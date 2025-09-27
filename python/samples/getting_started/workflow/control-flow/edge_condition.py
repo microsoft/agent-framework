@@ -4,6 +4,8 @@ import asyncio
 import os
 from typing import Any
 
+from typing_extensions import Never
+
 from agent_framework import (  # Core chat primitives used to build requests
     AgentExecutor,  # Wraps an LLM agent that can be invoked inside a workflow
     AgentExecutorRequest,  # Input message bundle for an AgentExecutor
@@ -11,11 +13,10 @@ from agent_framework import (  # Core chat primitives used to build requests
     ChatMessage,
     Role,
     WorkflowBuilder,  # Fluent builder for wiring executors and edges
-    WorkflowCompletedEvent,  # Event we emit at the end to signal completion
     WorkflowContext,  # Per-run context and event bus
     executor,  # Decorator to declare a Python function as a workflow executor
 )
-from agent_framework.azure import AzureChatClient  # Thin client wrapper for Azure OpenAI chat models
+from agent_framework.azure import AzureOpenAIChatClient  # Thin client wrapper for Azure OpenAI chat models
 from azure.identity import AzureCliCredential  # Uses your az CLI login for credentials
 from pydantic import BaseModel  # Structured outputs for safer parsing
 
@@ -34,22 +35,23 @@ Purpose:
 Prerequisites:
 - You understand the basics of WorkflowBuilder, executors, and events in this framework.
 - You know the concept of edge conditions and how they gate routes using a predicate function.
-- Azure OpenAI access is configured for AzureChatClient. You should be logged in with Azure CLI (AzureCliCredential)
+- Azure OpenAI access is configured for AzureOpenAIChatClient. You should be logged in with Azure CLI (AzureCliCredential)
 and have the Azure OpenAI environment variables set as documented in the getting started chat client README.
 - The sample email resource file exists at workflow/resources/email.txt.
 
 High level flow:
 1) spam_detection_agent reads an email and returns DetectionResult.
 2) If not spam, we transform the detection output into a user message for email_assistant_agent, then finish by
-sending the drafted reply.
-3) If spam, we short circuit to a spam handler that emits a completion event.
+yielding the drafted reply as workflow output.
+3) If spam, we short circuit to a spam handler that yields a spam notice as workflow output.
 
 Output:
-- The final WorkflowCompletedEvent is printed to stdout, either with a drafted reply or a spam notice.
+- The final workflow output is printed to stdout, either with a drafted reply or a spam notice.
 
 Notes:
 - Conditions read the agent response text and validate it into DetectionResult for robust routing.
 - Executors are small and single purpose to keep control flow easy to follow.
+- The workflow completes when it becomes idle, not via explicit completion events.
 """
 
 
@@ -96,18 +98,18 @@ def get_condition(expected_result: bool):
 
 
 @executor(id="send_email")
-async def handle_email_response(response: AgentExecutorResponse, ctx: WorkflowContext[None]) -> None:
-    # Downstream of the email assistant. Parse a validated EmailResponse and emit a completion event.
+async def handle_email_response(response: AgentExecutorResponse, ctx: WorkflowContext[Never, str]) -> None:
+    # Downstream of the email assistant. Parse a validated EmailResponse and yield the workflow output.
     email_response = EmailResponse.model_validate_json(response.agent_run_response.text)
-    await ctx.add_event(WorkflowCompletedEvent(f"Email sent:\n{email_response.response}"))
+    await ctx.yield_output(f"Email sent:\n{email_response.response}")
 
 
 @executor(id="handle_spam")
-async def handle_spam_classifier_response(response: AgentExecutorResponse, ctx: WorkflowContext[None]) -> None:
-    # Spam path. Confirm the DetectionResult and finish with the reason. Guard against accidental non spam input.
+async def handle_spam_classifier_response(response: AgentExecutorResponse, ctx: WorkflowContext[Never, str]) -> None:
+    # Spam path. Confirm the DetectionResult and yield the workflow output. Guard against accidental non spam input.
     detection = DetectionResult.model_validate_json(response.agent_run_response.text)
     if detection.is_spam:
-        await ctx.add_event(WorkflowCompletedEvent(f"Email marked as spam: {detection.reason}"))
+        await ctx.yield_output(f"Email marked as spam: {detection.reason}")
     else:
         # This indicates the routing predicate and executor contract are out of sync.
         raise RuntimeError("This executor should only handle spam messages.")
@@ -130,7 +132,7 @@ async def to_email_assistant_request(
 async def main() -> None:
     # Create agents
     # AzureCliCredential uses your current az login. This avoids embedding secrets in code.
-    chat_client = AzureChatClient(credential=AzureCliCredential())
+    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     # Agent 1. Classifies spam and returns a DetectionResult object.
     # response_format enforces that the LLM returns parsable JSON for the Pydantic model.
@@ -184,11 +186,12 @@ async def main() -> None:
         email = email_file.read()
 
     # Execute the workflow. Since the start is an AgentExecutor, pass an AgentExecutorRequest.
-    # run_stream yields events as they occur. We watch for the terminal WorkflowCompletedEvent and print it.
+    # The workflow completes when it becomes idle (no more work to do).
     request = AgentExecutorRequest(messages=[ChatMessage(Role.USER, text=email)], should_respond=True)
-    async for event in workflow.run_stream(request):
-        if isinstance(event, WorkflowCompletedEvent):
-            print(f"{event}")
+    events = await workflow.run(request)
+    outputs = events.get_outputs()
+    if outputs:
+        print(f"Workflow output: {outputs[0]}")
 
     """
     Sample Output:
@@ -214,7 +217,7 @@ async def main() -> None:
     (555) 123-4567
     ----------------------------------------
 
-    WorkflowCompletedEvent(data=Email sent:
+Workflow output: Email sent:
     Hi Alex,
 
     Thank you for the follow-up and for summarizing the action items from this morning's meeting. The points you listed accurately reflect our discussion, and I don't have any additional items to add at this time.
@@ -224,7 +227,7 @@ async def main() -> None:
     Thank you again for outlining the next steps.
 
     Best regards,
-    Sarah)
+    Sarah
     """  # noqa: E501
 
 

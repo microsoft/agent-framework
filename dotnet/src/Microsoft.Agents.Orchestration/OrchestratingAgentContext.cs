@@ -1,8 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using Microsoft.Extensions.AI.Agents;
-using Microsoft.Extensions.AI.Agents.Runtime;
+using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Runtime;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 

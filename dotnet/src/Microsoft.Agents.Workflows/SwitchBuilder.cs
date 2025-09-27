@@ -30,7 +30,7 @@ public sealed class SwitchBuilder
     /// <param name="executors">One or more executors to associate with the predicate. Each executor will be invoked if the predicate matches.
     /// Cannot be null.</param>
     /// <returns>The current <see cref="SwitchBuilder"/> instance, allowing for method chaining.</returns>
-    public SwitchBuilder AddCase<T>(Func<T?, bool> predicate, params ExecutorIsh[] executors)
+    public SwitchBuilder AddCase<T>(Func<T?, bool> predicate, params IEnumerable<ExecutorIsh> executors)
     {
         Throw.IfNull(predicate);
         Throw.IfNull(executors);
@@ -60,7 +60,7 @@ public sealed class SwitchBuilder
     /// </summary>
     /// <param name="executors"></param>
     /// <returns></returns>
-    public SwitchBuilder WithDefault(params ExecutorIsh[] executors)
+    public SwitchBuilder WithDefault(params IEnumerable<ExecutorIsh> executors)
     {
         Throw.IfNull(executors);
 

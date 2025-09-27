@@ -10,17 +10,18 @@ namespace Microsoft.Agents.Workflows.Sample;
 
 internal static class Step3EntryPoint
 {
-    public static Workflow<NumberSignal> WorkflowInstance
+    public static Workflow WorkflowInstance
     {
         get
         {
-            GuessNumberExecutor guessNumber = new(1, 100);
-            JudgeExecutor judge = new(42); // Let's say the target number is 42
+            GuessNumberExecutor guessNumber = new("GuessNumber", 1, 100);
+            JudgeExecutor judge = new("Judge", 42); // Let's say the target number is 42
 
             return new WorkflowBuilder(guessNumber)
                 .AddEdge(guessNumber, judge)
                 .AddEdge(judge, guessNumber)
-                .Build<NumberSignal>();
+                .WithOutputFrom(guessNumber)
+                .Build();
         }
     }
 
@@ -32,9 +33,9 @@ internal static class Step3EntryPoint
         {
             switch (evt)
             {
-                case WorkflowCompletedEvent workflowCompleteEvt:
+                case WorkflowOutputEvent workflowOutputEvt:
                     // The workflow has completed successfully, return the result
-                    string workflowResult = workflowCompleteEvt.Data!.ToString()!;
+                    string workflowResult = workflowOutputEvt.As<string>()!;
                     writer.WriteLine($"Result: {workflowResult}");
                     return workflowResult;
                 case ExecutorCompletedEvent executorCompletedEvt:
@@ -43,7 +44,7 @@ internal static class Step3EntryPoint
             }
         }
 
-        throw new InvalidOperationException("Workflow failed to yield the completion event.");
+        throw new InvalidOperationException("Workflow failed to yield an output.");
     }
 }
 
@@ -60,7 +61,7 @@ internal sealed class GuessNumberExecutor : ReflectingExecutor<GuessNumberExecut
     public int LowerBound { get; private set; }
     public int UpperBound { get; private set; }
 
-    public GuessNumberExecutor(int lowerBound, int upperBound)
+    public GuessNumberExecutor(string id, int lowerBound, int upperBound) : base(id, new ExecutorOptions { AutoYieldOutputHandlerResultObject = false })
     {
         this.LowerBound = lowerBound;
         this.UpperBound = upperBound;
@@ -74,7 +75,7 @@ internal sealed class GuessNumberExecutor : ReflectingExecutor<GuessNumberExecut
         switch (message)
         {
             case NumberSignal.Matched:
-                await context.AddEventAsync(new WorkflowCompletedEvent($"Guessed the number: {this._currGuess}"))
+                await context.YieldOutputAsync($"Guessed the number: {this._currGuess}")
                              .ConfigureAwait(false);
                 break;
 
@@ -91,43 +92,25 @@ internal sealed class GuessNumberExecutor : ReflectingExecutor<GuessNumberExecut
     }
 }
 
-internal sealed class JudgeExecutor : ReflectingExecutor<JudgeExecutor>, IMessageHandler<int, NumberSignal>
+internal sealed class JudgeExecutor : ReflectingExecutor<JudgeExecutor>, IMessageHandler<int, NumberSignal>, IResettableExecutor
 {
     private readonly int _targetNumber;
 
     internal int? Tries { get; private set; }
 
-    public JudgeExecutor(int targetNumber)
+    public JudgeExecutor(string id, int targetNumber) : base(id)
     {
         this._targetNumber = targetNumber;
     }
 
     public async ValueTask<NumberSignal> HandleAsync(int message, IWorkflowContext context)
     {
-        if (!this.Tries.HasValue)
-        {
-            this.Tries = 1;
-        }
-        else
-        {
-            this.Tries++;
-        }
+        this.Tries = this.Tries is int tries ? tries + 1 : 1;
 
-        NumberSignal result;
-        if (message == this._targetNumber)
-        {
-            result = NumberSignal.Matched;
-        }
-        else if (message < this._targetNumber)
-        {
-            result = NumberSignal.Below;
-        }
-        else
-        {
-            result = NumberSignal.Above;
-        }
-
-        return result;
+        return
+            message == this._targetNumber ? NumberSignal.Matched :
+            message < this._targetNumber ? NumberSignal.Below :
+            NumberSignal.Above;
     }
 
     protected internal override ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellation = default)
@@ -138,5 +121,11 @@ internal sealed class JudgeExecutor : ReflectingExecutor<JudgeExecutor>, IMessag
     protected internal override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellation = default)
     {
         this.Tries = await context.ReadStateAsync<int?>("TryCount").ConfigureAwait(false) ?? 0;
+    }
+
+    public ValueTask ResetAsync()
+    {
+        this.Tries = null;
+        return default;
     }
 }

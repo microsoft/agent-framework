@@ -4,13 +4,13 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.ObjectModel;
@@ -37,7 +37,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
             await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
         }
 
-        ChatMessage response = agentResponse.Messages.Last();
+        ChatMessage response = agentResponse.Messages[agentResponse.Messages.Count - 1];
         await this.AssignAsync(this.AgentOutput?.Messages?.Path, response.ToRecord(), context).ConfigureAwait(false);
 
         return default;
@@ -53,7 +53,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
                         Instructions = additionalInstructions,
                     });
 
-            AgentThread agentThread = new() { ConversationId = conversationId };
+            AgentThread agentThread = conversationId is not null && agent is ChatClientAgent chatClientAgent ? chatClientAgent.GetNewThread(conversationId) : agent.GetNewThread();
             IAsyncEnumerable<AgentRunResponseUpdate> agentUpdates =
                 inputMessages is not null ?
                     agent.RunStreamingAsync([.. inputMessages.ToChatMessages()], agentThread, options, cancellationToken) :
@@ -77,8 +77,8 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
             if (assignValue is not null && conversationId is null)
             {
                 conversationId = assignValue;
-                this.State.SetConversationId(conversationId);
-                await context.AddEventAsync(new ConversationUpdateEvent(conversationId)).ConfigureAwait(false);
+
+                await context.QueueConversationUpdateAsync(conversationId).ConfigureAwait(false);
             }
         }
     }
@@ -88,7 +88,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
         DataValue? userInput = null;
         if (this.AgentInput?.Messages is not null)
         {
-            EvaluationResult<DataValue> expressionResult = this.State.Evaluator.GetValue(this.AgentInput.Messages);
+            EvaluationResult<DataValue> expressionResult = this.Evaluator.GetValue(this.AgentInput.Messages);
             userInput = expressionResult.Value;
         }
 
@@ -102,12 +102,12 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
             return null;
         }
 
-        EvaluationResult<string> conversationIdResult = this.State.Evaluator.GetValue(this.Model.ConversationId);
+        EvaluationResult<string> conversationIdResult = this.Evaluator.GetValue(this.Model.ConversationId);
         return conversationIdResult.Value.Length == 0 ? null : conversationIdResult.Value;
     }
 
     private string GetAgentName() =>
-        this.State.Evaluator.GetValue(
+        this.Evaluator.GetValue(
             Throw.IfNull(
                 this.AgentUsage.Name,
                 $"{nameof(this.Model)}.{nameof(this.Model.Agent)}.{nameof(this.Model.Agent.Name)}")).Value;
@@ -118,7 +118,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
 
         if (this.AgentInput?.AdditionalInstructions is not null)
         {
-            additionalInstructions = this.State.Engine.Format(this.AgentInput.AdditionalInstructions);
+            additionalInstructions = this.Engine.Format(this.AgentInput.AdditionalInstructions);
         }
 
         return additionalInstructions;
@@ -131,7 +131,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
             return true;
         }
 
-        EvaluationResult<bool> autoSendResult = this.State.Evaluator.GetValue(this.AgentOutput.AutoSend);
+        EvaluationResult<bool> autoSendResult = this.Evaluator.GetValue(this.AgentOutput.AutoSend);
 
         return autoSendResult.Value;
     }

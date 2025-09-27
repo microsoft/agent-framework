@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
@@ -20,7 +19,7 @@ namespace Microsoft.Agents.Workflows.Declarative.IntegrationTests;
 /// Tests execution of workflow created by <see cref="DeclarativeWorkflowBuilder"/>.
 /// </summary>
 [Collection("Global")]
-public sealed class DeclarativeWorkflowTest(ITestOutputHelper output, AgentFixture agentFixture) : WorkflowTest(output), IClassFixture<AgentFixture>
+public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : WorkflowTest(output)
 {
     [Theory]
     [InlineData("SendActivity.yaml", "SendActivity.json")]
@@ -58,7 +57,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output, AgentFixtu
         AzureAIConfiguration? foundryConfig = configuration.GetSection("AzureAI").Get<AzureAIConfiguration>();
         Assert.NotNull(foundryConfig);
 
-        IReadOnlyDictionary<string, string?> agentMap = await agentFixture.GetAgentsAsync(foundryConfig);
+        IReadOnlyDictionary<string, string?> agentMap = await AgentFixture.GetAgentsAsync(foundryConfig);
 
         IConfiguration workflowConfig =
             new ConfigurationBuilder()
@@ -71,7 +70,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output, AgentFixtu
                 Configuration = workflowConfig,
                 LoggerFactory = this.Output
             };
-        Workflow<TInput> workflow = DeclarativeWorkflowBuilder.Build<TInput>(workflowPath, workflowOptions);
+        Workflow workflow = DeclarativeWorkflowBuilder.Build<TInput>(workflowPath, workflowOptions);
 
         WorkflowEvents workflowEvents = await WorkflowHarness.RunAsync(workflow, (TInput)GetInput<TInput>(testcase));
         foreach (DeclarativeActionInvokedEvent actionInvokeEvent in workflowEvents.ActionInvokeEvents)
@@ -98,12 +97,6 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output, AgentFixtu
         Assert.NotNull(testcase);
         return testcase;
     }
-
-    private static IConfigurationRoot InitializeConfig() =>
-        new ConfigurationBuilder()
-            .AddUserSecrets(Assembly.GetExecutingAssembly())
-            .AddEnvironmentVariables()
-            .Build();
 
     private static readonly JsonSerializerOptions s_jsonSerializerOptions = new()
     {

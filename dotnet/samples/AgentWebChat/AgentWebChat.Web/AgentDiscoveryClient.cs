@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Text.Json;
-using Microsoft.Extensions.AI.Agents.Hosting;
+using Microsoft.Agents.AI.Hosting;
 
 namespace AgentWebChat.Web;
 

@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json.Serialization;
 
 using Microsoft.Agents.Workflows.Checkpointing;
@@ -92,82 +93,78 @@ public sealed class PortableValue
     /// <remarks>If the underlying value implements delayed deserialization, this method will attempt to
     /// deserialize it to the specified type. If the value is already of the requested type, it is returned directly.
     /// Otherwise, the default value for TValue is returned.
-    ///
-    /// For nullable value types, make sure to make <typeparamref name="TValue"/> be nullable, e.g. <c>int?</c>,
-    /// otherwise the default non-null value of the type is returned when the value is missing. Use <see cref="AsValue{TValue}"/>
-    /// to get the correct behavior when unable to pass in the explicit-nullable type.
     /// </remarks>
     /// <typeparam name="TValue">The type to which the value should be cast or deserialized.</typeparam>
     /// <returns>The value cast or deserialized to type TValue if possible; otherwise, the default value for type TValue.</returns>
-    public TValue? As<TValue>()
-    {
-        if (this.Value is IDelayedDeserialization delayedDeserialization)
-        {
-            this._deserializedValueCache ??= delayedDeserialization.Deserialize<TValue>();
-        }
-
-        if (this.Value is TValue typedValue)
-        {
-            return typedValue;
-        }
-
-        return default;
-    }
-
-    /// <summary>
-    /// Attempts to retrieve the underlying value as the specified nullable value type, deserializing if
-    /// necessary.
-    /// </summary>
-    /// <remarks>If the underlying value implements delayed deserialization, this method will attempt to
-    /// deserialize it to the specified type. If the value is already of the requested type, it is returned directly.
-    /// Otherwise, null is returned.</remarks>
-    /// <typeparam name="TValue">The value type to which the value should be cast or deserialized.</typeparam>
-    /// <returns>The value cast or deserialized to type TValue if possible; otherwise, null.</returns>
-    public TValue? AsValue<TValue>() where TValue : struct
-    {
-        if (this.Value is IDelayedDeserialization delayedDeserialization)
-        {
-            this._deserializedValueCache ??= delayedDeserialization.Deserialize<TValue>();
-        }
-
-        if (this.Value is TValue typedValue)
-        {
-            return typedValue;
-        }
-
-        return default;
-    }
+    public TValue? As<TValue>() => this.Is(out TValue? value) ? value : default;
 
     /// <summary>
     /// Determines whether the current value can be represented as the specified type.
     /// </summary>
     /// <typeparam name="TValue">The type to test for compatibility with the current value.</typeparam>
     /// <returns>true if the current value can be represented as type TValue; otherwise, false.</returns>
-    public bool Is<TValue>() => this.IsType(typeof(TValue));
+    public bool Is<TValue>() => this.Is<TValue>(out _);
+
+    /// <summary>
+    /// Determines whether the current value can be represented as the specified type.
+    /// </summary>
+    /// <typeparam name="TValue">The type to test for compatibility with the current value.</typeparam>
+    /// <param name="value">When this method returns, contains the value cast or deserialized to type TValue
+    /// if the conversion succeeded, or null if the conversion failed.</param>
+    /// <returns>true if the current value can be represented as type TValue; otherwise, false.</returns>
+    public bool Is<TValue>([NotNullWhen(true)] out TValue? value)
+    {
+        if (this.Value is IDelayedDeserialization delayedDeserialization)
+        {
+            this._deserializedValueCache ??= delayedDeserialization.Deserialize<TValue>();
+        }
+
+        if (this.Value is TValue typedValue)
+        {
+            value = typedValue;
+            return true;
+        }
+
+        value = default;
+        return false;
+    }
 
     /// <summary>
     /// Attempts to retrieve the underlying value as the specified type, deserializing if necessary.
     /// </summary>
     /// <param name="targetType">The type to which the value should be cast or deserialized.</param>
     /// <returns>The value cast or deserialized to type targetType if possible; otherwise, null.</returns>
-    public object? AsType(Type targetType)
-    {
-        Throw.IfNull(targetType);
-
-        if (this.Value is IDelayedDeserialization delayedDeserialization)
-        {
-            this._deserializedValueCache ??= delayedDeserialization.Deserialize(targetType);
-        }
-
-        return this.Value is not null && targetType.IsAssignableFrom(this.Value.GetType())
-            ? this.Value
-            : this._deserializedValueCache = null;
-    }
+    public object? AsType(Type targetType) => this.IsType(targetType, out object? value) ? value : null;
 
     /// <summary>
     /// Determines whether the current instance can be assigned to the specified target type.
     /// </summary>
     /// <param name="targetType">The type to compare with the current instance. Cannot be null.</param>
     /// <returns>true if the current instance can be assigned to targetType; otherwise, false.</returns>
-    public bool IsType(Type targetType) => this.AsType(targetType) is not null;
+    public bool IsType(Type targetType) => this.IsType(targetType, out _);
+
+    /// <summary>
+    /// Determines whether the current instance can be assigned to the specified target type.
+    /// </summary>
+    /// <param name="targetType">The type to compare with the current instance. Cannot be null.</param>
+    /// <param name="value">When this method returns, contains the value cast or deserialized to type TValue
+    /// if the conversion succeeded, or null if the conversion failed.</param>
+    /// <returns>true if the current instance can be assigned to targetType; otherwise, false.</returns>
+    public bool IsType(Type targetType, out object? value)
+    {
+        Throw.IfNull(targetType);
+        if (this.Value is IDelayedDeserialization delayedDeserialization)
+        {
+            this._deserializedValueCache ??= delayedDeserialization.Deserialize(targetType);
+        }
+
+        if (this.Value is not null && targetType.IsAssignableFrom(this.Value.GetType()))
+        {
+            value = this.Value;
+            return true;
+        }
+
+        value = null;
+        return false;
+    }
 }

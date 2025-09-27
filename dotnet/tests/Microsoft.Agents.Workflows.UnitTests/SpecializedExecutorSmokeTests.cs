@@ -4,12 +4,13 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
+using Microsoft.Agents.AI;
 using Microsoft.Agents.Workflows.Specialized;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
 
 namespace Microsoft.Agents.Workflows.UnitTests;
 
@@ -42,12 +43,18 @@ public class SpecializedExecutorSmokeTests
                 {
                     MessageId = Guid.NewGuid().ToString("N"),
                     RawRepresentation = text,
-                    CreatedAt = DateTime.Now,
+                    CreatedAt = DateTime.UtcNow,
                 };
             }
 
             return result;
         }
+
+        public override AgentThread GetNewThread()
+            => new TestAgentThread();
+
+        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+            => new TestAgentThread();
 
         public static TestAIAgent FromStrings(params string[] messages) =>
             new(ToChatMessages(messages));
@@ -103,11 +110,19 @@ public class SpecializedExecutorSmokeTests
         }
     }
 
+    public sealed class TestAgentThread() : InMemoryAgentThread();
+
     internal sealed class TestWorkflowContext : IWorkflowContext
     {
         public List<List<ChatMessage>> Updates { get; } = [];
 
         public ValueTask AddEventAsync(WorkflowEvent workflowEvent) =>
+            default;
+
+        public ValueTask YieldOutputAsync(object output) =>
+            default;
+
+        public ValueTask RequestHaltAsync() =>
             default;
 
         public ValueTask QueueClearScopeAsync(string? scopeName = null) =>

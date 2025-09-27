@@ -9,32 +9,32 @@ import uuid
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from textwrap import shorten
-from types import UnionType
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, Union, cast, get_args, get_origin, overload
-
-if TYPE_CHECKING:
-    from ._workflow import Workflow
+from typing import Any, ClassVar, Generic, TypeVar, cast
 
 from pydantic import Field
 
-from agent_framework import AgentProtocol, AgentRunResponse, AgentRunResponseUpdate, AgentThread, ChatMessage
-from agent_framework._pydantic import AFBaseModel
-
+from .._agents import AgentProtocol
+from .._pydantic import AFBaseModel
+from .._threads import AgentThread
+from .._types import AgentRunResponse, AgentRunResponseUpdate, ChatMessage
+from ..observability import create_processing_span
 from ._checkpoint import WorkflowCheckpoint
 from ._events import (
     AgentRunEvent,
     AgentRunUpdateEvent,
     ExecutorCompletedEvent,
+    ExecutorFailedEvent,
     ExecutorInvokedEvent,
     RequestInfoEvent,
-    _framework_event_origin,  # pyright: ignore[reportPrivateUsage]
+    WorkflowErrorDetails,
+    _framework_event_origin,  # type: ignore[reportPrivateUsage]
 )
-from ._runner_context import _decode_checkpoint_value
+from ._runner_context import Message, RunnerContext, _decode_checkpoint_value  # type: ignore
+from ._shared_state import SharedState
 from ._typing_utils import is_instance_of
-from ._workflow_context import WorkflowContext
+from ._workflow_context import WorkflowContext, validate_function_signature
 
 logger = logging.getLogger(__name__)
-
 # region Executor
 
 
@@ -64,7 +64,131 @@ class WorkflowCheckpointSummary:
 
 
 class Executor(AFBaseModel):
-    """An executor is a component that processes messages in a workflow."""
+    """Base class for all workflow executors that process messages and perform computations.
+
+    ## Overview
+    Executors are the fundamental building blocks of workflows, representing individual processing
+    units that receive messages, perform operations, and produce outputs. Each executor is uniquely
+    identified and can handle specific message types through decorated handler methods.
+
+    ## Type System
+    Executors have a rich type system that defines their capabilities:
+
+    ### Input Types
+    The types of messages an executor can process, discovered from handler method signatures:
+    ```python
+    class MyExecutor(Executor):
+        @handler
+        async def handle_string(self, message: str, ctx: WorkflowContext) -> None:
+            # This executor can handle 'str' input types
+    ```
+    Access via the `input_types` property.
+
+    ### Output Types
+    The types of messages an executor can send to other executors via `ctx.send_message()`:
+    ```python
+    class MyExecutor(Executor):
+        @handler
+        async def handle_data(self, message: str, ctx: WorkflowContext[int | bool]) -> None:
+            # This executor can send 'int' or 'bool' messages
+    ```
+    Access via the `output_types` property.
+
+    ### Workflow Output Types
+    The types of data an executor can emit as workflow-level outputs via `ctx.yield_output()`:
+    ```python
+    class MyExecutor(Executor):
+        @handler
+        async def process(self, message: str, ctx: WorkflowContext[int, str]) -> None:
+            # Can send 'int' messages AND yield 'str' workflow outputs
+    ```
+    Access via the `workflow_output_types` property.
+
+    ## Handler Discovery
+    Executors discover their capabilities through decorated methods:
+
+    ### @handler Decorator
+    Marks methods that process incoming messages:
+    ```python
+    class MyExecutor(Executor):
+        @handler
+        async def handle_text(self, message: str, ctx: WorkflowContext[str]) -> None:
+            await ctx.send_message(message.upper())
+    ```
+
+    ### Sub-workflow Request Interception
+    Use @handler methods to intercept sub-workflow requests:
+    ```python
+    class ParentExecutor(Executor):
+        @handler
+        async def handle_domain_request(
+            self,
+            request: DomainRequest,  # Subclass of RequestInfoMessage
+            ctx: WorkflowContext[RequestResponse[RequestInfoMessage, Any] | DomainRequest],
+        ) -> None:
+            if self.is_allowed(request.domain):
+                response = RequestResponse(data=True, original_request=request, request_id=request.request_id)
+                await ctx.send_message(response, target_id=request.source_executor_id)
+            else:
+                await ctx.send_message(request)  # Forward to external
+    ```
+
+    ## Context Types
+    Handler methods receive different WorkflowContext variants based on their type annotations:
+
+    ### WorkflowContext (no type parameters)
+    For handlers that only perform side effects without sending messages or yielding outputs:
+    ```python
+    class LoggingExecutor(Executor):
+        @handler
+        async def log_message(self, msg: str, ctx: WorkflowContext) -> None:
+            print(f"Received: {msg}")  # Only logging, no outputs
+    ```
+
+    ### WorkflowContext[T_Out]
+    Enables sending messages of type T_Out via `ctx.send_message()`:
+    ```python
+    class ProcessorExecutor(Executor):
+        @handler
+        async def handler(self, msg: str, ctx: WorkflowContext[int]) -> None:
+            await ctx.send_message(42)  # Can send int messages
+    ```
+
+    ### WorkflowContext[T_Out, T_W_Out]
+    Enables both sending messages (T_Out) and yielding workflow outputs (T_W_Out):
+    ```python
+    class DualOutputExecutor(Executor):
+        @handler
+        async def handler(self, msg: str, ctx: WorkflowContext[int, str]) -> None:
+            await ctx.send_message(42)  # Send int message
+            await ctx.yield_output("done")  # Yield str workflow output
+    ```
+
+    ## Function Executors
+    Simple functions can be converted to executors using the `@executor` decorator:
+    ```python
+    @executor
+    async def process_text(text: str, ctx: WorkflowContext[str]) -> None:
+        await ctx.send_message(text.upper())
+
+
+    # Or with custom ID:
+    @executor(id="text_processor")
+    def sync_process(text: str, ctx: WorkflowContext[str]) -> None:
+        ctx.send_message(text.lower())  # Sync functions run in thread pool
+    ```
+
+    ## Sub-workflow Composition
+    Executors can contain sub-workflows using WorkflowExecutor. Sub-workflows can make requests
+    that parent workflows can intercept. See WorkflowExecutor documentation for details on
+    workflow composition patterns and request/response handling.
+
+    ## Implementation Notes
+    - Do not call `execute()` directly - it's invoked by the workflow engine
+    - Do not override `execute()` - define handlers using decorators instead
+    - Each executor must have at least one `@handler` method
+    - Handler method signatures are validated at initialization time
+    """
 
     # Provide a default so static analyzers (e.g., pyright) don't require passing `id`.
     # Runtime still sets a concrete value in __init__.
@@ -91,76 +215,81 @@ class Executor(AFBaseModel):
 
         super().__init__(**kwargs)
 
-        self._handlers: dict[type, Callable[[Any, WorkflowContext[Any]], Any]] = {}
-        self._request_interceptors: dict[type | str, list[dict[str, Any]]] = {}
-        self._instance_handler_specs: list[dict[str, Any]] = []
+        self._handlers: dict[type, Callable[[Any, WorkflowContext[Any, Any]], Awaitable[None]]] = {}
+        self._handler_specs: list[dict[str, Any]] = []
         self._discover_handlers()
 
-        if not self._handlers and not self._request_interceptors:
+        if not self._handlers:
             raise ValueError(
                 f"Executor {self.__class__.__name__} has no handlers defined. "
-                "Please define at least one handler using the @handler decorator "
-                "or @intercepts_request decorator."
+                "Please define at least one handler using the @handler decorator."
             )
 
-    async def execute(self, message: Any, context: WorkflowContext[Any]) -> None:
-        """Execute the executor with a given message and context.
+    async def execute(
+        self,
+        message: Any,
+        source_executor_ids: list[str],
+        shared_state: SharedState,
+        runner_context: RunnerContext,
+        trace_contexts: list[dict[str, str]] | None = None,
+        source_span_ids: list[str] | None = None,
+    ) -> None:
+        """Execute the executor with a given message and context parameters.
+
+        - Do not call this method directly - it is invoked by the workflow engine.
+        - Do not override this method. Instead, define handlers using @handler decorator.
 
         Args:
             message: The message to be processed by the executor.
-            context: The workflow context in which the executor operates.
+            source_executor_ids: The IDs of the source executors that sent messages to this executor.
+            shared_state: The shared state for the workflow.
+            runner_context: The runner context that provides methods to send messages and events.
+            trace_contexts: Optional trace contexts from multiple sources for OpenTelemetry propagation.
+            source_span_ids: Optional source span IDs from multiple sources for linking.
 
         Returns:
             An awaitable that resolves to the result of the execution.
         """
         # Create processing span for tracing (gracefully handles disabled tracing)
-        from ._telemetry import workflow_tracer
-
-        source_trace_contexts = getattr(context, "_trace_contexts", None)
-        source_span_ids = getattr(context, "_source_span_ids", None)
 
         # Handle case where Message wrapper is passed instead of raw data
-        from ._runner_context import Message
-
         if isinstance(message, Message):
             message = message.data
 
-        with workflow_tracer.create_processing_span(
+        with create_processing_span(
             self.id,
             self.__class__.__name__,
             type(message).__name__,
-            source_trace_contexts=source_trace_contexts,
+            source_trace_contexts=trace_contexts,
             source_span_ids=source_span_ids,
         ):
-            # Lazy registration for SubWorkflowRequestInfo if we have interceptors
-            if self._request_interceptors and message.__class__.__name__ == "SubWorkflowRequestInfo":
-                # Directly handle SubWorkflowRequestInfo
-                with _framework_event_origin():
-                    invoke_event = ExecutorInvokedEvent(self.id)
-                await context.add_event(invoke_event)
-                try:
-                    await self._handle_sub_workflow_request(message, context)
-                except Exception as exc:
-                    # Surface structured executor failure before propagating
-                    from ._events import ExecutorFailedEvent, WorkflowErrorDetails
-
-                    with _framework_event_origin():
-                        failure_event = ExecutorFailedEvent(self.id, WorkflowErrorDetails.from_exception(exc))
-                    await context.add_event(failure_event)
-                    raise
-                with _framework_event_origin():
-                    completed_event = ExecutorCompletedEvent(self.id)
-                await context.add_event(completed_event)
-                return
-
-            handler: Callable[[Any, WorkflowContext[Any]], Any] | None = None
+            # Find the handler and handler spec that matches the message type.
+            handler: Callable[[Any, WorkflowContext[Any, Any]], Awaitable[None]] | None = None
+            ctx_annotation = None
             for message_type in self._handlers:
                 if is_instance_of(message, message_type):
                     handler = self._handlers[message_type]
+                    # Find the corresponding handler spec for context annotation
+                    for spec in self._handler_specs:
+                        if spec.get("message_type") == message_type:
+                            ctx_annotation = spec.get("ctx_annotation")
+                            break
                     break
 
             if handler is None:
                 raise RuntimeError(f"Executor {self.__class__.__name__} cannot handle message of type {type(message)}.")
+
+            # Create the appropriate WorkflowContext based on handler specs
+            context = self._create_context_for_handler(
+                source_executor_ids=source_executor_ids,
+                shared_state=shared_state,
+                runner_context=runner_context,
+                ctx_annotation=ctx_annotation,
+                trace_contexts=trace_contexts,
+                source_span_ids=source_span_ids,
+            )
+
+            # Invoke the handler with the message and context
             with _framework_event_origin():
                 invoke_event = ExecutorInvokedEvent(self.id)
             await context.add_event(invoke_event)
@@ -168,8 +297,6 @@ class Executor(AFBaseModel):
                 await handler(message, context)
             except Exception as exc:
                 # Surface structured executor failure before propagating
-                from ._events import ExecutorFailedEvent, WorkflowErrorDetails
-
                 with _framework_event_origin():
                     failure_event = ExecutorFailedEvent(self.id, WorkflowErrorDetails.from_exception(exc))
                 await context.add_event(failure_event)
@@ -178,131 +305,71 @@ class Executor(AFBaseModel):
                 completed_event = ExecutorCompletedEvent(self.id)
             await context.add_event(completed_event)
 
+    def _create_context_for_handler(
+        self,
+        source_executor_ids: list[str],
+        shared_state: SharedState,
+        runner_context: RunnerContext,
+        ctx_annotation: Any,
+        trace_contexts: list[dict[str, str]] | None = None,
+        source_span_ids: list[str] | None = None,
+    ) -> WorkflowContext[Any]:
+        """Create the appropriate WorkflowContext based on the handler's context annotation.
+
+        Args:
+            source_executor_ids: The IDs of the source executors that sent messages to this executor.
+            shared_state: The shared state for the workflow.
+            runner_context: The runner context that provides methods to send messages and events.
+            ctx_annotation: The context annotation from the handler spec to determine which context type to create.
+            trace_contexts: Optional trace contexts from multiple sources for OpenTelemetry propagation.
+            source_span_ids: Optional source span IDs from multiple sources for linking.
+
+        Returns:
+            WorkflowContext[Any] based on the handler's context annotation.
+        """
+        # Create WorkflowContext
+        return WorkflowContext(
+            executor_id=self.id,
+            source_executor_ids=source_executor_ids,
+            shared_state=shared_state,
+            runner_context=runner_context,
+            trace_contexts=trace_contexts,
+            source_span_ids=source_span_ids,
+        )
+
     def _discover_handlers(self) -> None:
-        """Discover message handlers and request interceptors in the executor class."""
+        """Discover message handlers in the executor class."""
         # Use __class__.__dict__ to avoid accessing pydantic's dynamic attributes
         for attr_name in dir(self.__class__):
             try:
                 attr = getattr(self.__class__, attr_name)
-                if callable(attr):
-                    # Discover @handler methods
-                    if hasattr(attr, "_handler_spec"):
-                        handler_spec = attr._handler_spec  # type: ignore
-                        message_type = handler_spec["message_type"]
+                # Discover @handler methods
+                if callable(attr) and hasattr(attr, "_handler_spec"):
+                    handler_spec = attr._handler_spec  # type: ignore
+                    message_type = handler_spec["message_type"]
 
-                        # Keep full generic types for handler registration to avoid conflicts
-                        # Different RequestResponse[T, U] specializations are distinct handler types
+                    # Keep full generic types for handler registration to avoid conflicts
+                    # Different RequestResponse[T, U] specializations are distinct handler types
 
-                        if self._handlers.get(message_type) is not None:
-                            raise ValueError(f"Duplicate handler for type {message_type} in {self.__class__.__name__}")
-                        # Get the bound method
-                        bound_method = getattr(self, attr_name)
-                        self._handlers[message_type] = bound_method
+                    if self._handlers.get(message_type) is not None:
+                        raise ValueError(f"Duplicate handler for type {message_type} in {self.__class__.__name__}")
 
-                    # Discover @intercepts_request methods
-                    if hasattr(attr, "_intercepts_request"):
-                        # Get the bound method for interceptors
-                        bound_method = getattr(self, attr_name)
-                        interceptor_info = {
-                            "method": bound_method,
-                            "from_workflow": getattr(attr, "_from_workflow", None),
-                            "condition": getattr(attr, "_intercept_condition", None),
-                        }
-                        request_type = attr._intercepts_request  # type: ignore
-                        if request_type not in self._request_interceptors:
-                            self._request_interceptors[request_type] = []
-                        self._request_interceptors[request_type].append(interceptor_info)
+                    # Get the bound method
+                    bound_method = getattr(self, attr_name)
+                    self._handlers[message_type] = bound_method
+
+                    # Add to unified handler specs list
+                    self._handler_specs.append({
+                        "name": handler_spec["name"],
+                        "message_type": message_type,
+                        "output_types": handler_spec.get("output_types", []),
+                        "workflow_output_types": handler_spec.get("workflow_output_types", []),
+                        "ctx_annotation": handler_spec.get("ctx_annotation"),
+                        "source": "class_method",  # Distinguish from instance handlers if needed
+                    })
             except AttributeError:
                 # Skip attributes that may not be accessible
                 continue
-
-    def _register_sub_workflow_handler(self) -> None:
-        """Register automatic handler for SubWorkflowRequestInfo messages."""
-        # We need to use a string reference until the class is defined
-        # This will be resolved later when the class is actually used
-        pass  # Will be registered lazily when needed
-
-    async def _handle_sub_workflow_request(
-        self,
-        request: "SubWorkflowRequestInfo",
-        ctx: WorkflowContext[Any],
-    ) -> None:
-        """Automatic routing to @intercepts_request methods.
-
-        This is only active for executors that have @intercepts_request methods.
-        """
-        # Try to match against registered interceptors
-        for request_type, interceptor_list in self._request_interceptors.items():
-            matched = False
-
-            # Check type matching
-            if isinstance(request_type, type) and is_instance_of(request.data, request_type):
-                matched = True
-            elif (
-                isinstance(request_type, str)
-                and hasattr(request.data, "__class__")
-                and request.data.__class__.__name__ == request_type
-            ):
-                # String matching - could check against type name or other attributes
-                matched = True
-
-            if matched:
-                # Check each interceptor in the list for this request type
-                for interceptor_info in interceptor_list:
-                    # Check workflow scope if specified
-                    from_workflow = interceptor_info["from_workflow"]
-                    if from_workflow and request.sub_workflow_id != from_workflow:
-                        continue  # Skip this interceptor, wrong workflow
-
-                    # Check additional condition
-                    condition = interceptor_info["condition"]
-                    if condition and not condition(request):
-                        continue
-
-                    # Call the interceptor method
-                    method = interceptor_info["method"]
-                    response = await method(request.data, ctx)
-
-                    # Check if interceptor handled it or needs to forward
-                    if isinstance(response, RequestResponse):
-                        # Add automatic correlation info to the response
-                        correlated_response = RequestResponse[RequestInfoMessage, Any].with_correlation(
-                            response,
-                            request.data,
-                            request.request_id,
-                        )
-
-                        if correlated_response.is_handled:
-                            # Send response back to sub-workflow
-                            await ctx.send_message(
-                                SubWorkflowResponse(
-                                    request_id=request.request_id,
-                                    data=correlated_response.data,
-                                ),
-                                target_id=request.sub_workflow_id,
-                            )
-                        else:
-                            # Forward WITH CONTEXT PRESERVED
-                            # Update the data if interceptor provided a modified request
-                            if correlated_response.forward_request:
-                                request.data = correlated_response.forward_request
-
-                            # Send the inner request to RequestInfoExecutor to create external request
-                            await ctx.send_message(request)
-                    else:
-                        # Legacy support: direct return means handled
-                        await ctx.send_message(
-                            SubWorkflowResponse(
-                                request_id=request.request_id,
-                                data=response,
-                            ),
-                            target_id=request.sub_workflow_id,
-                        )
-                    return
-
-        # No interceptor found - forward inner request to RequestInfoExecutor
-        # This sends the original request to RequestInfoExecutor
-        await ctx.send_message(request.data)
 
     def can_handle(self, message: Any) -> bool:
         """Check if the executor can handle a given message type.
@@ -315,13 +382,14 @@ class Executor(AFBaseModel):
         """
         return any(is_instance_of(message, message_type) for message_type in self._handlers)
 
-    def register_instance_handler(
+    def _register_instance_handler(
         self,
         name: str,
         func: Callable[[Any, WorkflowContext[Any]], Awaitable[Any]],
         message_type: type,
         ctx_annotation: Any,
         output_types: list[type],
+        workflow_output_types: list[type],
     ) -> None:
         """Register a handler at instance level.
 
@@ -330,29 +398,62 @@ class Executor(AFBaseModel):
             func: The async handler function to register
             message_type: Type of message this handler processes
             ctx_annotation: The WorkflowContext[T] annotation from the function
-            output_types: List of output types inferred from ctx_annotation
+            output_types: List of output types for send_message()
+            workflow_output_types: List of workflow output types for yield_output()
         """
         if message_type in self._handlers:
             raise ValueError(f"Handler for type {message_type} already registered in {self.__class__.__name__}")
 
         self._handlers[message_type] = func
-        self._instance_handler_specs.append({
+        self._handler_specs.append({
             "name": name,
             "message_type": message_type,
             "ctx_annotation": ctx_annotation,
             "output_types": output_types,
+            "workflow_output_types": workflow_output_types,
+            "source": "instance_method",  # Distinguish from class handlers if needed
         })
 
-    def can_handle_type(self, message_type: type[Any]) -> bool:
-        """Check if the executor can handle a given message type.
-
-        Args:
-            message_type: The message type to check.
+    @property
+    def input_types(self) -> list[type[Any]]:
+        """Get the list of input types that this executor can handle.
 
         Returns:
-            True if the executor can handle the message type, False otherwise.
+            A list of the message types that this executor's handlers can process.
         """
-        return message_type in self._handlers
+        return list(self._handlers.keys())
+
+    @property
+    def output_types(self) -> list[type[Any]]:
+        """Get the list of output types that this executor can produce via send_message().
+
+        Returns:
+            A list of the output types inferred from the handlers' WorkflowContext[T] annotations.
+        """
+        output_types: set[type[Any]] = set()
+
+        # Collect output types from all handlers
+        for handler_spec in self._handler_specs:
+            handler_output_types = handler_spec.get("output_types", [])
+            output_types.update(handler_output_types)
+
+        return list(output_types)
+
+    @property
+    def workflow_output_types(self) -> list[type[Any]]:
+        """Get the list of workflow output types that this executor can produce via yield_output().
+
+        Returns:
+            A list of the workflow output types inferred from handlers' WorkflowContext[T, U] annotations.
+        """
+        output_types: set[type[Any]] = set()
+
+        # Collect workflow output types from all handlers
+        for handler_spec in self._handler_specs:
+            handler_workflow_output_types = handler_spec.get("workflow_output_types", [])
+            output_types.update(handler_workflow_output_types)
+
+        return list(output_types)
 
 
 # endregion: Executor
@@ -361,15 +462,16 @@ class Executor(AFBaseModel):
 
 
 ExecutorT = TypeVar("ExecutorT", bound="Executor")
+ContextT = TypeVar("ContextT", bound="WorkflowContext[Any, Any]")
 
 
 def handler(
-    func: Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[Any]],
+    func: Callable[[ExecutorT, Any, ContextT], Awaitable[Any]],
 ) -> (
-    Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[Any]]
+    Callable[[ExecutorT, Any, ContextT], Awaitable[Any]]
     | Callable[
-        [Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[Any]]],
-        Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[Any]],
+        [Callable[[ExecutorT, Any, ContextT], Awaitable[Any]]],
+        Callable[[ExecutorT, Any, ContextT], Awaitable[Any]],
     ]
 ):
     """Decorator to register a handler for an executor.
@@ -390,73 +492,19 @@ def handler(
             ...
     """
 
-    def _infer_output_types_from_ctx_annotation(ctx_annotation: Any) -> list[type[Any]]:
-        """Infer output types list from the WorkflowContext generic parameter.
-
-        Examples:
-        - WorkflowContext[str] -> [str]
-        - WorkflowContext[str | int] -> [str, int]
-        - WorkflowContext[Union[str, int]] -> [str, int]
-        - WorkflowContext -> [] (unknown)
-        """
-        # If no annotation or not parameterized, return empty list
-        try:
-            origin = get_origin(ctx_annotation)
-        except Exception:
-            origin = None
-
-        # If annotation is unsubscripted WorkflowContext, nothing to infer
-        if origin is None:
-            # Might be the class itself or Any; try simple check by name to avoid import cycles
-            return []
-
-        # Expecting WorkflowContext[T]
-        if origin is not WorkflowContext:
-            return []
-
-        args = get_args(ctx_annotation)
-        if not args:
-            return []
-
-        t = args[0]
-        # If t is a Union, flatten it
-        t_origin = get_origin(t)
-        # If Any, treat as unknown -> no output types inferred
-        if t is Any:
-            return []
-
-        if t_origin in (Union, UnionType):
-            # Return all union args as-is (may include generic aliases like list[str])
-            return [arg for arg in get_args(t) if arg is not Any and arg is not type(None)]
-
-        # Single concrete or generic alias type (e.g., str, int, list[str])
-        if t is Any or t is type(None):
-            return []
-        return [t]
-
     def decorator(
-        func: Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[Any]],
-    ) -> Callable[[ExecutorT, Any, WorkflowContext[Any]], Awaitable[Any]]:
-        # Extract the message type from a handler function.
+        func: Callable[[ExecutorT, Any, ContextT], Awaitable[Any]],
+    ) -> Callable[[ExecutorT, Any, ContextT], Awaitable[Any]]:
+        # Extract the message type and validate using unified validation
+        message_type, ctx_annotation, inferred_output_types, inferred_workflow_output_types = (
+            validate_function_signature(func, "Handler method")
+        )
+
+        # Get signature for preservation
         sig = inspect.signature(func)
-        params = list(sig.parameters.values())
-
-        if len(params) != 3:  # self, message, ctx
-            raise ValueError(f"Handler must have exactly 3 parameters, got {len(params)}")
-
-        message_type = params[1].annotation
-        if message_type is inspect.Parameter.empty:
-            raise ValueError("Handler's second parameter must have a type annotation")
-
-        ctx_annotation = params[2].annotation
-        if ctx_annotation is inspect.Parameter.empty:
-            # Allow missing ctx annotation, but we can't infer outputs
-            inferred_output_types: list[type[Any]] = []
-        else:
-            inferred_output_types = _infer_output_types_from_ctx_annotation(ctx_annotation)
 
         @functools.wraps(func)
-        async def wrapper(self: ExecutorT, message: Any, ctx: WorkflowContext[Any]) -> Any:
+        async def wrapper(self: ExecutorT, message: Any, ctx: ContextT) -> Any:
             """Wrapper function to call the handler."""
             return await func(self, message, ctx)
 
@@ -467,8 +515,10 @@ def handler(
         wrapper._handler_spec = {  # type: ignore
             "name": func.__name__,
             "message_type": message_type,
-            # Keep output_types in spec for validators, inferred from WorkflowContext[T]
+            # Keep output_types and workflow_output_types in spec for validators
             "output_types": inferred_output_types,
+            "workflow_output_types": inferred_workflow_output_types,
+            "ctx_annotation": ctx_annotation,
         }
 
         return wrapper
@@ -490,6 +540,11 @@ class RequestInfoMessage:
     """
 
     request_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    """Unique identifier for correlating requests and responses."""
+
+    source_executor_id: str | None = None
+    """ID of the executor expecting a response to this request.
+    May differ from the executor that sent the request if intercepted and forwarded."""
 
 
 TRequest = TypeVar("TRequest", bound="RequestInfoMessage")
@@ -498,209 +553,26 @@ TResponse = TypeVar("TResponse")
 
 @dataclass
 class RequestResponse(Generic[TRequest, TResponse]):
-    """Response from @intercepts_request methods with automatic correlation support.
+    """Response type for request/response correlation in workflows.
 
-    This type allows intercepting executors to indicate whether they handled
-    a request or whether it should be forwarded to external sources. When handled,
-    the framework automatically adds correlation info to link responses to requests.
+    This type is used by RequestInfoExecutor to create correlated responses
+    that include the original request context for proper message routing.
     """
 
-    is_handled: bool
-    data: TResponse | None = None
-    forward_request: TRequest | None = None
-    original_request: TRequest | None = None  # Added for automatic correlation
-    request_id: str | None = None  # Added for tracking
+    data: TResponse
+    """The response data returned from handling the request."""
 
-    @classmethod
-    def handled(cls, data: TResponse) -> "RequestResponse[TRequest, TResponse]":
-        """Create a response indicating the request was handled.
+    original_request: TRequest
+    """The original request that this response corresponds to."""
 
-        Correlation info (original_request, request_id) will be added automatically
-        by the framework when processing intercepted requests.
-        """
-        return cls(is_handled=True, data=data)
-
-    @classmethod
-    def forward(cls, modified_request: Any = None) -> "RequestResponse[TRequest, TResponse]":
-        """Create a response indicating the request should be forwarded."""
-        return cls(is_handled=False, forward_request=modified_request)
-
-    @staticmethod
-    def with_correlation(
-        original_response: "RequestResponse[TRequest, TResponse]",
-        original_request: TRequest,
-        request_id: str,
-    ) -> "RequestResponse[TRequest, TResponse]":
-        """Add correlation info to a response.
-
-        This is called automatically by the framework when processing intercepted requests.
-        """
-        return RequestResponse(
-            is_handled=original_response.is_handled,
-            data=original_response.data,
-            forward_request=original_response.forward_request,
-            original_request=original_request,
-            request_id=request_id,
-        )
-
-
-@dataclass
-class SubWorkflowRequestInfo:
-    """Routes requests from sub-workflows to parent workflows.
-
-    This message type wraps requests from sub-workflows to add routing context,
-    allowing parent workflows to intercept and potentially handle the request.
-    """
-
-    request_id: str  # Original request ID from sub-workflow
-    sub_workflow_id: str  # ID of the WorkflowExecutor that sent this
-    data: RequestInfoMessage  # The actual request data
-
-
-@dataclass
-class SubWorkflowResponse:
-    """Routes responses back to sub-workflows.
-
-    This message type is used to send responses back to sub-workflows that
-    made requests, ensuring the response reaches the correct sub-workflow.
-    """
-
-    request_id: str  # Matches the original request ID
-    data: Any  # The actual response data
+    request_id: str
+    """The ID of the original request."""
 
 
 # endregion: Request/Response Types
 
-# region Intercepts Request Decorator
-
-# TypeVar for request type that must be a RequestInfoMessage subclass
-RequestInfoMessageT = TypeVar("RequestInfoMessageT", bound="RequestInfoMessage")
-
-# Type alias for interceptor functions
-InterceptorFunc = Callable[
-    [Any, RequestInfoMessageT, WorkflowContext[Any]], Awaitable[RequestResponse[RequestInfoMessageT, Any]]
-]
-
-
-@overload
-def intercepts_request(
-    func: Callable[..., Any],
-) -> Callable[..., Any]: ...
-
-
-@overload
-def intercepts_request(
-    *,
-    from_workflow: str | None = None,
-    condition: Callable[[Any], bool] | None = None,
-) -> Callable[[Callable[..., Any]], Callable[..., Any]]: ...
-
-
-def intercepts_request(
-    func: Callable[..., Any] | None = None,
-    *,
-    from_workflow: str | None = None,
-    condition: Callable[[Any], bool] | None = None,
-) -> Callable[..., Any]:
-    """Decorator to mark methods that intercept sub-workflow requests.
-
-    The request type is automatically inferred from the method's second parameter type hint.
-    The type must be a subclass of RequestInfoMessage.
-
-    This decorator allows executors in parent workflows to intercept and handle requests from
-    sub-workflows before they are sent to external sources.
-
-    Args:
-        func: The function being decorated (automatically passed when used without parentheses).
-        from_workflow: Optional ID of specific sub-workflow to intercept from.
-        condition: Optional callable that must return True for interception.
-
-    Returns:
-        The decorated function with interception metadata.
-
-    Example:
-        @intercepts_request
-        async def check_domain(
-            self, request: DomainCheckRequest, ctx: WorkflowContext[Any]
-        ) -> RequestResponse[DomainCheckRequest, bool]:
-            # Type automatically inferred as DomainCheckRequest from parameter annotation
-            if request.domain in self.approved_domains:
-                return RequestResponse.handled(True)
-            return RequestResponse.forward()
-
-        @intercepts_request(from_workflow="email_validator")
-        async def handle_specific(
-            self, request: EmailRequest, ctx: WorkflowContext[Any]
-        ) -> RequestResponse[EmailRequest, str]:
-            # Only intercepts EmailRequest from the "email_validator" workflow
-            return RequestResponse.handled("handled by parent")
-    """
-
-    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
-        # Extract request type from method signature
-        sig = inspect.signature(func)
-        params = list(sig.parameters.values())
-
-        if len(params) < 2:
-            raise ValueError(f"Interceptor method '{func.__name__}' must have at least 2 parameters (self, request)")
-
-        request_param = params[1]  # Second parameter (after self)
-        request_type = request_param.annotation
-
-        if request_type is inspect.Parameter.empty:
-            raise ValueError(f"Interceptor method '{func.__name__}' request parameter must have a type annotation")
-
-        # Runtime validation that it's a RequestInfoMessage subclass
-        if isinstance(request_type, type):
-            # We need to check if RequestInfoMessage is defined yet, since this runs at import time
-            try:
-                # Try to get RequestInfoMessage from the current module's globals
-                request_info_message_class = None
-                func_module = inspect.getmodule(func)
-                if func_module and hasattr(func_module, "RequestInfoMessage"):
-                    request_info_message_class = func_module.RequestInfoMessage
-                else:
-                    # Look in the current module (where this decorator is defined)
-                    import sys
-
-                    current_module = sys.modules[__name__]
-                    if hasattr(current_module, "RequestInfoMessage"):
-                        request_info_message_class = current_module.RequestInfoMessage
-
-                if request_info_message_class and not issubclass(request_type, request_info_message_class):
-                    raise TypeError(
-                        f"Interceptor method '{func.__name__}' can only handle RequestInfoMessage subclasses, "
-                        f"got {request_type}. Make sure your request type inherits from RequestInfoMessage."
-                    )
-            except (AttributeError, NameError):
-                # RequestInfoMessage might not be defined yet at import time, skip validation
-                # This will be caught later when the interceptor is actually called
-                pass
-
-        @functools.wraps(func)
-        async def wrapper(self: Any, request: Any, ctx: WorkflowContext[Any]) -> Any:
-            return await func(self, request, ctx)
-
-        # Add metadata for discovery - store the inferred type
-        wrapper._intercepts_request = request_type  # type: ignore
-        wrapper._from_workflow = from_workflow  # type: ignore
-        wrapper._intercept_condition = condition  # type: ignore
-
-        return wrapper
-
-    # If func is provided, we're being called without parentheses: @intercepts_request
-    if func is not None:
-        return decorator(func)
-
-    # Otherwise, we're being called with parentheses: @intercepts_request(from_workflow="...")
-    return decorator
-
-
-# endregion: Intercepts Request Decorator
 
 # region Request Info Executor
-
-
 class RequestInfoExecutor(Executor):
     """Built-in executor that handles request/response patterns in workflows.
 
@@ -719,12 +591,12 @@ class RequestInfoExecutor(Executor):
         """
         super().__init__(id=id)
         self._request_events: dict[str, RequestInfoEvent] = {}
-        self._sub_workflow_contexts: dict[str, dict[str, str]] = {}
 
     @handler
-    async def run(self, message: RequestInfoMessage, ctx: WorkflowContext[None]) -> None:
+    async def run(self, message: RequestInfoMessage, ctx: WorkflowContext) -> None:
         """Run the RequestInfoExecutor with the given message."""
-        source_executor_id = ctx.get_source_executor_id()
+        # Use source_executor_id from message if available, otherwise fall back to context
+        source_executor_id = message.source_executor_id or ctx.get_source_executor_id()
 
         event = RequestInfoEvent(
             request_id=message.request_id,
@@ -736,41 +608,11 @@ class RequestInfoExecutor(Executor):
         await self._record_pending_request_snapshot(message, source_executor_id, ctx)
         await ctx.add_event(event)
 
-    @handler
-    async def handle_sub_workflow_request(
-        self,
-        message: SubWorkflowRequestInfo,
-        ctx: WorkflowContext[None],
-    ) -> None:
-        """Handle forwarded sub-workflow request.
-
-        This method handles requests that were forwarded from parent workflows
-        because they couldn't be handled locally.
-        """
-        # When called directly from runner, we need to use the sub_workflow_id as the source
-        source_executor_id = message.sub_workflow_id
-
-        # Store context for routing response back
-        self._sub_workflow_contexts[message.request_id] = {
-            "sub_workflow_id": message.sub_workflow_id,
-            "parent_executor_id": source_executor_id,
-        }
-
-        # Create event for external handling - preserve the SubWorkflowRequestInfo wrapper
-        event = RequestInfoEvent(
-            request_id=message.request_id,  # Use original request ID
-            source_executor_id=source_executor_id,
-            request_type=type(message.data),  # Type of the wrapped data # type: ignore
-            request_data=message.data,  # The wrapped request data
-        )
-        self._request_events[message.request_id] = event
-        await ctx.add_event(event)
-
     async def handle_response(
         self,
         response_data: Any,
         request_id: str,
-        ctx: WorkflowContext[Any],
+        ctx: WorkflowContext[RequestResponse[RequestInfoMessage, Any]],
     ) -> None:
         """Handle a response to a request.
 
@@ -787,31 +629,11 @@ class RequestInfoExecutor(Executor):
 
         self._request_events.pop(request_id, None)
 
-        # Check if this was a forwarded sub-workflow request
-        if request_id in self._sub_workflow_contexts:
-            context = self._sub_workflow_contexts.pop(request_id)
-
-            # Send back to sub-workflow that made the original request
-            await ctx.send_message(
-                SubWorkflowResponse(
-                    request_id=request_id,
-                    data=response_data,
-                ),
-                target_id=context["sub_workflow_id"],
-            )
-        else:
-            # Regular response - send directly back to source
-            # Create a correlated response that includes both the response data and original request
-            if not isinstance(event.data, RequestInfoMessage):
-                raise TypeError(f"Expected RequestInfoMessage, got {type(event.data)}")
-            correlated_response = RequestResponse[RequestInfoMessage, Any].handled(response_data)
-            correlated_response = RequestResponse[RequestInfoMessage, Any].with_correlation(
-                correlated_response,
-                event.data,
-                request_id,
-            )
-
-            await ctx.send_message(correlated_response, target_id=event.source_executor_id)
+        # Create a correlated response that includes both the response data and original request
+        if not isinstance(event.data, RequestInfoMessage):
+            raise TypeError(f"Expected RequestInfoMessage, got {type(event.data)}")
+        correlated_response = RequestResponse(data=response_data, original_request=event.data, request_id=request_id)
+        await ctx.send_message(correlated_response, target_id=event.source_executor_id)
 
         await self._clear_pending_request_snapshot(request_id, ctx)
 
@@ -826,23 +648,25 @@ class RequestInfoExecutor(Executor):
         pending = await self._load_pending_request_state(ctx)
         pending[request.request_id] = snapshot
         await self._persist_pending_request_state(pending, ctx)
+        await self._write_executor_state(ctx, pending)
 
     async def _clear_pending_request_snapshot(self, request_id: str, ctx: WorkflowContext[Any]) -> None:
         pending = await self._load_pending_request_state(ctx)
-        if request_id not in pending:
-            return
-
-        pending.pop(request_id, None)
-        await self._persist_pending_request_state(pending, ctx)
+        if request_id in pending:
+            pending.pop(request_id, None)
+            await self._persist_pending_request_state(pending, ctx)
+        await self._write_executor_state(ctx, pending)
 
     async def _load_pending_request_state(self, ctx: WorkflowContext[Any]) -> dict[str, Any]:
         try:
             existing = await ctx.get_shared_state(self._PENDING_SHARED_STATE_KEY)
+        except KeyError:
+            return {}
         except Exception as exc:  # pragma: no cover - transport specific
             logger.warning(f"RequestInfoExecutor {self.id} failed to read pending request state: {exc}")
             return {}
 
-        if not isinstance(existing, dict) or existing is None:
+        if not isinstance(existing, dict):
             if existing not in (None, {}):
                 logger.warning(
                     f"RequestInfoExecutor {self.id} encountered non-dict pending state "
@@ -850,7 +674,7 @@ class RequestInfoExecutor(Executor):
                 )
             return {}
 
-        return dict(existing)
+        return dict(existing)  # type: ignore[arg-type]
 
     async def _persist_pending_request_state(self, pending: dict[str, Any], ctx: WorkflowContext[Any]) -> None:
         await self._safe_set_shared_state(ctx, pending)
@@ -867,6 +691,163 @@ class RequestInfoExecutor(Executor):
             await ctx.set_state({"pending_requests": pending})
         except Exception as exc:  # pragma: no cover - transport specific
             logger.warning(f"RequestInfoExecutor {self.id} failed to update runner state with pending requests: {exc}")
+
+    def snapshot_state(self) -> dict[str, Any]:
+        """Serialize pending requests so checkpoint restoration can resume seamlessly."""
+
+        def _encode_event(event: RequestInfoEvent) -> dict[str, Any]:
+            request_data = event.data
+            payload: dict[str, Any]
+            data_cls = request_data.__class__ if request_data is not None else type(None)
+
+            payload = self._encode_request_payload(request_data, data_cls)
+
+            return {
+                "source_executor_id": event.source_executor_id,
+                "request_type": f"{event.request_type.__module__}:{event.request_type.__qualname__}",
+                "request_data": payload,
+            }
+
+        return {
+            "request_events": {rid: _encode_event(event) for rid, event in self._request_events.items()},
+        }
+
+    def _encode_request_payload(self, request_data: RequestInfoMessage | None, data_cls: type[Any]) -> dict[str, Any]:
+        if request_data is None or isinstance(request_data, (str, int, float, bool)):
+            return {
+                "kind": "raw",
+                "type": f"{data_cls.__module__}:{data_cls.__qualname__}",
+                "value": request_data,
+            }
+
+        if is_dataclass(request_data) and not isinstance(request_data, type):
+            dataclass_instance = cast(Any, request_data)
+            safe_value = self._make_json_safe(asdict(dataclass_instance))
+            return {
+                "kind": "dataclass",
+                "type": f"{data_cls.__module__}:{data_cls.__qualname__}",
+                "value": safe_value,
+            }
+
+        model_dump_fn = getattr(request_data, "model_dump", None)
+        if callable(model_dump_fn):
+            try:
+                dumped = model_dump_fn(mode="json")
+            except TypeError:
+                dumped = model_dump_fn()
+            safe_value = self._make_json_safe(dumped)
+            return {
+                "kind": "pydantic",
+                "type": f"{data_cls.__module__}:{data_cls.__qualname__}",
+                "value": safe_value,
+            }
+
+        details = self._serialise_request_details(request_data)
+        if details is not None:
+            safe_value = self._make_json_safe(details)
+            return {
+                "kind": "raw",
+                "type": f"{data_cls.__module__}:{data_cls.__qualname__}",
+                "value": safe_value,
+            }
+
+        safe_value = self._make_json_safe(request_data)
+        return {
+            "kind": "raw",
+            "type": f"{data_cls.__module__}:{data_cls.__qualname__}",
+            "value": safe_value,
+        }
+
+    def restore_state(self, state: dict[str, Any]) -> None:
+        """Restore pending request bookkeeping from checkpoint state."""
+        self._request_events.clear()
+        stored_events = state.get("request_events", {})
+
+        for request_id, payload in stored_events.items():
+            request_type_qual = payload.get("request_type", "")
+            try:
+                request_type = self._import_qualname(request_type_qual)
+            except Exception as exc:  # pragma: no cover - defensive fallback
+                logger.debug(
+                    "RequestInfoExecutor %s failed to import %s during restore: %s",
+                    self.id,
+                    request_type_qual,
+                    exc,
+                )
+                request_type = RequestInfoMessage
+            request_data_meta = payload.get("request_data", {})
+            request_data = self._decode_request_data(request_data_meta)
+            event = RequestInfoEvent(
+                request_id=request_id,
+                source_executor_id=payload.get("source_executor_id", ""),
+                request_type=request_type,
+                request_data=request_data,
+            )
+            self._request_events[request_id] = event
+
+    @staticmethod
+    def _import_qualname(qualname: str) -> type[Any]:
+        module_name, _, type_name = qualname.partition(":")
+        if not module_name or not type_name:
+            raise ValueError(f"Invalid qualified name: {qualname}")
+        module = importlib.import_module(module_name)
+        attr: Any = module
+        for part in type_name.split("."):
+            attr = getattr(attr, part)
+        if not isinstance(attr, type):
+            raise TypeError(f"Resolved object is not a type: {qualname}")
+        return attr
+
+    def _decode_request_data(self, metadata: dict[str, Any]) -> RequestInfoMessage:
+        kind = metadata.get("kind")
+        type_name = metadata.get("type", "")
+        value = metadata.get("value", {})
+        if type_name:
+            try:
+                imported = self._import_qualname(type_name)
+            except Exception as exc:  # pragma: no cover - defensive fallback
+                logger.debug(
+                    "RequestInfoExecutor %s failed to import %s during decode: %s",
+                    self.id,
+                    type_name,
+                    exc,
+                )
+                imported = RequestInfoMessage
+        else:
+            imported = RequestInfoMessage
+        target_cls: type[RequestInfoMessage]
+        if isinstance(imported, type) and issubclass(imported, RequestInfoMessage):
+            target_cls = imported
+        else:
+            target_cls = RequestInfoMessage
+
+        if kind == "dataclass" and isinstance(value, dict):
+            with contextlib.suppress(TypeError):
+                return target_cls(**value)
+
+        if kind == "pydantic" and isinstance(value, dict):
+            model_validate = getattr(target_cls, "model_validate", None)
+            if callable(model_validate):
+                return cast(RequestInfoMessage, model_validate(value))
+
+        if isinstance(value, dict):
+            with contextlib.suppress(TypeError):
+                return target_cls(**value)
+            instance = object.__new__(target_cls)
+            instance.__dict__.update(value)
+            return instance
+
+        with contextlib.suppress(Exception):
+            return target_cls()
+        return RequestInfoMessage()
+
+    async def _write_executor_state(self, ctx: WorkflowContext[Any], pending: dict[str, Any]) -> None:
+        state = self.snapshot_state()
+        state["pending_requests"] = pending
+        try:
+            await ctx.set_state(state)
+        except Exception as exc:  # pragma: no cover - transport specific
+            logger.warning(f"RequestInfoExecutor {self.id} failed to persist executor state: {exc}")
 
     def _build_request_snapshot(
         self,
@@ -927,7 +908,7 @@ class RequestInfoExecutor(Executor):
         return repr(value)
 
     async def has_pending_request(self, request_id: str, ctx: WorkflowContext[Any]) -> bool:
-        if request_id in self._request_events or request_id in self._sub_workflow_contexts:
+        if request_id in self._request_events:
             return True
         snapshot = await self._get_pending_request_snapshot(request_id, ctx)
         return snapshot is not None
@@ -970,6 +951,8 @@ class RequestInfoExecutor(Executor):
 
         try:
             shared_pending = await ctx.get_shared_state(self._PENDING_SHARED_STATE_KEY)
+        except KeyError:
+            shared_pending = None
         except Exception as exc:  # pragma: no cover - transport specific
             logger.warning(f"RequestInfoExecutor {self.id} failed to read shared pending state during rehydrate: {exc}")
             shared_pending = None
@@ -1069,7 +1052,7 @@ class RequestInfoExecutor(Executor):
             try:
                 field_names = {f.name for f in fields(request_cls)}
                 ctor_kwargs = {name: details[name] for name in field_names if name in details}
-                return request_cls(**ctor_kwargs)  # type: ignore[call-arg]
+                return request_cls(**ctor_kwargs)
             except (TypeError, ValueError) as exc:
                 logger.debug(
                     f"RequestInfoExecutor {self.id} could not instantiate dataclass "
@@ -1082,7 +1065,7 @@ class RequestInfoExecutor(Executor):
                 )
 
         try:
-            instance = request_cls()  # type: ignore[call-arg]
+            instance = request_cls()
         except Exception as exc:
             logger.warning(
                 f"RequestInfoExecutor {self.id} could not instantiate {request_cls.__name__} without arguments: {exc}"
@@ -1354,7 +1337,7 @@ class AgentExecutor(Executor):
     async def _run_agent_and_emit(self, ctx: WorkflowContext[AgentExecutorResponse]) -> None:
         """Execute the underlying agent, emit events, and enqueue response.
 
-        Terminal detection & WorkflowCompletedEvent emission are handled centrally in Runner.
+        Terminal detection is handled centrally in Runner.
         This method only produces AgentRunEvent/AgentRunUpdateEvent plus enqueues an
         AgentExecutorResponse message for routing.
         """
@@ -1441,176 +1424,3 @@ class AgentExecutor(Executor):
 
 
 # endregion: Agent Executor
-
-
-# region Workflow Executor
-
-
-class WorkflowExecutor(Executor):
-    """An executor that runs another workflow as its execution logic.
-
-    This executor wraps a workflow to make it behave as an executor, enabling
-    hierarchical workflow composition. Sub-workflows can send requests that
-    are intercepted by parent workflows.
-    """
-
-    workflow: "Workflow" = Field(description="The workflow to execute as a sub-workflow")
-
-    def __init__(self, workflow: "Workflow", id: str, **kwargs: Any):
-        """Initialize the WorkflowExecutor.
-
-        Args:
-            workflow: The workflow to execute as a sub-workflow.
-            id: Unique identifier for this executor.
-            **kwargs: Additional keyword arguments passed to the parent constructor.
-        """
-        kwargs.update({"workflow": workflow})
-        super().__init__(id, **kwargs)
-
-        # Track pending external responses by request_id
-        self._pending_responses: dict[str, Any] = {}  # request_id -> response_data
-        # Track workflow state for proper resumption - support multiple concurrent requests
-        self._pending_requests: dict[str, Any] = {}  # request_id -> original request data
-        self._active_executions: int = 0  # Count of active sub-workflow executions
-        # Response accumulation for multiple concurrent responses
-        self._collected_responses: dict[str, Any] = {}  # Accumulate responses
-        self._expected_response_count: int = 0  # Track how many responses we're waiting for
-
-    @handler  # No output_types - can send any completion data type
-    async def process_workflow(self, input_data: object, ctx: WorkflowContext[Any]) -> None:
-        """Execute the sub-workflow with raw input data.
-
-        This handler starts a new sub-workflow execution. When the sub-workflow
-        needs external information, it pauses and sends a request to the parent.
-
-        Args:
-            input_data: The input data to send to the sub-workflow.
-            ctx: The workflow context from the parent.
-        """
-        # Skip SubWorkflowResponse and SubWorkflowRequestInfo - they have specific handlers
-        if isinstance(input_data, (SubWorkflowResponse, SubWorkflowRequestInfo)):
-            return
-
-        from ._events import RequestInfoEvent, WorkflowCompletedEvent
-
-        # Track this execution
-        self._active_executions += 1
-
-        try:
-            # Run the sub-workflow and collect all events
-            events = [event async for event in self.workflow.run_stream(input_data)]
-
-            # Count requests and initialize response tracking
-            request_count = 0
-            for event in events:
-                if isinstance(event, RequestInfoEvent):
-                    request_count += 1
-
-            # Initialize response accumulation for this execution
-            # For sequential workflows (like step_08), expect only current requests
-            # For parallel workflows (like step_09), expect all requests at once
-            self._expected_response_count = request_count
-            self._collected_responses = {}
-
-            # If no requests in initial run, handle completion immediately
-            if request_count == 0:
-                self._expected_response_count = 0
-
-            # Process events to check for completion or requests
-            for event in events:
-                if isinstance(event, WorkflowCompletedEvent):
-                    # Sub-workflow completed normally - send result to parent
-                    await ctx.send_message(event.data)
-                    self._active_executions -= 1
-                    return  # Exit after completion
-
-                if isinstance(event, RequestInfoEvent):
-                    # Sub-workflow needs external information
-                    # Track the pending request
-                    self._pending_requests[event.request_id] = event.data
-
-                    # Wrap request with routing context and send to parent
-                    if not isinstance(event.data, RequestInfoMessage):
-                        raise TypeError(f"Expected RequestInfoMessage, got {type(event.data)}")
-                    wrapped_request = SubWorkflowRequestInfo(
-                        request_id=event.request_id,
-                        sub_workflow_id=self.id,
-                        data=event.data,
-                    )
-
-                    await ctx.send_message(wrapped_request)
-                    # Continue processing remaining events (no return)
-
-        except Exception as e:
-            from ._events import ExecutorEvent
-
-            # Sub-workflow failed - create error event
-            error_event = ExecutorEvent(executor_id=self.id, data={"error": str(e), "type": "sub_workflow_error"})
-            await ctx.add_event(error_event)
-            self._active_executions -= 1
-            raise
-
-    @handler
-    async def handle_response(
-        self,
-        response: SubWorkflowResponse,
-        ctx: WorkflowContext[Any],
-    ) -> None:
-        """Handle response from parent for a forwarded request.
-
-        This handler accumulates responses and only resumes the sub-workflow
-        when all expected responses have been received.
-
-        Args:
-            response: The response to a previous request.
-            ctx: The workflow context.
-        """
-        # Check if we have this pending request
-        pending_requests = getattr(self, "_pending_requests", {})
-        if response.request_id not in pending_requests:
-            return
-
-        # Remove the request from pending list
-        pending_requests.pop(response.request_id, None)
-
-        # Accumulate the response
-        self._collected_responses[response.request_id] = response.data
-
-        # Check if we have all expected responses for current batch
-        if len(self._collected_responses) >= self._expected_response_count:
-            from ._events import RequestInfoEvent, WorkflowCompletedEvent
-
-            # Send all collected responses to the sub-workflow
-            responses_to_send = dict(self._collected_responses)
-            self._collected_responses.clear()  # Clear for next batch
-
-            result_events = [event async for event in self.workflow.send_responses_streaming(responses_to_send)]
-
-            # Process the result events
-            new_request_count = 0
-            for event in result_events:
-                if isinstance(event, WorkflowCompletedEvent):
-                    # Sub-workflow completed - send result to parent
-                    await ctx.send_message(event.data)
-                    self._active_executions -= 1
-                    return
-                if isinstance(event, RequestInfoEvent):
-                    # Sub-workflow sent more requests - prepare for next batch
-                    new_request_count += 1
-                    self._pending_requests[event.request_id] = event.data
-
-                    # Send the new request to parent
-                    if not isinstance(event.data, RequestInfoMessage):
-                        raise TypeError(f"Expected RequestInfoMessage, got {type(event.data)}")
-                    wrapped_request = SubWorkflowRequestInfo(
-                        request_id=event.request_id,
-                        sub_workflow_id=self.id,
-                        data=event.data,
-                    )
-                    await ctx.send_message(wrapped_request)
-
-            # Update expected count for next batch of requests
-            self._expected_response_count = new_request_count
-
-
-# endregion: Workflow Executor

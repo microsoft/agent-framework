@@ -40,13 +40,13 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
     public bool HasUnsupportedActions { get; private set; }
 
-    public Workflow<TInput> Complete<TInput>()
+    public Workflow Complete()
     {
         // Process the cached links
         this._workflowModel.ConnectNodes(this._workflowBuilder);
 
         // Build final workflow
-        return this._workflowBuilder.Build<TInput>();
+        return this._workflowBuilder.Build();
     }
 
     protected override void Visit(ActionScope item)
@@ -197,12 +197,21 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         {
             DefaultActionExecutor continueLoopExecutor = new(item, this._workflowState);
             this.ContinueWith(continueLoopExecutor);
-            this._workflowModel.AddLink(continueLoopExecutor.Id, Steps.Post(loopExecutor.Id));
+            this._workflowModel.AddLink(continueLoopExecutor.Id, ForeachExecutor.Steps.Next(loopExecutor.Id));
             this.RestartAfter(continueLoopExecutor.Id, continueLoopExecutor.ParentId);
         }
     }
 
     protected override void Visit(EndConversation item)
+    {
+        this.Trace(item);
+
+        DefaultActionExecutor endExecutor = new(item, this._workflowState);
+        this.ContinueWith(endExecutor);
+        this.RestartAfter(item.Id.Value, endExecutor.ParentId);
+    }
+
+    protected override void Visit(EndDialog item)
     {
         this.Trace(item);
 
@@ -221,10 +230,10 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
         QuestionExecutor questionExecutor = new(item, this._workflowState);
         this.ContinueWith(questionExecutor);
-        this._workflowModel.AddLink(actionId, postId, message => questionExecutor.IsComplete(message));
+        this._workflowModel.AddLink(actionId, postId, QuestionExecutor.IsComplete);
 
         string prepareId = QuestionExecutor.Steps.Prepare(actionId);
-        this.ContinueWith(new DelegateActionExecutor(prepareId, this._workflowState, questionExecutor.PrepareResponseAsync, emitResult: false), parentId, message => !questionExecutor.IsComplete(message));
+        this.ContinueWith(new DelegateActionExecutor(prepareId, this._workflowState, questionExecutor.PrepareResponseAsync, emitResult: false), parentId, message => !QuestionExecutor.IsComplete(message));
 
         string inputId = QuestionExecutor.Steps.Input(actionId);
         InputPort inputPort = InputPort.Create<InputRequest, InputResponse>(inputId);
@@ -234,8 +243,8 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         string captureId = QuestionExecutor.Steps.Capture(actionId);
         this.ContinueWith(new DelegateActionExecutor<InputResponse>(captureId, this._workflowState, questionExecutor.CaptureResponseAsync, emitResult: false), parentId);
 
-        this.ContinueWith(new DelegateActionExecutor(postId, this._workflowState, questionExecutor.CompleteAsync), parentId, message => questionExecutor.IsComplete(message));
-        this._workflowModel.AddLink(captureId, prepareId, message => !questionExecutor.IsComplete(message));
+        this.ContinueWith(new DelegateActionExecutor(postId, this._workflowState, questionExecutor.CompleteAsync), parentId, QuestionExecutor.IsComplete);
+        this._workflowModel.AddLink(captureId, prepareId, message => !QuestionExecutor.IsComplete(message));
     }
 
     protected override void Visit(CreateConversation item)
@@ -387,8 +396,6 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     protected override void Visit(BeginDialog item) => this.NotSupported(item);
 
     protected override void Visit(UnknownDialogAction item) => this.NotSupported(item);
-
-    protected override void Visit(EndDialog item) => this.NotSupported(item);
 
     protected override void Visit(RepeatDialog item) => this.NotSupported(item);
 

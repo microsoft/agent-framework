@@ -2,10 +2,10 @@
 
 """Tests for sliding window message list."""
 
-import pytest
 from unittest.mock import patch
 
-from agent_framework._types import ChatMessage, Role, TextContent, FunctionCallContent, FunctionResultContent
+import pytest
+from agent_framework._types import ChatMessage, FunctionCallContent, FunctionResultContent, Role, TextContent
 from agent_framework_lab_tau2._sliding_window import SlidingWindowChatMessageList
 
 
@@ -225,7 +225,8 @@ def test_estimate_any_object_token_count_non_serializable():
 async def test_real_world_scenario():
     """Test a realistic conversation scenario."""
     sliding_window = SlidingWindowChatMessageList(
-        max_tokens=30, system_message="You are a helpful assistant"  # Moderate limit
+        max_tokens=30,
+        system_message="You are a helpful assistant",  # Moderate limit
     )
 
     # Simulate a conversation
@@ -239,7 +240,8 @@ async def test_real_world_scenario():
             role=Role.ASSISTANT,
             contents=[
                 TextContent(
-                    text="I'd be happy to help with weather information, but I don't have access to current weather data."
+                    text="I'd be happy to help with weather information, "
+                    "but I don't have access to current weather data."
                 )
             ],
         ),

@@ -2,7 +2,7 @@
 
 using AgentWebChat.Web;
 using AgentWebChat.Web.Components;
-using Microsoft.Extensions.AI.Agents.Runtime;
+using Microsoft.Agents.AI.Runtime;
 
 var builder = WebApplication.CreateBuilder(args);
 

@@ -9,21 +9,20 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from ._executor import RequestInfoExecutor
 
+from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
 from ._edge import EdgeGroup
 from ._edge_runner import EdgeRunner, create_edge_runner
-from ._events import WorkflowCompletedEvent, WorkflowEvent, _framework_event_origin
+from ._events import WorkflowEvent, WorkflowOutputEvent, _framework_event_origin
 from ._executor import Executor
 from ._runner_context import (
-    _DATACLASS_MARKER,
-    _PYDANTIC_MARKER,
+    _DATACLASS_MARKER,  # type: ignore
+    _PYDANTIC_MARKER,  # type: ignore
     CheckpointState,
     Message,
     RunnerContext,
-    _decode_checkpoint_value,
+    _decode_checkpoint_value,  # type: ignore
 )
 from ._shared_state import SharedState
-from ._typing_utils import is_instance_of
-from ._workflow_context import WorkflowContext
 
 logger = logging.getLogger(__name__)
 
@@ -161,93 +160,6 @@ class Runner:
         async def _deliver_messages(source_executor_id: str, messages: list[Message]) -> None:
             """Outer loop to concurrently deliver messages from all sources to their targets."""
 
-            # Special handling for SubWorkflowRequestInfo messages
-            async def _deliver_sub_workflow_requests(messages: list[Message]) -> None:
-                from ._executor import SubWorkflowRequestInfo
-
-                # Handle SubWorkflowRequestInfo messages - only process those not already targeted
-                sub_workflow_messages: list[Message] = []
-                for msg in messages:
-                    # Skip messages sent directly to RequestInfoExecutor - they are already forwarded
-                    if self._is_message_to_request_info_executor(msg):
-                        continue
-
-                    if isinstance(msg.data, SubWorkflowRequestInfo):
-                        sub_workflow_messages.append(msg)
-
-                for message in sub_workflow_messages:
-                    # message.data is guaranteed to be SubWorkflowRequestInfo via filtering above
-                    sub_request = message.data  # type: ignore[assignment]
-
-                    # Find executor that can intercept the wrapped type
-                    interceptor_found = False
-                    for executor in self._executors.values():
-                        interceptors = getattr(executor, "_request_interceptors", [])
-                        if interceptors and executor.id != message.source_id:
-                            for registered_type in interceptors:  # type: ignore[assignment]
-                                # Check type matching - handle both type and string cases
-                                matched = False
-                                if (
-                                    isinstance(registered_type, type)
-                                    and is_instance_of(sub_request.data, registered_type)
-                                ) or (
-                                    isinstance(registered_type, str)
-                                    and hasattr(sub_request.data, "__class__")
-                                    and sub_request.data.__class__.__name__ == registered_type
-                                ):
-                                    matched = True
-
-                                if matched:
-                                    # Send directly to the intercepting executor
-                                    logger.info(
-                                        f"Sending sub-workflow request of type '{sub_request.data.__class__.__name__}' "
-                                        f"from sub-workflow '{sub_request.sub_workflow_id}' "
-                                        f"to executor '{executor.id}' for interception."
-                                    )
-                                    # Create WorkflowContext with trace context from message
-                                    workflow_ctx: WorkflowContext[Any] = WorkflowContext(
-                                        executor.id,
-                                        [message.source_id],
-                                        self._shared_state,
-                                        self._ctx,
-                                        trace_contexts=[message.trace_context] if message.trace_context else None,
-                                        source_span_ids=[message.source_span_id] if message.source_span_id else None,
-                                    )
-                                    await executor.execute(sub_request, workflow_ctx)
-                                    interceptor_found = True
-                                    break
-                            if interceptor_found:
-                                break
-
-                    if not interceptor_found:
-                        # No interceptor found - send directly to RequestInfoExecutor if available.
-
-                        # Find the RequestInfoExecutor instance
-                        request_info_executor = self._find_request_info_executor()
-
-                        if request_info_executor:
-                            request_info_workflow_ctx: WorkflowContext[None] = WorkflowContext(
-                                request_info_executor.id,
-                                [message.source_id],
-                                self._shared_state,
-                                self._ctx,
-                                trace_contexts=[message.trace_context] if message.trace_context else None,
-                                source_span_ids=[message.source_span_id] if message.source_span_id else None,
-                            )
-                            logger.info(
-                                f"Sending sub-workflow request of type '{sub_request.data.__class__.__name__}' "
-                                f"from sub-workflow '{sub_request.sub_workflow_id}' to RequestInfoExecutor "
-                                f"'{request_info_executor.id}'"
-                            )
-                            await request_info_executor.execute(sub_request, request_info_workflow_ctx)
-                        else:
-                            logger.warning(
-                                f"Sub-workflow request of type '{sub_request.data.__class__.__name__}' "
-                                f"from sub-workflow '{sub_request.sub_workflow_id}' could not be handled: "
-                                f"no RequestInfoExecutor found in the workflow. Add a RequestInfoExecutor "
-                                f"to handle external requests or add an @intercepts_request handler."
-                            )
-
             async def _deliver_message_inner(edge_runner: EdgeRunner, message: Message) -> bool:
                 """Inner loop to deliver a single message through an edge runner."""
                 return await edge_runner.send_message(message, self._shared_state, self._ctx)
@@ -265,34 +177,15 @@ class Runner:
                     return
                 message.data = decoded
 
-            # Handle SubWorkflowRequestInfo messages specially
-            await _deliver_sub_workflow_requests(messages)
-
-            # Filter out SubWorkflowRequestInfo messages from normal edge routing
-            # since they were handled specially
-            from ._executor import SubWorkflowRequestInfo
-
-            non_sub_workflow_messages: list[Message] = []
-            for msg in messages:
-                # Keep messages sent directly to RequestInfoExecutor (forwarded messages)
-                if self._is_message_to_request_info_executor(msg):
-                    non_sub_workflow_messages.append(msg)
-                    continue
-
-                # Skip SubWorkflowRequestInfo messages (handled by special routing)
-                if isinstance(msg.data, SubWorkflowRequestInfo):
-                    continue
-
-                non_sub_workflow_messages.append(msg)
-
+            # Route all messages through normal workflow edges
             associated_edge_runners = self._edge_runner_map.get(source_executor_id, [])
-            for message in non_sub_workflow_messages:
+            for message in messages:
                 _normalize_message_payload(message)
                 # Deliver a message through all edge runners associated with the source executor concurrently.
                 tasks = [_deliver_message_inner(edge_runner, message) for edge_runner in associated_edge_runners]
                 if not tasks:
                     # No outgoing edges. If this is an AgentExecutorResponse, treat it as an
-                    # intentional terminal emission and emit a WorkflowCompletedEvent here.
+                    # intentional terminal emission and emit a WorkflowOutputEvent here.
                     # (Previously this relied on the executor to emit, but AgentExecutor only
                     # sends an AgentExecutorResponse message; centralized completion keeps the
                     # contract consistent with other executors.)
@@ -303,8 +196,9 @@ class Runner:
                             final_messages = message.data.agent_run_response.messages
                             final_text = final_messages[-1].text if final_messages else "(no content)"
                             with _framework_event_origin():
-                                completion_event = WorkflowCompletedEvent(final_text)
-                            await self._ctx.add_event(completion_event)
+                                # TODO(moonbox3): does user expect this event to contain the final text?
+                                output_event = WorkflowOutputEvent(data=final_text, source_executor_id="<Runner>")
+                            await self._ctx.add_event(output_event)
                             continue  # Terminal handled
                     except Exception as exc:  # pragma: no cover - defensive
                         logger.debug("Suppressed exception during terminal message type check: %s", exc)
@@ -326,8 +220,9 @@ class Runner:
                             final_messages = message.data.agent_run_response.messages
                             final_text = final_messages[-1].text if final_messages else "(no content)"
                             with _framework_event_origin():
-                                completion_event = WorkflowCompletedEvent(final_text)
-                            await self._ctx.add_event(completion_event)
+                                # TODO(moonbox3): does user expect this event to contain the final text?
+                                output_event = WorkflowOutputEvent(data=final_text, source_executor_id="<Runner>")
+                            await self._ctx.add_event(output_event)
                             continue
                     except Exception as exc:  # pragma: no cover
                         logger.debug("Terminal completion emission failed: %s", exc)
@@ -413,21 +308,31 @@ class Runner:
         except Exception as e:
             logger.warning(f"Failed to update context with shared state: {e}")
 
-    async def restore_from_checkpoint(self, checkpoint_id: str) -> bool:
+    async def restore_from_checkpoint(
+        self,
+        checkpoint_id: str,
+        checkpoint_storage: CheckpointStorage | None = None,
+    ) -> bool:
         """Restore workflow state from a checkpoint.
 
         Args:
             checkpoint_id: The ID of the checkpoint to restore from
+            checkpoint_storage: Optional storage to load checkpoints from when the
+                runner context itself is not configured with checkpointing.
 
         Returns:
             True if restoration was successful, False otherwise
         """
-        if not self._ctx.has_checkpointing():
-            logger.warning("Context does not support checkpointing")
-            return False
-
         try:
-            checkpoint = await self._ctx.load_checkpoint(checkpoint_id)
+            checkpoint: WorkflowCheckpoint | None
+            if self._ctx.has_checkpointing():
+                checkpoint = await self._ctx.load_checkpoint(checkpoint_id)
+            elif checkpoint_storage is not None:
+                checkpoint = await checkpoint_storage.load_checkpoint(checkpoint_id)
+            else:
+                logger.warning("Context does not support checkpointing and no external storage was provided")
+                return False
+
             if not checkpoint:
                 logger.error(f"Checkpoint {checkpoint_id} not found")
                 return False
@@ -445,13 +350,7 @@ class Runner:
                     checkpoint_id,
                 )
 
-            state: CheckpointState = {
-                "messages": checkpoint.messages,
-                "shared_state": checkpoint.shared_state,
-                "executor_states": checkpoint.executor_states,
-                "iteration_count": checkpoint.iteration_count,
-                "max_iterations": checkpoint.max_iterations,
-            }
+            state = self._checkpoint_to_state(checkpoint)
             await self._ctx.set_checkpoint_state(state)
             if checkpoint.workflow_id:
                 self._ctx.set_workflow_id(checkpoint.workflow_id)
@@ -471,9 +370,6 @@ class Runner:
             return False
 
     async def _restore_shared_state_from_context(self) -> None:
-        if not self._ctx.has_checkpointing():
-            return
-
         try:
             restored_state = await self._ctx.get_checkpoint_state()
 
@@ -488,6 +384,16 @@ class Runner:
 
         except Exception as e:
             logger.warning(f"Failed to restore shared state from context: {e}")
+
+    @staticmethod
+    def _checkpoint_to_state(checkpoint: WorkflowCheckpoint) -> CheckpointState:
+        return {
+            "messages": checkpoint.messages,
+            "shared_state": checkpoint.shared_state,
+            "executor_states": checkpoint.executor_states,
+            "iteration_count": checkpoint.iteration_count,
+            "max_iterations": checkpoint.max_iterations,
+        }
 
     def _parse_edge_runners(self, edge_runners: list[EdgeRunner]) -> dict[str, list[EdgeRunner]]:
         """Parse the edge runners of the workflow into a mapping where each source executor ID maps to its edge runners.

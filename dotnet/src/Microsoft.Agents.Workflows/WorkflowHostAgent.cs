@@ -9,8 +9,8 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows;
@@ -48,7 +48,7 @@ internal sealed class WorkflowHostAgent : AIAgent
 
     public override AgentThread GetNewThread() => new WorkflowThread(this.Id, this.Name, this.GenerateNewId());
 
-    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
         => new WorkflowThread(serializedThread, jsonSerializerOptions);
 
     private async
@@ -65,7 +65,7 @@ internal sealed class WorkflowHostAgent : AIAgent
             // in the case of new threads.
             if (!this._runningWorkflows.TryGetValue(runId, out StreamingRun? run))
             {
-                run = await InProcessExecution.StreamAsync(this._workflow, messages, cancellation)
+                run = await InProcessExecution.StreamAsync(this._workflow, messages, cancellation: cancellation)
                                                        .ConfigureAwait(false);
                 this._runningWorkflows[runId] = run;
             }

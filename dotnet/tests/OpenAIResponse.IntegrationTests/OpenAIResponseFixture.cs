@@ -6,8 +6,8 @@ using System.Linq;
 using System.Threading.Tasks;
 using AgentConformance.IntegrationTests;
 using AgentConformance.IntegrationTests.Support;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
 using OpenAI;
 using OpenAI.Responses;
 using Shared.IntegrationTests;
@@ -18,10 +18,8 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
 {
     private static readonly OpenAIConfiguration s_config = TestConfiguration.LoadSection<OpenAIConfiguration>();
 
-#pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
-    private OpenAIResponseClient _openAIResponseClient;
-    private ChatClientAgent _agent;
-#pragma warning restore CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
+    private OpenAIResponseClient _openAIResponseClient = null!;
+    private ChatClientAgent _agent = null!;
 
     public AIAgent Agent => this._agent;
 
@@ -29,10 +27,12 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
 
     public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread)
     {
+        var typedThread = (ChatClientAgentThread)thread;
+
         if (store)
         {
-            var inputItems = await this._openAIResponseClient.GetResponseInputItemsAsync(thread.ConversationId).ToListAsync();
-            var response = await this._openAIResponseClient.GetResponseAsync(thread.ConversationId);
+            var inputItems = await this._openAIResponseClient.GetResponseInputItemsAsync(typedThread.ConversationId).ToListAsync();
+            var response = await this._openAIResponseClient.GetResponseAsync(typedThread.ConversationId);
             var responseItem = response.Value.OutputItems.FirstOrDefault()!;
 
             // Take the messages that were the chat history leading up to the current response
@@ -50,7 +50,7 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
             return [.. previousMessages, responseMessage];
         }
 
-        return thread.MessageStore is null ? [] : (await thread.MessageStore.GetMessagesAsync()).ToList();
+        return typedThread.MessageStore is null ? [] : (await typedThread.MessageStore.GetMessagesAsync()).ToList();
     }
 
     private static ChatMessage ConvertToChatMessage(ResponseItem item)
@@ -77,7 +77,7 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
                     ChatOptions = new ChatOptions
                     {
                         Tools = aiTools,
-                        RawRepresentationFactory = new Func<IChatClient, object>((_) => new ResponseCreationOptions() { StoredOutputEnabled = store })
+                        RawRepresentationFactory = new Func<IChatClient, object>(_ => new ResponseCreationOptions() { StoredOutputEnabled = store })
                     },
                 });
 

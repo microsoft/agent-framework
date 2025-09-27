@@ -8,6 +8,8 @@ namespace Microsoft.Agents.Workflows.Execution;
 
 internal interface ISuperStepRunner
 {
+    string RunId { get; }
+
     bool HasUnservicedRequests { get; }
     bool HasUnprocessedMessages { get; }
 
@@ -17,4 +19,6 @@ internal interface ISuperStepRunner
     event EventHandler<WorkflowEvent>? WorkflowEvent;
 
     ValueTask<bool> RunSuperStepAsync(CancellationToken cancellation);
+
+    ValueTask RequestEndRunAsync();
 }

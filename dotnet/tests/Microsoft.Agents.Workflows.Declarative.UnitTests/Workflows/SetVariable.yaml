@@ -1,10 +1,11 @@
-kind: AdaptiveDialog
-beginDialog:
-  kind: OnActivity
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
   id: my_workflow
-  type: Message
   actions:
+
     - kind: SetVariable
       id: set_var
-      variable: Topic.TestVar
+      variable: Local.TestVar
       value: =3

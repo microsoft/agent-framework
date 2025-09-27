@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Frozen;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
@@ -10,8 +9,8 @@ using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.PowerFx;
 using Microsoft.PowerFx.Types;
-using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
 
@@ -24,13 +23,8 @@ internal abstract class DeclarativeActionExecutor<TAction>(TAction model, Workfl
 
 internal abstract class DeclarativeActionExecutor : Executor<ExecutorResultMessage>
 {
-    private static readonly FrozenSet<string> s_mutableScopes =
-        [
-            VariableScopeNames.Topic,
-            VariableScopeNames.Global
-        ];
-
     private string? _parentId;
+    private readonly WorkflowFormulaState _state;
 
     protected DeclarativeActionExecutor(DialogAction model, WorkflowFormulaState state)
         : base(model.Id.Value)
@@ -40,17 +34,20 @@ internal abstract class DeclarativeActionExecutor : Executor<ExecutorResultMessa
             throw new DeclarativeModelException($"Missing required properties for element: {model.GetId()} ({model.GetType().Name}).");
         }
 
+        this._state = state;
+
         this.Model = model;
-        this.State = state;
     }
 
     public DialogAction Model { get; }
 
     public string ParentId => this._parentId ??= this.Model.GetParentId() ?? WorkflowActionVisitor.Steps.Root();
 
-    internal ILogger Logger { get; set; } = NullLogger<DeclarativeActionExecutor>.Instance;
+    public RecalcEngine Engine => this._state.Engine;
 
-    protected WorkflowFormulaState State { get; }
+    public WorkflowExpressionEngine Evaluator => this._state.Evaluator;
+
+    internal ILogger Logger { get; set; } = NullLogger<DeclarativeActionExecutor>.Instance;
 
     protected virtual bool IsDiscreteAction => true;
 
@@ -71,7 +68,7 @@ internal abstract class DeclarativeActionExecutor : Executor<ExecutorResultMessa
 
         try
         {
-            object? result = await this.ExecuteAsync(new DeclarativeWorkflowContext(context, this.State), cancellationToken: default).ConfigureAwait(false);
+            object? result = await this.ExecuteAsync(new DeclarativeWorkflowContext(context, this._state), cancellationToken: default).ConfigureAwait(false);
 
             if (this.EmitResultEvent)
             {
@@ -104,18 +101,13 @@ internal abstract class DeclarativeActionExecutor : Executor<ExecutorResultMessa
     /// This must be overridden to restore any state that was saved during checkpointing.
     /// </summary>
     protected override ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellation = default) =>
-        this.State.RestoreAsync(context, cancellation);
+        this._state.RestoreAsync(context, cancellation);
 
     protected async ValueTask AssignAsync(PropertyPath? targetPath, FormulaValue result, IWorkflowContext context)
     {
         if (targetPath is null)
         {
             return;
-        }
-
-        if (!s_mutableScopes.Contains(Throw.IfNull(targetPath.VariableScopeName)))
-        {
-            throw new DeclarativeModelException($"Invalid scope: {targetPath.VariableScopeName}");
         }
 
         await context.QueueStateUpdateAsync(targetPath, result).ConfigureAwait(false);

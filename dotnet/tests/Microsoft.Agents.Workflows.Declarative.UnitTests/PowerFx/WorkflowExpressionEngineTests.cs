@@ -34,14 +34,15 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
         : base(output)
     {
         this.State.Set(Variables.GlobalValue, FormulaValue.New(255), VariableScopeNames.Global);
-        this.State.Set(Variables.BoolValue, FormulaValue.New(true), VariableScopeNames.Topic);
-        this.State.Set(Variables.StringValue, FormulaValue.New("Hello World"), VariableScopeNames.Topic);
-        this.State.Set(Variables.IntValue, FormulaValue.New(long.MaxValue), VariableScopeNames.Topic);
-        this.State.Set(Variables.NumberValue, FormulaValue.New(33.3), VariableScopeNames.Topic);
-        this.State.Set(Variables.EnumValue, FormulaValue.New(nameof(VariablesToClear.ConversationScopedVariables)), VariableScopeNames.Topic);
-        this.State.Set(Variables.ObjectValue, ObjectData, VariableScopeNames.Topic);
-        this.State.Set(Variables.ArrayValue, TableData, VariableScopeNames.Topic);
-        this.State.Set(Variables.BlankValue, FormulaValue.NewBlank(), VariableScopeNames.Topic);
+        this.State.Set(Variables.BoolValue, FormulaValue.New(true));
+        this.State.Set(Variables.StringValue, FormulaValue.New("Hello World"));
+        this.State.Set(Variables.IntValue, FormulaValue.New(long.MaxValue));
+        this.State.Set(Variables.NumberValue, FormulaValue.New(33.3));
+        this.State.Set(Variables.EnumValue, FormulaValue.New(nameof(VariablesToClear.ConversationScopedVariables)));
+        this.State.Set(Variables.ObjectValue, ObjectData);
+        this.State.Set(Variables.ArrayValue, TableData);
+        this.State.Set(Variables.BlankValue, FormulaValue.NewBlank());
+        this.State.Bind();
     }
 
     #region BoolExpression Tests
@@ -136,6 +137,7 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
         // Arrange
         RecordValue state = FormulaValue.NewRecordFromFields([new NamedValue("test", FormulaValue.New("value"))]);
         this.State.Set("TestRecord", state, VariableScopeNames.Global);
+        this.State.Bind();
 
         // Arrange, Act & Assert
         this.EvaluateExpression(
@@ -495,8 +497,8 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
         => this.EvaluateExpression((evaluator) => evaluator.GetValue(expression), expectedValue, expectedSensitivity);
 
     private void EvaluateInvalidExpression<TValue, TException>(ObjectExpression<TValue> expression)
-        where TException : Exception
         where TValue : BotElement
+        where TException : Exception
         => this.EvaluateInvalidExpression<TException>((evaluator) => evaluator.GetValue(expression));
 
     private ImmutableArray<TValue> EvaluateExpression<TValue>(ArrayExpression<TValue> expression, TValue[] expectedValue)

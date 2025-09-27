@@ -3,11 +3,11 @@
 from typing import Any
 
 import pytest
+from typing_extensions import Never
 
 from agent_framework import (
     FunctionExecutor,
     WorkflowBuilder,
-    WorkflowCompletedEvent,
     WorkflowContext,
     executor,
 )
@@ -28,9 +28,9 @@ class TestFunctionExecutor:
         assert len(func_exec._handlers) == 1
         assert str in func_exec._handlers
 
-        # Check instance handler spec was created
-        assert len(func_exec._instance_handler_specs) == 1
-        spec = func_exec._instance_handler_specs[0]
+        # Check handler spec was created
+        assert len(func_exec._handler_specs) == 1
+        spec = func_exec._handler_specs[0]
         assert spec["name"] == "process_string"
         assert spec["message_type"] is str
         assert spec["output_types"] == [str]
@@ -47,7 +47,7 @@ class TestFunctionExecutor:
         assert int in process_int._handlers
 
         # Check spec
-        spec = process_int._instance_handler_specs[0]
+        spec = process_int._handler_specs[0]
         assert spec["message_type"] is int
         assert spec["output_types"] == [int]
 
@@ -81,7 +81,7 @@ class TestFunctionExecutor:
         assert int in simple_no_parens._handlers
 
     def test_union_output_types(self):
-        """Test that union output types are properly inferred."""
+        """Test that union output types are properly inferred for both messages and workflow outputs."""
 
         @executor
         async def multi_output(text: str, ctx: WorkflowContext[str | int]) -> None:
@@ -90,29 +90,56 @@ class TestFunctionExecutor:
             else:
                 await ctx.send_message(text.upper())
 
-        spec = multi_output._instance_handler_specs[0]
+        spec = multi_output._handler_specs[0]
         assert set(spec["output_types"]) == {str, int}
+        assert spec["workflow_output_types"] == []  # No workflow outputs defined
+
+        # Test union types for workflow outputs too
+        @executor
+        async def multi_workflow_output(data: str, ctx: WorkflowContext[Never, str | int | bool]) -> None:
+            if data.isdigit():
+                await ctx.yield_output(int(data))
+            elif data.lower() in ("true", "false"):
+                await ctx.yield_output(data.lower() == "true")
+            else:
+                await ctx.yield_output(data.upper())
+
+        workflow_spec = multi_workflow_output._handler_specs[0]
+        assert workflow_spec["output_types"] == []  # None means no message outputs
+        assert set(workflow_spec["workflow_output_types"]) == {str, int, bool}
 
     def test_none_output_type(self):
-        """Test WorkflowContext[None] produces empty output types."""
+        """Test WorkflowContext produces empty output types."""
 
         @executor
-        async def no_output(data: Any, ctx: WorkflowContext[None]) -> None:
+        async def no_output(data: Any, ctx: WorkflowContext) -> None:
             # This executor doesn't send any messages
             pass
 
-        spec = no_output._instance_handler_specs[0]
+        spec = no_output._handler_specs[0]
         assert spec["output_types"] == []
+        assert spec["workflow_output_types"] == []  # No workflow outputs defined
 
     def test_any_output_type(self):
-        """Test WorkflowContext[Any] produces empty output types."""
+        """Test WorkflowContext[Any] and WorkflowContext[Any, Any] produce Any output types."""
 
         @executor
         async def any_output(data: str, ctx: WorkflowContext[Any]) -> None:
             await ctx.send_message("result")
 
-        spec = any_output._instance_handler_specs[0]
-        assert spec["output_types"] == []
+        spec = any_output._handler_specs[0]
+        assert spec["output_types"] == [Any]
+        assert spec["workflow_output_types"] == []  # No workflow outputs defined
+
+        # Test both parameters as Any
+        @executor
+        async def any_both_output(data: str, ctx: WorkflowContext[Any, Any]) -> None:
+            await ctx.send_message("message")
+            await ctx.yield_output("workflow_output")
+
+        both_spec = any_both_output._handler_specs[0]
+        assert both_spec["output_types"] == [Any]
+        assert both_spec["workflow_output_types"] == [Any]
 
     def test_validation_errors(self):
         """Test various validation errors in function signatures."""
@@ -121,13 +148,17 @@ class TestFunctionExecutor:
         async def no_params() -> None:
             pass
 
-        with pytest.raises(ValueError, match="one or two parameters"):
+        with pytest.raises(
+            ValueError, match="must have \\(message: T\\) or \\(message: T, ctx: WorkflowContext\\[U\\]\\)"
+        ):
             FunctionExecutor(no_params)  # type: ignore
 
         async def too_many_params(data: str, ctx: WorkflowContext[str], extra: int) -> None:
             pass
 
-        with pytest.raises(ValueError, match="one or two parameters"):
+        with pytest.raises(
+            ValueError, match="must have \\(message: T\\) or \\(message: T, ctx: WorkflowContext\\[U\\]\\)"
+        ):
             FunctionExecutor(too_many_params)  # type: ignore
 
         # Missing message type annotation
@@ -141,22 +172,24 @@ class TestFunctionExecutor:
         async def no_ctx_type(data: str, ctx) -> None:  # type: ignore
             pass
 
-        with pytest.raises(ValueError, match="annotated as WorkflowContext"):
+        with pytest.raises(ValueError, match="must have a WorkflowContext"):
             FunctionExecutor(no_ctx_type)  # type: ignore
 
         # Wrong ctx type
         async def wrong_ctx_type(data: str, ctx: str) -> None:  # type: ignore
             pass
 
-        with pytest.raises(ValueError, match="WorkflowContext\\[T\\]"):
+        with pytest.raises(ValueError, match="must be annotated as WorkflowContext"):
             FunctionExecutor(wrong_ctx_type)  # type: ignore
 
-        # Unparameterized WorkflowContext
+        # Unparameterized WorkflowContext is now allowed
         async def unparameterized_ctx(data: str, ctx: WorkflowContext) -> None:  # type: ignore
             pass
 
-        with pytest.raises(ValueError, match="concrete T"):
-            FunctionExecutor(unparameterized_ctx)  # type: ignore
+        # This should now succeed since unparameterized WorkflowContext is allowed
+        executor = FunctionExecutor(unparameterized_ctx)
+        assert executor.output_types == []  # Unparameterized has no inferred types
+        assert executor.workflow_output_types == []  # No workflow output types
 
     async def test_execution_in_workflow(self):
         """Test that FunctionExecutor works properly in a workflow."""
@@ -167,18 +200,28 @@ class TestFunctionExecutor:
             await ctx.send_message(result)
 
         @executor(id="reverse")
-        async def reverse_text(text: str, ctx: WorkflowContext[Any]) -> None:
+        async def reverse_text(text: str, ctx: WorkflowContext[Any, str]) -> None:
             result = text[::-1]
-            await ctx.add_event(WorkflowCompletedEvent(result))
+            await ctx.yield_output(result)
+
+        # Verify type inference for both executors
+        upper_spec = to_upper._handler_specs[0]
+        assert upper_spec["output_types"] == [str]
+        assert upper_spec["workflow_output_types"] == []  # No workflow outputs
+
+        reverse_spec = reverse_text._handler_specs[0]
+        assert reverse_spec["output_types"] == [Any]  # First parameter is Any
+        assert reverse_spec["workflow_output_types"] == [str]  # Second parameter is str
 
         workflow = WorkflowBuilder().add_edge(to_upper, reverse_text).set_start_executor(to_upper).build()
 
         # Run workflow
         events = await workflow.run("hello world")
-        completed = events.get_completed_event()
+        outputs = events.get_outputs()
 
-        assert completed is not None
-        assert completed.data == "DLROW OLLEH"
+        # Assert that we got the expected output
+        assert len(outputs) == 1
+        assert outputs[0] == "DLROW OLLEH"
 
     def test_can_handle_method(self):
         """Test that can_handle method works with instance handlers."""
@@ -204,12 +247,13 @@ class TestFunctionExecutor:
             await ctx.send_message(message)
 
         with pytest.raises(ValueError, match="Handler for type .* already registered"):
-            func_exec.register_instance_handler(
+            func_exec._register_instance_handler(
                 name="second",
                 func=second_handler,
                 message_type=str,
                 ctx_annotation=WorkflowContext[str],
                 output_types=[str],
+                workflow_output_types=[],
             )
 
     def test_complex_type_annotations(self):
@@ -220,7 +264,7 @@ class TestFunctionExecutor:
             result = {item: len(item) for item in items}
             await ctx.send_message(result)
 
-        spec = process_list._instance_handler_specs[0]
+        spec = process_list._handler_specs[0]
         assert spec["message_type"] == list[str]
         assert spec["output_types"] == [dict[str, int]]
 
@@ -236,7 +280,7 @@ class TestFunctionExecutor:
         assert str in process_simple._handlers
 
         # Check spec - single parameter functions have no output types since they can't send messages
-        spec = process_simple._instance_handler_specs[0]
+        spec = process_simple._handler_specs[0]
         assert spec["message_type"] is str
         assert spec["output_types"] == []
         assert spec["ctx_annotation"] is None
@@ -296,7 +340,7 @@ class TestFunctionExecutor:
         assert str in process_sync._handlers
 
         # Check spec - sync single parameter functions have no output types
-        spec = process_sync._instance_handler_specs[0]
+        spec = process_sync._handler_specs[0]
         assert spec["message_type"] is str
         assert spec["output_types"] == []
         assert spec["ctx_annotation"] is None
@@ -314,7 +358,7 @@ class TestFunctionExecutor:
         assert int in sync_with_ctx._handlers
 
         # Check spec - sync functions with context can infer output types
-        spec = sync_with_ctx._instance_handler_specs[0]
+        spec = sync_with_ctx._handler_specs[0]
         assert spec["message_type"] is int
         assert spec["output_types"] == [int]
 
@@ -385,9 +429,18 @@ class TestFunctionExecutor:
             # In practice, the wrapper handles the async conversion
 
         @executor(id="async_reverse")
-        async def reverse_async(text: str, ctx: WorkflowContext[Any]):
+        async def reverse_async(text: str, ctx: WorkflowContext[Any, str]):
             result = text[::-1]
-            await ctx.add_event(WorkflowCompletedEvent(result))
+            await ctx.yield_output(result)
+
+        # Verify type inference for sync and async functions
+        sync_spec = to_upper_sync._handler_specs[0]
+        assert sync_spec["output_types"] == [str]
+        assert sync_spec["workflow_output_types"] == []  # No workflow outputs
+
+        async_spec = reverse_async._handler_specs[0]
+        assert async_spec["output_types"] == [Any]  # First parameter is Any
+        assert async_spec["workflow_output_types"] == [str]  # Second parameter is str
 
         # Verify the executors can handle their input types
         assert to_upper_sync.can_handle("hello")

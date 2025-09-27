@@ -1,5 +1,4 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
-
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
@@ -9,8 +8,8 @@ using System.Threading.Tasks;
 using Azure.AI.Agents.Persistent;
 using Azure.Core;
 using Azure.Core.Pipeline;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
 
 namespace Microsoft.Agents.Workflows.Declarative;
 
@@ -43,18 +42,20 @@ public sealed class AzureAgentProvider(string projectEndpoint, TokenCredential p
     }
 
     /// <inheritdoc/>
-    public override async Task CreateMessageAsync(string conversationId, ChatMessage conversationMessage, CancellationToken cancellationToken = default)
+    public override Task CreateMessageAsync(string conversationId, ChatMessage conversationMessage, CancellationToken cancellationToken = default)
     {
-        await this.GetAgentsClient().Messages.CreateMessageAsync(
+        // TODO: Switch to asynchronous "CreateMessageAsync", when fix properly applied:
+        //  BUG: https://github.com/Azure/azure-sdk-for-net/issues/52571
+        //   PR: https://github.com/Azure/azure-sdk-for-net/pull/52653
+        this.GetAgentsClient().Messages.CreateMessage(
             conversationId,
             role: s_roleMap[conversationMessage.Role.Value.ToUpperInvariant()],
-            // TODO: PersistentAgent bug blocks supporting multiple content types:
-            //       https://github.com/Azure/azure-sdk-for-net/issues/52571
-            //contentBlocks: GetContent(),
-            content: conversationMessage.Text,
+            contentBlocks: GetContent(),
             attachments: null,
             metadata: GetMetadata(),
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken);
+
+        return Task.CompletedTask;
 
         Dictionary<string, string>? GetMetadata()
         {
@@ -66,27 +67,25 @@ public sealed class AzureAgentProvider(string projectEndpoint, TokenCredential p
             return conversationMessage.AdditionalProperties.ToDictionary(prop => prop.Key, prop => prop.Value?.ToString() ?? string.Empty);
         }
 
-        // TODO: PersistentAgent bug blocks supporting multiple content types:
-        //       https://github.com/Azure/azure-sdk-for-net/issues/52571
-        //IEnumerable<MessageInputContentBlock> GetContent()
-        //{
-        //    foreach (AIContent content in conversationMessage.Contents)
-        //    {
-        //        MessageInputContentBlock? contentBlock =
-        //            content switch
-        //            {
-        //                TextContent textContent => new MessageInputTextBlock(textContent.Text),
-        //                HostedFileContent fileContent => new MessageInputImageFileBlock(new MessageImageFileParam(fileContent.FileId)),
-        //                UriContent uriContent when uriContent.Uri is not null => new MessageInputImageUriBlock(new MessageImageUriParam(uriContent.Uri.ToString())),
-        //                _ => null // Unsupported content type
-        //            };
+        IEnumerable<MessageInputContentBlock> GetContent()
+        {
+            foreach (AIContent content in conversationMessage.Contents)
+            {
+                MessageInputContentBlock? contentBlock =
+                    content switch
+                    {
+                        TextContent textContent => new MessageInputTextBlock(textContent.Text),
+                        HostedFileContent fileContent => new MessageInputImageFileBlock(new MessageImageFileParam(fileContent.FileId)),
+                        UriContent uriContent when uriContent.Uri is not null => new MessageInputImageUriBlock(new MessageImageUriParam(uriContent.Uri.ToString())),
+                        _ => null // Unsupported content type
+                    };
 
-        //        if (contentBlock is not null)
-        //        {
-        //            yield return contentBlock;
-        //        }
-        //    }
-        //}
+                if (contentBlock is not null)
+                {
+                    yield return contentBlock;
+                }
+            }
+        }
     }
 
     /// <inheritdoc/>

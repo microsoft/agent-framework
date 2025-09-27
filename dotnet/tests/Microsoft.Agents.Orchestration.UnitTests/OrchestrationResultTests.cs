@@ -5,8 +5,8 @@ using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Microsoft.Agents.Orchestration.UnitTest;
@@ -89,6 +89,10 @@ public class OrchestrationResultTests
 
     private sealed class MockAgent : AIAgent
     {
+        public override AgentThread GetNewThread()
+            => throw new NotSupportedException();
+        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+            => throw new NotSupportedException();
         public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
         public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>

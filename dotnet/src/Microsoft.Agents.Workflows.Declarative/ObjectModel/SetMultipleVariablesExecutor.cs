@@ -29,7 +29,7 @@ internal sealed class SetMultipleVariablesExecutor(SetMultipleVariables model, W
             }
             else
             {
-                EvaluationResult<DataValue> expressionResult = this.State.Evaluator.GetValue(assignment.Value);
+                EvaluationResult<DataValue> expressionResult = this.Evaluator.GetValue(assignment.Value);
 
                 await this.AssignAsync(assignment.Variable, expressionResult.Value.ToFormula(), context).ConfigureAwait(false);
             }

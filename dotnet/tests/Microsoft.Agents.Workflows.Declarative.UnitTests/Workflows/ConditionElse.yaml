@@ -1,21 +1,20 @@
-kind: AdaptiveDialog
-beginDialog:
-  
-  kind: OnActivity
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
   id: my_workflow
-  type: Message
   actions:
   
     - kind: SetVariable
       id: setVariable_test
-      variable: Topic.TestValue
-      value: =System.LastMessageText
+      variable: Local.TestValue
+      value: =Value(System.LastMessageText)
 
     - kind: ConditionGroup
       id: conditionGroup_test
       conditions:
         - id: conditionItem_odd
-          condition: =Mod(Topic.TestValue, 2) = 1
+          condition: =Mod(Local.TestValue, 2) = 1
           actions:
             - kind: SendActivity
               id: sendActivity_odd

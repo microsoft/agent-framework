@@ -5,8 +5,8 @@ using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using Azure.AI.OpenAI;
 using Azure.Identity;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using OpenTelemetry;
@@ -123,7 +123,7 @@ appLogger.LogInformation("Agent created successfully with ID: {AgentId}", agent.
 
 // Create a parent span for the entire agent session
 using var sessionActivity = activitySource.StartActivity("Agent Session");
-var sessionId = thread.ConversationId ?? Guid.NewGuid().ToString();
+var sessionId = Guid.NewGuid().ToString("N");
 sessionActivity?
     .SetTag("agent.name", "OpenTelemetryDemoAgent")
     .SetTag("session.id", sessionId)

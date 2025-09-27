@@ -7,12 +7,12 @@ from typing import Any
 from agent_framework import (
     Executor,
     WorkflowBuilder,
-    WorkflowCompletedEvent,
     WorkflowContext,
     WorkflowEvent,
     WorkflowExecutor,
     handler,
 )
+from typing_extensions import Never
 
 """
 Sample: Sub-Workflows (Basics)
@@ -20,6 +20,7 @@ Sample: Sub-Workflows (Basics)
 What it does:
 - Shows how a parent workflow invokes a sub-workflow via `WorkflowExecutor` and collects results.
 - Example: parent orchestrates multiple text processors that count words/characters.
+- Demonstrates how sub-workflows complete by yielding outputs when processing is done.
 
 Prerequisites:
 - No external services required.
@@ -60,7 +61,9 @@ class TextProcessor(Executor):
         super().__init__(id="text_processor")
 
     @handler
-    async def process_text(self, request: TextProcessingRequest, ctx: WorkflowContext[TextProcessingResult]) -> None:
+    async def process_text(
+        self, request: TextProcessingRequest, ctx: WorkflowContext[Never, TextProcessingResult]
+    ) -> None:
         """Process a text string and return statistics."""
         text_preview = f"'{request.text[:50]}{'...' if len(request.text) > 50 else ''}'"
         print(f"🔍 Sub-workflow processing text (Task {request.task_id}): {text_preview}")
@@ -80,8 +83,8 @@ class TextProcessor(Executor):
         )
 
         print(f"✅ Sub-workflow completed task {request.task_id}")
-        # Signal completion
-        await ctx.add_event(WorkflowCompletedEvent(data=result))
+        # Signal completion by yielding the result
+        await ctx.yield_output(result)
 
 
 # Parent workflow
@@ -110,7 +113,7 @@ class TextProcessingOrchestrator(Executor):
             await ctx.send_message(request, target_id="text_processor_workflow")
 
     @handler
-    async def collect_result(self, result: TextProcessingResult, ctx: WorkflowContext[None]) -> None:
+    async def collect_result(self, result: TextProcessingResult, ctx: WorkflowContext) -> None:
         """Collect results from sub-workflows."""
         print(f"📥 Collected result from {result.task_id}")
         self.results.append(result)
@@ -173,7 +176,7 @@ async def main():
     print("=" * 60)
 
     # Step 4: Run the workflow
-    result = await main_workflow.run(test_texts)
+    await main_workflow.run(test_texts)
 
     # Step 5: Display results
     print("\n📊 Processing Results:")

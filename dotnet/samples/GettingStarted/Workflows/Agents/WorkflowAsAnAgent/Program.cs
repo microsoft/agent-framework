@@ -5,9 +5,9 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using Azure.AI.OpenAI;
 using Azure.Identity;
+using Microsoft.Agents.AI;
 using Microsoft.Agents.Workflows;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
 
 namespace WorkflowAsAnAgentsSample;
 
@@ -38,7 +38,7 @@ public static class Program
         var chatClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName).AsIChatClient();
 
         // Create the workflow and turn it into an agent
-        var workflow = WorkflowHelper.GetWorkflow(chatClient);
+        var workflow = await WorkflowHelper.GetWorkflowAsync(chatClient).ConfigureAwait(false);
         var agent = workflow.AsAgent("workflow-agent", "Workflow Agent");
         var thread = agent.GetNewThread();
 

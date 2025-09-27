@@ -115,7 +115,7 @@ public static class ModelExtensions
                   new("ConnectionString", csTask.Result ) { IsSensitive = true }
                 ]
             });
-#pragma warning restore VSTHRD002 // Avoid problematic synchronous waits
+#pragma warning restore VSTHRD002
         }
 
         builder.Resource.UnderlyingResource = builder.Resource;
@@ -175,7 +175,7 @@ public static class ModelExtensions
                   new("ConnectionString", csTask.Result ) { IsSensitive = true }
                 ]
             });
-#pragma warning restore VSTHRD002 // Avoid problematic synchronous waits
+#pragma warning restore VSTHRD002
         }
 
         builder.Resource.UnderlyingResource = builder.Resource;
@@ -214,7 +214,7 @@ public static class ModelExtensions
                   new("ConnectionString", csTask.Result ) { IsSensitive = true }
                 ]
             });
-#pragma warning restore VSTHRD002 // Avoid problematic synchronous waits
+#pragma warning restore VSTHRD002
         }
 
         builder.Resource.UnderlyingResource = builder.Resource;

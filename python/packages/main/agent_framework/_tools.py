@@ -21,19 +21,19 @@ from typing import (
     runtime_checkable,
 )
 
-from opentelemetry import metrics
+from opentelemetry.metrics import Histogram
 from pydantic import AnyUrl, BaseModel, Field, PrivateAttr, ValidationError, create_model, field_validator
 
 from ._logging import get_logger
 from ._pydantic import AFBaseModel
 from .exceptions import ChatClientInitializationError, ToolException
-from .telemetry import (
+from .observability import (
     OPERATION_DURATION_BUCKET_BOUNDARIES,
     OtelAttr,
-    _capture_exception,  # type: ignore
+    capture_exception,  # type: ignore
     get_function_span,
     get_function_span_attributes,
-    meter,
+    get_meter,
 )
 
 if TYPE_CHECKING:
@@ -224,11 +224,18 @@ class HostedWebSearchTool(BaseTool):
             additional_properties: Additional properties associated with the tool
                 (e.g., {"user_location": {"city": "Seattle", "country": "US"}}).
             **kwargs: Additional keyword arguments to pass to the base class.
+                if additional_properties is not provided, any kwargs will be added to additional_properties.
         """
         args: dict[str, Any] = {
             "name": "web_search",
         }
-        super().__init__(**args, **kwargs)
+        if additional_properties is not None:
+            args["additional_properties"] = additional_properties
+        elif kwargs:
+            args["additional_properties"] = kwargs
+        if description is not None:
+            args["description"] = description
+        super().__init__(**args)
 
 
 class HostedMCPSpecificApproval(TypedDict, total=False):
@@ -358,6 +365,16 @@ class HostedFileSearchTool(BaseTool):
         super().__init__(**args, **kwargs)
 
 
+def _default_histogram() -> Histogram:
+    """Get the default histogram for function invocation duration."""
+    return get_meter().create_histogram(
+        name=OtelAttr.MEASUREMENT_FUNCTION_INVOCATION_DURATION,
+        unit=OtelAttr.DURATION_UNIT,
+        description="Measures the duration of a function's execution",
+        explicit_bucket_boundaries_advisory=OPERATION_DURATION_BUCKET_BOUNDARIES,
+    )
+
+
 class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
     """A AITool that is callable as code.
 
@@ -371,14 +388,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
 
     func: Callable[..., Awaitable[ReturnT] | ReturnT]
     input_model: type[ArgsT]
-    _invocation_duration_histogram: metrics.Histogram = PrivateAttr(
-        default_factory=lambda: meter.create_histogram(
-            name=OtelAttr.MEASUREMENT_FUNCTION_INVOCATION_DURATION,
-            unit=OtelAttr.DURATION_UNIT,
-            description="Measures the duration of a function's execution",
-            explicit_bucket_boundaries_advisory=OPERATION_DURATION_BUCKET_BOUNDARIES,
-        )
-    )
+    _invocation_duration_histogram: Histogram = PrivateAttr(default_factory=_default_histogram)
 
     def __call__(self, *args: Any, **kwargs: Any) -> ReturnT | Awaitable[ReturnT]:
         """Call the wrapped function with the provided arguments."""
@@ -394,18 +404,17 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
 
         Args:
             arguments: A Pydantic model instance containing the arguments for the function.
-            otel_settings: Optional model diagnostics settings to override the default settings.
             kwargs: keyword arguments to pass to the function, will not be used if `arguments` is provided.
         """
-        global OTEL_SETTINGS
-        from .telemetry import OTEL_SETTINGS, setup_telemetry
+        global OBSERVABILITY_SETTINGS
+        from .observability import OBSERVABILITY_SETTINGS
 
         tool_call_id = kwargs.pop("tool_call_id", None)
         if arguments is not None:
             if not isinstance(arguments, self.input_model):
                 raise TypeError(f"Expected {self.input_model.__name__}, got {type(arguments).__name__}")
             kwargs = arguments.model_dump(exclude_none=True)
-        if not OTEL_SETTINGS.ENABLED:  # type: ignore[name-defined]
+        if not OBSERVABILITY_SETTINGS.ENABLED:  # type: ignore[name-defined]
             logger.info(f"Function name: {self.name}")
             logger.debug(f"Function arguments: {kwargs}")
             res = self.__call__(**kwargs)
@@ -414,9 +423,8 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
             logger.debug(f"Function result: {result or 'None'}")
             return result  # type: ignore[reportReturnType]
 
-        setup_telemetry()
         attributes = get_function_span_attributes(self, tool_call_id=tool_call_id)
-        if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
+        if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
             attributes.update({
                 OtelAttr.TOOL_ARGUMENTS: arguments.model_dump_json()
                 if arguments
@@ -427,7 +435,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
         with get_function_span(attributes=attributes) as span:
             attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] = self.name
             logger.info(f"Function name: {self.name}")
-            if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
+            if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
                 logger.debug(f"Function arguments: {kwargs}")
             start_time_stamp = perf_counter()
             end_time_stamp: float | None = None
@@ -438,12 +446,12 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
             except Exception as exception:
                 end_time_stamp = perf_counter()
                 attributes[OtelAttr.ERROR_TYPE] = type(exception).__name__
-                _capture_exception(span=span, exception=exception, timestamp=time_ns())
+                capture_exception(span=span, exception=exception, timestamp=time_ns())
                 logger.error(f"Function failed. Error: {exception}")
                 raise
             else:
                 logger.info(f"Function {self.name} succeeded.")
-                if OTEL_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
+                if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
                     try:
                         json_result = json.dumps(result)
                     except (TypeError, OverflowError):
@@ -599,6 +607,7 @@ async def _auto_invoke_function(
         middleware_context = FunctionInvocationContext(
             function=tool,
             arguments=args,
+            kwargs=custom_args or {},
         )
 
         async def final_function_handler(context_obj: Any) -> Any:
@@ -713,7 +722,15 @@ def _handle_function_calls_response(
             **kwargs: Any,
         ) -> "ChatResponse":
             from ._clients import prepare_messages
+            from ._middleware import extract_and_merge_function_middleware
             from ._types import ChatMessage, ChatOptions, FunctionCallContent, FunctionResultContent
+
+            # Extract and merge function middleware from chat client with kwargs pipeline
+            extract_and_merge_function_middleware(self, kwargs)
+
+            # Extract the middleware pipeline before calling the underlying function
+            # because the underlying function may not preserve it in kwargs
+            stored_middleware_pipeline = kwargs.get("_function_middleware_pipeline")
 
             prepped_messages = prepare_messages(messages)
             response: "ChatResponse | None" = None
@@ -738,8 +755,9 @@ def _handle_function_calls_response(
                 if not tools and (chat_options := kwargs.get("chat_options")) and isinstance(chat_options, ChatOptions):
                     tools = chat_options.tools
                 if function_calls and tools:
-                    # Extract function middleware pipeline from kwargs if available
-                    middleware_pipeline = kwargs.get("_function_middleware_pipeline")
+                    # Use the stored middleware pipeline instead of extracting from kwargs
+                    # because kwargs may have been modified by the underlying function
+                    middleware_pipeline = stored_middleware_pipeline
                     function_results = await execute_function_calls(
                         custom_args=kwargs,
                         attempt_idx=attempt_idx,
@@ -812,7 +830,15 @@ def _handle_function_calls_streaming_response(
         ) -> AsyncIterable["ChatResponseUpdate"]:
             """Wrap the inner get streaming response method to handle tool calls."""
             from ._clients import prepare_messages
+            from ._middleware import extract_and_merge_function_middleware
             from ._types import ChatMessage, ChatOptions, ChatResponse, ChatResponseUpdate, FunctionCallContent
+
+            # Extract and merge function middleware from chat client with kwargs pipeline
+            extract_and_merge_function_middleware(self, kwargs)
+
+            # Extract the middleware pipeline before calling the underlying function
+            # because the underlying function may not preserve it in kwargs
+            stored_middleware_pipeline = kwargs.get("_function_middleware_pipeline")
 
             prepped_messages = prepare_messages(messages)
             for attempt_idx in range(max_iterations):
@@ -850,8 +876,9 @@ def _handle_function_calls_streaming_response(
                     tools = chat_options.tools
 
                 if function_calls and tools:
-                    # Extract function middleware pipeline from kwargs if available
-                    middleware_pipeline = kwargs.get("_function_middleware_pipeline")
+                    # Use the stored middleware pipeline instead of extracting from kwargs
+                    # because kwargs may have been modified by the underlying function
+                    middleware_pipeline = stored_middleware_pipeline
                     function_results = await execute_function_calls(
                         custom_args=kwargs,
                         attempt_idx=attempt_idx,

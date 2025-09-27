@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""
-GAIA Benchmark Sample
+"""GAIA Benchmark Sample.
 
 To run this sample, execute it from the root directory of the agent-framework repository:
     cd /path/to/agent-framework
@@ -10,13 +9,12 @@ To run this sample, execute it from the root directory of the agent-framework re
 This avoids namespace package conflicts that occur when running from within the gaia package directory.
 """
 
-from agent_framework.foundry import FoundryChatClient
+from agent_framework.azure import AzureAIAgentClient
+from agent_framework.lab.gaia import GAIA, Evaluation, GAIATelemetryConfig, Prediction, Task
 from azure.identity.aio import AzureCliCredential
 
-from agent_framework.lab.gaia import GAIA, Evaluation, GAIATelemetryConfig, Prediction, Task
 
-
-async def evaluate_task(task: Task, prediction: Prediction) -> Evaluation:
+def evaluate_task(task: Task, prediction: Prediction) -> Evaluation:
     """Evaluate the prediction for a given task."""
     # Simple evaluation: check if the prediction contains the answer
     is_correct = (task.answer or "").lower() in prediction.prediction.lower()
@@ -24,13 +22,10 @@ async def evaluate_task(task: Task, prediction: Prediction) -> Evaluation:
 
 
 async def main() -> None:
+    """Run GAIA benchmark with telemetry configuration."""
     # Configure telemetry for tracing
     telemetry_config = GAIATelemetryConfig(
         enable_tracing=True,  # Enable OpenTelemetry tracing
-        # Optional: Configure external endpoints
-        # otlp_endpoint="http://localhost:4317",  # For Aspire Dashboard or other OTLP endpoints
-        # application_insights_connection_string="your_connection_string",  # For Azure Monitor
-        # enable_live_metrics=True,  # Enable Azure Monitor live metrics
         # Configure local file tracing
         trace_to_file=True,  # Export traces to local file
         file_path="gaia_benchmark_traces.jsonl",  # Custom file path for traces
@@ -39,7 +34,7 @@ async def main() -> None:
     # Create a single agent once and reuse it for all tasks
     async with (
         AzureCliCredential() as credential,
-        FoundryChatClient(async_credential=credential).create_agent(
+        AzureAIAgentClient(async_credential=credential).create_agent(
             name="GaiaAgent",
             instructions="Solve tasks to your best ability.",
         ) as agent,

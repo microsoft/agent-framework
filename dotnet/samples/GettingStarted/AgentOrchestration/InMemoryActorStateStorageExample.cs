@@ -2,7 +2,7 @@
 
 using System.Text.Json;
 
-namespace Microsoft.Extensions.AI.Agents.Runtime.Samples;
+namespace Microsoft.Agents.AI.Runtime.Samples;
 
 /// <summary>
 /// Example demonstrating how to use the InMemoryActorStateStorage.

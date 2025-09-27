@@ -3,8 +3,8 @@
 #pragma warning disable OPENAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
 using System.ComponentModel;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.Agents.OpenAI;
 using Microsoft.SemanticKernel.Connectors.OpenAI;
@@ -90,6 +90,9 @@ async Task AFAgentAsync()
     }
 
     // Clean up
-    await assistantClient.DeleteThreadAsync(thread.ConversationId);
+    if (thread is ChatClientAgentThread chatThread)
+    {
+        await assistantClient.DeleteThreadAsync(chatThread.ConversationId);
+    }
     await assistantClient.DeleteAssistantAsync(agent.Id);
 }

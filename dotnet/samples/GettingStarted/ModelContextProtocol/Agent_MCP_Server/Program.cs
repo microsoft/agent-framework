@@ -6,8 +6,8 @@ using System;
 using System.Linq;
 using Azure.AI.OpenAI;
 using Azure.Identity;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
 using ModelContextProtocol.Client;
 using OpenAI;
 

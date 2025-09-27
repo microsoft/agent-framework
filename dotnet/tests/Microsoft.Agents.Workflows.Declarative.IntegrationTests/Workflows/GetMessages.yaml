@@ -1,22 +1,16 @@
-#
-# This workflow demonstrates a conversation and message manipulation.
-#
-# Any Foundry Agent may be used to provide the response.
-# See: ./setup/QuestionAgent.yaml
-#
-kind: AdaptiveDialog
-beginDialog:
+kind: Workflow
+trigger:
 
-  kind: OnActivity
+  kind: OnConversationStart
   id: workflow_test
   actions:
   
     - kind: RetrieveConversationMessages
       id: get_message
-      messages: Topic.MyMessages
+      messages: Local.MyMessages
       conversationId: thread_T8xIzNrNcPkUkoCEGzxg80Vt
 
     - kind: SendActivity
       id: sendActivity_message
       activity: |-
-        {Topic.MyMessages}
+        {Local.MyMessages}

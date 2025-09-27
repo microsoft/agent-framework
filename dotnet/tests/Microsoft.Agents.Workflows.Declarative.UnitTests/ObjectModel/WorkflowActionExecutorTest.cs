@@ -29,7 +29,7 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
         TestWorkflowExecutor workflowExecutor = new();
         WorkflowBuilder workflowBuilder = new(workflowExecutor);
         workflowBuilder.AddEdge(workflowExecutor, executor);
-        StreamingRun run = await InProcessExecution.StreamAsync(workflowBuilder.Build<WorkflowFormulaState>(), this.State);
+        StreamingRun run = await InProcessExecution.StreamAsync(workflowBuilder.Build(), this.State);
         WorkflowEvent[] events = await run.WatchStreamAsync().ToArrayAsync();
         Assert.Contains(events, e => e is DeclarativeActionInvokedEvent);
         Assert.Contains(events, e => e is DeclarativeActionCompletedEvent);
@@ -42,7 +42,7 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
         Assert.Equal(model, action.Model);
     }
 
-    protected void VerifyState(string variableName, FormulaValue expectedValue) => this.VerifyState(variableName, VariableScopeNames.Topic, expectedValue);
+    protected void VerifyState(string variableName, FormulaValue expectedValue) => this.VerifyState(variableName, WorkflowFormulaState.DefaultScopeName, expectedValue);
 
     internal void VerifyState(string variableName, string scopeName, FormulaValue expectedValue)
     {
@@ -50,9 +50,7 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
         Assert.Equal(expectedValue.Format(), actualValue.Format());
     }
 
-    protected void VerifyUndefined(string variableName) => this.VerifyUndefined(variableName, VariableScopeNames.Topic);
-
-    internal void VerifyUndefined(string variableName, string scopeName) =>
+    internal void VerifyUndefined(string variableName, string? scopeName = null) =>
         Assert.IsType<BlankValue>(this.State.Get(variableName, scopeName));
 
     protected static TAction AssignParent<TAction>(DialogAction.Builder actionBuilder) where TAction : DialogAction
