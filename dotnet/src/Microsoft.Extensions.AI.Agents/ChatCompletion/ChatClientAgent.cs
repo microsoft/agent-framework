@@ -113,8 +113,7 @@ public sealed class ChatClientAgent : AIAgent
 
         var chatClient = this.ChatClient;
 
-        // If we have an AIToolsTransformer, we should use it to transform the tools before sending them to the chat client.
-        chatClient = ApplyRunOptionsTransformations(options, chatOptions, chatClient);
+        chatClient = ApplyRunOptionsTransformations(options, chatClient);
 
         var agentName = this.GetLoggingAgentName();
 
@@ -161,27 +160,17 @@ public sealed class ChatClientAgent : AIAgent
     /// name="chatClient"/> is returned unchanged.</remarks>
     /// <param name="options">The run options to apply. If <paramref name="options"/> is of type <see cref="ChatClientAgentRunOptions"/>,
     /// additional configuration such as tool transformations and custom chat client creation may be applied.</param>
-    /// <param name="chatOptions">The chat options to modify. If not null, the tools in <paramref name="chatOptions"/> may be transformed based on
-    /// the <see cref="ChatClientAgentRunOptions.AIToolsTransformer"/> delegate.</param>
     /// <param name="chatClient">The <see cref="IChatClient"/> instance to configure. If a custom chat client factory is provided in <see
     /// cref="ChatClientAgentRunOptions.ChatClientFactory"/>, a new <see cref="IChatClient"/> instance may be created.</param>
     /// <returns>The configured <see cref="IChatClient"/> instance. If a custom chat client factory is used, the returned
     /// instance may differ from the input <paramref name="chatClient"/>.</returns>
-    private static IChatClient ApplyRunOptionsTransformations(AgentRunOptions? options, ChatOptions? chatOptions, IChatClient chatClient)
+    private static IChatClient ApplyRunOptionsTransformations(AgentRunOptions? options, IChatClient chatClient)
     {
-        if (options is ChatClientAgentRunOptions agentChatOptions)
+        if (options is ChatClientAgentRunOptions agentChatOptions && agentChatOptions.ChatClientFactory is not null)
         {
-            if (chatOptions?.Tools is { Count: > 0 } && agentChatOptions.AIToolsTransformer is not null)
-            {
-                chatOptions.Tools = agentChatOptions.AIToolsTransformer(chatOptions.Tools);
-            }
-
-            if (agentChatOptions.ChatClientFactory is not null)
-            {
-                // If we have a custom chat client factory, we should use it to create a new chat client with the transformed tools.
-                chatClient = agentChatOptions.ChatClientFactory(chatClient);
-                _ = Throw.IfNull(chatClient);
-            }
+            // If we have a custom chat client factory, we should use it to create a new chat client with the transformed tools.
+            chatClient = agentChatOptions.ChatClientFactory(chatClient);
+            _ = Throw.IfNull(chatClient);
         }
 
         return chatClient;
@@ -203,8 +192,7 @@ public sealed class ChatClientAgent : AIAgent
 
         var chatClient = this.ChatClient;
 
-        // If we have an AIToolsTransformer, we should use it to transform the tools before sending them to the chat client.
-        chatClient = ApplyRunOptionsTransformations(options, chatOptions, chatClient);
+        chatClient = ApplyRunOptionsTransformations(options, chatClient);
 
         var loggingAgentName = this.GetLoggingAgentName();
 

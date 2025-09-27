@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Generic;
 
 namespace Microsoft.Extensions.AI.Agents;
 
@@ -26,10 +25,4 @@ public sealed class ChatClientAgentRunOptions : AgentRunOptions
     /// Gets or sets the factory method used to modify instances of <see cref="IChatClient"/> per-request basis.
     /// </summary>
     public Func<IChatClient, IChatClient>? ChatClientFactory { get; set; }
-
-    /// <summary>
-    /// Gets or sets a agent level tool transformation function.
-    /// </summary>
-    /// <remarks>If provided, this function will be used to transform the all tools at running time, including Agent level tools.</remarks>
-    internal Func<IList<AITool>?, IList<AITool>?>? AIToolsTransformer { get; set; }
 }
