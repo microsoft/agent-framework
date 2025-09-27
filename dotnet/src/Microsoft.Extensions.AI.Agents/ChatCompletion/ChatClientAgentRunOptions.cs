@@ -22,7 +22,7 @@ public sealed class ChatClientAgentRunOptions : AgentRunOptions
     public ChatOptions? ChatOptions { get; set; }
 
     /// <summary>
-    /// Gets or sets the factory method used to modify instances of <see cref="IChatClient"/> per-request basis.
+    /// Gets or sets the factory method used to modify instances of <see cref="IChatClient"/> per-request.
     /// </summary>
     public Func<IChatClient, IChatClient>? ChatClientFactory { get; set; }
 }
