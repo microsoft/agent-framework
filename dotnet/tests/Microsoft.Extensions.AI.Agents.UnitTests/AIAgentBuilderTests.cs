@@ -1,6 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
 
@@ -309,6 +313,112 @@ public class AIAgentBuilderTests
         });
         builder.Build();
     }
+
+    #region Delegate Overload Tests
+
+    /// <summary>
+    /// Verify that Use with shared delegate throws ArgumentNullException when sharedFunc is null.
+    /// </summary>
+    [Fact]
+    public void Use_WithNullSharedFunc_ThrowsArgumentNullException()
+    {
+        // Arrange
+        var mockAgent = new Mock<AIAgent>();
+        var builder = new AIAgentBuilder(mockAgent.Object);
+
+        // Act & Assert
+        Assert.Throws<ArgumentNullException>("sharedFunc", () =>
+            builder.Use((Func<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, Func<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, CancellationToken, Task>, CancellationToken, Task>)null!));
+    }
+
+    /// <summary>
+    /// Verify that Use with both delegates null throws ArgumentNullException.
+    /// </summary>
+    [Fact]
+    public void Use_WithBothDelegatesNull_ThrowsArgumentNullException()
+    {
+        // Arrange
+        var mockAgent = new Mock<AIAgent>();
+        var builder = new AIAgentBuilder(mockAgent.Object);
+
+        // Act & Assert
+        var exception = Assert.Throws<ArgumentNullException>(() =>
+            builder.Use(null, null));
+
+        Assert.Contains("runFunc", exception.Message);
+    }
+
+    /// <summary>
+    /// Verify that Use with shared delegate creates AnonymousDelegatingAIAgent.
+    /// </summary>
+    [Fact]
+    public void Use_WithSharedDelegate_CreatesAnonymousDelegatingAgent()
+    {
+        // Arrange
+        var mockAgent = new Mock<AIAgent>();
+        var builder = new AIAgentBuilder(mockAgent.Object);
+
+        // Act
+        var result = builder.Use((_, _, _, _, _) => Task.CompletedTask).Build();
+
+        // Assert
+        Assert.IsType<AnonymousDelegatingAIAgent>(result);
+    }
+
+    /// <summary>
+    /// Verify that Use with runFunc only creates AnonymousDelegatingAIAgent.
+    /// </summary>
+    [Fact]
+    public void Use_WithRunFuncOnly_CreatesAnonymousDelegatingAgent()
+    {
+        // Arrange
+        var mockAgent = new Mock<AIAgent>();
+        var builder = new AIAgentBuilder(mockAgent.Object);
+
+        // Act
+        var result = builder.Use((_, _, _, _, _) => Task.FromResult(new AgentRunResponse()), null).Build();
+
+        // Assert
+        Assert.IsType<AnonymousDelegatingAIAgent>(result);
+    }
+
+    /// <summary>
+    /// Verify that Use with runStreamingFunc only creates AnonymousDelegatingAIAgent.
+    /// </summary>
+    [Fact]
+    public void Use_WithStreamingFuncOnly_CreatesAnonymousDelegatingAgent()
+    {
+        // Arrange
+        var mockAgent = new Mock<AIAgent>();
+        var builder = new AIAgentBuilder(mockAgent.Object);
+
+        // Act
+        var result = builder.Use(null, (_, _, _, _, _) => AsyncEnumerable.Empty<AgentRunResponseUpdate>()).Build();
+
+        // Assert
+        Assert.IsType<AnonymousDelegatingAIAgent>(result);
+    }
+
+    /// <summary>
+    /// Verify that Use with both delegates creates AnonymousDelegatingAIAgent.
+    /// </summary>
+    [Fact]
+    public void Use_WithBothDelegates_CreatesAnonymousDelegatingAgent()
+    {
+        // Arrange
+        var mockAgent = new Mock<AIAgent>();
+        var builder = new AIAgentBuilder(mockAgent.Object);
+
+        // Act
+        var result = builder.Use(
+            (_, _, _, _, _) => Task.FromResult(new AgentRunResponse()),
+            (_, _, _, _, _) => AsyncEnumerable.Empty<AgentRunResponseUpdate>()).Build();
+
+        // Assert
+        Assert.IsType<AnonymousDelegatingAIAgent>(result);
+    }
+
+    #endregion
 
     /// <summary>
     /// Helper class for testing pipeline order.
