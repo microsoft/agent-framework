@@ -12,7 +12,7 @@ namespace Microsoft.Extensions.AI.Agents.UnitTests.Middleware;
 /// <summary>
 /// Unit tests for FunctionCallMiddlewareAgent functionality.
 /// </summary>
-public sealed class FunctionCallMiddlewareAgentTests
+public sealed class FunctionInvocationDelegatingAgentTests
 {
     #region Basic Functionality Tests
 

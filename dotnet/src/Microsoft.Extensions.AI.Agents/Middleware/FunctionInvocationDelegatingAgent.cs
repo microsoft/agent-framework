@@ -16,9 +16,9 @@ namespace Microsoft.Extensions.AI.Agents;
 /// </summary>
 internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
 {
-    private readonly Func<AgentFunctionInvocationContext, Func<AgentFunctionInvocationContext, Task>, Task> _delegateFunc;
+    private readonly Func<AIAgent, FunctionInvocationContext, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>>, CancellationToken, ValueTask<object?>> _delegateFunc;
 
-    internal FunctionInvocationDelegatingAgent(AIAgent innerAgent, Func<AgentFunctionInvocationContext, Func<AgentFunctionInvocationContext, Task>, Task> delegateFunc) : base(innerAgent)
+    internal FunctionInvocationDelegatingAgent(AIAgent innerAgent, Func<AIAgent, FunctionInvocationContext, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>>, CancellationToken, ValueTask<object?>> delegateFunc) : base(innerAgent)
     {
         this._delegateFunc = delegateFunc;
     }
@@ -54,7 +54,7 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
                 => tools?.Select(tool => tool is AIFunction aiFunction
                     ? aiFunction is ApprovalRequiredAIFunction approvalRequiredAiFunction
                     ? new ApprovalRequiredAIFunction(new MiddlewareEnabledFunction(this, approvalRequiredAiFunction, this._delegateFunc))
-                    : new MiddlewareEnabledFunction(this, aiFunction, this._delegateFunc)
+                    : new MiddlewareEnabledFunction(this.InnerAgent, aiFunction, this._delegateFunc)
                     : tool)
                 .ToList();
         }
@@ -62,7 +62,7 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
         return options;
     }
 
-    private sealed class MiddlewareEnabledFunction(AIAgent agent, AIFunction innerFunction, Func<AgentFunctionInvocationContext, Func<AgentFunctionInvocationContext, Task>, Task> next) : DelegatingAIFunction(innerFunction)
+    private sealed class MiddlewareEnabledFunction(AIAgent innerAgent, AIFunction innerFunction, Func<AIAgent, FunctionInvocationContext, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>>, CancellationToken, ValueTask<object?>> next) : DelegatingAIFunction(innerFunction)
     {
         protected async override ValueTask<object?> InvokeCoreAsync(AIFunctionArguments arguments, CancellationToken cancellationToken)
         {
@@ -72,16 +72,12 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
                 return null;
             }
 
-            var context = new AgentFunctionInvocationContext(agent, FunctionInvokingChatClient.CurrentContext, cancellationToken);
+            var context = FunctionInvokingChatClient.CurrentContext;
 
-            await next(context, CoreLogicAsync).ConfigureAwait(false);
+            return await next(innerAgent, context, CoreLogicAsync, cancellationToken).ConfigureAwait(false);
 
-            return context.FunctionResult;
-
-            async Task CoreLogicAsync(AgentFunctionInvocationContext ctx)
-            {
-                ctx.FunctionResult = await base.InvokeCoreAsync(ctx.Arguments, ctx.CancellationToken).ConfigureAwait(false);
-            }
+            ValueTask<object?> CoreLogicAsync(FunctionInvocationContext ctx, CancellationToken cancellationToken)
+                => base.InvokeCoreAsync(ctx.Arguments, cancellationToken);
         }
     }
 }

@@ -2,6 +2,8 @@
 
 using System;
 using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Shared.Diagnostics;
 
@@ -70,6 +72,65 @@ public sealed class AIAgentBuilder
 
         (this._agentFactories ??= []).Add(agentFactory);
         return this;
+    }
+
+    /// <summary>
+    /// Adds to the agent pipeline an anonymous delegating agent based on a delegate that provides
+    /// an implementation for both <see cref="AIAgent.RunAsync(IEnumerable{ChatMessage}, AgentThread?, AgentRunOptions?, CancellationToken)"/> and <see cref="AIAgent.RunStreamingAsync(IEnumerable{ChatMessage}, AgentThread?, AgentRunOptions?, CancellationToken)"/>.
+    /// </summary>
+    /// <param name="sharedFunc">
+    /// A delegate that provides the implementation for both <see cref="AIAgent.RunAsync(IEnumerable{ChatMessage}, AgentThread?, AgentRunOptions?, CancellationToken)"/> and
+    /// <see cref="AIAgent.RunStreamingAsync(IEnumerable{ChatMessage}, AgentThread?, AgentRunOptions?, CancellationToken)"/>. This delegate is invoked with the list of messages, the agent
+    /// thread, the run options, a delegate that represents invoking the inner agent, and a cancellation token. The delegate should be passed
+    /// whatever messages, thread, options, and cancellation token should be passed along to the next stage in the pipeline.
+    /// It will handle both the non-streaming and streaming cases.
+    /// </param>
+    /// <returns>The updated <see cref="AIAgentBuilder"/> instance.</returns>
+    /// <remarks>
+    /// This overload can be used when the anonymous implementation needs to provide pre-processing and/or post-processing, but doesn't
+    /// need to interact with the results of the operation, which will come from the inner agent.
+    /// </remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="sharedFunc"/> is <see langword="null"/>.</exception>
+    public AIAgentBuilder Use(Func<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, Func<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, CancellationToken, Task>, CancellationToken, Task> sharedFunc)
+    {
+        _ = Throw.IfNull(sharedFunc);
+
+        return this.Use((innerAgent, _) => new AnonymousDelegatingAIAgent(innerAgent, sharedFunc));
+    }
+
+    /// <summary>
+    /// Adds to the agent pipeline an anonymous delegating agent based on a delegate that provides
+    /// an implementation for both <see cref="AIAgent.RunAsync(IEnumerable{ChatMessage}, AgentThread?, AgentRunOptions?, CancellationToken)"/> and <see cref="AIAgent.RunStreamingAsync(IEnumerable{ChatMessage}, AgentThread?, AgentRunOptions?, CancellationToken)"/>.
+    /// </summary>
+    /// <param name="runFunc">
+    /// A delegate that provides the implementation for <see cref="AIAgent.RunAsync(IEnumerable{ChatMessage}, AgentThread?, AgentRunOptions?, CancellationToken)"/>. When <see langword="null"/>,
+    /// <paramref name="runStreamingFunc"/> must be non-null, and the implementation of <see cref="AIAgent.RunAsync(IEnumerable{ChatMessage}, AgentThread?, AgentRunOptions?, CancellationToken)"/>
+    /// will use <paramref name="runStreamingFunc"/> for the implementation.
+    /// </param>
+    /// <param name="runStreamingFunc">
+    /// A delegate that provides the implementation for <see cref="AIAgent.RunStreamingAsync(IEnumerable{ChatMessage}, AgentThread?, AgentRunOptions?, CancellationToken)"/>. When <see langword="null"/>,
+    /// <paramref name="runFunc"/> must be non-null, and the implementation of <see cref="AIAgent.RunStreamingAsync(IEnumerable{ChatMessage}, AgentThread?, AgentRunOptions?, CancellationToken)"/>
+    /// will use <paramref name="runFunc"/> for the implementation.
+    /// </param>
+    /// <returns>The updated <see cref="AIAgentBuilder"/> instance.</returns>
+    /// <remarks>
+    /// One or both delegates can be provided. If both are provided, they will be used for their respective methods:
+    /// <paramref name="runFunc"/> will provide the implementation of <see cref="AIAgent.RunAsync(IEnumerable{ChatMessage}, AgentThread?, AgentRunOptions?, CancellationToken)"/>, and
+    /// <paramref name="runStreamingFunc"/> will provide the implementation of <see cref="AIAgent.RunStreamingAsync(IEnumerable{ChatMessage}, AgentThread?, AgentRunOptions?, CancellationToken)"/>.
+    /// If only one of the delegates is provided, it will be used for both methods. That means that if <paramref name="runFunc"/>
+    /// is supplied without <paramref name="runStreamingFunc"/>, the implementation of <see cref="AIAgent.RunStreamingAsync(IEnumerable{ChatMessage}, AgentThread?, AgentRunOptions?, CancellationToken)"/>
+    /// will employ limited streaming, as it will be operating on the batch output produced by <paramref name="runFunc"/>. And if
+    /// <paramref name="runStreamingFunc"/> is supplied without <paramref name="runFunc"/>, the implementation of
+    /// <see cref="AIAgent.RunAsync(IEnumerable{ChatMessage}, AgentThread?, AgentRunOptions?, CancellationToken)"/> will be implemented by combining the updates from <paramref name="runStreamingFunc"/>.
+    /// </remarks>
+    /// <exception cref="ArgumentNullException">Both <paramref name="runFunc"/> and <paramref name="runStreamingFunc"/> are <see langword="null"/>.</exception>
+    public AIAgentBuilder Use(
+        Func<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, AIAgent, CancellationToken, Task<AgentRunResponse>>? runFunc,
+        Func<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, AIAgent, CancellationToken, IAsyncEnumerable<AgentRunResponseUpdate>>? runStreamingFunc)
+    {
+        AnonymousDelegatingAIAgent.ThrowIfBothDelegatesNull(runFunc, runStreamingFunc);
+
+        return this.Use((innerAgent, _) => new AnonymousDelegatingAIAgent(innerAgent, runFunc, runStreamingFunc));
     }
 
     /// <summary>

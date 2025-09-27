@@ -38,7 +38,7 @@ static string GetDateTime()
 // Adding middleware to the chat client level
 var chatClient = azureOpenAIClient.AsIChatClient()
     .AsBuilder()
-        .Use(ChatClientMiddleware)
+        .Use(getResponseFunc: ChatClientMiddleware, getStreamingResponseFunc: null)
     .Build();
 
 // For flexibility we create the agent without any middleware.
@@ -52,8 +52,8 @@ var middlewareEnabledAgent = originalAgent
     .AsBuilder()
         .Use(FunctionCallMiddleware)
         .Use(FunctionCallOverrideWeather)
-        .Use(PIIMiddleware)
-        .Use(GuardrailMiddleware)
+        .Use(PIIMiddleware, null)
+        .Use(GuardrailMiddleware, null)
     .Build();
 
 var thread = middlewareEnabledAgent.GetNewThread();
@@ -90,7 +90,7 @@ var optionsWithApproval = new ChatClientAgentRunOptions(new()
 {
     ChatClientFactory = (chatClient) => chatClient
         .AsBuilder()
-            .Use(PerRequestChatClientMiddleware)
+            .Use(PerRequestChatClientMiddleware, null) // Using the non-streaming for handling streaming as well
         .Build()
 };
 
@@ -98,56 +98,64 @@ var optionsWithApproval = new ChatClientAgentRunOptions(new()
 var response = await originalAgent // Using per-request middleware pipeline without existing agent-level middleware
     .AsBuilder()
         .Use(PerRequestFunctionCallingMiddleware)
-        .Use(ConsolePromptingApprovalMiddleware)
+        .Use(ConsolePromptingApprovalMiddleware, null)
     .Build()
     .RunAsync("What's the current time and the weather in Seattle?", thread, optionsWithApproval);
 
 Console.WriteLine($"Per-request middleware response: {response}");
 
 // Function invocation middleware that logs before and after function calls.
-async Task FunctionCallMiddleware(AgentFunctionInvocationContext context, Func<AgentFunctionInvocationContext, Task> next)
+async ValueTask<object?> FunctionCallMiddleware(AIAgent agent, FunctionInvocationContext context, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next, CancellationToken cancellationToken)
 {
     Console.WriteLine($"Function Name: {context!.Function.Name} - Middleware 1 Pre-Invoke");
-    await next(context);
+    var result = await next(context, cancellationToken);
     Console.WriteLine($"Function Name: {context!.Function.Name} - Middleware 1 Post-Invoke");
+
+    return result;
 }
 
 // Function invocation middleware that overrides the result of the GetWeather function.
-async Task FunctionCallOverrideWeather(AgentFunctionInvocationContext context, Func<AgentFunctionInvocationContext, Task> next)
+async ValueTask<object?> FunctionCallOverrideWeather(AIAgent agent, FunctionInvocationContext context, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next, CancellationToken cancellationToken)
 {
     Console.WriteLine($"Function Name: {context!.Function.Name} - Middleware 2 Pre-Invoke");
-    await next(context);
+
+    var result = await next(context, cancellationToken);
 
     if (context.Function.Name == nameof(GetWeather))
     {
         // Override the result of the GetWeather function
-        context.FunctionResult = "The weather is sunny with a high of 25°C.";
+        result = "The weather is sunny with a high of 25°C.";
     }
     Console.WriteLine($"Function Name: {context!.Function.Name} - Middleware 2 Post-Invoke");
+    return result;
 }
 
 // There's no difference per-request middleware, except it's added to the agent and used for a single agent run.
 // This middleware logs function names before and after they are invoked.
-async Task PerRequestFunctionCallingMiddleware(AgentFunctionInvocationContext context, Func<AgentFunctionInvocationContext, Task> next)
+async ValueTask<object?> PerRequestFunctionCallingMiddleware(AIAgent agent, FunctionInvocationContext context, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next, CancellationToken cancellationToken)
 {
+    Console.WriteLine($"Agent Id: {agent.Id}");
     Console.WriteLine($"Function Name: {context!.Function.Name} - Per-Request Pre-Invoke");
-    await next(context);
+    var result = await next(context, cancellationToken);
     Console.WriteLine($"Function Name: {context!.Function.Name} - Per-Request Post-Invoke");
+    return result;
 }
 
 // This middleware redacts PII information from input and output messages.
-async Task PIIMiddleware(AgentRunContext context, Func<AgentRunContext, Task> next)
+async Task<AgentRunResponse> PIIMiddleware(IEnumerable<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options, AIAgent innerAgent, CancellationToken cancellationToken)
 {
     // Redact PII information from input messages
-    context.Messages = FilterMessages(context.Messages);
+    var filteredMessages = FilterMessages(messages);
     Console.WriteLine("Pii Middleware - Filtered Messages Pre-Run");
 
-    await next(context).ConfigureAwait(false);
+    var response = await innerAgent.RunAsync(filteredMessages, thread, options, cancellationToken).ConfigureAwait(false);
 
     // Redact PII information from output messages
-    context.RunResponse!.Messages = FilterMessages(context.RunResponse!.Messages);
+    response.Messages = FilterMessages(response.Messages);
 
     Console.WriteLine("Pii Middleware - Filtered Messages Post-Run");
+
+    return response;
 
     static IList<ChatMessage> FilterMessages(IEnumerable<ChatMessage> messages)
     {
@@ -173,20 +181,22 @@ async Task PIIMiddleware(AgentRunContext context, Func<AgentRunContext, Task> ne
 }
 
 // This middleware enforces guardrails by redacting certain keywords from input and output messages.
-async Task GuardrailMiddleware(AgentRunContext context, Func<AgentRunContext, Task> next)
+async Task<AgentRunResponse> GuardrailMiddleware(IEnumerable<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options, AIAgent innerAgent, CancellationToken cancellationToken)
 {
     // Redact keywords from input messages
-    context.Messages = FilterMessages(context.Messages);
+    var filteredMessages = FilterMessages(messages);
 
     Console.WriteLine("Guardrail Middleware - Filtered messages Pre-Run");
 
     // Proceed with the agent run
-    await next(context);
+    var response = await innerAgent.RunAsync(filteredMessages, thread, options, cancellationToken);
 
     // Redact keywords from output messages
-    context.RunResponse!.Messages = FilterMessages(context.RunResponse!.Messages);
+    response.Messages = FilterMessages(response.Messages);
 
     Console.WriteLine("Guardrail Middleware - Filtered messages Post-Run");
+
+    return response;
 
     List<ChatMessage> FilterMessages(IEnumerable<ChatMessage> messages)
     {
@@ -208,11 +218,11 @@ async Task GuardrailMiddleware(AgentRunContext context, Func<AgentRunContext, Ta
 }
 
 // This middleware handles Human in the loop console interaction for any user approval required during function calling.
-async Task ConsolePromptingApprovalMiddleware(AgentRunContext context, Func<AgentRunContext, Task> next)
+async Task<AgentRunResponse> ConsolePromptingApprovalMiddleware(IEnumerable<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options, AIAgent innerAgent, CancellationToken cancellationToken)
 {
-    await next(context);
+    var response = await innerAgent.RunAsync(messages, thread, options, cancellationToken);
 
-    var userInputRequests = context.RunResponse!.UserInputRequests.ToList();
+    var userInputRequests = response.UserInputRequests.ToList();
 
     while (userInputRequests.Count > 0)
     {
@@ -220,7 +230,7 @@ async Task ConsolePromptingApprovalMiddleware(AgentRunContext context, Func<Agen
         // For simplicity, we are assuming here that only function approval requests are being made.
 
         // Pass the user input responses back to the agent for further processing.
-        context.Messages = userInputRequests
+        response.Messages = userInputRequests
             .OfType<FunctionApprovalRequestContent>()
             .Select(functionApprovalRequest =>
             {
@@ -229,27 +239,33 @@ async Task ConsolePromptingApprovalMiddleware(AgentRunContext context, Func<Agen
             })
             .ToList();
 
-        await next(context);
+        response = await innerAgent.RunAsync(response.Messages, thread, options, cancellationToken);
 
-        userInputRequests = context.RunResponse!.UserInputRequests.ToList();
+        userInputRequests = response.UserInputRequests.ToList();
     }
+
+    return response;
 }
 
 // This middleware handles chat client lower level invocations.
 // This is useful for handling agent messages before they are sent to the LLM and also handle any response messages from the LLM before they are sent back to the agent.
-async Task ChatClientMiddleware(IEnumerable<ChatMessage> message, ChatOptions? options, Func<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken, Task> next, CancellationToken cancellationToken)
+async Task<ChatResponse> ChatClientMiddleware(IEnumerable<ChatMessage> message, ChatOptions? options, IChatClient innerChatClient, CancellationToken cancellationToken)
 {
     Console.WriteLine("Chat Client Middleware - Pre-Chat");
-    await next(message, options, cancellationToken);
+    var response = await innerChatClient.GetResponseAsync(message, options, cancellationToken);
     Console.WriteLine("Chat Client Middleware - Post-Chat");
+
+    return response;
 }
 
 // There's no difference per-request middleware, except it's added to the chat client and used for a single agent run.
 // This middleware handles chat client lower level invocations.
 // This is useful for handling agent messages before they are sent to the LLM and also handle any response messages from the LLM before they are sent back to the agent.
-async Task PerRequestChatClientMiddleware(IEnumerable<ChatMessage> message, ChatOptions? options, Func<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken, Task> next, CancellationToken cancellationToken)
+async Task<ChatResponse> PerRequestChatClientMiddleware(IEnumerable<ChatMessage> message, ChatOptions? options, IChatClient innerChatClient, CancellationToken cancellationToken)
 {
     Console.WriteLine("Per-Request Chat Client Middleware - Pre-Chat");
-    await next(message, options, cancellationToken);
+    var response = await innerChatClient.GetResponseAsync(message, options, cancellationToken);
     Console.WriteLine("Per-Request Chat Client Middleware - Post-Chat");
+
+    return response;
 }
