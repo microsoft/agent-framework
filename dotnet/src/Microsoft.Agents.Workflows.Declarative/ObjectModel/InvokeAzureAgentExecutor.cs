@@ -52,7 +52,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
             userInput = expressionResult.Value;
         }
 
-        return userInput?.ToChatMessages();
+        return userInput?.ToChatMessages(); // %%% VERIFY SINGLE MESSAGE (NO ARRAY)
     }
 
     private string? GetConversationId()

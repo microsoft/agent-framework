@@ -16,11 +16,11 @@ void EvaluateIntExpression(IntExpression expression, string targetVariable, bool
     }
     else if (expression.IsVariableReference)
     {#>
-        <#= typeName #>? <#= targetVariable #> = await context.EvaluateExpressionAsync<<#= typeName #>>(<#= FormatStringValue(expression.VariableReference.ToString()) #>).ConfigureAwait(false);<#+ 
+        <#= typeName #>? <#= targetVariable #> = await context.EvaluateValueAsync<<#= typeName #>>(<#= FormatStringValue(expression.VariableReference.ToString()) #>).ConfigureAwait(false);<#+ 
     }
     else
     {#>
-        <#= typeName #> <#= targetVariable #> = await context.EvaluateExpressionAsync<<#= typeName #>>(<#= FormatStringValue(expression.ExpressionText) #>).ConfigureAwait(false);<#+ 
+        <#= typeName #> <#= targetVariable #> = await context.EvaluateValueAsync<<#= typeName #>>(<#= FormatStringValue(expression.ExpressionText) #>).ConfigureAwait(false);<#+ 
     }
 }
 #>

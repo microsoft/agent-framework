@@ -97,6 +97,16 @@ internal static class DataValueExtensions
             _ => throw new DeclarativeModelException($"Unsupported {nameof(DataValue)} type: {value.GetType().Name}"),
         };
 
+    public static IList<TElement>? AsList<TElement>(this DataValue? value)
+    {
+        if (value is null || value is BlankDataValue)
+        {
+            return null;
+        }
+
+        return value.AsList<TElement>();
+    }
+
     public static FormulaValue NewBlank(this DataType? type) => FormulaValue.NewBlank(type?.ToFormulaType() ?? FormulaType.Blank);
 
     public static RecordValue ToRecordValue(this RecordDataValue recordDataValue) =>

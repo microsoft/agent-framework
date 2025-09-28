@@ -69,7 +69,7 @@ public static class WorkflowProvider
             string? conversationId = await context.ReadStateAsync<string>(key: "ConversationId", scopeName: "System").ConfigureAwait(false);
             bool autoSend = true;
             string? additionalInstructions = null;
-            ChatMessage[]? inputMessages = await context.EvaluateExpressionAsync<ChatMessage[]>("[UserMessage(System.LastMessageText)]").ConfigureAwait(false);
+            IList<ChatMessage>? inputMessages = await context.EvaluateListAsync<ChatMessage>("[UserMessage(System.LastMessageText)]").ConfigureAwait(false);
     
             AgentRunResponse agentResponse =
                 InvokeAgentAsync(

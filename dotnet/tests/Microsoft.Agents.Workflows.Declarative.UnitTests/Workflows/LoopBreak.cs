@@ -64,7 +64,7 @@ public static class WorkflowProvider
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
             this._index = 0;
-            object? evaluatedValue = await context.EvaluateExpressionAsync<object>("""["a", "b", "c", "d", "e", "f"]""").ConfigureAwait(false);
+            object? evaluatedValue = await context.EvaluateValueAsync<object>("""["a", "b", "c", "d", "e", "f"]""").ConfigureAwait(false);
     
             if (evaluatedValue == null)
             {
@@ -114,7 +114,7 @@ public static class WorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            object? evaluatedValue = await context.EvaluateExpressionAsync<object>("Local.Count + 1").ConfigureAwait(false);
+            object? evaluatedValue = await context.EvaluateValueAsync<object>("Local.Count + 1").ConfigureAwait(false);
             await context.QueueStateUpdateAsync(key: "Count", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
     
             return default;

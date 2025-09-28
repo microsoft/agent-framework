@@ -46,11 +46,11 @@ public static class TestWorkflowProvider
             // Set environment variables
             await this.InitializeEnvironmentAsync(
                 context,
-                "FOUNDRY_AGENT_RESEARCHWEATHER",
-                "FOUNDRY_AGENT_RESEARCHCODER",
-                "FOUNDRY_AGENT_RESEARCHWEB",
                 "FOUNDRY_AGENT_RESEARCHMANAGER",
-                "FOUNDRY_AGENT_RESEARCHANALYST").ConfigureAwait(false);
+                "FOUNDRY_AGENT_RESEARCHWEB",
+                "FOUNDRY_AGENT_RESEARCHANALYST",
+                "FOUNDRY_AGENT_RESEARCHCODER",
+                "FOUNDRY_AGENT_RESEARCHWEATHER").ConfigureAwait(false);
 
             // Initialize variables
             await context.QueueStateUpdateAsync("AgentResponse", UnassignedValue.Instance, "Local").ConfigureAwait(false);
@@ -80,7 +80,7 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            object? evaluatedValue = await context.EvaluateExpressionAsync<object>("""
+            object? evaluatedValue = await context.EvaluateValueAsync<object>("""
     [
         {
             name: "WeatherAgent",
@@ -113,7 +113,7 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            object? evaluatedValue = await context.EvaluateExpressionAsync<object>("""
+            object? evaluatedValue = await context.EvaluateValueAsync<object>("""
     Concat(ForAll(Local.AvailableAgents, $"- " & name & $": " & description), Value, "
     ")
     """).ConfigureAwait(false);
@@ -131,7 +131,7 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            object? evaluatedValue = await context.EvaluateExpressionAsync<object>("System.LastMessage.Text").ConfigureAwait(false);
+            object? evaluatedValue = await context.EvaluateValueAsync<object>("System.LastMessage.Text").ConfigureAwait(false);
             await context.QueueStateUpdateAsync(key: "InputTask", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
 
             return default;
@@ -146,7 +146,7 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            object? evaluatedValue = await context.ReadStateAsync<object>(key: "InputTask", scopeName: "Local").ConfigureAwait(false);
+            object? evaluatedValue = await context.EvaluateValueAsync<object>("UserMessage(Local.InputTask)").ConfigureAwait(false);
             await context.QueueStateUpdateAsync(key: "SeedTask", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
 
             return default;
@@ -227,7 +227,7 @@ public static class TestWorkflowProvider
     
                     DO NOT include any other headings or sections in your response. DO NOT list next steps or plans until asked to do so.
                     """);
-            ChatMessage[]? inputMessages = await context.EvaluateExpressionAsync<ChatMessage[]>("[UserMessage(Local.InputTask)]").ConfigureAwait(false);
+            IList<ChatMessage>? inputMessages = await context.EvaluateListAsync<ChatMessage>("UserMessage(Local.InputTask)").ConfigureAwait(false);
 
             AgentRunResponse agentResponse =
                 InvokeAgentAsync(
@@ -301,7 +301,7 @@ public static class TestWorkflowProvider
     
                     Remember, there is no requirement to involve the entire team -- only select team member's whose particular expertise is required for this task.
                     """);
-            ChatMessage[]? inputMessages = await context.EvaluateExpressionAsync<ChatMessage[]>("[UserMessage(Local.InputTask)]").ConfigureAwait(false);
+            IList<ChatMessage>? inputMessages = await context.EvaluateListAsync<ChatMessage>("UserMessage(Local.InputTask)").ConfigureAwait(false);
 
             AgentRunResponse agentResponse =
                 InvokeAgentAsync(
@@ -332,7 +332,7 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            object? evaluatedValue = await context.EvaluateExpressionAsync<object>("""
+            object? evaluatedValue = await context.EvaluateValueAsync<object>("""
     "# TASK
     Address the following user request:
     
@@ -348,13 +348,13 @@ public static class TestWorkflowProvider
     # FACTS
     Consider this initial fact sheet:
     
-    " & Trim(Local.TaskFacts.Text) & "
+    " & Trim(Last(Local.TaskFacts).Text) & "
     
     
     # PLAN
     Here is the plan to follow as best as possible:
     
-    " & Local.Plan.Text
+    " & Last(Local.Plan).Text
     """).ConfigureAwait(false);
             await context.QueueStateUpdateAsync(key: "TaskInstructions", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
 
@@ -444,7 +444,7 @@ public static class TestWorkflowProvider
                             }}
                         }}
                     """);
-            ChatMessage[]? inputMessages = await context.EvaluateExpressionAsync<ChatMessage[]>("[UserMessage(Local.AgentResponseText)]").ConfigureAwait(false);
+            IList<ChatMessage>? inputMessages = await context.EvaluateListAsync<ChatMessage>("UserMessage(Local.AgentResponseText)").ConfigureAwait(false);
 
             AgentRunResponse agentResponse =
                 InvokeAgentAsync(
@@ -487,13 +487,13 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            bool condition0 = await context.EvaluateExpressionAsync<bool>("Local.TypedProgressLedger.is_request_satisfied.answer").ConfigureAwait(false);
+            bool condition0 = await context.EvaluateValueAsync<bool>("Local.TypedProgressLedger.is_request_satisfied.answer").ConfigureAwait(false);
             if (condition0)
             {
                 return "conditionItem_fj432c";
             }
 
-            bool condition1 = await context.EvaluateExpressionAsync<bool>("Local.TypedProgressLedger.is_in_loop.answer || Not(Local.TypedProgressLedger.is_progress_being_made.answer)").ConfigureAwait(false);
+            bool condition1 = await context.EvaluateValueAsync<bool>("Local.TypedProgressLedger.is_in_loop.answer || Not(Local.TypedProgressLedger.is_progress_being_made.answer)").ConfigureAwait(false);
             if (condition1)
             {
                 return "conditionItem_yiqund";
@@ -548,7 +548,7 @@ public static class TestWorkflowProvider
                     Based only on the conversation and without adding any new information, synthesize the result of the conversation as a complete response to the user task.
                     The user will only every see this last response and not the entire conversation, so please ensure it is complete and self-contained.
                     """);
-            ChatMessage[]? inputMessages = await context.EvaluateExpressionAsync<ChatMessage[]>("[UserMessage(Local.SeedTask)]").ConfigureAwait(false);
+            IList<ChatMessage>? inputMessages = await context.ReadListAsync<ChatMessage>(key: "SeedTask", scopeName: "Local").ConfigureAwait(false);
 
             AgentRunResponse agentResponse =
                 InvokeAgentAsync(
@@ -579,7 +579,7 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            object? evaluatedValue = await context.EvaluateExpressionAsync<object>("Local.StallCount + 1").ConfigureAwait(false);
+            object? evaluatedValue = await context.EvaluateValueAsync<object>("Local.StallCount + 1").ConfigureAwait(false);
             await context.QueueStateUpdateAsync(key: "StallCount", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
 
             return default;
@@ -594,13 +594,13 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            bool condition0 = await context.EvaluateExpressionAsync<bool>(".TypedProgressLedger.is_in_loop.answer").ConfigureAwait(false);
+            bool condition0 = await context.EvaluateValueAsync<bool>(".TypedProgressLedger.is_in_loop.answer").ConfigureAwait(false);
             if (condition0)
             {
                 return "conditionItem_fpaNL9";
             }
 
-            bool condition1 = await context.EvaluateExpressionAsync<bool>("Not(Local.TypedProgressLedger.is_progress_being_made.answer)").ConfigureAwait(false);
+            bool condition1 = await context.EvaluateValueAsync<bool>("Not(Local.TypedProgressLedger.is_progress_being_made.answer)").ConfigureAwait(false);
             if (condition1)
             {
                 return "conditionItem_NnqvXh";
@@ -660,7 +660,7 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            bool condition0 = await context.EvaluateExpressionAsync<bool>("Local.StallCount > 2").ConfigureAwait(false);
+            bool condition0 = await context.EvaluateValueAsync<bool>("Local.StallCount > 2").ConfigureAwait(false);
             if (condition0)
             {
                 return "conditionItem_NlQTBv";
@@ -699,7 +699,7 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            bool condition0 = await context.EvaluateExpressionAsync<bool>("Local.RestartCount > 2").ConfigureAwait(false);
+            bool condition0 = await context.EvaluateValueAsync<bool>("Local.RestartCount > 2").ConfigureAwait(false);
             if (condition0)
             {
                 return "conditionItem_EXAlhZ";
@@ -781,13 +781,11 @@ public static class TestWorkflowProvider
     
                     {Local.TaskFacts}
                     """);
-            ChatMessage[]? inputMessages = await context.EvaluateExpressionAsync<ChatMessage[]>("""
-    [
-      UserMessage(
+            IList<ChatMessage>? inputMessages = await context.EvaluateListAsync<ChatMessage>("""
+    UserMessage(
       "As a reminder, we are working to solve the following task:
     
       " & Local.InputTask)
-    ]
     """).ConfigureAwait(false);
 
             AgentRunResponse agentResponse =
@@ -859,7 +857,7 @@ public static class TestWorkflowProvider
     
                     {Local.TeamDescription}
                     """);
-            ChatMessage[]? inputMessages = null;
+            IList<ChatMessage>? inputMessages = null;
 
             AgentRunResponse agentResponse =
                 InvokeAgentAsync(
@@ -890,7 +888,7 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            object? evaluatedValue = await context.EvaluateExpressionAsync<object>("""
+            object? evaluatedValue = await context.EvaluateValueAsync<object>("""
     "# TASK
     Address the following user request:
     
@@ -943,7 +941,7 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            object? evaluatedValue = await context.EvaluateExpressionAsync<object>("Local.RestartCount + 1").ConfigureAwait(false);
+            object? evaluatedValue = await context.EvaluateValueAsync<object>("Local.RestartCount + 1").ConfigureAwait(false);
             await context.QueueStateUpdateAsync(key: "RestartCount", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
 
             return default;
@@ -996,7 +994,7 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            object? evaluatedValue = await context.EvaluateExpressionAsync<object>("Search(Local.AvailableAgents, Local.TypedProgressLedger.next_speaker.answer, name)").ConfigureAwait(false);
+            object? evaluatedValue = await context.EvaluateValueAsync<object>("Search(Local.AvailableAgents, Local.TypedProgressLedger.next_speaker.answer, name)").ConfigureAwait(false);
             await context.QueueStateUpdateAsync(key: "NextSpeaker", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
 
             return default;
@@ -1011,7 +1009,7 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            bool condition0 = await context.EvaluateExpressionAsync<bool>("CountRows(Local.NextSpeaker) = 1").ConfigureAwait(false);
+            bool condition0 = await context.EvaluateValueAsync<bool>("CountRows(Local.NextSpeaker) = 1").ConfigureAwait(false);
             if (condition0)
             {
                 return "conditionItem_GmigcU";
@@ -1029,7 +1027,7 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            string? agentName = await context.EvaluateExpressionAsync<string>("First(Local.NextSpeaker).agentid").ConfigureAwait(false);
+            string? agentName = await context.EvaluateValueAsync<string>("First(Local.NextSpeaker).agentid").ConfigureAwait(false);
 
             if (string.IsNullOrWhiteSpace(agentName))
             {
@@ -1043,7 +1041,7 @@ public static class TestWorkflowProvider
                     """
                     {Local.TypedProgressLedger.instruction_or_question.answer}
                     """);
-            ChatMessage[]? inputMessages = await context.EvaluateExpressionAsync<ChatMessage[]>("[UserMessage(Local.SeedTask)]").ConfigureAwait(false);
+            IList<ChatMessage>? inputMessages = await context.ReadListAsync<ChatMessage>(key: "SeedTask", scopeName: "Local").ConfigureAwait(false);
 
             AgentRunResponse agentResponse =
                 InvokeAgentAsync(
@@ -1074,7 +1072,7 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            object? evaluatedValue = await context.EvaluateExpressionAsync<object>("Local.AgentResponse.Text").ConfigureAwait(false);
+            object? evaluatedValue = await context.EvaluateValueAsync<object>("Last(Local.AgentResponse).Text").ConfigureAwait(false);
             await context.QueueStateUpdateAsync(key: "AgentResponseText", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
 
             return default;
@@ -1124,7 +1122,7 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            object? evaluatedValue = await context.EvaluateExpressionAsync<object>("Local.StallCount + 1").ConfigureAwait(false);
+            object? evaluatedValue = await context.EvaluateValueAsync<object>("Local.StallCount + 1").ConfigureAwait(false);
             await context.QueueStateUpdateAsync(key: "StallCount", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
 
             return default;
@@ -1246,9 +1244,9 @@ public static class TestWorkflowProvider
         builder.AddEdge(sendActivityBwnzim, questionO3bqkf);
         builder.AddEdge(questionO3bqkf, parseRnztlv);
         builder.AddEdge(parseRnztlv, conditionGroupMviecc);
-        builder.AddEdge(conditionGroupMviecc, conditionItemFj432c, (object? result) => string.Equals("conditionItem_fj432c", result as string, StringComparison.Ordinal));
-        builder.AddEdge(conditionGroupMviecc, conditionItemYiqund, (object? result) => string.Equals("conditionItem_yiqund", result as string, StringComparison.Ordinal));
-        builder.AddEdge(conditionGroupMviecc, conditionGroupMvieccelseactions, (object? result) => string.Equals("conditionGroup_mVIecCElseActions", result as string, StringComparison.Ordinal));
+        builder.AddEdge(conditionGroupMviecc, conditionItemFj432c, (object? result) => ActionExecutor.IsMatch("conditionItem_fj432c", result));
+        builder.AddEdge(conditionGroupMviecc, conditionItemYiqund, (object? result) => ActionExecutor.IsMatch("conditionItem_yiqund", result));
+        builder.AddEdge(conditionGroupMviecc, conditionGroupMvieccelseactions, (object? result) => ActionExecutor.IsMatch("conditionGroup_mVIecCElseActions", result));
         builder.AddEdge(conditionItemFj432c, conditionItemFj432cactions);
         builder.AddEdge(conditionItemFj432cactions, sendActivityKdl3mc);
         builder.AddEdge(sendActivityKdl3mc, questionKe3l1d);
@@ -1256,18 +1254,18 @@ public static class TestWorkflowProvider
         builder.AddEdge(conditionItemYiqund, conditionItemYiqundactions);
         builder.AddEdge(conditionItemYiqundactions, setVariableH5lxdd);
         builder.AddEdge(setVariableH5lxdd, conditionGroupVbtqd3);
-        builder.AddEdge(conditionGroupVbtqd3, conditionItemFpanl9, (object? result) => string.Equals("conditionItem_fpaNL9", result as string, StringComparison.Ordinal));
-        builder.AddEdge(conditionGroupVbtqd3, conditionItemNnqvxh, (object? result) => string.Equals("conditionItem_NnqvXh", result as string, StringComparison.Ordinal));
+        builder.AddEdge(conditionGroupVbtqd3, conditionItemFpanl9, (object? result) => ActionExecutor.IsMatch("conditionItem_fpaNL9", result));
+        builder.AddEdge(conditionGroupVbtqd3, conditionItemNnqvxh, (object? result) => ActionExecutor.IsMatch("conditionItem_NnqvXh", result));
         builder.AddEdge(conditionItemFpanl9, conditionItemFpanl9actions);
         builder.AddEdge(conditionItemFpanl9actions, sendActivityFpanl9);
         builder.AddEdge(conditionItemNnqvxh, conditionItemNnqvxhactions);
         builder.AddEdge(conditionItemNnqvxhactions, sendActivityNnqvxh);
         builder.AddEdge(conditionGroupVbtqd3Post, conditionGroupXznrdm);
-        builder.AddEdge(conditionGroupXznrdm, conditionItemNlqtbv, (object? result) => string.Equals("conditionItem_NlQTBv", result as string, StringComparison.Ordinal));
+        builder.AddEdge(conditionGroupXznrdm, conditionItemNlqtbv, (object? result) => ActionExecutor.IsMatch("conditionItem_NlQTBv", result));
         builder.AddEdge(conditionItemNlqtbv, conditionItemNlqtbvactions);
         builder.AddEdge(conditionItemNlqtbvactions, sendActivityH5lxdd);
         builder.AddEdge(sendActivityH5lxdd, conditionGroup4S1z27);
-        builder.AddEdge(conditionGroup4S1z27, conditionItemExalhz, (object? result) => string.Equals("conditionItem_EXAlhZ", result as string, StringComparison.Ordinal));
+        builder.AddEdge(conditionGroup4S1z27, conditionItemExalhz, (object? result) => ActionExecutor.IsMatch("conditionItem_EXAlhZ", result));
         builder.AddEdge(conditionItemExalhz, conditionItemExalhzactions);
         builder.AddEdge(conditionItemExalhzactions, sendActivityXkxfuu);
         builder.AddEdge(sendActivityXkxfuu, endGhvrfh);
@@ -1285,8 +1283,8 @@ public static class TestWorkflowProvider
         builder.AddEdge(sendActivityL7ooqo, setVariableL7ooqo);
         builder.AddEdge(conditionGroupMvieccPost, setVariableNxn1me);
         builder.AddEdge(setVariableNxn1me, conditionGroupQfpif5);
-        builder.AddEdge(conditionGroupQfpif5, conditionItemGmigcu, (object? result) => string.Equals("conditionItem_GmigcU", result as string, StringComparison.Ordinal));
-        builder.AddEdge(conditionGroupQfpif5, conditionGroupQfpif5elseactions, (object? result) => string.Equals("conditionGroup_QFPiF5ElseActions", result as string, StringComparison.Ordinal));
+        builder.AddEdge(conditionGroupQfpif5, conditionItemGmigcu, (object? result) => ActionExecutor.IsMatch("conditionItem_GmigcU", result));
+        builder.AddEdge(conditionGroupQfpif5, conditionGroupQfpif5elseactions, (object? result) => ActionExecutor.IsMatch("conditionGroup_QFPiF5ElseActions", result));
         builder.AddEdge(conditionItemGmigcu, conditionItemGmigcuactions);
         builder.AddEdge(conditionItemGmigcuactions, questionOrsbf06);
         builder.AddEdge(questionOrsbf06, setVariableXznrdm);

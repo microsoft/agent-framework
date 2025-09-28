@@ -15,11 +15,11 @@ void EvaluateBoolExpression(BoolExpression expression, string targetVariable, bo
     }
     else if (expression.IsVariableReference)
     {#>
-        bool <#= targetVariable #> = await context.EvaluateExpressionAsync<bool>>(<#= FormatStringValue(expression.VariableReference.ToString()) #>).ConfigureAwait(false);<#+ 
+        bool <#= targetVariable #> = await context.EvaluateValueAsync<bool>>(<#= FormatStringValue(expression.VariableReference.ToString()) #>).ConfigureAwait(false);<#+ 
     }
     else
     {#>
-        bool <#= targetVariable #> = await context.EvaluateExpressionAsync<bool>(<#= FormatStringValue(expression.ExpressionText) #>).ConfigureAwait(false);<#+ 
+        bool <#= targetVariable #> = await context.EvaluateValueAsync<bool>(<#= FormatStringValue(expression.ExpressionText) #>).ConfigureAwait(false);<#+ 
     }
 }
 #>

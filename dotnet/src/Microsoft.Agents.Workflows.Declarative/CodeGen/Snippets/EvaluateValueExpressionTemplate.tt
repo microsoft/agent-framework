@@ -18,11 +18,11 @@ void EvaluateValueExpression<TValue>(ValueExpression expression, string targetVa
     }
     else if (expression.IsVariableReference)
     {#>
-        <#= GetTypeAlias<TValue>() #>? <#= targetVariable #> = await context.EvaluateExpressionAsync<<#= GetTypeAlias<TValue>() #>>(<#= FormatStringValue(expression.VariableReference.ToString()) #>).ConfigureAwait(false);<#+ 
+        <#= GetTypeAlias<TValue>() #>? <#= targetVariable #> = await context.EvaluateValueAsync<<#= GetTypeAlias<TValue>() #>>(<#= FormatStringValue(expression.VariableReference.ToString()) #>).ConfigureAwait(false);<#+ 
     }
     else
     {#>
-        <#= GetTypeAlias<TValue>() #>? <#= targetVariable #> = await context.EvaluateExpressionAsync<<#= GetTypeAlias<TValue>() #>>(<#= FormatStringValue(expression.ExpressionText) #>).ConfigureAwait(false);<#+ 
+        <#= GetTypeAlias<TValue>() #>? <#= targetVariable #> = await context.EvaluateValueAsync<<#= GetTypeAlias<TValue>() #>>(<#= FormatStringValue(expression.ExpressionText) #>).ConfigureAwait(false);<#+ 
     }
 }
 #>

@@ -106,7 +106,7 @@ public abstract class WorkflowTest(ITestOutputHelper output) : IntegrationTest(o
         public static void EventCounts(int actualCount, Testcase testcase)
         {
             Assert.True(actualCount >= testcase.Validation.MinActionCount, $"Event count less than expected: {testcase.Validation.MinActionCount} ({actualCount}).");
-            Assert.True(actualCount <= (testcase.Validation.MaxActionCount ?? testcase.Validation.MinActionCount), $"Event count greater than expected: {testcase.Validation.MinActionCount} ({actualCount}).");
+            Assert.True(actualCount <= (testcase.Validation.MaxActionCount ?? testcase.Validation.MinActionCount), $"Event count greater than expected: {testcase.Validation.MaxActionCount ?? testcase.Validation.MinActionCount} ({actualCount}).");
         }
 
         internal static void EventSequence(IEnumerable<string> sourceIds, Testcase testcase)

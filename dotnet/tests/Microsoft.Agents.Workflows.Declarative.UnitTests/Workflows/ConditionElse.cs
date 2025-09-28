@@ -56,7 +56,7 @@ public static class WorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            object? evaluatedValue = await context.EvaluateExpressionAsync<object>("Value(System.LastMessageText)").ConfigureAwait(false);
+            object? evaluatedValue = await context.EvaluateValueAsync<object>("Value(System.LastMessageText)").ConfigureAwait(false);
             await context.QueueStateUpdateAsync(key: "TestValue", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
     
             return default;
@@ -71,7 +71,7 @@ public static class WorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            bool condition0 = await context.EvaluateExpressionAsync<bool>("Mod(Local.TestValue, 2) = 1").ConfigureAwait(false);
+            bool condition0 = await context.EvaluateValueAsync<bool>("Mod(Local.TestValue, 2) = 1").ConfigureAwait(false);
             if (condition0)
             {
                 return "conditionItem_odd";

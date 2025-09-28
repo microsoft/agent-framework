@@ -72,7 +72,7 @@ public static class IWorkflowContextExtensions
     /// <param name="cancellationToken">A token that propagates notification when operation should be canceled.</param>
     /// <returns>The evaluated expression value</returns>
     public static ValueTask<object?> EvaluateExpressionAsync(this IWorkflowContext context, string expression, CancellationToken cancellationToken = default) =>
-            context.EvaluateExpressionAsync<object>(expression, cancellationToken);
+            context.EvaluateValueAsync<object>(expression, cancellationToken);
 
     /// <summary>
     /// Evaluate an expression using the workflow's declarative state.
@@ -81,13 +81,44 @@ public static class IWorkflowContextExtensions
     /// <param name="expression">The expression to evaluate.</param>
     /// <param name="cancellationToken">A token that propagates notification when operation should be canceled.</param>
     /// <returns>The evaluated expression value</returns>
-    public static async ValueTask<TValue?> EvaluateExpressionAsync<TValue>(this IWorkflowContext context, string expression, CancellationToken cancellationToken = default)
+    public static async ValueTask<TValue?> EvaluateValueAsync<TValue>(this IWorkflowContext context, string expression, CancellationToken cancellationToken = default)
     {
         WorkflowFormulaState state = await context.GetStateAsync(cancellationToken).ConfigureAwait(false);
 
         EvaluationResult<DataValue> result = state.Evaluator.GetValue(ValueExpression.Expression(expression));
 
         return (TValue?)result.Value.ToObject();
+    }
+
+    /// <summary>
+    /// Evaluate an expression using the workflow's declarative state.
+    /// </summary>
+    /// <typeparam name="TElement">The type of the list element.</typeparam>
+    /// <param name="context">The workflow execution context used to restore persisted state prior to formatting.</param>
+    /// <param name="expression">The expression to evaluate.</param>
+    /// <param name="cancellationToken">A token that propagates notification when operation should be canceled.</param>
+    /// <returns>The evaluated list expression</returns>
+    public static async ValueTask<IList<TElement>?> EvaluateListAsync<TElement>(this IWorkflowContext context, string expression, CancellationToken cancellationToken = default)
+    {
+        WorkflowFormulaState state = await context.GetStateAsync(cancellationToken).ConfigureAwait(false);
+
+        EvaluationResult<DataValue> result = state.Evaluator.GetValue(ValueExpression.Expression(expression));
+
+        return result.Value.AsList<TElement>();
+    }
+
+    /// <summary>
+    /// Evaluate an expression using the workflow's declarative state.
+    /// </summary>
+    /// <typeparam name="TElement">The type of the list element.</typeparam>
+    /// <param name="context">The workflow execution context used to restore persisted state prior to formatting.</param>
+    /// <param name="key">The key of the state value.</param>
+    /// <param name = "scopeName" > An optional name that specifies the scope to read.If null, the default scope is used.</param>
+    /// <returns>The evaluated list expression</returns>
+    public static async ValueTask<IList<TElement>?> ReadListAsync<TElement>(this IWorkflowContext context, string key, string? scopeName = null)
+    {
+        object? value = await context.ReadStateAsync<object>(key, scopeName).ConfigureAwait(false);
+        return value.AsList<TElement>();
     }
 
     private static async Task<WorkflowFormulaState> GetStateAsync(this IWorkflowContext context, CancellationToken cancellationToken)

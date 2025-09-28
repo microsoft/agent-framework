@@ -1,0 +1,26 @@
+﻿<#+
+void EvaluateListExpression<TElement>(ValueExpression expression, string targetVariable)
+{
+    string typeName = GetTypeAlias<TElement>();
+    if (expression is null)
+    {#>
+        IList<<#= typeName #>>? <#= targetVariable #> = null;<#+ 
+    }
+    else if (expression.IsLiteral)
+    {#>
+        IList<<#= typeName #>>? <#= targetVariable #> = <#= FormatDataValue(expression.LiteralValue) #>;<#+ 
+    }
+    else if (expression.IsVariableReference && expression.VariableReference.SegmentCount == 2)
+    {#>
+        IList<<#= typeName #>>? <#= targetVariable #> = await context.ReadListAsync<<#= GetTypeAlias<TElement>() #>>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.NamespaceAlias #>").ConfigureAwait(false);<#+
+    }
+    else if (expression.IsVariableReference)
+    {#>
+        IList<<#= typeName #>>? <#= targetVariable #>> = await context.EvaluateListAsync<<#= typeName #>>(<#= FormatStringValue(expression.VariableReference.ToString()) #>).ConfigureAwait(false);<#+ 
+    }
+    else
+    {#>
+        IList<<#= typeName #>>? <#= targetVariable #> = await context.EvaluateListAsync<<#= typeName #>>(<#= FormatStringValue(expression.ExpressionText) #>).ConfigureAwait(false);<#+ 
+    }
+}
+#>

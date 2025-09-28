@@ -26,11 +26,11 @@ void EvaluateStringExpression(StringExpression expression, string targetVariable
     }
     else if (expression.IsVariableReference)
     {#>
-        <#= typeName #> <#= targetVariable #> = await context.EvaluateExpressionAsync<string>(<#= FormatStringValue(expression.VariableReference.ToString()) #>).ConfigureAwait(false);<#+ 
+        <#= typeName #> <#= targetVariable #> = await context.EvaluateValueAsync<string>(<#= FormatStringValue(expression.VariableReference.ToString()) #>).ConfigureAwait(false);<#+ 
     }
     else
     {#>
-        <#= typeName #> <#= targetVariable #> = await context.EvaluateExpressionAsync<string>(<#= FormatStringValue(expression.ExpressionText) #>).ConfigureAwait(false);<#+ 
+        <#= typeName #> <#= targetVariable #> = await context.EvaluateValueAsync<string>(<#= FormatStringValue(expression.ExpressionText) #>).ConfigureAwait(false);<#+ 
     }
 }
 #>

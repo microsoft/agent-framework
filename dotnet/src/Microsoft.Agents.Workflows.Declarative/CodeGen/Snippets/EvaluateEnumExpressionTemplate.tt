@@ -31,11 +31,11 @@ void EvaluateEnumExpression<TWrapper, TValue>(
     }
     else if (expression.IsVariableReference)
     {#>
-        <#= resultType #>? <#= targetVariable #> = await context.EvaluateExpressionAsync<<#= resultType #>>(<#= FormatStringValue(expression.VariableReference.ToString()) #>).ConfigureAwait(false);<#+ 
+        <#= resultType #>? <#= targetVariable #> = await context.EvaluateValueAsync<<#= resultType #>>(<#= FormatStringValue(expression.VariableReference.ToString()) #>).ConfigureAwait(false);<#+ 
     }
     else
     {#>
-        <#= resultType #> <#= targetVariable #> = await context.EvaluateExpressionAsync<<#= resultType #>>(<#= FormatStringValue(expression.ExpressionText) #>).ConfigureAwait(false);<#+ 
+        <#= resultType #> <#= targetVariable #> = await context.EvaluateValueAsync<<#= resultType #>>(<#= FormatStringValue(expression.ExpressionText) #>).ConfigureAwait(false);<#+ 
     }
 }
 #>
