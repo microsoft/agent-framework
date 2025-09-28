@@ -2096,28 +2096,46 @@ class AgentRunResponse(AFBaseModel):
 
     @classmethod
     def from_agent_run_response_updates(
-        cls: type[TAgentRunResponse], updates: Sequence["AgentRunResponseUpdate"]
+        cls: type[TAgentRunResponse],
+        updates: Sequence["AgentRunResponseUpdate"],
+        *,
+        output_format_type: type[BaseModel] | None = None,
     ) -> TAgentRunResponse:
         """Joins multiple updates into a single AgentRunResponse."""
         msg = cls(messages=[])
         for update in updates:
             _process_update(msg, update)
         _finalize_response(msg)
+        if output_format_type:
+            msg.try_parse_value(output_format_type)
         return msg
 
     @classmethod
     async def from_agent_response_generator(
-        cls: type[TAgentRunResponse], updates: AsyncIterable["AgentRunResponseUpdate"]
+        cls: type[TAgentRunResponse],
+        updates: AsyncIterable["AgentRunResponseUpdate"],
+        *,
+        output_format_type: type[BaseModel] | None = None,
     ) -> TAgentRunResponse:
         """Joins multiple updates into a single AgentRunResponse."""
         msg = cls(messages=[])
         async for update in updates:
             _process_update(msg, update)
         _finalize_response(msg)
+        if output_format_type:
+            msg.try_parse_value(output_format_type)
         return msg
 
     def __str__(self) -> str:
         return self.text
+
+    def try_parse_value(self, output_format_type: type[BaseModel]) -> None:
+        """If there is a value, does nothing, otherwise tries to parse the text into the value."""
+        if self.value is None:
+            try:
+                self.value = output_format_type.model_validate_json(self.text)  # type: ignore[reportUnknownMemberType]
+            except ValidationError as ex:
+                logger.debug("Failed to parse value from agent run response text: %s", ex)
 
 
 # region AgentRunResponseUpdate

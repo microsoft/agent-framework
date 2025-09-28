@@ -2,8 +2,8 @@
 
 using System.Text.Json;
 using Microsoft.Agents.AI.Hosting;
+using Microsoft.Agents.AI.Runtime;
 using Microsoft.AspNetCore.Http.Features;
-using Microsoft.Extensions.AI.Agents.Runtime;
 
 namespace AgentWebChat.AgentHost;
 
