@@ -2,8 +2,8 @@
 
 using A2A;
 using A2A.AspNetCore;
+using Microsoft.Agents.AI.Runtime;
 using Microsoft.AspNetCore.Builder;
-using Microsoft.Extensions.AI.Agents.Runtime;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 

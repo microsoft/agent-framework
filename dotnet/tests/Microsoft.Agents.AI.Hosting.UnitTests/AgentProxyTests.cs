@@ -6,8 +6,8 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Runtime;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents.Runtime;
 using Moq;
 
 namespace Microsoft.Agents.AI.Hosting.UnitTests;
