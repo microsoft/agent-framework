@@ -2,12 +2,12 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Shared.Diagnostics;
-using System.Diagnostics;
 using Microsoft.Agents.Workflows.Observability;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.Workflows;
 
