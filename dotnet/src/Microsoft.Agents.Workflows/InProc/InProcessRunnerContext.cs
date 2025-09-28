@@ -196,7 +196,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         InProcessRunnerContext RunnerContext,
         string ExecutorId,
         OutputFilter outputFilter,
-        IReadOnlyDictionary<string, string>? traceContext) : IWorkflowContext
+        Dictionary<string, string>? traceContext) : IWorkflowContext
     {
         public ValueTask AddEventAsync(WorkflowEvent workflowEvent) => RunnerContext.AddEventAsync(workflowEvent);
         public ValueTask SendMessageAsync(object message, string? targetId = null)
