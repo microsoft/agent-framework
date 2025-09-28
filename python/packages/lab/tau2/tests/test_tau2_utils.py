@@ -2,9 +2,8 @@
 
 """Tests for tau2 utils module."""
 
-import os
-import tempfile
 import urllib.request
+from pathlib import Path
 
 import pytest
 from agent_framework._tools import AIFunction
@@ -24,32 +23,32 @@ def tau2_airline_environment() -> Environment:
     airline_db_remote_path = "https://raw.githubusercontent.com/sierra-research/tau2-bench/5ba9e3e56db57c5e4114bf7f901291f09b2c5619/data/tau2/domains/airline/db.json"
     airline_policy_remote_path = "https://raw.githubusercontent.com/sierra-research/tau2-bench/5ba9e3e56db57c5e4114bf7f901291f09b2c5619/data/tau2/domains/airline/policy.md"
 
-    # Create temporary file paths
-    db_temp_path = tempfile.mktemp(suffix=".json")
-    policy_temp_path = tempfile.mktemp(suffix=".md")
+    # Create cache directory
+    cache_dir = Path(__file__).parent / "data"
+    cache_dir.mkdir(exist_ok=True)
 
-    # Download airline DB
-    urllib.request.urlretrieve(airline_db_remote_path, db_temp_path)
+    # Define cache file paths
+    db_cache_path = cache_dir / "airline_db.json"
+    policy_cache_path = cache_dir / "airline_policy.md"
 
-    # Download airline policy
-    urllib.request.urlretrieve(airline_policy_remote_path, policy_temp_path)
+    # Download files only if they don't exist in cache
+    if not db_cache_path.exists():
+        urllib.request.urlretrieve(airline_db_remote_path, db_cache_path)
 
-    try:
-        # Load data from downloaded files
-        db = FlightDB.load(db_temp_path)
-        tools = AirlineTools(db)
-        with open(policy_temp_path) as fp:
-            policy = fp.read()
+    if not policy_cache_path.exists():
+        urllib.request.urlretrieve(airline_policy_remote_path, policy_cache_path)
 
-        yield Environment(
-            domain_name="airline",
-            policy=policy,
-            tools=tools,
-        )
-    finally:
-        # Clean up temporary files
-        os.unlink(db_temp_path)
-        os.unlink(policy_temp_path)
+    # Load data from cached files
+    db = FlightDB.load(str(db_cache_path))
+    tools = AirlineTools(db)
+    with open(policy_cache_path) as fp:
+        policy = fp.read()
+
+    yield Environment(
+        domain_name="airline",
+        policy=policy,
+        tools=tools,
+    )
 
 
 def test_convert_tau2_tool_to_ai_function_basic(tau2_airline_environment):
