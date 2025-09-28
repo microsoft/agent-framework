@@ -7,8 +7,8 @@ using System.Text.Json;
 using A2A;
 using Microsoft.Agents.AI.Hosting;
 using Microsoft.Agents.AI.Hosting.A2A.Converters;
+using Microsoft.Agents.AI.Runtime;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents.Runtime;
 
 namespace AgentWebChat.Web;
 
@@ -102,7 +102,7 @@ internal sealed class A2AActorClient : IActorClient
                     throw new NotSupportedException("Only message is supported in A2A processing, but got: " + @event.GetType());
                 }
 
-                // handling of message on agentProxy side expects the 
+                // handling of message on agentProxy side expects the
                 yield return message.ToActorRequestUpdate(status: RequestStatus.Pending);
             }
 

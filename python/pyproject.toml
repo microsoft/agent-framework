@@ -10,7 +10,7 @@ dependencies = [
     "agent-framework-mem0",
     "agent-framework-redis",
     "agent-framework-devui",
-    "agent-framework-lab-gaia",
+    "agent-framework-lab",
 ]
 
 [dependency-groups]
@@ -49,14 +49,14 @@ environments = [
 ]
 
 [tool.uv.workspace]
-members = [ "packages/*", "packages/lab/*" ]
-exclude = [ "packages/agent_framework_project.egg-info", "packages/lab", "packages/lab/cookiecutter-agent-framework-lab", "packages/lab/README.md" ]
+members = [ "packages/*" ]
+exclude = [ "packages/agent_framework_project.egg-info" ]
 
 [tool.uv.sources]
 agent-framework = { workspace = true }
 agent-framework-azure-ai = { workspace = true }
 agent-framework-copilotstudio = { workspace = true }
-agent-framework-lab-gaia = { workspace = true }
+agent-framework-lab = { workspace = true }
 agent-framework-mem0 = { workspace = true }
 agent-framework-redis = { workspace = true }
 agent-framework-runtime = { workspace = true }

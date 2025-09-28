@@ -39,7 +39,7 @@
     <PackageVersion Include="System.Text.Json" Version="9.0.9" />
     <PackageVersion Include="System.CodeDom" Version="9.0.8" />
     <PackageVersion Include="System.Collections.Immutable" Version="9.0.9" />
-    <PackageVersion Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
+    <PackageVersion Include="System.CommandLine" Version="2.0.0-rc.1.25451.107" />
     <PackageVersion Include="System.Diagnostics.DiagnosticSource" Version="9.0.9" />
     <PackageVersion Include="System.Threading.Channels" Version="9.0.9" />
     <PackageVersion Include="System.Threading.Tasks.Extensions" Version="4.6.3" />
