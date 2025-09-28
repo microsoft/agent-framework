@@ -47,7 +47,7 @@ internal sealed class DirectEdgeRunner(IRunnerContext runContext, DirectEdgeData
             throw;
         }
 
-        activity?.SetEdgeRunnerDeliveryStatus(EdgeRunnerDeliveryStatus.DropperTypeMismatch);
+        activity?.SetEdgeRunnerDeliveryStatus(EdgeRunnerDeliveryStatus.DroppedTypeMismatch);
         return null;
     }
 }

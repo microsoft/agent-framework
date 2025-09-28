@@ -36,7 +36,7 @@ internal static class ActivityExtensions
     /// Executor processing spans are not nested, they are siblings.
     /// We use links to represent the causal relationship between them.
     /// </summary>
-    internal static void CreateSourceLinks(this Activity? activity, Dictionary<string, string>? traceContext)
+    internal static void CreateSourceLinks(this Activity? activity, IReadOnlyDictionary<string, string>? traceContext)
     {
         if (activity is null || traceContext is null)
         {

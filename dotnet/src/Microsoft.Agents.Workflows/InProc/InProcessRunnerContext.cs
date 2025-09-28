@@ -196,7 +196,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         InProcessRunnerContext RunnerContext,
         string ExecutorId,
         OutputFilter outputFilter,
-        Dictionary<string, string>? traceContext) : IWorkflowContext
+        IReadOnlyDictionary<string, string>? traceContext) : IWorkflowContext
     {
         public ValueTask AddEventAsync(WorkflowEvent workflowEvent) => RunnerContext.AddEventAsync(workflowEvent);
         public ValueTask SendMessageAsync(object message, string? targetId = null)
@@ -235,7 +235,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         public ValueTask QueueClearScopeAsync(string? scopeName = null)
             => RunnerContext.StateManager.ClearStateAsync(ExecutorId, scopeName);
 
-        public Dictionary<string, string>? TraceContext => traceContext;
+        public IReadOnlyDictionary<string, string>? TraceContext => traceContext;
     }
 
     internal Task PrepareForCheckpointAsync(CancellationToken cancellation = default)

@@ -17,20 +17,12 @@ internal sealed class FanInEdgeRunner(IRunnerContext runContext, FanInEdgeData e
 
     protected internal override async ValueTask<DeliveryMapping?> ChaseEdgeAsync(MessageEnvelope envelope, IStepTracer? stepTracer)
     {
+        Debug.Assert(!envelope.IsExternal, "FanIn edges should never be chased from external input");
+
         using var activity = s_activitySource.StartActivity(ActivityNames.EdgeGroupProcess);
         activity?
             .SetTag(Tags.EdgeGroupType, nameof(FanInEdgeRunner))
             .SetTag(Tags.MessageTargetId, this.EdgeData.SinkId);
-
-        try
-        {
-            Debug.Assert(!envelope.IsExternal, "FanIn edges should never be chased from external input");
-        }
-        catch
-        {
-            activity?.SetEdgeRunnerDeliveryStatus(EdgeRunnerDeliveryStatus.Exception);
-            throw;
-        }
 
         if (envelope.TargetId is not null && this.EdgeData.SinkId != envelope.TargetId)
         {
@@ -52,10 +44,11 @@ internal sealed class FanInEdgeRunner(IRunnerContext runContext, FanInEdgeData e
             // TODO: Filter messages based on accepted input types?
             Executor target = await this.RunContext.EnsureExecutorAsync(this.EdgeData.SinkId, stepTracer)
                                                    .ConfigureAwait(false);
-            var finalReleasedMessages = releasedMessages.Where(envelope => target.CanHandle(envelope.MessageType));
-            if (!finalReleasedMessages.Any())
+            // Materialize the filtered list via ToList() to avoid multiple enumerations
+            var finalReleasedMessages = releasedMessages.Where(envelope => target.CanHandle(envelope.MessageType)).ToList();
+            if (finalReleasedMessages.Count == 0)
             {
-                activity?.SetEdgeRunnerDeliveryStatus(EdgeRunnerDeliveryStatus.DropperTypeMismatch);
+                activity?.SetEdgeRunnerDeliveryStatus(EdgeRunnerDeliveryStatus.DroppedTypeMismatch);
                 return null;
             }
 

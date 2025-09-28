@@ -42,7 +42,7 @@ internal sealed class FanOutEdgeRunner(IRunnerContext runContext, FanOutEdgeData
 
             if (!validTargets.Any())
             {
-                activity?.SetEdgeRunnerDeliveryStatus(EdgeRunnerDeliveryStatus.DropperTypeMismatch);
+                activity?.SetEdgeRunnerDeliveryStatus(EdgeRunnerDeliveryStatus.DroppedTypeMismatch);
                 return null;
             }
 

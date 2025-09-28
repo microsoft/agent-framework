@@ -96,5 +96,5 @@ public interface IWorkflowContext
     /// <summary>
     /// The trace context associated with the current message about to be processed by the executor, if any.
     /// </summary>
-    internal Dictionary<string, string>? TraceContext { get; }
+    IReadOnlyDictionary<string, string>? TraceContext { get; }
 }

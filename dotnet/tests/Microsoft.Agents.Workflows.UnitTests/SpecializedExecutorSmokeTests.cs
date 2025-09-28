@@ -150,6 +150,8 @@ public class SpecializedExecutorSmokeTests
 
             return default;
         }
+
+        public IReadOnlyDictionary<string, string>? TraceContext => null;
     }
 
     [Fact]

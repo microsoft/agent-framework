@@ -5,7 +5,7 @@ namespace Microsoft.Agents.Workflows.Observability;
 internal enum EdgeRunnerDeliveryStatus
 {
     Delivered,
-    DropperTypeMismatch,
+    DroppedTypeMismatch,
     DroppedTargetMismatch,
     DroppedConditionFalse,
     Exception,
@@ -19,7 +19,7 @@ internal static class EdgeRunnerDeliveryStatusExtensions
         return status switch
         {
             EdgeRunnerDeliveryStatus.Delivered => "delivered",
-            EdgeRunnerDeliveryStatus.DropperTypeMismatch => "dropper type mismatch",
+            EdgeRunnerDeliveryStatus.DroppedTypeMismatch => "dropped type mismatch",
             EdgeRunnerDeliveryStatus.DroppedTargetMismatch => "dropped target mismatch",
             EdgeRunnerDeliveryStatus.DroppedConditionFalse => "dropped condition false",
             EdgeRunnerDeliveryStatus.Exception => "exception",
