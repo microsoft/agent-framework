@@ -211,6 +211,15 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         this.RestartAfter(item.Id.Value, endExecutor.ParentId);
     }
 
+    protected override void Visit(EndDialog item)
+    {
+        this.Trace(item);
+
+        DefaultActionExecutor endExecutor = new(item, this._workflowState);
+        this.ContinueWith(endExecutor);
+        this.RestartAfter(item.Id.Value, endExecutor.ParentId);
+    }
+
     protected override void Visit(Question item)
     {
         this.Trace(item);
@@ -387,8 +396,6 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     protected override void Visit(BeginDialog item) => this.NotSupported(item);
 
     protected override void Visit(UnknownDialogAction item) => this.NotSupported(item);
-
-    protected override void Visit(EndDialog item) => this.NotSupported(item);
 
     protected override void Visit(RepeatDialog item) => this.NotSupported(item);
 

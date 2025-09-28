@@ -2,7 +2,7 @@
 
 using System;
 using System.Reflection;
-using Microsoft.Bot.ObjectModel;
+using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Extensions.Configuration;
 using Xunit.Abstractions;
 
@@ -35,7 +35,7 @@ public abstract class WorkflowTest : IDisposable
         }
     }
 
-    internal static string FormatVariablePath(string variableName, string? scope = null) => $"{scope ?? VariableScopeNames.Topic}.{variableName}";
+    internal static string FormatVariablePath(string variableName, string? scope = null) => $"{scope ?? WorkflowFormulaState.DefaultScopeName}.{variableName}";
 
     protected static IConfigurationRoot InitializeConfig() =>
         new ConfigurationBuilder()

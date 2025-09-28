@@ -1,11 +1,15 @@
-# Agent Framework Lab - Agent Framework x Agent Lightning
+# Agent Framework Lab - Lightning
 
 RL Module for Microsoft Agent Framework
 
+> **Note**: This module is part of the consolidated `agent-framework-lab` package. Install the package with the `lightning` extra to use this module.
+
 ## Installation
 
+Install the agent-framework-lab package with Lightning dependencies:
+
 ```bash
-pip install agent-framework-lab-lightning
+pip install "agent-framework-lab[lightning]"
 ```
 
 ## Usage
