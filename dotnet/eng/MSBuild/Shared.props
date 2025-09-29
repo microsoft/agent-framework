@@ -9,6 +9,6 @@
     <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\IntegrationTests\*.cs" LinkBase="Shared\IntegrationTests" />
   </ItemGroup>
   <ItemGroup Condition="'$(InjectSharedBuildTestCode)' == 'true'">
-    <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\Build\*.cs" LinkBase="Shared\Build" />
+    <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\CodeTests\*.cs" LinkBase="Shared\CodeTests" />
   </ItemGroup>
 </Project>

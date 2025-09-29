@@ -2,9 +2,8 @@
 
 using System;
 using System.IO;
-using System.Reflection;
 using System.Threading.Tasks;
-using Shared.Compiler;
+using Shared.Code;
 using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.CodeGen;
