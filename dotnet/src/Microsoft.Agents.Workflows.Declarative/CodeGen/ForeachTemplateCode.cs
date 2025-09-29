@@ -11,7 +11,7 @@ internal partial class ForeachTemplate
     {
         this.Model = this.Initialize(model);
         this.Index = this.Model.Index?.Path;
-        this.Value = Throw.IfNull(this.Model.Value?.Path);
+        this.Value = Throw.IfNull(this.Model.Value);
     }
 
     public Foreach Model { get; }

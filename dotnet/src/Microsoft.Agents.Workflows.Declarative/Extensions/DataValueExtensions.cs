@@ -104,7 +104,7 @@ internal static class DataValueExtensions
             return null;
         }
 
-        return value.AsList<TElement>();
+        return value.ToObject().AsList<TElement>();
     }
 
     public static FormulaValue NewBlank(this DataType? type) => FormulaValue.NewBlank(type?.ToFormulaType() ?? FormulaType.Blank);

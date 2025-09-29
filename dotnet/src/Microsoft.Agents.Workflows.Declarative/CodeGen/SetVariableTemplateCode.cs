@@ -10,7 +10,7 @@ internal partial class SetVariableTemplate
     internal SetVariableTemplate(SetVariable model)
     {
         this.Model = this.Initialize(model);
-        this.Variable = Throw.IfNull(this.Model.Variable?.Path);
+        this.Variable = Throw.IfNull(this.Model.Variable);
     }
 
     public SetVariable Model { get; }

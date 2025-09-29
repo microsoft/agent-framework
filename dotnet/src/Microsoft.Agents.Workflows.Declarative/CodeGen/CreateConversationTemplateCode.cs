@@ -10,7 +10,7 @@ internal partial class CreateConversationTemplate
     public CreateConversationTemplate(CreateConversation model)
     {
         this.Model = this.Initialize(model);
-        this.ConversationId = Throw.IfNull(this.Model.ConversationId?.Path);
+        this.ConversationId = Throw.IfNull(this.Model.ConversationId);
         this.UseAgentProvider = true;
     }
 

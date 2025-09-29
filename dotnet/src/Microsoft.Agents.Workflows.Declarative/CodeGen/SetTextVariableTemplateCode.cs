@@ -10,7 +10,7 @@ internal partial class SetTextVariableTemplate
     public SetTextVariableTemplate(SetTextVariable model)
     {
         this.Model = this.Initialize(model);
-        this.Variable = Throw.IfNull(this.Model.Variable?.Path);
+        this.Variable = Throw.IfNull(this.Model.Variable);
     }
 
     public SetTextVariable Model { get; }
