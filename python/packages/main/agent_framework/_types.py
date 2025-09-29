@@ -2881,9 +2881,9 @@ class ChatOptions:
 
         # Apply scalar and mapping updates from the other options
         updated_data = other.to_dict(exclude_none=True, exclude={"tools"})
-        logit_bias = updated_data.pop("logit_bias", None)
-        metadata = updated_data.pop("metadata", None)
-        additional_properties = updated_data.pop("additional_properties", None)
+        logit_bias = updated_data.pop("logit_bias", {})
+        metadata = updated_data.pop("metadata", {})
+        additional_properties = updated_data.pop("additional_properties", {})
 
         for key, value in updated_data.items():
             setattr(combined, key, value)
