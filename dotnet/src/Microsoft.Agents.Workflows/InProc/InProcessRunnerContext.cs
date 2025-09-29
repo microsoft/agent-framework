@@ -144,7 +144,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         using Activity? activity = s_activitySource.StartActivity(ActivityNames.MessageSend, ActivityKind.Producer);
         // Create a carrier for trace context propagation
         var traceContext = activity is null ? null : new Dictionary<string, string>();
-        if (activity != null && traceContext != null)
+        if (traceContext is not null)
         {
             // Inject the current activity context into the carrier
             Propagators.DefaultTextMapPropagator.Inject(

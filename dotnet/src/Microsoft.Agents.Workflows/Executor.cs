@@ -95,8 +95,8 @@ public abstract class Executor : IIdentified
         using var activity = s_activitySource.StartActivity(ActivityNames.ExecutorProcess, ActivityKind.Internal);
         activity?.SetTag(Tags.ExecutorId, this.Id)
             .SetTag(Tags.ExecutorType, this.GetType().FullName)
-            .SetTag(Tags.MessageType, messageType.TypeName);
-        activity?.CreateSourceLinks(context.TraceContext);
+            .SetTag(Tags.MessageType, messageType.TypeName)
+            .CreateSourceLinks(context.TraceContext);
 
         await context.AddEventAsync(new ExecutorInvokedEvent(this.Id, message)).ConfigureAwait(false);
 

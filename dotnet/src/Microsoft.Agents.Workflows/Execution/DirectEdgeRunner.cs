@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Observability;
 
@@ -41,9 +42,9 @@ internal sealed class DirectEdgeRunner(IRunnerContext runContext, DirectEdgeData
                 return new DeliveryMapping(envelope, target);
             }
         }
-        catch
+        catch (Exception) when (activity is not null)
         {
-            activity?.SetEdgeRunnerDeliveryStatus(EdgeRunnerDeliveryStatus.Exception);
+            activity.SetEdgeRunnerDeliveryStatus(EdgeRunnerDeliveryStatus.Exception);
             throw;
         }
 

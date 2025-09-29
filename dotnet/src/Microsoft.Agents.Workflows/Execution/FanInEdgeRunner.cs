@@ -54,9 +54,9 @@ internal sealed class FanInEdgeRunner(IRunnerContext runContext, FanInEdgeData e
 
             return new DeliveryMapping(finalReleasedMessages, target);
         }
-        catch
+        catch (Exception) when (activity is not null)
         {
-            activity?.SetEdgeRunnerDeliveryStatus(EdgeRunnerDeliveryStatus.Exception);
+            activity.SetEdgeRunnerDeliveryStatus(EdgeRunnerDeliveryStatus.Exception);
             throw;
         }
     }

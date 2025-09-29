@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -50,9 +51,9 @@ internal sealed class FanOutEdgeRunner(IRunnerContext runContext, FanOutEdgeData
 
             return new DeliveryMapping(envelope, validTargets);
         }
-        catch
+        catch (Exception) when (activity is not null)
         {
-            activity?.SetEdgeRunnerDeliveryStatus(EdgeRunnerDeliveryStatus.Exception);
+            activity.SetEdgeRunnerDeliveryStatus(EdgeRunnerDeliveryStatus.Exception);
             throw;
         }
 
