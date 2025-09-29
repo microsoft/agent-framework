@@ -105,8 +105,8 @@ class FakeManager(MagenticManagerBase):
         if self.task_ledger is not None:
             state = dict(state)
             state["task_ledger"] = {
-                "facts": self.task_ledger.facts.model_dump(mode="json"),
-                "plan": self.task_ledger.plan.model_dump(mode="json"),
+                "facts": self.task_ledger.facts.to_dict(),
+                "plan": self.task_ledger.plan.to_dict(),
             }
         return state
 
@@ -118,8 +118,8 @@ class FakeManager(MagenticManagerBase):
             plan_payload = ledger_state.get("plan")  # type: ignore[reportUnknownMemberType]
             if facts_payload is not None and plan_payload is not None:
                 try:
-                    facts = ChatMessage.model_validate(facts_payload)
-                    plan = ChatMessage.model_validate(plan_payload)
+                    facts = ChatMessage.from_dict(facts_payload)
+                    plan = ChatMessage.from_dict(plan_payload)
                     self.task_ledger = _SimpleLedger(facts=facts, plan=plan)
                 except Exception:  # pragma: no cover - defensive
                     pass
@@ -159,11 +159,11 @@ async def test_standard_manager_plan_and_replan_combined_ledger():
         participant_descriptions={"agentA": "Agent A"},
     )
 
-    first = await manager.plan(ctx.model_copy(deep=True))
+    first = await manager.plan(ctx.clone())
     assert first.role == Role.ASSISTANT and "Facts:" in first.text and "Plan:" in first.text
     assert manager.task_ledger is not None
 
-    replanned = await manager.replan(ctx.model_copy(deep=True))
+    replanned = await manager.replan(ctx.clone())
     assert "A2" in replanned.text or "Do Z" in replanned.text
 
 
@@ -174,12 +174,12 @@ async def test_standard_manager_progress_ledger_and_fallback():
         participant_descriptions={"agentA": "Agent A"},
     )
 
-    ledger = await manager.create_progress_ledger(ctx.model_copy(deep=True))
+    ledger = await manager.create_progress_ledger(ctx.clone())
     assert isinstance(ledger, MagenticProgressLedger)
     assert ledger.next_speaker.answer == "agentA"
 
     manager.satisfied_after_signoff = False
-    ledger2 = await manager.create_progress_ledger(ctx.model_copy(deep=True))
+    ledger2 = await manager.create_progress_ledger(ctx.clone())
     assert ledger2.is_request_satisfied.answer is False
 
 
@@ -412,7 +412,7 @@ async def test_standard_manager_plan_and_replan_via_complete_monkeypatch():
         task=ChatMessage(role=Role.USER, text="T"),
         participant_descriptions={"A": "desc"},
     )
-    combined = await mgr.plan(ctx.model_copy(deep=True))
+    combined = await mgr.plan(ctx.clone())
     # Assert structural headings and that steps appear in the combined ledger output.
     assert "We are working to address the following user request:" in combined.text
     assert "Here is the plan to follow as best as possible:" in combined.text
@@ -425,7 +425,7 @@ async def test_standard_manager_plan_and_replan_via_complete_monkeypatch():
         return ChatMessage(role=Role.ASSISTANT, text="GIVEN OR VERIFIED FACTS\n- updated")
 
     mgr._complete = fake_complete_replan  # type: ignore[attr-defined]
-    combined2 = await mgr.replan(ctx.model_copy(deep=True))
+    combined2 = await mgr.replan(ctx.clone())
     assert "updated" in combined2.text or "new step" in combined2.text
 
 
@@ -448,7 +448,7 @@ async def test_standard_manager_progress_ledger_success_and_error():
         return ChatMessage(role=Role.ASSISTANT, text=json_text)
 
     mgr._complete = fake_complete_ok  # type: ignore[attr-defined]
-    ledger = await mgr.create_progress_ledger(ctx.model_copy(deep=True))
+    ledger = await mgr.create_progress_ledger(ctx.clone())
     assert ledger.next_speaker.answer == "alice"
 
     # Error path: invalid JSON now raises to avoid emitting planner-oriented instructions to agents
@@ -457,7 +457,7 @@ async def test_standard_manager_progress_ledger_success_and_error():
 
     mgr._complete = fake_complete_bad  # type: ignore[attr-defined]
     with pytest.raises(RuntimeError):
-        await mgr.create_progress_ledger(ctx.model_copy(deep=True))
+        await mgr.create_progress_ledger(ctx.clone())
 
 
 class InvokeOnceManager(MagenticManagerBase):

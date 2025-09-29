@@ -35,8 +35,10 @@ class NumberMessage:
 class IncrementExecutor(Executor):
     """An executor that increments message data by a specified amount for testing purposes."""
 
-    limit: int = 10
-    increment: int = 1
+    def __init__(self, id: str, *, limit: int = 10, increment: int = 1) -> None:
+        super().__init__(id=id)
+        self.limit = limit
+        self.increment = increment
 
     @handler
     async def mock_handler(self, message: NumberMessage, ctx: WorkflowContext[NumberMessage, int]) -> None:

@@ -564,7 +564,11 @@ def get_meter(
         schema_url: Optional. Specifies the Schema URL of the emitted telemetry.
         attributes: Optional. Attributes that are associated with the emitted telemetry.
     """
-    return metrics.get_meter(name=name, version=version, schema_url=schema_url, attributes=attributes)
+    try:
+        return metrics.get_meter(name=name, version=version, schema_url=schema_url, attributes=attributes)
+    except TypeError:
+        # Older OpenTelemetry releases do not support the attributes parameter.
+        return metrics.get_meter(name=name, version=version, schema_url=schema_url)
 
 
 global OBSERVABILITY_SETTINGS

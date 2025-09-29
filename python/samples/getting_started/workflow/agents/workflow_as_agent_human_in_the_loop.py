@@ -2,8 +2,10 @@
 
 import asyncio
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, cast
 
 # Ensure local getting_started package can be imported when running as a script.
 _SAMPLES_ROOT = Path(__file__).resolve().parents[3]
@@ -138,15 +140,33 @@ async def main() -> None:
     # Handle the human review if required.
     if human_review_function_call:
         # Parse the human review request arguments.
-        if isinstance(human_review_function_call.arguments, str):
-            request = WorkflowAgent.RequestInfoFunctionArgs.model_validate_json(human_review_function_call.arguments)
+        human_request_args = human_review_function_call.arguments
+        if isinstance(human_request_args, str):
+            request: WorkflowAgent.RequestInfoFunctionArgs = WorkflowAgent.RequestInfoFunctionArgs.from_json(
+                human_request_args
+            )
+        elif isinstance(human_request_args, Mapping):
+            request = WorkflowAgent.RequestInfoFunctionArgs.from_dict(dict(human_request_args))
         else:
-            request = WorkflowAgent.RequestInfoFunctionArgs.model_validate(human_review_function_call.arguments)
+            raise TypeError("Unexpected argument type for human review function call.")
+
+        request_payload_obj: Any = request.data
+        if not isinstance(request_payload_obj, Mapping):
+            raise ValueError("Human review request payload must be a mapping.")
+        request_payload = cast(Mapping[str, Any], request_payload_obj)
+
+        agent_request_obj = request_payload.get("agent_request")
+        if not isinstance(agent_request_obj, Mapping):
+            raise ValueError("Human review request must include agent_request mapping data.")
+        agent_request_data = cast(Mapping[str, Any], agent_request_obj)
+
+        request_id_obj = agent_request_data.get("request_id")
+        if not isinstance(request_id_obj, str):
+            raise ValueError("Human review request_id must be a string.")
+        request_id_value = request_id_obj
 
         # Mock a human response approval for demonstration purposes.
-        human_response = ReviewResponse(
-            request_id=request.data["agent_request"]["request_id"], feedback="Approved", approved=True
-        )
+        human_response = ReviewResponse(request_id=request_id_value, feedback="Approved", approved=True)
 
         # Create the function call result object to send back to the agent.
         human_review_function_result = FunctionResultContent(

@@ -4,6 +4,7 @@ import contextlib
 import functools
 import importlib
 import inspect
+import json
 import logging
 import uuid
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
@@ -11,10 +12,7 @@ from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from textwrap import shorten
 from typing import Any, ClassVar, Generic, TypeVar, cast
 
-from pydantic import Field
-
 from .._agents import AgentProtocol
-from .._pydantic import AFBaseModel
 from .._threads import AgentThread
 from .._types import AgentRunResponse, AgentRunResponseUpdate, ChatMessage
 from ..observability import create_processing_span
@@ -29,6 +27,7 @@ from ._events import (
     WorkflowErrorDetails,
     _framework_event_origin,  # type: ignore[reportPrivateUsage]
 )
+from ._model_utils import DictConvertible
 from ._runner_context import Message, RunnerContext, _decode_checkpoint_value  # type: ignore
 from ._shared_state import SharedState
 from ._typing_utils import is_instance_of
@@ -63,7 +62,7 @@ class WorkflowCheckpointSummary:
     pending_requests: list[PendingRequestDetails]
 
 
-class Executor(AFBaseModel):
+class Executor(DictConvertible):
     """Base class for all workflow executors that process messages and perform computations.
 
     ## Overview
@@ -192,38 +191,44 @@ class Executor(AFBaseModel):
 
     # Provide a default so static analyzers (e.g., pyright) don't require passing `id`.
     # Runtime still sets a concrete value in __init__.
-    id: str = Field(
-        ...,
-        min_length=1,
-        description="Unique identifier for the executor",
-    )
-    type_: str = Field(default="", alias="type", description="The type of executor, corresponding to the class name")
-
-    def __init__(self, id: str, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        id: str,
+        *,
+        type: str | None = None,
+        type_: str | None = None,
+        defer_discovery: bool = False,
+        **_: Any,
+    ) -> None:
         """Initialize the executor with a unique identifier.
 
         Args:
             id: A unique identifier for the executor.
-            kwargs: Additional keyword arguments. Unused in this implementation.
+            type: The executor type name. If not provided, uses class name.
+            type_: Alternative parameter name for executor type.
+            defer_discovery: If True, defer handler method discovery until later.
+            **_: Additional keyword arguments. Unused in this implementation.
         """
         if not id:
             raise ValueError("Executor ID must be a non-empty string.")
 
-        kwargs.update({"id": id})
-        if "type" not in kwargs and "type_" not in kwargs:
-            kwargs["type_"] = self.__class__.__name__
+        resolved_type = type or type_ or self.__class__.__name__
+        self.id = id
+        self.type = resolved_type
+        self.type_ = resolved_type
 
-        super().__init__(**kwargs)
+        from builtins import type as builtin_type
 
-        self._handlers: dict[type, Callable[[Any, WorkflowContext[Any, Any]], Awaitable[None]]] = {}
+        self._handlers: dict[builtin_type[Any], Callable[[Any, WorkflowContext[Any, Any]], Awaitable[None]]] = {}
         self._handler_specs: list[dict[str, Any]] = []
-        self._discover_handlers()
+        if not defer_discovery:
+            self._discover_handlers()
 
-        if not self._handlers:
-            raise ValueError(
-                f"Executor {self.__class__.__name__} has no handlers defined. "
-                "Please define at least one handler using the @handler decorator."
-            )
+            if not self._handlers:
+                raise ValueError(
+                    f"Executor {self.__class__.__name__} has no handlers defined. "
+                    "Please define at least one handler using the @handler decorator."
+                )
 
     async def execute(
         self,
@@ -454,6 +459,10 @@ class Executor(AFBaseModel):
             output_types.update(handler_workflow_output_types)
 
         return list(output_types)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize executor definition for workflow topology export."""
+        return {"id": self.id, "type": self.type}
 
 
 # endregion: Executor
@@ -729,15 +738,42 @@ class RequestInfoExecutor(Executor):
                 "value": safe_value,
             }
 
-        model_dump_fn = getattr(request_data, "model_dump", None)
-        if callable(model_dump_fn):
+        to_dict_fn = getattr(request_data, "to_dict", None)
+        if callable(to_dict_fn):
             try:
-                dumped = model_dump_fn(mode="json")
+                dumped = to_dict_fn()
             except TypeError:
-                dumped = model_dump_fn()
+                dumped = to_dict_fn()
             safe_value = self._make_json_safe(dumped)
             return {
-                "kind": "pydantic",
+                "kind": "dict",
+                "type": f"{data_cls.__module__}:{data_cls.__qualname__}",
+                "value": safe_value,
+            }
+
+        to_json_fn = getattr(request_data, "to_json", None)
+        if callable(to_json_fn):
+            try:
+                dumped = to_json_fn()
+            except TypeError:
+                dumped = to_json_fn()
+            converted = dumped
+            if isinstance(dumped, (str, bytes, bytearray)):
+                decoded: str | bytes | bytearray
+                if isinstance(dumped, (bytes, bytearray)):
+                    try:
+                        decoded = dumped.decode()
+                    except Exception:
+                        decoded = dumped
+                else:
+                    decoded = dumped
+                try:
+                    converted = json.loads(decoded)
+                except Exception:
+                    converted = decoded
+            safe_value = self._make_json_safe(converted)
+            return {
+                "kind": "dict" if isinstance(converted, dict) else "json",
                 "type": f"{data_cls.__module__}:{data_cls.__qualname__}",
                 "value": safe_value,
             }
@@ -801,7 +837,7 @@ class RequestInfoExecutor(Executor):
     def _decode_request_data(self, metadata: dict[str, Any]) -> RequestInfoMessage:
         kind = metadata.get("kind")
         type_name = metadata.get("type", "")
-        value = metadata.get("value", {})
+        value: Any = metadata.get("value", {})
         if type_name:
             try:
                 imported = self._import_qualname(type_name)
@@ -823,18 +859,30 @@ class RequestInfoExecutor(Executor):
 
         if kind == "dataclass" and isinstance(value, dict):
             with contextlib.suppress(TypeError):
-                return target_cls(**value)
+                return target_cls(**value)  # type: ignore[arg-type]
 
-        if kind == "pydantic" and isinstance(value, dict):
-            model_validate = getattr(target_cls, "model_validate", None)
-            if callable(model_validate):
-                return cast(RequestInfoMessage, model_validate(value))
+        # Backwards-compat handling for checkpoints that used to store pydantic as "dict"
+        if kind in {"dict", "pydantic", "json"} and isinstance(value, dict):
+            from_dict = getattr(target_cls, "from_dict", None)
+            if callable(from_dict):
+                with contextlib.suppress(Exception):
+                    return cast(RequestInfoMessage, from_dict(value))
+
+        if kind == "json" and isinstance(value, str):
+            from_json = getattr(target_cls, "from_json", None)
+            if callable(from_json):
+                with contextlib.suppress(Exception):
+                    return cast(RequestInfoMessage, from_json(value))
+            with contextlib.suppress(Exception):
+                parsed = json.loads(value)
+                if isinstance(parsed, dict):
+                    return self._decode_request_data({"kind": "dict", "type": type_name, "value": parsed})
 
         if isinstance(value, dict):
             with contextlib.suppress(TypeError):
-                return target_cls(**value)
+                return target_cls(**value)  # type: ignore[arg-type]
             instance = object.__new__(target_cls)
-            instance.__dict__.update(value)
+            instance.__dict__.update(value)  # type: ignore[arg-type]
             return instance
 
         with contextlib.suppress(Exception):
@@ -877,12 +925,37 @@ class RequestInfoExecutor(Executor):
                 return cast(dict[str, Any], data)
             return None
 
-        model_dump = getattr(request, "model_dump", None)
-        if callable(model_dump):
+        to_dict = getattr(request, "to_dict", None)
+        if callable(to_dict):
             try:
-                dump = self._make_json_safe(model_dump(mode="json"))
+                dump = self._make_json_safe(to_dict())
             except TypeError:
-                dump = self._make_json_safe(model_dump())
+                dump = self._make_json_safe(to_dict())
+            if isinstance(dump, dict):
+                return cast(dict[str, Any], dump)
+            return None
+
+        to_json = getattr(request, "to_json", None)
+        if callable(to_json):
+            try:
+                raw = to_json()
+            except TypeError:
+                raw = to_json()
+            converted = raw
+            if isinstance(raw, (str, bytes, bytearray)):
+                decoded: str | bytes | bytearray
+                if isinstance(raw, (bytes, bytearray)):
+                    try:
+                        decoded = raw.decode()
+                    except Exception:
+                        decoded = raw
+                else:
+                    decoded = raw
+                try:
+                    converted = json.loads(decoded)
+                except Exception:
+                    converted = decoded
+            dump = self._make_json_safe(converted)
             if isinstance(dump, dict):
                 return cast(dict[str, Any], dump)
             return None
@@ -900,11 +973,11 @@ class RequestInfoExecutor(Executor):
             return value
         if isinstance(value, Mapping):
             safe_dict: dict[str, Any] = {}
-            for key, val in value.items():
-                safe_dict[str(key)] = self._make_json_safe(val)
+            for key, val in value.items():  # type: ignore[attr-defined]
+                safe_dict[str(key)] = self._make_json_safe(val)  # type: ignore[arg-type]
             return safe_dict
         if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-            return [self._make_json_safe(item) for item in value]
+            return [self._make_json_safe(item) for item in value]  # type: ignore[misc]
         return repr(value)
 
     async def has_pending_request(self, request_id: str, ctx: WorkflowContext[Any]) -> bool:
@@ -958,7 +1031,7 @@ class RequestInfoExecutor(Executor):
             shared_pending = None
 
         if isinstance(shared_pending, dict):
-            for key, value in shared_pending.items():
+            for key, value in shared_pending.items():  # type: ignore[attr-defined]
                 if isinstance(key, str) and isinstance(value, dict):
                     combined[key] = cast(dict[str, Any], value)
 
@@ -971,7 +1044,7 @@ class RequestInfoExecutor(Executor):
         if isinstance(state, dict):
             state_pending = state.get("pending_requests")
             if isinstance(state_pending, dict):
-                for key, value in state_pending.items():
+                for key, value in state_pending.items():  # type: ignore[attr-defined]
                     if isinstance(key, str) and isinstance(value, dict) and key not in combined:
                         combined[key] = cast(dict[str, Any], value)
 
@@ -1035,17 +1108,15 @@ class RequestInfoExecutor(Executor):
         details: dict[str, Any],
     ) -> RequestInfoMessage | None:
         try:
-            model_validate = getattr(request_cls, "model_validate", None)
-            if callable(model_validate):
-                return cast(RequestInfoMessage, model_validate(details))
+            from_dict = getattr(request_cls, "from_dict", None)
+            if callable(from_dict):
+                return cast(RequestInfoMessage, from_dict(details))
         except (TypeError, ValueError) as exc:
-            logger.debug(
-                f"RequestInfoExecutor {self.id} validation failed for {request_cls.__name__} via model_validate: {exc}"
-            )
+            logger.debug(f"RequestInfoExecutor {self.id} failed to hydrate {request_cls.__name__} via from_dict: {exc}")
         except Exception as exc:
             logger.warning(
                 f"RequestInfoExecutor {self.id} encountered unexpected error during "
-                f"{request_cls.__name__}.model_validate: {exc}"
+                f"{request_cls.__name__}.from_dict: {exc}"
             )
 
         if is_dataclass(request_cls):
@@ -1100,16 +1171,16 @@ class RequestInfoExecutor(Executor):
 
         shared_map = checkpoint.shared_state.get(RequestInfoExecutor._PENDING_SHARED_STATE_KEY)
         if isinstance(shared_map, Mapping):
-            for request_id, snapshot in shared_map.items():
-                RequestInfoExecutor._merge_snapshot(pending, str(request_id), snapshot)
+            for request_id, snapshot in shared_map.items():  # type: ignore[attr-defined]
+                RequestInfoExecutor._merge_snapshot(pending, str(request_id), snapshot)  # type: ignore[arg-type]
 
         for state in checkpoint.executor_states.values():
             if not isinstance(state, Mapping):
                 continue
             inner = state.get("pending_requests")
             if isinstance(inner, Mapping):
-                for request_id, snapshot in inner.items():
-                    RequestInfoExecutor._merge_snapshot(pending, str(request_id), snapshot)
+                for request_id, snapshot in inner.items():  # type: ignore[attr-defined]
+                    RequestInfoExecutor._merge_snapshot(pending, str(request_id), snapshot)  # type: ignore[arg-type]
 
         for source_id, message_list in checkpoint.messages.items():
             if executor_filter is not None and source_id not in executor_filter:
@@ -1176,19 +1247,19 @@ class RequestInfoExecutor(Executor):
 
         RequestInfoExecutor._apply_update(
             details,
-            prompt=snapshot.get("prompt"),
-            draft=snapshot.get("draft"),
-            iteration=snapshot.get("iteration"),
-            source_executor_id=snapshot.get("source_executor_id"),
+            prompt=snapshot.get("prompt"),  # type: ignore[attr-defined]
+            draft=snapshot.get("draft"),  # type: ignore[attr-defined]
+            iteration=snapshot.get("iteration"),  # type: ignore[attr-defined]
+            source_executor_id=snapshot.get("source_executor_id"),  # type: ignore[attr-defined]
         )
 
-        extra = snapshot.get("details")
+        extra = snapshot.get("details")  # type: ignore[attr-defined]
         if isinstance(extra, Mapping):
             RequestInfoExecutor._apply_update(
                 details,
-                prompt=extra.get("prompt"),
-                draft=extra.get("draft"),
-                iteration=extra.get("iteration"),
+                prompt=extra.get("prompt"),  # type: ignore[attr-defined]
+                draft=extra.get("draft"),  # type: ignore[attr-defined]
+                iteration=extra.get("iteration"),  # type: ignore[attr-defined]
             )
 
     @staticmethod
@@ -1198,17 +1269,17 @@ class RequestInfoExecutor(Executor):
         raw_message: Mapping[str, Any],
     ) -> None:
         if isinstance(payload, RequestResponse):
-            request_id = payload.request_id or RequestInfoExecutor._get_field(payload.original_request, "request_id")
+            request_id = payload.request_id or RequestInfoExecutor._get_field(payload.original_request, "request_id")  # type: ignore[arg-type]
             if not request_id:
                 return
             details = pending.setdefault(request_id, PendingRequestDetails(request_id=request_id))
             RequestInfoExecutor._apply_update(
                 details,
-                prompt=RequestInfoExecutor._get_field(payload.original_request, "prompt"),
-                draft=RequestInfoExecutor._get_field(payload.original_request, "draft"),
-                iteration=RequestInfoExecutor._get_field(payload.original_request, "iteration"),
+                prompt=RequestInfoExecutor._get_field(payload.original_request, "prompt"),  # type: ignore[arg-type]
+                draft=RequestInfoExecutor._get_field(payload.original_request, "draft"),  # type: ignore[arg-type]
+                iteration=RequestInfoExecutor._get_field(payload.original_request, "iteration"),  # type: ignore[arg-type]
                 source_executor_id=raw_message.get("source_id"),
-                original_request=payload.original_request,
+                original_request=payload.original_request,  # type: ignore[arg-type]
             )
         elif isinstance(payload, RequestInfoMessage):
             request_id = getattr(payload, "request_id", None)
@@ -1252,7 +1323,7 @@ class RequestInfoExecutor(Executor):
         if obj is None:
             return None
         if isinstance(obj, Mapping):
-            return obj.get(key)
+            return obj.get(key)  # type: ignore[attr-defined,return-value]
         return getattr(obj, key, None)
 
     @staticmethod

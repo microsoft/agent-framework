@@ -16,7 +16,7 @@ from ._events import WorkflowEvent, WorkflowOutputEvent, _framework_event_origin
 from ._executor import Executor
 from ._runner_context import (
     _DATACLASS_MARKER,  # type: ignore
-    _PYDANTIC_MARKER,  # type: ignore
+    _MODEL_MARKER,  # type: ignore
     CheckpointState,
     Message,
     RunnerContext,
@@ -168,7 +168,7 @@ class Runner:
                 data = message.data
                 if not isinstance(data, dict):
                     return
-                if _PYDANTIC_MARKER not in data and _DATACLASS_MARKER not in data:
+                if _MODEL_MARKER not in data and _DATACLASS_MARKER not in data:
                     return
                 try:
                     decoded = _decode_checkpoint_value(data)

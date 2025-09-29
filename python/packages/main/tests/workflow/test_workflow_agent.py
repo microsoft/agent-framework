@@ -29,11 +29,10 @@ from agent_framework import (
 class SimpleExecutor(Executor):
     """Simple executor that emits AgentRunEvent or AgentRunStreamingEvent."""
 
-    response_text: str
-    emit_streaming: bool = False
-
     def __init__(self, id: str, response_text: str, emit_streaming: bool = False):
-        super().__init__(id=id, response_text=response_text, emit_streaming=emit_streaming)
+        super().__init__(id=id)
+        self.response_text = response_text
+        self.emit_streaming = emit_streaming
 
     @handler
     async def handle_message(self, message: list[ChatMessage], ctx: WorkflowContext[list[ChatMessage]]) -> None:

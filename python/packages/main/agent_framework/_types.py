@@ -2854,26 +2854,31 @@ class ChatOptions:
         other_tools = other.tools
         # tool_choice has a specialized serialize method. Save it here so we can fix it later.
         tool_choice = other.tool_choice or self.tool_choice
+        # Start with a shallow copy of self that preserves tool objects
+        combined = ChatOptions.from_dict(self.to_dict())
+        combined.tool_choice = self.tool_choice
+        combined.tools = list(self.tools) if self.tools else None
+        combined.logit_bias = dict(self.logit_bias) if self.logit_bias else None
+        combined.metadata = dict(self.metadata) if self.metadata else None
+        combined.additional_properties = dict(self.additional_properties)
 
-        # Create a new instance with updated values from other
+        # Apply scalar and mapping updates from the other options
         updated_data = other.to_dict(exclude_none=True, exclude={"tools"})
-        logit_bias = updated_data.pop("logit_bias", {})
-        metadata = updated_data.pop("metadata", {})
-        additional_properties = updated_data.pop("additional_properties", {})
+        logit_bias = updated_data.pop("logit_bias", None)
+        metadata = updated_data.pop("metadata", None)
+        additional_properties = updated_data.pop("additional_properties", None)
 
-        # Start with self's data
-        combined_data = self.to_dict()
-        combined_data.update(updated_data)
+        for key, value in updated_data.items():
+            setattr(combined, key, value)
 
-        combined = ChatOptions.from_dict(combined_data)
         combined.tool_choice = tool_choice
         combined.instructions = "\n".join([combined.instructions or "", other.instructions or ""])
         combined.logit_bias = {**(combined.logit_bias or {}), **logit_bias}
         combined.metadata = {**(combined.metadata or {}), **metadata}
         combined.additional_properties = {**(combined.additional_properties or {}), **additional_properties}
         if other_tools:
-            if not combined.tools:
-                combined.tools = other_tools
+            if combined.tools is None:
+                combined.tools = list(other_tools)
             else:
                 for tool in other_tools:
                     if tool not in combined.tools:
