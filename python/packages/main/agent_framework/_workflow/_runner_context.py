@@ -6,7 +6,7 @@ import importlib
 import logging
 import sys
 import uuid
-from collections import defaultdict
+from copy import copy
 from dataclasses import dataclass, fields, is_dataclass
 from typing import Any, Protocol, TypedDict, TypeVar, cast, runtime_checkable
 
@@ -56,6 +56,7 @@ class CheckpointState(TypedDict):
 # Checkpoint serialization helpers
 _MODEL_MARKER = "__af_model__"
 _DATACLASS_MARKER = "__af_dataclass__"
+_AF_MARKER = "__af__"
 
 # Guards to prevent runaway recursion while encoding arbitrary user data
 _MAX_ENCODE_DEPTH = 100
@@ -437,7 +438,7 @@ class InProcRunnerContext:
         Args:
             checkpoint_storage: Optional storage to enable checkpointing.
         """
-        self._messages: defaultdict[str, list[Message]] = defaultdict(list)
+        self._messages: dict[str, list[Message]] = {}
         # Event queue for immediate streaming of events (e.g., AgentRunUpdateEvent)
         self._event_queue: asyncio.Queue[WorkflowEvent] = asyncio.Queue()
 
@@ -450,10 +451,11 @@ class InProcRunnerContext:
         self._max_iterations: int = 100
 
     async def send_message(self, message: Message) -> None:
+        self._messages.setdefault(message.source_id, [])
         self._messages[message.source_id].append(message)
 
     async def drain_messages(self) -> dict[str, list[Message]]:
-        messages = dict(self._messages)
+        messages = copy(self._messages)
         self._messages.clear()
         return messages
 

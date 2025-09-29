@@ -9,6 +9,8 @@ import pytest
 from agent_framework import (
     AgentRunResponse,
     AgentRunResponseUpdate,
+    BaseAgent,
+    ChatClientProtocol,
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
@@ -31,8 +33,6 @@ from agent_framework import (
     WorkflowStatusEvent,
     handler,
 )
-from agent_framework._agents import BaseAgent
-from agent_framework._clients import ChatClientProtocol as AFChatClient
 from agent_framework._workflow._checkpoint import InMemoryCheckpointStorage
 from agent_framework._workflow._magentic import (
     MagenticAgentExecutor,
@@ -379,7 +379,7 @@ def test_magentic_agent_executor_snapshot_roundtrip():
 from agent_framework import StandardMagenticManager  # noqa: E402
 
 
-class _StubChatClient(AFChatClient):
+class _StubChatClient(ChatClientProtocol):
     @property
     def additional_properties(self) -> dict[str, Any]:
         """Get additional properties associated with the client."""

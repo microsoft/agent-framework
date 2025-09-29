@@ -6,9 +6,6 @@ from collections import defaultdict
 from collections.abc import AsyncGenerator, Sequence
 from typing import TYPE_CHECKING, Any
 
-if TYPE_CHECKING:
-    from ._executor import RequestInfoExecutor
-
 from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
 from ._edge import EdgeGroup
 from ._edge_runner import EdgeRunner, create_edge_runner
@@ -23,6 +20,9 @@ from ._runner_context import (
     _decode_checkpoint_value,  # type: ignore
 )
 from ._shared_state import SharedState
+
+if TYPE_CHECKING:
+    from ._executor import RequestInfoExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -226,6 +226,7 @@ class Runner:
                             continue
                     except Exception as exc:  # pragma: no cover
                         logger.debug("Terminal completion emission failed: %s", exc)
+
                     logger.warning(
                         f"Message {message} could not be delivered. "
                         "This may be due to type incompatibility or no matching targets."

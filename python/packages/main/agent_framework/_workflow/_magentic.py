@@ -319,7 +319,9 @@ def _new_participant_descriptions() -> dict[str, str]:
 class MagenticStartMessage:
     """A message to start a magentic workflow."""
 
-    task: ChatMessage
+    def __init__(self, task: ChatMessage) -> None:
+        """Create the start message."""
+        self.task = task
 
     @classmethod
     def from_string(cls, task_text: str) -> "MagenticStartMessage":
@@ -333,6 +335,16 @@ class MagenticStartMessage:
         """
         return cls(task=ChatMessage(role=Role.USER, text=task_text))
 
+    def to_dict(self) -> dict[str, Any]:
+        """Create a dict representation of the message."""
+        return {"task": self.task.to_dict()}
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "MagenticStartMessage":
+        """Create from a dict."""
+        task = ChatMessage.from_dict(value["task"])
+        return cls(task=task)
+
 
 @dataclass
 class MagenticRequestMessage:
@@ -343,7 +355,6 @@ class MagenticRequestMessage:
     task_context: str = ""
 
 
-@dataclass
 class MagenticResponseMessage:
     """A response message type.
 
@@ -351,9 +362,27 @@ class MagenticResponseMessage:
     or target a specific agent by name.
     """
 
-    body: ChatMessage
-    target_agent: str | None = None  # deliver only to this agent if set
-    broadcast: bool = False  # deliver to all agents if True
+    def __init__(
+        self,
+        body: ChatMessage,
+        target_agent: str | None = None,  # deliver only to this agent if set
+        broadcast: bool = False,  # deliver to all agents if True
+    ) -> None:
+        self.body = body
+        self.target_agent = target_agent
+        self.broadcast = broadcast
+
+    def to_dict(self) -> dict[str, Any]:
+        """Create a dict representation of the message."""
+        return {"body": self.body.to_dict(), "target_agent": self.target_agent, "broadcast": self.broadcast}
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "MagenticResponseMessage":
+        """Create from a dict."""
+        body = ChatMessage.from_dict(value["body"])
+        target_agent = value.get("target_agent")
+        broadcast = value.get("broadcast", False)
+        return cls(body=body, target_agent=target_agent, broadcast=broadcast)
 
 
 @dataclass
