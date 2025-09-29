@@ -415,5 +415,8 @@ class TaskRunner:
             domain="airline",
         )
 
-        logger.info(f"Evaluation completed - Reward: {self.full_reward_info.reward}, Info: {self.full_reward_info}")
-        return self.full_reward_info.reward  # type: ignore[no-any-return]
+        logger.info(
+            f"Evaluation completed - Reward: {self.full_reward_info.reward if self.full_reward_info else None}, "
+            f"Info: {self.full_reward_info}"
+        )
+        return self.full_reward_info.reward if self.full_reward_info else 0.0
