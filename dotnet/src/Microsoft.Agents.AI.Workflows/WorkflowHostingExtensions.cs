@@ -42,7 +42,7 @@ public static class WorkflowHostingExtensions
             throw new InvalidOperationException("Cannot host a workflow that does not accept List<ChatMessage> as an input");
         }
 
-        return maybeTyped.AsAgent();
+        return maybeTyped.AsAgent(id: id, name: name);
     }
 
     internal static FunctionCallContent ToFunctionCall(this ExternalRequest request)

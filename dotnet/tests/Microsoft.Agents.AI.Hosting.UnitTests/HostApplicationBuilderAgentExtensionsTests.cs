@@ -236,25 +236,6 @@ public class HostApplicationBuilderAgentExtensionsTests
         // Assert
         Assert.Same(builder, result);
     }
-
-    /// <summary>
-    /// Verifies that AddAIAgent with whitespace name throws ArgumentException.
-    /// </summary>
-    [Theory]
-    [InlineData(" ")]
-    [InlineData("\t")]
-    [InlineData(" agent ")]
-    public void AddAIAgent_WhitespaceName_ThrowsArgumentException(string name)
-    {
-        // Arrange
-        var builder = new HostApplicationBuilder();
-
-        // Act & Assert
-        var exception = Assert.Throws<ArgumentException>(() =>
-            builder.AddAIAgent(name, "instructions"));
-        Assert.Contains("Invalid type", exception.Message);
-    }
-
     /// <summary>
     /// Verifies that AddAIAgent without chat client key calls the overload with null key.
     /// </summary>
@@ -301,28 +282,5 @@ public class HostApplicationBuilderAgentExtensionsTests
             d => (d.ServiceKey as string) == name &&
                  d.ServiceType == typeof(AIAgent));
         Assert.NotNull(descriptor);
-    }
-
-    /// <summary>
-    /// Verifies that AddAIAgent with invalid special characters throws ArgumentException.
-    /// </summary>
-    [Theory]
-    [InlineData("特殊字符")] // non-ASCII not allowed
-    [InlineData("123agent")] // cannot start with number
-    [InlineData("agent@name")] // @ not allowed
-    [InlineData("agent/name")] // / not allowed
-    [InlineData("agent name")] // space not allowed
-    [InlineData(".agent")] // cannot start with period
-    [InlineData("-agent")] // cannot start with dash
-    [InlineData(":agent")] // cannot start with colon
-    public void AddAIAgent_InvalidSpecialCharactersInName_ThrowsArgumentException(string name)
-    {
-        // Arrange
-        var builder = new HostApplicationBuilder();
-
-        // Act & Assert
-        var exception = Assert.Throws<ArgumentException>(() =>
-            builder.AddAIAgent(name, "instructions"));
-        Assert.Contains("Invalid type", exception.Message);
     }
 }

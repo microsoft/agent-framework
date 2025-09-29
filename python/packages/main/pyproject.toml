@@ -57,9 +57,7 @@ redis = [
 viz = [
     "graphviz>=0.20.0"
 ]
-runtime = [
-    "agent-framework-runtime"
-]
+
 mem0 = [
     "agent-framework-mem0"
 ]
@@ -72,7 +70,6 @@ devui = [
 all = [
     "agent_framework_copilotstudio",
     "agent-framework-azure-ai",
-    "agent-framework-runtime",
     "agent-framework-mem0",
     "agent-framework-a2a",
     "agent-framework-redis",

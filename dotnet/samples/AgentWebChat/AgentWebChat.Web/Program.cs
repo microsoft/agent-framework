@@ -2,7 +2,6 @@
 
 using AgentWebChat.Web;
 using AgentWebChat.Web.Components;
-using Microsoft.Agents.AI.Runtime;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -23,8 +22,7 @@ Uri baseAddress = new("https+http://agenthost");
 Uri a2aAddress = new("http://localhost:5390/a2a");
 
 builder.Services.AddHttpClient<AgentDiscoveryClient>(client => client.BaseAddress = baseAddress);
-builder.Services.AddHttpClient<IActorClient, HttpActorClient>(client => client.BaseAddress = baseAddress);
-builder.Services.AddSingleton(sp => new A2AActorClient(sp.GetRequiredService<ILogger<A2AActorClient>>(), a2aAddress));
+builder.Services.AddSingleton(sp => new A2AAgentClient(sp.GetRequiredService<ILogger<A2AAgentClient>>(), a2aAddress));
 
 var app = builder.Build();
 

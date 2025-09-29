@@ -32,7 +32,6 @@ members = [
     "agent-framework-mem0",
     "agent-framework-project",
     "agent-framework-redis",
-    "agent-framework-runtime",
 ]
 
 [[package]]
@@ -91,7 +90,6 @@ all = [
     { name = "agent-framework-devui", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-mem0", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-redis", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "agent-framework-runtime", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "graphviz", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 azure = [
@@ -115,9 +113,6 @@ microsoft-copilotstudio = [
 redis = [
     { name = "agent-framework-redis", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-runtime = [
-    { name = "agent-framework-runtime", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-]
 viz = [
     { name = "graphviz", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
@@ -138,8 +133,6 @@ requires-dist = [
     { name = "agent-framework-mem0", marker = "extra == 'mem0'", editable = "packages/mem0" },
     { name = "agent-framework-redis", marker = "extra == 'all'", editable = "packages/redis" },
     { name = "agent-framework-redis", marker = "extra == 'redis'", editable = "packages/redis" },
-    { name = "agent-framework-runtime", marker = "extra == 'all'", editable = "packages/runtime" },
-    { name = "agent-framework-runtime", marker = "extra == 'runtime'", editable = "packages/runtime" },
     { name = "aiofiles", specifier = ">=24.1.0" },
     { name = "azure-identity", specifier = ">=1,<2" },
     { name = "azure-monitor-opentelemetry", specifier = ">=1.7.0" },
@@ -156,7 +149,7 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2,<3" },
     { name = "typing-extensions" },
 ]
-provides-extras = ["azure-ai", "azure", "microsoft-copilotstudio", "microsoft", "redis", "viz", "runtime", "mem0", "a2a", "devui", "all"]
+provides-extras = ["azure-ai", "azure", "microsoft-copilotstudio", "microsoft", "redis", "viz", "mem0", "a2a", "devui", "all"]
 
 [[package]]
 name = "agent-framework-a2a"
@@ -395,17 +388,6 @@ requires-dist = [
     { name = "redis", specifier = ">=6.4.0" },
     { name = "redisvl", specifier = ">=0.8.2" },
 ]
-
-[[package]]
-name = "agent-framework-runtime"
-version = "0.1.0b1"
-source = { editable = "packages/runtime" }
-dependencies = [
-    { name = "agent-framework", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "agent-framework", editable = "packages/main" }]
 
 [[package]]
 name = "aiofiles"
