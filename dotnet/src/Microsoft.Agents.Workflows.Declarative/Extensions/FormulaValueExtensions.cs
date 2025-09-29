@@ -9,7 +9,9 @@ using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
+using Microsoft.Agents.Workflows.Declarative.PowerFx.Functions;
 using Microsoft.Bot.ObjectModel;
+using Microsoft.Extensions.AI;
 using Microsoft.PowerFx.Types;
 using BlankType = Microsoft.PowerFx.Types.BlankType;
 
@@ -37,6 +39,7 @@ internal static class FormulaValueExtensions
             DateTime dateonlyValue when dateonlyValue.TimeOfDay == TimeSpan.Zero => FormulaValue.NewDateOnly(dateonlyValue),
             DateTime datetimeValue => FormulaValue.New(datetimeValue),
             TimeSpan timeValue => FormulaValue.New(timeValue),
+            ChatMessage chatMessage => chatMessage.ToRecord(),
             ExpandoObject expandoValue => expandoValue.ToRecord(),
             object when value is IDictionary dictionaryValue => dictionaryValue.ToRecord(),
             object when value is IEnumerable tableValue => tableValue.ToTable(),
@@ -209,10 +212,40 @@ internal static class FormulaValueExtensions
         return TableType.Empty();
     }
 
-    private static TableValue ToTable(this IEnumerable value) =>
-        FormulaValue.NewTable(
-            value.ToTableType().ToRecord(),
-            [.. value.OfType<ExpandoObject>().Select(element => element.ToRecord())]);
+    private static TableValue ToTable(this IEnumerable value)
+    {
+        Type? elementType = value.GetType().GetElementType();
+        if (elementType is null || elementType == typeof(object))
+        {
+            IEnumerator enumerator = value.GetEnumerator();
+            if (enumerator.MoveNext())
+            {
+                elementType = enumerator.Current?.GetType();
+            }
+        }
+
+        return
+            elementType switch
+            {
+                null => FormulaValue.NewTable(RecordType.EmptySealed(), []),
+                _ when elementType == typeof(ExpandoObject) =>
+                    FormulaValue.NewTable(
+                        value.ToTableType().ToRecord(),
+                        [.. value.OfType<ExpandoObject>().Select(element => element.ToRecord())]),
+                _ when typeof(ChatMessage).IsAssignableFrom(elementType) =>
+                    FormulaValue.NewTable(
+                        TypeSchema.Message.MessageRecordType,
+                        [.. value.OfType<ChatMessage>().Select(message => message.ToRecord())]),
+                _ when typeof(IDictionary).IsAssignableFrom(elementType) => value.ToTableOfRecords(),
+                _ => throw new DeclarativeModelException($"Unsupported element type: {elementType.Name}"),
+            };
+    }
+
+    private static TableValue ToTableOfRecords(this IEnumerable list)
+    {
+        RecordValue[] elements = [.. list.OfType<IDictionary>().Select(table => table.ToRecord())];
+        return FormulaValue.NewTable(elements.First().Type, elements);
+    }
 
     private static KeyValuePair<string, DataValue> GetKeyValuePair(this NamedValue value) => new(value.Name, value.Value.ToDataValue());
 

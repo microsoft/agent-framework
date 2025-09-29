@@ -4,11 +4,14 @@ from collections.abc import AsyncIterable
 from typing import Any, ClassVar
 
 from agent_framework import (
+    AgentMiddlewares,
     AgentRunResponse,
     AgentRunResponseUpdate,
     AgentThread,
+    AggregateContextProvider,
     BaseAgent,
     ChatMessage,
+    ContextProvider,
     Role,
     TextContent,
 )
@@ -53,20 +56,16 @@ class CopilotStudioSettings(AFBaseSettings):
 class CopilotStudioAgent(BaseAgent):
     """A Copilot Studio Agent."""
 
-    client: CopilotClient
-    settings: ConnectionSettings | None
-    token: str | None
-    cloud: PowerPlatformCloud | None
-    agent_type: AgentType | None
-    custom_power_platform_cloud: str | None
-    username: str | None
-    token_cache: Any | None
-    scopes: list[str] | None
-
     def __init__(
         self,
         client: CopilotClient | None = None,
         settings: ConnectionSettings | None = None,
+        *,
+        id: str | None = None,
+        name: str | None = None,
+        description: str | None = None,
+        context_providers: ContextProvider | list[ContextProvider] | AggregateContextProvider | None = None,
+        middleware: AgentMiddlewares | list[AgentMiddlewares] | None = None,
         environment_id: str | None = None,
         agent_identifier: str | None = None,
         client_id: str | None = None,
@@ -88,6 +87,11 @@ class CopilotStudioAgent(BaseAgent):
                 a new client will be created using the other parameters.
             settings: Optional pre-configured ConnectionSettings. If not provided,
                 settings will be created from the other parameters.
+            id: id of the CopilotAgent
+            name: Name of the CopilotAgent
+            description: Description of the CopilotAgent
+            context_providers: Context Providers, to be used by the copilot agent.
+            middleware: Agent middlewares used by the agent.
             environment_id: Environment ID of the Power Platform environment containing
                 the Copilot Studio app. Can also be set via COPILOTSTUDIOAGENT__ENVIRONMENTID
                 environment variable.
@@ -113,6 +117,13 @@ class CopilotStudioAgent(BaseAgent):
         Raises:
             ServiceInitializationError: If required configuration is missing or invalid.
         """
+        super().__init__(
+            id=id,
+            name=name,
+            description=description,
+            context_providers=context_providers,
+            middleware=middleware,
+        )
         if not client:
             try:
                 copilot_studio_settings = CopilotStudioSettings(
@@ -169,17 +180,13 @@ class CopilotStudioAgent(BaseAgent):
 
             client = CopilotClient(settings=settings, token=token)
 
-        super().__init__(
-            client=client,  # type: ignore[reportCallIssue]
-            settings=settings,  # type: ignore[reportCallIssue]
-            token=token,  # type: ignore[reportCallIssue]
-            cloud=cloud,  # type: ignore[reportCallIssue]
-            agent_type=agent_type,  # type: ignore[reportCallIssue]
-            custom_power_platform_cloud=custom_power_platform_cloud,  # type: ignore[reportCallIssue]
-            username=username,  # type: ignore[reportCallIssue]
-            token_cache=token_cache,  # type: ignore[reportCallIssue]
-            scopes=scopes,  # type: ignore[reportCallIssue]
-        )
+        self.client = client
+        self.cloud = cloud
+        self.agent_type = agent_type
+        self.custom_power_platform_cloud = custom_power_platform_cloud
+        self.username = username
+        self.token_cache = token_cache
+        self.scopes = scopes
 
     async def run(
         self,

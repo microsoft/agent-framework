@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Frozen;
 using System.Globalization;
+using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.SystemVariables;
@@ -89,11 +90,10 @@ internal static class SystemScope
         }
     }
 
-    public static void SetLastMessage(this WorkflowFormulaState state, ChatMessage message)
+    public static async ValueTask SetLastMessageAsync(this IWorkflowContext context, ChatMessage message)
     {
-        state.Set(Names.LastMessage, message.ToRecord(), VariableScopeNames.System);
-        state.Set(Names.LastMessageId, message.MessageId is null ? FormulaValue.NewBlank(FormulaType.String) : FormulaValue.New(message.MessageId), VariableScopeNames.System);
-        state.Set(Names.LastMessageText, FormulaValue.New(message.Text), VariableScopeNames.System);
-        state.Bind();
+        await context.QueueSystemUpdateAsync(Names.LastMessage, message.ToRecord()).ConfigureAwait(false);
+        await context.QueueSystemUpdateAsync<object>(Names.LastMessageId, string.IsNullOrEmpty(message.MessageId) ? UnassignedValue.Instance : message.MessageId).ConfigureAwait(false);
+        await context.QueueSystemUpdateAsync(Names.LastMessageText, FormulaValue.New(message.Text)).ConfigureAwait(false);
     }
 }

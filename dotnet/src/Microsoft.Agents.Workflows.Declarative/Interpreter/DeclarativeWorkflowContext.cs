@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Linq;
@@ -75,7 +74,23 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
     }
 
     /// <inheritdoc/>
-    public ValueTask<T?> ReadStateAsync<T>(string key, string? scopeName = null) => this.Source.ReadStateAsync<T>(key, scopeName);
+    public async ValueTask<TValue?> ReadStateAsync<TValue>(string key, string? scopeName = null)
+    {
+        bool isManagedScope =
+            scopeName is not null && // null scope cannot be managed
+            VariableScopeNames.IsValidName(scopeName);
+
+        return typeof(TValue) switch
+        {
+            // Not a managed scope, just pass through.  This is valid when a declarative
+            // workflow has been ejected to code (where DeclarativeWorkflowContext is also utilized).
+            _ when !isManagedScope => await this.Source.ReadStateAsync<TValue>(key, scopeName).ConfigureAwait(false),
+            // Retrieve formula values directly from the managed state to avoid conversion.
+            _ when typeof(TValue) == typeof(FormulaValue) => (TValue?)(object?)this.State.Get(key, scopeName),
+            // Retrieve native types from the source context to avoid conversion.
+            _ => await this.Source.ReadStateAsync<TValue>(key, scopeName).ConfigureAwait(false),
+        };
+    }
 
     /// <inheritdoc/>
     public ValueTask<HashSet<string>> ReadStateKeysAsync(string? scopeName = null) => this.Source.ReadStateKeysAsync(scopeName);
@@ -86,15 +101,19 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
     private ValueTask UpdateStateAsync<T>(string key, T? value, string? scopeName, bool allowSystem = true)
     {
         bool isManagedScope =
-            scopeName != null && // null scope cannot be managed
-            (ManagedScopes.Contains(scopeName) ||
-            (allowSystem && VariableScopeNames.System.Equals(scopeName, StringComparison.Ordinal)));
+            scopeName is not null && // null scope cannot be managed
+            VariableScopeNames.IsValidName(scopeName);
 
         if (!isManagedScope)
         {
             // Not a managed scope, just pass through.  This is valid when a declarative
             // workflow has been ejected to code (where DeclarativeWorkflowContext is also utilized).
             return this.Source.QueueStateUpdateAsync(key, value, scopeName);
+        }
+
+        if (!ManagedScopes.Contains(scopeName!) && !allowSystem)
+        {
+            throw new DeclarativeActionException($"Cannot manage variable definitions in scope: '{scopeName}'.");
         }
 
         return value switch
@@ -127,19 +146,19 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
 
         ValueTask QueueDataValueStateAsync(DataValue dataValue)
         {
-            FormulaValue formulaValue = dataValue.ToFormula();
             if (isManagedScope)
             {
+                FormulaValue formulaValue = dataValue.ToFormula();
                 this.State.Set(key, formulaValue, scopeName);
             }
-            return this.Source.QueueStateUpdateAsync(key, formulaValue.ToObject(), scopeName);
+            return this.Source.QueueStateUpdateAsync(key, dataValue.ToObject(), scopeName);
         }
 
         ValueTask QueueNativeStateAsync(object? rawValue)
         {
-            FormulaValue formulaValue = rawValue.ToFormula();
             if (isManagedScope)
             {
+                FormulaValue formulaValue = rawValue.ToFormula();
                 this.State.Set(key, formulaValue, scopeName);
             }
             return this.Source.QueueStateUpdateAsync(key, rawValue, scopeName);

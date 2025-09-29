@@ -30,7 +30,7 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
         Task threadTask = Task.CompletedTask;
         if (this._thread is not null)
         {
-            JsonElement threadValue = await this._thread.SerializeAsync(cancellationToken: cancellation).ConfigureAwait(false);
+            JsonElement threadValue = this._thread.Serialize();
             threadTask = context.QueueStateUpdateAsync(ThreadStateKey, threadValue).AsTask();
         }
 

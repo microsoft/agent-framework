@@ -7,7 +7,7 @@ using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hosting;
 using Microsoft.Agents.AI.Hosting.A2A.AspNetCore;
 using Microsoft.Agents.AI.Runtime.Storage.CosmosDB;
-using Microsoft.Agents.Orchestration;
+using Microsoft.Agents.Workflows;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.AI;
 
@@ -74,7 +74,10 @@ builder.AddAIAgent("knights-and-knaves", (sp, key) =>
         If the user asks a general question about their surrounding, make something up which is consistent with the scenario.
         """, "Narrator");
 
-    return new ConcurrentOrchestration([knight, knave, narrator], name: key);
+    // TODO: How to avoid sync-over-async here?
+#pragma warning disable VSTHRD002 // Avoid problematic synchronous waits
+    return AgentWorkflowBuilder.BuildConcurrent([knight, knave, narrator]).AsAgentAsync(name: key).AsTask().GetAwaiter().GetResult();
+#pragma warning restore VSTHRD002
 });
 
 // Add CosmosDB state storage to override default storage
