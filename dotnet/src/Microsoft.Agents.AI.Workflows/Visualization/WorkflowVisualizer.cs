@@ -263,7 +263,7 @@ public static class WorkflowVisualizer
         return BitConverter.ToString(hash).Replace("-", "").Substring(0, 8).ToUpperInvariant();
 #else
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(input));
-        return Convert.ToHexString(hash).Substring(0, 8).ToUpperInvariant();
+        return Convert.ToHexString(hash).Substring(0, 8);
 #endif
     }
 
