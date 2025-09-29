@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import uuid
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,7 +41,7 @@ class WorkflowCheckpoint:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "WorkflowCheckpoint":
+    def from_dict(cls, data: Mapping[str, Any]) -> "WorkflowCheckpoint":
         return cls(**data)
 
 

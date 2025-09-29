@@ -7,27 +7,20 @@ import sys
 from collections.abc import (
     AsyncIterable,
     Callable,
-    Iterable,
-    Iterator,
     Mapping,
     MutableMapping,
     MutableSequence,
     Sequence,
 )
 from copy import deepcopy
-from typing import Annotated, Any, ClassVar, Generic, Literal, TypeVar, overload
+from typing import Any, ClassVar, Literal, TypeVar, overload
 
 from pydantic import (
     BaseModel,
-    ConfigDict,
-    Field,
     ValidationError,
-    field_validator,
-    model_serializer,
 )
 
 from ._logging import get_logger
-from ._pydantic import AFBaseModel
 from ._tools import ToolProtocol, ai_function
 from .exceptions import AdditionItemMismatch
 
@@ -38,11 +31,88 @@ else:
 
 logger = get_logger("agent_framework")
 
+
+# region Content Parsing Utilities
+
+
+class EnumLike(type):
+    """Generic metaclass for creating enum-like classes with predefined constants.
+
+    This metaclass automatically creates class-level constants based on a _constants
+    class attribute. Each constant is defined as a tuple of (name, *args) where
+    name is the constant name and args are the constructor arguments.
+    """
+
+    def __new__(mcs, name: str, bases: tuple[type, ...], namespace: dict[str, Any]) -> "EnumLike":
+        cls = super().__new__(mcs, name, bases, namespace)
+
+        # Create constants if _constants is defined
+        if (const := getattr(cls, "_constants", None)) and isinstance(const, dict):
+            for const_name, const_args in const.items():
+                if isinstance(const_args, (list, tuple)):
+                    setattr(cls, const_name, cls(*const_args))
+                else:
+                    setattr(cls, const_name, cls(const_args))
+
+        return cls
+
+
+def _parse_content_list(contents_data: list[Any]) -> list["Contents"]:
+    """Parse a list of content data dictionaries into appropriate Content objects.
+
+    Args:
+        contents_data: List of content data (dicts or already constructed objects)
+
+    Returns:
+        List of Content objects with unknown types logged and ignored
+    """
+    contents: list["Contents"] = []
+
+    for content_data in contents_data:
+        if isinstance(content_data, dict):
+            # Determine the content type and create the appropriate class
+            content_type = str(content_data.get("type"))
+            if content_type == "text":
+                contents.append(TextContent.from_dict(content_data))
+            elif content_type == "data":
+                contents.append(DataContent.from_dict(content_data))
+            elif content_type == "uri":
+                contents.append(UriContent.from_dict(content_data))
+            elif content_type == "error":
+                contents.append(ErrorContent.from_dict(content_data))
+            elif content_type == "function_call":
+                contents.append(FunctionCallContent.from_dict(content_data))
+            elif content_type == "function_result":
+                contents.append(FunctionResultContent.from_dict(content_data))
+            elif content_type == "usage":
+                contents.append(UsageContent.from_dict(content_data))
+            elif content_type == "hosted_file":
+                contents.append(HostedFileContent.from_dict(content_data))
+            elif content_type == "hosted_vector_store":
+                contents.append(HostedVectorStoreContent.from_dict(content_data))
+            elif content_type == "function_approval_request":
+                contents.append(FunctionApprovalRequestContent.from_dict(content_data))
+            elif content_type == "function_approval_response":
+                contents.append(FunctionApprovalResponseContent.from_dict(content_data))
+            elif content_type == "text_reasoning":
+                contents.append(TextReasoningContent.from_dict(content_data))
+            else:
+                # Log unknown content types and ignore them
+                logger.warning(f"Unknown content type '{content_type}', ignoring: {content_data}")
+        else:
+            # If it's already a content object, keep it as is
+            contents.append(content_data)
+
+    return contents
+
+
+# endregion
+
 # region Constants and types
 _T = TypeVar("_T")
 TEmbedding = TypeVar("TEmbedding")
 TChatResponse = TypeVar("TChatResponse", bound="ChatResponse")
-TChatToolMode = TypeVar("TChatToolMode", bound="ChatToolMode")
+TToolMode = TypeVar("TToolMode", bound="ToolMode")
 TAgentRunResponse = TypeVar("TAgentRunResponse", bound="AgentRunResponse")
 
 CreatedAtT = str  # Use a datetimeoffset type? Or a more specific type like datetime.datetime?
@@ -88,7 +158,6 @@ __all__ = [
     "ChatOptions",
     "ChatResponse",
     "ChatResponseUpdate",
-    "ChatToolMode",
     "CitationAnnotation",
     "Contents",
     "DataContent",
@@ -98,22 +167,20 @@ __all__ = [
     "FunctionApprovalResponseContent",
     "FunctionCallContent",
     "FunctionResultContent",
-    "GeneratedEmbeddings",
     "HostedFileContent",
     "HostedVectorStoreContent",
     "Role",
-    "SpeechToTextOptions",
     "TextContent",
     "TextReasoningContent",
     "TextSpanRegion",
-    "TextToSpeechOptions",
+    "ToolMode",
     "UriContent",
     "UsageContent",
     "UsageDetails",
 ]
 
 
-class UsageDetails(AFBaseModel):
+class UsageDetails:
     """Provides usage details about a request/response.
 
     Attributes:
@@ -122,19 +189,6 @@ class UsageDetails(AFBaseModel):
         total_token_count: The total number of tokens used to produce the response.
         additional_counts: A dictionary of additional token counts, can be set by passing kwargs.
     """
-
-    model_config = ConfigDict(
-        populate_by_name=True, arbitrary_types_allowed=True, validate_assignment=True, extra="allow"
-    )
-    __pydantic_extra__: dict[str, int]  # type: ignore[reportIncompatibleVariableOverride]
-    """Overriding the default extras type, to make sure all extras are integers."""
-
-    input_token_count: int | None = None
-    """The number of tokens in the input."""
-    output_token_count: int | None = None
-    """The number of tokens in the output."""
-    total_token_count: int | None = None
-    """The total number of tokens used to produce the response."""
 
     def __init__(
         self,
@@ -152,16 +206,71 @@ class UsageDetails(AFBaseModel):
             **kwargs: Additional token counts, can be set by passing keyword arguments.
                 They can be retrieved through the `additional_counts` property.
         """
-        super().__init__(
-            input_token_count=input_token_count,  # type: ignore[reportCallIssue]
-            output_token_count=output_token_count,  # type: ignore[reportCallIssue]
-            total_token_count=total_token_count,  # type: ignore[reportCallIssue]
-            **kwargs,
-        )
+        self.input_token_count = input_token_count
+        self.output_token_count = output_token_count
+        self.total_token_count = total_token_count
+
+        # Validate that all kwargs are integers (preserving Pydantic behavior)
+        self._extra_counts: dict[str, int] = {}
+        for key, value in kwargs.items():
+            if not isinstance(value, int):
+                raise ValueError(f"Additional counts must be integers, got {type(value).__name__}")
+            self._extra_counts[key] = value
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "UsageDetails":
+        """Create a UsageDetails instance from a dictionary.
+
+        Args:
+            data: Dictionary containing the data to create the instance from.
+
+        Returns:
+            UsageDetails instance created from the dictionary.
+        """
+        return cls(**data)
+
+    def to_dict(self, *, exclude_none: bool = False, exclude: set[str] | None = None) -> dict[str, Any]:
+        """Convert the UsageDetails instance to a dictionary.
+
+        Args:
+            exclude_none: Whether to exclude None values from the output.
+            exclude: Set of field names to exclude from the output.
+
+        Returns:
+            Dictionary representation of the UsageDetails instance.
+        """
+        if exclude is None:
+            exclude = set()
+
+        result: dict[str, Any] = {}
+
+        # Handle main fields
+        for field_name, value in [
+            ("input_token_count", self.input_token_count),
+            ("output_token_count", self.output_token_count),
+            ("total_token_count", self.total_token_count),
+        ]:
+            if field_name in exclude:
+                continue
+            if exclude_none and value is None:
+                continue
+            result[field_name] = value
+
+        # Add additional counts (extra fields)
+        for key, value in self._extra_counts.items():
+            if key in exclude:
+                continue
+            if exclude_none and value is None:
+                continue
+            result[key] = value
+
+        return result
 
     def __str__(self) -> str:
         """Returns a string representation of the usage details."""
-        return self.model_dump_json(indent=4, exclude_none=True)
+        import json
+
+        return json.dumps(self.to_dict(exclude_none=True), indent=4)
 
     @property
     def additional_counts(self) -> dict[str, int]:
@@ -175,15 +284,13 @@ class UsageDetails(AFBaseModel):
 
             Over time additional counts may be added to the base class.
         """
-        return self.model_extra or {}
+        return self._extra_counts
 
     def __setitem__(self, key: str, value: int) -> None:
         """Sets an additional count for the usage details."""
         if not isinstance(value, int):
             raise ValueError("Additional counts must be integers.")
-        if self.model_extra is None:
-            self.model_extra = {}  # type: ignore[reportAttributeAccessIssue, misc]
-        self.model_extra[key] = value
+        self._extra_counts[key] = value
 
     def __add__(self, other: "UsageDetails | None") -> "UsageDetails":
         """Combines two `UsageDetails` instances."""
@@ -192,7 +299,7 @@ class UsageDetails(AFBaseModel):
         if not isinstance(other, UsageDetails):
             raise ValueError("Can only add two usage details objects together.")
 
-        additional_counts = self.additional_counts or {}
+        additional_counts = self.additional_counts.copy()
         if other.additional_counts:
             for key, value in other.additional_counts.items():
                 additional_counts[key] = additional_counts.get(key, 0) + (value or 0)
@@ -218,6 +325,18 @@ class UsageDetails(AFBaseModel):
             self.additional_counts[key] = self.additional_counts.get(key, 0) + (value or 0)
 
         return self
+
+    def __eq__(self, other: object) -> bool:
+        """Check if two UsageDetails instances are equal."""
+        if not isinstance(other, UsageDetails):
+            return False
+
+        return (
+            self.input_token_count == other.input_token_count
+            and self.output_token_count == other.output_token_count
+            and self.total_token_count == other.total_token_count
+            and self.additional_counts == other.additional_counts
+        )
 
 
 def _process_update(
@@ -283,8 +402,8 @@ def _process_update(
             response.conversation_id = update.conversation_id
         if update.finish_reason is not None:
             response.finish_reason = update.finish_reason
-        if update.ai_model_id is not None:
-            response.ai_model_id = update.ai_model_id
+        if update.model_id is not None:
+            response.model_id = update.model_id
 
 
 def _coalesce_text_content(
@@ -326,21 +445,72 @@ def _finalize_response(response: "ChatResponse | AgentRunResponse") -> None:
 # region BaseAnnotation
 
 
-class TextSpanRegion(AFBaseModel):
+class TextSpanRegion:
     """Represents a region of text that has been annotated."""
 
-    type: Literal["text_span"] = "text_span"  # type: ignore[assignment]
-    start_index: int | None = None
-    end_index: int | None = None
+    def __init__(
+        self,
+        *,
+        start_index: int | None = None,
+        end_index: int | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize TextSpanRegion.
+
+        Args:
+            start_index: The start index of the text span.
+            end_index: The end index of the text span.
+            **kwargs: Additional keyword arguments.
+        """
+        self.type: Literal["text_span"] = "text_span"
+        self.start_index = start_index
+        self.end_index = end_index
+
+        # Handle any additional kwargs
+        for key, value in kwargs.items():
+            if not hasattr(self, key):
+                setattr(self, key, value)
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "TextSpanRegion":
+        """Create a TextSpanRegion instance from a dictionary.
+
+        Args:
+            data: Dictionary containing the data to create the instance from.
+
+        Returns:
+            TextSpanRegion instance created from the dictionary.
+        """
+        return cls(**data)
+
+    def to_dict(self, *, exclude_none: bool = False, exclude: set[str] | None = None) -> dict[str, Any]:
+        """Convert the TextSpanRegion instance to a dictionary.
+
+        Args:
+            exclude_none: Whether to exclude None values from the output.
+            exclude: Set of field names to exclude from the output.
+
+        Returns:
+            Dictionary representation of the TextSpanRegion instance.
+        """
+        if exclude is None:
+            exclude = set()
+
+        result: dict[str, Any] = {}
+        for key, value in self.__dict__.items():
+            if key in exclude:
+                continue
+            if exclude_none and value is None:
+                continue
+            result[key] = value
+
+        return result
 
 
-AnnotatedRegions = Annotated[
-    TextSpanRegion,
-    Field(discriminator="type"),
-]
+AnnotatedRegions = TextSpanRegion
 
 
-class BaseAnnotation(AFBaseModel):
+class BaseAnnotation:
     """Base class for all AI Annotation types.
 
     Args:
@@ -349,9 +519,98 @@ class BaseAnnotation(AFBaseModel):
 
     """
 
-    annotated_regions: list[AnnotatedRegions] | None = None
-    additional_properties: dict[str, Any] | None = None
-    raw_representation: Any | None = Field(default=None, repr=False, exclude=True)
+    def __init__(
+        self,
+        *,
+        annotated_regions: list[AnnotatedRegions] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize BaseAnnotation.
+
+        Args:
+            annotated_regions: A list of regions that have been annotated.
+            additional_properties: Optional additional properties associated with the content.
+            raw_representation: Optional raw representation of the content from an underlying implementation.
+            **kwargs: Additional keyword arguments (for compatibility with subclasses).
+        """
+        self.annotated_regions = annotated_regions
+        self.additional_properties = additional_properties
+        self.raw_representation = raw_representation
+
+        # Handle any additional kwargs that weren't consumed by this class
+        for key, value in kwargs.items():
+            if not hasattr(self, key):
+                setattr(self, key, value)
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "BaseAnnotation":
+        """Create a BaseAnnotation instance from a dictionary.
+
+        Args:
+            data: Dictionary containing the data to create the instance from.
+
+        Returns:
+            BaseAnnotation instance created from the dictionary.
+        """
+        data_copy = dict(data).copy()
+
+        # Handle annotated_regions - convert from list of dicts to list of AnnotatedRegions objects if needed
+        if annotated_regions := data_copy.get("annotated_regions"):
+            regions = []
+            for region_data in annotated_regions:
+                if isinstance(region_data, dict):
+                    region_type = region_data.get("type")
+                    if region_type == "text_span":
+                        regions.append(TextSpanRegion.from_dict(region_data))
+                    else:
+                        logger.warning(f"Unknown region type: {region_type} in {region_data}")
+                else:
+                    # Already an object, keep as is
+                    regions.append(region_data)
+            data_copy["annotated_regions"] = regions
+
+        return cls(**data_copy)
+
+    def to_dict(self, *, exclude_none: bool = False, exclude: set[str] | None = None) -> dict[str, Any]:
+        """Convert the BaseAnnotation instance to a dictionary.
+
+        Args:
+            exclude_none: Whether to exclude None values from the output.
+            exclude: Set of field names to exclude from the output.
+                    'raw_representation' is always excluded as per original Pydantic config.
+
+        Returns:
+            Dictionary representation of the BaseAnnotation instance.
+        """
+        if exclude is None:
+            exclude = set()
+
+        # Always exclude raw_representation as it was marked with exclude=True in Pydantic
+        exclude = exclude | {"raw_representation"}
+
+        result: dict[str, Any] = {}
+        for key, value in self.__dict__.items():
+            if key in exclude:
+                continue
+            if exclude_none and value is None:
+                continue
+
+            # Special handling for annotated_regions
+            if key == "annotated_regions" and value is not None:
+                regions_list = []
+                for region in value:
+                    if hasattr(region, "to_dict"):
+                        regions_list.append(region.to_dict(exclude_none=exclude_none))
+                    else:
+                        # Fallback for non-object regions
+                        regions_list.append(region)
+                result[key] = regions_list
+            else:
+                result[key] = value
+
+        return result
 
 
 class CitationAnnotation(BaseAnnotation):
@@ -369,24 +628,55 @@ class CitationAnnotation(BaseAnnotation):
         raw_representation: Optional raw representation of the content from an underlying implementation.
     """
 
-    type: Literal["citation"] = "citation"  # type: ignore[assignment]
-    title: str | None = None
-    url: str | None = None
-    file_id: str | None = None
-    tool_name: str | None = None
-    snippet: str | None = None
+    def __init__(
+        self,
+        *,
+        title: str | None = None,
+        url: str | None = None,
+        file_id: str | None = None,
+        tool_name: str | None = None,
+        snippet: str | None = None,
+        annotated_regions: list[AnnotatedRegions] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize CitationAnnotation.
+
+        Args:
+            title: The title of the cited content.
+            url: The URL of the cited content.
+            file_id: The file identifier of the cited content, if applicable.
+            tool_name: The name of the tool that generated the citation, if applicable.
+            snippet: A snippet of the cited content, if applicable.
+            annotated_regions: A list of regions that have been annotated with this citation.
+            additional_properties: Optional additional properties associated with the content.
+            raw_representation: Optional raw representation of the content from an underlying implementation.
+            **kwargs: Additional keyword arguments.
+        """
+        super().__init__(
+            annotated_regions=annotated_regions,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+            **kwargs,
+        )
+        self.title = title
+        self.url = url
+        self.file_id = file_id
+        self.tool_name = tool_name
+        self.snippet = snippet
+        self.type: Literal["citation"] = "citation"
 
 
-Annotations = Annotated[
-    CitationAnnotation,
-    Field(discriminator="type"),
-]
+Annotations = CitationAnnotation
 
 
 # region BaseContent
 
+TContents = TypeVar("TContents", bound="BaseContent")
 
-class BaseContent(AFBaseModel):
+
+class BaseContent:
     """Represents content used by AI services.
 
     Attributes:
@@ -396,9 +686,99 @@ class BaseContent(AFBaseModel):
 
     """
 
-    annotations: list[Annotations] | None = None
-    additional_properties: dict[str, Any] | None = None
-    raw_representation: Any | None = Field(default=None, repr=False, exclude=True)
+    def __init__(
+        self,
+        *,
+        annotations: list[Annotations] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize BaseContent.
+
+        Args:
+            annotations: Optional annotations associated with the content.
+            additional_properties: Optional additional properties associated with the content.
+            raw_representation: Optional raw representation of the content from an underlying implementation.
+            **kwargs: Additional keyword arguments (for compatibility with subclasses).
+        """
+        self.annotations = annotations
+        self.additional_properties = additional_properties
+        self.raw_representation = raw_representation
+
+        # Handle any additional kwargs that weren't consumed by this class
+        for key, value in kwargs.items():
+            if not hasattr(self, key):
+                setattr(self, key, value)
+
+    @classmethod
+    def from_dict(cls: type[TContents], data: dict[str, Any]) -> TContents:
+        """Create a BaseContent instance from a dictionary.
+
+        Args:
+            data: Dictionary containing the data to create the instance from.
+
+        Returns:
+            BaseContent instance created from the dictionary.
+        """
+        # Handle annotations conversion from dict format
+        if "annotations" in data and data["annotations"] is not None:
+            annotations = []
+            for annotation_data in data["annotations"]:
+                if isinstance(annotation_data, dict):
+                    # Determine the annotation type and create the appropriate class
+                    annotation_type = annotation_data.get("type")
+                    if annotation_type == "citation":
+                        annotations.append(CitationAnnotation.from_dict(annotation_data))
+                    else:
+                        # Fallback to BaseAnnotation for unknown types
+                        annotations.append(BaseAnnotation.from_dict(annotation_data))
+                else:
+                    # If it's already an annotation object, keep it as is
+                    annotations.append(annotation_data)
+            data = data.copy()
+            data["annotations"] = annotations
+
+        return cls(**data)
+
+    def to_dict(self, *, exclude_none: bool = False, exclude: set[str] | None = None) -> dict[str, Any]:
+        """Convert the BaseContent instance to a dictionary.
+
+        Args:
+            exclude_none: Whether to exclude None values from the output.
+            exclude: Set of field names to exclude from the output.
+                    'raw_representation' is always excluded as per original Pydantic config.
+
+        Returns:
+            Dictionary representation of the BaseContent instance.
+        """
+        if exclude is None:
+            exclude = set()
+
+        # Always exclude raw_representation as it was marked with exclude=True in Pydantic
+        exclude = exclude | {"raw_representation"}
+
+        result: dict[str, Any] = {}
+        for key, value in self.__dict__.items():
+            if key in exclude:
+                continue
+            if exclude_none and value is None:
+                continue
+
+            # Handle annotations conversion to dict format
+            if key == "annotations" and value is not None:
+                annotations_list = []
+                for annotation in value:
+                    if hasattr(annotation, "to_dict"):
+                        annotations_list.append(annotation.to_dict(exclude_none=exclude_none))
+                    else:
+                        # If it's already a dict or other serializable type, keep it as is
+                        annotations_list.append(annotation)
+                result[key] = annotations_list
+            else:
+                result[key] = value
+
+        return result
 
 
 class TextContent(BaseContent):
@@ -412,15 +792,13 @@ class TextContent(BaseContent):
         raw_representation: Optional raw representation of the content.
     """
 
-    text: str
-    type: Literal["text"] = "text"  # type: ignore[assignment]
-
     def __init__(
         self,
         text: str,
         *,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
+        annotations: list[Annotations] | None = None,
         **kwargs: Any,
     ):
         """Initializes a TextContent instance.
@@ -429,14 +807,17 @@ class TextContent(BaseContent):
             text: The text content represented by this instance.
             additional_properties: Optional additional properties associated with the content.
             raw_representation: Optional raw representation of the content.
+            annotations: Optional annotations associated with the content.
             **kwargs: Any additional keyword arguments.
         """
         super().__init__(
-            text=text,  # type: ignore[reportCallIssue]
-            raw_representation=raw_representation,
+            annotations=annotations,
             additional_properties=additional_properties,
+            raw_representation=raw_representation,
             **kwargs,
         )
+        self.text = text
+        self.type: Literal["text"] = "text"
 
     def __add__(self, other: "TextContent") -> "TextContent":
         """Concatenate two TextContent instances.
@@ -516,15 +897,13 @@ class TextReasoningContent(BaseContent):
         raw_representation: Optional raw representation of the content.
     """
 
-    text: str
-    type: Literal["text_reasoning"] = "text_reasoning"  # type: ignore[assignment]
-
     def __init__(
         self,
         text: str,
         *,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
+        annotations: list[Annotations] | None = None,
         **kwargs: Any,
     ):
         """Initializes a TextReasoningContent instance.
@@ -533,14 +912,17 @@ class TextReasoningContent(BaseContent):
             text: The text content represented by this instance.
             additional_properties: Optional additional properties associated with the content.
             raw_representation: Optional raw representation of the content.
+            annotations: Optional annotations associated with the content.
             **kwargs: Any additional keyword arguments.
         """
         super().__init__(
-            text=text,  # type: ignore[reportCallIssue]
-            raw_representation=raw_representation,
+            annotations=annotations,
             additional_properties=additional_properties,
+            raw_representation=raw_representation,
             **kwargs,
         )
+        self.text = text
+        self.type: Literal["text_reasoning"] = "text_reasoning"
 
     def __add__(self, other: "TextReasoningContent") -> "TextReasoningContent":
         """Concatenate two TextReasoningContent instances.
@@ -616,10 +998,6 @@ class DataContent(BaseContent):
         raw_representation: Optional raw representation of the content.
 
     """
-
-    type: Literal["data"] = "data"  # type: ignore[assignment]
-    uri: str
-    media_type: str | None = None
 
     @overload
     def __init__(
@@ -705,16 +1083,24 @@ class DataContent(BaseContent):
             if data is None or media_type is None:
                 raise ValueError("Either 'data' and 'media_type' or 'uri' must be provided.")
             uri = f"data:{media_type};base64,{base64.b64encode(data).decode('utf-8')}"
+
+        # Validate URI format and extract media type if not provided
+        validated_uri = self._validate_uri(uri)
+        if media_type is None:
+            match = URI_PATTERN.match(validated_uri)
+            if match:
+                media_type = match.group("media_type")
+
         super().__init__(
-            uri=uri,  # type: ignore[reportCallIssue]
-            media_type=media_type,  # type: ignore[reportCallIssue]
             annotations=annotations,
-            raw_representation=raw_representation,
             additional_properties=additional_properties,
+            raw_representation=raw_representation,
             **kwargs,
         )
+        self.uri = validated_uri
+        self.media_type = media_type
+        self.type: Literal["data"] = "data"
 
-    @field_validator("uri", mode="after")
     @classmethod
     def _validate_uri(cls, uri: str) -> str:
         """Validates the URI format and extracts the media type.
@@ -750,10 +1136,6 @@ class UriContent(BaseContent):
 
     """
 
-    type: Literal["uri"] = "uri"  # type: ignore[assignment]
-    uri: str
-    media_type: str
-
     def __init__(
         self,
         uri: str,
@@ -779,13 +1161,14 @@ class UriContent(BaseContent):
             **kwargs: Any additional keyword arguments.
         """
         super().__init__(
-            uri=uri,  # type: ignore[reportCallIssue]
-            media_type=media_type,  # type: ignore[reportCallIssue]
             annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
             **kwargs,
         )
+        self.uri = uri
+        self.media_type = media_type
+        self.type: Literal["uri"] = "uri"
 
     def has_top_level_media_type(self, top_level_media_type: Literal["application", "audio", "image", "text"]) -> bool:
         return _has_top_level_media_type(self.media_type, top_level_media_type)
@@ -822,11 +1205,6 @@ class ErrorContent(BaseContent):
 
     """
 
-    type: Literal["error"] = "error"  # type: ignore[assignment]
-    error_code: str | None = None
-    details: str | None = None
-    message: str | None
-
     def __init__(
         self,
         *,
@@ -850,14 +1228,15 @@ class ErrorContent(BaseContent):
             **kwargs: Any additional keyword arguments.
         """
         super().__init__(
-            message=message,  # type: ignore[reportCallIssue]
-            error_code=error_code,  # type: ignore[reportCallIssue]
-            details=details,  # type: ignore[reportCallIssue]
             annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
             **kwargs,
         )
+        self.message = message
+        self.error_code = error_code
+        self.details = details
+        self.type: Literal["error"] = "error"
 
     def __str__(self) -> str:
         """Returns a string representation of the error."""
@@ -878,12 +1257,6 @@ class FunctionCallContent(BaseContent):
         raw_representation: Optional raw representation of the content.
 
     """
-
-    type: Literal["function_call"] = "function_call"  # type: ignore[assignment]
-    call_id: str
-    name: str
-    arguments: str | dict[str, Any | None] | None = None
-    exception: Exception | None = None
 
     def __init__(
         self,
@@ -911,15 +1284,16 @@ class FunctionCallContent(BaseContent):
             **kwargs: Any additional keyword arguments.
         """
         super().__init__(
-            call_id=call_id,  # type: ignore[reportCallIssue]
-            name=name,  # type: ignore[reportCallIssue]
-            arguments=arguments,  # type: ignore[reportCallIssue]
-            exception=exception,  # type: ignore[reportCallIssue]
             annotations=annotations,
-            raw_representation=raw_representation,
             additional_properties=additional_properties,
+            raw_representation=raw_representation,
             **kwargs,
         )
+        self.call_id = call_id
+        self.name = name
+        self.arguments = arguments
+        self.exception = exception
+        self.type: Literal["function_call"] = "function_call"
 
     def parse_arguments(self) -> dict[str, Any | None] | None:
         if isinstance(self.arguments, str):
@@ -972,11 +1346,6 @@ class FunctionResultContent(BaseContent):
 
     """
 
-    type: Literal["function_result"] = "function_result"  # type: ignore[assignment]
-    call_id: str
-    result: Any | None = None
-    exception: Exception | None = None
-
     def __init__(
         self,
         *,
@@ -1000,14 +1369,15 @@ class FunctionResultContent(BaseContent):
             **kwargs: Any additional keyword arguments.
         """
         super().__init__(
-            call_id=call_id,  # type: ignore[reportCallIssue]
-            result=result,  # type: ignore[reportCallIssue]
-            exception=exception,  # type: ignore[reportCallIssue]
             annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
             **kwargs,
         )
+        self.call_id = call_id
+        self.result = result
+        self.exception = exception
+        self.type: Literal["function_result"] = "function_result"
 
 
 class UsageContent(BaseContent):
@@ -1022,9 +1392,6 @@ class UsageContent(BaseContent):
 
     """
 
-    type: Literal["usage"] = "usage"  # type: ignore[assignment]
-    details: UsageDetails
-
     def __init__(
         self,
         details: UsageDetails,
@@ -1036,12 +1403,68 @@ class UsageContent(BaseContent):
     ) -> None:
         """Initializes a UsageContent instance."""
         super().__init__(
-            details=details,  # type: ignore[reportCallIssue]
             annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
             **kwargs,
         )
+        self.details = details
+        self.type: Literal["usage"] = "usage"
+
+    @classmethod
+    def from_dict(cls: type[TContents], data: dict[str, Any]) -> TContents:
+        """Create a UsageContent instance from a dictionary.
+
+        Args:
+            data: Dictionary containing the data to create the instance from.
+
+        Returns:
+            UsageContent instance created from the dictionary.
+        """
+        data_copy = data.copy()
+
+        # Handle details - convert from dict to UsageDetails if needed
+        if "details" in data_copy and isinstance(data_copy["details"], dict):
+            data_copy["details"] = UsageDetails.from_dict(data_copy["details"])
+
+        # Handle annotations via BaseContent logic
+        if "annotations" in data_copy and data_copy["annotations"] is not None:
+            annotations = []
+            for annotation_data in data_copy["annotations"]:
+                if isinstance(annotation_data, dict):
+                    # Determine the annotation type and create the appropriate class
+                    annotation_type = annotation_data.get("type")
+                    if annotation_type == "citation":
+                        annotations.append(CitationAnnotation.from_dict(annotation_data))
+                    else:
+                        # Fallback to BaseAnnotation for unknown types
+                        annotations.append(BaseAnnotation.from_dict(annotation_data))
+                else:
+                    # If it's already an annotation object, keep it as is
+                    annotations.append(annotation_data)
+            data_copy["annotations"] = annotations
+
+        return cls(**data_copy)
+
+    def to_dict(self, *, exclude_none: bool = False, exclude: set[str] | None = None) -> dict[str, Any]:
+        """Convert the UsageContent instance to a dictionary.
+
+        Args:
+            exclude_none: Whether to exclude None values from the output.
+            exclude: Set of field names to exclude from the output.
+
+        Returns:
+            Dictionary representation of the UsageContent instance.
+        """
+        result = super().to_dict(exclude_none=exclude_none, exclude=exclude)
+
+        # Handle details - convert to dict if it's a UsageDetails object
+        if hasattr(self.details, "to_dict"):
+            result["details"] = self.details.to_dict(exclude_none=exclude_none)
+        else:
+            result["details"] = self.details
+
+        return result
 
 
 class HostedFileContent(BaseContent):
@@ -1055,9 +1478,6 @@ class HostedFileContent(BaseContent):
 
     """
 
-    type: Literal["hosted_file"] = "hosted_file"  # type: ignore[assignment]
-    file_id: str
-
     def __init__(
         self,
         file_id: str,
@@ -1068,11 +1488,12 @@ class HostedFileContent(BaseContent):
     ) -> None:
         """Initializes a HostedFileContent instance."""
         super().__init__(
-            file_id=file_id,  # type: ignore[reportCallIssue]
             additional_properties=additional_properties,
             raw_representation=raw_representation,
             **kwargs,
         )
+        self.file_id = file_id
+        self.type: Literal["hosted_file"] = "hosted_file"
 
 
 class HostedVectorStoreContent(BaseContent):
@@ -1086,9 +1507,6 @@ class HostedVectorStoreContent(BaseContent):
 
     """
 
-    type: Literal["hosted_vector_store"] = "hosted_vector_store"  # type: ignore[assignment]
-    vector_store_id: str
-
     def __init__(
         self,
         vector_store_id: str,
@@ -1099,33 +1517,49 @@ class HostedVectorStoreContent(BaseContent):
     ) -> None:
         """Initializes a HostedVectorStoreContent instance."""
         super().__init__(
-            vector_store_id=vector_store_id,  # type: ignore[reportCallIssue]
             additional_properties=additional_properties,
             raw_representation=raw_representation,
             **kwargs,
         )
+        self.vector_store_id = vector_store_id
+        self.type: Literal["hosted_vector_store"] = "hosted_vector_store"
 
 
 class BaseUserInputRequest(BaseContent):
     """Base class for all user requests."""
 
-    type: Literal["user_input_request"] = "user_input_request"  # type: ignore[assignment]
-    id: Annotated[str, Field(..., min_length=1)]
+    def __init__(
+        self,
+        *,
+        id: str,
+        annotations: list[Annotations] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize BaseUserInputRequest.
+
+        Args:
+            id: The unique identifier for the request.
+            annotations: Optional annotations associated with the content.
+            additional_properties: Optional additional properties associated with the content.
+            raw_representation: Optional raw representation of the content.
+            **kwargs: Any additional keyword arguments.
+        """
+        if not id or len(id) < 1:
+            raise ValueError("id must be at least 1 character long")
+        super().__init__(
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+            **kwargs,
+        )
+        self.id = id
+        self.type: Literal["user_input_request"] = "user_input_request"
 
 
-class BaseUserInputResponse(BaseContent):
-    """Base class for all user responses."""
-
-    type: Literal["user_input_response"] = "user_input_response"  # type: ignore[assignment]
-    id: Annotated[str, Field(..., min_length=1)]
-
-
-class FunctionApprovalResponseContent(BaseUserInputResponse):
+class FunctionApprovalResponseContent(BaseContent):
     """Represents a response for user approval of a function call."""
-
-    type: Literal["function_approval_response"] = "function_approval_response"  # type: ignore[assignment]
-    approved: bool
-    function_call: FunctionCallContent
 
     def __init__(
         self,
@@ -1150,21 +1584,58 @@ class FunctionApprovalResponseContent(BaseUserInputResponse):
             **kwargs: Additional keyword arguments.
         """
         super().__init__(
-            approved=approved,  # type: ignore[reportCallIssue]
-            id=id,  # type: ignore[reportCallIssue]
-            function_call=function_call,  # type: ignore[reportCallIssue]
             annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
             **kwargs,
         )
+        self.id = id
+        self.approved = approved
+        self.function_call = function_call
+        # Override the type for this specific subclass
+        self.type: Literal["function_approval_response"] = "function_approval_response"
+
+    @classmethod
+    def from_dict(cls: type[TContents], data: dict[str, Any]) -> TContents:
+        """Create a FunctionApprovalResponseContent instance from a dictionary.
+
+        Args:
+            data: Dictionary containing the data to create the instance from.
+
+        Returns:
+            FunctionApprovalResponseContent instance created from the dictionary.
+        """
+        data_copy = data.copy()
+
+        # Handle function_call - convert from dict to FunctionCallContent if needed
+        if (function_call := data_copy.get("function_call")) and isinstance(function_call, dict):
+            data_copy["function_call"] = FunctionCallContent.from_dict(function_call)
+
+        return cls(**data_copy)
+
+    def to_dict(self, *, exclude_none: bool = False, exclude: set[str] | None = None) -> dict[str, Any]:
+        """Convert the FunctionApprovalResponseContent instance to a dictionary.
+
+        Args:
+            exclude_none: Whether to exclude None values from the output.
+            exclude: Set of field names to exclude from the output.
+
+        Returns:
+            Dictionary representation of the FunctionApprovalResponseContent instance.
+        """
+        result = super().to_dict(exclude_none=exclude_none, exclude=exclude)
+
+        # Handle function_call - convert to dict if it's a content object
+        if hasattr(self.function_call, "to_dict"):
+            result["function_call"] = self.function_call.to_dict(exclude_none=exclude_none)
+        else:
+            result["function_call"] = self.function_call
+
+        return result
 
 
-class FunctionApprovalRequestContent(BaseUserInputRequest):
+class FunctionApprovalRequestContent(BaseContent):
     """Represents a request for user approval of a function call."""
-
-    type: Literal["function_approval_request"] = "function_approval_request"  # type: ignore[assignment]
-    function_call: FunctionCallContent
 
     def __init__(
         self,
@@ -1187,13 +1658,53 @@ class FunctionApprovalRequestContent(BaseUserInputRequest):
             **kwargs: Additional keyword arguments.
         """
         super().__init__(
-            id=id,  # type: ignore[reportCallIssue]
-            function_call=function_call,  # type: ignore[reportCallIssue]
             annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
             **kwargs,
         )
+        self.id = id
+        self.function_call = function_call
+        # Override the type for this specific subclass
+        self.type: Literal["function_approval_request"] = "function_approval_request"
+
+    @classmethod
+    def from_dict(cls: type[TContents], data: dict[str, Any]) -> TContents:
+        """Create a FunctionApprovalRequestContent instance from a dictionary.
+
+        Args:
+            data: Dictionary containing the data to create the instance from.
+
+        Returns:
+            FunctionApprovalRequestContent instance created from the dictionary.
+        """
+        data_copy = data.copy()
+
+        # Handle function_call - convert from dict to FunctionCallContent if needed
+        if "function_call" in data_copy and isinstance(data_copy["function_call"], dict):
+            data_copy["function_call"] = FunctionCallContent.from_dict(data_copy["function_call"])
+
+        return cls(**data_copy)
+
+    def to_dict(self, *, exclude_none: bool = False, exclude: set[str] | None = None) -> dict[str, Any]:
+        """Convert the FunctionApprovalRequestContent instance to a dictionary.
+
+        Args:
+            exclude_none: Whether to exclude None values from the output.
+            exclude: Set of field names to exclude from the output.
+
+        Returns:
+            Dictionary representation of the FunctionApprovalRequestContent instance.
+        """
+        result = super().to_dict(exclude_none=exclude_none, exclude=exclude)
+
+        # Handle function_call - convert to dict if it's a content object
+        if hasattr(self.function_call, "to_dict"):
+            result["function_call"] = self.function_call.to_dict(exclude_none=exclude_none)
+        else:
+            result["function_call"] = self.function_call
+
+        return result
 
     def create_response(self, approved: bool) -> "FunctionApprovalResponseContent":
         """Create a response for the function approval request."""
@@ -1205,12 +1716,9 @@ class FunctionApprovalRequestContent(BaseUserInputRequest):
         )
 
 
-UserInputRequestContents = Annotated[
-    FunctionApprovalRequestContent,
-    Field(discriminator="type"),
-]
+UserInputRequestContents = FunctionApprovalRequestContent
 
-Contents = Annotated[
+Contents = (
     TextContent
     | DataContent
     | TextReasoningContent
@@ -1222,36 +1730,81 @@ Contents = Annotated[
     | HostedFileContent
     | HostedVectorStoreContent
     | FunctionApprovalRequestContent
-    | FunctionApprovalResponseContent,
-    Field(discriminator="type"),
-]
+    | FunctionApprovalResponseContent
+)
 
 # region Chat Response constants
 
 
-class Role(AFBaseModel):
+class Role(metaclass=EnumLike):
     """Describes the intended purpose of a message within a chat interaction.
 
     Attributes:
         value: The string representation of the role.
 
     Properties:
-        SYSTEM: The role that instructs or sets the behaviour of the AI system.
+        SYSTEM: The role that instructs or sets the behavior of the AI system.
         USER: The role that provides user input for chat interactions.
         ASSISTANT: The role that provides responses to system-instructed, user-prompted input.
         TOOL: The role that provides additional information and references in response to tool use requests.
     """
 
-    value: str = Field(..., kw_only=False)
+    # Constants configuration for EnumLike metaclass
+    _constants: ClassVar[dict[str, str]] = {
+        "SYSTEM": "system",
+        "USER": "user",
+        "ASSISTANT": "assistant",
+        "TOOL": "tool",
+    }
 
-    SYSTEM: ClassVar[Self]  # type: ignore[assignment]
-    """The role that instructs or sets the behaviour of the AI system."""
-    USER: ClassVar[Self]  # type: ignore[assignment]
-    """The role that provides user input for chat interactions."""
-    ASSISTANT: ClassVar[Self]  # type: ignore[assignment]
-    """The role that provides responses to system-instructed, user-prompted input."""
-    TOOL: ClassVar[Self]  # type: ignore[assignment]
-    """The role that provides additional information and references in response to tool use requests."""
+    # Type annotations for constants
+    SYSTEM: "Role"
+    USER: "Role"
+    ASSISTANT: "Role"
+    TOOL: "Role"
+
+    def __init__(self, value: str) -> None:
+        """Initialize Role with a value.
+
+        Args:
+            value: The string representation of the role.
+        """
+        self.value = value
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "Role":
+        """Create a Role instance from a dictionary.
+
+        Args:
+            data: Dictionary containing the data to create the instance from.
+
+        Returns:
+            Role instance created from the dictionary.
+        """
+        return cls(**data)
+
+    def to_dict(self, *, exclude_none: bool = False, exclude: set[str] | None = None) -> dict[str, Any]:
+        """Convert the Role instance to a dictionary.
+
+        Args:
+            exclude_none: Whether to exclude None values from the output.
+            exclude: Set of field names to exclude from the output.
+
+        Returns:
+            Dictionary representation of the Role instance.
+        """
+        if exclude is None:
+            exclude = set()
+
+        result: dict[str, Any] = {}
+        for key, value in self.__dict__.items():
+            if key in exclude:
+                continue
+            if exclude_none and value is None:
+                continue
+            result[key] = value
+
+        return result
 
     def __str__(self) -> str:
         """Returns the string representation of the role."""
@@ -1261,46 +1814,104 @@ class Role(AFBaseModel):
         """Returns the string representation of the role."""
         return f"Role(value={self.value!r})"
 
+    def __eq__(self, other: object) -> bool:
+        """Check if two Role instances are equal."""
+        if not isinstance(other, Role):
+            return False
+        return self.value == other.value
 
-# Note: ClassVar is used to indicate that these are class-level constants, not instance attributes.
-# The type: ignore[assignment] is used to suppress the type checker warning about assigning to a ClassVar,
-# it gets assigned immediately after the class definition.
-Role.SYSTEM = Role(value="system")  # type: ignore[assignment]
-Role.USER = Role(value="user")  # type: ignore[assignment]
-Role.ASSISTANT = Role(value="assistant")  # type: ignore[assignment]
-Role.TOOL = Role(value="tool")  # type: ignore[assignment]
+    def __hash__(self) -> int:
+        """Return hash of the Role for use in sets and dicts."""
+        return hash(self.value)
 
 
-class FinishReason(AFBaseModel):
+class FinishReason(metaclass=EnumLike):
     """Represents the reason a chat response completed.
 
     Attributes:
         value: The string representation of the finish reason.
     """
 
-    value: str
+    # Constants configuration for EnumLike metaclass
+    _constants: ClassVar[dict[str, str]] = {
+        "CONTENT_FILTER": "content_filter",
+        "LENGTH": "length",
+        "STOP": "stop",
+        "TOOL_CALLS": "tool_calls",
+    }
 
-    CONTENT_FILTER: ClassVar[Self]  # type: ignore[assignment]
-    """A FinishReason representing the model filtering content, whether for safety, prohibited content,
-    sensitive content, or other such issues."""
-    LENGTH: ClassVar[Self]  # type: ignore[assignment]
-    """A FinishReason representing the model reaching the maximum length allowed for the request and/or
-    response (typically in terms of tokens)."""
-    STOP: ClassVar[Self]  # type: ignore[assignment]
-    """A FinishReason representing the model encountering a natural stop point or provided stop sequence."""
-    TOOL_CALLS: ClassVar[Self]  # type: ignore[assignment]
-    """A FinishReason representing the model requesting the use of a tool that was defined in the request."""
+    # Type annotations for constants
+    CONTENT_FILTER: "FinishReason"
+    LENGTH: "FinishReason"
+    STOP: "FinishReason"
+    TOOL_CALLS: "FinishReason"
 
+    def __init__(self, value: str) -> None:
+        """Initialize FinishReason with a value.
 
-FinishReason.CONTENT_FILTER = FinishReason(value="content_filter")  # type: ignore[assignment]
-FinishReason.LENGTH = FinishReason(value="length")  # type: ignore[assignment]
-FinishReason.STOP = FinishReason(value="stop")  # type: ignore[assignment]
-FinishReason.TOOL_CALLS = FinishReason(value="tool_calls")  # type: ignore[assignment]
+        Args:
+            value: The string representation of the finish reason.
+        """
+        self.value = value
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "FinishReason":
+        """Create a FinishReason instance from a dictionary.
+
+        Args:
+            data: Dictionary containing the data to create the instance from.
+
+        Returns:
+            FinishReason instance created from the dictionary.
+        """
+        return cls(**data)
+
+    def to_dict(self, *, exclude_none: bool = False, exclude: set[str] | None = None) -> dict[str, Any]:
+        """Convert the FinishReason instance to a dictionary.
+
+        Args:
+            exclude_none: Whether to exclude None values from the output.
+            exclude: Set of field names to exclude from the output.
+
+        Returns:
+            Dictionary representation of the FinishReason instance.
+        """
+        if exclude is None:
+            exclude = set()
+
+        result: dict[str, Any] = {}
+        for key, value in self.__dict__.items():
+            if key in exclude:
+                continue
+            if exclude_none and value is None:
+                continue
+            result[key] = value
+
+        return result
+
+    def __eq__(self, other: object) -> bool:
+        """Check if two FinishReason instances are equal."""
+        if not isinstance(other, FinishReason):
+            return False
+        return self.value == other.value
+
+    def __hash__(self) -> int:
+        """Return hash of the FinishReason for use in sets and dicts."""
+        return hash(self.value)
+
+    def __str__(self) -> str:
+        """Returns the string representation of the finish reason."""
+        return self.value
+
+    def __repr__(self) -> str:
+        """Returns the string representation of the finish reason."""
+        return f"FinishReason(value={self.value!r})"
+
 
 # region ChatMessage
 
 
-class ChatMessage(AFBaseModel):
+class ChatMessage:
     """Represents a chat message.
 
     Attributes:
@@ -1312,19 +1923,6 @@ class ChatMessage(AFBaseModel):
         raw_representation: The raw representation of the chat message from an underlying implementation.
 
     """
-
-    role: Role
-    """The role of the author of the message."""
-    contents: list[Contents]
-    """The chat message content items."""
-    author_name: str | None
-    """The name of the author of the message."""
-    message_id: str | None
-    """The ID of the chat message."""
-    additional_properties: dict[str, Any] | None = None
-    """Any additional properties associated with the chat message."""
-    raw_representation: Any | None = Field(default=None, exclude=True)
-    """The raw representation of the chat message from an underlying implementation."""
 
     @overload
     def __init__(
@@ -1381,20 +1979,96 @@ class ChatMessage(AFBaseModel):
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
     ) -> None:
+        """Initialize ChatMessage.
+
+        Args:
+            role: The role of the author of the message.
+            text: Optional text content of the message.
+            contents: Optional list of BaseContent items to include in the message.
+            author_name: Optional name of the author of the message.
+            message_id: Optional ID of the chat message.
+            additional_properties: Optional additional properties associated with the chat message.
+            raw_representation: Optional raw representation of the chat message.
+        """
         if contents is None:
             contents = []
         if text is not None:
             contents.append(TextContent(text=text))
         if isinstance(role, str):
             role = Role(value=role)
-        super().__init__(
-            role=role,  # type: ignore[reportCallIssue]
-            contents=contents,  # type: ignore[reportCallIssue]
-            author_name=author_name,  # type: ignore[reportCallIssue]
-            message_id=message_id,  # type: ignore[reportCallIssue]
-            additional_properties=additional_properties,  # type: ignore[reportCallIssue]
-            raw_representation=raw_representation,  # type: ignore[reportCallIssue]
-        )
+
+        self.role = role
+        self.contents = list(contents)  # Convert to list to ensure it's mutable
+        self.author_name = author_name
+        self.message_id = message_id
+        self.additional_properties = additional_properties
+        self.raw_representation = raw_representation
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "ChatMessage":
+        """Create a ChatMessage instance from a dictionary.
+
+        Args:
+            data: Dictionary containing the data to create the instance from.
+
+        Returns:
+            ChatMessage instance created from the dictionary.
+        """
+        data_copy = dict(data).copy()
+
+        # Handle role - convert from dict to Role if needed
+        if role := data.get("role"):
+            data_copy["role"] = Role.from_dict(role) if isinstance(role, dict) else Role(value=role)
+        # Handle contents - convert from list of dicts to list of Contents objects if needed
+        if contents := data.get("contents"):
+            data_copy["contents"] = _parse_content_list(contents)
+
+        return cls(**data_copy)
+
+    def to_dict(self, *, exclude_none: bool = False, exclude: set[str] | None = None) -> dict[str, Any]:
+        """Convert the ChatMessage instance to a dictionary.
+
+        Args:
+            exclude_none: Whether to exclude None values from the output.
+            exclude: Set of field names to exclude from the output.
+                    'raw_representation' is always excluded as per original Pydantic config.
+
+        Returns:
+            Dictionary representation of the ChatMessage instance.
+        """
+        if exclude is None:
+            exclude = set()
+
+        # Always exclude raw_representation as it was marked with exclude=True in Pydantic
+        exclude = exclude | {"raw_representation"}
+
+        result: dict[str, Any] = {}
+        for key, value in self.__dict__.items():
+            if key in exclude:
+                continue
+            if exclude_none and value is None:
+                continue
+
+            # Handle role conversion to dict format
+            if key == "role" and value is not None:
+                if hasattr(value, "to_dict"):
+                    result[key] = value.to_dict(exclude_none=exclude_none)
+                else:
+                    result[key] = value
+            # Handle contents conversion to dict format
+            elif key == "contents" and value is not None:
+                contents_list = []
+                for content in value:
+                    if hasattr(content, "to_dict"):
+                        contents_list.append(content.to_dict(exclude_none=exclude_none))
+                    else:
+                        # If it's already a dict or other serializable type, keep it as is
+                        contents_list.append(content)
+                result[key] = contents_list
+            else:
+                result[key] = value
+
+        return result
 
     @property
     def text(self) -> str:
@@ -1409,14 +2083,14 @@ class ChatMessage(AFBaseModel):
 # region ChatResponse
 
 
-class ChatResponse(AFBaseModel):
+class ChatResponse:
     """Represents the response to a chat request.
 
     Attributes:
         messages: The list of chat messages in the response.
         response_id: The ID of the chat response.
         conversation_id: An identifier for the state of the conversation.
-        ai_model_id: The model ID used in the creation of the chat response.
+        model_id: The model ID used in the creation of the chat response.
         created_at: A timestamp for the chat response.
         finish_reason: The reason for the chat response.
         usage_details: The usage details for the chat response.
@@ -1424,28 +2098,6 @@ class ChatResponse(AFBaseModel):
         additional_properties: Any additional properties associated with the chat response.
         raw_representation: The raw representation of the chat response from an underlying implementation.
     """
-
-    messages: list[ChatMessage]
-    """The chat response messages."""
-
-    response_id: str | None = None
-    """The ID of the chat response."""
-    conversation_id: str | None = None
-    """An identifier for the state of the conversation."""
-    ai_model_id: str | None = Field(default=None, alias="model_id")
-    """The model ID used in the creation of the chat response."""
-    created_at: CreatedAtT | None = None  # use a datetimeoffset type?
-    """A timestamp for the chat response."""
-    finish_reason: FinishReason | None = None
-    """The reason for the chat response."""
-    usage_details: UsageDetails | None = None
-    """The usage details for the chat response."""
-    value: Any | None = None
-    """The structured output of the chat response, if applicable."""
-    additional_properties: dict[str, Any] | None = None
-    """Any additional properties associated with the chat response."""
-    raw_representation: Any | None = None
-    """The raw representation of the chat response from an underlying implementation."""
 
     @overload
     def __init__(
@@ -1544,21 +2196,100 @@ class ChatResponse(AFBaseModel):
                 text = TextContent(text=text)
             messages.append(ChatMessage(role=Role.ASSISTANT, contents=[text]))
 
-        super().__init__(
-            messages=messages,  # type: ignore[reportCallIssue]
-            response_id=response_id,  # type: ignore[reportCallIssue]
-            conversation_id=conversation_id,  # type: ignore[reportCallIssue]
-            ai_model_id=model_id,  # type: ignore[reportCallIssue]
-            created_at=created_at,  # type: ignore[reportCallIssue]
-            finish_reason=finish_reason,  # type: ignore[reportCallIssue]
-            usage_details=usage_details,  # type: ignore[reportCallIssue]
-            value=value,  # type: ignore[reportCallIssue]
-            additional_properties=additional_properties,  # type: ignore[reportCallIssue]
-            raw_representation=raw_representation,  # type: ignore[reportCallIssue]
-            **kwargs,
-        )
+        self.messages = list(messages)
+        self.response_id = response_id
+        self.conversation_id = conversation_id
+        self.model_id = model_id
+        self.created_at = created_at
+        self.finish_reason = finish_reason
+        self.usage_details = usage_details
+        self.value = value
+        self.additional_properties = additional_properties
+        self.raw_representation = raw_representation
+
+        # Handle any additional kwargs
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
         if response_format:
             self.try_parse_value(output_format_type=response_format)
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "ChatResponse":
+        """Create a ChatResponse instance from a dictionary.
+
+        Args:
+            data: Dictionary containing the data to create the instance from.
+
+        Returns:
+            ChatResponse instance created from the dictionary.
+        """
+        data_copy = dict(data).copy()
+
+        # Handle messages - convert from list of dicts to list of ChatMessage objects if needed
+        if messages := data_copy.get("messages"):
+            parsed_messages = []
+            for message_data in messages:
+                if isinstance(message_data, ChatMessage):
+                    parsed_messages.append(message_data)
+                elif isinstance(message_data, dict):
+                    parsed_messages.append(ChatMessage.from_dict(message_data))
+                else:
+                    logger.warning(f"Unknown type for message: {message_data}")
+            data_copy["messages"] = parsed_messages
+
+        # Handle finish_reason - convert from dict to FinishReason if needed
+        if finish_reason := data_copy.get("finish_reason"):
+            data_copy["finish_reason"] = FinishReason.from_dict(finish_reason)
+
+        # Handle usage_details - convert from dict to UsageDetails if needed
+        if (usage_details := data_copy.get("usage_details")) and isinstance(usage_details, dict):
+            data_copy["usage_details"] = UsageDetails.from_dict(usage_details)
+        return cls(**data_copy)
+
+    def to_dict(self, *, exclude_none: bool = False, exclude: set[str] | None = None) -> dict[str, Any]:
+        """Convert the ChatResponse instance to a dictionary.
+
+        Args:
+            exclude_none: Whether to exclude None values from the output.
+            exclude: Set of field names to exclude from the output.
+                    'raw_representation' is always excluded as per original Pydantic config.
+
+        Returns:
+            Dictionary representation of the ChatResponse instance.
+        """
+        if exclude is None:
+            exclude = set()
+
+        # Always exclude raw_representation as it was marked with exclude=True in Pydantic
+        exclude = exclude | {"raw_representation"}
+
+        result: dict[str, Any] = {}
+        for key, value in self.__dict__.items():
+            if key in exclude:
+                continue
+            if exclude_none and value is None:
+                continue
+
+            # Handle messages conversion to dict format
+            if key == "messages" and value is not None:
+                messages_list = []
+                for message in value:
+                    if hasattr(message, "to_dict"):
+                        messages_list.append(message.to_dict(exclude_none=exclude_none))
+                    else:
+                        messages_list.append(message)
+                result[key] = messages_list
+            # Handle finish_reason conversion to dict format
+            elif (key == "finish_reason" and value is not None) or (key == "usage_details" and value is not None):
+                if hasattr(value, "to_dict"):
+                    result[key] = value.to_dict(exclude_none=exclude_none)
+                else:
+                    result[key] = value
+            else:
+                result[key] = value
+
+        return result
 
     @classmethod
     def from_chat_response_updates(
@@ -1612,7 +2343,7 @@ class ChatResponse(AFBaseModel):
 # region ChatResponseUpdate
 
 
-class ChatResponseUpdate(AFBaseModel):
+class ChatResponseUpdate:
     """Represents a single streaming response chunk from a `ModelClient`.
 
     Attributes:
@@ -1622,39 +2353,13 @@ class ChatResponseUpdate(AFBaseModel):
         response_id: The ID of the response of which this update is a part.
         message_id: The ID of the message of which this update is a part.
         conversation_id: An identifier for the state of the conversation of which this update is a part.
-        ai_model_id: The model ID associated with this response update.
+        model_id: The model ID associated with this response update.
         created_at: A timestamp for the chat response update.
         finish_reason: The finish reason for the operation.
         additional_properties: Any additional properties associated with the chat response update.
         raw_representation: The raw representation of the chat response update from an underlying implementation.
 
     """
-
-    contents: list[Contents]
-    """The chat response update content items."""
-
-    role: Role | None = None
-    """The role of the author of the response update."""
-    author_name: str | None = None
-    """The name of the author of the response update."""
-    response_id: str | None = None
-    """The ID of the response of which this update is a part."""
-    message_id: str | None = None
-    """The ID of the message of which this update is a part."""
-
-    conversation_id: str | None = None
-    """An identifier for the state of the conversation of which this update is a part."""
-    ai_model_id: str | None = Field(default=None, alias="model_id")
-    """The model ID associated with this response update."""
-    created_at: CreatedAtT | None = None  # use a datetimeoffset type?
-    """A timestamp for the chat response update."""
-    finish_reason: FinishReason | None = None
-    """The finish reason for the operation."""
-
-    additional_properties: dict[str, Any] | None = None
-    """Any additional properties associated with the chat response update."""
-    raw_representation: Any | None = None
-    """The raw representation of the chat response update from an underlying implementation."""
 
     @overload
     def __init__(
@@ -1666,7 +2371,7 @@ class ChatResponseUpdate(AFBaseModel):
         response_id: str | None = None,
         message_id: str | None = None,
         conversation_id: str | None = None,
-        ai_model_id: str | None = None,
+        model_id: str | None = None,
         created_at: CreatedAtT | None = None,
         finish_reason: FinishReason | None = None,
         additional_properties: dict[str, Any] | None = None,
@@ -1684,7 +2389,7 @@ class ChatResponseUpdate(AFBaseModel):
         response_id: str | None = None,
         message_id: str | None = None,
         conversation_id: str | None = None,
-        ai_model_id: str | None = None,
+        model_id: str | None = None,
         created_at: CreatedAtT | None = None,
         finish_reason: FinishReason | None = None,
         additional_properties: dict[str, Any] | None = None,
@@ -1702,7 +2407,7 @@ class ChatResponseUpdate(AFBaseModel):
         response_id: str | None = None,
         message_id: str | None = None,
         conversation_id: str | None = None,
-        ai_model_id: str | None = None,
+        model_id: str | None = None,
         created_at: CreatedAtT | None = None,
         finish_reason: FinishReason | None = None,
         additional_properties: dict[str, Any] | None = None,
@@ -1717,19 +2422,93 @@ class ChatResponseUpdate(AFBaseModel):
             contents.append(text)
         if role and isinstance(role, str):
             role = Role(value=role)
-        super().__init__(
-            contents=contents,  # type: ignore[reportCallIssue]
-            additional_properties=additional_properties,  # type: ignore[reportCallIssue]
-            author_name=author_name,  # type: ignore[reportCallIssue]
-            conversation_id=conversation_id,  # type: ignore[reportCallIssue]
-            created_at=created_at,  # type: ignore[reportCallIssue]
-            finish_reason=finish_reason,  # type: ignore[reportCallIssue]
-            message_id=message_id,  # type: ignore[reportCallIssue]
-            ai_model_id=ai_model_id,  # type: ignore[reportCallIssue]
-            raw_representation=raw_representation,  # type: ignore[reportCallIssue]
-            response_id=response_id,  # type: ignore[reportCallIssue]
-            role=role,  # type: ignore[reportCallIssue]
-        )
+
+        self.contents = list(contents)
+        self.role = role
+        self.author_name = author_name
+        self.response_id = response_id
+        self.message_id = message_id
+        self.conversation_id = conversation_id
+        self.model_id = model_id
+        self.created_at = created_at
+        self.finish_reason = finish_reason
+        self.additional_properties = additional_properties
+        self.raw_representation = raw_representation
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "ChatResponseUpdate":
+        """Create a ChatResponseUpdate instance from a dictionary.
+
+        Args:
+            data: Dictionary containing the data to create the instance from.
+
+        Returns:
+            ChatResponseUpdate instance created from the dictionary.
+        """
+        data_copy = dict(data).copy()
+
+        # Handle contents - convert from list of dicts to list of Contents objects if needed
+        if "contents" in data_copy and data_copy["contents"] is not None:
+            data_copy["contents"] = _parse_content_list(data_copy["contents"])
+        # Handle role - convert from dict to Role if needed
+        if role := data.get("role"):
+            data_copy["role"] = Role.from_dict(role) if isinstance(role, dict) else Role(value=role)
+        # Handle contents - convert from list of dicts to list of Contents objects if needed
+        if contents := data.get("contents"):
+            data_copy["contents"] = _parse_content_list(contents)
+
+        # Handle finish_reason - convert from dict to FinishReason if needed
+        if finish_reason := data.get("finish_reason"):
+            data_copy["finish_reason"] = (
+                FinishReason.from_dict(finish_reason)
+                if isinstance(finish_reason, dict)
+                else FinishReason(value=finish_reason)
+            )
+        return cls(**data_copy)
+
+    def to_dict(self, *, exclude_none: bool = False, exclude: set[str] | None = None) -> dict[str, Any]:
+        """Convert the ChatResponseUpdate instance to a dictionary.
+
+        Args:
+            exclude_none: Whether to exclude None values from the output.
+            exclude: Set of field names to exclude from the output.
+                    'raw_representation' is always excluded as per original Pydantic config.
+
+        Returns:
+            Dictionary representation of the ChatResponseUpdate instance.
+        """
+        if exclude is None:
+            exclude = set()
+
+        # Always exclude raw_representation as it was marked with exclude=True in Pydantic
+        exclude = exclude | {"raw_representation"}
+
+        result: dict[str, Any] = {}
+        for key, value in self.__dict__.items():
+            if key in exclude:
+                continue
+            if exclude_none and value is None:
+                continue
+
+            # Handle contents conversion to dict format
+            if key == "contents" and value is not None:
+                contents_list = []
+                for content in value:
+                    if hasattr(content, "to_dict"):
+                        contents_list.append(content.to_dict(exclude_none=exclude_none))
+                    else:
+                        contents_list.append(content)
+                result[key] = contents_list
+            # Handle role conversion to dict format
+            elif (key == "role" and value is not None) or (key == "finish_reason" and value is not None):
+                if hasattr(value, "to_dict"):
+                    result[key] = value.to_dict(exclude_none=exclude_none)
+                else:
+                    result[key] = value
+            else:
+                result[key] = value
+
+        return result
 
     @property
     def text(self) -> str:
@@ -1739,84 +2518,270 @@ class ChatResponseUpdate(AFBaseModel):
     def __str__(self) -> str:
         return self.text
 
-    def with_(self, contents: list[BaseContent] | None = None, message_id: str | None = None) -> Self:
+    def with_(self, contents: list[BaseContent] | None = None, message_id: str | None = None) -> "ChatResponseUpdate":
         """Returns a new instance with the specified contents and message_id."""
         if contents is None:
             contents = []
 
-        return self.model_copy(
-            update={
-                "contents": self.contents + contents,
-                "message_id": message_id or self.message_id,
-            }
-        )
+        # Create a dictionary of current instance data
+        current_data = self.to_dict()
+
+        # Update with new values
+        current_data["contents"] = self.contents + contents
+        current_data["message_id"] = message_id or self.message_id
+
+        return ChatResponseUpdate.from_dict(current_data)
 
 
 # region ChatOptions
 
 
-class ChatToolMode(AFBaseModel):
+class ToolMode(metaclass=EnumLike):
     """Defines if and how tools are used in a chat request."""
 
-    mode: Literal["auto", "required", "none"] = "none"
-    required_function_name: str | None = None
+    # Constants configuration for EnumLike metaclass
+    _constants: ClassVar[dict[str, tuple[str, ...]]] = {
+        "AUTO": ("auto",),
+        "REQUIRED_ANY": ("required",),
+        "NONE": ("none",),
+    }
 
-    AUTO: ClassVar[Self]  # type: ignore[assignment]
-    REQUIRED_ANY: ClassVar[Self]  # type: ignore[assignment]
-    NONE: ClassVar[Self]  # type: ignore[assignment]
+    # Type annotations for constants
+    AUTO: "ToolMode"
+    REQUIRED_ANY: "ToolMode"
+    NONE: "ToolMode"
+
+    def __init__(
+        self,
+        mode: Literal["auto", "required", "none"] = "none",
+        required_function_name: str | None = None,
+    ) -> None:
+        """Initialize ToolMode.
+
+        Args:
+            mode: The tool mode - "auto", "required", or "none".
+            required_function_name: Optional function name for required mode.
+        """
+        self.mode = mode
+        self.required_function_name = required_function_name
 
     @classmethod
-    def REQUIRED(cls: type[TChatToolMode], function_name: str | None = None) -> TChatToolMode:
-        """Returns a ChatToolMode that requires the specified function to be called."""
+    def from_dict(cls, data: Mapping[str, Any]) -> "ToolMode":
+        """Create a ToolMode instance from a dictionary.
+
+        Args:
+            data: Dictionary containing the data to create the instance from.
+
+        Returns:
+            ToolMode instance created from the dictionary.
+        """
+        return cls(**data)
+
+    def to_dict(self, *, exclude_none: bool = False, exclude: set[str] | None = None) -> dict[str, Any]:
+        """Convert the ToolMode instance to a dictionary.
+
+        Args:
+            exclude_none: Whether to exclude None values from the output.
+            exclude: Set of field names to exclude from the output.
+
+        Returns:
+            Dictionary representation of the ToolMode instance.
+        """
+        if exclude is None:
+            exclude = set()
+
+        result: dict[str, Any] = {}
+        for key, value in self.__dict__.items():
+            if key in exclude:
+                continue
+            if exclude_none and value is None:
+                continue
+            result[key] = value
+
+        return result
+
+    @classmethod
+    def REQUIRED(cls, function_name: str | None = None) -> "ToolMode":
+        """Returns a ToolMode that requires the specified function to be called."""
         return cls(mode="required", required_function_name=function_name)
 
     def __eq__(self, other: object) -> bool:
-        """Checks equality with another ChatToolMode or string."""
+        """Checks equality with another ToolMode or string."""
         if isinstance(other, str):
             return self.mode == other
-        if isinstance(other, ChatToolMode):
+        if isinstance(other, ToolMode):
             return self.mode == other.mode and self.required_function_name == other.required_function_name
         return False
 
-    @model_serializer
+    def __hash__(self) -> int:
+        """Return hash of the ToolMode for use in sets and dicts."""
+        return hash((self.mode, self.required_function_name))
+
     def serialize_model(self) -> str:
-        """Serializes the ChatToolMode to just the mode string."""
+        """Serializes the ToolMode to just the mode string."""
         return self.mode
 
+    def __str__(self) -> str:
+        """Returns the string representation of the mode."""
+        return self.mode
 
-ChatToolMode.AUTO = ChatToolMode(mode="auto")  # type: ignore[assignment]
-ChatToolMode.REQUIRED_ANY = ChatToolMode(mode="required")  # type: ignore[assignment]
-ChatToolMode.NONE = ChatToolMode(mode="none")  # type: ignore[assignment]
+    def __repr__(self) -> str:
+        """Returns the string representation of the ToolMode."""
+        if self.required_function_name:
+            return f"ToolMode(mode={self.mode!r}, required_function_name={self.required_function_name!r})"
+        return f"ToolMode(mode={self.mode!r})"
 
 
-class ChatOptions(AFBaseModel):
+class ChatOptions:
     """Common request settings for AI services."""
 
-    additional_properties: MutableMapping[str, Any] = Field(
-        default_factory=dict, description="Provider-specific additional properties."
-    )
-    ai_model_id: Annotated[str | None, Field(serialization_alias="model")] = None
-    allow_multiple_tool_calls: bool | None = None
-    conversation_id: str | None = None
-    frequency_penalty: Annotated[float | None, Field(ge=-2.0, le=2.0)] = None
-    instructions: str | None = None
-    logit_bias: MutableMapping[str | int, float] | None = None
-    max_tokens: Annotated[int | None, Field(gt=0)] = None
-    metadata: MutableMapping[str, str] | None = None
-    presence_penalty: Annotated[float | None, Field(ge=-2.0, le=2.0)] = None
-    response_format: type[BaseModel] | None = Field(
-        default=None, description="Structured output response format schema. Must be a valid Pydantic model."
-    )
-    seed: int | None = None
-    stop: str | Sequence[str] | None = None
-    store: bool | None = None
-    temperature: Annotated[float | None, Field(ge=0.0, le=2.0)] = None
-    tool_choice: ChatToolMode | Literal["auto", "required", "none"] | Mapping[str, Any] | None = None
-    tools: MutableSequence[ToolProtocol | MutableMapping[str, Any]] | None = None
-    top_p: Annotated[float | None, Field(ge=0.0, le=1.0)] = None
-    user: str | None = None
+    def __init__(
+        self,
+        *,
+        model_id: str | None = None,
+        allow_multiple_tool_calls: bool | None = None,
+        conversation_id: str | None = None,
+        frequency_penalty: float | None = None,
+        instructions: str | None = None,
+        logit_bias: MutableMapping[str | int, float] | None = None,
+        max_tokens: int | None = None,
+        metadata: MutableMapping[str, str] | None = None,
+        presence_penalty: float | None = None,
+        response_format: type[BaseModel] | None = None,
+        seed: int | None = None,
+        stop: str | Sequence[str] | None = None,
+        store: bool | None = None,
+        temperature: float | None = None,
+        tool_choice: ToolMode | Literal["auto", "required", "none"] | Mapping[str, Any] | None = None,
+        tools: ToolProtocol
+        | Callable[..., Any]
+        | MutableMapping[str, Any]
+        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | None = None,
+        top_p: float | None = None,
+        user: str | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+    ):
+        """Initialize ChatOptions.
 
-    @field_validator("tools", mode="before")
+        Args:
+            additional_properties: Provider-specific additional properties.
+            model_id: The AI model ID to use.
+            allow_multiple_tool_calls: Whether to allow multiple tool calls.
+            conversation_id: The conversation ID.
+            frequency_penalty: The frequency penalty (must be between -2.0 and 2.0).
+            instructions: the instructions, will be turned into a system or equivalent message.
+            logit_bias: The logit bias mapping.
+            max_tokens: The maximum number of tokens (must be > 0).
+            metadata: Metadata mapping.
+            presence_penalty: The presence penalty (must be between -2.0 and 2.0).
+            response_format: Structured output response format schema. Must be a valid Pydantic model.
+            seed: Random seed for reproducibility.
+            stop: Stop sequences.
+            store: Whether to store the conversation.
+            temperature: The temperature (must be between 0.0 and 2.0).
+            tool_choice: The tool choice mode.
+            tools: List of available tools.
+            top_p: The top-p value (must be between 0.0 and 1.0).
+            user: The user ID.
+        """
+        # Validate numeric constraints and convert types as needed
+        if frequency_penalty is not None:
+            if not (-2.0 <= frequency_penalty <= 2.0):
+                raise ValueError("frequency_penalty must be between -2.0 and 2.0")
+            frequency_penalty = float(frequency_penalty)
+        if presence_penalty is not None:
+            if not (-2.0 <= presence_penalty <= 2.0):
+                raise ValueError("presence_penalty must be between -2.0 and 2.0")
+            presence_penalty = float(presence_penalty)
+        if temperature is not None:
+            if not (0.0 <= temperature <= 2.0):
+                raise ValueError("temperature must be between 0.0 and 2.0")
+            temperature = float(temperature)
+        if top_p is not None:
+            if not (0.0 <= top_p <= 1.0):
+                raise ValueError("top_p must be between 0.0 and 1.0")
+            top_p = float(top_p)
+        if max_tokens is not None and max_tokens <= 0:
+            raise ValueError("max_tokens must be greater than 0")
+
+        self.additional_properties = additional_properties or {}
+        self.model_id = model_id
+        self.allow_multiple_tool_calls = allow_multiple_tool_calls
+        self.conversation_id = conversation_id
+        self.frequency_penalty = frequency_penalty
+        self.instructions = instructions
+        self.logit_bias = logit_bias
+        self.max_tokens = max_tokens
+        self.metadata = metadata
+        self.presence_penalty = presence_penalty
+        self.response_format = response_format
+        self.seed = seed
+        self.stop = stop
+        self.store = store
+        self.temperature = temperature
+        self.tool_choice = self._validate_tool_mode(tool_choice)
+        self._tools = self._validate_tools(tools)
+        self.top_p = top_p
+        self.user = user
+
+    @property
+    def tools(self) -> list[ToolProtocol | MutableMapping[str, Any]] | None:
+        """Return the tools that are specified."""
+        return self._tools
+
+    @tools.setter
+    def tools(
+        self,
+        new_tools: ToolProtocol
+        | Callable[..., Any]
+        | MutableMapping[str, Any]
+        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | None,
+    ) -> None:
+        """Set the tools."""
+        self._tools = self._validate_tools(new_tools)
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "ChatOptions":
+        """Create a ChatOptions instance from a dictionary."""
+        return cls(**data)
+
+    def to_dict(self, *, exclude_none: bool = False, exclude: set[str] | None = None) -> dict[str, Any]:
+        """Convert the ChatOptions instance to a dictionary."""
+        exclude = exclude or set()
+        result: dict[str, Any] = {}
+
+        for key, value in [
+            ("additional_properties", self.additional_properties),
+            ("model_id", self.model_id),
+            ("allow_multiple_tool_calls", self.allow_multiple_tool_calls),
+            ("conversation_id", self.conversation_id),
+            ("frequency_penalty", self.frequency_penalty),
+            ("instructions", self.instructions),
+            ("logit_bias", self.logit_bias),
+            ("max_tokens", self.max_tokens),
+            ("metadata", self.metadata),
+            ("presence_penalty", self.presence_penalty),
+            ("response_format", self.response_format),
+            ("seed", self.seed),
+            ("stop", self.stop),
+            ("store", self.store),
+            ("temperature", self.temperature),
+            ("tool_choice", self.tool_choice),
+            ("tools", self.tools),
+            ("top_p", self.top_p),
+            ("user", self.user),
+        ]:
+            if key not in exclude and (not exclude_none or value is not None):
+                if isinstance(value, ToolMode):
+                    result[key] = value.to_dict()
+                elif isinstance(value, list) and value and hasattr(value[0], "to_dict"):
+                    result[key] = [item.to_dict() if hasattr(item, "to_dict") else item for item in value]  # type: ignore[assignment]
+                else:
+                    result[key] = value
+        return result
+
     @classmethod
     def _validate_tools(
         cls,
@@ -1824,41 +2789,38 @@ class ChatOptions(AFBaseModel):
             ToolProtocol
             | Callable[..., Any]
             | MutableMapping[str, Any]
-            | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+            | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
             | None
         ),
     ) -> list[ToolProtocol | MutableMapping[str, Any]] | None:
         """Parse the tools field."""
         if not tools:
             return None
-        if not isinstance(tools, list):
-            tools = [tools]  # type: ignore[reportAssignmentType, assignment]
-        for idx, tool in enumerate(tools):  # type: ignore[reportArgumentType, arg-type]
-            if not isinstance(tool, (ToolProtocol, MutableMapping)):
-                # Convert to ToolProtocol if it's a function or callable
-                tools[idx] = ai_function(tool)  # type: ignore[reportIndexIssues, reportCallIssue, reportArgumentType, index, call-overload, arg-type]
-        return tools  # type: ignore[reportReturnType, return-value]
+        if not isinstance(tools, Sequence):
+            if not isinstance(tools, (ToolProtocol, MutableMapping)):
+                return [ai_function(tools)]
+            return [tools]
+        return [tool if isinstance(tool, (ToolProtocol, MutableMapping)) else ai_function(tool) for tool in tools]
 
-    @field_validator("tool_choice", mode="before")
     @classmethod
     def _validate_tool_mode(
-        cls, tool_choice: ChatToolMode | Literal["auto", "required", "none"] | Mapping[str, Any] | None
-    ) -> ChatToolMode | None:
-        """Validates the tool_choice field to ensure it is a valid ChatToolMode."""
+        cls, tool_choice: ToolMode | Literal["auto", "required", "none"] | Mapping[str, Any] | None
+    ) -> ToolMode | str | None:
+        """Validates the tool_choice field to ensure it is a valid ToolMode."""
         if not tool_choice:
             return None
         if isinstance(tool_choice, str):
             match tool_choice:
                 case "auto":
-                    return ChatToolMode.AUTO
+                    return ToolMode.AUTO
                 case "required":
-                    return ChatToolMode.REQUIRED_ANY
+                    return ToolMode.REQUIRED_ANY
                 case "none":
-                    return ChatToolMode.NONE
+                    return ToolMode.NONE
                 case _:
                     raise ValidationError(f"Invalid tool choice: {tool_choice}")
         if isinstance(tool_choice, (dict, Mapping)):
-            return ChatToolMode.model_validate(tool_choice)
+            return ToolMode.from_dict(tool_choice)
         return tool_choice
 
     def to_provider_settings(self, by_alias: bool = True, exclude: set[str] | None = None) -> dict[str, Any]:
@@ -1884,14 +2846,21 @@ class ChatOptions(AFBaseModel):
 
         merged_exclude = default_exclude if exclude is None else default_exclude | set(exclude)
 
-        settings = self.model_dump(exclude_none=True, by_alias=by_alias, exclude=merged_exclude)
+        settings = self.to_dict(exclude_none=True, exclude=merged_exclude)
+        if by_alias and self.model_id is not None:
+            settings["model"] = settings.pop("model_id", None)
+
+        # Serialize tool_choice to its string representation for provider settings
+        if "tool_choice" in settings and isinstance(self.tool_choice, ToolMode):
+            settings["tool_choice"] = self.tool_choice.serialize_model()
+
         settings = {k: v for k, v in settings.items() if v is not None}
         settings.update(self.additional_properties)
         for key in merged_exclude:
             settings.pop(key, None)
         return settings
 
-    def __and__(self, other: object) -> Self:
+    def __and__(self, other: object) -> "ChatOptions":
         """Combines two ChatOptions instances.
 
         The values from the other ChatOptions take precedence.
@@ -1902,20 +2871,31 @@ class ChatOptions(AFBaseModel):
         other_tools = other.tools
         # tool_choice has a specialized serialize method. Save it here so we can fix it later.
         tool_choice = other.tool_choice or self.tool_choice
-        updated_values = other.model_dump(exclude_none=True, exclude={"tools"})
+        # Start with a shallow copy of self that preserves tool objects
+        combined = ChatOptions.from_dict(self.to_dict())
+        combined.tool_choice = self.tool_choice
+        combined.tools = list(self.tools) if self.tools else None
+        combined.logit_bias = dict(self.logit_bias) if self.logit_bias else None
+        combined.metadata = dict(self.metadata) if self.metadata else None
+        combined.additional_properties = dict(self.additional_properties)
 
-        logit_bias = updated_values.pop("logit_bias", {})
-        metadata = updated_values.pop("metadata", {})
-        additional_properties = updated_values.pop("additional_properties", {})
-        combined = self.model_copy(update=updated_values)
+        # Apply scalar and mapping updates from the other options
+        updated_data = other.to_dict(exclude_none=True, exclude={"tools"})
+        logit_bias = updated_data.pop("logit_bias", {})
+        metadata = updated_data.pop("metadata", {})
+        additional_properties = updated_data.pop("additional_properties", {})
+
+        for key, value in updated_data.items():
+            setattr(combined, key, value)
+
         combined.tool_choice = tool_choice
-        combined.instructions = " ".join([combined.instructions or "", other.instructions or ""])
+        combined.instructions = "\n".join([combined.instructions or "", other.instructions or ""])
         combined.logit_bias = {**(combined.logit_bias or {}), **logit_bias}
         combined.metadata = {**(combined.metadata or {}), **metadata}
         combined.additional_properties = {**(combined.additional_properties or {}), **additional_properties}
         if other_tools:
-            if not combined.tools:
-                combined.tools = other_tools
+            if combined.tools is None:
+                combined.tools = list(other_tools)
             else:
                 for tool in other_tools:
                     if tool not in combined.tools:
@@ -1923,126 +2903,16 @@ class ChatOptions(AFBaseModel):
         return combined
 
 
-# region GeneratedEmbeddings
-
-
-class GeneratedEmbeddings(AFBaseModel, MutableSequence[TEmbedding], Generic[TEmbedding]):
-    """A model representing generated embeddings."""
-
-    embeddings: list[TEmbedding] = Field(default_factory=list, kw_only=False)  # type: ignore[ReportUnknownVariableType]
-    usage: UsageDetails | None = None
-    additional_properties: dict[str, Any] = Field(default_factory=dict)
-
-    def __contains__(self, value: object) -> bool:
-        return value in self.embeddings
-
-    def __iter__(self) -> Iterator[TEmbedding]:  # type: ignore[override] # overrides a method in BaseModel, ignoring
-        return iter(self.embeddings)
-
-    def __len__(self) -> int:
-        return len(self.embeddings)
-
-    def __reversed__(self) -> Iterator[TEmbedding]:
-        return self.embeddings.__reversed__()
-
-    def index(self, value: TEmbedding, start: int = 0, stop: int | None = None) -> int:
-        if start > 0:
-            if stop is not None:
-                return self.embeddings.index(value, start, stop)
-            return self.embeddings.index(value, start)
-        return self.embeddings.index(value)
-
-    def count(self, value: TEmbedding) -> int:
-        return self.embeddings.count(value)
-
-    @overload
-    def __getitem__(self, index: int) -> TEmbedding: ...
-
-    @overload
-    def __getitem__(self, index: slice) -> MutableSequence[TEmbedding]: ...
-
-    def __getitem__(self, index: int | slice) -> TEmbedding | MutableSequence[TEmbedding]:
-        return self.embeddings[index]
-
-    @overload
-    def __setitem__(self, index: int, value: TEmbedding) -> None: ...
-
-    @overload
-    def __setitem__(self, index: slice, value: Iterable[TEmbedding]) -> None: ...
-
-    def __setitem__(self, index: int | slice, value: TEmbedding | Iterable[TEmbedding]) -> None:
-        if isinstance(index, int):
-            if isinstance(value, Iterable):
-                raise TypeError("Value must be an iterable when setting a slice.")
-            self.embeddings[index] = value
-            return
-        if not isinstance(value, Iterable):
-            raise TypeError("Value must be an iterable when setting a slice.")
-        self.embeddings[index] = value
-
-    @overload
-    def __delitem__(self, index: int) -> None: ...
-
-    @overload
-    def __delitem__(self, index: slice) -> None: ...
-
-    def __delitem__(self, index: int | slice) -> None:
-        del self.embeddings[index]
-
-    def insert(self, index: int, value: TEmbedding) -> None:
-        self.embeddings.insert(index, value)
-
-    def append(self, value: TEmbedding) -> None:
-        self.embeddings.append(value)
-
-    def clear(self) -> None:
-        self.embeddings.clear()
-        self.usage = None
-        self.additional_properties = {}
-
-    def reverse(self) -> None:
-        self.embeddings.reverse()
-
-    def extend(self, values: Iterable[TEmbedding]) -> None:
-        self.embeddings.extend(values)
-
-    def pop(self, index: int = -1) -> TEmbedding:
-        return self.embeddings.pop(index)
-
-    def remove(self, value: TEmbedding) -> None:
-        self.embeddings.remove(value)
-
-    def __iadd__(self, values: Iterable[TEmbedding] | Self) -> Self:
-        if isinstance(values, GeneratedEmbeddings):
-            self.embeddings += values.embeddings
-            if not self.usage:
-                self.usage = values.usage
-            else:
-                self.usage += values.usage
-            self.additional_properties.update(values.additional_properties)
-        else:
-            self.embeddings += values
-        return self
-
-
 # region AgentRunResponse
 
 
-class AgentRunResponse(AFBaseModel):
+class AgentRunResponse:
     """Represents the response to an Agent run request.
 
     Provides one or more response messages and metadata about the response.
     A typical response will contain a single message, but may contain multiple
     messages in scenarios involving function calls, RAG retrievals, or complex logic.
     """
-
-    messages: list[ChatMessage] = Field(default_factory=list[ChatMessage])
-    response_id: str | None = None
-    created_at: CreatedAtT | None = None  # use a datetimeoffset type?
-    usage_details: UsageDetails | None = None
-    value: Any | None = None
-    raw_representation: Any | None = None
-    additional_properties: dict[str, Any] | None = None
 
     def __init__(
         self,
@@ -2074,16 +2944,91 @@ class AgentRunResponse(AFBaseModel):
             elif isinstance(messages, list):
                 processed_messages.extend(messages)
 
-        super().__init__(
-            messages=processed_messages,  # type: ignore[reportCallIssue]
-            response_id=response_id,  # type: ignore[reportCallIssue]
-            created_at=created_at,  # type: ignore[reportCallIssue]
-            usage_details=usage_details,  # type: ignore[reportCallIssue]
-            value=value,  # type: ignore[reportCallIssue]
-            additional_properties=additional_properties,  # type: ignore[reportCallIssue]
-            raw_representation=raw_representation,  # type: ignore[reportCallIssue]
-            **kwargs,
-        )
+        self.messages = processed_messages
+        self.response_id = response_id
+        self.created_at = created_at
+        self.usage_details = usage_details
+        self.value = value
+        self.additional_properties = additional_properties
+        self.raw_representation = raw_representation
+
+        # Handle any additional kwargs
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "AgentRunResponse":
+        """Create an AgentRunResponse instance from a dictionary.
+
+        Args:
+            data: Dictionary containing the data to create the instance from.
+
+        Returns:
+            AgentRunResponse instance created from the dictionary.
+        """
+        data_copy = dict(data).copy()
+
+        # Handle messages - convert from list of dicts to list of ChatMessage objects if needed
+        if messages := data_copy.get("messages"):
+            parsed_messages: list[ChatMessage] = []
+            for message_data in messages:
+                if isinstance(message_data, ChatMessage):
+                    parsed_messages.append(message_data)
+                elif isinstance(message_data, dict):
+                    parsed_messages.append(ChatMessage.from_dict(message_data))
+                else:
+                    logger.warning(f"Unknown message content: {message_data}")
+            data_copy["messages"] = parsed_messages
+
+        # Handle usage_details - convert from dict to UsageDetails if needed
+        if "usage_details" in data_copy and isinstance(data_copy["usage_details"], dict):
+            data_copy["usage_details"] = UsageDetails.from_dict(data_copy["usage_details"])
+
+        return cls(**data_copy)
+
+    def to_dict(self, *, exclude_none: bool = False, exclude: set[str] | None = None) -> dict[str, Any]:
+        """Convert the AgentRunResponse instance to a dictionary.
+
+        Args:
+            exclude_none: Whether to exclude None values from the output.
+            exclude: Set of field names to exclude from the output.
+                    'raw_representation' is always excluded as per original Pydantic config.
+
+        Returns:
+            Dictionary representation of the AgentRunResponse instance.
+        """
+        if exclude is None:
+            exclude = set()
+
+        # Always exclude raw_representation as it was marked with exclude=True in Pydantic
+        exclude = exclude | {"raw_representation"}
+
+        result: dict[str, Any] = {}
+        for key, value in self.__dict__.items():
+            if key in exclude:
+                continue
+            if exclude_none and value is None:
+                continue
+
+            # Handle messages conversion to dict format
+            if key == "messages" and value is not None:
+                messages_list = []
+                for message in value:
+                    if hasattr(message, "to_dict"):
+                        messages_list.append(message.to_dict(exclude_none=exclude_none))
+                    else:
+                        messages_list.append(message)
+                result[key] = messages_list
+            # Handle usage_details conversion to dict format
+            elif key == "usage_details" and value is not None:
+                if hasattr(value, "to_dict"):
+                    result[key] = value.to_dict(exclude_none=exclude_none)
+                else:
+                    result[key] = value
+            else:
+                result[key] = value
+
+        return result
 
     @property
     def text(self) -> str:
@@ -2094,7 +3039,10 @@ class AgentRunResponse(AFBaseModel):
     def user_input_requests(self) -> list[UserInputRequestContents]:
         """Get all BaseUserInputRequest messages from the response."""
         return [
-            content for msg in self.messages for content in msg.contents if isinstance(content, BaseUserInputRequest)
+            content
+            for msg in self.messages
+            for content in msg.contents
+            if isinstance(content, UserInputRequestContents)
         ]
 
     @classmethod
@@ -2144,17 +3092,102 @@ class AgentRunResponse(AFBaseModel):
 # region AgentRunResponseUpdate
 
 
-class AgentRunResponseUpdate(AFBaseModel):
+class AgentRunResponseUpdate:
     """Represents a single streaming response chunk from an Agent."""
 
-    contents: list[Contents] = Field(default_factory=list[Contents])
-    role: Role | None = None
-    author_name: str | None = None
-    response_id: str | None = None
-    message_id: str | None = None
-    created_at: CreatedAtT | None = None  # use a datetimeoffset type?
-    additional_properties: dict[str, Any] | None = None
-    raw_representation: Any | None = None
+    def __init__(
+        self,
+        *,
+        contents: list[Contents] | None = None,
+        text: TextContent | str | None = None,
+        role: Role | None = None,
+        author_name: str | None = None,
+        response_id: str | None = None,
+        message_id: str | None = None,
+        created_at: CreatedAtT | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+    ) -> None:
+        """Initialize an AgentRunResponseUpdate."""
+        if contents is None:
+            contents = []
+        if text is not None:
+            if isinstance(text, str):
+                text = TextContent(text=text)
+            contents.append(text)
+
+        self.contents = contents
+        self.role = role
+        self.author_name = author_name
+        self.response_id = response_id
+        self.message_id = message_id
+        self.created_at = created_at
+        self.additional_properties = additional_properties
+        self.raw_representation = raw_representation
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "AgentRunResponseUpdate":
+        """Create an AgentRunResponseUpdate instance from a dictionary.
+
+        Args:
+            data: Dictionary containing the data to create the instance from.
+
+        Returns:
+            AgentRunResponseUpdate instance created from the dictionary.
+        """
+        data_copy = dict(data).copy()
+
+        # Handle contents - convert from list of dicts to list of Contents objects if needed
+        if contents := data_copy.get("contents"):
+            data_copy["contents"] = _parse_content_list(contents)
+        # Handle role - convert from dict to Role if needed
+        if role := data.get("role"):
+            data_copy["role"] = Role.from_dict(role) if isinstance(role, dict) else Role(value=role)
+        return cls(**data_copy)
+
+    def to_dict(self, *, exclude_none: bool = False, exclude: set[str] | None = None) -> dict[str, Any]:
+        """Convert the AgentRunResponseUpdate instance to a dictionary.
+
+        Args:
+            exclude_none: Whether to exclude None values from the output.
+            exclude: Set of field names to exclude from the output.
+                    'raw_representation' is always excluded as per original Pydantic config.
+
+        Returns:
+            Dictionary representation of the AgentRunResponseUpdate instance.
+        """
+        if exclude is None:
+            exclude = set()
+
+        # Always exclude raw_representation as it was marked with exclude=True in Pydantic
+        exclude = exclude | {"raw_representation"}
+
+        result: dict[str, Any] = {}
+        for key, value in self.__dict__.items():
+            if key in exclude:
+                continue
+            if exclude_none and value is None:
+                continue
+
+            # Handle contents conversion to dict format
+            if key == "contents" and value is not None:
+                contents_list = []
+                for content in value:
+                    if hasattr(content, "to_dict"):
+                        contents_list.append(content.to_dict(exclude_none=exclude_none))
+                    else:
+                        contents_list.append(content)
+                result[key] = contents_list
+            # Handle role conversion to dict format
+            elif key == "role" and value is not None:
+                if hasattr(value, "to_dict"):
+                    result[key] = value.to_dict(exclude_none=exclude_none)
+                else:
+                    result[key] = value
+            else:
+                result[key] = value
+
+        return result
 
     @property
     def text(self) -> str:
@@ -2168,80 +3201,7 @@ class AgentRunResponseUpdate(AFBaseModel):
     @property
     def user_input_requests(self) -> list[UserInputRequestContents]:
         """Get all BaseUserInputRequest messages from the response."""
-        return [content for content in self.contents if isinstance(content, BaseUserInputRequest)]
+        return [content for content in self.contents if isinstance(content, UserInputRequestContents)]
 
     def __str__(self) -> str:
         return self.text
-
-
-# region SpeechToTextOptions
-
-
-class SpeechToTextOptions(AFBaseModel):
-    """Common request settings for Speech to Text AI services."""
-
-    ai_model_id: Annotated[str | None, Field(serialization_alias="model")] = None
-    speech_language: Annotated[str | None, Field(description="Language of the input speech.")] = None
-    text_language: Annotated[str | None, Field(description="Language of the output text.")] = None
-    speech_sample_rate: Annotated[int | None, Field(description="Sample rate of the input speech.")] = None
-    additional_properties: dict[str, Any] = Field(
-        default_factory=dict, description="Provider-specific additional properties."
-    )
-
-    def to_provider_settings(self, by_alias: bool = True, exclude: set[str] | None = None) -> dict[str, Any]:
-        """Convert the SpeechToTextOptions to a dictionary suitable for provider requests.
-
-        Args:
-            by_alias: Use alias names for fields if True.
-            exclude: Additional keys to exclude from the output.
-
-        Returns:
-            Dictionary of settings for provider.
-        """
-        default_exclude = {"additional_properties"}
-        merged_exclude = default_exclude if exclude is None else default_exclude | set(exclude)
-
-        settings: dict[str, Any] = self.model_dump(exclude_none=True, by_alias=by_alias, exclude=merged_exclude)
-        settings = {k: v for k, v in settings.items() if not (isinstance(v, dict) and not v)}
-        settings.update(self.additional_properties)
-        for key in merged_exclude:
-            settings.pop(key, None)
-        return settings
-
-
-# region TextToSpeechOptions
-
-
-class TextToSpeechOptions(AFBaseModel):
-    """Request settings for text to speech services.
-
-    Tailor this to be more general as more models (aside from OpenAI) are added.
-    """
-
-    ai_model_id: str | None = Field(None, serialization_alias="model")
-    voice: Literal["alloy", "ash", "ballad", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer"] = "alloy"
-    response_format: Literal["mp3", "opus", "aac", "flac", "wav", "pcm"] | None = None
-    speed: Annotated[float | None, Field(ge=0.25, le=4.0)] = None
-    additional_properties: dict[str, Any] = Field(
-        default_factory=dict, description="Provider-specific additional properties."
-    )
-
-    def to_provider_settings(self, by_alias: bool = True, exclude: set[str] | None = None) -> dict[str, Any]:
-        """Convert the SpeechToTextOptions to a dictionary suitable for provider requests.
-
-        Args:
-            by_alias: Use alias names for fields if True.
-            exclude: Additional keys to exclude from the output.
-
-        Returns:
-            Dictionary of settings for provider.
-        """
-        default_exclude = {"additional_properties"}
-        merged_exclude = default_exclude if exclude is None else default_exclude | set(exclude)
-
-        settings: dict[str, Any] = self.model_dump(exclude_none=True, by_alias=by_alias, exclude=merged_exclude)
-        settings = {k: v for k, v in settings.items() if not (isinstance(v, dict) and not v)}
-        settings.update(self.additional_properties)
-        for key in merged_exclude:
-            settings.pop(key, None)
-        return settings

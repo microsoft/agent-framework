@@ -1,11 +1,12 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import contextlib
 import importlib
 import logging
 import sys
 import uuid
-from collections import defaultdict
+from copy import copy
 from dataclasses import dataclass, fields, is_dataclass
 from typing import Any, Protocol, TypedDict, TypeVar, cast, runtime_checkable
 
@@ -53,8 +54,9 @@ class CheckpointState(TypedDict):
 
 
 # Checkpoint serialization helpers
-_PYDANTIC_MARKER = "__af_pydantic_model__"
+_MODEL_MARKER = "__af_model__"
 _DATACLASS_MARKER = "__af_dataclass__"
+_AF_MARKER = "__af__"
 
 # Guards to prevent runaway recursion while encoding arbitrary user data
 _MAX_ENCODE_DEPTH = 100
@@ -78,9 +80,9 @@ def _instantiate_checkpoint_dataclass(cls: type[Any], payload: Any) -> Any | Non
         except Exception as exc:
             logger.debug(f"Checkpoint decoder could not allocate {cls.__name__} without __init__: {exc}")
             return None
-        for key, val in payload.items():
+        for key, val in payload.items():  # type: ignore[attr-defined]
             try:
-                setattr(instance, key, val)
+                setattr(instance, key, val)  # type: ignore[arg-type]
             except Exception as exc:
                 logger.debug(f"Checkpoint decoder could not set attribute {key} on {cls.__name__}: {exc}")
         return instance
@@ -94,22 +96,39 @@ def _instantiate_checkpoint_dataclass(cls: type[Any], payload: Any) -> Any | Non
     return None
 
 
-def _is_pydantic_model(obj: object) -> bool:
-    """Best-effort check for Pydantic models (e.g., AFBaseModel).
-
-    We avoid hard dependencies by duck-typing on model_dump/model_validate.
-    """
+def _supports_model_protocol(obj: object) -> bool:
+    """Detect objects that expose dictionary serialization hooks."""
     try:
         obj_type: type[Any] = type(obj)
-        return hasattr(obj, "model_dump") and hasattr(obj_type, "model_validate")
     except Exception:
         return False
+
+    has_to_dict = hasattr(obj, "to_dict") and callable(getattr(obj, "to_dict", None))  # type: ignore[arg-type]
+    has_from_dict = hasattr(obj_type, "from_dict") and callable(getattr(obj_type, "from_dict", None))
+
+    has_to_json = hasattr(obj, "to_json") and callable(getattr(obj, "to_json", None))  # type: ignore[arg-type]
+    has_from_json = hasattr(obj_type, "from_json") and callable(getattr(obj_type, "from_json", None))
+
+    return (has_to_dict and has_from_dict) or (has_to_json and has_from_json)
+
+
+def _import_qualified_name(qualname: str) -> type[Any] | None:
+    if ":" not in qualname:
+        return None
+    module_name, class_name = qualname.split(":", 1)
+    module = sys.modules.get(module_name)
+    if module is None:
+        module = importlib.import_module(module_name)
+    attr: Any = module
+    for part in class_name.split("."):
+        attr = getattr(attr, part)
+    return attr if isinstance(attr, type) else None
 
 
 def _encode_checkpoint_value(value: Any) -> Any:
     """Recursively encode values into JSON-serializable structures.
 
-    - Pydantic models -> { _PYDANTIC_MARKER: "module:Class", value: model_dump(mode="json") }
+    - Objects exposing to_dict/to_json -> { _MODEL_MARKER: "module:Class", value: encoded }
     - dataclass instances -> { _DATACLASS_MARKER: "module:Class", value: {field: encoded} }
     - dict -> encode keys as str and values recursively
     - list/tuple/set -> list of encoded items
@@ -124,16 +143,31 @@ def _encode_checkpoint_value(value: Any) -> Any:
             logger.debug(f"Max encode depth reached at depth={depth} for type={type(v)}")
             return "<max_depth>"
 
-        # Pydantic (AFBaseModel) handling
-        if _is_pydantic_model(v):
+        # Structured model handling (objects exposing to_dict/to_json)
+        if _supports_model_protocol(v):
             cls = cast(type[Any], type(v))  # type: ignore
             try:
+                if hasattr(v, "to_dict") and callable(getattr(v, "to_dict", None)):
+                    raw = v.to_dict()  # type: ignore[attr-defined]
+                    strategy = "to_dict"
+                elif hasattr(v, "to_json") and callable(getattr(v, "to_json", None)):
+                    serialized = v.to_json()  # type: ignore[attr-defined]
+                    if isinstance(serialized, (bytes, bytearray)):
+                        try:
+                            serialized = serialized.decode()
+                        except Exception:
+                            serialized = serialized.decode(errors="replace")
+                    raw = serialized
+                    strategy = "to_json"
+                else:
+                    raise AttributeError("Structured model lacks serialization hooks")
                 return {
-                    _PYDANTIC_MARKER: f"{cls.__module__}:{cls.__name__}",
-                    "value": v.model_dump(mode="json"),
+                    _MODEL_MARKER: f"{cls.__module__}:{cls.__name__}",
+                    "strategy": strategy,
+                    "value": _enc(raw, stack, depth + 1),
                 }
             except Exception as exc:  # best-effort fallback
-                logger.debug(f"Pydantic model_dump failed for {cls}: {exc}")
+                logger.debug(f"Structured model serialization failed for {cls}: {exc}")
                 return str(v)
 
         # Dataclasses (instances only)
@@ -205,21 +239,31 @@ def _decode_checkpoint_value(value: Any) -> Any:
     """Recursively decode values previously encoded by _encode_checkpoint_value."""
     if isinstance(value, dict):
         value_dict = cast(dict[str, Any], value)  # encoded form always uses string keys
-        # Pydantic marker handling
-        if _PYDANTIC_MARKER in value_dict and "value" in value_dict:
-            type_key: str | None = value_dict.get(_PYDANTIC_MARKER)  # type: ignore[assignment]
-            raw: Any = value_dict.get("value")
+        # Structured model marker handling
+        if _MODEL_MARKER in value_dict and "value" in value_dict:
+            type_key: str | None = value_dict.get(_MODEL_MARKER)  # type: ignore[assignment]
+            strategy: str | None = value_dict.get("strategy")  # type: ignore[assignment]
+            raw_encoded: Any = value_dict.get("value")
+            decoded_payload = _decode_checkpoint_value(raw_encoded)
             if isinstance(type_key, str):
                 try:
-                    module_name, class_name = type_key.split(":", 1)
-                    module = sys.modules.get(module_name)
-                    if module is None:
-                        module = importlib.import_module(module_name)
-                    cls: Any = getattr(module, class_name)
-                    if hasattr(cls, "model_validate"):
-                        return cls.model_validate(raw)
+                    cls = _import_qualified_name(type_key)
                 except Exception as exc:
-                    logger.debug(f"Failed to decode pydantic model {type_key}: {exc}; returning raw value")
+                    logger.debug(f"Failed to import structured model {type_key}: {exc}")
+                    cls = None
+
+                if cls is not None:
+                    if strategy == "to_dict" and hasattr(cls, "from_dict"):
+                        with contextlib.suppress(Exception):
+                            return cls.from_dict(decoded_payload)
+                    if strategy == "to_json" and hasattr(cls, "from_json"):
+                        if isinstance(decoded_payload, (str, bytes, bytearray)):
+                            with contextlib.suppress(Exception):
+                                return cls.from_json(decoded_payload)
+                        if isinstance(decoded_payload, dict) and hasattr(cls, "from_dict"):
+                            with contextlib.suppress(Exception):
+                                return cls.from_dict(decoded_payload)
+            return decoded_payload
         # Dataclass marker handling
         if _DATACLASS_MARKER in value_dict and "value" in value_dict:
             type_key_dc: str | None = value_dict.get(_DATACLASS_MARKER)  # type: ignore[assignment]
@@ -394,7 +438,7 @@ class InProcRunnerContext:
         Args:
             checkpoint_storage: Optional storage to enable checkpointing.
         """
-        self._messages: defaultdict[str, list[Message]] = defaultdict(list)
+        self._messages: dict[str, list[Message]] = {}
         # Event queue for immediate streaming of events (e.g., AgentRunUpdateEvent)
         self._event_queue: asyncio.Queue[WorkflowEvent] = asyncio.Queue()
 
@@ -407,10 +451,11 @@ class InProcRunnerContext:
         self._max_iterations: int = 100
 
     async def send_message(self, message: Message) -> None:
+        self._messages.setdefault(message.source_id, [])
         self._messages[message.source_id].append(message)
 
     async def drain_messages(self) -> dict[str, list[Message]]:
-        messages = dict(self._messages)
+        messages = copy(self._messages)
         self._messages.clear()
         return messages
 

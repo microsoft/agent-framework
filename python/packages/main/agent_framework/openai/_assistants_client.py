@@ -28,12 +28,12 @@ from .._types import (
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
-    ChatToolMode,
     Contents,
     FunctionCallContent,
     FunctionResultContent,
     Role,
     TextContent,
+    ToolMode,
     UriContent,
     UsageContent,
     UsageDetails,
@@ -115,7 +115,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
         if not openai_settings.chat_model_id:
             raise ServiceInitializationError(
                 "OpenAI model ID is required. "
-                "Set via 'ai_model_id' parameter or 'OPENAI_CHAT_MODEL_ID' environment variable."
+                "Set via 'model_id' parameter or 'OPENAI_CHAT_MODEL_ID' environment variable."
             )
 
         super().__init__(
@@ -361,7 +361,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
 
         if chat_options is not None:
             run_options["max_completion_tokens"] = chat_options.max_tokens
-            run_options["model"] = chat_options.ai_model_id
+            run_options["model"] = chat_options.model_id
             run_options["top_p"] = chat_options.top_p
             run_options["temperature"] = chat_options.temperature
 
@@ -392,7 +392,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
                 if chat_options.tool_choice == "none" or chat_options.tool_choice == "auto":
                     run_options["tool_choice"] = chat_options.tool_choice
                 elif (
-                    isinstance(chat_options.tool_choice, ChatToolMode)
+                    isinstance(chat_options.tool_choice, ToolMode)
                     and chat_options.tool_choice == "required"
                     and chat_options.tool_choice.required_function_name is not None
                 ):

@@ -11,8 +11,6 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from ._workflow import Workflow
 
-from pydantic import Field
-
 from ._events import (
     RequestInfoEvent,
     WorkflowErrorEvent,
@@ -199,8 +197,6 @@ class WorkflowExecutor(Executor):
     - Concurrent executions are fully isolated and do not interfere with each other
     """
 
-    workflow: "Workflow" = Field(description="The workflow to execute as a sub-workflow")
-
     def __init__(self, workflow: "Workflow", id: str, **kwargs: Any):
         """Initialize the WorkflowExecutor.
 
@@ -209,8 +205,8 @@ class WorkflowExecutor(Executor):
             id: Unique identifier for this executor.
             **kwargs: Additional keyword arguments passed to the parent constructor.
         """
-        kwargs.update({"workflow": workflow})
         super().__init__(id, **kwargs)
+        self.workflow = workflow
 
         # Track execution contexts for concurrent sub-workflow executions
         self._execution_contexts: dict[str, ExecutionContext] = {}  # execution_id -> ExecutionContext
@@ -263,6 +259,11 @@ class WorkflowExecutor(Executor):
                         output_types.append(output_type)
 
         return output_types
+
+    def to_dict(self) -> dict[str, Any]:
+        data = super().to_dict()
+        data["workflow"] = self.workflow.to_dict()
+        return data
 
     def can_handle(self, message: Any) -> bool:
         """Override can_handle to only accept messages that the wrapped workflow can handle.
