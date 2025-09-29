@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
@@ -37,6 +37,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Microsoft.Agents.Workflows.Declarative.UnitTests" />
+    <InternalsVisibleTo Include="Microsoft.Agents.Workflows.Declarative.IntegrationTests" />
   </ItemGroup>
 
 </Project>

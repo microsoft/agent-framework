@@ -17,7 +17,7 @@ namespace Microsoft.Agents.Workflows.Declarative;
 public static class DeclarativeWorkflowBuilder
 {
     /// <summary>
-    /// Builds a process from the provided YAML definition of a CPS Topic ObjectModel.
+    /// Builder for converting a Foundry workflow object-model YAML definition into a process.
     /// </summary>
     /// <typeparam name="TInput">The type of the input message</typeparam>
     /// <param name="workflowFile">The path to the workflow.</param>
@@ -35,7 +35,7 @@ public static class DeclarativeWorkflowBuilder
     }
 
     /// <summary>
-    /// Builds a process from the provided YAML definition of a CPS Topic ObjectModel.
+    /// Builds a workflow from the provided YAML definition.
     /// </summary>
     /// <typeparam name="TInput">The type of the input message</typeparam>
     /// <param name="yamlReader">The reader that provides the workflow object model YAML.</param>
@@ -55,23 +55,24 @@ public static class DeclarativeWorkflowBuilder
             throw new DeclarativeModelException($"Unsupported root element: {rootElement.GetType().Name}. Expected an {nameof(Workflow)}.");
         }
 
-        string rootId = WorkflowActionVisitor.Steps.Root(workflowElement.BeginDialog?.Id.Value);
+        string rootId = WorkflowActionVisitor.Steps.Root(workflowElement);
 
         WorkflowFormulaState state = new(options.CreateRecalcEngine());
         state.Initialize(workflowElement.WrapWithBot(), options.Configuration);
         DeclarativeWorkflowExecutor<TInput> rootExecutor =
             new(rootId,
+                options.AgentProvider,
                 state,
                 message => inputTransform?.Invoke(message) ?? DefaultTransform(message));
 
         WorkflowActionVisitor visitor = new(rootExecutor, state, options);
         WorkflowElementWalker walker = new(visitor);
-        walker.Visit(rootElement);
+        walker.Visit(workflowElement);
 
         return visitor.Complete();
     }
 
-    private static ChatMessage DefaultTransform(object message) =>
+    internal static ChatMessage DefaultTransform(object message) =>
             message switch
             {
                 ChatMessage chatMessage => chatMessage,

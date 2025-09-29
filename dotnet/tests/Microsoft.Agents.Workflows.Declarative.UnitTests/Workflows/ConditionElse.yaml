@@ -7,14 +7,14 @@ trigger:
   
     - kind: SetVariable
       id: setVariable_test
-      variable: Topic.TestValue
+      variable: Local.TestValue
       value: =Value(System.LastMessageText)
 
     - kind: ConditionGroup
       id: conditionGroup_test
       conditions:
         - id: conditionItem_odd
-          condition: =Mod(Topic.TestValue, 2) = 1
+          condition: =Mod(Local.TestValue, 2) = 1
           actions:
             - kind: SendActivity
               id: sendActivity_odd

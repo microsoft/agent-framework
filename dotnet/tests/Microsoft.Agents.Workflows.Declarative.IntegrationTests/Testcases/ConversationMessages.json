@@ -1,0 +1,26 @@
+﻿{
+  "description": "Create conversation and manipulate messages.",
+  "setup": {
+    "input": {
+      "type": "String",
+      "value": "Why is the sky blue?"
+    }
+  },
+  "validation": {
+    "min_action_count": 7,
+    "actions": {
+      "start": [
+        "conversation_create1",
+        "conversation_create2",
+        "sendActivity_conversation",
+        "add_message",
+        "sendActivity_message",
+        "copy_messages",
+        "sendActivity_copy"
+      ],
+      "final": [
+        "sendActivity_copy"
+      ]
+    }
+  }
+}

@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Xunit.Abstractions;
 
@@ -17,6 +18,7 @@ public abstract class WorkflowTest : IDisposable
     {
         this.Output = new TestOutputAdapter(output);
         Console.SetOut(this.Output);
+        SetProduct();
     }
 
     public void Dispose()
@@ -33,8 +35,16 @@ public abstract class WorkflowTest : IDisposable
         }
     }
 
+    protected static void SetProduct()
+    {
+        if (!ProductContext.IsLocalScopeSupported())
+        {
+            ProductContext.SetContext(Product.Foundry);
+        }
+    }
+
     internal static string? FormatOptionalPath(string? variableName, string? scope = null) =>
         variableName is null ? null : FormatVariablePath(variableName, scope);
 
-    internal static string FormatVariablePath(string variableName, string? scope = null) => $"{scope ?? VariableScopeNames.Topic}.{variableName}";
+    internal static string FormatVariablePath(string variableName, string? scope = null) => $"{scope ?? WorkflowFormulaState.DefaultScopeName}.{variableName}";
 }

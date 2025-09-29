@@ -10,10 +10,10 @@ namespace Microsoft.Agents.Workflows.Declarative.Interpreter;
 
 internal delegate ValueTask DelegateAction<TMessage>(IWorkflowContext context, TMessage message, CancellationToken cancellationToken) where TMessage : notnull;
 
-internal sealed class DelegateActionExecutor(string actionId, WorkflowFormulaState state, DelegateAction<ExecutorResultMessage>? action = null, bool emitResult = true)
-    : DelegateActionExecutor<ExecutorResultMessage>(actionId, state, action, emitResult)
+internal sealed class DelegateActionExecutor(string actionId, WorkflowFormulaState state, DelegateAction<ActionExecutorResult>? action = null, bool emitResult = true)
+    : DelegateActionExecutor<ActionExecutorResult>(actionId, state, action, emitResult)
 {
-    public override ValueTask HandleAsync(ExecutorResultMessage message, IWorkflowContext context)
+    public override ValueTask HandleAsync(ActionExecutorResult message, IWorkflowContext context)
     {
         Debug.WriteLine($"RESULT #{this.Id} - {message.Result ?? "(null)"}");
 

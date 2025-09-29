@@ -1,8 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""
-Tau2 Benchmark for Agent Framework.
-"""
+"""Tau2 Benchmark for Agent Framework."""
 
 import importlib.metadata
 

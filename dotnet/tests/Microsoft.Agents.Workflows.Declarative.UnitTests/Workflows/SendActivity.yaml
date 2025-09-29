@@ -7,10 +7,10 @@ trigger:
   
     - kind: SetVariable
       id: set_input
-      variable: Topic.TestValue
+      variable: Local.TestValue
       value: =System.LastMessageText
 
     - kind: SendActivity
       id: activity_input
       activity: |-
-        Input: {Topic.TestValue}
+        Input: "{Local.TestValue}"

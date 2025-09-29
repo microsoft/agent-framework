@@ -7,6 +7,6 @@ trigger:
   actions:
     - kind: ParseValue
       id: parse_var
-      variable: Topic.MyVar
+      variable: Local.MyVar
       value: "42"
       valueType: Number
