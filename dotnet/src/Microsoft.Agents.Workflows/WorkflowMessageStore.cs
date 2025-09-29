@@ -65,7 +65,7 @@ internal sealed class WorkflowMessageStore : ChatMessageStore
 
     public void UpdateBookmark() => this._bookmark = this._chatMessages.Count;
 
-    public override ValueTask<JsonElement?> SerializeStateAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
     {
         StoreState state = new()
         {
@@ -73,8 +73,7 @@ internal sealed class WorkflowMessageStore : ChatMessageStore
             Messages = this._chatMessages,
         };
 
-        return new ValueTask<JsonElement?>
-            (JsonSerializer.SerializeToElement(state,
-            WorkflowsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(StoreState))));
+        return JsonSerializer.SerializeToElement(state,
+            WorkflowsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(StoreState)));
     }
 }
