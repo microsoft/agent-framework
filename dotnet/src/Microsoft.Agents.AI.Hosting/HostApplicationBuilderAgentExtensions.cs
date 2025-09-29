@@ -69,6 +69,29 @@ public static class HostApplicationBuilderAgentExtensions
     }
 
     /// <summary>
+    /// Adds an AI agent to the <see cref="IHostApplicationBuilder"/> with the specified configuration.
+    /// </summary>
+    /// <param name="builder">The application builder to add the AI agent to.</param>
+    /// <param name="name">The unique name of the AI agent.</param>
+    /// <param name="instructions">Instructions for the AI agent's behavior.</param>
+    /// <param name="description">A description of the AI agent.</param>
+    /// <param name="chatClientServiceKey">
+    /// An optional service key to resolve the <see cref="IChatClient"/>; if null, the default service is used.
+    /// </param>
+    /// <param name="tools">Optional tools to be provided to the AI agent.</param>
+    /// <returns>The <see cref="IHostApplicationBuilder"/> instance for chaining.</returns>
+    public static IHostApplicationBuilder AddAIAgent(this IHostApplicationBuilder builder, string name, string instructions, string description, object? chatClientServiceKey, params AITool[]? tools)
+    {
+        Throw.IfNull(builder);
+        Throw.IfNull(name);
+        return builder.AddAIAgent(name, (sp, key) =>
+        {
+            var chatClient = chatClientServiceKey is null ? sp.GetRequiredService<IChatClient>() : sp.GetRequiredKeyedService<IChatClient>(chatClientServiceKey);
+            return new ChatClientAgent(chatClient, instructions: instructions, name: key, description: description, tools: tools);
+        });
+    }
+
+    /// <summary>
     /// Adds an AI agent to the host application builder with the specified name, instructions, and chat client key.
     /// </summary>
     /// <param name="builder">The host application builder to configure.</param>
