@@ -23,16 +23,16 @@ internal static class IWorkflowContextExtensions
         context.SendMessageAsync(new ExecutorResultMessage(id, result));
 
     public static ValueTask QueueStateResetAsync(this IWorkflowContext context, PropertyPath variablePath) =>
-        context.QueueStateUpdateAsync(Throw.IfNull(variablePath.VariableName), UnassignedValue.Instance, Throw.IfNull(variablePath.VariableScopeName));
+        context.QueueStateUpdateAsync(Throw.IfNull(variablePath.VariableName), UnassignedValue.Instance, Throw.IfNull(variablePath.NamespaceAlias));
 
     public static ValueTask QueueStateUpdateAsync<TValue>(this IWorkflowContext context, PropertyPath variablePath, TValue? value) =>
-        context.QueueStateUpdateAsync(Throw.IfNull(variablePath.VariableName), value, Throw.IfNull(variablePath.VariableScopeName));
+        context.QueueStateUpdateAsync(Throw.IfNull(variablePath.VariableName), value, Throw.IfNull(variablePath.NamespaceAlias));
 
     public static ValueTask QueueSystemUpdateAsync<TValue>(this IWorkflowContext context, string key, TValue? value) =>
         DeclarativeContext(context).QueueSystemUpdateAsync(key, value);
 
     public static FormulaValue ReadState(this IWorkflowContext context, PropertyPath variablePath) =>
-        context.ReadState(Throw.IfNull(variablePath.VariableName), Throw.IfNull(variablePath.VariableScopeName));
+        context.ReadState(Throw.IfNull(variablePath.VariableName), Throw.IfNull(variablePath.NamespaceAlias));
 
     public static FormulaValue ReadState(this IWorkflowContext context, string key, string? scopeName = null) =>
         DeclarativeContext(context).State.Get(key, scopeName);
@@ -51,7 +51,7 @@ internal static class IWorkflowContextExtensions
     public static async ValueTask EnsureWorkflowConversationAsync(this IWorkflowContext context, WorkflowAgentProvider agentProvider, StringExpression expression, CancellationToken cancellationToken)
     {
         if (expression.IsVariableReference &&
-            expression.VariableReference.IsVariableReferenceWithScope(VariableScopeNames.System, out string? variableName))
+            expression.VariableReference.IsVariableReferenceWithScope(VariableNamespace.System, out string? variableName))
         {
             if (string.Equals(variableName, SystemScope.Names.Conversation, StringComparison.Ordinal) ||
                 string.Equals(variableName, SystemScope.Names.ConversationId, StringComparison.Ordinal))

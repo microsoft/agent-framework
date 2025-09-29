@@ -212,6 +212,17 @@ class BaseChatClient(AFBaseModel, ABC):
         """Turn the allowed input into a list of chat messages."""
         return prepare_messages(messages)
 
+    def _filter_internal_kwargs(self, kwargs: dict[str, Any]) -> dict[str, Any]:
+        """Filter out internal framework parameters that shouldn't be passed to chat client implementations.
+
+        Args:
+            kwargs: The original kwargs dictionary.
+
+        Returns:
+            A filtered kwargs dictionary without internal parameters.
+        """
+        return {k: v for k, v in kwargs.items() if not k.startswith("_")}
+
     @staticmethod
     def _normalize_tools(
         tools: ToolProtocol
@@ -360,7 +371,8 @@ class BaseChatClient(AFBaseModel, ABC):
         prepped_messages = self.prepare_messages(messages)
         self._prepare_tool_choice(chat_options=chat_options)
 
-        return await self._inner_get_response(messages=prepped_messages, chat_options=chat_options, **kwargs)
+        filtered_kwargs = self._filter_internal_kwargs(kwargs)
+        return await self._inner_get_response(messages=prepped_messages, chat_options=chat_options, **filtered_kwargs)
 
     async def get_streaming_response(
         self,
@@ -440,8 +452,9 @@ class BaseChatClient(AFBaseModel, ABC):
         prepped_messages = self.prepare_messages(messages)
         self._prepare_tool_choice(chat_options=chat_options)
 
+        filtered_kwargs = self._filter_internal_kwargs(kwargs)
         async for update in self._inner_get_streaming_response(
-            messages=prepped_messages, chat_options=chat_options, **kwargs
+            messages=prepped_messages, chat_options=chat_options, **filtered_kwargs
         ):
             yield update
 

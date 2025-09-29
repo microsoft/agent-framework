@@ -28,9 +28,7 @@ members = [
     "agent-framework-azure-ai",
     "agent-framework-copilotstudio",
     "agent-framework-devui",
-    "agent-framework-lab-gaia",
-    "agent-framework-lab-lightning",
-    "agent-framework-lab-tau2",
+    "agent-framework-lab",
     "agent-framework-mem0",
     "agent-framework-project",
     "agent-framework-redis",
@@ -244,50 +242,28 @@ requires-dist = [
 provides-extras = ["dev", "all"]
 
 [[package]]
-name = "agent-framework-lab-gaia"
+name = "agent-framework-lab"
 version = "0.1.0b1"
-source = { editable = "packages/lab/gaia" }
+source = { editable = "packages/lab" }
 dependencies = [
     { name = "agent-framework", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.optional-dependencies]
+gaia = [
     { name = "huggingface-hub", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "opentelemetry-api", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "orjson", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "pydantic", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "tqdm", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "agent-framework", editable = "packages/main" },
-    { name = "huggingface-hub", specifier = ">=0.20.0" },
-    { name = "opentelemetry-api", specifier = ">=1.24.0" },
-    { name = "orjson", specifier = ">=3.8.0" },
-    { name = "pydantic", specifier = ">=2.0.0" },
-    { name = "tqdm", specifier = ">=4.60.0" },
-]
-
-[[package]]
-name = "agent-framework-lab-lightning"
-version = "0.1.0b1"
-source = { editable = "packages/lab/lightning" }
-dependencies = [
-    { name = "agent-framework", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+lightning = [
     { name = "pydantic", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "agent-framework", editable = "packages/main" },
-    { name = "pydantic", specifier = ">=2.0.0" },
-]
-
-[[package]]
-name = "agent-framework-lab-tau2"
-version = "0.1.0b1"
-source = { editable = "packages/lab/tau2" }
-dependencies = [
-    { name = "agent-framework", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+tau2 = [
     { name = "loguru", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.11' and sys_platform == 'darwin') or (python_full_version < '3.11' and sys_platform == 'linux') or (python_full_version < '3.11' and sys_platform == 'win32')" },
+    { name = "numpy", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and sys_platform == 'darwin') or (python_full_version >= '3.11' and sys_platform == 'linux') or (python_full_version >= '3.11' and sys_platform == 'win32')" },
     { name = "pydantic", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "tau2", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "tiktoken", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -296,11 +272,19 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework", editable = "packages/main" },
-    { name = "loguru", specifier = ">=0.7.3" },
-    { name = "pydantic", specifier = ">=2.0.0" },
-    { name = "tau2", git = "https://github.com/sierra-research/tau2-bench?rev=5ba9e3e56db57c5e4114bf7f901291f09b2c5619" },
-    { name = "tiktoken", specifier = ">=0.11.0" },
+    { name = "huggingface-hub", marker = "extra == 'gaia'", specifier = ">=0.20.0" },
+    { name = "loguru", marker = "extra == 'tau2'", specifier = ">=0.7.3" },
+    { name = "numpy", marker = "extra == 'tau2'" },
+    { name = "opentelemetry-api", marker = "extra == 'gaia'", specifier = ">=1.24.0" },
+    { name = "orjson", marker = "extra == 'gaia'", specifier = ">=3.8.0" },
+    { name = "pydantic", marker = "extra == 'gaia'", specifier = ">=2.0.0" },
+    { name = "pydantic", marker = "extra == 'lightning'", specifier = ">=2.0.0" },
+    { name = "pydantic", marker = "extra == 'tau2'", specifier = ">=2.0.0" },
+    { name = "tau2", marker = "extra == 'tau2'", git = "https://github.com/sierra-research/tau2-bench?rev=5ba9e3e56db57c5e4114bf7f901291f09b2c5619" },
+    { name = "tiktoken", marker = "extra == 'tau2'", specifier = ">=0.11.0" },
+    { name = "tqdm", marker = "extra == 'gaia'", specifier = ">=4.60.0" },
 ]
+provides-extras = ["gaia", "lightning", "tau2"]
 
 [[package]]
 name = "agent-framework-mem0"
@@ -327,7 +311,7 @@ dependencies = [
     { name = "agent-framework-azure-ai", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-copilotstudio", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-devui", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "agent-framework-lab-gaia", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-lab", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-mem0", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-redis", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
@@ -363,7 +347,7 @@ requires-dist = [
     { name = "agent-framework-azure-ai", editable = "packages/azure-ai" },
     { name = "agent-framework-copilotstudio", editable = "packages/copilotstudio" },
     { name = "agent-framework-devui", editable = "packages/devui" },
-    { name = "agent-framework-lab-gaia", editable = "packages/lab/gaia" },
+    { name = "agent-framework-lab", editable = "packages/lab" },
     { name = "agent-framework-mem0", editable = "packages/mem0" },
     { name = "agent-framework-redis", editable = "packages/redis" },
 ]
@@ -1387,7 +1371,7 @@ name = "exceptiongroup"
 version = "1.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "(python_full_version < '3.13' and sys_platform == 'darwin') or (python_full_version < '3.13' and sys_platform == 'linux') or (python_full_version < '3.13' and sys_platform == 'win32')" },
+    { name = "typing-extensions", marker = "(python_full_version < '3.11' and sys_platform == 'darwin') or (python_full_version < '3.11' and sys_platform == 'linux') or (python_full_version < '3.11' and sys_platform == 'win32')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/0b/9f/a65090624ecf468cdca03533906e7c69ed7588582240cfe7cc9e770b50eb/exceptiongroup-1.3.0.tar.gz", hash = "sha256:b241f5885f560bc56a59ee63ca4c6a8bfa46ae4ad651af316d4e81817bb9fd88", size = 29749, upload-time = "2025-05-10T17:42:51.123Z" }
 wheels = [

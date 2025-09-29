@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
-using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Abstractions.UnitTests;
@@ -58,11 +57,11 @@ public class InMemoryAgentThreadTests
     }
 
     [Fact]
-    public async Task Constructor_WithSerializedState_SetsPropertyAsync()
+    public void Constructor_WithSerializedState_SetsProperty()
     {
         // Arrange
         InMemoryChatMessageStore store = [new(ChatRole.User, "TestMsg")];
-        var storeState = await store.SerializeStateAsync();
+        var storeState = store.Serialize();
         var json = JsonSerializer.SerializeToElement(new { storeState });
 
         // Act
@@ -89,13 +88,13 @@ public class InMemoryAgentThreadTests
     #region SerializeAsync Tests
 
     [Fact]
-    public async Task SerializeAsync_ReturnsCorrectJson_WhenMessagesExistAsync()
+    public void Serialize_ReturnsCorrectJson_WhenMessagesExist()
     {
         // Arrange
         var thread = new TestInMemoryAgentThread([new(ChatRole.User, "TestContent")]);
 
         // Act
-        var json = await thread.SerializeAsync();
+        var json = thread.Serialize();
 
         // Assert
         Assert.Equal(JsonValueKind.Object, json.ValueKind);
@@ -108,13 +107,13 @@ public class InMemoryAgentThreadTests
     }
 
     [Fact]
-    public async Task SerializeAsync_ReturnsEmptyMessages_WhenNoMessagesAsync()
+    public void Serialize_ReturnsEmptyMessages_WhenNoMessages()
     {
         // Arrange
         var thread = new TestInMemoryAgentThread();
 
         // Act
-        var json = await thread.SerializeAsync();
+        var json = thread.Serialize();
 
         // Assert
         Assert.Equal(JsonValueKind.Object, json.ValueKind);

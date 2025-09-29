@@ -39,7 +39,7 @@ trigger:
     - kind: SetVariable
       id: setVariable_aASlmF
       displayName: List all available agents for this orchestrator
-      variable: Topic.AvailableAgents
+      variable: Local.AvailableAgents
       value: |-
         =[
             {
@@ -62,20 +62,20 @@ trigger:
     - kind: SetVariable
       id: setVariable_V6yEbo
       displayName: Get a summary of all the agents for use in prompts
-      variable: Topic.TeamDescription
-      value: "=Concat(ForAll(Topic.AvailableAgents, $\"- \" & name & $\": \" & description), Value, \"\n\")"
+      variable: Local.TeamDescription
+      value: "=Concat(ForAll(Local.AvailableAgents, $\"- \" & name & $\": \" & description), Value, \"\n\")"
 
     - kind: SetVariable
       id: setVariable_NZ2u0l
       displayName: Set Task
-      variable: Topic.InputTask
+      variable: Local.InputTask
       value: =System.LastMessage.Text
 
     - kind: SetVariable
       id: setVariable_10u2ZN
       displayName: Set Task
-      variable: Topic.SeedTask
-      value: =Topic.InputTask
+      variable: Local.SeedTask
+      value: =Local.InputTask
 
     - kind: SendActivity
       id: sendActivity_yFsbRy
@@ -83,18 +83,18 @@ trigger:
 
     - kind: CreateConversation
       id: conversation_1a2b3c
-      conversationId: Topic.InternalConversationId
+      conversationId: Local.InternalConversationId
 
     - kind: InvokeAzureAgent
       id: question_UDoMUw
       displayName: Get Facts
-      conversationId: =Topic.InternalConversationId
+      conversationId: =Local.InternalConversationId
       agent:
         name: =Env.FOUNDRY_AGENT_RESEARCHANALYST
       output:
-        messages: Topic.TaskFacts
+        messages: Local.TaskFacts
       input:
-        messages: =[UserMessage(Topic.InputTask)]
+        messages: =[UserMessage(Local.InputTask)]
         additionalInstructions: |-
           In order to help begin addressing the user request, please answer the following pre-survey to the best of your ability. 
           Keep in mind that you are Ken Jennings-level with trivia, and Mensa-level with puzzles, so there should be a deep well to draw from.
@@ -122,19 +122,19 @@ trigger:
     - kind: InvokeAzureAgent
       id: question_DsBaJU
       displayName: Create a Plan
-      conversationId: =Topic.InternalConversationId
+      conversationId: =Local.InternalConversationId
       agent:
         name: =Env.FOUNDRY_AGENT_RESEARCHMANAGER
       output:
-        messages: Topic.Plan
+        messages: Local.Plan
       input:
-        messages: =[UserMessage(Topic.InputTask)]
+        messages: =[UserMessage(Local.InputTask)]
         additionalInstructions: |-
           Your only job is to devise an efficient plan that identifies (by name) how a team member may contribute to addressing the user request.
 
           Only select the following team which is listed as "- [Name]: [Description]"
 
-          {Topic.TeamDescription}
+          {Local.TeamDescription}
 
           The plan must be a bullet point list must be in the form "- [AgentName]: [Specific action or task for that agent to perform]"
   
@@ -143,60 +143,60 @@ trigger:
     - kind: SetVariable
       id: setVariable_Kk2LDL
       displayName: Define instructions
-      variable: Topic.TaskInstructions
+      variable: Local.TaskInstructions
       value: |-
         ="# TASK
         Address the following user request:
 
-        " & Topic.InputTask & "
+        " & Local.InputTask & "
 
 
         # TEAM
         Use the following team to answer this request:
 
-        " & Topic.TeamDescription & "
+        " & Local.TeamDescription & "
 
 
         # FACTS
         Consider this initial fact sheet:
 
-        " & Trim(Topic.TaskFacts.Text) & "
+        " & Trim(Local.TaskFacts.Text) & "
 
 
         # PLAN
         Here is the plan to follow as best as possible:
   
-        " & Topic.Plan.Text
+        " & Local.Plan.Text
 
     - kind: SendActivity
       id: sendActivity_bwNZiM
-      activity: {Topic.TaskInstructions}
+      activity: {Local.TaskInstructions}
 
     - kind: InvokeAzureAgent
       id: question_o3BQkf
       displayName: Progress Ledger Prompt
-      conversationId: =Topic.InternalConversationId
+      conversationId: =Local.InternalConversationId
       agent:
         name: =Env.FOUNDRY_AGENT_RESEARCHMANAGER
       output:
-        messages: Topic.ProgressLedgerUpdate
+        messages: Local.ProgressLedgerUpdate
       input:
-        messages: =[UserMessage(Topic.AgentResponseText)]
+        messages: =[UserMessage(Local.AgentResponseText)]
         additionalInstructions: |-
           Recall we are working on the following request:
 
-          {Topic.InputTask}
+          {Local.InputTask}
 
           And we have assembled the following team:
 
-          {Topic.TeamDescription}
+          {Local.TeamDescription}
 
           To make progress on the request, please answer the following questions, including necessary reasoning:
 
               - Is the request fully satisfied? (True if complete, or False if the original request has yet to be SUCCESSFULLY and FULLY addressed)
               - Are we in a loop where we are repeating the same requests and / or getting the same responses from an agent multiple times? Loops can span multiple turns, and can include repeated actions like scrolling up or down more than a handful of times.
               - Are we making forward progress? (True if just starting, or recent messages are adding value. False if recent messages show evidence of being stuck in a loop or if there is evidence of significant barriers to success such as the inability to read from a required file)
-              - Who should speak next? (select from: {Concat(Topic.AvailableAgents, name, ",")}) 
+              - Who should speak next? (select from: {Concat(Local.AvailableAgents, name, ",")}) 
               - What instruction or question would you give this team member? (Phrase as if speaking directly to them, and include any specific information they may need)
 
           Please output an answer in pure JSON format according to the following schema. The JSON object must be parsable as-is. DO NOT OUTPUT ANYTHING OTHER THAN JSON, AND DO NOT DEVIATE FROM THIS SCHEMA:
@@ -216,7 +216,7 @@ trigger:
                   }},
                   "next_speaker": {{
                       "reason": string,
-                      "answer": string (select from: {Concat(Topic.AvailableAgents, name, ",")})
+                      "answer": string (select from: {Concat(Local.AvailableAgents, name, ",")})
                   }},
                   "instruction_or_question": {{
                       "reason": string,
@@ -227,8 +227,8 @@ trigger:
     - kind: ParseValue
       id: parse_rNZtlV
       displayName: Parse ledger response
-      variable: Topic.TypedProgressLedger
-      value: =Topic.ProgressLedgerUpdate.Text
+      variable: Local.TypedProgressLedger
+      value: =Local.ProgressLedgerUpdate.Text
       valueType:
         kind: Record
         properties:
@@ -271,13 +271,13 @@ trigger:
       id: conditionGroup_mVIecC
       conditions:
         - id: conditionItem_fj432c
-          condition: =Topic.TypedProgressLedger.is_request_satisfied.answer
+          condition: =Local.TypedProgressLedger.is_request_satisfied.answer
           displayName: If Done
           actions:
 
             - kind: SendActivity
               id: sendActivity_kdl3mC
-              activity: Completed! {Topic.TypedProgressLedger.is_request_satisfied.reason}
+              activity: Completed! {Local.TypedProgressLedger.is_request_satisfied.reason}
 
             - kind: InvokeAzureAgent
               id: question_Ke3l1d
@@ -286,9 +286,9 @@ trigger:
               agent:
                 name: =Env.FOUNDRY_AGENT_RESEARCHMANAGER
               output:
-                messages: Topic.FinalResponse
+                messages: Local.FinalResponse
               input:
-                messages: =[UserMessage(Topic.SeedTask)]
+                messages: =[UserMessage(Local.SeedTask)]
                 additionalInstructions: |-
                   We have completed the task.
                   Based only on the conversation and without adding any new information, synthesize the result of the conversation as a complete response to the user task.
@@ -298,15 +298,15 @@ trigger:
               id: end_SVoNSV
 
         - id: conditionItem_yiqund
-          condition: =Topic.TypedProgressLedger.is_in_loop.answer || Not(Topic.TypedProgressLedger.is_progress_being_made.answer)
+          condition: =Local.TypedProgressLedger.is_in_loop.answer || Not(Local.TypedProgressLedger.is_progress_being_made.answer)
           displayName: If Stalling
           actions:
     
             - kind: SetVariable
               id: setVariable_H5lXdD
               displayName: Increase stall count
-              variable: Topic.StallCount
-              value: =Topic.StallCount + 1
+              variable: Local.StallCount
+              value: =Local.StallCount + 1
 
 
             - kind: ConditionGroup
@@ -319,22 +319,22 @@ trigger:
                   actions:
                     - kind: SendActivity
                       id: sendActivity_fpaNL9
-                      activity: {Topic.TypedProgressLedger.is_in_loop.reason}
+                      activity: {Local.TypedProgressLedger.is_in_loop.reason}
 
                 - id: conditionItem_NnqvXh
-                  condition: =Not(Topic.TypedProgressLedger.is_progress_being_made.answer)
+                  condition: =Not(Local.TypedProgressLedger.is_progress_being_made.answer)
                   displayName: Is No Progress
                   actions:
                     - kind: SendActivity
                       id: sendActivity_NnqvXh
-                      activity: {Topic.TypedProgressLedger.is_progress_being_made.reason}
+                      activity: {Local.TypedProgressLedger.is_progress_being_made.reason}
 
 
             - kind: ConditionGroup
               id: conditionGroup_xzNrdM
               conditions:
                 - id: conditionItem_NlQTBv
-                  condition: =Topic.StallCount > 2
+                  condition: =Local.StallCount > 2
                   displayName: Stall Count Exceeded
                   actions:
 
@@ -346,11 +346,11 @@ trigger:
                       id: conditionGroup_4s1Z27
                       conditions:
                         - id: conditionItem_EXAlhZ
-                          condition: =Topic.RestartCount > 2
+                          condition: =Local.RestartCount > 2
                           actions:
                             - kind: SendActivity
                               id: sendActivity_xKxFUU
-                              activity: Stopping after attempting {Topic.RestartCount} restarts...
+                              activity: Stopping after attempting {Local.RestartCount} restarts...
 
                             - kind: EndConversation
                               id: end_GHVrFh
@@ -362,18 +362,18 @@ trigger:
                     - kind: InvokeAzureAgent
                       id: question_wFJ123
                       displayName: Get New Facts Prompt
-                      conversationId: =Topic.InternalConversationId
+                      conversationId: =Local.InternalConversationId
                       agent:
                         name: =Env.FOUNDRY_AGENT_RESEARCHANALYST
                       output:
-                        messages: Topic.TaskFacts
+                        messages: Local.TaskFacts
                       input:
                         messages: |-
                           =[
                             UserMessage(
                             "As a reminder, we are working to solve the following task:
 
-                            " & Topic.InputTask)
+                            " & Local.InputTask)
                           ]
                         additionalInstructions: |-
                           It's clear we aren't making as much progress as we would like, but we may have learned something new.
@@ -384,7 +384,7 @@ trigger:
 
                           Here is the old fact sheet:
 
-                          {Topic.TaskFacts}
+                          {Local.TaskFacts}
 
                     - kind: SendActivity
                       id: sendActivity_dsBaJU
@@ -393,11 +393,11 @@ trigger:
                     - kind: InvokeAzureAgent
                       id: question_uEJ456
                       displayName: Create new Plan Prompt
-                      conversationId: =Topic.InternalConversationId
+                      conversationId: =Local.InternalConversationId
                       agent:
                         name: =Env.FOUNDRY_AGENT_RESEARCHMANAGER
                       output:
-                        messages: Topic.Plan
+                        messages: Local.Plan
                       input:
                         additionalInstructions: |-
                           Please briefly explain what went wrong on this last run (the root cause of the failure),
@@ -405,47 +405,47 @@ trigger:
                           As before, the new plan should be concise, be expressed in bullet-point form, and consider the following team composition
                           (do not involve any other outside people since we cannot contact anyone else):
 
-                          {Topic.TeamDescription}
+                          {Local.TeamDescription}
 
                     - kind: SetVariable
                       id: setVariable_jW7tmM
                       displayName: Set Plan as Context
-                      variable: Topic.TaskInstructions
+                      variable: Local.TaskInstructions
                       value: |-
                         ="# TASK
                         Address the following user request:
 
-                        " & Topic.InputTask & "
+                        " & Local.InputTask & "
 
 
                         # TEAM
                         Use the following team to answer this request:
 
-                        " & Topic.TeamDescription & "
+                        " & Local.TeamDescription & "
                         
 
                         # FACTS
                         Consider this initial fact sheet:
 
-                        " & Topic.TaskFacts.Text & "
+                        " & Local.TaskFacts.Text & "
 
 
                         # PLAN
                         Here is the plan to follow as best as possible:
   
-                        " & Topic.Plan.Text
+                        " & Local.Plan.Text
 
                     - kind: SetVariable
                       id: setVariable_6J2snP
                       displayName: Reset Stall count
-                      variable: Topic.StallCount
+                      variable: Local.StallCount
                       value: 0
 
                     - kind: SetVariable
                       id: setVariable_S6HCgh
                       displayName: Increase Restart count
-                      variable: Topic.RestartCount
-                      value: =Topic.RestartCount + 1
+                      variable: Local.RestartCount
+                      value: =Local.RestartCount + 1
 
                     - kind: GotoAction
                       id: goto_LzfJ8u
@@ -455,25 +455,25 @@ trigger:
         - kind: SendActivity
           id: sendActivity_L7ooQO
           activity: |-
-           ({Topic.TypedProgressLedger.next_speaker.reason})
+           ({Local.TypedProgressLedger.next_speaker.reason})
 
-           {Topic.TypedProgressLedger.next_speaker.answer} - {Topic.TypedProgressLedger.instruction_or_question.answer}
+           {Local.TypedProgressLedger.next_speaker.answer} - {Local.TypedProgressLedger.instruction_or_question.answer}
 
         - kind: SetVariable
           id: setVariable_L7ooQO
-          variable: Topic.StallCount
+          variable: Local.StallCount
           value: 0
 
     - kind: SetVariable
       id: setVariable_nxN1mE
-      variable: Topic.NextSpeaker
-      value: =Search(Topic.AvailableAgents, Topic.TypedProgressLedger.next_speaker.answer, name)
+      variable: Local.NextSpeaker
+      value: =Search(Local.AvailableAgents, Local.TypedProgressLedger.next_speaker.answer, name)
 
     - kind: ConditionGroup
       id: conditionGroup_QFPiF5
       conditions:
         - id: conditionItem_GmigcU
-          condition: =CountRows(Topic.NextSpeaker) = 1
+          condition: =CountRows(Local.NextSpeaker) = 1
           displayName: If next Agent tool Exists
           actions:
 
@@ -482,23 +482,23 @@ trigger:
               displayName: Progress Ledger Prompt
               conversationId: =System.ConversationId
               agent:
-                name: =First(Topic.NextSpeaker).agentid
+                name: =First(Local.NextSpeaker).agentid
               output:
-                messages: Topic.AgentResponse
+                messages: Local.AgentResponse
               input:
-                messages: =[UserMessage(Topic.SeedTask)]
+                messages: =[UserMessage(Local.SeedTask)]
                 additionalInstructions: |-
-                  {Topic.TypedProgressLedger.instruction_or_question.answer}
+                  {Local.TypedProgressLedger.instruction_or_question.answer}
 
             - kind: SetVariable
               id: setVariable_XzNrdM
-              variable: Topic.AgentResponseText
-              value: =Topic.AgentResponse.Text
+              variable: Local.AgentResponseText
+              value: =Local.AgentResponse.Text
 
             - kind: ResetVariable
               id: setVariable_8eIx2A
               displayName: Clear seed task
-              variable: Topic.SeedTask
+              variable: Local.SeedTask
 
       elseActions:
         - kind: SendActivity
@@ -508,8 +508,8 @@ trigger:
         - kind: SetVariable
           id: setVariable_BhcsI7
           displayName: Increase stall count
-          variable: Topic.StallCount
-          value: =Topic.StallCount + 1
+          variable: Local.StallCount
+          value: =Local.StallCount + 1
 
     - kind: GotoAction
       id: goto_76Hne8

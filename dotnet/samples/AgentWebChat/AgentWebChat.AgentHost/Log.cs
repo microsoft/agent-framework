@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Microsoft.Extensions.AI.Agents.Runtime;
+using Microsoft.Agents.AI.Runtime;
 
 namespace AgentWebChat.AgentHost;
 
