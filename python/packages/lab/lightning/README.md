@@ -1,6 +1,6 @@
 # Agent Framework Lab - Lightning
 
-**Agent Framework Lab Lightning** is a specialized package that integrates Microsoft's [Agent Framework](https://github.com/microsoft/agent-framework) with [Agent-lightning](https://github.com/microsoft/agent-lightning) to provide reinforcement learning (RL) training capabilities for AI agents.
+**Agent Framework Lab Lightning** is a specialized package that integrates [Microsoft Agent Framework](https://github.com/microsoft/agent-framework) with [Agent-lightning](https://github.com/microsoft/agent-lightning) to provide reinforcement learning (RL) training capabilities for AI agents.
 
 This package enables you to train and fine-tune agents using advanced RL algorithms from VERL (e.g., GRPO, PPO, Reinforce++) with support for distributed training, multi-GPU setups, and comprehensive monitoring. It also supports complex multi-turn agent interactions during training and optimization techniques like prompt optimization. See the [Agent-lightning documentation](https://microsoft.github.io/agent-lightning/stable/) for details.
 
