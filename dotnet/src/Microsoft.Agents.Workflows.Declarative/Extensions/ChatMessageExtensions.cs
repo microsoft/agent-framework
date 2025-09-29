@@ -18,8 +18,13 @@ internal static class ChatMessageExtensions
     public static TableValue ToTable(this IEnumerable<ChatMessage> messages) =>
         FormulaValue.NewTable(TypeSchema.Message.MessageRecordType, messages.Select(message => message.ToRecord()));
 
-    public static IEnumerable<ChatMessage> ToChatMessages(this DataValue messages)
+    public static IEnumerable<ChatMessage>? ToChatMessages(this DataValue? messages)
     {
+        if (messages is null || messages is BlankDataValue)
+        {
+            return null;
+        }
+
         if (messages is TableDataValue table)
         {
             return table.ToChatMessages();
@@ -35,7 +40,7 @@ internal static class ChatMessageExtensions
             return [text.ToChatMessage()];
         }
 
-        return [];
+        return null;
     }
 
     public static IEnumerable<ChatMessage> ToChatMessages(this TableDataValue messages)

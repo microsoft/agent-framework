@@ -93,11 +93,11 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     {
         this.Trace(item);
 
-        ConditionGroupExecutor? conditionGroup = this._workflowModel.LocateParent<ConditionGroupExecutor>(item.GetParentId());
+        string parentId = GetParentId(item);
+        ConditionGroupExecutor? conditionGroup = this._workflowModel.LocateParent<ConditionGroupExecutor>(parentId);
         if (conditionGroup is not null)
         {
             string stepId = ConditionGroupExecutor.Steps.Item(conditionGroup.Model, item);
-            string parentId = GetParentId(item);
             this._workflowModel.AddNode(new DelegateActionExecutor(stepId, this._workflowState), parentId, CompletionHandler);
 
             base.VisitConditionItem(item);
