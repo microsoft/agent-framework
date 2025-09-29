@@ -15,10 +15,10 @@ const string JokerName = "Joker";
 const string JokerInstructions = "You are good at telling jokes.";
 
 AIAgent agent = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new AzureCliCredential())
-     .GetChatClient(deploymentName)
-     .CreateAIAgent(JokerInstructions, JokerName);
+        new Uri(endpoint),
+        new AzureCliCredential())
+    .GetChatClient(deploymentName)
+    .CreateAIAgent(JokerInstructions, JokerName);
 
 // Invoke the agent with a multi-turn conversation, where the context is preserved in the thread object.
 AgentThread thread = agent.GetNewThread();
@@ -29,9 +29,10 @@ Console.WriteLine(await agent.RunAsync("Now add some emojis to the joke and tell
 thread = agent.GetNewThread();
 await foreach (var update in agent.RunStreamingAsync("Tell me a joke about a pirate.", thread))
 {
-    Console.WriteLine(update);
+    Console.Write(update);
 }
+
 await foreach (var update in agent.RunStreamingAsync("Now add some emojis to the joke and tell it in the voice of a pirate's parrot.", thread))
 {
-    Console.WriteLine(update);
+    Console.Write(update);
 }

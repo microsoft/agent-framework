@@ -29,11 +29,11 @@ using var tracerProvider = Sdk.CreateTracerProviderBuilder()
 
 // Create the agent, and enable OpenTelemetry instrumentation.
 AIAgent agent = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new AzureCliCredential())
-     .GetChatClient(deploymentName)
-     .CreateAIAgent(JokerInstructions, JokerName)
-     .WithOpenTelemetry(sourceName: sourceName);
+        new Uri(endpoint),
+        new AzureCliCredential())
+    .GetChatClient(deploymentName)
+    .CreateAIAgent(JokerInstructions, JokerName)
+    .WithOpenTelemetry(sourceName: sourceName);
 
 // Invoke the agent and output the text result.
 Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate."));
@@ -41,5 +41,5 @@ Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate."));
 // Invoke the agent with streaming support.
 await foreach (var update in agent.RunStreamingAsync("Tell me a joke about a pirate."))
 {
-    Console.WriteLine(update);
+    Console.Write(update);
 }

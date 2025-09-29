@@ -15,10 +15,10 @@ const string JokerName = "Joker";
 const string JokerInstructions = "You are good at telling jokes.";
 
 AIAgent agent = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new AzureCliCredential())
-     .GetChatClient(deploymentName)
-     .CreateAIAgent(JokerInstructions, JokerName);
+        new Uri(endpoint),
+        new AzureCliCredential())
+    .GetChatClient(deploymentName)
+    .CreateAIAgent(JokerInstructions, JokerName);
 
 // Invoke the agent and output the text result.
 Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate."));
@@ -26,5 +26,5 @@ Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate."));
 // Invoke the agent with streaming support.
 await foreach (var update in agent.RunStreamingAsync("Tell me a joke about a pirate."))
 {
-    Console.WriteLine(update);
+    Console.Write(update);
 }

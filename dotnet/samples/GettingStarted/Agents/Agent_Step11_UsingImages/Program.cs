@@ -26,5 +26,5 @@ var thread = agent.GetNewThread();
 
 await foreach (var update in agent.RunStreamingAsync(message, thread))
 {
-    Console.WriteLine(update);
+    Console.Write(update);
 }
