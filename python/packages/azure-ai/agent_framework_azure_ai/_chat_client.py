@@ -864,7 +864,11 @@ class AzureAIAgentClient(BaseChatClient):
                     )
                     results: list[Any] = []
                     for item in result_contents:
-                        if isinstance(item, BaseModel):
+                        if isinstance(item, Contents):
+                            results.append(
+                                json.dumps(item.to_dict(exclude={"raw_representation", "additional_properties"}))
+                            )
+                        elif isinstance(item, BaseModel):
                             results.append(item.model_dump_json())
                         else:
                             results.append(json.dumps(item))
