@@ -116,7 +116,7 @@ internal sealed class AnonymousDelegatingAIAgent : DelegatingAIAgent
 
                 if (response is null)
                 {
-                    Throw.InvalidOperationException("The wrapper completed successfully without producing an AgentRunResponse.");
+                    Throw.InvalidOperationException("The shared delegate completed successfully without producing an AgentRunResponse.");
                 }
 
                 return response;
