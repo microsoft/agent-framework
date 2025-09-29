@@ -4,7 +4,6 @@
 
 from unittest.mock import patch
 
-import pytest
 from agent_framework._types import ChatMessage, FunctionCallContent, FunctionResultContent, Role, TextContent
 from agent_framework_lab_tau2._sliding_window import SlidingWindowChatMessageStore
 
@@ -47,7 +46,6 @@ def test_initialization_with_messages():
     assert len(sliding_window.truncated_messages) == 2
 
 
-
 async def test_add_messages_simple():
     """Test adding messages without truncation."""
     sliding_window = SlidingWindowChatMessageStore(max_tokens=10000)  # Large limit
@@ -63,7 +61,6 @@ async def test_add_messages_simple():
     assert len(messages) == 2
     assert messages[0].text == "What's the weather?"
     assert messages[1].text == "I can help with that."
-
 
 
 async def test_list_all_messages_vs_list_messages():
@@ -219,7 +216,6 @@ def test_estimate_any_object_token_count_non_serializable():
 
     # Should fall back to string representation
     assert token_count > 0
-
 
 
 async def test_real_world_scenario():
