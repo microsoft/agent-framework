@@ -61,11 +61,11 @@ public class TestRunContext : IRunnerContext
             this.QueuedMessages[sourceId] = deliveryQueue = [];
         }
 
-        deliveryQueue.Add(new(message, targetId: targetId));
+        deliveryQueue.Add(new(message, sourceId, targetId: targetId));
         return default;
     }
 
-    StepContext IRunnerContext.Advance() =>
+    ValueTask<StepContext> IRunnerContext.AdvanceAsync() =>
         throw new NotImplementedException();
 
     public Dictionary<string, Executor> Executors { get; } = [];

@@ -17,7 +17,7 @@ namespace Microsoft.Agents.Workflows.Declarative;
 public static class DeclarativeWorkflowBuilder
 {
     /// <summary>
-    /// Builds a process from the provided YAML definition of a CPS Topic ObjectModel.
+    /// Builds a workflow from the provided YAML definition.
     /// </summary>
     /// <typeparam name="TInput">The type of the input message</typeparam>
     /// <param name="workflowFile">The path to the workflow.</param>
@@ -35,7 +35,7 @@ public static class DeclarativeWorkflowBuilder
     }
 
     /// <summary>
-    /// Builds a process from the provided YAML definition of a CPS Topic ObjectModel.
+    /// Builds a workflow from the provided YAML definition.
     /// </summary>
     /// <typeparam name="TInput">The type of the input message</typeparam>
     /// <param name="yamlReader">The reader that provides the workflow object model YAML.</param>
@@ -71,7 +71,7 @@ public static class DeclarativeWorkflowBuilder
         return visitor.Complete();
     }
 
-    private static ChatMessage DefaultTransform(object message) =>
+    internal static ChatMessage DefaultTransform(object message) =>
             message switch
             {
                 ChatMessage chatMessage => chatMessage,

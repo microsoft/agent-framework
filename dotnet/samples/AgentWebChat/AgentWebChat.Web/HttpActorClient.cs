@@ -4,9 +4,9 @@ using System.Diagnostics.CodeAnalysis;
 using System.Net.ServerSentEvents;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
-using Microsoft.Extensions.AI.Agents;
-using Microsoft.Extensions.AI.Agents.Hosting;
-using Microsoft.Extensions.AI.Agents.Runtime;
+using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Hosting;
+using Microsoft.Agents.AI.Runtime;
 
 namespace AgentWebChat.Web;
 

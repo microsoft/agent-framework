@@ -18,6 +18,14 @@ internal abstract class ChatProtocolExecutor(string id, ChatProtocolExecutorOpti
     private List<ChatMessage> _pendingMessages = [];
     private readonly ChatRole? _stringMessageChatRole = options?.StringMessageChatRole;
 
+    // Note that we explicitly do not implement IResettableExecutor here, as we want to allow derived classes to
+    // implement it if they want to be resettable, but do not want to opt them into it.
+    protected ValueTask ResetAsync()
+    {
+        this._pendingMessages = [];
+        return default;
+    }
+
     protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
     {
         if (this._stringMessageChatRole.HasValue)

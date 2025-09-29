@@ -29,7 +29,7 @@ from ._events import (
     WorkflowErrorDetails,
     _framework_event_origin,  # type: ignore[reportPrivateUsage]
 )
-from ._runner_context import Message, RunnerContext, _decode_checkpoint_value
+from ._runner_context import Message, RunnerContext, _decode_checkpoint_value  # type: ignore
 from ._shared_state import SharedState
 from ._typing_utils import is_instance_of
 from ._workflow_context import WorkflowContext, validate_function_signature
@@ -637,17 +637,6 @@ class RequestInfoExecutor(Executor):
 
         await self._clear_pending_request_snapshot(request_id, ctx)
 
-    def _register_instance_handler(
-        self,
-        name: str,
-        func: Callable[[Any, WorkflowContext[Any]], Awaitable[Any]],
-        message_type: type,
-        ctx_annotation: Any,
-        output_types: list[type],
-        workflow_output_types: list[type],
-    ) -> None:
-        raise NotImplementedError("Cannot register handlers on RequestInfoExecutor")
-
     async def _record_pending_request_snapshot(
         self,
         request: RequestInfoMessage,
@@ -659,23 +648,25 @@ class RequestInfoExecutor(Executor):
         pending = await self._load_pending_request_state(ctx)
         pending[request.request_id] = snapshot
         await self._persist_pending_request_state(pending, ctx)
+        await self._write_executor_state(ctx, pending)
 
     async def _clear_pending_request_snapshot(self, request_id: str, ctx: WorkflowContext[Any]) -> None:
         pending = await self._load_pending_request_state(ctx)
-        if request_id not in pending:
-            return
-
-        pending.pop(request_id, None)
-        await self._persist_pending_request_state(pending, ctx)
+        if request_id in pending:
+            pending.pop(request_id, None)
+            await self._persist_pending_request_state(pending, ctx)
+        await self._write_executor_state(ctx, pending)
 
     async def _load_pending_request_state(self, ctx: WorkflowContext[Any]) -> dict[str, Any]:
         try:
             existing = await ctx.get_shared_state(self._PENDING_SHARED_STATE_KEY)
+        except KeyError:
+            return {}
         except Exception as exc:  # pragma: no cover - transport specific
             logger.warning(f"RequestInfoExecutor {self.id} failed to read pending request state: {exc}")
             return {}
 
-        if not isinstance(existing, dict) or existing is None:
+        if not isinstance(existing, dict):
             if existing not in (None, {}):
                 logger.warning(
                     f"RequestInfoExecutor {self.id} encountered non-dict pending state "
@@ -683,7 +674,7 @@ class RequestInfoExecutor(Executor):
                 )
             return {}
 
-        return dict(existing)
+        return dict(existing)  # type: ignore[arg-type]
 
     async def _persist_pending_request_state(self, pending: dict[str, Any], ctx: WorkflowContext[Any]) -> None:
         await self._safe_set_shared_state(ctx, pending)
@@ -700,6 +691,163 @@ class RequestInfoExecutor(Executor):
             await ctx.set_state({"pending_requests": pending})
         except Exception as exc:  # pragma: no cover - transport specific
             logger.warning(f"RequestInfoExecutor {self.id} failed to update runner state with pending requests: {exc}")
+
+    def snapshot_state(self) -> dict[str, Any]:
+        """Serialize pending requests so checkpoint restoration can resume seamlessly."""
+
+        def _encode_event(event: RequestInfoEvent) -> dict[str, Any]:
+            request_data = event.data
+            payload: dict[str, Any]
+            data_cls = request_data.__class__ if request_data is not None else type(None)
+
+            payload = self._encode_request_payload(request_data, data_cls)
+
+            return {
+                "source_executor_id": event.source_executor_id,
+                "request_type": f"{event.request_type.__module__}:{event.request_type.__qualname__}",
+                "request_data": payload,
+            }
+
+        return {
+            "request_events": {rid: _encode_event(event) for rid, event in self._request_events.items()},
+        }
+
+    def _encode_request_payload(self, request_data: RequestInfoMessage | None, data_cls: type[Any]) -> dict[str, Any]:
+        if request_data is None or isinstance(request_data, (str, int, float, bool)):
+            return {
+                "kind": "raw",
+                "type": f"{data_cls.__module__}:{data_cls.__qualname__}",
+                "value": request_data,
+            }
+
+        if is_dataclass(request_data) and not isinstance(request_data, type):
+            dataclass_instance = cast(Any, request_data)
+            safe_value = self._make_json_safe(asdict(dataclass_instance))
+            return {
+                "kind": "dataclass",
+                "type": f"{data_cls.__module__}:{data_cls.__qualname__}",
+                "value": safe_value,
+            }
+
+        model_dump_fn = getattr(request_data, "model_dump", None)
+        if callable(model_dump_fn):
+            try:
+                dumped = model_dump_fn(mode="json")
+            except TypeError:
+                dumped = model_dump_fn()
+            safe_value = self._make_json_safe(dumped)
+            return {
+                "kind": "pydantic",
+                "type": f"{data_cls.__module__}:{data_cls.__qualname__}",
+                "value": safe_value,
+            }
+
+        details = self._serialise_request_details(request_data)
+        if details is not None:
+            safe_value = self._make_json_safe(details)
+            return {
+                "kind": "raw",
+                "type": f"{data_cls.__module__}:{data_cls.__qualname__}",
+                "value": safe_value,
+            }
+
+        safe_value = self._make_json_safe(request_data)
+        return {
+            "kind": "raw",
+            "type": f"{data_cls.__module__}:{data_cls.__qualname__}",
+            "value": safe_value,
+        }
+
+    def restore_state(self, state: dict[str, Any]) -> None:
+        """Restore pending request bookkeeping from checkpoint state."""
+        self._request_events.clear()
+        stored_events = state.get("request_events", {})
+
+        for request_id, payload in stored_events.items():
+            request_type_qual = payload.get("request_type", "")
+            try:
+                request_type = self._import_qualname(request_type_qual)
+            except Exception as exc:  # pragma: no cover - defensive fallback
+                logger.debug(
+                    "RequestInfoExecutor %s failed to import %s during restore: %s",
+                    self.id,
+                    request_type_qual,
+                    exc,
+                )
+                request_type = RequestInfoMessage
+            request_data_meta = payload.get("request_data", {})
+            request_data = self._decode_request_data(request_data_meta)
+            event = RequestInfoEvent(
+                request_id=request_id,
+                source_executor_id=payload.get("source_executor_id", ""),
+                request_type=request_type,
+                request_data=request_data,
+            )
+            self._request_events[request_id] = event
+
+    @staticmethod
+    def _import_qualname(qualname: str) -> type[Any]:
+        module_name, _, type_name = qualname.partition(":")
+        if not module_name or not type_name:
+            raise ValueError(f"Invalid qualified name: {qualname}")
+        module = importlib.import_module(module_name)
+        attr: Any = module
+        for part in type_name.split("."):
+            attr = getattr(attr, part)
+        if not isinstance(attr, type):
+            raise TypeError(f"Resolved object is not a type: {qualname}")
+        return attr
+
+    def _decode_request_data(self, metadata: dict[str, Any]) -> RequestInfoMessage:
+        kind = metadata.get("kind")
+        type_name = metadata.get("type", "")
+        value = metadata.get("value", {})
+        if type_name:
+            try:
+                imported = self._import_qualname(type_name)
+            except Exception as exc:  # pragma: no cover - defensive fallback
+                logger.debug(
+                    "RequestInfoExecutor %s failed to import %s during decode: %s",
+                    self.id,
+                    type_name,
+                    exc,
+                )
+                imported = RequestInfoMessage
+        else:
+            imported = RequestInfoMessage
+        target_cls: type[RequestInfoMessage]
+        if isinstance(imported, type) and issubclass(imported, RequestInfoMessage):
+            target_cls = imported
+        else:
+            target_cls = RequestInfoMessage
+
+        if kind == "dataclass" and isinstance(value, dict):
+            with contextlib.suppress(TypeError):
+                return target_cls(**value)
+
+        if kind == "pydantic" and isinstance(value, dict):
+            model_validate = getattr(target_cls, "model_validate", None)
+            if callable(model_validate):
+                return cast(RequestInfoMessage, model_validate(value))
+
+        if isinstance(value, dict):
+            with contextlib.suppress(TypeError):
+                return target_cls(**value)
+            instance = object.__new__(target_cls)
+            instance.__dict__.update(value)
+            return instance
+
+        with contextlib.suppress(Exception):
+            return target_cls()
+        return RequestInfoMessage()
+
+    async def _write_executor_state(self, ctx: WorkflowContext[Any], pending: dict[str, Any]) -> None:
+        state = self.snapshot_state()
+        state["pending_requests"] = pending
+        try:
+            await ctx.set_state(state)
+        except Exception as exc:  # pragma: no cover - transport specific
+            logger.warning(f"RequestInfoExecutor {self.id} failed to persist executor state: {exc}")
 
     def _build_request_snapshot(
         self,
@@ -803,6 +951,8 @@ class RequestInfoExecutor(Executor):
 
         try:
             shared_pending = await ctx.get_shared_state(self._PENDING_SHARED_STATE_KEY)
+        except KeyError:
+            shared_pending = None
         except Exception as exc:  # pragma: no cover - transport specific
             logger.warning(f"RequestInfoExecutor {self.id} failed to read shared pending state during rehydrate: {exc}")
             shared_pending = None
@@ -902,7 +1052,7 @@ class RequestInfoExecutor(Executor):
             try:
                 field_names = {f.name for f in fields(request_cls)}
                 ctor_kwargs = {name: details[name] for name in field_names if name in details}
-                return request_cls(**ctor_kwargs)  # type: ignore[call-arg]
+                return request_cls(**ctor_kwargs)
             except (TypeError, ValueError) as exc:
                 logger.debug(
                     f"RequestInfoExecutor {self.id} could not instantiate dataclass "
@@ -915,7 +1065,7 @@ class RequestInfoExecutor(Executor):
                 )
 
         try:
-            instance = request_cls()  # type: ignore[call-arg]
+            instance = request_cls()
         except Exception as exc:
             logger.warning(
                 f"RequestInfoExecutor {self.id} could not instantiate {request_cls.__name__} without arguments: {exc}"

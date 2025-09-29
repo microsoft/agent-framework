@@ -21,6 +21,7 @@ from openai.types.beta.threads.runs import RunStep
 from pydantic import Field, PrivateAttr, SecretStr, ValidationError
 
 from .._clients import BaseChatClient
+from .._middleware import use_chat_middleware
 from .._tools import AIFunction, HostedCodeInterpreterTool, HostedFileSearchTool, use_function_invocation
 from .._types import (
     ChatMessage,
@@ -52,6 +53,7 @@ __all__ = ["OpenAIAssistantsClient"]
 
 @use_function_invocation
 @use_observability
+@use_chat_middleware
 class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
     """OpenAI Assistants client."""
 

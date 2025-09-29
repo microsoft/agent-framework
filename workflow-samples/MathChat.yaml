@@ -33,7 +33,7 @@ trigger:
 
     - kind: SetVariable
       id: set_project
-      variable: Topic.Project
+      variable: Local.Project
       value: =System.LastMessage.Text
 
     - kind: InvokeAzureAgent
@@ -42,11 +42,11 @@ trigger:
       agent:
         name: =Env.FOUNDRY_AGENT_STUDENT
       input:
-        messages: =[UserMessage(Topic.Project)]
+        messages: =[UserMessage(Local.Project)]
 
     - kind: ResetVariable
       id: reset_project
-      variable: Topic.Project
+      variable: Local.Project
 
     - kind: InvokeAzureAgent
       id: question_teacher
@@ -54,18 +54,18 @@ trigger:
       agent:
         name: =Env.FOUNDRY_AGENT_TEACHER
       output:
-        messages: Topic.TeacherResponse
+        messages: Local.TeacherResponse
 
     - kind: SetVariable
       id: set_count_increment
-      variable: Topic.TurnCount
-      value: =Topic.TurnCount + 1
+      variable: Local.TurnCount
+      value: =Local.TurnCount + 1
 
     - kind: ConditionGroup
       id: check_completion
       conditions:
 
-        - condition: =!IsBlank(Find("CONGRATULATIONS", Upper(Topic.TeacherResponse.Text)))
+        - condition: =!IsBlank(Find("CONGRATULATIONS", Upper(Local.TeacherResponse.Text)))
           id: check_turn_done
           actions:
 
@@ -73,7 +73,7 @@ trigger:
               id: sendActivity_done
               activity: GOLD STAR!
     
-        - condition: =Topic.TurnCount < 4
+        - condition: =Local.TurnCount < 4
           id: check_turn_count
           actions:
     

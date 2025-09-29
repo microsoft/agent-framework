@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
@@ -32,11 +32,12 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Microsoft.Agents.Workflows\Microsoft.Agents.Workflows.csproj" />
-    <ProjectReference Include="..\Microsoft.Extensions.AI.Agents.AzureAI\Microsoft.Extensions.AI.Agents.AzureAI.csproj" />
+    <ProjectReference Include="..\Microsoft.Agents.AI.AzureAI\Microsoft.Agents.AI.AzureAI.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <InternalsVisibleTo Include="Microsoft.Agents.Workflows.Declarative.UnitTests" />
+    <InternalsVisibleTo Include="Microsoft.Agents.Workflows.Declarative.IntegrationTests" />
   </ItemGroup>
 
 </Project>

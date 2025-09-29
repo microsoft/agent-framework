@@ -26,6 +26,7 @@ from pydantic import BaseModel, SecretStr, ValidationError
 
 from .._clients import BaseChatClient
 from .._logging import get_logger
+from .._middleware import use_chat_middleware
 from .._tools import (
     AIFunction,
     HostedCodeInterpreterTool,
@@ -257,7 +258,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                         )
                         response_tools.append(
                             WebSearchToolParam(
-                                type="web_search_preview",
+                                type="web_search",
                                 user_location=WebSearchUserLocation(
                                     type="approximate",
                                     city=location.get("city", None),
@@ -933,6 +934,7 @@ TOpenAIResponsesClient = TypeVar("TOpenAIResponsesClient", bound="OpenAIResponse
 
 @use_function_invocation
 @use_observability
+@use_chat_middleware
 class OpenAIResponsesClient(OpenAIConfigMixin, OpenAIBaseResponsesClient):
     """OpenAI Responses client class."""
 

@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -16,81 +17,157 @@ namespace Microsoft.Agents.Workflows.InProc;
 
 internal sealed class InProcessRunnerContext : IRunnerContext
 {
-    private StepContext _nextStep = new();
-    private readonly Dictionary<string, ExecutorRegistration> _executorRegistrations;
-    private readonly Dictionary<string, Executor> _executors = [];
-    private readonly Dictionary<string, ExternalRequest> _externalRequests = [];
+    private int _runEnded;
+    private readonly string _runId;
+    private readonly Workflow _workflow;
+
+    private readonly EdgeMap _edgeMap;
     private readonly OutputFilter _outputFilter;
 
-    public InProcessRunnerContext(Workflow workflow, ILogger? logger = null)
+    private StepContext _nextStep = new();
+
+    private readonly ConcurrentDictionary<string, Task<Executor>> _executors = new();
+    private readonly ConcurrentQueue<Func<ValueTask>> _queuedExternalDeliveries = new();
+
+    private readonly Dictionary<string, ExternalRequest> _externalRequests = new();
+
+    public InProcessRunnerContext(Workflow workflow, string runId, IStepTracer? stepTracer, ILogger? logger = null)
     {
-        this._executorRegistrations = Throw.IfNull(workflow).Registrations;
+        workflow.TakeOwnership(this);
+        this._workflow = workflow;
+        this._runId = runId;
+
+        this._edgeMap = new(this, this._workflow, stepTracer);
         this._outputFilter = new(workflow);
     }
 
     public async ValueTask<Executor> EnsureExecutorAsync(string executorId, IStepTracer? tracer)
     {
-        if (!this._executors.TryGetValue(executorId, out var executor))
+        this.CheckEnded();
+        Task<Executor> executorTask = this._executors.GetOrAdd(executorId, CreateExecutorAsync);
+
+        async Task<Executor> CreateExecutorAsync(string id)
         {
-            if (!this._executorRegistrations.TryGetValue(executorId, out var registration))
+            if (!this._workflow.Registrations.TryGetValue(executorId, out var registration))
             {
                 throw new InvalidOperationException($"Executor with ID '{executorId}' is not registered.");
             }
 
-            this._executors[executorId] = executor = await registration.ProviderAsync().ConfigureAwait(false);
+            Executor executor = await registration.ProviderAsync().ConfigureAwait(false);
             tracer?.TraceActivated(executorId);
 
             if (executor is RequestInfoExecutor requestInputExecutor)
             {
                 requestInputExecutor.AttachRequestSink(this);
             }
+
+            return executor;
         }
 
-        return executor;
+        return await executorTask.ConfigureAwait(false);
     }
 
-    public ValueTask AddExternalMessageUntypedAsync(object message)
+    public ValueTask AddExternalMessageAsync(object message, Type declaredType)
     {
+        this.CheckEnded();
         Throw.IfNull(message);
 
-        this._nextStep.MessagesFor(ExecutorIdentity.None).Add(new MessageEnvelope(message));
+        this._queuedExternalDeliveries.Enqueue(PrepareExternalDeliveryAsync);
         return default;
+
+        async ValueTask PrepareExternalDeliveryAsync()
+        {
+            DeliveryMapping? maybeMapping =
+                await this._edgeMap.PrepareDeliveryForInputAsync(new(message, ExecutorIdentity.None, declaredType))
+                                   .ConfigureAwait(false);
+
+            maybeMapping?.MapInto(this._nextStep);
+        }
     }
 
-    public ValueTask AddExternalMessageAsync<T>(T message)
+    public ValueTask AddExternalResponseAsync(ExternalResponse response)
     {
-        Throw.IfNull(message);
+        this.CheckEnded();
+        Throw.IfNull(response);
 
-        this._nextStep.MessagesFor(ExecutorIdentity.None).Add(new MessageEnvelope(message, declaredType: typeof(T)));
+        this._queuedExternalDeliveries.Enqueue(PrepareExternalDeliveryAsync);
         return default;
+
+        async ValueTask PrepareExternalDeliveryAsync()
+        {
+            if (!this.CompleteRequest(response.RequestId))
+            {
+                throw new InvalidOperationException($"No pending request with ID {response.RequestId} found in the workflow context.");
+            }
+
+            DeliveryMapping? maybeMapping =
+                await this._edgeMap.PrepareDeliveryForResponseAsync(response)
+                                   .ConfigureAwait(false);
+
+            maybeMapping?.MapInto(this._nextStep);
+        }
     }
 
-    public bool NextStepHasActions => this._nextStep.HasMessages;
+    public bool NextStepHasActions => this._nextStep.HasMessages || !this._queuedExternalDeliveries.IsEmpty;
     public bool HasUnservicedRequests => this._externalRequests.Count > 0;
 
-    public StepContext Advance() => Interlocked.Exchange(ref this._nextStep, new StepContext());
+    public async ValueTask<StepContext> AdvanceAsync()
+    {
+        this.CheckEnded();
+
+        while (this._queuedExternalDeliveries.TryDequeue(out var deliveryPrep))
+        {
+            // It's important we do not try to run these in parallel, because they make be modifying
+            // inner edge state, etc.
+            await deliveryPrep().ConfigureAwait(false);
+        }
+
+        return Interlocked.Exchange(ref this._nextStep, new StepContext());
+    }
 
     public ValueTask AddEventAsync(WorkflowEvent workflowEvent)
     {
+        this.CheckEnded();
         this.QueuedEvents.Add(workflowEvent);
         return default;
     }
 
-    public ValueTask SendMessageAsync(string sourceId, object message, string? targetId = null)
+    public async ValueTask SendMessageAsync(string sourceId, object message, string? targetId = null)
     {
-        this._nextStep.MessagesFor(sourceId).Add(new MessageEnvelope(message, targetId: targetId));
-        return default;
+        this.CheckEnded();
+        MessageEnvelope envelope = new(message, sourceId, targetId: targetId);
+
+        if (this._workflow.Edges.TryGetValue(sourceId, out HashSet<Edge>? edges))
+        {
+            foreach (Edge edge in edges)
+            {
+                DeliveryMapping? maybeMapping =
+                    await this._edgeMap.PrepareDeliveryForEdgeAsync(edge, envelope)
+                                       .ConfigureAwait(false);
+
+                maybeMapping?.MapInto(this._nextStep);
+            }
+        }
     }
 
-    public IWorkflowContext Bind(string executorId) => new BoundContext(this, executorId, this._outputFilter);
+    public IWorkflowContext Bind(string executorId)
+    {
+        this.CheckEnded();
+        return new BoundContext(this, executorId, this._outputFilter);
+    }
 
     public ValueTask PostAsync(ExternalRequest request)
     {
+        this.CheckEnded();
         this._externalRequests.Add(request.RequestId, request);
         return this.AddEventAsync(new RequestInfoEvent(request));
     }
 
-    public bool CompleteRequest(string requestId) => this._externalRequests.Remove(requestId);
+    public bool CompleteRequest(string requestId)
+    {
+        this.CheckEnded();
+        return this._externalRequests.Remove(requestId);
+    }
 
     public readonly List<WorkflowEvent> QueuedEvents = [];
 
@@ -103,6 +180,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
 
         public async ValueTask YieldOutputAsync(object output)
         {
+            RunnerContext.CheckEnded();
             Throw.IfNull(output);
 
             Executor sourceExecutor = await RunnerContext.EnsureExecutorAsync(ExecutorId, tracer: null).ConfigureAwait(false);
@@ -132,18 +210,42 @@ internal sealed class InProcessRunnerContext : IRunnerContext
             => RunnerContext.StateManager.ClearStateAsync(ExecutorId, scopeName);
     }
 
-    internal Task PrepareForCheckpointAsync(CancellationToken cancellation = default) => Task.WhenAll(this._executors.Values.Select(executor => executor.OnCheckpointingAsync(this.Bind(executor.Id), cancellation).AsTask()));
+    internal Task PrepareForCheckpointAsync(CancellationToken cancellation = default)
+    {
+        this.CheckEnded();
 
-    internal Task NotifyCheckpointLoadedAsync(CancellationToken cancellationToken = default) => Task.WhenAll(this._executors.Values.Select(executor => executor.OnCheckpointRestoredAsync(this.Bind(executor.Id), cancellationToken).AsTask()));
+        return Task.WhenAll(this._executors.Values.Select(InvokeCheckpointingAsync));
+
+        async Task InvokeCheckpointingAsync(Task<Executor> executorTask)
+        {
+            Executor executor = await executorTask.ConfigureAwait(false);
+            await executor.OnCheckpointingAsync(this.Bind(executor.Id), cancellation).ConfigureAwait(false);
+        }
+    }
+
+    internal Task NotifyCheckpointLoadedAsync(CancellationToken cancellation = default)
+    {
+        this.CheckEnded();
+
+        return Task.WhenAll(this._executors.Values.Select(InvokeCheckpointRestoredAsync));
+
+        async Task InvokeCheckpointRestoredAsync(Task<Executor> executorTask)
+        {
+            Executor executor = await executorTask.ConfigureAwait(false);
+            await executor.OnCheckpointRestoredAsync(this.Bind(executor.Id), cancellation).ConfigureAwait(false);
+        }
+    }
 
     internal ValueTask<RunnerStateData> ExportStateAsync()
     {
+        this.CheckEnded();
+
         if (this.QueuedEvents.Count > 0)
         {
             throw new InvalidOperationException("Cannot export state when there are queued events. Please process or clear the events before exporting state.");
         }
 
-        Dictionary<ExecutorIdentity, List<PortableMessageEnvelope>> queuedMessages = this._nextStep.ExportMessages();
+        Dictionary<string, List<PortableMessageEnvelope>> queuedMessages = this._nextStep.ExportMessages();
         RunnerStateData result = new(instantiatedExecutors: [.. this._executors.Keys],
                                      queuedMessages,
                                      outstandingRequests: [.. this._externalRequests.Values]);
@@ -153,6 +255,8 @@ internal sealed class InProcessRunnerContext : IRunnerContext
 
     internal async ValueTask RepublishUnservicedRequestsAsync(CancellationToken cancellation = default)
     {
+        this.CheckEnded();
+
         if (this.HasUnservicedRequests)
         {
             foreach (string requestId in this._externalRequests.Keys)
@@ -165,6 +269,8 @@ internal sealed class InProcessRunnerContext : IRunnerContext
 
     internal async ValueTask ImportStateAsync(Checkpoint checkpoint)
     {
+        this.CheckEnded();
+
         if (this.QueuedEvents.Count > 0)
         {
             throw new InvalidOperationException("Cannot import state when there are queued events. Please process or clear the events before importing state.");
@@ -191,5 +297,23 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         }
 
         await Task.WhenAll(executorTasks).ConfigureAwait(false);
+    }
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1513:Use ObjectDisposedException throw helper",
+        Justification = "Does not exist in NetFx 4.7.2")]
+    internal void CheckEnded()
+    {
+        if (Volatile.Read(ref this._runEnded) == 1)
+        {
+            throw new InvalidOperationException($"Workflow run '{this._runId}' has been ended. Please start a new Run or StreamingRun.");
+        }
+    }
+
+    public async ValueTask EndRunAsync()
+    {
+        if (Interlocked.Exchange(ref this._runEnded, 1) == 0)
+        {
+            await this._workflow.ReleaseOwnershipAsync(this).ConfigureAwait(false);
+        }
     }
 }

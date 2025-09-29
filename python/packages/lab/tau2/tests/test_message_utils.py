@@ -2,7 +2,7 @@
 
 from unittest.mock import patch
 
-from agent_framework._types import ChatMessage, Role, TextContent, FunctionCallContent, FunctionResultContent
+from agent_framework._types import ChatMessage, FunctionCallContent, FunctionResultContent, Role, TextContent
 from agent_framework_lab_tau2._message_utils import flip_messages, log_messages
 
 
@@ -120,7 +120,8 @@ def test_flip_messages_mixed_conversation():
 
     flipped = flip_messages(messages)
 
-    # Should have: system (unchanged), assistant (from user), user (from assistant, filtered), assistant (from final assistant)
+    # Should have: system (unchanged), assistant (from user), user (from assistant, filtered),
+    # assistant (from final assistant)
     assert len(flipped) == 4
 
     # Check each flipped message

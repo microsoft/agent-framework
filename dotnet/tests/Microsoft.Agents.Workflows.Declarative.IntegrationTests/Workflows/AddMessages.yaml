@@ -7,23 +7,23 @@ trigger:
 
     - kind: CreateConversation
       id: conversation_create1
-      conversationId: Topic.FirstConversationId
+      conversationId: Local.FirstConversationId
 
     - kind: CreateConversation
       id: conversation_create2
-      conversationId: Topic.SecondConversationId
+      conversationId: Local.SecondConversationId
 
     - kind: SendActivity
       id: sendActivity_conversation
       activity: |-
-        Conversation 1: {Topic.FirstConversationId}
-        Conversation 2: {Topic.SecondConversationId}
+        Conversation 1: {Local.FirstConversationId}
+        Conversation 2: {Local.SecondConversationId}
 
     - kind: AddConversationMessage
       id: add_message
-      message: Topic.MyMessage1
+      message: Local.MyMessage1
       role: User
-      conversationId: =Topic.FirstConversationId
+      conversationId: =Local.FirstConversationId
       content:
         - type: Text
           value: {System.LastMessage.Text}
@@ -31,12 +31,12 @@ trigger:
     - kind: SendActivity
       id: sendActivity_message
       activity: |-
-        Messsage 1: {Topic.MyMessage1}
+        Messsage 1: {Local.MyMessage1}
 
     - kind: CopyConversationMessages
       id: copy_messages
-      conversationId: =Topic.SecondConversationId
-      messages: =[Topic.MyMessage1]
+      conversationId: =Local.SecondConversationId
+      messages: =[Local.MyMessage1]
 
     - kind: SendActivity
       id: sendActivity_copy

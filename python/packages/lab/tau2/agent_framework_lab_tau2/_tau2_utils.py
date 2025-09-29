@@ -35,11 +35,7 @@ def convert_tau2_tool_to_ai_function(tau2_tool: Tool) -> AIFunction[Any, Any]:
     def wrapped_func(**kwargs: Any) -> Any:
         result = tau2_tool(**kwargs)
         # Deep copy to prevent mutations of returned data
-        if isinstance(result, BaseModel):
-            result = result.model_copy(deep=True)
-        else:
-            result = deepcopy(result)
-        return result
+        return result.model_copy(deep=True) if isinstance(result, BaseModel) else deepcopy(result)
 
     return AIFunction(
         name=tau2_tool.name,
@@ -55,7 +51,6 @@ def convert_agent_framework_messages_to_tau2_messages(messages: list[ChatMessage
     Handles role mapping, text extraction, function calls, and function results.
     Function results are converted to separate ToolMessage instances.
     """
-
     tau2_messages = []
 
     for msg in messages:
@@ -126,16 +121,13 @@ def patch_env_set_state() -> None:
         initialization_actions: list[EnvFunctionCall] | None,
         message_history: list[Message],
     ) -> None:
-        if self.solo_mode:
-            if any(isinstance(message, UserMessage) for message in message_history):
-                raise ValueError("User messages are not allowed in solo mode")
+        if self.solo_mode and any(isinstance(message, UserMessage) for message in message_history):
+            raise ValueError("User messages are not allowed in solo mode")
 
         def get_actions_from_messages(
             messages: list[Message],
         ) -> list[tuple[ToolCall, ToolMessage]]:
-            """
-            Get the actions from the messages.
-            """
+            """Get the actions from the messages."""
             messages = deepcopy(messages)[::-1]
             actions = []
             while messages:
@@ -194,14 +186,13 @@ def unpatch_env_set_state() -> None:
 def _dump_function_result(result: Any) -> Any:
     if isinstance(result, BaseModel):
         return result.model_dump_json()
-    elif isinstance(result, list):
+    if isinstance(result, list):
         return [_dump_function_result(item) for item in result]
-    elif isinstance(result, dict):
+    if isinstance(result, dict):
         return {k: _dump_function_result(v) for k, v in result.items()}
-    elif result is None:
+    if result is None:
         return None
-    else:
-        return result
+    return result
 
 
 def _to_native(obj: Any) -> Any:
@@ -227,9 +218,7 @@ def _to_native(obj: Any) -> Any:
 
 
 def _recursive_json_deserialize(obj: Any) -> Any:
-    """
-    Recursively deserialize a JSON object.
-    """
+    """Recursively deserialize a JSON object."""
     if isinstance(obj, str):
         try:
             deserialized = json.loads(obj)
