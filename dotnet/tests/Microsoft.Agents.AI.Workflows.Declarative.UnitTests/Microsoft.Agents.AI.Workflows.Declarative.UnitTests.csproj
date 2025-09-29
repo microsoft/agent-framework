@@ -1,8 +1,13 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
     <NoWarn>$(NoWarn);IDE1006</NoWarn>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <InjectSharedIntegrationTestCode>true</InjectSharedIntegrationTestCode>
+    <InjectSharedBuildTestCode>true</InjectSharedBuildTestCode>
   </PropertyGroup>
 
   <ItemGroup>
@@ -11,6 +16,7 @@
 
   <ItemGroup>
     <PackageReference Include="FluentAssertions" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" />
   </ItemGroup>
 
@@ -19,7 +25,6 @@
     <None Include="Workflows\*.cs">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
-    <None Include="Workflows\TestProject.csproj" />
     <None Update="Workflows\*.yaml">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>

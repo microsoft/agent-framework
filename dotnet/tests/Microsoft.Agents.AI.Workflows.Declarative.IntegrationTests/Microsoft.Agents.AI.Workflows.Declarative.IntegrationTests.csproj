@@ -7,6 +7,7 @@
 
   <PropertyGroup>
     <InjectSharedIntegrationTestCode>true</InjectSharedIntegrationTestCode>
+    <InjectSharedBuildTestCode>true</InjectSharedBuildTestCode>
   </PropertyGroup>
 
   <ItemGroup>
