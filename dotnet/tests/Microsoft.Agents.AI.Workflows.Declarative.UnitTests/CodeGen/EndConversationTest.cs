@@ -26,8 +26,8 @@ public class EndConversationTest(ITestOutputHelper output) : WorkflowActionTempl
         this.Output.WriteLine(workflowCode.Trim());
 
         // Assert
-        this.AssertDelegate(template.Id, "workflow_id", workflowCode);
-        this.AssertAgentProvider(template.UseAgentProvider, workflowCode);
+        AssertDelegate(template.Id, "workflow_id", workflowCode);
+        AssertAgentProvider(template.UseAgentProvider, workflowCode);
     }
 
     private EndConversation CreateModel(string displayName)

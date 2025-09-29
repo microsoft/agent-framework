@@ -51,10 +51,10 @@ public class ForeachTemplateTest(ITestOutputHelper output) : WorkflowActionTempl
         this.Output.WriteLine(workflowCode.Trim());
 
         // Assert
-        this.AssertGeneratedCode<ActionExecutor>(template.Id, workflowCode);
-        this.AssertAgentProvider(template.UseAgentProvider, workflowCode);
-        this.AssertGeneratedMethod(nameof(ForeachExecutor.TakeNextAsync), workflowCode);
-        this.AssertGeneratedMethod(nameof(ForeachExecutor.ResetAsync), workflowCode);
+        AssertGeneratedCode<ActionExecutor>(template.Id, workflowCode);
+        AssertAgentProvider(template.UseAgentProvider, workflowCode);
+        AssertGeneratedMethod(nameof(ForeachExecutor.TakeNextAsync), workflowCode);
+        AssertGeneratedMethod(nameof(ForeachExecutor.ResetAsync), workflowCode);
     }
 
     private Foreach CreateModel(

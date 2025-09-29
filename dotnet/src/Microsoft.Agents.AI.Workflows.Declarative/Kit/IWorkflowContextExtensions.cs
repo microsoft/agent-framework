@@ -2,7 +2,6 @@
 
 using System.Collections.Generic;
 using System.Text;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
@@ -109,24 +108,24 @@ public static class IWorkflowContextExtensions
     }
 
     /// <summary>
-    /// %%% COMMENT
+    /// Convert the result of an expression to the specified target type.
     /// </summary>
     /// <param name="context">The workflow execution context used to restore persisted state prior to formatting.</param>
-    /// <param name="targetType">/// %%% COMMENT</param>
+    /// <param name="targetType">Describes the target type for the value conversion.</param>
     /// <param name="expression">The expression to evaluate.</param>
     /// <param name="cancellationToken">A token that propagates notification when operation should be canceled.</param>
     /// <returns>The converted expression value</returns>
     public static async ValueTask<object?> ConvertValueAsync(this IWorkflowContext context, VariableType targetType, string expression, CancellationToken cancellationToken = default)
     {
         object? sourceValue = await context.EvaluateValueAsync(expression, cancellationToken).ConfigureAwait(false);
-        return targetType.ConvertFromObject(sourceValue);
+        return sourceValue.Convert(targetType);
     }
 
     /// <summary>
-    /// %%% COMMENT
+    /// Convert the variable value to the specified target type.
     /// </summary>
     /// <param name="context">The workflow execution context used to restore persisted state prior to formatting.</param>
-    /// <param name="targetType">/// %%% COMMENT</param>
+    /// <param name="targetType">Describes the target type for the value conversion.</param>
     /// <param name="key">The key of the state value.</param>
     /// <param name = "scopeName" > An optional name that specifies the scope to read.If null, the default scope is used.</param>
     /// <param name="cancellationToken">A token that propagates notification when operation should be canceled.</param>
@@ -134,23 +133,7 @@ public static class IWorkflowContextExtensions
     public static async ValueTask<object?> ConvertValueAsync(this IWorkflowContext context, VariableType targetType, string key, string? scopeName = null, CancellationToken cancellationToken = default)
     {
         object? sourceValue = await context.ReadStateAsync<object>(key, scopeName).ConfigureAwait(false);
-        return targetType.ConvertFromObject(sourceValue);
-    }
-
-    private static object? ConvertFromObject(this VariableType targetType, object? sourceValue) // %%% MOVE
-    {
-        if (targetType.Schema is not null) // %%% UPLEVEL SEMANTICS: IsRecord ?
-        {
-#pragma warning disable RCS1061 // %%% CONTINUE VALIDATION: Merge 'if' with nested 'if'
-            if (sourceValue is string sourceText)
-#pragma warning restore RCS1061
-            {
-                JsonDocument? document = JsonDocument.Parse(sourceText);
-                return document.ParseRecord(targetType);
-            }
-        }
-
-        return sourceValue;
+        return sourceValue.Convert(targetType);
     }
 
     /// <summary>

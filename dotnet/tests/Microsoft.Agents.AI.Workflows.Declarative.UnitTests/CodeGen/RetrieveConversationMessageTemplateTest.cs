@@ -40,9 +40,9 @@ public class RetrieveConversationMessageTemplateTest(ITestOutputHelper output) :
         this.Output.WriteLine(workflowCode.Trim());
 
         // Assert
-        this.AssertGeneratedCode<ActionExecutor>(template.Id, workflowCode);
-        this.AssertAgentProvider(template.UseAgentProvider, workflowCode);
-        this.AssertGeneratedAssignment(model.Message?.Path, workflowCode);
+        AssertGeneratedCode<ActionExecutor>(template.Id, workflowCode);
+        AssertAgentProvider(template.UseAgentProvider, workflowCode);
+        AssertGeneratedAssignment(model.Message?.Path, workflowCode);
     }
 
     private RetrieveConversationMessage CreateModel(

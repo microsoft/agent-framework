@@ -58,9 +58,9 @@ public class SetVariableTemplateTest(ITestOutputHelper output) : WorkflowActionT
         this.Output.WriteLine(workflowCode.Trim());
 
         // Assert
-        this.AssertGeneratedCode<ActionExecutor>(template.Id, workflowCode);
-        this.AssertAgentProvider(template.UseAgentProvider, workflowCode);
-        this.AssertGeneratedAssignment(model.Variable?.Path, workflowCode);
+        AssertGeneratedCode<ActionExecutor>(template.Id, workflowCode);
+        AssertAgentProvider(template.UseAgentProvider, workflowCode);
+        AssertGeneratedAssignment(model.Variable?.Path, workflowCode);
     }
 
     private SetVariable CreateModel(string displayName, string variablePath, ValueExpression.Builder valueExpression)

@@ -20,17 +20,17 @@ public abstract class WorkflowActionTemplateTest(ITestOutputHelper output) : Wor
 
     protected string FormatDisplayName(string name) => $"{this.GetType().Name}_{name}";
 
-    protected void AssertGeneratedCode<TBase>(string actionId, string workflowCode) where TBase : class
+    protected static void AssertGeneratedCode<TBase>(string actionId, string workflowCode) where TBase : class
     {
         Assert.Contains($"internal sealed class {actionId.FormatType()}", workflowCode);
         Assert.Contains($") : {typeof(TBase).Name}(", workflowCode);
         Assert.Contains(@$"""{actionId}""", workflowCode);
     }
 
-    protected void AssertGeneratedMethod(string methodName, string workflowCode) =>
+    protected static void AssertGeneratedMethod(string methodName, string workflowCode) =>
         Assert.Contains($"ValueTask {methodName}(", workflowCode);
 
-    protected void AssertAgentProvider(bool expected, string workflowCode)
+    protected static void AssertAgentProvider(bool expected, string workflowCode)
     {
         if (expected)
         {
@@ -42,7 +42,7 @@ public abstract class WorkflowActionTemplateTest(ITestOutputHelper output) : Wor
         }
     }
 
-    protected void AssertOptionalAssignment(PropertyPath? variablePath, string workflowCode)
+    protected static void AssertOptionalAssignment(PropertyPath? variablePath, string workflowCode)
     {
         if (variablePath is not null)
         {
@@ -51,14 +51,14 @@ public abstract class WorkflowActionTemplateTest(ITestOutputHelper output) : Wor
         }
     }
 
-    protected void AssertGeneratedAssignment(PropertyPath? variablePath, string workflowCode)
+    protected static void AssertGeneratedAssignment(PropertyPath? variablePath, string workflowCode)
     {
         Assert.NotNull(variablePath);
         Assert.Contains(@$"key: ""{variablePath.VariableName}""", workflowCode);
         Assert.Contains(@$"scopeName: ""{variablePath.NamespaceAlias}""", workflowCode);
     }
 
-    protected void AssertDelegate(string actionId, string rootId, string workflowCode)
+    protected static void AssertDelegate(string actionId, string rootId, string workflowCode)
     {
         Assert.Contains($"{nameof(DelegateExecutor)} {actionId.FormatName()} = new(", workflowCode);
         Assert.Contains(@$"""{actionId}""", workflowCode);

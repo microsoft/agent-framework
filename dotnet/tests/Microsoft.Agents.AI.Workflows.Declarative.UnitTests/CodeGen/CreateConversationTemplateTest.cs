@@ -55,9 +55,9 @@ public class CreateConversationTemplateTest(ITestOutputHelper output) : Workflow
         this.Output.WriteLine(workflowCode.Trim());
 
         // Assert
-        this.AssertGeneratedCode<ActionExecutor>(template.Id, workflowCode);
-        this.AssertAgentProvider(template.UseAgentProvider, workflowCode);
-        this.AssertGeneratedAssignment(model.ConversationId?.Path, workflowCode);
+        AssertGeneratedCode<ActionExecutor>(template.Id, workflowCode);
+        AssertAgentProvider(template.UseAgentProvider, workflowCode);
+        AssertGeneratedAssignment(model.ConversationId?.Path, workflowCode);
     }
 
     private CreateConversation CreateModel(

@@ -51,7 +51,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
             userInput = expressionResult.Value;
         }
 
-        return userInput?.ToChatMessages(); // %%% VERIFY SINGLE MESSAGE (NO ARRAY)
+        return userInput?.ToChatMessages();
     }
 
     private string? GetConversationId()

@@ -34,9 +34,9 @@ public class SetTextVariableTemplateTest(ITestOutputHelper output) : WorkflowAct
         this.Output.WriteLine(workflowCode.Trim());
 
         // Assert
-        this.AssertGeneratedCode<ActionExecutor>(template.Id, workflowCode);
-        this.AssertAgentProvider(template.UseAgentProvider, workflowCode);
-        this.AssertGeneratedAssignment(model.Variable?.Path, workflowCode);
+        AssertGeneratedCode<ActionExecutor>(template.Id, workflowCode);
+        AssertAgentProvider(template.UseAgentProvider, workflowCode);
+        AssertGeneratedAssignment(model.Variable?.Path, workflowCode);
         Assert.Contains(textValue, workflowCode);
     }
 

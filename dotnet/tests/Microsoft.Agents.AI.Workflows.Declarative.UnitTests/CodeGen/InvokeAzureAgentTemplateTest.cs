@@ -106,9 +106,9 @@ public class InvokeAzureAgentTemplateTest(ITestOutputHelper output) : WorkflowAc
         this.Output.WriteLine(workflowCode.Trim());
 
         // Assert
-        this.AssertGeneratedCode<AgentExecutor>(template.Id, workflowCode);
-        this.AssertAgentProvider(template.UseAgentProvider, workflowCode);
-        this.AssertOptionalAssignment(model.Output?.Messages?.Path, workflowCode);
+        AssertGeneratedCode<AgentExecutor>(template.Id, workflowCode);
+        AssertAgentProvider(template.UseAgentProvider, workflowCode);
+        AssertOptionalAssignment(model.Output?.Messages?.Path, workflowCode);
     }
 
     private InvokeAzureAgent CreateModel(

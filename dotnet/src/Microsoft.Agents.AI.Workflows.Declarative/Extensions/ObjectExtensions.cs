@@ -3,6 +3,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.PowerFx.Types;
@@ -42,5 +43,16 @@ internal static class ObjectExtensions
                 yield return element;
             }
         }
+    }
+
+    public static object? Convert(this object? sourceValue, VariableType targetType)
+    {
+        if (sourceValue is string sourceText)
+        {
+            JsonDocument? document = JsonDocument.Parse(sourceText);
+            return document.ParseRecord(targetType);
+        }
+
+        return sourceValue;
     }
 }
