@@ -6,11 +6,10 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
-
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Execution;
-using Microsoft.Agents.AI.Workflows.Reflection;
 using Microsoft.Agents.AI.Workflows.Observability;
+using Microsoft.Agents.AI.Workflows.Reflection;
 
 namespace Microsoft.Agents.AI.Workflows;
 
