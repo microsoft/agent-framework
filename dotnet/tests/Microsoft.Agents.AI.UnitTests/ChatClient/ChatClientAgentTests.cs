@@ -38,7 +38,7 @@ public class ChatClientAgentTests
         Assert.Equal("test description", agent.Description);
         Assert.Equal("test instructions", agent.Instructions);
         Assert.NotNull(agent.ChatClient);
-        Assert.Equal("AgentInvokedChatClient", agent.ChatClient.GetType().Name);
+        Assert.Equal("FunctionInvokingChatClient", agent.ChatClient.GetType().Name);
     }
 
     #endregion
@@ -1321,14 +1321,36 @@ public class ChatClientAgentTests
         });
 
         // Act
-        var result = agent.GetService(typeof(IChatClient));
+        var result = agent.GetService<IChatClient>();
 
         // Assert
         Assert.NotNull(result);
         Assert.IsType<IChatClient>(result, exactMatch: false);
 
         // Note: The result will be the AgentInvokedChatClient wrapper, not the original mock
-        Assert.Equal("AgentInvokedChatClient", result.GetType().Name);
+        Assert.Equal("FunctionInvokingChatClient", result.GetType().Name);
+    }
+
+    /// <summary>
+    /// Verify that GetService returns IChatClient when requested.
+    /// </summary>
+    [Fact]
+    public void GetService_RequestingChatClientAgent_ReturnsChatClientAgent()
+    {
+        // Arrange
+        var mockChatClient = new Mock<IChatClient>();
+        var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
+        {
+            Instructions = "Test instructions"
+        });
+
+        // Act
+        var result = agent.GetService<ChatClientAgent>();
+
+        // Assert
+        Assert.NotNull(result);
+
+        Assert.Same(result, agent);
     }
 
     /// <summary>

@@ -35,7 +35,7 @@ dependencies = [
     "opentelemetry-exporter-otlp-proto-grpc>=1.36.0",
     "opentelemetry-semantic-conventions-ai>=0.4.13",
     "aiofiles>=24.1.0",
-    "azure-identity>=1,<2"
+    "azure-identity>=1,<2",
 ]
 
 [project.optional-dependencies]
@@ -63,6 +63,9 @@ runtime = [
 mem0 = [
     "agent-framework-mem0"
 ]
+a2a = [
+    "agent-framework-a2a"
+]
 devui = [
     "agent-framework-devui"
 ]
@@ -71,6 +74,7 @@ all = [
     "agent-framework-azure-ai",
     "agent-framework-runtime",
     "agent-framework-mem0",
+    "agent-framework-a2a",
     "agent-framework-redis",
     "agent-framework-devui",
     "graphviz>=0.20.0"
@@ -91,6 +95,7 @@ fallback-version = "0.0.0"
 testpaths = [
     'tests',
     'packages/main/tests',
+    'packages/a2a/tests',
     'packages/azure-ai/tests',
     'packages/copilotstudio/tests',
     'packages/mem0/tests',

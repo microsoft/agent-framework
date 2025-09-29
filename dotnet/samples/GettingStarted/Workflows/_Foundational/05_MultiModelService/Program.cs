@@ -3,7 +3,7 @@
 using System;
 using Amazon.BedrockRuntime;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.Workflows;
+using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 
 // Define the topic discussion.

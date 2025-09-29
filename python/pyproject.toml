@@ -5,6 +5,7 @@ version = "0.0.0"
 requires-python = ">=3.10"
 dependencies = [
     "agent-framework",
+    "agent-framework-a2a",
     "agent-framework-azure-ai",
     "agent-framework-copilotstudio",
     "agent-framework-mem0",
@@ -54,6 +55,7 @@ exclude = [ "packages/agent_framework_project.egg-info" ]
 
 [tool.uv.sources]
 agent-framework = { workspace = true }
+agent-framework-a2a = { workspace = true }
 agent-framework-azure-ai = { workspace = true }
 agent-framework-copilotstudio = { workspace = true }
 agent-framework-lab = { workspace = true }
@@ -194,6 +196,7 @@ pre-commit-check = ["fmt", "lint", "pyright", "markdown-code-lint", "samples-cod
 cmd = """
 pytest --import-mode=importlib
 --cov=agent_framework
+--cov=agent_framework_a2a
 --cov=agent_framework_azure_ai
 --cov=agent_framework_copilotstudio
 --cov=agent_framework_mem0
