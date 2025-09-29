@@ -33,6 +33,6 @@ internal sealed class DeclarativeWorkflowExecutor<TInput>(
         await agentProvider.CreateMessageAsync(conversationId, input, cancellationToken: default).ConfigureAwait(false);
         await declarativeContext.SetLastMessageAsync(input).ConfigureAwait(false);
 
-        await context.SendMessageAsync(new ActionExecutorResult(this.Id)).ConfigureAwait(false);
+        await context.SendResultMessageAsync(this.Id).ConfigureAwait(false);
     }
 }

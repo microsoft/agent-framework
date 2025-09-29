@@ -678,7 +678,6 @@ def test_chat_response_updates_to_chat_response_multiple_multiple():
     assert chat_response.text == "I'm doing well, thank you! More contextFinal part"
 
 
-@mark.asyncio
 async def test_chat_response_from_async_generator():
     async def gen() -> AsyncIterable[ChatResponseUpdate]:
         yield ChatResponseUpdate(text="Hello", message_id="1")
@@ -688,7 +687,6 @@ async def test_chat_response_from_async_generator():
     assert resp.text == "Hello world"
 
 
-@mark.asyncio
 async def test_chat_response_from_async_generator_output_format():
     async def gen() -> AsyncIterable[ChatResponseUpdate]:
         yield ChatResponseUpdate(text='{ "respon', message_id="1")
@@ -702,7 +700,6 @@ async def test_chat_response_from_async_generator_output_format():
     assert resp.value.response == "Hello"
 
 
-@mark.asyncio
 async def test_chat_response_from_async_generator_output_format_in_method():
     async def gen() -> AsyncIterable[ChatResponseUpdate]:
         yield ChatResponseUpdate(text='{ "respon', message_id="1")
@@ -1199,7 +1196,6 @@ def agent_run_response_async() -> AgentRunResponse:
     return AgentRunResponse(messages=[ChatMessage(role="user", text="Hello")])
 
 
-@mark.asyncio
 async def test_agent_run_response_from_async_generator():
     async def gen():
         yield AgentRunResponseUpdate(contents=[TextContent("A")])

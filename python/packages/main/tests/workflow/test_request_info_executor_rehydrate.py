@@ -101,7 +101,6 @@ class TimedApproval(RequestInfoMessage):
     issued_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
-@pytest.mark.asyncio
 async def test_rehydrate_falls_back_when_request_type_missing() -> None:
     """Rehydration should succeed even if the original request type cannot be imported.
 
@@ -144,7 +143,6 @@ async def test_rehydrate_falls_back_when_request_type_missing() -> None:
     assert getattr(event.data, "iteration", None) == 2
 
 
-@pytest.mark.asyncio
 async def test_has_pending_request_detects_snapshot() -> None:
     request_id = "req-pending"
     snapshot = {
@@ -172,7 +170,6 @@ async def test_has_pending_request_detects_snapshot() -> None:
     assert await executor.has_pending_request(request_id, ctx)
 
 
-@pytest.mark.asyncio
 async def test_has_pending_request_false_when_snapshot_absent() -> None:
     shared_state = SharedState()
     runner_ctx = _StubRunnerContext({"pending_requests": {}})

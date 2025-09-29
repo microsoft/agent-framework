@@ -5,7 +5,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Agents.Workflows.Declarative.Kit;
-using Microsoft.Agents.Workflows.Declarative.PowerFx.Functions;
+using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.AI;
 using Microsoft.PowerFx.Types;

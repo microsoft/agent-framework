@@ -30,7 +30,7 @@ internal sealed class QuestionExecutor(Question model, WorkflowFormulaState stat
     protected override bool IsDiscreteAction => false;
     protected override bool EmitResultEvent => false;
 
-    public static bool IsComplete(object? message)
+    public static bool IsComplete(object? message) // %%% BASE CLASS ???
     {
         ActionExecutorResult executorMessage = ActionExecutorResult.ThrowIfNot(message);
         return executorMessage.Result is null;

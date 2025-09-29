@@ -70,8 +70,12 @@ public class ForeachTemplateTest(ITestOutputHelper output) : WorkflowActionTempl
                 DisplayName = this.FormatDisplayName(displayName),
                 Items = items,
                 Value = PropertyPath.Create(valueName),
-                Index = indexName is null ? null : PropertyPath.Create(indexName, false),
             };
+
+        if (indexName is not null)
+        {
+            actionBuilder.Index = PropertyPath.Create(indexName);
+        }
 
         return actionBuilder.Build();
     }

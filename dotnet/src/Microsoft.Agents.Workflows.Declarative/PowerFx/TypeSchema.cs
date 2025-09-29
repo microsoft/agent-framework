@@ -3,7 +3,7 @@
 using Microsoft.Bot.ObjectModel;
 using Microsoft.PowerFx.Types;
 
-namespace Microsoft.Agents.Workflows.Declarative.PowerFx.Functions;
+namespace Microsoft.Agents.Workflows.Declarative.PowerFx;
 
 internal static class TypeSchema
 {

@@ -130,6 +130,8 @@ test-tau2 = "pytest tau2/tests --cov=agent_framework_lab_tau2 --cov-report=term-
 [tool.pytest.ini_options]
 pythonpath = ["."]
 addopts = "--strict-markers --strict-config"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 markers = [
   "unit: marks tests as unit tests",
   "integration: marks tests as integration tests",
