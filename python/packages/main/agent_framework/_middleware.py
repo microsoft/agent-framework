@@ -1011,7 +1011,7 @@ def use_chat_middleware(chat_client_class: type[TChatClient]) -> type[TChatClien
         pipeline = ChatMiddlewarePipeline(chat_middleware_list)  # type: ignore[arg-type]
         context = ChatContext(
             chat_client=self,
-            messages=self.prepare_messages(messages),
+            messages=self.prepare_messages(messages, chat_options),
             chat_options=chat_options,
             is_streaming=False,
             kwargs=kwargs,
@@ -1061,7 +1061,7 @@ def use_chat_middleware(chat_client_class: type[TChatClient]) -> type[TChatClien
             pipeline = ChatMiddlewarePipeline(all_middleware)  # type: ignore[arg-type]
             context = ChatContext(
                 chat_client=self,
-                messages=self.prepare_messages(messages),
+                messages=self.prepare_messages(messages, chat_options),
                 chat_options=chat_options,
                 is_streaming=True,
                 kwargs=kwargs,

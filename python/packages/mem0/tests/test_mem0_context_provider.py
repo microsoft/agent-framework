@@ -347,9 +347,9 @@ class TestMem0ProviderModelInvoking:
             "User likes outdoor activities\nUser lives in Seattle"
         )
 
-        assert context.contents
-        assert isinstance(context.contents[0], TextContent)
-        assert context.contents[0].text == expected_instructions
+        assert context.messages
+        assert isinstance(context.messages[0], TextContent)
+        assert context.messages[0].text == expected_instructions
 
     async def test_model_invoking_multiple_messages(
         self, mock_mem0_client: AsyncMock, sample_messages: list[ChatMessage]
