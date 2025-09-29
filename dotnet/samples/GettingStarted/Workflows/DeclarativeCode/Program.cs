@@ -13,7 +13,6 @@ using Microsoft.Agents.AI.Workflows;
 using Microsoft.Agents.AI.Workflows.Declarative;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
-using Test.WorkflowProviders;
 
 namespace Demo.DeclarativeCode;
 
