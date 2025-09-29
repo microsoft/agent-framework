@@ -2,7 +2,6 @@
 
 using System.Collections.Generic;
 using System.Threading;
-using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Extensions.AI;
 
