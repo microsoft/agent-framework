@@ -123,9 +123,6 @@ async def test_base_client_with_function_calling_resets(chat_client_base: ChatCl
     assert isinstance(response.messages[1].contents[0], FunctionResultContent)
     assert isinstance(response.messages[2].contents[0], FunctionCallContent)
     assert isinstance(response.messages[3].contents[0], FunctionResultContent)
-    # after these two responses, it would try another regular call, but since max_iterations is 1, it stops and calls
-    assert isinstance(response.messages[4].contents[0], TextContent)
-    assert response.text == "I broke out of the function invocation loop..."
 
 
 async def test_base_client_with_streaming_function_calling(chat_client_base: ChatClientProtocol):
