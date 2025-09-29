@@ -1,20 +1,22 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Reflection;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
+using Microsoft.Extensions.Configuration;
 using Xunit.Abstractions;
 
-namespace Microsoft.Agents.Workflows.Declarative.UnitTests;
+namespace Microsoft.Agents.Workflows.Declarative.IntegrationTests.Framework;
 
 /// <summary>
 /// Base class for workflow tests.
 /// </summary>
-public abstract class WorkflowTest : IDisposable
+public abstract class IntegrationTest : IDisposable
 {
     public TestOutputAdapter Output { get; }
 
-    protected WorkflowTest(ITestOutputHelper output)
+    protected IntegrationTest(ITestOutputHelper output)
     {
         this.Output = new TestOutputAdapter(output);
         Console.SetOut(this.Output);
@@ -43,8 +45,10 @@ public abstract class WorkflowTest : IDisposable
         }
     }
 
-    internal static string? FormatOptionalPath(string? variableName, string? scope = null) =>
-        variableName is null ? null : FormatVariablePath(variableName, scope);
-
     internal static string FormatVariablePath(string variableName, string? scope = null) => $"{scope ?? WorkflowFormulaState.DefaultScopeName}.{variableName}";
+
+    protected static IConfigurationRoot InitializeConfig() =>
+        new ConfigurationBuilder()
+            .AddUserSecrets(Assembly.GetExecutingAssembly())
+            .Build();
 }

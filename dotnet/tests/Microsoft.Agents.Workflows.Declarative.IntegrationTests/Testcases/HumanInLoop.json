@@ -1,9 +1,9 @@
 ﻿{
-  "description": "Produce a single response from an agent.",
+  "description": "Human in the loop sample - HumanInLoop.yaml.",
   "setup": {
     "input": {
       "type": "String",
-      "value": "Why is the sky blue?"
+      "value": "Iko"
     }
   },
   "validation": {

@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
@@ -20,7 +19,7 @@ internal static class IWorkflowContextExtensions
         context.AddEventAsync(new DeclarativeActionCompletedEvent(action));
 
     public static ValueTask SendResultMessageAsync(this IWorkflowContext context, string id, object? result = null, CancellationToken cancellationToken = default) =>
-        context.SendMessageAsync(new ExecutorResultMessage(id, result));
+        context.SendMessageAsync(new ActionExecutorResult(id, result));
 
     public static ValueTask QueueStateResetAsync(this IWorkflowContext context, PropertyPath variablePath) =>
         context.QueueStateUpdateAsync(Throw.IfNull(variablePath.VariableName), UnassignedValue.Instance, Throw.IfNull(variablePath.NamespaceAlias));
@@ -45,25 +44,6 @@ internal static class IWorkflowContextExtensions
         await context.QueueSystemUpdateAsync(SystemScope.Names.ConversationId, FormulaValue.New(conversationId)).ConfigureAwait(false);
 
         await context.AddEventAsync(new ConversationUpdateEvent(conversationId)).ConfigureAwait(false);
-    }
-
-    // Ensure "System.Conversation.Id" and "System.ConversationId" are properly initialized when referenced.
-    public static async ValueTask EnsureWorkflowConversationAsync(this IWorkflowContext context, WorkflowAgentProvider agentProvider, StringExpression expression, CancellationToken cancellationToken)
-    {
-        if (expression.IsVariableReference &&
-            expression.VariableReference.IsVariableReferenceWithScope(VariableNamespace.System, out string? variableName))
-        {
-            if (string.Equals(variableName, SystemScope.Names.Conversation, StringComparison.Ordinal) ||
-                string.Equals(variableName, SystemScope.Names.ConversationId, StringComparison.Ordinal))
-            {
-                FormulaValue variableValue = context.ReadState(SystemScope.Names.ConversationId, VariableScopeNames.System);
-                if (variableValue is BlankValue)
-                {
-                    string conversationId = await agentProvider.CreateConversationAsync(cancellationToken).ConfigureAwait(false);
-                    await context.QueueConversationUpdateAsync(conversationId).ConfigureAwait(false);
-                }
-            }
-        }
     }
 
     private static DeclarativeWorkflowContext DeclarativeContext(IWorkflowContext context)
