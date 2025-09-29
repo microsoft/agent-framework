@@ -56,7 +56,6 @@ def test_request() -> AgentFrameworkRequest:
     )
 
 
-@pytest.mark.asyncio
 async def test_critical_isinstance_bug_detection(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
     """CRITICAL: Test that would have caught the isinstance vs hasattr bug."""
 
@@ -79,7 +78,6 @@ async def test_critical_isinstance_bug_detection(mapper: MessageMapper, test_req
     assert all(event.type != "unknown" for event in events)
 
 
-@pytest.mark.asyncio
 async def test_text_content_mapping(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
     """Test TextContent mapping."""
     content = create_test_content("text", text="Hello, clean test!")
@@ -92,7 +90,6 @@ async def test_text_content_mapping(mapper: MessageMapper, test_request: AgentFr
     assert events[0].delta == "Hello, clean test!"
 
 
-@pytest.mark.asyncio
 async def test_function_call_mapping(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
     """Test FunctionCallContent mapping."""
     content = create_test_content("function_call", name="test_func", arguments={"location": "TestCity"})
@@ -108,7 +105,6 @@ async def test_function_call_mapping(mapper: MessageMapper, test_request: AgentF
     assert "TestCity" in full_json
 
 
-@pytest.mark.asyncio
 async def test_error_content_mapping(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
     """Test ErrorContent mapping."""
     content = create_test_content("error", message="Test error", code="test_code")
@@ -122,7 +118,6 @@ async def test_error_content_mapping(mapper: MessageMapper, test_request: AgentF
     assert events[0].code == "test_code"
 
 
-@pytest.mark.asyncio
 async def test_mixed_content_types(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
     """Test multiple content types together."""
     contents = [
@@ -142,7 +137,6 @@ async def test_mixed_content_types(mapper: MessageMapper, test_request: AgentFra
     assert "response.function_call_arguments.delta" in event_types
 
 
-@pytest.mark.asyncio
 async def test_unknown_content_fallback(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
     """Test graceful handling of unknown content types."""
     # Test the fallback path directly since we can't create invalid AgentRunResponseUpdate

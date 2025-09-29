@@ -239,7 +239,7 @@ class TestRedisChatMessageStore:
 
     async def test_serialize_state(self, redis_store):
         """Test state serialization."""
-        state = await redis_store.serialize_state()
+        state = await redis_store.serialize()
 
         expected_state = {
             "thread_id": "test_thread_123",
@@ -259,7 +259,7 @@ class TestRedisChatMessageStore:
             "max_messages": 50,
         }
 
-        await redis_store.deserialize_state(serialized_state)
+        await redis_store.update_from_state(serialized_state)
 
         assert redis_store.thread_id == "restored_thread_456"
         assert redis_store.redis_url == "redis://localhost:6380"
@@ -270,7 +270,7 @@ class TestRedisChatMessageStore:
         """Test deserializing empty state doesn't change anything."""
         original_thread_id = redis_store.thread_id
 
-        await redis_store.deserialize_state(None)
+        await redis_store.update_from_state(None)
 
         assert redis_store.thread_id == original_thread_id
 
