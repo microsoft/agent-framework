@@ -2,107 +2,178 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows;
 using Microsoft.Agents.Workflows.Reflection;
-using Microsoft.Extensions.AI;
 
 namespace ConcurrentWithVisualizationSample;
 
 /// <summary>
-/// This sample demonstrates concurrent execution using "fan-out" and "fan-in" patterns
-/// with workflow visualization using the WorkflowViz class.
+/// Sample: Map-Reduce Word Count with Fan-Out and Fan-In over File-Backed Intermediate Results
 ///
-/// The workflow structure:
-/// 1. DispatchExecutor sends the same prompt to multiple domain experts concurrently (fan-out)
-/// 2. Research, Marketing, and Legal agents analyze the prompt independently and in parallel
-/// 3. AggregationExecutor collects all responses and combines them into a consolidated report (fan-in)
-/// 4. WorkflowViz generates visual representations of the workflow structure
+/// The workflow splits a large text into chunks, maps words to counts in parallel,
+/// shuffles intermediate pairs to reducers, then reduces to per-word totals.
+/// It also demonstrates workflow visualization for graph visualization.
 ///
-/// This pattern is useful for getting multiple expert perspectives on business decisions,
-/// product launches, or strategic planning where you need diverse domain expertise.
+/// Purpose:
+/// Show how to:
+/// - Partition input once and coordinate parallel mappers with shared state.
+/// - Implement map, shuffle, and reduce executors that pass file paths instead of large payloads.
+/// - Use fan-out and fan-in edges to express parallelism and joins.
+/// - Persist intermediate results to disk to bound memory usage for large inputs.
+/// - Visualize the workflow graph using ToDotString and ToMermaidString and export to SVG.
 /// </summary>
 /// <remarks>
 /// Pre-requisites:
-/// - An Azure OpenAI chat completion deployment must be configured.
-/// - Set AZURE_OPENAI_ENDPOINT and optionally AZURE_OPENAI_DEPLOYMENT_NAME environment variables.
+/// - Write access to a temp directory.
+/// - A source text file to process.
 /// - For SVG/PNG/PDF export: Install Graphviz (https://graphviz.org/download/)
 /// </remarks>
 public static class Program
 {
     private static async Task Main()
     {
-        // Create the mapper executors
-        const int NumberOfMappers = 3;
-        var mapperIds = Enumerable.Range(0, NumberOfMappers).Select(i => $"mapper_{i}");
-        var mappers = mapperIds.Select(id => new Mapper(id));
+        // Step 1: Create the executors
+        var mappers = Enumerable.Range(0, 3).Select(i => new Mapper($"map_executor_{i}")).ToArray();
+        var splitter = new Split(mappers.Select(m => m.Id).ToArray(), "split_data_executor");
 
-        // Create the data spitter executor
-        var splitter = new Split(mapperIds.ToArray());
+        var reducers = Enumerable.Range(0, 4).Select(i => new Reducer($"reduce_executor_{i}")).ToArray();
+        var shuffler = new Shuffler(reducers.Select(r => r.Id).ToArray(), mappers.Select(m => m.Id).ToArray(), "shuffle_executor");
 
-        // Create the 
+        var completion = new CompletionExecutor("completion_executor");
 
-        // Build the concurrent workflow with fan-out/fan-in pattern
+        // Step 2: Build the concurrent workflow with fan-out/fan-in pattern
         var workflow = new WorkflowBuilder(splitter)
-            .AddFanOutEdge(splitter, targets: [.. mappers])
-            .AddFanInEdge(aggregator, sources: [.. mappers])
+            .AddFanOutEdge(splitter, targets: [.. mappers])         // Split -> many mappers
+            .AddFanInEdge(shuffler, sources: [.. mappers])          // All mappers -> shuffle
+            .AddFanOutEdge(shuffler, targets: [.. reducers])        // Shuffle -> many reducers
+            .AddFanInEdge(completion, sources: [.. reducers])       // All reducers -> completion
+            .WithOutputFrom(completion)
             .Build();
 
-        // Generate and display workflow visualization
-        Console.WriteLine("=== WORKFLOW VISUALIZATION ===");
+        // Step 2.5: Generate and display workflow visualization
+        Console.WriteLine("Generating workflow visualization...");
 
-        // Display DOT (GraphViz) representation
-        Console.WriteLine("\n--- GraphViz DOT Format ---");
-        var dotString = workflow.ToDotString();
-        Console.WriteLine(dotString);
-
-        // Display Mermaid representation
-        Console.WriteLine("\n--- Mermaid Format ---");
+        Console.WriteLine("Mermaid string: \n=======");
         var mermaid = workflow.ToMermaidString();
         Console.WriteLine(mermaid);
+        Console.WriteLine("=======");
+
+        Console.WriteLine("DiGraph string: \n=======");
+        var dotString = workflow.ToDotString();
+        Console.WriteLine(dotString);
+        Console.WriteLine("=======");
+
+        // Note: For SVG export, install Graphviz and use external tools or libraries
+        Console.WriteLine("Tip: To export as SVG, install Graphviz and pipe the DOT output to 'dot -Tsvg'");
+
+        // Step 3: Read the input text
+        var resourcesPath = Path.Combine(Directory.GetCurrentDirectory(), "..", "..", "..", "..", "resources");
+        var textFilePath = Path.Combine(resourcesPath, "long_text.txt");
+
+        string rawText;
+        if (File.Exists(textFilePath))
+        {
+            rawText = await File.ReadAllTextAsync(textFilePath);
+        }
+        else
+        {
+            // Use sample text if file doesn't exist
+            Console.WriteLine($"Note: {textFilePath} not found, using sample text");
+            rawText = "The quick brown fox jumps over the lazy dog. The dog was very lazy. The fox was very quick.";
+        }
+
+        // Step 4: Run the workflow
+        Console.WriteLine("\n=== RUNNING WORKFLOW ===\n");
+        StreamingRun run = await InProcessExecution.StreamAsync(workflow, rawText);
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+        {
+            Console.WriteLine($"Event: {evt}");
+            if (evt is WorkflowOutputEvent outputEvent)
+            {
+                Console.WriteLine("\nFinal Output Files:");
+                if (outputEvent.Data is List<string> filePaths)
+                {
+                    foreach (var filePath in filePaths)
+                    {
+                        Console.WriteLine($"  - {filePath}");
+                        if (File.Exists(filePath))
+                        {
+                            var content = await File.ReadAllTextAsync(filePath);
+                            Console.WriteLine($"    Contents:\n{content}");
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
+/// <summary>
+/// Marker event published when splitting finishes. Triggers map executors.
+/// </summary>
 internal sealed class SplitComplete : WorkflowEvent
 {
 }
 
-internal sealed class MapComplete(string JobId, string MapperId) : WorkflowEvent()
+/// <summary>
+/// Signal that a mapper wrote its intermediate pairs to file.
+/// </summary>
+internal sealed class MapComplete(string FilePath) : WorkflowEvent
 {
-    public string MapperId { get; } = MapperId;
+    public string FilePath { get; } = FilePath;
+}
 
-    public string JobId { get; } = JobId;
+/// <summary>
+/// Signal that a shuffle partition file is ready for a specific reducer.
+/// </summary>
+internal sealed class ShuffleComplete(string FilePath, string ReducerId) : WorkflowEvent
+{
+    public string FilePath { get; } = FilePath;
+    public string ReducerId { get; } = ReducerId;
+}
+
+/// <summary>
+/// Signal that a reducer wrote final counts for its partition.
+/// </summary>
+internal sealed class ReduceComplete(string FilePath) : WorkflowEvent
+{
+    public string FilePath { get; } = FilePath;
 }
 
 internal static class Constants
 {
     public static string DataToProcessKey = "data_to_be_processed";
+    public static string TempDir = Path.Combine(Path.GetTempPath(), "workflow_viz_sample");
+    public static string StateScope = "MapReduceState";
 }
 
-internal sealed class Split(string[] mapperIds) :
-    ReflectingExecutor<Split>("Split"),
+/// <summary>
+/// Splits data into roughly equal chunks based on the number of mapper nodes.
+/// </summary>
+internal sealed class Split(string[] mapperIds, string id) :
+    ReflectingExecutor<Split>(id),
     IMessageHandler<string>
 {
     private readonly string[] _mapperIds = mapperIds;
-    internal static readonly string[] lineSeparators = ["\r\n", "\r", "\n"];
+    private static readonly string[] s_lineSeparators = ["\r\n", "\r", "\n"];
 
     /// <summary>
-    /// Handles the processing of a message by dividing it into chunks and notifying mappers for further processing.
+    /// Tokenize input and assign contiguous index ranges to each mapper via shared state.
     /// </summary>
-    /// <remarks>This method processes the input message into a list of words, stores the processed data in
-    /// the workflow state,  and divides the data into chunks for each mapper. Each mapper is notified when its chunk is
-    /// ready for processing.</remarks>
-    /// <param name="message">The input message to be processed. Cannot be null or empty.</param>
-    /// <param name="context">The workflow context used for state updates and message communication. Cannot be null.</param>
-    /// <returns>A <see cref="ValueTask"/> that represents the asynchronous operation.</returns>
     public async ValueTask HandleAsync(string message, IWorkflowContext context)
     {
+        // Ensure temp directory exists
+        Directory.CreateDirectory(Constants.TempDir);
+
         // Process the data into a list of words and remove any empty lines
-        var wordList = this.Preprocess(message);
+        var wordList = Preprocess(message);
 
         // Store the tokenized words once so that all mappers can read by index
-        await context.QueueStateUpdateAsync(Constants.DataToProcessKey, wordList);
+        await context.QueueStateUpdateAsync(Constants.DataToProcessKey, wordList, scopeName: Constants.StateScope);
 
         // Divide indices into contiguous slices for each mapper
         var mapperCount = this._mapperIds.Length;
@@ -114,176 +185,211 @@ internal sealed class Split(string[] mapperIds) :
             var startIndex = i * chunkSize;
             var endIndex = i < mapperCount - 1 ? startIndex + chunkSize : wordList.Length;
 
-            // Save the indices under the mappers Id
-            await context.QueueStateUpdateAsync(this._mapperIds[i], (startIndex, endIndex));
+            // Save the indices under the mapper's Id
+            await context.QueueStateUpdateAsync(this._mapperIds[i], (startIndex, endIndex), scopeName: Constants.StateScope);
 
             // Notify the mapper that data is ready
             await context.SendMessageAsync(new SplitComplete(), targetId: this._mapperIds[i]);
         }
 
         // Process all the chunks
-        var tasks = Enumerable.Range(0, mapperCount).Select(i => ProcessChunkAsync(i));
+        var tasks = Enumerable.Range(0, mapperCount).Select(ProcessChunkAsync);
         await Task.WhenAll(tasks);
     }
 
-    private string[] Preprocess(string data)
+    private static string[] Preprocess(string data)
     {
-        var lines = data.Split(lineSeparators, StringSplitOptions.RemoveEmptyEntries);
-        return lines.SelectMany(line => line.Split(' ')).ToArray();
+        var lines = data.Split(s_lineSeparators, StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.Trim())
+            .Where(line => !string.IsNullOrWhiteSpace(line));
+
+        return lines
+            .SelectMany(line => line.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            .Where(word => !string.IsNullOrWhiteSpace(word))
+            .ToArray();
     }
 }
 
+/// <summary>
+/// Maps each token to a count of 1 and writes pairs to a per-mapper file.
+/// </summary>
 internal sealed class Mapper(string id) : ReflectingExecutor<Mapper>(id), IMessageHandler<SplitComplete>
 {
+    /// <summary>
+    /// Read the assigned slice, emit (word, 1) pairs, and persist to disk.
+    /// </summary>
     public async ValueTask HandleAsync(SplitComplete message, IWorkflowContext context)
     {
-        var dataToProcess = await context.ReadStateAsync<string[]>(Constants.DataToProcessKey);
-        (int start, int stop) chunk = await context.ReadStateAsync<(int, int)>(this.Id);
+        var dataToProcess = await context.ReadStateAsync<string[]>(Constants.DataToProcessKey, scopeName: Constants.StateScope);
+        var chunk = await context.ReadStateAsync<(int start, int end)>(this.Id, scopeName: Constants.StateScope);
 
-        var mapped = dataToProcess?[chunk.start..chunk.stop].Select(data => (dataToProcess, 1));
+        var results = dataToProcess![chunk.start..chunk.end]
+            .Select(word => (word, 1))
+            .ToArray();
 
-        var jobId = $"mapped_{this.Id}";
-        await context.QueueStateUpdateAsync(jobId, mapped);
-        await context.SendMessageAsync(new MapComplete(jobId, this.Id));
+        // Write this mapper's results as simple text lines for easy debugging
+        var filePath = Path.Combine(Constants.TempDir, $"map_results_{this.Id}.txt");
+        var lines = results.Select(r => $"{r.word}: {r.Item2}");
+        await File.WriteAllLinesAsync(filePath, lines);
+
+        await context.SendMessageAsync(new MapComplete(filePath));
     }
 }
 
-internal sealed class Shuffle : ReflectingExecutor<Shuffle>, IMessageHandler<MapComplete>
+/// <summary>
+/// Groups intermediate pairs by key and partitions them across reducers.
+/// </summary>
+internal sealed class Shuffler(string[] reducerIds, string[] mapperIds, string id) :
+    ReflectingExecutor<Shuffler>(id),
+    IMessageHandler<MapComplete>
 {
-    private readonly string[] _mapperIds;
-    private readonly string[] _reducerIds;
-    private readonly HashSet<string> _outstandingMappers;
-    private readonly 
+    private readonly string[] _reducerIds = reducerIds;
+    private readonly string[] _mapperIds = mapperIds;
+    private readonly List<MapComplete> _mapResults = new();
 
-    public Shuffle(string[] mapperIds, string[] reducerIds) : base("shuffle")
-    {
-        this._mapperIds = mapperIds;
-        this._reducerIds = reducerIds;
-        this._outstandingMappers = [.. reducerIds];
-    }
-
+    /// <summary>
+    /// Aggregate mapper outputs and write one partition file per reducer.
+    /// </summary>
     public async ValueTask HandleAsync(MapComplete message, IWorkflowContext context)
     {
-        // Read the mapped data from state
-        await context.ReadStateAsync<(string, int)[]>(message.JobId);
+        this._mapResults.Add(message);
 
-        async Task ProcessChunk()
+        // Wait for all mappers to complete
+        if (this._mapResults.Count < this._mapperIds.Length)
         {
-
+            return;
         }
-    }
 
-    private async Task PreprocessAsync(MapComplete message, IWorkflowContext context)
-    {
-        // Read the mapped chunk in from state
-        var mappedChunk = await context.ReadStateAsync<(string, int)[]>(message.JobId);
-        var sortedChunk = mappedChunk?.GroupBy(item => item.Item1);
-    }
-}
+        var chunks = await this.PreprocessAsync(this._mapResults);
 
-/// <summary>
-/// Executor that dispatches the incoming prompt to all expert agent executors (fan-out).
-/// </summary>
-internal sealed class DispatchToExpertsExecutor(string[] expertIds) :
-    ReflectingExecutor<DispatchToExpertsExecutor>("DispatchToExperts"),
-    IMessageHandler<string>
-{
-    private readonly string[] _expertIds = expertIds;
+        async Task ProcessChunkAsync(List<(string key, List<int> values)> chunk, int index)
+        {
+            // Write one grouped partition for reducer index and notify that reducer
+            var filePath = Path.Combine(Constants.TempDir, $"shuffle_results_{index}.txt");
+            var lines = chunk.Select(kvp => $"{kvp.key}: {JsonSerializer.Serialize(kvp.values)}");
+            await File.WriteAllLinesAsync(filePath, lines);
+
+            await context.SendMessageAsync(new ShuffleComplete(filePath, this._reducerIds[index]));
+        }
+
+        var tasks = chunks.Select((chunk, i) => ProcessChunkAsync(chunk, i));
+        await Task.WhenAll(tasks);
+    }
 
     /// <summary>
-    /// Dispatches the user prompt to all domain expert agents concurrently.
+    /// Load all mapper files, group by key, sort keys, and partition for reducers.
     /// </summary>
-    /// <param name="message">The user prompt to analyze</param>
-    /// <param name="context">Workflow context for message passing</param>
-    public async ValueTask HandleAsync(string message, IWorkflowContext context)
+    private async Task<List<List<(string key, List<int> values)>>> PreprocessAsync(List<MapComplete> data)
     {
-        Console.WriteLine($"Dispatching prompt to {this._expertIds.Length} domain experts...");
-
-        // Send the prompt as a user message to all expert agents
-        await context.SendMessageAsync(new ChatMessage(ChatRole.User, message));
-
-        // Send turn tokens to start processing
-        await context.SendMessageAsync(new TurnToken(emitEvents: true));
-    }
-}
-
-/// <summary>
-/// Structured data class for aggregated expert insights.
-/// </summary>
-public class AggregatedInsights
-{
-    public string Research { get; }
-    public string Marketing { get; }
-    public string Legal { get; }
-
-    public AggregatedInsights(string research, string marketing, string legal)
-    {
-        this.Research = research;
-        this.Marketing = marketing;
-        this.Legal = legal;
-    }
-}
-
-/// <summary>
-/// Executor that aggregates expert agent responses into a consolidated result (fan-in).
-/// </summary>
-internal sealed class AggregateInsightsExecutor(string[] expertIds) :
-    ReflectingExecutor<AggregateInsightsExecutor>("AggregateInsights"),
-    IMessageHandler<ChatMessage>
-{
-    private readonly string[] _expertIds = expertIds;
-    private readonly Dictionary<string, string> _responsesByExpert = new();
-
-    /// <summary>
-    /// Collects responses from expert agents and aggregates them when all have responded.
-    /// </summary>
-    /// <param name="message">Response message from an expert agent</param>
-    /// <param name="context">Workflow context for emitting completion events</param>
-    public async ValueTask HandleAsync(ChatMessage message, IWorkflowContext context)
-    {
-        var expertName = message.AuthorName ?? "Unknown";
-        this._responsesByExpert[expertName] = message.Text ?? "";
-
-        Console.WriteLine($"Received response from {expertName}");
-
-        // Check if we have responses from all expected experts
-        if (this._responsesByExpert.Count == this._expertIds.Length)
+        // Load all intermediate pairs
+        var mapResults = new List<(string key, int value)>();
+        foreach (var result in data)
         {
-            Console.WriteLine("All expert responses received. Aggregating insights...");
-
-            // Extract responses by domain
-            var research = this._responsesByExpert.TryGetValue("Researcher", out var researchText) ? researchText : "No research analysis provided.";
-            var marketing = this._responsesByExpert.TryGetValue("Marketer", out var marketingText) ? marketingText : "No marketing analysis provided.";
-            var legal = this._responsesByExpert.TryGetValue("Legal", out var legalText) ? legalText : "No legal analysis provided.";
-
-            // Create structured insights
-            var insights = new AggregatedInsights(research, marketing, legal);
-
-            // Format consolidated report
-            var consolidatedReport = FormatConsolidatedReport(insights);
-
-            // Complete the workflow with the aggregated result
-            await context.YieldOutputAsync(consolidatedReport);
+            var lines = await File.ReadAllLinesAsync(result.FilePath);
+            foreach (var line in lines)
+            {
+                var parts = line.Split(": ");
+                if (parts.Length == 2)
+                {
+                    mapResults.Add((parts[0], int.Parse(parts[1])));
+                }
+            }
         }
+
+        // Group values by token
+        var intermediateResults = mapResults
+            .GroupBy(r => r.key)
+            .ToDictionary(g => g.Key, g => g.Select(r => r.value).ToList());
+
+        // Deterministic ordering helps with debugging and test stability
+        var aggregatedResults = intermediateResults
+            .Select(kvp => (key: kvp.Key, values: kvp.Value))
+            .OrderBy(x => x.key)
+            .ToList();
+
+        // Partition keys across reducers as evenly as possible
+        var reduceExecutorCount = this._reducerIds.Length; // Use actual number of reducers
+        if (reduceExecutorCount == 0)
+        {
+            reduceExecutorCount = 1;
+        }
+
+        var chunkSize = aggregatedResults.Count / reduceExecutorCount;
+        var remaining = aggregatedResults.Count % reduceExecutorCount;
+
+        var chunks = new List<List<(string key, List<int> values)>>();
+        for (int i = 0; i < aggregatedResults.Count - remaining; i += chunkSize)
+        {
+            chunks.Add(aggregatedResults.GetRange(i, chunkSize));
+        }
+
+        if (remaining > 0 && chunks.Count > 0)
+        {
+            chunks[^1].AddRange(aggregatedResults.TakeLast(remaining));
+        }
+        else if (chunks.Count == 0)
+        {
+            chunks.Add(aggregatedResults);
+        }
+
+        return chunks;
     }
+}
 
-    private static string FormatConsolidatedReport(AggregatedInsights insights)
+/// <summary>
+/// Sums grouped counts per key for its assigned partition.
+/// </summary>
+internal sealed class Reducer(string id) : ReflectingExecutor<Reducer>(id), IMessageHandler<ShuffleComplete>
+{
+    /// <summary>
+    /// Read one shuffle partition and reduce it to totals.
+    /// </summary>
+    public async ValueTask HandleAsync(ShuffleComplete message, IWorkflowContext context)
     {
-        return $"""
-               CONSOLIDATED EXPERT ANALYSIS
-               ============================
+        if (message.ReducerId != this.Id)
+        {
+            // This partition belongs to a different reducer. Skip.
+            return;
+        }
 
-               RESEARCH FINDINGS
-               {insights.Research}
+        // Read grouped values from the shuffle output
+        var lines = await File.ReadAllLinesAsync(message.FilePath);
 
-               MARKETING PERSPECTIVE
-               {insights.Marketing}
+        // Sum values per key. Values are serialized JSON arrays like [1, 1, ...]
+        var reducedResults = new Dictionary<string, int>();
+        foreach (var line in lines)
+        {
+            var parts = line.Split(": ", 2);
+            if (parts.Length == 2)
+            {
+                var key = parts[0];
+                var values = JsonSerializer.Deserialize<List<int>>(parts[1]);
+                reducedResults[key] = values?.Sum() ?? 0;
+            }
+        }
 
-               LEGAL & COMPLIANCE REVIEW
-               {insights.Legal}
+        // Persist our partition totals
+        var filePath = Path.Combine(Constants.TempDir, $"reduced_results_{this.Id}.txt");
+        var outputLines = reducedResults.Select(kvp => $"{kvp.Key}: {kvp.Value}");
+        await File.WriteAllLinesAsync(filePath, outputLines);
 
-               ============================
-               Analysis complete. All domain expertise consolidated.
-               """;
+        await context.SendMessageAsync(new ReduceComplete(filePath));
+    }
+}
+
+/// <summary>
+/// Joins all reducer outputs and yields the final output.
+/// </summary>
+internal sealed class CompletionExecutor(string id) :
+    ReflectingExecutor<CompletionExecutor>(id),
+    IMessageHandler<List<ReduceComplete>>
+{
+    /// <summary>
+    /// Collect reducer output file paths and yield final output.
+    /// </summary>
+    public async ValueTask HandleAsync(List<ReduceComplete> message, IWorkflowContext context)
+    {
+        var filePaths = message.ConvertAll(r => r.FilePath);
+        await context.YieldOutputAsync(filePaths);
     }
 }
