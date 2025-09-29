@@ -22,4 +22,4 @@ For information on creating new samples, see [SAMPLE_GUIDELINES.md](./SAMPLE_GUI
 ## More Information
 
 - [Python Package Documentation](../README.md)
-- [Agent Framework Repository](https://github.com/microsoft/agent-framework)
+

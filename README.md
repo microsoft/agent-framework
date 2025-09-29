@@ -13,8 +13,8 @@ You're getting early access to Microsoft's comprehensive multi-language framewor
 - For Python: Run samples from any sample directory (e.g., [`python/samples/getting_started/minimal_sample.py`](python/samples/getting_started/minimal_sample.py)) after setting up the local dev environment following this [guide](python/DEV_SETUP.md).
 
 **Option 2: Install packages in your own project**
-- **[.NET Getting Started Guide](./docs/FAQS.md)** - Instructions for using nightly packages
-- **[Python Installation Guide](./python/README.md#quick-install)** - Install packages from GitHub
+- **[.NET Getting Started Guide](./user-documentation-dotnet/getting-started/README.md)** - Instructions for using nightly packages
+- **[Python Package Installation Guide](./user-documentation-python/getting-started/package_installation.md)** - Install packages directly from GitHub
 
 **Stay Updated:** This is an active project - sync your local repository regularly to get the latest updates.
 
@@ -39,7 +39,7 @@ Below are the basics for each language implementation. For more details on pytho
 ### Python
 - [Getting Started with Agents](./python/samples/getting_started/agents): basic agent creation and tool usage
 - [Chat Client Examples](./python/samples/getting_started/chat_client): direct chat client usage patterns
-- [Azure AI Integration](./python/packages/azure-ai): Azure OpenAI and AI Foundry integration
+- [Azure Integration](./python/packages/azure): Azure OpenAI and AI Foundry integration
 - [Getting Started with Workflows](./python/samples/getting_started/workflow): basic workflow creation and integration with agents
 
 ### .NET
@@ -49,8 +49,8 @@ Below are the basics for each language implementation. For more details on pytho
 
 ## Agent Framework Documentation
 
-- [Python documentation](./python/README.md)
-- [.NET documentation](./dotnet/README.md)
+- [Python documentation](./user-documentation-python/README.md)
+- [DotNet documentation](./user-documentation-dotnet/README.md)
 - [Agent Framework Repository](https://github.com/microsoft/agent-framework)
 - [Design Documents](./docs/design)
 - [Architectural Decision Records](./docs/decisions)

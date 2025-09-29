@@ -14,6 +14,3 @@ This pattern is useful when you need to:
 - Create rule-based agents without AI
 - Build agents with specific custom logic
 
-## Prerequisites
-
-This sample has no prerequisites.

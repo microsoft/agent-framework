@@ -13,16 +13,11 @@ Highlights
 ## Quick Install
 
 ```bash
-# Base package including workflow support
-pip install agent-framework
-# Optional: Add Azure AI integration (Foundry)
-pip install agent-framework[azure-ai]
-# Optional: Add Microsoft integrations, currently only CopilotStudioAgents
-pip install agent-framework[microsoft]
-# Optional: Both
-pip install agent-framework[microsoft,azure-ai]
-# All-in-one
 pip install agent-framework[all]
+# Optional: Add Azure AI integration
+pip install agent-framework-azure-ai
+# Optional: Both
+pip install agent-framework-azure-ai agent-framework-copilotstudio
 ```
 
 Supported Platforms:
