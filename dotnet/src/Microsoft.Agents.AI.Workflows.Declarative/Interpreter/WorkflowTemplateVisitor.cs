@@ -11,12 +11,12 @@ using Microsoft.Bot.ObjectModel;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 
-internal sealed class WorkflowEjectVisitor : DialogActionVisitor
+internal sealed class WorkflowTemplateVisitor : DialogActionVisitor
 {
     private readonly string _rootId;
     private readonly WorkflowModel<string> _workflowModel;
 
-    public WorkflowEjectVisitor(
+    public WorkflowTemplateVisitor(
         string workflowId,
         WorkflowTypeInfo typeInfo)
     {

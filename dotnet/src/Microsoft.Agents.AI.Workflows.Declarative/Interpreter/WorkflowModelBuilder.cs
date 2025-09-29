@@ -27,7 +27,7 @@ internal sealed class WorkflowModelBuilder : IModelBuilder<Func<object?, bool>>
     private static ExecutorIsh GetExecutorIsh(IModeledAction action) =>
         action switch
         {
-            ModeledPort port => port.InputPort,
+            InputPortAction port => port.InputPort,
             Executor executor => executor,
             _ => throw new DeclarativeModelException($"Unsupported modeled action: {action.GetType().Name}.")
         };

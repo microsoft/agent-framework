@@ -7,6 +7,16 @@ using System.Linq;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 
+internal interface IModeledAction
+{
+    string Id { get; }
+}
+
+internal interface IModelBuilder<TCondition> where TCondition : class
+{
+    void Connect(IModeledAction source, IModeledAction target, TCondition? condition = null);
+}
+
 internal sealed class WorkflowModel<TCondition> where TCondition : class
 {
     public WorkflowModel(IModeledAction rootAction)
@@ -105,7 +115,7 @@ internal sealed class WorkflowModel<TCondition> where TCondition : class
         return newNode;
     }
 
-    internal TAction? LocateParent<TAction>(string? itemId) where TAction : class, IModeledAction
+    public TAction? LocateParent<TAction>(string? itemId) where TAction : class, IModeledAction
     {
         if (string.IsNullOrEmpty(itemId))
         {

@@ -252,7 +252,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
         // Define input action
         string inputId = QuestionExecutor.Steps.Input(actionId);
-        ModeledPort inputPort = new(InputPort.Create<InputRequest, InputResponse>(inputId));
+        InputPortAction inputPort = new(InputPort.Create<InputRequest, InputResponse>(inputId));
         this._workflowModel.AddNode(inputPort, parentId);
         this._workflowModel.AddLinkFromPeer(parentId, inputId);
 

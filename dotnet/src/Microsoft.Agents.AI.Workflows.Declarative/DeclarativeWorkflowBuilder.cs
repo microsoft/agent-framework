@@ -122,7 +122,7 @@ public static class DeclarativeWorkflowBuilder
         string rootId = WorkflowActionVisitor.Steps.Root(workflowElement);
         WorkflowTypeInfo typeInfo = workflowElement.WrapWithBot().Describe();
 
-        WorkflowEjectVisitor visitor = new(rootId, typeInfo);
+        WorkflowTemplateVisitor visitor = new(rootId, typeInfo);
         WorkflowElementWalker walker = new(visitor);
         walker.Visit(workflowElement);
 
