@@ -280,6 +280,109 @@ public sealed class FunctionInvocationDelegatingAgentTests
         Assert.True(secondMiddlewareExecuted, "Second middleware should have executed");
     }
 
+    /// <summary>
+    /// Verify that AIAgentBuilder.Use method throws InvalidOperationException when inner agent is doesn't use a FunctinInvocking.
+    /// </summary>
+    [Fact]
+    public void AIAgentBuilder_Use_NonFICCEnabledAgent_ThrowsInvalidOperationException()
+    {
+        // Arrange
+        var mockAgent = new Mock<AIAgent>();
+
+        // Act & Assert
+        var builder = new AIAgentBuilder(mockAgent.Object);
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+        {
+            builder.Use((agent, context, next, cancellationToken) => next(context, cancellationToken));
+            builder.Build();
+        });
+    }
+
+    /// <summary>
+    /// Verify that AIAgentBuilder.Use method throws InvalidOperationException when inner agent is doesn't use a FunctinInvokingChatClient.
+    /// </summary>
+    [Fact]
+    public void AIAgentBuilder_Use_NonFICCDecoratedChatClientInAgent_ThrowsInvalidOperationException()
+    {
+        // Arrange
+        var mockChatClient = new Mock<IChatClient>();
+
+        var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions() { UseProvidedChatClientAsIs = true });
+
+        // Act & Assert
+        var builder = new AIAgentBuilder(agent);
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+        {
+            builder.Use((agent, context, next, cancellationToken) => next(context, cancellationToken));
+            builder.Build();
+        });
+    }
+
+    /// <summary>
+    /// Tests function invocation middleware when FunctionInvokingChatClient.CurrentContext is null (direct function invocation).
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_DirectFunctionInvocation_MiddlewareHandlesNullCurrentContextAsync()
+    {
+        // Arrange
+        var executionOrder = new List<string>();
+        var capturedContext = new List<FunctionInvocationContext>();
+
+        var testFunction = AIFunctionFactory.Create(() =>
+        {
+            executionOrder.Add("Function-Executed");
+            return "Function result";
+        }, "TestFunction", "A test function");
+
+        var mockChatClient = new Mock<IChatClient>();
+
+        // Setup mock to directly invoke the function (bypassing FunctionInvokingChatClient)
+        mockChatClient.Setup(c => c.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .Returns<IEnumerable<ChatMessage>, ChatOptions, CancellationToken>(async (messages, options, ct) =>
+            {
+                // Directly invoke the function to simulate null CurrentContext scenario
+                if (options?.Tools?.FirstOrDefault() is AIFunction function)
+                {
+                    executionOrder.Add("Direct-Function-Invocation");
+                    await function.InvokeAsync(new AIFunctionArguments(), ct);
+                }
+                return new ChatResponse([new ChatMessage(ChatRole.Assistant, "Response after direct invocation")]);
+            });
+
+        var innerAgent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
+        {
+            UseProvidedChatClientAsIs = true
+        });
+
+        async ValueTask<object?> MiddlewareCallbackAsync(AIAgent agent, FunctionInvocationContext context, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next, CancellationToken cancellationToken)
+        {
+            executionOrder.Add("Middleware-Pre");
+            capturedContext.Add(context);
+            var result = await next(context, cancellationToken);
+            executionOrder.Add("Middleware-Post");
+            return result;
+        }
+
+        var middleware = new FunctionInvocationDelegatingAgent(innerAgent, MiddlewareCallbackAsync);
+        var messages = new List<ChatMessage> { new(ChatRole.User, "Test message") };
+
+        // Act
+        var options = new ChatClientAgentRunOptions(new ChatOptions { Tools = [testFunction] });
+        await middleware.RunAsync(messages, null, options, CancellationToken.None);
+
+        // Assert
+        Assert.Contains("Direct-Function-Invocation", executionOrder);
+        Assert.Contains("Middleware-Pre", executionOrder);
+        Assert.Contains("Function-Executed", executionOrder);
+        Assert.Contains("Middleware-Post", executionOrder);
+
+        // Verify that the context was created with Iteration = -1 (indicating no ambient context)
+        Assert.Single(capturedContext);
+        Assert.Equal(-1, capturedContext[0].Iteration);
+        Assert.Equal("TestFunction", capturedContext[0].Function.Name);
+        Assert.NotNull(capturedContext[0].Arguments);
+    }
+
     #endregion
 
     #region Error Handling Tests

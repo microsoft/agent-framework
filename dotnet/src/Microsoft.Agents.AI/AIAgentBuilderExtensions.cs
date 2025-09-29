@@ -30,9 +30,9 @@ public static class AIAgentBuilderExtensions
         return builder.Use((innerAgent, _) =>
         {
             // Function calling requires a ChatClientAgent inner agent.
-            if (innerAgent.GetService<ChatClientAgent>() is null)
+            if (innerAgent.GetService<FunctionInvokingChatClient>() is null)
             {
-                throw new InvalidOperationException($"The {nameof(FunctionInvocationDelegatingAgent)} can only be used with agents that are decorations of a {nameof(ChatClientAgent)}.");
+                throw new InvalidOperationException($"The function invocation middleware can only be used with decorations of a {nameof(AIAgent)} that support usage of FunctionInvokingChatClient decorated chat clients.");
             }
 
             return new FunctionInvocationDelegatingAgent(innerAgent, callback);

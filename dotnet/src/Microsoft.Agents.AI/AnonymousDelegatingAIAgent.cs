@@ -1,8 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-#if !NET9_0_OR_GREATER
-using System.Runtime.CompilerServices;
-#endif
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -172,22 +169,7 @@ internal sealed class AnonymousDelegatingAIAgent : DelegatingAIAgent
                 }
             }
 
-#if NET9_0_OR_GREATER
             return updates.Reader.ReadAllAsync(cancellationToken);
-#else
-            return ReadAllAsync(updates, cancellationToken);
-            static async IAsyncEnumerable<AgentRunResponseUpdate> ReadAllAsync(
-                ChannelReader<AgentRunResponseUpdate> channel, [EnumeratorCancellation] CancellationToken cancellationToken)
-            {
-                while (await channel.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
-                {
-                    while (channel.TryRead(out var update))
-                    {
-                        yield return update;
-                    }
-                }
-            }
-#endif
         }
         else if (this._runStreamingFunc is not null)
         {

@@ -42,17 +42,15 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
                     builder.Use(originalFactory);
                 }
 
-                return builder.ConfigureOptions(co => co.Tools = LocalTransformer(co.Tools))
+                return builder.ConfigureOptions(co
+                    => co.Tools = co.Tools?.Select(tool => tool is AIFunction aiFunction
+                            ? aiFunction is ApprovalRequiredAIFunction approvalRequiredAiFunction
+                            ? new ApprovalRequiredAIFunction(new MiddlewareEnabledFunction(this, approvalRequiredAiFunction, this._delegateFunc))
+                            : new MiddlewareEnabledFunction(this.InnerAgent, aiFunction, this._delegateFunc)
+                            : tool)
+                        .ToList())
                     .Build();
             };
-
-            IList<AITool>? LocalTransformer(IList<AITool>? tools)
-                => tools?.Select(tool => tool is AIFunction aiFunction
-                    ? aiFunction is ApprovalRequiredAIFunction approvalRequiredAiFunction
-                    ? new ApprovalRequiredAIFunction(new MiddlewareEnabledFunction(this, approvalRequiredAiFunction, this._delegateFunc))
-                    : new MiddlewareEnabledFunction(this.InnerAgent, aiFunction, this._delegateFunc)
-                    : tool)
-                .ToList();
         }
 
         return options;
@@ -62,13 +60,14 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
     {
         protected override async ValueTask<object?> InvokeCoreAsync(AIFunctionArguments arguments, CancellationToken cancellationToken)
         {
-            if (FunctionInvokingChatClient.CurrentContext is null)
-            {
-                // If there's no current function invocation context, there's nothing to do.
-                return null;
-            }
-
-            var context = FunctionInvokingChatClient.CurrentContext;
+            var context = FunctionInvokingChatClient.CurrentContext
+                ?? new FunctionInvocationContext() // When there is no ambient context, create a new one to hold the arguments
+                {
+                    Arguments = arguments,
+                    Function = this.InnerFunction,
+                    CallContent = new(string.Empty, this.InnerFunction.Name, new Dictionary<string, object?>(arguments)),
+                    Iteration = 0,  // Indicate this function was not invoked by a FICC and has no iteration flow.
+                };
 
             return await next(innerAgent, context, CoreLogicAsync, cancellationToken).ConfigureAwait(false);
 

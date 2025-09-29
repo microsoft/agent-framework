@@ -20,10 +20,6 @@
     <ProjectReference Include="..\Microsoft.Agents.AI\Microsoft.Agents.AI.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <InternalsVisibleTo Include="Microsoft.Extensions.AI.Agents.AzureAI.UnitTests" />
-  </ItemGroup>
-  
   <PropertyGroup>
     <!-- NuGet Package Settings -->
     <Title>Microsoft.Agents.AI.AzureAI</Title>
