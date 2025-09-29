@@ -4,10 +4,12 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
+using Microsoft.Extensions.AI;
 using Moq;
 using Xunit.Abstractions;
 
@@ -36,8 +38,10 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     public async Task LoopEachActionAsync()
     {
         await this.RunWorkflowAsync("LoopEach.yaml");
-        this.AssertExecutionCount(expectedCount: 35);
+        this.AssertExecutionCount(expectedCount: 34);
         this.AssertExecuted("foreach_loop");
+        this.AssertExecuted("set_variable_inner");
+        this.AssertExecuted("send_activity_inner");
         this.AssertExecuted("end_all");
     }
 
@@ -45,24 +49,24 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     public async Task LoopBreakActionAsync()
     {
         await this.RunWorkflowAsync("LoopBreak.yaml");
-        this.AssertExecutionCount(expectedCount: 7);
+        this.AssertExecutionCount(expectedCount: 6);
         this.AssertExecuted("foreach_loop");
-        this.AssertExecuted("breakLoop_now");
+        this.AssertExecuted("break_loop_now");
         this.AssertExecuted("end_all");
-        this.AssertNotExecuted("setVariable_loop");
-        this.AssertNotExecuted("sendActivity_loop");
+        this.AssertNotExecuted("set_variable_inner");
+        this.AssertNotExecuted("send_activity_inner");
     }
 
     [Fact]
     public async Task LoopContinueActionAsync()
     {
         await this.RunWorkflowAsync("LoopContinue.yaml");
-        this.AssertExecutionCount(expectedCount: 23);
+        this.AssertExecutionCount(expectedCount: 22);
         this.AssertExecuted("foreach_loop");
-        this.AssertExecuted("continueLoop_now");
+        this.AssertExecuted("continue_loop_now");
         this.AssertExecuted("end_all");
-        this.AssertNotExecuted("setVariable_loop");
-        this.AssertNotExecuted("sendActivity_loop");
+        this.AssertNotExecuted("set_variable_inner");
+        this.AssertNotExecuted("send_activity_inner");
     }
 
     [Fact]
@@ -209,9 +213,9 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         AdaptiveDialog dialog = dialogBuilder.Build();
 
         WorkflowFormulaState state = new(RecalcEngineFactory.Create());
-        Mock<WorkflowAgentProvider> mockAgentProvider = new(MockBehavior.Strict);
+        Mock<WorkflowAgentProvider> mockAgentProvider = CreateMockProvider();
         DeclarativeWorkflowOptions options = new(mockAgentProvider.Object);
-        WorkflowActionVisitor visitor = new(new DeclarativeWorkflowExecutor<string>(WorkflowActionVisitor.Steps.Root("anything"), state, (message) => DeclarativeWorkflowBuilder.DefaultTransform(message)), state, options);
+        WorkflowActionVisitor visitor = new(new DeclarativeWorkflowExecutor<string>(WorkflowActionVisitor.Steps.Root("anything"), mockAgentProvider.Object, state, (message) => DeclarativeWorkflowBuilder.DefaultTransform(message)), state, options);
         WorkflowElementWalker walker = new(visitor);
         walker.Visit(dialog);
         Assert.True(visitor.HasUnsupportedActions);
@@ -249,7 +253,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     private async Task RunWorkflowAsync<TInput>(string workflowPath, TInput workflowInput) where TInput : notnull
     {
         using StreamReader yamlReader = File.OpenText(Path.Combine("Workflows", workflowPath));
-        Mock<WorkflowAgentProvider> mockAgentProvider = new(MockBehavior.Strict);
+        Mock<WorkflowAgentProvider> mockAgentProvider = CreateMockProvider();
         DeclarativeWorkflowOptions workflowContext = new(mockAgentProvider.Object) { LoggerFactory = this.Output };
 
         Workflow workflow = DeclarativeWorkflowBuilder.Build<TInput>(yamlReader, workflowContext);
@@ -261,7 +265,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         {
             if (workflowEvent is ExecutorInvokedEvent invokeEvent)
             {
-                ExecutorResultMessage? message = invokeEvent.Data as ExecutorResultMessage;
+                ActionExecutorResult? message = invokeEvent.Data as ActionExecutorResult;
                 this.Output.WriteLine($"EXEC: {invokeEvent.ExecutorId} << {message?.ExecutorId ?? "?"} [{message?.Result ?? "-"}]");
             }
             else if (workflowEvent is DeclarativeActionInvokedEvent actionInvokeEvent)
@@ -282,5 +286,13 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
             }
         }
         this.WorkflowEventCounts = this.WorkflowEvents.GroupBy(e => e.GetType()).ToDictionary(e => e.Key, e => e.Count());
+    }
+
+    private static Mock<WorkflowAgentProvider> CreateMockProvider()
+    {
+        Mock<WorkflowAgentProvider> mockAgentProvider = new(MockBehavior.Strict);
+        mockAgentProvider.Setup(provider => provider.CreateConversationAsync(It.IsAny<CancellationToken>())).Returns(() => Task.FromResult(Guid.NewGuid().ToString("N")));
+        mockAgentProvider.Setup(provider => provider.CreateMessageAsync(It.IsAny<string>(), It.IsAny<ChatMessage>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        return mockAgentProvider;
     }
 }

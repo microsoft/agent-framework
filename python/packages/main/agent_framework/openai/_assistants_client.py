@@ -407,7 +407,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
                     "json_schema": chat_options.response_format.model_json_schema(),
                 }
 
-        instructions: list[str] = []
+        instructions: list[str] = [chat_options.instructions] if chat_options and chat_options.instructions else []
         tool_results: list[FunctionResultContent] | None = None
 
         additional_messages: list[AdditionalMessage] | None = None

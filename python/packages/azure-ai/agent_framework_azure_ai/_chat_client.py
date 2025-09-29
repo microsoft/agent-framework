@@ -3,7 +3,7 @@
 import json
 import os
 import sys
-from collections.abc import AsyncIterable, MutableMapping, MutableSequence
+from collections.abc import AsyncIterable, MutableMapping, MutableSequence, Sequence
 from typing import Any, ClassVar, TypeVar
 
 from agent_framework import (
@@ -269,7 +269,8 @@ class AzureAIAgentClient(BaseChatClient):
         **kwargs: Any,
     ) -> ChatResponse:
         return await ChatResponse.from_chat_response_generator(
-            updates=self._inner_get_streaming_response(messages=messages, chat_options=chat_options, **kwargs)
+            updates=self._inner_get_streaming_response(messages=messages, chat_options=chat_options, **kwargs),
+            output_format_type=chat_options.response_format,
         )
 
     async def _inner_get_streaming_response(
@@ -660,7 +661,7 @@ class AzureAIAgentClient(BaseChatClient):
                     )
                 )
 
-        instructions: list[str] = []
+        instructions: list[str] = [chat_options.instructions] if chat_options and chat_options.instructions else []
         required_action_results: list[FunctionResultContent | FunctionApprovalResponseContent] | None = None
 
         additional_messages: list[ThreadMessageOptions] | None = None
@@ -708,7 +709,7 @@ class AzureAIAgentClient(BaseChatClient):
         return run_options, required_action_results
 
     async def _prep_tools(
-        self, tools: list["ToolProtocol | MutableMapping[str, Any]"]
+        self, tools: Sequence["ToolProtocol | MutableMapping[str, Any]"]
     ) -> list[ToolDefinition | dict[str, Any]]:
         """Prepare tool definitions for the run options."""
         tool_definitions: list[ToolDefinition | dict[str, Any]] = []

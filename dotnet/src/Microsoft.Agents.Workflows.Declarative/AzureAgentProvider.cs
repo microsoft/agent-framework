@@ -90,7 +90,7 @@ public sealed class AzureAgentProvider(string projectEndpoint, TokenCredential p
 
     /// <inheritdoc/>
     public override async Task<AIAgent> GetAgentAsync(string agentId, CancellationToken cancellationToken = default) =>
-        await this.GetAgentsClient().GetAIAgentAsync(agentId, chatOptions: null, cancellationToken).ConfigureAwait(false);
+        await this.GetAgentsClient().GetAIAgentAsync(agentId, chatOptions: null, cancellationToken: cancellationToken).ConfigureAwait(false);
 
     /// <inheritdoc/>
     public override async Task<ChatMessage> GetMessageAsync(string conversationId, string messageId, CancellationToken cancellationToken = default)

@@ -227,17 +227,9 @@ class AgentFrameworkExecutor:
     async def deserialize_thread(self, thread_id: str, agent_id: str, serialized_state: dict[str, Any]) -> bool:
         """Deserialize thread state from persistence."""
         try:
-            # Create new thread
-            thread = AgentThread()
-
-            # Use AgentThread's built-in deserialization
-            from agent_framework._threads import deserialize_thread_state
-
-            await deserialize_thread_state(thread, serialized_state)
-
+            thread = await AgentThread.deserialize(serialized_state)
             # Store the restored thread
             self.thread_storage[thread_id] = thread
-
             if agent_id not in self.agent_threads:
                 self.agent_threads[agent_id] = []
             self.agent_threads[agent_id].append(thread_id)

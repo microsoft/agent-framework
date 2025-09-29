@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.Workflows.Declarative.Extensions;
@@ -18,14 +19,13 @@ internal sealed class CopyConversationMessagesExecutor(CopyConversationMessages 
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
         Throw.IfNull(this.Model.ConversationId, $"{nameof(this.Model)}.{nameof(this.Model.ConversationId)}");
-        await context.EnsureWorkflowConversationAsync(agentProvider, this.Model.ConversationId, cancellationToken).ConfigureAwait(false);
         string conversationId = this.Evaluator.GetValue(this.Model.ConversationId).Value;
 
-        DataValue? inputMessages = this.GetInputMessages();
+        IEnumerable<ChatMessage>? inputMessages = this.GetInputMessages();
 
         if (inputMessages is not null)
         {
-            foreach (ChatMessage message in inputMessages.ToChatMessages())
+            foreach (ChatMessage message in inputMessages)
             {
                 await agentProvider.CreateMessageAsync(conversationId, message, cancellationToken).ConfigureAwait(false);
             }
@@ -34,7 +34,7 @@ internal sealed class CopyConversationMessagesExecutor(CopyConversationMessages 
         return default;
     }
 
-    private DataValue? GetInputMessages()
+    private IEnumerable<ChatMessage>? GetInputMessages()
     {
         DataValue? messages = null;
 
@@ -44,6 +44,6 @@ internal sealed class CopyConversationMessagesExecutor(CopyConversationMessages 
             messages = expressionResult.Value;
         }
 
-        return messages;
+        return messages?.ToChatMessages();
     }
 }

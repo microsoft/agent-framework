@@ -73,6 +73,6 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
         IMessageHandler<WorkflowFormulaState>
     {
         public async ValueTask HandleAsync(WorkflowFormulaState message, IWorkflowContext context) =>
-            await context.SendMessageAsync(new ExecutorResultMessage(this.Id)).ConfigureAwait(false);
+            await context.SendMessageAsync(new ActionExecutorResult(this.Id)).ConfigureAwait(false);
     }
 }
