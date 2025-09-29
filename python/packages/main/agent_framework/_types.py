@@ -2638,7 +2638,6 @@ class ChatOptions:
     def __init__(
         self,
         *,
-        additional_properties: MutableMapping[str, Any] | None = None,
         model_id: str | None = None,
         allow_multiple_tool_calls: bool | None = None,
         conversation_id: str | None = None,
@@ -2661,6 +2660,7 @@ class ChatOptions:
         | None = None,
         top_p: float | None = None,
         user: str | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
     ):
         """Initialize ChatOptions.
 
@@ -2721,9 +2721,26 @@ class ChatOptions:
         self.store = store
         self.temperature = temperature
         self.tool_choice = self._validate_tool_mode(tool_choice)
-        self.tools = self._validate_tools(tools)
+        self._tools = self._validate_tools(tools)
         self.top_p = top_p
         self.user = user
+
+    @property
+    def tools(self) -> list[ToolProtocol | MutableMapping[str, Any]] | None:
+        """Return the tools that are specified."""
+        return self._tools
+
+    @tools.setter
+    def tools(
+        self,
+        new_tools: ToolProtocol
+        | Callable[..., Any]
+        | MutableMapping[str, Any]
+        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | None,
+    ) -> None:
+        """Set the tools."""
+        self._tools = self._validate_tools(new_tools)
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "ChatOptions":
@@ -2864,9 +2881,9 @@ class ChatOptions:
 
         # Apply scalar and mapping updates from the other options
         updated_data = other.to_dict(exclude_none=True, exclude={"tools"})
-        logit_bias = updated_data.pop("logit_bias", None)
-        metadata = updated_data.pop("metadata", None)
-        additional_properties = updated_data.pop("additional_properties", None)
+        logit_bias = updated_data.pop("logit_bias", {})
+        metadata = updated_data.pop("metadata", {})
+        additional_properties = updated_data.pop("additional_properties", {})
 
         for key, value in updated_data.items():
             setattr(combined, key, value)

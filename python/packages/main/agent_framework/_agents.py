@@ -417,7 +417,7 @@ class ChatAgent(BaseAgent):
         self._local_mcp_tools = [tool for tool in normalized_tools if isinstance(tool, MCPTool)]
         agent_tools = [tool for tool in normalized_tools if not isinstance(tool, MCPTool)]
         self.chat_options = ChatOptions(
-            ai_model_id=model,
+            model_id=model,
             frequency_penalty=frequency_penalty,
             instructions=instructions,
             logit_bias=logit_bias,

@@ -446,7 +446,7 @@ class BaseChatClient(AFBaseModel, ABC):
                 temperature=temperature,
                 top_p=top_p,
                 tool_choice=tool_choice,
-                tools=self._normalize_tools(tools),  # type: ignore
+                tools=self._normalize_tools(tools),
                 user=user,
                 additional_properties=additional_properties or {},
             )
