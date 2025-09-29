@@ -25,6 +25,11 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import Self  # pragma: no cover
 
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+
 
 class RedisProvider(ContextProvider):
     """Redis context provider with dynamic, filterable schema.
@@ -458,6 +463,7 @@ class RedisProvider(ContextProvider):
         """
         return self._per_operation_thread_id if self.scope_to_per_operation_thread_id else self.thread_id
 
+    @override
     async def thread_created(self, thread_id: str | None) -> None:
         """Called when a new thread is created.
 
@@ -471,20 +477,27 @@ class RedisProvider(ContextProvider):
         # Track current conversation id (Agent passes conversation_id here)
         self._conversation_id = thread_id or self._conversation_id
 
-    async def messages_adding(self, thread_id: str | None, new_messages: ChatMessage | Sequence[ChatMessage]) -> None:
-        """Called when a new message is being added to the thread.
-
-        Validates scope, normalizes allowed roles, and persists messages to Redis via add().
-
-        Args:
-            thread_id: The ID of the thread or None.
-            new_messages: New messages to add.
-        """
+    @override
+    async def invoked(
+        self,
+        request_messages: ChatMessage | Sequence[ChatMessage],
+        response_messages: ChatMessage | Sequence[ChatMessage] | None = None,
+        invoke_exception: Exception | None = None,
+        **kwargs: Any,
+    ) -> None:
         self._validate_filters()
-        self._validate_per_operation_thread_id(thread_id)
-        self._per_operation_thread_id = self._per_operation_thread_id or thread_id
 
-        messages_list = [new_messages] if isinstance(new_messages, ChatMessage) else list(new_messages)
+        request_messages_list = (
+            [request_messages] if isinstance(request_messages, ChatMessage) else list(request_messages)
+        )
+        response_messages_list = (
+            [response_messages]
+            if isinstance(response_messages, ChatMessage)
+            else list(response_messages)
+            if response_messages
+            else []
+        )
+        messages_list = [*request_messages_list, *response_messages_list]
 
         messages: list[dict[str, Any]] = []
         for message in messages_list:
@@ -504,6 +517,7 @@ class RedisProvider(ContextProvider):
         if messages:
             await self._add(data=messages)
 
+    @override
     async def invoking(self, messages: ChatMessage | MutableSequence[ChatMessage], **kwargs: Any) -> Context:
         """Called before invoking the model to provide scoped context.
 

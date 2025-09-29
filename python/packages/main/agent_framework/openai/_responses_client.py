@@ -172,7 +172,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
     # region Prep methods
 
     def _tools_to_response_tools(
-        self, tools: list[ToolProtocol | MutableMapping[str, Any]]
+        self, tools: Sequence[ToolProtocol | MutableMapping[str, Any]]
     ) -> list[ToolParam | dict[str, Any]]:
         response_tools: list[ToolParam | dict[str, Any]] = []
         for tool in tools:

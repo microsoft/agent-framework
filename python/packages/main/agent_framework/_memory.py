@@ -48,8 +48,8 @@ class Context:
             tools: a list of tools to provide to this run.
         """
         self.instructions = instructions
-        self.messages: list[ChatMessage] = cast(list[ChatMessage], messages) or []
-        self.tools: list[ToolProtocol] = cast(list[ToolProtocol], tools) or []
+        self.messages: Sequence[ChatMessage] = messages or []
+        self.tools: Sequence[ToolProtocol] = tools or []
 
 
 # region ContextProvider
@@ -80,14 +80,22 @@ class ContextProvider(ABC):
         """
         pass
 
-    async def messages_adding(self, thread_id: str | None, new_messages: ChatMessage | Sequence[ChatMessage]) -> None:
-        """Called just before messages are added to the chat by any participant.
+    async def invoked(
+        self,
+        request_messages: ChatMessage | Sequence[ChatMessage],
+        response_messages: ChatMessage | Sequence[ChatMessage] | None = None,
+        invoke_exception: Exception | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Called after the agent has received a response from the underlying inference service.
 
-        Inheritors can use this method to update their context based on new messages.
+        You can inspect the request and response messages, and update the state of the context provider
 
         Args:
-            thread_id: The ID of the thread for the new message.
-            new_messages: New messages to add.
+            request_messages: messages that were sent to the model/agent
+            response_messages: messages that were returned by the model/agent
+            invoke_exception: exception that was thrown, if any.
+            kwargs: not used at present.
         """
         pass
 
@@ -166,22 +174,7 @@ class AggregateContextProvider(ContextProvider):
         await asyncio.gather(*[x.thread_created(thread_id) for x in self.providers])
 
     @override
-    async def messages_adding(self, thread_id: str | None, new_messages: ChatMessage | Sequence[ChatMessage]) -> None:
-        await asyncio.gather(*[x.messages_adding(thread_id, new_messages) for x in self.providers])
-
-    @override
     async def invoking(self, messages: ChatMessage | MutableSequence[ChatMessage], **kwargs: Any) -> Context:
-        """Called just before the Model/Agent/etc. is invoked.
-
-        This calls all context providers stored in this aggregate provider.
-
-        Args:
-            messages: The most recent messages that the agent is being invoked with.
-            kwargs: not used at present.
-
-        Returns:
-            Context object containing the contents from all context providers.
-        """
         contexts = await asyncio.gather(*[provider.invoking(messages, **kwargs) for provider in self.providers])
         instructions: str = ""
         return_messages: list[ChatMessage] = []
@@ -194,6 +187,24 @@ class AggregateContextProvider(ContextProvider):
             if ctx.tools:
                 tools.extend(ctx.tools)
         return Context(instructions=instructions, messages=return_messages, tools=tools)
+
+    @override
+    async def invoked(
+        self,
+        request_messages: ChatMessage | Sequence[ChatMessage],
+        response_messages: ChatMessage | Sequence[ChatMessage] | None = None,
+        invoke_exception: Exception | None = None,
+        **kwargs: Any,
+    ) -> None:
+        await asyncio.gather(*[
+            x.invoked(
+                request_messages=request_messages,
+                response_messages=response_messages,
+                invoke_exception=invoke_exception,
+                **kwargs,
+            )
+            for x in self.providers
+        ])
 
     @override
     async def __aenter__(self) -> "Self":

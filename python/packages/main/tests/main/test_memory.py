@@ -1,36 +1,23 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import MutableSequence, Sequence
+from collections.abc import MutableSequence
 from typing import Any
 from unittest.mock import AsyncMock, Mock
 
-from agent_framework import ChatMessage, Role, TextContent, ToolProtocol
+from agent_framework import ChatMessage, Role, TextContent
 from agent_framework._memory import AggregateContextProvider, Context, ContextProvider
 
 
 class MockContextProvider(ContextProvider):
     """Mock ContextProvider for testing."""
 
-    context_messages: list[ChatMessage] | None = None
-    context_tools: list[ToolProtocol] | None = None
-    context_instructions: str | None = None
-    thread_created_called: bool = False
-    messages_adding_called: bool = False
-    model_invoking_called: bool = False
-    thread_created_thread_id: str | None = None
-    messages_adding_thread_id: str | None = None
-    messages_adding_new_messages: ChatMessage | Sequence[ChatMessage] | None = None
-    model_invoking_messages: ChatMessage | MutableSequence[ChatMessage] | None = None
-
     def __init__(self, messages: list[ChatMessage] | None = None) -> None:
-        super().__init__()
         self.context_messages = messages
         self.thread_created_called = False
-        self.messages_adding_called = False
-        self.model_invoking_called = False
+        self.invoked_called = False
+        self.invoking_called = False
         self.thread_created_thread_id = None
-        self.messages_adding_thread_id = None
-        self.messages_adding_new_messages = None
+        self.new_messages = None
         self.model_invoking_messages = None
 
     async def thread_created(self, thread_id: str | None) -> None:
@@ -38,15 +25,20 @@ class MockContextProvider(ContextProvider):
         self.thread_created_called = True
         self.thread_created_thread_id = thread_id
 
-    async def messages_adding(self, thread_id: str | None, new_messages: ChatMessage | Sequence[ChatMessage]) -> None:
-        """Track messages_adding calls."""
-        self.messages_adding_called = True
-        self.messages_adding_thread_id = thread_id
-        self.messages_adding_new_messages = new_messages
+    async def invoked(
+        self,
+        request_messages: Any,
+        response_messages: Any | None = None,
+        invoke_exception: Exception | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Track invoked calls."""
+        self.invoked_called = True
+        self.new_messages = request_messages
 
     async def invoking(self, messages: ChatMessage | MutableSequence[ChatMessage], **kwargs: Any) -> Context:
         """Track invoking calls and return context."""
-        self.model_invoking_called = True
+        self.invoking_called = True
         self.model_invoking_messages = messages
         context = Context()
         context.messages = self.context_messages
@@ -133,45 +125,40 @@ class TestAggregateContextProvider:
         assert provider.thread_created_thread_id is None
 
     async def test_messages_adding_with_no_providers(self) -> None:
-        """Test messages_adding with no providers."""
+        """Test invoked with no providers."""
         aggregate = AggregateContextProvider()
         message = ChatMessage(text="Hello", role=Role.USER)
 
         # Should not raise an exception
-        await aggregate.messages_adding("thread-123", message)
+        await aggregate.invoked(message)
 
     async def test_messages_adding_with_single_message(self) -> None:
-        """Test messages_adding with a single message."""
+        """Test invoked with a single message."""
         provider1 = MockContextProvider(messages=[ChatMessage(role="user", text="Instructions 1")])
         provider2 = MockContextProvider(messages=[ChatMessage(role="user", text="Instructions 2")])
         aggregate = AggregateContextProvider([provider1, provider2])
 
-        thread_id = "thread-123"
         message = ChatMessage(text="Hello", role=Role.USER)
-        await aggregate.messages_adding(thread_id, message)
+        await aggregate.invoked(message)
 
-        assert provider1.messages_adding_called
-        assert provider1.messages_adding_thread_id == thread_id
-        assert provider1.messages_adding_new_messages == message
-        assert provider2.messages_adding_called
-        assert provider2.messages_adding_thread_id == thread_id
-        assert provider2.messages_adding_new_messages == message
+        assert provider1.invoked_called
+        assert provider1.new_messages == message
+        assert provider2.invoked_called
+        assert provider2.new_messages == message
 
     async def test_messages_adding_with_message_sequence(self) -> None:
-        """Test messages_adding with a sequence of messages."""
+        """Test invoked with a sequence of messages."""
         provider = MockContextProvider(messages=[ChatMessage(role="user", text="Instructions")])
         aggregate = AggregateContextProvider([provider])
 
-        thread_id = "thread-123"
         messages = [
             ChatMessage(text="Hello", role=Role.USER),
             ChatMessage(text="Hi there", role=Role.ASSISTANT),
         ]
-        await aggregate.messages_adding(thread_id, messages)
+        await aggregate.invoked(messages)
 
-        assert provider.messages_adding_called
-        assert provider.messages_adding_thread_id == thread_id
-        assert provider.messages_adding_new_messages == messages
+        assert provider.invoked_called
+        assert provider.new_messages == messages
 
     async def test_model_invoking_with_no_providers(self) -> None:
         """Test invoking with no providers."""
@@ -191,7 +178,7 @@ class TestAggregateContextProvider:
         message = [ChatMessage(text="Hello", role=Role.USER)]
         context = await aggregate.invoking(message)
 
-        assert provider.model_invoking_called
+        assert provider.invoking_called
         assert provider.model_invoking_messages == message
         assert isinstance(context, Context)
 
@@ -209,11 +196,11 @@ class TestAggregateContextProvider:
         messages = [ChatMessage(text="Hello", role=Role.USER)]
         context = await aggregate.invoking(messages)
 
-        assert provider1.model_invoking_called
+        assert provider1.invoking_called
         assert provider1.model_invoking_messages == messages
-        assert provider2.model_invoking_called
+        assert provider2.invoking_called
         assert provider2.model_invoking_messages == messages
-        assert provider3.model_invoking_called
+        assert provider3.invoking_called
         assert provider3.model_invoking_messages == messages
 
         assert isinstance(context, Context)
@@ -263,7 +250,7 @@ class TestAggregateContextProvider:
         messages = [ChatMessage(text="Hello", role=Role.USER)]
         context = await aggregate.invoking(messages)
 
-        assert provider.model_invoking_called
+        assert provider.invoking_called
         assert provider.model_invoking_messages == messages
         assert isinstance(context, Context)
         assert context.messages
@@ -275,12 +262,12 @@ class TestAggregateContextProvider:
         # Use AsyncMock to verify concurrent execution
         provider1 = Mock(spec=ContextProvider)
         provider1.thread_created = AsyncMock()
-        provider1.messages_adding = AsyncMock()
+        provider1.invoked = AsyncMock()
         provider1.invoking = AsyncMock(return_value=Context(messages=[ChatMessage(role="user", text="Test 1")]))
 
         provider2 = Mock(spec=ContextProvider)
         provider2.thread_created = AsyncMock()
-        provider2.messages_adding = AsyncMock()
+        provider2.invoked = AsyncMock()
         provider2.invoking = AsyncMock(return_value=Context(messages=[ChatMessage(role="user", text="Test 2")]))
 
         aggregate = AggregateContextProvider([provider1, provider2])
@@ -290,11 +277,15 @@ class TestAggregateContextProvider:
         provider1.thread_created.assert_called_once_with("thread-123")
         provider2.thread_created.assert_called_once_with("thread-123")
 
-        # Test messages_adding
+        # Test invoked
         message = ChatMessage(text="Hello", role=Role.USER)
-        await aggregate.messages_adding("thread-123", message)
-        provider1.messages_adding.assert_called_once_with("thread-123", message)
-        provider2.messages_adding.assert_called_once_with("thread-123", message)
+        await aggregate.invoked(message)
+        provider1.invoked.assert_called_once_with(
+            request_messages=message, response_messages=None, invoke_exception=None
+        )
+        provider2.invoked.assert_called_once_with(
+            request_messages=message, response_messages=None, invoke_exception=None
+        )
 
         # Test invoking
         context = await aggregate.invoking(message)

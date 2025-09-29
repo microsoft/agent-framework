@@ -14,6 +14,11 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import NotRequired, Self, TypedDict  # pragma: no cover
 
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+
 
 # Type aliases for Mem0 search response formats (v1.1 and v2; v1 is deprecated, but matches the type definition for v2)
 class MemorySearchResponse_v1_1(TypedDict):
@@ -87,18 +92,27 @@ class Mem0Provider(ContextProvider):
         self._validate_per_operation_thread_id(thread_id)
         self._per_operation_thread_id = self._per_operation_thread_id or thread_id
 
-    async def messages_adding(self, thread_id: str | None, new_messages: ChatMessage | Sequence[ChatMessage]) -> None:
-        """Called when a new message is being added to the thread.
-
-        Args:
-            thread_id: The ID of the thread or None.
-            new_messages: New messages to add.
-        """
+    @override
+    async def invoked(
+        self,
+        request_messages: ChatMessage | Sequence[ChatMessage],
+        response_messages: ChatMessage | Sequence[ChatMessage] | None = None,
+        invoke_exception: Exception | None = None,
+        **kwargs: Any,
+    ) -> None:
         self._validate_filters()
-        self._validate_per_operation_thread_id(thread_id)
-        self._per_operation_thread_id = self._per_operation_thread_id or thread_id
 
-        messages_list = [new_messages] if isinstance(new_messages, ChatMessage) else list(new_messages)
+        request_messages_list = (
+            [request_messages] if isinstance(request_messages, ChatMessage) else list(request_messages)
+        )
+        response_messages_list = (
+            [response_messages]
+            if isinstance(response_messages, ChatMessage)
+            else list(response_messages)
+            if response_messages
+            else []
+        )
+        messages_list = [*request_messages_list, *response_messages_list]
 
         messages: list[dict[str, str]] = [
             {"role": message.role.value, "content": message.text}
@@ -115,6 +129,7 @@ class Mem0Provider(ContextProvider):
                 metadata={"application_id": self.application_id},
             )
 
+    @override
     async def invoking(self, messages: ChatMessage | MutableSequence[ChatMessage], **kwargs: Any) -> Context:
         """Called before invoking the AI model to provide context.
 

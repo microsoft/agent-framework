@@ -4,6 +4,7 @@ import inspect
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
+from copy import copy
 from itertools import chain
 from typing import Any, ClassVar, Literal, Protocol, TypeVar, cast, runtime_checkable
 from uuid import uuid4
@@ -181,11 +182,21 @@ class BaseAgent:
         self.additional_properties = kwargs
 
     async def _notify_thread_of_new_messages(
-        self, thread: AgentThread, new_messages: ChatMessage | Sequence[ChatMessage]
+        self,
+        thread: AgentThread,
+        input_messages: ChatMessage | Sequence[ChatMessage],
+        response_messages: ChatMessage | Sequence[ChatMessage],
     ) -> None:
-        """Notify the thread of new messages."""
-        if isinstance(new_messages, ChatMessage) or len(new_messages) > 0:
-            await thread.on_new_messages(new_messages)
+        """Notify the thread of new messages.
+
+        This also calls the invoked method of a potential context provider on the thread.
+        """
+        if isinstance(input_messages, ChatMessage) or len(input_messages) > 0:
+            await thread.on_new_messages(input_messages)
+        if isinstance(response_messages, ChatMessage) or len(response_messages) > 0:
+            await thread.on_new_messages(response_messages)
+        if thread.context_provider:
+            await thread.context_provider.invoked(input_messages, response_messages)
 
     @property
     def display_name(self) -> str:
@@ -520,14 +531,12 @@ class ChatAgent(BaseAgent):
                 will only be passed to functions that are called.
         """
         input_messages = self._normalize_messages(messages)
-        thread, thread_messages, context = await self._prepare_thread_and_messages(
+        thread, run_chat_options, thread_messages = await self._prepare_thread_and_messages(
             thread=thread, input_messages=input_messages
         )
         normalized_tools: list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] = (  # type:ignore[reportUnknownVariableType]
             [] if tools is None else tools if isinstance(tools, list) else [tools]
         )
-        if context and context.tools:
-            normalized_tools.extend(context.tools)
         agent_name = self._get_agent_name()
 
         # Resolve final tool list (runtime provided tools + local MCP server tools)
@@ -545,15 +554,13 @@ class ChatAgent(BaseAgent):
             if not mcp_server.is_connected:
                 await self._async_exit_stack.enter_async_context(mcp_server)
             final_tools.extend(mcp_server.functions)
-
         response = await self.chat_client.get_response(
             messages=thread_messages,
-            chat_options=self.chat_options
+            chat_options=run_chat_options
             & ChatOptions(
                 ai_model_id=model,
                 conversation_id=thread.service_thread_id,
                 frequency_penalty=frequency_penalty,
-                instructions=context.instructions if context else None,
                 logit_bias=logit_bias,
                 max_tokens=max_tokens,
                 metadata=metadata,
@@ -572,7 +579,7 @@ class ChatAgent(BaseAgent):
             **kwargs,
         )
 
-        self._update_thread_with_type_and_conversation_id(thread, response.conversation_id)
+        await self._update_thread_with_type_and_conversation_id(thread, response.conversation_id)
 
         # Ensure that the author name is set for each message in the response.
         for message in response.messages:
@@ -581,13 +588,7 @@ class ChatAgent(BaseAgent):
 
         # Only notify the thread of new messages if the chatResponse was successful
         # to avoid inconsistent messages state in the thread.
-        await self._notify_thread_of_new_messages(thread, input_messages)
-        await self._notify_thread_of_new_messages(thread, response.messages)
-
-        if self.context_provider:
-            await self.context_provider.thread_created(response.conversation_id)
-            await self.context_provider.messages_adding(thread.service_thread_id, input_messages + response.messages)
-
+        await self._notify_thread_of_new_messages(thread, input_messages, response.messages)
         return AgentRunResponse(
             messages=response.messages,
             response_id=response.response_id,
@@ -657,19 +658,17 @@ class ChatAgent(BaseAgent):
 
         """
         input_messages = self._normalize_messages(messages)
-        normalized_tools: list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] = (  # type: ignore[reportUnknownVariableType]
-            [] if tools is None else tools if isinstance(tools, list) else [tools]
-        )
-        thread, thread_messages, context = await self._prepare_thread_and_messages(
+        thread, run_chat_options, thread_messages = await self._prepare_thread_and_messages(
             thread=thread, input_messages=input_messages
         )
-        if context and context.tools:
-            normalized_tools.extend(context.tools)
         agent_name = self._get_agent_name()
         response_updates: list[ChatResponseUpdate] = []
 
         # Resolve final tool list (runtime provided tools + local MCP server tools)
         final_tools: list[ToolProtocol | MutableMapping[str, Any] | Callable[..., Any]] = []
+        normalized_tools: list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] = (  # type: ignore[reportUnknownVariableType]
+            [] if tools is None else tools if isinstance(tools, list) else [tools]
+        )
         # Normalize tools argument to a list without mutating the original parameter
         for tool in normalized_tools:
             if isinstance(tool, MCPTool):
@@ -686,11 +685,10 @@ class ChatAgent(BaseAgent):
 
         async for update in self.chat_client.get_streaming_response(
             messages=thread_messages,
-            chat_options=self.chat_options
+            chat_options=run_chat_options
             & ChatOptions(
                 conversation_id=thread.service_thread_id,
                 frequency_penalty=frequency_penalty,
-                instructions=context.instructions if context else None,
                 logit_bias=logit_bias,
                 max_tokens=max_tokens,
                 metadata=metadata,
@@ -726,17 +724,8 @@ class ChatAgent(BaseAgent):
             )
 
         response = ChatResponse.from_chat_response_updates(response_updates)
-
-        self._update_thread_with_type_and_conversation_id(thread, response.conversation_id)
-
-        # Only notify the thread of new messages if the chatResponse was successful
-        # to avoid inconsistent messages state in the thread.
-        await self._notify_thread_of_new_messages(thread, input_messages)
-        await self._notify_thread_of_new_messages(thread, response.messages)
-
-        if self.context_provider:
-            await self.context_provider.thread_created(response.conversation_id)
-            await self.context_provider.messages_adding(thread.service_thread_id, input_messages + response.messages)
+        await self._update_thread_with_type_and_conversation_id(thread, response.conversation_id)
+        await self._notify_thread_of_new_messages(thread, input_messages, response.messages)
 
     @override
     def get_new_thread(
@@ -774,7 +763,7 @@ class ChatAgent(BaseAgent):
             )
         return AgentThread(context_provider=self.context_provider)
 
-    def _update_thread_with_type_and_conversation_id(
+    async def _update_thread_with_type_and_conversation_id(
         self, thread: AgentThread, response_conversation_id: str | None
     ) -> None:
         """Update thread with storage type and conversation ID.
@@ -798,6 +787,8 @@ class ChatAgent(BaseAgent):
             # If we got a conversation id back from the chat client, it means that the service
             # supports server side thread storage so we should update the thread with the new id.
             thread.service_thread_id = response_conversation_id
+            if thread.context_provider:
+                await thread.context_provider.thread_created(thread.service_thread_id)
         elif thread.message_store is None and self.chat_message_store_factory is not None:
             # If the service doesn't use service side thread storage (i.e. we got no id back from invocation), and
             # the thread has no message_store yet, and we have a custom messages store, we should update the thread
@@ -809,8 +800,10 @@ class ChatAgent(BaseAgent):
         *,
         thread: AgentThread | None,
         input_messages: list[ChatMessage] | None = None,
-    ) -> tuple[AgentThread, list[ChatMessage], Context | None]:
+    ) -> tuple[AgentThread, ChatOptions, list[ChatMessage]]:
         """Prepare the messages for agent execution.
+
+        Also updates the chat_options of the agent, with
 
         Args:
             thread: The conversation thread.
@@ -822,22 +815,42 @@ class ChatAgent(BaseAgent):
         Raises:
             AgentExecutionException: If the thread is not of the expected type.
         """
+        chat_options = copy(self.chat_options) if self.chat_options else ChatOptions()
         thread = thread or self.get_new_thread()
-        run_tools: list[ToolProtocol] = []
-
-        messages: list[ChatMessage] = []
+        if thread.service_thread_id and thread.context_provider:
+            await thread.context_provider.thread_created(thread.service_thread_id)
+        thread_messages: list[ChatMessage] = []
         if thread.message_store:
-            messages.extend(await thread.message_store.list_messages() or [])
+            thread_messages.extend(await thread.message_store.list_messages() or [])
         context: Context | None = None
-        if context := await thread.invoke_context_provider(input_messages):
-            if context.instructions:
-                messages.append(ChatMessage(role="system", text=context.instructions))
-            if context.messages:
-                messages.extend(context.messages)
-            if context.tools:
-                run_tools.extend(context.tools)
-        messages.extend(input_messages or [])
-        return thread, messages, context
+        if self.context_provider:
+            async with self.context_provider:
+                context = await self.context_provider.invoking(input_messages or [])
+                if context:
+                    if context.messages:
+                        thread_messages.extend(context.messages)
+                    if context.tools:
+                        if chat_options.tools is not None:
+                            chat_options.tools.extend(context.tools)
+                        else:
+                            chat_options.tools = list(context.tools)
+                    if context.instructions:
+                        chat_options.instructions = (
+                            context.instructions
+                            if not chat_options.instructions
+                            else f"{chat_options.instructions}\n{context.instructions}"
+                        )
+        thread_messages.extend(input_messages or [])
+        if (
+            thread.service_thread_id
+            and chat_options.conversation_id
+            and thread.service_thread_id != chat_options.conversation_id
+        ):
+            raise AgentExecutionException(
+                "The conversation_id set on the agent is different from the one set on the thread, "
+                "only one ID can be used for a run."
+            )
+        return thread, chat_options, thread_messages
 
     def _get_agent_name(self) -> str:
         return self.name or "UnnamedAgent"

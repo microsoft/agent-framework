@@ -9,7 +9,7 @@ from agent_framework.openai import OpenAIChatClient
 from agent_framework.redis import RedisChatMessageStore
 
 
-async def example_basic_redis_store() -> None:
+async def example_manual_memory_store() -> None:
     """Basic example of using Redis chat message store."""
     print("=== Basic Redis Chat Message Store Example ===")
 
@@ -297,7 +297,7 @@ async def main() -> None:
 
     try:
         # Run all examples
-        await example_basic_redis_store()
+        await example_manual_memory_store()
         await example_user_session_management()
         await example_conversation_persistence()
         await example_thread_serialization()

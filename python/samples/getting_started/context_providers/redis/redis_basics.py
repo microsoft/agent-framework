@@ -135,7 +135,7 @@ async def main() -> None:
     # Threads are logical boundaries used by the provider to group and retrieve
     # conversation-specific context.
     await provider.thread_created(thread_id="runA")
-    await provider.messages_adding(thread_id="runA", new_messages=messages)
+    await provider.invoked(request_messages=messages)
 
     # Retrieve relevant memories for a hypothetical model call. The provider uses
     # the current request messages as the retrieval query and returns context to

@@ -124,7 +124,7 @@ class TestRedisProviderMessages:
     async def test_messages_adding_requires_filters(self, patch_index_from_dict):  # noqa: ARG002
         provider = RedisProvider()
         with pytest.raises(ServiceInitializationError):
-            await provider.messages_adding("thread123", ChatMessage(role=Role.USER, text="Hello"))
+            await provider.invoked("thread123", ChatMessage(role=Role.USER, text="Hello"))
 
     # Captures the per-operation thread id when provided
     async def test_thread_created_sets_per_operation_id(self, patch_index_from_dict):  # noqa: ARG002
@@ -245,7 +245,7 @@ class TestMessagesAddingBehavior:
             ChatMessage(role=Role.SYSTEM, text="s"),
         ]
 
-        await provider.messages_adding("t1", msgs)
+        await provider.invoked(msgs)
 
         # Ensure load invoked with shaped docs containing defaults
         assert mock_index.load.await_count == 1
@@ -258,7 +258,6 @@ class TestMessagesAddingBehavior:
             assert d["application_id"] == "app"
             assert d["agent_id"] == "agent"
             assert d["user_id"] == "u1"
-            assert d["thread_id"] == "t1"  # scoped via per-operation thread id
 
     # Skips blank text and disallowed roles (e.g., TOOL) when adding messages
     async def test_messages_adding_ignores_blank_and_disallowed_roles(
@@ -269,7 +268,7 @@ class TestMessagesAddingBehavior:
             ChatMessage(role=Role.USER, text="   "),
             ChatMessage(role=Role.TOOL, text="tool output"),
         ]
-        await provider.messages_adding("tid", msgs)
+        await provider.invoked(msgs)
         # No valid messages -> no load
         assert mock_index.load.await_count == 0
 
@@ -280,8 +279,8 @@ class TestIndexCreationPublicCalls:
         self, mock_index: AsyncMock, patch_index_from_dict
     ):  # noqa: ARG002
         provider = RedisProvider(user_id="u1")
-        await provider.messages_adding("t1", ChatMessage(role=Role.USER, text="m1"))
-        await provider.messages_adding("t1", ChatMessage(role=Role.USER, text="m2"))
+        await provider.invoked(ChatMessage(role=Role.USER, text="m1"))
+        await provider.invoked(ChatMessage(role=Role.USER, text="m2"))
         # create only on first call
         assert mock_index.create.await_count == 1
 
@@ -311,7 +310,7 @@ class TestThreadCreatedAdditional:
 
 
 class TestVectorPopulation:
-    # When vectorizer configured, messages_adding should embed content and populate the vector field
+    # When vectorizer configured, invoked should embed content and populate the vector field
     async def test_messages_adding_populates_vector_field_when_vectorizer_present(
         self, mock_index: AsyncMock, patch_index_from_dict
     ):  # noqa: ARG002
@@ -322,7 +321,7 @@ class TestVectorPopulation:
             vector_field_name="vec",
         )
 
-        await provider.messages_adding("t1", ChatMessage(role=Role.USER, text="hello"))
+        await provider.invoked(ChatMessage(role=Role.USER, text="hello"))
         assert mock_index.load.await_count == 1
         (loaded_args, _kwargs) = mock_index.load.call_args
         docs = loaded_args[0]

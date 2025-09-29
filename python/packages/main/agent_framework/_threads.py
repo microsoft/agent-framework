@@ -1,11 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import MutableSequence, Sequence
+from collections.abc import Sequence
 from typing import Any, Protocol, TypeVar
 
 from pydantic import model_validator
 
-from ._memory import Context, ContextProvider
+from ._memory import AggregateContextProvider
 from ._pydantic import AFBaseModel
 from ._types import ChatMessage
 from .exceptions import AgentThreadException
@@ -192,7 +192,7 @@ class AgentThread:
         *,
         service_thread_id: str | None = None,
         message_store: ChatMessageStoreProtocol | None = None,
-        context_provider: ContextProvider | None = None,
+        context_provider: AggregateContextProvider | None = None,
     ) -> None:
         """Initialize an AgentThread, do not use this method manually, always use: agent.get_new_thread().
 
@@ -276,15 +276,6 @@ class AgentThread:
         if isinstance(new_messages, ChatMessage):
             new_messages = [new_messages]
         await self._message_store.add_messages(new_messages)
-
-    async def invoke_context_provider(
-        self, messages: ChatMessage | MutableSequence[ChatMessage] | None
-    ) -> Context | None:
-        """Invoke the context_provider, if any."""
-        if not self.context_provider:
-            return None
-        async with self.context_provider:
-            return await self.context_provider.invoking(messages or [])
 
     async def serialize(self, **kwargs: Any) -> dict[str, Any]:
         """Serializes the current object's state.

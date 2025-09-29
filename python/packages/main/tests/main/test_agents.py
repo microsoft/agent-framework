@@ -22,7 +22,6 @@ from agent_framework import (
     HostedCodeInterpreterTool,
     Role,
     TextContent,
-    ToolProtocol,
 )
 from agent_framework.exceptions import AgentExecutionException
 
@@ -103,7 +102,7 @@ async def test_chat_client_agent_prepare_thread_and_messages(chat_client: ChatCl
     message = ChatMessage(role=Role.USER, text="Hello")
     thread = AgentThread(message_store=ChatMessageStore(messages=[message]))
 
-    _, result_messages, _ = await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
+    _, _, result_messages = await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
         thread=thread,
         input_messages=[ChatMessage(role=Role.USER, text="Test")],
     )
@@ -154,7 +153,7 @@ async def test_chat_client_agent_update_thread_conversation_id_missing(chat_clie
     thread = AgentThread(service_thread_id="123")
 
     with raises(AgentExecutionException, match="Service did not return a valid conversation id"):
-        agent._update_thread_with_type_and_conversation_id(thread, None)  # type: ignore[reportPrivateUsage]
+        await agent._update_thread_with_type_and_conversation_id(thread, None)  # type: ignore[reportPrivateUsage]
 
 
 async def test_chat_client_agent_default_author_name(chat_client: ChatClientProtocol) -> None:
@@ -193,40 +192,38 @@ async def test_chat_client_agent_author_name_is_used_from_response(chat_client_b
 
 # Mock context provider for testing
 class MockContextProvider(ContextProvider):
-    context_messages: list[ChatMessage] | None = None
-    context_tools: list[ToolProtocol] | None = None
-    context_instructions: str | None = None
-    thread_created_called: bool = False
-    messages_adding_called: bool = False
-    model_invoking_called: bool = False
-    thread_created_thread_id: str | None = None
-    messages_adding_thread_id: str | None = None
-    new_messages: list[ChatMessage] = []
-
     def __init__(self, messages: list[ChatMessage] | None = None) -> None:
-        super().__init__()
         self.context_messages = messages
         self.thread_created_called = False
-        self.messages_adding_called = False
-        self.model_invoking_called = False
+        self.invoked_called = False
+        self.invoking_called = False
         self.thread_created_thread_id = None
-        self.messages_adding_thread_id = None
-        self.new_messages = []
+        self.invoked_thread_id = None
+        self.new_messages: list[ChatMessage] = []
 
     async def thread_created(self, thread_id: str | None) -> None:
         self.thread_created_called = True
         self.thread_created_thread_id = thread_id
 
-    async def messages_adding(self, thread_id: str | None, new_messages: ChatMessage | Sequence[ChatMessage]) -> None:
-        self.messages_adding_called = True
-        self.messages_adding_thread_id = thread_id
-        if isinstance(new_messages, ChatMessage):
-            self.new_messages.append(new_messages)
+    async def invoked(
+        self,
+        request_messages: ChatMessage | Sequence[ChatMessage],
+        response_messages: ChatMessage | Sequence[ChatMessage] | None = None,
+        invoke_exception: Any = None,
+        **kwargs: Any,
+    ) -> None:
+        self.invoked_called = True
+        if isinstance(request_messages, ChatMessage):
+            self.new_messages.append(request_messages)
         else:
-            self.new_messages.extend(new_messages)
+            self.new_messages.extend(request_messages)
+        if isinstance(response_messages, ChatMessage):
+            self.new_messages.append(response_messages)
+        else:
+            self.new_messages.extend(response_messages)
 
     async def invoking(self, messages: ChatMessage | MutableSequence[ChatMessage], **kwargs: Any) -> Context:
-        self.model_invoking_called = True
+        self.invoking_called = True
         return Context(messages=self.context_messages)
 
 
@@ -237,7 +234,7 @@ async def test_chat_agent_context_providers_model_invoking(chat_client: ChatClie
 
     await agent.run("Hello")
 
-    assert mock_provider.model_invoking_called
+    assert mock_provider.invoking_called
 
 
 async def test_chat_agent_context_providers_thread_created(chat_client_base: ChatClientProtocol) -> None:
@@ -259,13 +256,13 @@ async def test_chat_agent_context_providers_thread_created(chat_client_base: Cha
 
 
 async def test_chat_agent_context_providers_messages_adding(chat_client: ChatClientProtocol) -> None:
-    """Test that context providers' messages_adding is called during agent run."""
+    """Test that context providers' invoked is called during agent run."""
     mock_provider = MockContextProvider()
     agent = ChatAgent(chat_client=chat_client, context_providers=mock_provider)
 
     await agent.run("Hello")
 
-    assert mock_provider.messages_adding_called
+    assert mock_provider.invoked_called
     # Should be called with both input and response messages
     assert len(mock_provider.new_messages) >= 2
 
@@ -276,7 +273,7 @@ async def test_chat_agent_context_instructions_in_messages(chat_client: ChatClie
     agent = ChatAgent(chat_client=chat_client, instructions="Agent instructions", context_providers=mock_provider)
 
     # We need to test the _prepare_thread_and_messages method directly
-    _, messages, _ = await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
+    _, _, messages = await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
         thread=None, input_messages=[ChatMessage(role=Role.USER, text="Hello")]
     )
 
@@ -294,7 +291,7 @@ async def test_chat_agent_no_context_instructions(chat_client: ChatClientProtoco
     mock_provider = MockContextProvider()
     agent = ChatAgent(chat_client=chat_client, instructions="Agent instructions", context_providers=mock_provider)
 
-    _, messages, _ = await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
+    _, _, messages = await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
         thread=None, input_messages=[ChatMessage(role=Role.USER, text="Hello")]
     )
 
@@ -315,9 +312,10 @@ async def test_chat_agent_run_stream_context_providers(chat_client: ChatClientPr
         updates.append(update)
 
     # Verify context provider was called
-    assert mock_provider.model_invoking_called
-    assert mock_provider.thread_created_called
-    assert mock_provider.messages_adding_called
+    assert mock_provider.invoking_called
+    # no conversation id is created, so no need to thread_create to be called.
+    assert not mock_provider.thread_created_called
+    assert mock_provider.invoked_called
 
 
 async def test_chat_agent_multiple_context_providers(chat_client: ChatClientProtocol) -> None:
@@ -330,13 +328,13 @@ async def test_chat_agent_multiple_context_providers(chat_client: ChatClientProt
     await agent.run("Hello")
 
     # Both providers should be called
-    assert provider1.model_invoking_called
-    assert provider1.thread_created_called
-    assert provider1.messages_adding_called
+    assert provider1.invoking_called
+    assert not provider1.thread_created_called
+    assert provider1.invoked_called
 
-    assert provider2.model_invoking_called
-    assert provider2.thread_created_called
-    assert provider2.messages_adding_called
+    assert provider2.invoking_called
+    assert not provider2.thread_created_called
+    assert provider2.invoked_called
 
 
 async def test_chat_agent_aggregate_context_provider_combines_instructions() -> None:
@@ -371,12 +369,11 @@ async def test_chat_agent_context_providers_with_thread_service_id(chat_client_b
     agent = ChatAgent(chat_client=chat_client_base, context_providers=mock_provider)
 
     # Use existing service-managed thread
-    thread = AgentThread(service_thread_id="existing-thread-id")
+    thread = agent.get_new_thread(service_thread_id="existing-thread-id")
     await agent.run("Hello", thread=thread)
 
-    # messages_adding should be called with the service thread ID from response
-    assert mock_provider.messages_adding_called
-    assert mock_provider.messages_adding_thread_id == "service-thread-123"  # Updated thread ID from response
+    # invoked should be called with the service thread ID from response
+    assert mock_provider.invoked_called
 
 
 # Tests for as_tool method

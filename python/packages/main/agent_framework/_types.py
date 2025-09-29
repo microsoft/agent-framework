@@ -1812,7 +1812,7 @@ class ChatOptions(AFBaseModel):
     store: bool | None = None
     temperature: Annotated[float | None, Field(ge=0.0, le=2.0)] = None
     tool_choice: ChatToolMode | Literal["auto", "required", "none"] | Mapping[str, Any] | None = None
-    tools: list[ToolProtocol | MutableMapping[str, Any]] | None = None
+    tools: MutableSequence[ToolProtocol | MutableMapping[str, Any]] | None = None
     top_p: Annotated[float | None, Field(ge=0.0, le=1.0)] = None
     user: str | None = None
 

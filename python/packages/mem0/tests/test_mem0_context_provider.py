@@ -173,27 +173,25 @@ class TestMem0ProviderThreadMethods:
 
         assert "can only be used with one thread at a time" in str(exc_info.value)
 
-    async def test_messages_adding_sets_per_operation_thread_id(
-        self, mock_mem0_client: AsyncMock, sample_messages: list[ChatMessage]
-    ) -> None:
-        """Test that messages_adding sets per-operation thread ID."""
+    async def test_messages_adding_sets_per_operation_thread_id(self, mock_mem0_client: AsyncMock) -> None:
+        """Test that invoked sets per-operation thread ID."""
         provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
 
-        await provider.messages_adding("thread123", sample_messages)
+        await provider.thread_created("thread123")
 
         assert provider._per_operation_thread_id == "thread123"
 
 
 class TestMem0ProviderMessagesAdding:
-    """Test messages_adding method."""
+    """Test invoked method."""
 
     async def test_messages_adding_fails_without_filters(self, mock_mem0_client: AsyncMock) -> None:
-        """Test that messages_adding fails when no filters are provided."""
+        """Test that invoked fails when no filters are provided."""
         provider = Mem0Provider(mem0_client=mock_mem0_client)
         message = ChatMessage(role=Role.USER, text="Hello!")
 
         with pytest.raises(ServiceInitializationError) as exc_info:
-            await provider.messages_adding("thread123", message)
+            await provider.invoked(message)
 
         assert "At least one of the filters" in str(exc_info.value)
 
@@ -202,7 +200,7 @@ class TestMem0ProviderMessagesAdding:
         provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
         message = ChatMessage(role=Role.USER, text="Hello!")
 
-        await provider.messages_adding("thread123", message)
+        await provider.invoked(message)
 
         mock_mem0_client.add.assert_called_once()
         call_args = mock_mem0_client.add.call_args
@@ -215,7 +213,7 @@ class TestMem0ProviderMessagesAdding:
         """Test adding multiple messages."""
         provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
 
-        await provider.messages_adding("thread123", sample_messages)
+        await provider.invoked(sample_messages)
 
         mock_mem0_client.add.assert_called_once()
         call_args = mock_mem0_client.add.call_args
@@ -232,7 +230,7 @@ class TestMem0ProviderMessagesAdding:
         """Test adding messages with agent_id."""
         provider = Mem0Provider(agent_id="agent123", mem0_client=mock_mem0_client)
 
-        await provider.messages_adding("thread123", sample_messages)
+        await provider.invoked(sample_messages)
 
         call_args = mock_mem0_client.add.call_args
         assert call_args.kwargs["agent_id"] == "agent123"
@@ -244,7 +242,7 @@ class TestMem0ProviderMessagesAdding:
         """Test adding messages with application_id in metadata."""
         provider = Mem0Provider(user_id="user123", application_id="app123", mem0_client=mock_mem0_client)
 
-        await provider.messages_adding("thread123", sample_messages)
+        await provider.invoked(sample_messages)
 
         call_args = mock_mem0_client.add.call_args
         assert call_args.kwargs["metadata"] == {"application_id": "app123"}
@@ -261,7 +259,8 @@ class TestMem0ProviderMessagesAdding:
         )
         provider._per_operation_thread_id = "operation_thread"
 
-        await provider.messages_adding("operation_thread", sample_messages)
+        await provider.thread_created(thread_id="operation_thread")
+        await provider.invoked(sample_messages)
 
         call_args = mock_mem0_client.add.call_args
         assert call_args.kwargs["run_id"] == "operation_thread"
@@ -277,7 +276,7 @@ class TestMem0ProviderMessagesAdding:
             mem0_client=mock_mem0_client,
         )
 
-        await provider.messages_adding("operation_thread", sample_messages)
+        await provider.invoked(sample_messages)
 
         call_args = mock_mem0_client.add.call_args
         assert call_args.kwargs["run_id"] == "base_thread"
@@ -291,7 +290,7 @@ class TestMem0ProviderMessagesAdding:
             ChatMessage(role=Role.USER, text="Valid message"),
         ]
 
-        await provider.messages_adding("thread123", messages)
+        await provider.invoked(messages)
 
         call_args = mock_mem0_client.add.call_args
         # Should only include the valid message
@@ -305,7 +304,7 @@ class TestMem0ProviderMessagesAdding:
             ChatMessage(role=Role.USER, text="   "),
         ]
 
-        await provider.messages_adding("thread123", messages)
+        await provider.invoked(messages)
 
         mock_mem0_client.add.assert_not_called()
 

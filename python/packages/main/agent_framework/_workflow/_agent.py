@@ -110,8 +110,7 @@ class WorkflowAgent(BaseAgent):
         response = self.merge_updates(response_updates, response_id)
 
         # Notify thread of new messages (both input and response messages)
-        await self._notify_thread_of_new_messages(thread, input_messages)
-        await self._notify_thread_of_new_messages(thread, response.messages)
+        await self._notify_thread_of_new_messages(thread, input_messages, response.messages)
 
         return response
 
@@ -145,8 +144,7 @@ class WorkflowAgent(BaseAgent):
         response = self.merge_updates(response_updates, response_id)
 
         # Notify thread of new messages (both input and response messages)
-        await self._notify_thread_of_new_messages(thread, input_messages)
-        await self._notify_thread_of_new_messages(thread, response.messages)
+        await self._notify_thread_of_new_messages(thread, input_messages, response.messages)
 
     async def _run_stream_impl(
         self,
