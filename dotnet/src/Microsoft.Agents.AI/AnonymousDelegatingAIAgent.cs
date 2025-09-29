@@ -15,6 +15,9 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Agents.AI;
 
 /// <summary>Represents a delegating AI agent that wraps an inner agent with implementations provided by delegates.</summary>
+/// <remarks>
+/// This internal class is a convenience implementation mainly used to support <see cref="AIAgentBuilder"/> Use methods that take delegates to intercept agent operations.
+/// </remarks>
 internal sealed class AnonymousDelegatingAIAgent : DelegatingAIAgent
 {
     /// <summary>The delegate to use as the implementation of <see cref="RunAsync"/>.</summary>
