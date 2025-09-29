@@ -10,18 +10,13 @@ namespace Microsoft.Agents.AI.Hosting.A2A.Converters;
 
 internal static class ActorEntitiesConverter
 {
-    public static Message ToMessage(this ActorResponse response)
+    public static Message ToMessage(this AgentRunResponse response, string contextId)
     {
-        var agentRunResponse =
-            response.Data.Deserialize(AgentHostingJsonUtilities.DefaultOptions.GetTypeInfo(typeof(AgentRunResponse))) as AgentRunResponse ??
-            throw new ArgumentException("The ActorResponse data could not be deserialized to an AgentRunResponse.", nameof(response));
-
-        var contextId = response.ActorId.Key;
-        var parts = agentRunResponse.Messages.ToParts();
+        var parts = response.Messages.ToParts();
 
         return new Message
         {
-            MessageId = response.MessageId ?? Guid.NewGuid().ToString("N"),
+            MessageId = response.ResponseId ?? Guid.NewGuid().ToString("N"),
             ContextId = contextId,
             Role = MessageRole.Agent,
             Parts = parts

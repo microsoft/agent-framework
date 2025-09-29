@@ -22,13 +22,14 @@ public static class AIAgentExtensions
     /// <param name="taskManager">Instance of <see cref="TaskManager"/> to configure for A2A messaging. New instance will be created if not passed.</param>
     /// <param name="loggerFactory">The logger factory to use for creating <see cref="ILogger"/> instances.</param>
     /// <returns>The configured <see cref="TaskManager"/>.</returns>
-    public static TaskManager AttachA2A(
+    public static TaskManager MapA2A(
         this AIAgent agent,
         IActorClient actorClient,
         TaskManager? taskManager = null,
         ILoggerFactory? loggerFactory = null)
     {
         ArgumentNullException.ThrowIfNull(agent, nameof(agent));
+        ArgumentNullException.ThrowIfNull(agent.Name, nameof(agent.Name));
         ArgumentNullException.ThrowIfNull(actorClient, nameof(actorClient));
 
         taskManager ??= new();
@@ -49,14 +50,14 @@ public static class AIAgentExtensions
     /// <param name="taskManager">Instance of <see cref="TaskManager"/> to configure for A2A messaging. New instance will be created if not passed.</param>
     /// <param name="loggerFactory">The logger factory to use for creating <see cref="ILogger"/> instances.</param>
     /// <returns>The configured <see cref="TaskManager"/>.</returns>
-    public static TaskManager AttachA2A(
+    public static TaskManager MapA2A(
         this AIAgent agent,
         IActorClient actorClient,
         AgentCard agentCard,
         TaskManager? taskManager = null,
         ILoggerFactory? loggerFactory = null)
     {
-        taskManager = agent.AttachA2A(actorClient, taskManager, loggerFactory);
+        taskManager = agent.MapA2A(actorClient, taskManager, loggerFactory);
 
         taskManager.OnAgentCardQuery += (context, query) =>
         {
