@@ -905,7 +905,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
             contents=contents,
             conversation_id=conversation_id,
             role=Role.ASSISTANT,
-            ai_model_id=model,
+            model_id=model,
             additional_properties=metadata,
             raw_representation=event,
         )

@@ -21,7 +21,7 @@ def enable_sensitive_data(request: Any) -> bool:
     return request.param if hasattr(request, "param") else True
 
 
-@fixture(autouse=True)
+@fixture
 def span_exporter(monkeypatch, enable_otel: bool, enable_sensitive_data: bool) -> Generator[SpanExporter]:
     """Fixture to remove environment variables for ObservabilitySettings."""
 
