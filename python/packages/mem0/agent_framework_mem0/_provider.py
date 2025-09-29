@@ -115,11 +115,12 @@ class Mem0Provider(ContextProvider):
                 metadata={"application_id": self.application_id},
             )
 
-    async def model_invoking(self, messages: ChatMessage | MutableSequence[ChatMessage]) -> Context:
+    async def invoking(self, messages: ChatMessage | MutableSequence[ChatMessage], **kwargs: Any) -> Context:
         """Called before invoking the AI model to provide context.
 
         Args:
             messages: List of new messages in the thread.
+            kwargs: not used at present.
 
         Returns:
             Context: Context object containing instructions with memories.

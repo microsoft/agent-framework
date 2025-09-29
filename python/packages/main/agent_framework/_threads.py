@@ -284,7 +284,7 @@ class AgentThread:
         if not self.context_provider:
             return None
         async with self.context_provider:
-            return await self.context_provider.model_invoking(messages or [])
+            return await self.context_provider.invoking(messages or [])
 
     async def serialize(self, **kwargs: Any) -> dict[str, Any]:
         """Serializes the current object's state.

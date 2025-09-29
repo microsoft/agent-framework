@@ -504,7 +504,7 @@ class RedisProvider(ContextProvider):
         if messages:
             await self._add(data=messages)
 
-    async def model_invoking(self, messages: ChatMessage | MutableSequence[ChatMessage]) -> Context:
+    async def invoking(self, messages: ChatMessage | MutableSequence[ChatMessage], **kwargs: Any) -> Context:
         """Called before invoking the model to provide scoped context.
 
         Concatenates recent messages into a query, fetches matching memories from Redis.
@@ -512,6 +512,7 @@ class RedisProvider(ContextProvider):
 
         Args:
             messages: List of new messages in the thread.
+            kwargs: not used at present at present.
 
         Returns:
             Context: Context object containing instructions with memories.

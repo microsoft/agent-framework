@@ -157,7 +157,7 @@ class TestRedisProviderModelInvoking:
     async def test_model_invoking_requires_filters(self, patch_index_from_dict):  # noqa: ARG002
         provider = RedisProvider()
         with pytest.raises(ServiceInitializationError):
-            await provider.model_invoking(ChatMessage(role=Role.USER, text="Hi"))
+            await provider.invoking(ChatMessage(role=Role.USER, text="Hi"))
 
     # Ensures text-only search path is used and context is composed from hits
     async def test_textquery_path_and_context_contents(
@@ -168,7 +168,7 @@ class TestRedisProviderModelInvoking:
         provider = RedisProvider(user_id="u1")
 
         # Act
-        ctx = await provider.model_invoking([ChatMessage(role=Role.USER, text="q1")])
+        ctx = await provider.invoking([ChatMessage(role=Role.USER, text="q1")])
 
         # Assert: TextQuery used (not HybridQuery), filter_expression included
         assert patch_queries["TextQuery"].call_count == 1
@@ -190,7 +190,7 @@ class TestRedisProviderModelInvoking:
     ):  # noqa: ARG002
         mock_index.query = AsyncMock(return_value=[])
         provider = RedisProvider(user_id="u1")
-        ctx = await provider.model_invoking([ChatMessage(role=Role.USER, text="any")])
+        ctx = await provider.invoking([ChatMessage(role=Role.USER, text="any")])
         assert ctx.messages == []
 
     # Ensures hybrid vector-text search is used when a vectorizer and vector field are configured
@@ -198,7 +198,7 @@ class TestRedisProviderModelInvoking:
         mock_index.query = AsyncMock(return_value=[{"content": "Hit"}])
         provider = RedisProvider(user_id="u1", redis_vectorizer=CUSTOM_VECTORIZER, vector_field_name="vec")
 
-        ctx = await provider.model_invoking([ChatMessage(role=Role.USER, text="hello")])
+        ctx = await provider.invoking([ChatMessage(role=Role.USER, text="hello")])
 
         # Assert: HybridQuery used with vector and vector field
         assert patch_queries["HybridQuery"].call_count == 1
@@ -292,7 +292,7 @@ class TestIndexCreationPublicCalls:
         mock_index.exists = AsyncMock(return_value=False)
         provider = RedisProvider(user_id="u1")
         mock_index.query = AsyncMock(return_value=[{"content": "C"}])
-        await provider.model_invoking([ChatMessage(role=Role.USER, text="q")])
+        await provider.invoking([ChatMessage(role=Role.USER, text="q")])
         assert mock_index.create.await_count == 1
 
 

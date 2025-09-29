@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from collections.abc import AsyncIterable, MutableSequence, Sequence
+from typing import Any
 from uuid import uuid4
 
 from pytest import raises
@@ -224,13 +225,13 @@ class MockContextProvider(ContextProvider):
         else:
             self.new_messages.extend(new_messages)
 
-    async def model_invoking(self, messages: ChatMessage | MutableSequence[ChatMessage]) -> Context:
+    async def invoking(self, messages: ChatMessage | MutableSequence[ChatMessage], **kwargs: Any) -> Context:
         self.model_invoking_called = True
         return Context(messages=self.context_messages)
 
 
 async def test_chat_agent_context_providers_model_invoking(chat_client: ChatClientProtocol) -> None:
-    """Test that context providers' model_invoking is called during agent run."""
+    """Test that context providers' invoking is called during agent run."""
     mock_provider = MockContextProvider(messages=[ChatMessage(role=Role.SYSTEM, text="Test context instructions")])
     agent = ChatAgent(chat_client=chat_client, context_providers=mock_provider)
 
@@ -347,8 +348,8 @@ async def test_chat_agent_aggregate_context_provider_combines_instructions() -> 
     aggregate.providers.append(provider1)
     aggregate.providers.append(provider2)
 
-    # Test model_invoking combines instructions
-    result = await aggregate.model_invoking([ChatMessage(role=Role.USER, text="Test")])
+    # Test invoking combines instructions
+    result = await aggregate.invoking([ChatMessage(role=Role.USER, text="Test")])
 
     assert result.messages
     assert isinstance(result.messages[0], ChatMessage)

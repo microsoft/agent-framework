@@ -311,20 +311,20 @@ class TestMem0ProviderMessagesAdding:
 
 
 class TestMem0ProviderModelInvoking:
-    """Test model_invoking method."""
+    """Test invoking method."""
 
     async def test_model_invoking_fails_without_filters(self, mock_mem0_client: AsyncMock) -> None:
-        """Test that model_invoking fails when no filters are provided."""
+        """Test that invoking fails when no filters are provided."""
         provider = Mem0Provider(mem0_client=mock_mem0_client)
         message = ChatMessage(role=Role.USER, text="What's the weather?")
 
         with pytest.raises(ServiceInitializationError) as exc_info:
-            await provider.model_invoking(message)
+            await provider.invoking(message)
 
         assert "At least one of the filters" in str(exc_info.value)
 
     async def test_model_invoking_single_message(self, mock_mem0_client: AsyncMock) -> None:
-        """Test model_invoking with a single message."""
+        """Test invoking with a single message."""
         provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
         message = ChatMessage(role=Role.USER, text="What's the weather?")
 
@@ -334,7 +334,7 @@ class TestMem0ProviderModelInvoking:
             {"memory": "User lives in Seattle"},
         ]
 
-        context = await provider.model_invoking(message)
+        context = await provider.invoking(message)
 
         mock_mem0_client.search.assert_called_once()
         call_args = mock_mem0_client.search.call_args
@@ -353,32 +353,32 @@ class TestMem0ProviderModelInvoking:
     async def test_model_invoking_multiple_messages(
         self, mock_mem0_client: AsyncMock, sample_messages: list[ChatMessage]
     ) -> None:
-        """Test model_invoking with multiple messages."""
+        """Test invoking with multiple messages."""
         provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
 
         mock_mem0_client.search.return_value = [{"memory": "Previous conversation context"}]
 
-        await provider.model_invoking(sample_messages)
+        await provider.invoking(sample_messages)
 
         call_args = mock_mem0_client.search.call_args
         expected_query = "Hello, how are you?\nI'm doing well, thank you!\nYou are a helpful assistant"
         assert call_args.kwargs["query"] == expected_query
 
     async def test_model_invoking_with_agent_id(self, mock_mem0_client: AsyncMock) -> None:
-        """Test model_invoking with agent_id."""
+        """Test invoking with agent_id."""
         provider = Mem0Provider(agent_id="agent123", mem0_client=mock_mem0_client)
         message = ChatMessage(role=Role.USER, text="Hello")
 
         mock_mem0_client.search.return_value = []
 
-        await provider.model_invoking(message)
+        await provider.invoking(message)
 
         call_args = mock_mem0_client.search.call_args
         assert call_args.kwargs["agent_id"] == "agent123"
         assert call_args.kwargs["user_id"] is None
 
     async def test_model_invoking_with_scope_to_per_operation_thread_id(self, mock_mem0_client: AsyncMock) -> None:
-        """Test model_invoking with scope_to_per_operation_thread_id enabled."""
+        """Test invoking with scope_to_per_operation_thread_id enabled."""
         provider = Mem0Provider(
             user_id="user123",
             thread_id="base_thread",
@@ -390,7 +390,7 @@ class TestMem0ProviderModelInvoking:
 
         mock_mem0_client.search.return_value = []
 
-        await provider.model_invoking(message)
+        await provider.invoking(message)
 
         call_args = mock_mem0_client.search.call_args
         assert call_args.kwargs["run_id"] == "operation_thread"
@@ -402,7 +402,7 @@ class TestMem0ProviderModelInvoking:
 
         mock_mem0_client.search.return_value = []
 
-        context = await provider.model_invoking(message)
+        context = await provider.invoking(message)
 
         assert isinstance(context, Context)
         assert not context.messages
@@ -418,13 +418,13 @@ class TestMem0ProviderModelInvoking:
 
         mock_mem0_client.search.return_value = []
 
-        await provider.model_invoking(messages)
+        await provider.invoking(messages)
 
         call_args = mock_mem0_client.search.call_args
         assert call_args.kwargs["query"] == "Valid message"
 
     async def test_model_invoking_custom_context_prompt(self, mock_mem0_client: AsyncMock) -> None:
-        """Test model_invoking with custom context prompt."""
+        """Test invoking with custom context prompt."""
         custom_prompt = "## Custom Context\nRemember these details:"
         provider = Mem0Provider(
             user_id="user123",
@@ -435,7 +435,7 @@ class TestMem0ProviderModelInvoking:
 
         mock_mem0_client.search.return_value = [{"memory": "Test memory"}]
 
-        context = await provider.model_invoking(message)
+        context = await provider.invoking(message)
 
         expected_instructions = "## Custom Context\nRemember these details:\nTest memory"
         assert context.messages

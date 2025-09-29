@@ -760,7 +760,7 @@ class ChatAgent(BaseAgent):
 
         Args:
             service_thread_id: Optional service managed thread ID.
-            kwargs: not used.
+            kwargs: not used at present.
         """
         if service_thread_id is not None:
             return AgentThread(

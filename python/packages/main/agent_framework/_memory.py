@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import MutableSequence, Sequence
 from contextlib import AsyncExitStack
 from types import TracebackType
-from typing import Final, cast
+from typing import Any, Final, cast
 
 from ._tools import ToolProtocol
 from ._types import ChatMessage
@@ -92,7 +92,7 @@ class ContextProvider(ABC):
         pass
 
     @abstractmethod
-    async def model_invoking(self, messages: ChatMessage | MutableSequence[ChatMessage]) -> Context:
+    async def invoking(self, messages: ChatMessage | MutableSequence[ChatMessage], **kwargs: Any) -> Context:
         """Called just before the Model/Agent/etc. is invoked.
 
         Implementers can load any additional context required at this time,
@@ -100,6 +100,7 @@ class ContextProvider(ABC):
 
         Args:
             messages: The most recent messages that the agent is being invoked with.
+            kwargs: not used at present.
         """
         pass
 
@@ -169,18 +170,19 @@ class AggregateContextProvider(ContextProvider):
         await asyncio.gather(*[x.messages_adding(thread_id, new_messages) for x in self.providers])
 
     @override
-    async def model_invoking(self, messages: ChatMessage | MutableSequence[ChatMessage]) -> Context:
+    async def invoking(self, messages: ChatMessage | MutableSequence[ChatMessage], **kwargs: Any) -> Context:
         """Called just before the Model/Agent/etc. is invoked.
 
         This calls all context providers stored in this aggregate provider.
 
         Args:
             messages: The most recent messages that the agent is being invoked with.
+            kwargs: not used at present.
 
         Returns:
             Context object containing the contents from all context providers.
         """
-        contexts = await asyncio.gather(*[provider.model_invoking(messages) for provider in self.providers])
+        contexts = await asyncio.gather(*[provider.invoking(messages, **kwargs) for provider in self.providers])
         instructions: str = ""
         return_messages: list[ChatMessage] = []
         tools: list[ToolProtocol] = []
