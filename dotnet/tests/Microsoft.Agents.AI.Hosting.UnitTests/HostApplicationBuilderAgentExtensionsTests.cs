@@ -2,6 +2,7 @@
 
 using System;
 using System.Linq;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Moq;
@@ -324,5 +325,31 @@ public class HostApplicationBuilderAgentExtensionsTests
         var exception = Assert.Throws<ArgumentException>(() =>
             builder.AddAIAgent(name, "instructions"));
         Assert.Contains("Invalid type", exception.Message);
+    }
+
+    /// <summary>
+    /// Verifies that AddAIAgent with tools parameter registers the agent with tools.
+    /// </summary>
+    [Fact]
+    public void AddAIAgent_WithTools_RegistersAgentWithTools()
+    {
+        // Arrange
+        var builder = new HostApplicationBuilder();
+        var tool1 = new Mock<AIFunction>().Object;
+        var tool2 = new Mock<AIFunction>().Object;
+        const string AgentName = "agentWithTools";
+        const string Instructions = "instructions";
+        const string Description = "desc";
+        object? chatClientServiceKey = null;
+
+        // Act
+        builder.AddAIAgent(AgentName, Instructions, Description, chatClientServiceKey, tool1, tool2);
+
+        // Assert
+        var descriptor = builder.Services.FirstOrDefault(
+            d => (d.ServiceKey as string) == AgentName &&
+                    d.ServiceType == typeof(AIAgent));
+        Assert.NotNull(descriptor);
+        Assert.Equal(ServiceLifetime.Singleton, descriptor.Lifetime);
     }
 }
