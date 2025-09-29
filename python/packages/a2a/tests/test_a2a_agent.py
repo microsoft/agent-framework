@@ -397,7 +397,6 @@ async def test_context_manager_no_cleanup_when_no_http_client() -> None:
 
     agent = A2AAgent(client=mock_a2a_client)  # type: ignore[arg-type]
     agent.client = mock_a2a_client  # type: ignore[assignment]  # type: ignore[arg-type]
-    agent.client = mock_a2a_client  # type: ignore[assignment]
 
     # This should not raise any errors
     async with agent:
