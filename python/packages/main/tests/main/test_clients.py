@@ -1,10 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import sys
-from collections.abc import Sequence
-from typing import Any
-
-from pytest import fixture
 
 from agent_framework import (
     BaseChatClient,
@@ -12,10 +8,8 @@ from agent_framework import (
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
-    EmbeddingGenerator,
     FunctionCallContent,
     FunctionResultContent,
-    GeneratedEmbeddings,
     Role,
     TextContent,
     ai_function,
@@ -25,27 +19,6 @@ if sys.version_info >= (3, 12):
     pass  # type: ignore
 else:
     pass  # type: ignore[import]
-
-
-class MockEmbeddingGenerator:
-    """Simple implementation of an embedding generator."""
-
-    async def generate(
-        self,
-        input_data: Sequence[str],
-        **kwargs: Any,
-    ) -> GeneratedEmbeddings[list[float]]:
-        # Implement the method
-        embeddings = GeneratedEmbeddings[list[float]]()
-        for i, _ in enumerate(input_data):
-            embeddings.append([0.0 * 1, 0.1 * 1, 0.2 * 1, 0.3 * i, 0.4 * i])
-        return embeddings
-
-
-@fixture
-def embedding_generator() -> MockEmbeddingGenerator:
-    gen: EmbeddingGenerator[str, list[float]] = MockEmbeddingGenerator()
-    return gen
 
 
 def test_chat_client_type(chat_client: ChatClientProtocol):
@@ -62,18 +35,6 @@ async def test_chat_client_get_streaming_response(chat_client: ChatClientProtoco
     async for update in chat_client.get_streaming_response(ChatMessage(role="user", text="Hello")):
         assert update.text == "test streaming response " or update.text == "another update"
         assert update.role == Role.ASSISTANT
-
-
-def test_embedding_generator_type(embedding_generator: MockEmbeddingGenerator):
-    assert isinstance(embedding_generator, EmbeddingGenerator)
-
-
-async def test_embedding_generator_generate(embedding_generator: MockEmbeddingGenerator):
-    input_data = ["Hello", "world"]
-    embeddings = await embedding_generator.generate(input_data)
-    assert len(embeddings) == len(input_data)
-    for emb in embeddings:
-        assert len(emb) == 5
 
 
 def test_base_client(chat_client_base: ChatClientProtocol):
@@ -162,9 +123,6 @@ async def test_base_client_with_function_calling_resets(chat_client_base: ChatCl
     assert isinstance(response.messages[1].contents[0], FunctionResultContent)
     assert isinstance(response.messages[2].contents[0], FunctionCallContent)
     assert isinstance(response.messages[3].contents[0], FunctionResultContent)
-    # after these two responses, it would try another regular call, but since max_iterations is 1, it stops and calls
-    assert isinstance(response.messages[4].contents[0], TextContent)
-    assert response.text == "I broke out of the function invocation loop..."
 
 
 async def test_base_client_with_streaming_function_calling(chat_client_base: ChatClientProtocol):

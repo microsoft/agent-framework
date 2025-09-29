@@ -9,10 +9,7 @@ import uuid
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from typing import Any
 
-from pydantic import Field
-
 from .._agents import AgentProtocol
-from .._pydantic import AFBaseModel
 from ..observability import OtelAttr, capture_exception, create_workflow_span
 from ._agent import WorkflowAgent
 from ._checkpoint import CheckpointStorage
@@ -40,6 +37,7 @@ from ._events import (
     _framework_event_origin,  # type: ignore
 )
 from ._executor import AgentExecutor, Executor, RequestInfoExecutor
+from ._model_utils import DictConvertible
 from ._runner import Runner
 from ._runner_context import InProcRunnerContext, RunnerContext
 from ._shared_state import SharedState
@@ -116,7 +114,7 @@ class WorkflowRunResult(list[WorkflowEvent]):
 # region Workflow
 
 
-class Workflow(AFBaseModel):
+class Workflow(DictConvertible):
     """A graph-based execution engine that orchestrates connected executors.
 
     ## Overview
@@ -167,20 +165,6 @@ class Workflow(AFBaseModel):
     When invoked, the WorkflowExecutor runs the nested workflow to completion and processes its outputs.
     """
 
-    edge_groups: list[EdgeGroup] = Field(
-        default_factory=list, description="List of edge groups that define the workflow edges"
-    )
-    executors: dict[str, Executor] = Field(
-        default_factory=dict, description="Dictionary mapping executor IDs to Executor instances"
-    )
-    start_executor_id: str = Field(min_length=1, description="The ID of the starting executor for the workflow")
-    max_iterations: int = Field(
-        default=DEFAULT_MAX_ITERATIONS, description="Maximum number of iterations the workflow will run"
-    )
-    id: str = Field(
-        default_factory=lambda: str(uuid.uuid4()), description="Unique identifier for this workflow instance"
-    )
-
     def __init__(
         self,
         edge_groups: list[EdgeGroup],
@@ -205,15 +189,11 @@ class Workflow(AFBaseModel):
 
         id = str(uuid.uuid4())
 
-        kwargs.update({
-            "edge_groups": edge_groups,
-            "executors": executors,
-            "start_executor_id": start_executor_id,
-            "max_iterations": max_iterations,
-            "id": id,
-        })
-
-        super().__init__(**kwargs)
+        self.edge_groups = list(edge_groups)
+        self.executors = dict(executors)
+        self.start_executor_id = start_executor_id
+        self.max_iterations = max_iterations
+        self.id = id
 
         # Store non-serializable runtime objects as private attributes
         self._runner_context = runner_context
@@ -246,35 +226,35 @@ class Workflow(AFBaseModel):
         """Reset the running flag."""
         self._is_running = False
 
-    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
-        """Custom serialization that properly handles WorkflowExecutor nested workflows."""
-        data = super().model_dump(**kwargs)
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the workflow definition into a JSON-ready dictionary."""
+        data: dict[str, Any] = {
+            "id": self.id,
+            "start_executor_id": self.start_executor_id,
+            "max_iterations": self.max_iterations,
+            "edge_groups": [group.to_dict() for group in self.edge_groups],
+            "executors": {executor_id: executor.to_dict() for executor_id, executor in self.executors.items()},
+        }
 
-        # Ensure WorkflowExecutor instances have their workflow field serialized
-        if "executors" in data:
-            executors_data = data["executors"]
-            for executor_id, executor_data in executors_data.items():
-                # Check if this is a WorkflowExecutor that might be missing its workflow field
-                if (
-                    isinstance(executor_data, dict)
-                    and executor_data.get("type") == "WorkflowExecutor"
-                    and "workflow" not in executor_data
-                ):
-                    # Get the original executor object and serialize its workflow
-                    original_executor = self.executors.get(executor_id)
-                    if original_executor and hasattr(original_executor, "workflow"):
-                        from ._workflow_executor import WorkflowExecutor
+        executors_data: dict[str, dict[str, Any]] = data.get("executors", {})
+        for executor_id, executor_payload in executors_data.items():
+            if (
+                isinstance(executor_payload, dict)
+                and executor_payload.get("type") == "WorkflowExecutor"
+                and "workflow" not in executor_payload
+            ):
+                original_executor = self.executors.get(executor_id)
+                if original_executor and hasattr(original_executor, "workflow"):
+                    from ._workflow_executor import WorkflowExecutor
 
-                        if isinstance(original_executor, WorkflowExecutor):
-                            executor_data["workflow"] = original_executor.workflow.model_dump(**kwargs)
+                    if isinstance(original_executor, WorkflowExecutor):
+                        executor_payload["workflow"] = original_executor.workflow.to_dict()
 
         return data
 
-    def model_dump_json(self, **kwargs: Any) -> str:
-        """Custom JSON serialization that properly handles WorkflowExecutor nested workflows."""
-        import json
-
-        return json.dumps(self.model_dump(**kwargs))
+    def to_json(self) -> str:
+        """Serialize the workflow definition to JSON."""
+        return json.dumps(self.to_dict())
 
     def get_start_executor(self) -> Executor:
         """Get the starting executor of the workflow.
@@ -567,7 +547,7 @@ class Workflow(AFBaseModel):
             self._reset_running_flag()
 
         # Coalesce streaming update events into a single AgentRunEvent per executor sequence.
-        coalesced: list[WorkflowEvent] = []  # type: ignore[name-defined]
+        coalesced: list[WorkflowEvent] = []
         pending_updates: list[AgentRunResponseUpdate] = []
         pending_executor: str | None = None
         status_events: list[WorkflowStatusEvent] = []
@@ -810,7 +790,7 @@ class Workflow(AFBaseModel):
             }
 
             if isinstance(group, FanOutEdgeGroup):
-                group_info["selection_func"] = group.selection_func_name
+                group_info["selection_func"] = getattr(group, "selection_func_name", None)
 
             edge_groups_signature.append(group_info)
 
@@ -975,7 +955,7 @@ class WorkflowBuilder:
         target_exec = self._maybe_wrap_agent(target)
         source_id = self._add_executor(source_exec)
         target_id = self._add_executor(target_exec)
-        self._edge_groups.append(SingleEdgeGroup(source_id, target_id, condition))
+        self._edge_groups.append(SingleEdgeGroup(source_id, target_id, condition))  # type: ignore[call-arg]
         return self
 
     def add_fan_out_edges(
@@ -995,7 +975,7 @@ class WorkflowBuilder:
         target_execs = [self._maybe_wrap_agent(t) for t in targets]
         source_id = self._add_executor(source_exec)
         target_ids = [self._add_executor(t) for t in target_execs]
-        self._edge_groups.append(FanOutEdgeGroup(source_id, target_ids))
+        self._edge_groups.append(FanOutEdgeGroup(source_id, target_ids))  # type: ignore[call-arg]
 
         return self
 
@@ -1033,7 +1013,7 @@ class WorkflowBuilder:
                 internal_cases.append(SwitchCaseEdgeGroupDefault(target_id=case.target.id))
             else:
                 internal_cases.append(SwitchCaseEdgeGroupCase(condition=case.condition, target_id=case.target.id))
-        self._edge_groups.append(SwitchCaseEdgeGroup(source_id, internal_cases))
+        self._edge_groups.append(SwitchCaseEdgeGroup(source_id, internal_cases))  # type: ignore[call-arg]
 
         return self
 
@@ -1061,7 +1041,7 @@ class WorkflowBuilder:
         target_execs = [self._maybe_wrap_agent(t) for t in targets]
         source_id = self._add_executor(source_exec)
         target_ids = [self._add_executor(t) for t in target_execs]
-        self._edge_groups.append(FanOutEdgeGroup(source_id, target_ids, selection_func))
+        self._edge_groups.append(FanOutEdgeGroup(source_id, target_ids, selection_func))  # type: ignore[call-arg]
 
         return self
 
@@ -1107,7 +1087,7 @@ class WorkflowBuilder:
         target_exec = self._maybe_wrap_agent(target)
         source_ids = [self._add_executor(s) for s in source_execs]
         target_id = self._add_executor(target_exec)
-        self._edge_groups.append(FanInEdgeGroup(source_ids, target_id))
+        self._edge_groups.append(FanInEdgeGroup(source_ids, target_id))  # type: ignore[call-arg]
 
         return self
 
@@ -1209,7 +1189,7 @@ class WorkflowBuilder:
                 )
                 span.set_attributes({
                     OtelAttr.WORKFLOW_ID: workflow.id,
-                    OtelAttr.WORKFLOW_DEFINITION: workflow.model_dump_json(by_alias=True),
+                    OtelAttr.WORKFLOW_DEFINITION: workflow.to_json(),
                 })
 
                 # Add workflow build completed event

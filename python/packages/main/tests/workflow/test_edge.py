@@ -44,8 +44,10 @@ class MockMessageSecondary:
 class MockExecutor(Executor):
     """A mock executor for testing purposes."""
 
-    call_count: int = 0
-    last_message: Any = None
+    def __init__(self, *, id: str) -> None:
+        super().__init__(id=id)
+        self.call_count: int = 0
+        self.last_message: MockMessage | None = None
 
     @handler
     async def mock_handler(self, message: MockMessage, ctx: WorkflowContext) -> None:
@@ -57,8 +59,10 @@ class MockExecutor(Executor):
 class MockExecutorSecondary(Executor):
     """A secondary mock executor for testing purposes."""
 
-    call_count: int = 0
-    last_message: Any = None
+    def __init__(self, *, id: str) -> None:
+        super().__init__(id=id)
+        self.call_count: int = 0
+        self.last_message: MockMessageSecondary | None = None
 
     @handler
     async def mock_handler_secondary(self, message: MockMessageSecondary, ctx: WorkflowContext) -> None:
@@ -70,8 +74,10 @@ class MockExecutorSecondary(Executor):
 class MockAggregator(Executor):
     """A mock aggregator for testing purposes."""
 
-    call_count: int = 0
-    last_message: Any = None
+    def __init__(self, *, id: str) -> None:
+        super().__init__(id=id)
+        self.call_count: int = 0
+        self.last_message: list[MockMessage] | list[MockMessageSecondary] | None = None
 
     @handler
     async def mock_aggregator_handler(self, message: list[MockMessage], ctx: WorkflowContext) -> None:
@@ -93,8 +99,10 @@ class MockAggregator(Executor):
 class MockAggregatorSecondary(Executor):
     """A mock aggregator that has a handler for a union type for testing purposes."""
 
-    call_count: int = 0
-    last_message: Any = None
+    def __init__(self, *, id: str) -> None:
+        super().__init__(id=id)
+        self.call_count: int = 0
+        self.last_message: list[MockMessage | MockMessageSecondary] | None = None
 
     @handler
     async def mock_aggregator_handler_combine(
