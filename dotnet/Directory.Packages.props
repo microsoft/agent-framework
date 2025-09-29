@@ -14,7 +14,6 @@
     <PackageVersion Include="Aspire.Azure.AI.OpenAI" Version="9.4.2-preview.1.25428.12" />
     <PackageVersion Include="Aspire.Hosting.AppHost" Version="9.4.2" />
     <PackageVersion Include="Aspire.Hosting.Azure.CognitiveServices" Version="9.4.2" />
-    <PackageVersion Include="Aspire.Hosting.Azure.CosmosDB" Version="9.4.2" />
     <PackageVersion Include="Aspire.Microsoft.Azure.Cosmos" Version="9.4.2" />
     <PackageVersion Include="Aspire.Hosting.Testing" Version="9.4.2" />
     <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.5" />
