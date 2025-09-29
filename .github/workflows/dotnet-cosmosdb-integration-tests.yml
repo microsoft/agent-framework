@@ -10,7 +10,7 @@ on:
     branches: ["main", "feature*"]
     paths:
       - dotnet/tests/CosmosDB.IntegrationTests/**
-      - dotnet/src/Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB/**
+      - dotnet/src/Microsoft.Agents.AI.Runtime.Storage.CosmosDB/**
       - '.github/workflows/dotnet-cosmosdb-integration-tests.yml'
   merge_group:
     branches: ["main"]
@@ -18,7 +18,7 @@ on:
     branches: ["main", "feature*"]
     paths:
       - dotnet/tests/CosmosDB.IntegrationTests/**
-      - dotnet/src/Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB/**
+      - dotnet/src/Microsoft.Agents.AI.Runtime.Storage.CosmosDB/**
       - '.github/workflows/dotnet-cosmosdb-integration-tests.yml'
   schedule:
     - cron: "0 2 * * *" # Run at 2 AM UTC daily
@@ -92,7 +92,7 @@ jobs:
 
           # Change to project directory to ensure local nuget.config is used
           pushd consoleapp
-          dotnet add packcheck.csproj package Microsoft.Extensions.AI.Agents --prerelease
+          dotnet add packcheck.csproj package Microsoft.Agents.AI --prerelease
           dotnet build -f ${{ matrix.targetFramework }} -c ${{ matrix.configuration }} packcheck.csproj
 
           # Clean up
@@ -133,7 +133,7 @@ jobs:
         shell: bash
         run: |
           # Run the specific CosmosDB integration tests
-          dotnet test ./dotnet/tests/CosmosDB.IntegrationTests/Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.Tests/Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB.Tests.csproj \
+          dotnet test ./dotnet/tests/CosmosDB.IntegrationTests/Microsoft.Agents.AI.Runtime.Storage.CosmosDB.Tests/Microsoft.Agents.AI.Runtime.Storage.CosmosDB.Tests.csproj \
           -f ${{ matrix.targetFramework }} \
           -c ${{ matrix.configuration }} \
           --no-build \

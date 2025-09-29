@@ -3,7 +3,6 @@
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic import Field
 from typing_extensions import Never
 
 from agent_framework import (
@@ -62,13 +61,10 @@ def create_email_validation_workflow() -> Workflow:
 class BasicParent(Executor):
     """Basic parent executor for simple sub-workflow tests."""
 
-    result: ValidationResult | None = Field(default=None)
-    cache: dict[str, bool] = Field(default_factory=dict)
-
-    def __init__(self, cache: dict[str, bool] | None = None, **kwargs: Any):
-        if cache is not None:
-            kwargs["cache"] = cache
-        super().__init__(id="basic_parent", **kwargs)
+    def __init__(self, cache: dict[str, bool] | None = None) -> None:
+        super().__init__(id="basic_parent")
+        self.result: ValidationResult | None = None
+        self.cache: dict[str, bool] = dict(cache) if cache is not None else {}
 
     @handler
     async def start(self, email: str, ctx: WorkflowContext[EmailValidationRequest]) -> None:
@@ -140,13 +136,12 @@ class EmailValidator(Executor):
 class ParentOrchestrator(Executor):
     """Parent workflow orchestrator with domain knowledge."""
 
-    approved_domains: set[str] = Field(default_factory=lambda: {"example.com", "test.org"})
-    results: list[ValidationResult] = Field(default_factory=list)
-
-    def __init__(self, approved_domains: set[str] | None = None, **kwargs: Any):
-        if approved_domains is not None:
-            kwargs["approved_domains"] = approved_domains
-        super().__init__(id="parent_orchestrator", **kwargs)
+    def __init__(self, approved_domains: set[str] | None = None) -> None:
+        super().__init__(id="parent_orchestrator")
+        self.approved_domains: set[str] = (
+            set(approved_domains) if approved_domains is not None else {"example.com", "test.org"}
+        )
+        self.results: list[ValidationResult] = []
 
     @handler
     async def start(self, emails: list[str], ctx: WorkflowContext[EmailValidationRequest]) -> None:
@@ -278,10 +273,9 @@ async def test_workflow_scoped_interception() -> None:
     class MultiWorkflowParent(Executor):
         """Parent handling multiple sub-workflows."""
 
-        results: dict[str, ValidationResult] = Field(default_factory=dict)
-
-        def __init__(self, **kwargs: Any):
-            super().__init__(id="multi_parent", **kwargs)
+        def __init__(self) -> None:
+            super().__init__(id="multi_parent")
+            self.results: dict[str, ValidationResult] = {}
 
         @handler
         async def start(self, data: dict[str, str], ctx: WorkflowContext[EmailValidationRequest]) -> None:
@@ -362,10 +356,9 @@ async def test_concurrent_sub_workflow_execution() -> None:
     class ConcurrentProcessor(Executor):
         """Processor that sends multiple concurrent requests to the same sub-workflow."""
 
-        results: list[ValidationResult] = Field(default_factory=list)
-
-        def __init__(self, **kwargs: Any):
-            super().__init__(id="concurrent_processor", **kwargs)
+        def __init__(self) -> None:
+            super().__init__(id="concurrent_processor")
+            self.results: list[ValidationResult] = []
 
         @handler
         async def start(self, emails: list[str], ctx: WorkflowContext[EmailValidationRequest]) -> None:

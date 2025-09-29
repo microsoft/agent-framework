@@ -3,7 +3,7 @@
 import json
 import os
 import sys
-from collections.abc import AsyncIterable, MutableMapping, MutableSequence
+from collections.abc import AsyncIterable, MutableMapping, MutableSequence, Sequence
 from typing import Any, ClassVar, TypeVar
 
 from agent_framework import (
@@ -14,7 +14,6 @@ from agent_framework import (
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
-    ChatToolMode,
     Contents,
     DataContent,
     FunctionApprovalRequestContent,
@@ -29,6 +28,7 @@ from agent_framework import (
     HostedWebSearchTool,
     Role,
     TextContent,
+    ToolMode,
     ToolProtocol,
     UriContent,
     UsageContent,
@@ -269,7 +269,8 @@ class AzureAIAgentClient(BaseChatClient):
         **kwargs: Any,
     ) -> ChatResponse:
         return await ChatResponse.from_chat_response_generator(
-            updates=self._inner_get_streaming_response(messages=messages, chat_options=chat_options, **kwargs)
+            updates=self._inner_get_streaming_response(messages=messages, chat_options=chat_options, **kwargs),
+            output_format_type=chat_options.response_format,
         )
 
     async def _inner_get_streaming_response(
@@ -484,7 +485,7 @@ class AzureAIAgentClient(BaseChatClient):
                                     raw_representation=event_data,
                                     response_id=response_id,
                                     role=Role.ASSISTANT,
-                                    ai_model_id=event_data.model,
+                                    model_id=event_data.model,
                                 )
 
                     case RunStep():
@@ -629,7 +630,7 @@ class AzureAIAgentClient(BaseChatClient):
 
         if chat_options is not None:
             run_options["max_completion_tokens"] = chat_options.max_tokens
-            run_options["model"] = chat_options.ai_model_id
+            run_options["model"] = chat_options.model_id
             run_options["top_p"] = chat_options.top_p
             run_options["temperature"] = chat_options.temperature
             run_options["parallel_tool_calls"] = chat_options.allow_multiple_tool_calls
@@ -645,7 +646,7 @@ class AzureAIAgentClient(BaseChatClient):
                 elif chat_options.tool_choice == "auto":
                     run_options["tool_choice"] = AgentsToolChoiceOptionMode.AUTO
                 elif (
-                    isinstance(chat_options.tool_choice, ChatToolMode)
+                    isinstance(chat_options.tool_choice, ToolMode)
                     and chat_options.tool_choice == "required"
                     and chat_options.tool_choice.required_function_name is not None
                 ):
@@ -662,7 +663,7 @@ class AzureAIAgentClient(BaseChatClient):
                     )
                 )
 
-        instructions: list[str] = []
+        instructions: list[str] = [chat_options.instructions] if chat_options and chat_options.instructions else []
         required_action_results: list[FunctionResultContent | FunctionApprovalResponseContent] | None = None
 
         additional_messages: list[ThreadMessageOptions] | None = None
@@ -710,7 +711,7 @@ class AzureAIAgentClient(BaseChatClient):
         return run_options, required_action_results
 
     async def _prep_tools(
-        self, tools: list["ToolProtocol | MutableMapping[str, Any]"], run_options: dict[str, Any] | None = None
+        self, tools: Sequence["ToolProtocol | MutableMapping[str, Any]"], run_options: dict[str, Any] | None = None
     ) -> list[ToolDefinition | dict[str, Any]]:
         """Prepare tool definitions for the run options."""
         tool_definitions: list[ToolDefinition | dict[str, Any]] = []
@@ -868,7 +869,11 @@ class AzureAIAgentClient(BaseChatClient):
                     )
                     results: list[Any] = []
                     for item in result_contents:
-                        if isinstance(item, BaseModel):
+                        if isinstance(item, Contents):
+                            results.append(
+                                json.dumps(item.to_dict(exclude={"raw_representation", "additional_properties"}))
+                            )
+                        elif isinstance(item, BaseModel):
                             results.append(item.model_dump_json())
                         else:
                             results.append(json.dumps(item))

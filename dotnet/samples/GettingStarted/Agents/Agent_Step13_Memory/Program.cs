@@ -52,7 +52,7 @@ Console.WriteLine(await agent.RunAsync("My name is Ruaidhrí", thread));
 Console.WriteLine(await agent.RunAsync("I am 20 years old", thread));
 
 // We can serialize the thread. The serialized state will include the state of the memory component.
-var threadElement = await thread.SerializeAsync();
+var threadElement = thread.Serialize();
 
 Console.WriteLine("\n>> Use deserialized thread with previously created memories\n");
 
@@ -148,9 +148,9 @@ namespace SampleApp
             });
         }
 
-        public override ValueTask<JsonElement?> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
         {
-            return new ValueTask<JsonElement?>(JsonSerializer.SerializeToElement(this.UserInfo, jsonSerializerOptions));
+            return JsonSerializer.SerializeToElement(this.UserInfo, jsonSerializerOptions);
         }
     }
 

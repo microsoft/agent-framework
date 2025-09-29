@@ -4,7 +4,8 @@ import asyncio
 import logging
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from typing import Any
+from collections.abc import Callable
+from typing import Any, cast
 
 from ..observability import EdgeGroupDeliveryStatus, OtelAttr, create_edge_group_processing_span
 from ._edge import Edge, EdgeGroup, FanInEdgeGroup, FanOutEdgeGroup, SingleEdgeGroup, SwitchCaseEdgeGroup
@@ -145,9 +146,11 @@ class FanOutEdgeRunner(EdgeRunner):
     def __init__(self, edge_group: FanOutEdgeGroup, executors: dict[str, Executor]) -> None:
         super().__init__(edge_group, executors)
         self._edges = edge_group.edges
-        self._target_ids = edge_group.target_ids
+        self._target_ids = edge_group.target_executor_ids
         self._target_map = {edge.target_id: edge for edge in self._edges}
-        self._selection_func = edge_group.selection_func
+        self._selection_func = cast(
+            Callable[[Any, list[str]], list[str]] | None, getattr(edge_group, "selection_func", None)
+        )
 
     async def send_message(self, message: Message, shared_state: SharedState, ctx: RunnerContext) -> bool:
         """Send a message through all edges in the fan-out edge group."""

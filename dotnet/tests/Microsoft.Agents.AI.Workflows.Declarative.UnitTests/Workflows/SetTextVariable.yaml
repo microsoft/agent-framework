@@ -1,0 +1,11 @@
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: my_workflow
+  actions:
+
+    - kind: SetTextVariable
+      id: set_text
+      variable: Local.TestVar
+      value: Test content

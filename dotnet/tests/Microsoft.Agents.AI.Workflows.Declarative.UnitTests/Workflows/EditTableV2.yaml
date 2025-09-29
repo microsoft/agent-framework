@@ -1,0 +1,18 @@
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: my_workflow
+  actions:
+
+    - kind: SetVariable
+      id: set_var
+      variable: Local.MyTable
+      value: =[{id: 3}]
+
+    - kind: EditTableV2
+      id: edit_var
+      itemsVariable: Local.MyTable
+      changeType:
+        kind: AddItemOperation
+        value: ={id: 7}

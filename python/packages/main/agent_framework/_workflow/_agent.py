@@ -1,12 +1,12 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import json
 import logging
 import uuid
 from collections.abc import AsyncIterable, Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, cast
-
-from pydantic import Field
 
 from agent_framework import (
     AgentRunResponse,
@@ -21,7 +21,6 @@ from agent_framework import (
     UsageDetails,
 )
 
-from .._pydantic import AFBaseModel
 from ..exceptions import AgentExecutionException
 from ._events import (
     AgentRunUpdateEvent,
@@ -41,14 +40,27 @@ class WorkflowAgent(BaseAgent):
     # Class variable for the request info function name
     REQUEST_INFO_FUNCTION_NAME: ClassVar[str] = "request_info"
 
-    class RequestInfoFunctionArgs(AFBaseModel):
+    @dataclass
+    class RequestInfoFunctionArgs:
         request_id: str
         data: Any
 
-    workflow: "Workflow" = Field(description="The workflow wrapped as an agent")
-    pending_requests: dict[str, RequestInfoEvent] = Field(
-        default_factory=dict, description="Pending request info events"
-    )
+        def to_dict(self) -> dict[str, Any]:
+            return {"request_id": self.request_id, "data": self.data}
+
+        def to_json(self) -> str:
+            return json.dumps(self.to_dict())
+
+        @classmethod
+        def from_dict(cls, payload: dict[str, Any]) -> "WorkflowAgent.RequestInfoFunctionArgs":
+            return cls(request_id=payload.get("request_id", ""), data=payload.get("data"))
+
+        @classmethod
+        def from_json(cls, raw: str) -> "WorkflowAgent.RequestInfoFunctionArgs":
+            data = json.loads(raw)
+            if not isinstance(data, dict):
+                raise ValueError("RequestInfoFunctionArgs JSON payload must decode to a mapping")
+            return cls.from_dict(data)
 
     def __init__(
         self,
@@ -71,8 +83,6 @@ class WorkflowAgent(BaseAgent):
         if id is None:
             id = f"WorkflowAgent_{uuid.uuid4().hex[:8]}"
         # Initialize with standard BaseAgent parameters first
-        kwargs["workflow"] = workflow
-
         # Validate the workflow's start executor can handle agent-facing message inputs
         try:
             start_executor = workflow.get_start_executor()
@@ -83,6 +93,16 @@ class WorkflowAgent(BaseAgent):
             raise ValueError("Workflow's start executor cannot handle list[ChatMessage]")
 
         super().__init__(id=id, name=name, description=description, **kwargs)
+        self._workflow: "Workflow" = workflow
+        self._pending_requests: dict[str, RequestInfoEvent] = {}
+
+    @property
+    def workflow(self) -> "Workflow":
+        return self._workflow
+
+    @property
+    def pending_requests(self) -> dict[str, RequestInfoEvent]:
+        return self._pending_requests
 
     async def run(
         self,
@@ -116,8 +136,7 @@ class WorkflowAgent(BaseAgent):
         response = self.merge_updates(response_updates, response_id)
 
         # Notify thread of new messages (both input and response messages)
-        await self._notify_thread_of_new_messages(thread, input_messages)
-        await self._notify_thread_of_new_messages(thread, response.messages)
+        await self._notify_thread_of_new_messages(thread, input_messages, response.messages)
 
         return response
 
@@ -151,8 +170,7 @@ class WorkflowAgent(BaseAgent):
         response = self.merge_updates(response_updates, response_id)
 
         # Notify thread of new messages (both input and response messages)
-        await self._notify_thread_of_new_messages(thread, input_messages)
-        await self._notify_thread_of_new_messages(thread, response.messages)
+        await self._notify_thread_of_new_messages(thread, input_messages, response.messages)
 
     async def _run_stream_impl(
         self,
@@ -248,7 +266,7 @@ class WorkflowAgent(BaseAgent):
                 function_call = FunctionCallContent(
                     call_id=request_id,
                     name=self.REQUEST_INFO_FUNCTION_NAME,
-                    arguments=self.RequestInfoFunctionArgs(request_id=request_id, data=event.data).model_dump(),
+                    arguments=self.RequestInfoFunctionArgs(request_id=request_id, data=event.data).to_dict(),
                 )
                 return AgentRunResponseUpdate(
                     contents=[function_call],

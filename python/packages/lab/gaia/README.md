@@ -3,12 +3,14 @@
 The GAIA benchmark can be used for evaluating agents and workflows built using the Agent Framework.
 It includes built-in benchmarks as well as utilities for running custom evaluations.
 
+> **Note**: This module is part of the consolidated `agent-framework-lab` package. Install the package with the `gaia` extra to use this module.
+
 ## Setup
 
-Use `uv` to install the package with GAIA dependencies:
+Install the agent-framework-lab package with GAIA dependencies:
 
 ```bash
-uv pip install "agent-framework-lab-gaia"
+pip install "agent-framework-lab[gaia]"
 ```
 
 Set up Hugging Face token:

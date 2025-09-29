@@ -45,7 +45,7 @@ async def main() -> None:
                 "Use the Bing search tool to find up-to-date information and provide accurate, "
                 "well-sourced answers. Always cite your sources when possible."
             ),
-            tools=[bing_search_tool],
+            tools=bing_search_tool,
         ) as agent,
     ):
         # 4. Demonstrate agent capabilities with web search

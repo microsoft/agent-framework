@@ -55,7 +55,7 @@ async def main() -> None:
                 "You are a helpful assistant that can search through uploaded employee files "
                 "to answer questions about employees."
             ),
-            tools=[file_search_tool],
+            tools=file_search_tool,
         ) as agent:
             # 4. Simulate conversation with the agent
             for user_input in USER_INPUTS:

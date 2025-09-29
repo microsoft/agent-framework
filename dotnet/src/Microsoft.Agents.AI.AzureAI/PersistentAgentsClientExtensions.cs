@@ -17,12 +17,14 @@ public static class PersistentAgentsClientExtensions
     /// <returns>A <see cref="ChatClientAgent"/> for the persistent agent.</returns>
     /// <param name="agentId"> The ID of the server side agent to create a <see cref="ChatClientAgent"/> for.</param>
     /// <param name="chatOptions">Options that should apply to all runs of the agent.</param>
+    /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the persistent agent.</returns>
     public static ChatClientAgent GetAIAgent(
         this PersistentAgentsClient persistentAgentsClient,
         string agentId,
         ChatOptions? chatOptions = null,
+        Func<IChatClient, IChatClient>? clientFactory = null,
         CancellationToken cancellationToken = default)
     {
         if (persistentAgentsClient is null)
@@ -36,7 +38,7 @@ public static class PersistentAgentsClientExtensions
         }
 
         var persistentAgentResponse = persistentAgentsClient.Administration.GetAgent(agentId, cancellationToken);
-        return persistentAgentResponse.AsAIAgent(persistentAgentsClient, chatOptions);
+        return persistentAgentResponse.AsAIAgent(persistentAgentsClient, chatOptions, clientFactory);
     }
 
     /// <summary>
@@ -46,12 +48,14 @@ public static class PersistentAgentsClientExtensions
     /// <returns>A <see cref="ChatClientAgent"/> for the persistent agent.</returns>
     /// <param name="agentId"> The ID of the server side agent to create a <see cref="ChatClientAgent"/> for.</param>
     /// <param name="chatOptions">Options that should apply to all runs of the agent.</param>
+    /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the persistent agent.</returns>
     public static async Task<ChatClientAgent> GetAIAgentAsync(
         this PersistentAgentsClient persistentAgentsClient,
         string agentId,
         ChatOptions? chatOptions = null,
+        Func<IChatClient, IChatClient>? clientFactory = null,
         CancellationToken cancellationToken = default)
     {
         if (persistentAgentsClient is null)
@@ -65,7 +69,7 @@ public static class PersistentAgentsClientExtensions
         }
 
         var persistentAgentResponse = await persistentAgentsClient.Administration.GetAgentAsync(agentId, cancellationToken).ConfigureAwait(false);
-        return persistentAgentResponse.AsAIAgent(persistentAgentsClient, chatOptions);
+        return persistentAgentResponse.AsAIAgent(persistentAgentsClient, chatOptions, clientFactory);
     }
 
     /// <summary>
@@ -82,6 +86,7 @@ public static class PersistentAgentsClientExtensions
     /// <param name="topP">The top-p setting for the agent.</param>
     /// <param name="responseFormat">The response format for the agent.</param>
     /// <param name="metadata">The metadata for the agent.</param>
+    /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the newly created agent.</returns>
     public static async Task<ChatClientAgent> CreateAIAgentAsync(
@@ -96,6 +101,7 @@ public static class PersistentAgentsClientExtensions
         float? topP = null,
         BinaryData? responseFormat = null,
         IReadOnlyDictionary<string, string>? metadata = null,
+        Func<IChatClient, IChatClient>? clientFactory = null,
         CancellationToken cancellationToken = default)
     {
         if (persistentAgentsClient is null)
@@ -116,7 +122,7 @@ public static class PersistentAgentsClientExtensions
             cancellationToken: cancellationToken).ConfigureAwait(false);
 
         // Get a local proxy for the agent to work with.
-        return await persistentAgentsClient.GetAIAgentAsync(createPersistentAgentResponse.Value.Id, cancellationToken: cancellationToken).ConfigureAwait(false);
+        return await persistentAgentsClient.GetAIAgentAsync(createPersistentAgentResponse.Value.Id, clientFactory: clientFactory, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -133,6 +139,7 @@ public static class PersistentAgentsClientExtensions
     /// <param name="topP">The top-p setting for the agent.</param>
     /// <param name="responseFormat">The response format for the agent.</param>
     /// <param name="metadata">The metadata for the agent.</param>
+    /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the newly created agent.</returns>
     public static ChatClientAgent CreateAIAgent(
@@ -147,6 +154,7 @@ public static class PersistentAgentsClientExtensions
         float? topP = null,
         BinaryData? responseFormat = null,
         IReadOnlyDictionary<string, string>? metadata = null,
+        Func<IChatClient, IChatClient>? clientFactory = null,
         CancellationToken cancellationToken = default)
     {
         if (persistentAgentsClient is null)
@@ -167,7 +175,7 @@ public static class PersistentAgentsClientExtensions
             cancellationToken: cancellationToken);
 
         // Get a local proxy for the agent to work with.
-        return persistentAgentsClient.GetAIAgent(createPersistentAgentResponse.Value.Id, cancellationToken: cancellationToken);
+        return persistentAgentsClient.GetAIAgent(createPersistentAgentResponse.Value.Id, clientFactory: clientFactory, cancellationToken: cancellationToken);
     }
 
     /// <summary>

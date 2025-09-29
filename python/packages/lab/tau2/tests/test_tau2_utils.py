@@ -2,19 +2,30 @@
 
 """Tests for tau2 utils module."""
 
-from typing import Any, cast
-from pydantic import BaseModel
-
+import pytest
 from agent_framework._tools import AIFunction
-from agent_framework._types import ChatMessage, Role, TextContent, FunctionCallContent, FunctionResultContent
+from agent_framework._types import ChatMessage, FunctionCallContent, FunctionResultContent, Role, TextContent
 from agent_framework_lab_tau2._tau2_utils import (
-    convert_tau2_tool_to_ai_function,
     convert_agent_framework_messages_to_tau2_messages,
+    convert_tau2_tool_to_ai_function,
 )
-from tau2.data_model.message import SystemMessage, UserMessage, AssistantMessage, ToolMessage, ToolCall
-from tau2.domains.airline.environment import get_environment
+from tau2.data_model.message import AssistantMessage, SystemMessage, ToolCall, ToolMessage, UserMessage
+
+# Try to import get_environment and handle missing data files
+try:
+    from tau2.domains.airline.environment import get_environment
+
+    # Try to initialize the environment to check if data files are available
+    try:
+        get_environment()
+        TAU2_DATA_AVAILABLE = True
+    except FileNotFoundError:
+        TAU2_DATA_AVAILABLE = False
+except ImportError:
+    TAU2_DATA_AVAILABLE = False
 
 
+@pytest.mark.skipif(not TAU2_DATA_AVAILABLE, reason="tau2 data files not available")
 def test_convert_tau2_tool_to_ai_function_basic():
     """Test basic conversion from tau2 tool to AIFunction."""
     # Get real tools from tau2 environment
@@ -38,6 +49,7 @@ def test_convert_tau2_tool_to_ai_function_basic():
     assert callable(ai_function.func)
 
 
+@pytest.mark.skipif(not TAU2_DATA_AVAILABLE, reason="tau2 data files not available")
 def test_convert_tau2_tool_to_ai_function_multiple_tools():
     """Test conversion with multiple tau2 tools."""
     # Get real tools from tau2 environment
@@ -48,7 +60,7 @@ def test_convert_tau2_tool_to_ai_function_multiple_tools():
     ai_functions = [convert_tau2_tool_to_ai_function(tool) for tool in tools[:3]]  # Test first 3 tools
 
     # Verify all conversions
-    for ai_function, tau2_tool in zip(ai_functions, tools[:3]):
+    for ai_function, tau2_tool in zip(ai_functions, tools[:3], strict=False):
         assert isinstance(ai_function, AIFunction)
         assert ai_function.name == tau2_tool.name
         assert ai_function.description == tau2_tool._get_description()

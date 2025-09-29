@@ -3,7 +3,7 @@
 import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, Callable, MutableMapping, MutableSequence, Sequence
-from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeVar, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar, runtime_checkable
 
 from pydantic import BaseModel, Field
 
@@ -18,15 +18,14 @@ from ._middleware import (
     Middleware,
 )
 from ._pydantic import AFBaseModel
-from ._threads import ChatMessageStore
+from ._threads import ChatMessageStoreProtocol
 from ._tools import ToolProtocol
 from ._types import (
     ChatMessage,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
-    ChatToolMode,
-    GeneratedEmbeddings,
+    ToolMode,
 )
 
 if TYPE_CHECKING:
@@ -42,7 +41,6 @@ logger = get_logger()
 __all__ = [
     "BaseChatClient",
     "ChatClientProtocol",
-    "EmbeddingGenerator",
 ]
 
 
@@ -73,7 +71,7 @@ class ChatClientProtocol(Protocol):
         stop: str | Sequence[str] | None = None,
         store: bool | None = None,
         temperature: float | None = None,
-        tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
+        tool_choice: ToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
         tools: ToolProtocol
         | Callable[..., Any]
         | MutableMapping[str, Any]
@@ -130,7 +128,7 @@ class ChatClientProtocol(Protocol):
         stop: str | Sequence[str] | None = None,
         store: bool | None = None,
         temperature: float | None = None,
-        tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
+        tool_choice: ToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
         tools: ToolProtocol
         | Callable[..., Any]
         | MutableMapping[str, Any]
@@ -207,10 +205,24 @@ class BaseChatClient(AFBaseModel, ABC):
     # This is used for OTel setup, should be overridden in subclasses
 
     def prepare_messages(
-        self, messages: str | ChatMessage | list[str] | list[ChatMessage]
+        self, messages: str | ChatMessage | list[str] | list[ChatMessage], chat_options: ChatOptions
     ) -> MutableSequence[ChatMessage]:
         """Turn the allowed input into a list of chat messages."""
+        if chat_options.instructions:
+            system_msg = ChatMessage(role="system", text=chat_options.instructions)
+            return [system_msg, *prepare_messages(messages)]
         return prepare_messages(messages)
+
+    def _filter_internal_kwargs(self, kwargs: dict[str, Any]) -> dict[str, Any]:
+        """Filter out internal framework parameters that shouldn't be passed to chat client implementations.
+
+        Args:
+            kwargs: The original kwargs dictionary.
+
+        Returns:
+            A filtered kwargs dictionary without internal parameters.
+        """
+        return {k: v for k, v in kwargs.items() if not k.startswith("_")}
 
     @staticmethod
     def _normalize_tools(
@@ -296,7 +308,7 @@ class BaseChatClient(AFBaseModel, ABC):
         stop: str | Sequence[str] | None = None,
         store: bool | None = None,
         temperature: float | None = None,
-        tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
+        tool_choice: ToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
         tools: ToolProtocol
         | Callable[..., Any]
         | MutableMapping[str, Any]
@@ -340,7 +352,7 @@ class BaseChatClient(AFBaseModel, ABC):
                 raise TypeError("chat_options must be an instance of ChatOptions")
         else:
             chat_options = ChatOptions(
-                ai_model_id=model,
+                model_id=model,
                 frequency_penalty=frequency_penalty,
                 logit_bias=logit_bias,
                 max_tokens=max_tokens,
@@ -357,10 +369,11 @@ class BaseChatClient(AFBaseModel, ABC):
                 user=user,
                 additional_properties=additional_properties or {},
             )
-        prepped_messages = self.prepare_messages(messages)
+        prepped_messages = self.prepare_messages(messages, chat_options)
         self._prepare_tool_choice(chat_options=chat_options)
 
-        return await self._inner_get_response(messages=prepped_messages, chat_options=chat_options, **kwargs)
+        filtered_kwargs = self._filter_internal_kwargs(kwargs)
+        return await self._inner_get_response(messages=prepped_messages, chat_options=chat_options, **filtered_kwargs)
 
     async def get_streaming_response(
         self,
@@ -377,7 +390,7 @@ class BaseChatClient(AFBaseModel, ABC):
         stop: str | Sequence[str] | None = None,
         store: bool | None = None,
         temperature: float | None = None,
-        tool_choice: ChatToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
+        tool_choice: ToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
         tools: ToolProtocol
         | Callable[..., Any]
         | MutableMapping[str, Any]
@@ -420,7 +433,7 @@ class BaseChatClient(AFBaseModel, ABC):
                 raise TypeError("chat_options must be an instance of ChatOptions")
         else:
             chat_options = ChatOptions(
-                ai_model_id=model,
+                model_id=model,
                 frequency_penalty=frequency_penalty,
                 logit_bias=logit_bias,
                 max_tokens=max_tokens,
@@ -433,15 +446,16 @@ class BaseChatClient(AFBaseModel, ABC):
                 temperature=temperature,
                 top_p=top_p,
                 tool_choice=tool_choice,
-                tools=self._normalize_tools(tools),  # type: ignore
+                tools=self._normalize_tools(tools),
                 user=user,
                 additional_properties=additional_properties or {},
             )
-        prepped_messages = self.prepare_messages(messages)
+        prepped_messages = self.prepare_messages(messages, chat_options)
         self._prepare_tool_choice(chat_options=chat_options)
 
+        filtered_kwargs = self._filter_internal_kwargs(kwargs)
         async for update in self._inner_get_streaming_response(
-            messages=prepped_messages, chat_options=chat_options, **kwargs
+            messages=prepped_messages, chat_options=chat_options, **filtered_kwargs
         ):
             yield update
 
@@ -451,15 +465,15 @@ class BaseChatClient(AFBaseModel, ABC):
         This function should be overridden by subclasses to customize tool handling.
         Because it currently parses only AIFunctions.
         """
-        chat_tool_mode: ChatToolMode | None = chat_options.tool_choice  # type: ignore
-        if chat_tool_mode is None or chat_tool_mode == ChatToolMode.NONE:
+        chat_tool_mode = chat_options.tool_choice
+        if chat_tool_mode is None or chat_tool_mode == ToolMode.NONE or chat_tool_mode == "none":
             chat_options.tools = None
-            chat_options.tool_choice = ChatToolMode.NONE.mode
+            chat_options.tool_choice = ToolMode.NONE.mode
             return
         if not chat_options.tools:
-            chat_options.tool_choice = ChatToolMode.NONE.mode
+            chat_options.tool_choice = ToolMode.NONE.mode
         else:
-            chat_options.tool_choice = chat_tool_mode.mode
+            chat_options.tool_choice = chat_tool_mode.mode if isinstance(chat_tool_mode, ToolMode) else chat_tool_mode
 
     def service_url(self) -> str:
         """Get the URL of the service.
@@ -479,7 +493,7 @@ class BaseChatClient(AFBaseModel, ABC):
         | MutableMapping[str, Any]
         | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
-        chat_message_store_factory: Callable[[], ChatMessageStore] | None = None,
+        chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
         context_providers: ContextProvider | list[ContextProvider] | AggregateContextProvider | None = None,
         middleware: Middleware | list[Middleware] | None = None,
         **kwargs: Any,
@@ -490,8 +504,8 @@ class BaseChatClient(AFBaseModel, ABC):
             name: The name of the agent.
             instructions: The instructions for the agent.
             tools: Optional list of tools to associate with the agent.
-            chat_message_store_factory: Factory function to create an instance of ChatMessageStore. If not provided,
-                the default in-memory store will be used.
+            chat_message_store_factory: Factory function to create an instance of ChatMessageStoreProtocol.
+                If not provided, the default in-memory store will be used.
             context_providers: Context providers to include during agent invocation.
             middleware: List of middleware to intercept agent and function invocations.
             **kwargs: Additional keyword arguments to pass to the agent.
@@ -512,28 +526,3 @@ class BaseChatClient(AFBaseModel, ABC):
             middleware=middleware,
             **kwargs,
         )
-
-
-# region Embedding Client
-
-
-@runtime_checkable
-class EmbeddingGenerator(Protocol, Generic[TInput, TEmbedding]):
-    """A protocol for an embedding generator that can create embeddings from input data."""
-
-    async def generate(
-        self,
-        input_data: Sequence[TInput],
-        **kwargs: Any,
-    ) -> GeneratedEmbeddings[TEmbedding]:
-        """Generates an embedding for the given input data.
-
-        Args:
-            input_data: The input data to generate an embedding for.
-            **kwargs: Additional options for the request.
-
-        Returns:
-            The generated embedding, this acts like a list, but has additional metadata and usage details.
-
-        """
-        ...

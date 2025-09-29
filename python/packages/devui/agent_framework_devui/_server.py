@@ -2,6 +2,7 @@
 
 """FastAPI server implementation."""
 
+import json
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -156,8 +157,31 @@ class DevServer:
                     if entity_obj:
                         # Get workflow structure
                         workflow_dump = None
-                        if hasattr(entity_obj, "model_dump"):
-                            workflow_dump = entity_obj.model_dump()
+                        if hasattr(entity_obj, "to_dict") and callable(getattr(entity_obj, "to_dict", None)):
+                            try:
+                                workflow_dump = entity_obj.to_dict()  # type: ignore[attr-defined]
+                            except Exception:
+                                workflow_dump = None
+                        elif hasattr(entity_obj, "to_json") and callable(getattr(entity_obj, "to_json", None)):
+                            try:
+                                raw_dump = entity_obj.to_json()  # type: ignore[attr-defined]
+                            except Exception:
+                                workflow_dump = None
+                            else:
+                                if isinstance(raw_dump, (bytes, bytearray)):
+                                    try:
+                                        raw_dump = raw_dump.decode()
+                                    except Exception:
+                                        raw_dump = raw_dump.decode(errors="replace")
+                                if isinstance(raw_dump, str):
+                                    try:
+                                        parsed_dump = json.loads(raw_dump)
+                                    except Exception:
+                                        workflow_dump = raw_dump
+                                    else:
+                                        workflow_dump = parsed_dump if isinstance(parsed_dump, dict) else raw_dump
+                                else:
+                                    workflow_dump = raw_dump
                         elif hasattr(entity_obj, "__dict__"):
                             workflow_dump = {k: v for k, v in entity_obj.__dict__.items() if not k.startswith("_")}
 
@@ -192,16 +216,15 @@ class DevServer:
                             executor_list = [getattr(ex, "executor_id", str(ex)) for ex in entity_obj.executors]
 
                         # Create copy of entity info and populate workflow-specific fields
-                        enhanced_info = entity_info.model_copy()
-                        enhanced_info.workflow_dump = workflow_dump
-                        enhanced_info.input_schema = input_schema
-                        enhanced_info.input_type_name = input_type_name
-                        enhanced_info.start_executor_id = start_executor_id
-
-                        # Update executors field if we found better data
+                        update_payload: dict[str, Any] = {
+                            "workflow_dump": workflow_dump,
+                            "input_schema": input_schema,
+                            "input_type_name": input_type_name,
+                            "start_executor_id": start_executor_id,
+                        }
                         if executor_list:
-                            enhanced_info.executors = executor_list
-                        return enhanced_info
+                            update_payload["executors"] = executor_list
+                        return entity_info.model_copy(update=update_payload)
 
                 # For non-workflow entities, return as-is
                 return entity_info
@@ -227,7 +250,7 @@ class DevServer:
 
                 if not entity_id:
                     error = OpenAIError.create(f"Missing entity_id. Request extra_body: {request.extra_body}")
-                    return JSONResponse(status_code=400, content=error.model_dump())
+                    return JSONResponse(status_code=400, content=error.to_dict())
 
                 # Get executor and validate entity exists
                 executor = await self._ensure_executor()
@@ -236,7 +259,7 @@ class DevServer:
                     logger.info(f"Found entity: {entity_info.name} ({entity_info.type})")
                 except Exception:
                     error = OpenAIError.create(f"Entity not found: {entity_id}")
-                    return JSONResponse(status_code=404, content=error.model_dump())
+                    return JSONResponse(status_code=404, content=error.to_dict())
 
                 # Execute request
                 if request.stream:
@@ -254,7 +277,7 @@ class DevServer:
             except Exception as e:
                 logger.error(f"Error executing request: {e}")
                 error = OpenAIError.create(f"Execution failed: {e!s}")
-                return JSONResponse(status_code=500, content=error.model_dump())
+                return JSONResponse(status_code=500, content=error.to_dict())
 
         @app.post("/v1/threads")
         async def create_thread(request_data: dict[str, Any]) -> dict[str, Any]:
@@ -362,7 +385,16 @@ class DevServer:
         try:
             # Direct call to executor - simple and clean
             async for event in executor.execute_streaming(request):
-                yield f"data: {event.model_dump_json()}\n\n"
+                if hasattr(event, "to_json") and callable(getattr(event, "to_json", None)):
+                    payload = event.to_json()  # type: ignore[attr-defined]
+                elif hasattr(event, "model_dump_json"):
+                    payload = event.model_dump_json()  # type: ignore[attr-defined]
+                else:
+                    if hasattr(event, "to_dict") and callable(getattr(event, "to_dict", None)):
+                        payload = json.dumps(event.to_dict())  # type: ignore[attr-defined]
+                    else:
+                        payload = json.dumps(str(event))
+                yield f"data: {payload}\n\n"
 
             # Send final done event
             yield "data: [DONE]\n\n"
