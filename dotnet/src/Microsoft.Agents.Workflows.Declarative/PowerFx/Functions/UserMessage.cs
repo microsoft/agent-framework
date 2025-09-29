@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using Microsoft.Agents.Workflows.Declarative.Extensions;
 using Microsoft.Extensions.AI;
 using Microsoft.PowerFx;
 using Microsoft.PowerFx.Types;
@@ -18,6 +19,7 @@ internal sealed class UserMessage : ReflectionFunction
         string.IsNullOrEmpty(input.Value) ?
             FormulaValue.NewBlank(RecordType.Empty()) :
             FormulaValue.NewRecordFromFields(
+                new NamedValue(TypeSchema.Discriminator, nameof(ChatMessage).ToFormula()),
                 new NamedValue(TypeSchema.Message.Fields.Role, FormulaValue.New(ChatRole.User.Value)),
                 new NamedValue(
                     TypeSchema.Message.Fields.Content,

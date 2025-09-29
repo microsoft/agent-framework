@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Collections.Generic;
 using System.Text.Json.Serialization;
 
 namespace Microsoft.Agents.Workflows.Declarative.IntegrationTests.Framework;
@@ -50,10 +51,34 @@ public sealed class TestcaseInput
 public sealed class TestcaseValidation
 {
     [JsonConstructor]
-    public TestcaseValidation(int actionCount)
+    public TestcaseValidation(int minActionCount, int? maxActionCount = null, TestcaseValidationActions? actions = null)
     {
-        this.ActionCount = actionCount;
+        this.MinActionCount = minActionCount;
+        this.MaxActionCount = maxActionCount;
+        this.Actions = actions ?? new TestcaseValidationActions([]);
     }
 
-    public int ActionCount { get; }
+    public TestcaseValidationActions Actions { get; }
+    public int MinActionCount { get; }
+    public int? MaxActionCount { get; }
+}
+
+public sealed class TestcaseValidationActions
+{
+    [JsonConstructor]
+    public TestcaseValidationActions(IList<string> start, IList<string>? repeat = null, IList<string>? final = null)
+    {
+        this.Start = start;
+        this.Repeat = repeat ?? [];
+        this.Final = final ?? [];
+    }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public IList<string> Start { get; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public IList<string> Repeat { get; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public IList<string> Final { get; }
 }

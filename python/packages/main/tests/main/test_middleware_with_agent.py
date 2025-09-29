@@ -1505,9 +1505,13 @@ class TestChatAgentChatMiddleware:
             context: ChatContext, next: Callable[[ChatContext], Awaitable[None]]
         ) -> None:
             # Modify the first message by adding a prefix
-            if context.messages and len(context.messages) > 0:
-                original_text = context.messages[0].text or ""
-                context.messages[0] = ChatMessage(role=context.messages[0].role, text=f"MODIFIED: {original_text}")
+            if context.messages:
+                for idx, msg in enumerate(context.messages):
+                    if msg.role.value == "system":
+                        continue
+                    original_text = msg.text or ""
+                    context.messages[idx] = ChatMessage(role=msg.role, text=f"MODIFIED: {original_text}")
+                    break
             await next(context)
 
         # Create ChatAgent with message-modifying middleware
@@ -1519,8 +1523,7 @@ class TestChatAgentChatMiddleware:
         response = await agent.run(messages)
 
         # Verify that the message was modified (MockBaseChatClient echoes back the input)
-        assert response is not None
-        assert len(response.messages) > 0
+        assert response and response.messages
         assert "MODIFIED: test message" in response.messages[0].text
 
     async def test_chat_middleware_can_override_response(self) -> None:

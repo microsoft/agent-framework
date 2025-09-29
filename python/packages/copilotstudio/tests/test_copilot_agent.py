@@ -121,7 +121,6 @@ class TestCopilotStudioAgent:
             with pytest.raises(ServiceInitializationError, match="agent identifier"):
                 CopilotStudioAgent()
 
-    @pytest.mark.asyncio
     async def test_run_with_string_message(self, mock_copilot_client: MagicMock, mock_activity: MagicMock) -> None:
         """Test run method with string message."""
         agent = CopilotStudioAgent(client=mock_copilot_client)
@@ -141,7 +140,6 @@ class TestCopilotStudioAgent:
         assert content.text == "Test response"
         assert response.messages[0].role == Role.ASSISTANT
 
-    @pytest.mark.asyncio
     async def test_run_with_chat_message(self, mock_copilot_client: MagicMock, mock_activity: MagicMock) -> None:
         """Test run method with ChatMessage."""
         agent = CopilotStudioAgent(client=mock_copilot_client)
@@ -162,7 +160,6 @@ class TestCopilotStudioAgent:
         assert content.text == "Test response"
         assert response.messages[0].role == Role.ASSISTANT
 
-    @pytest.mark.asyncio
     async def test_run_with_thread(self, mock_copilot_client: MagicMock, mock_activity: MagicMock) -> None:
         """Test run method with existing thread."""
         agent = CopilotStudioAgent(client=mock_copilot_client)
@@ -180,7 +177,6 @@ class TestCopilotStudioAgent:
         assert len(response.messages) == 1
         assert thread.service_thread_id == "test-conversation-id"
 
-    @pytest.mark.asyncio
     async def test_run_start_conversation_failure(self, mock_copilot_client: MagicMock) -> None:
         """Test run method when conversation start fails."""
         agent = CopilotStudioAgent(client=mock_copilot_client)
@@ -190,7 +186,6 @@ class TestCopilotStudioAgent:
         with pytest.raises(ServiceException, match="Failed to start a new conversation"):
             await agent.run("test message")
 
-    @pytest.mark.asyncio
     async def test_run_stream_with_string_message(self, mock_copilot_client: MagicMock) -> None:
         """Test run_stream method with string message."""
         agent = CopilotStudioAgent(client=mock_copilot_client)
@@ -217,7 +212,6 @@ class TestCopilotStudioAgent:
 
         assert response_count == 1
 
-    @pytest.mark.asyncio
     async def test_run_stream_with_thread(self, mock_copilot_client: MagicMock) -> None:
         """Test run_stream method with existing thread."""
         agent = CopilotStudioAgent(client=mock_copilot_client)
@@ -246,7 +240,6 @@ class TestCopilotStudioAgent:
         assert response_count == 1
         assert thread.service_thread_id == "test-conversation-id"
 
-    @pytest.mark.asyncio
     async def test_run_stream_no_typing_activity(self, mock_copilot_client: MagicMock) -> None:
         """Test run_stream method with non-typing activity."""
         agent = CopilotStudioAgent(client=mock_copilot_client)
@@ -268,7 +261,6 @@ class TestCopilotStudioAgent:
 
         assert response_count == 0
 
-    @pytest.mark.asyncio
     async def test_run_multiple_activities(self, mock_copilot_client: MagicMock) -> None:
         """Test run method with multiple message activities."""
         agent = CopilotStudioAgent(client=mock_copilot_client)
@@ -296,7 +288,6 @@ class TestCopilotStudioAgent:
         assert isinstance(response, AgentRunResponse)
         assert len(response.messages) == 2
 
-    @pytest.mark.asyncio
     async def test_run_list_of_messages(self, mock_copilot_client: MagicMock, mock_activity: MagicMock) -> None:
         """Test run method with list of messages."""
         agent = CopilotStudioAgent(client=mock_copilot_client)
@@ -313,7 +304,6 @@ class TestCopilotStudioAgent:
         assert isinstance(response, AgentRunResponse)
         assert len(response.messages) == 1
 
-    @pytest.mark.asyncio
     async def test_run_stream_start_conversation_failure(self, mock_copilot_client: MagicMock) -> None:
         """Test run_stream method when conversation start fails."""
         agent = CopilotStudioAgent(client=mock_copilot_client)

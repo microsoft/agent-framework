@@ -29,7 +29,7 @@ from tau2.user.user_simulator import (  # type: ignore[import-untyped]
 from tau2.utils.utils import get_now  # type: ignore[import-untyped]
 
 from ._message_utils import flip_messages, log_messages
-from ._sliding_window import SlidingWindowChatMessageList
+from ._sliding_window import SlidingWindowChatMessageStore
 from ._tau2_utils import convert_agent_framework_messages_to_tau2_messages, convert_tau2_tool_to_ai_function
 
 # Agent instructions matching tau2's LLMAgent
@@ -196,7 +196,7 @@ class TaskRunner:
             instructions=assistant_system_prompt,
             tools=ai_functions,  # type: ignore
             temperature=self.assistant_sampling_temperature,
-            chat_message_store_factory=lambda: SlidingWindowChatMessageList(
+            chat_message_store_factory=lambda: SlidingWindowChatMessageStore(
                 system_message=assistant_system_prompt,
                 tool_definitions=[tool.openai_schema for tool in tools],
                 max_tokens=self.assistant_window_size,
@@ -352,7 +352,7 @@ class TaskRunner:
         # 2. The assistant's message store (not just the truncated window)
         # 3. The final user message (if any)
         assistant_executor = cast(AgentExecutor, self._assistant_executor)
-        message_store = cast(SlidingWindowChatMessageList, assistant_executor._agent_thread.message_store)
+        message_store = cast(SlidingWindowChatMessageStore, assistant_executor._agent_thread.message_store)
         full_conversation = [first_message] + await message_store.list_all_messages()
         if self._final_user_message is not None:
             full_conversation.extend(self._final_user_message)
