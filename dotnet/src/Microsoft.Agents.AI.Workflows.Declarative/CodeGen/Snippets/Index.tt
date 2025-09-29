@@ -1,0 +1,14 @@
+﻿<#@ import namespace="Microsoft.Agents.AI.Workflows.Declarative.Extensions" #>
+<#@ import namespace="Microsoft.Agents.AI.Workflows.Declarative.ObjectModel" #>
+<#@ import namespace="Microsoft.Bot.ObjectModel" #>
+<#@ import namespace="Microsoft.Extensions.AI" #>
+<#@ import namespace="System.Collections.Generic" #>
+<#@ include file="AssignVariableTemplate.tt" once="true" #>
+<#@ include file="EvaluateBoolExpressionTemplate.tt" once="true" #>
+<#@ include file="EvaluateEnumExpressionTemplate.tt" once="true" #>
+<#@ include file="EvaluateIntExpressionTemplate.tt" once="true" #>
+<#@ include file="EvaluateListExpressionTemplate.tt" once="true" #>
+<#@ include file="EvaluateRecordExpressionTemplate.tt" once="true" #>
+<#@ include file="EvaluateStringExpressionTemplate.tt" once="true" #>
+<#@ include file="EvaluateValueExpressionTemplate.tt" once="true" #>
+<#@ include file="FormatMessageTemplate.tt" once="true" #>

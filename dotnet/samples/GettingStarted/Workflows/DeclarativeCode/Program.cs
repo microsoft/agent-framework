@@ -9,8 +9,8 @@ using System.Reflection;
 using System.Threading.Tasks;
 using Azure.AI.Agents.Persistent;
 using Azure.Identity;
-using Microsoft.Agents.Workflows;
-using Microsoft.Agents.Workflows.Declarative;
+using Microsoft.Agents.AI.Workflows;
+using Microsoft.Agents.AI.Workflows.Declarative;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Test.WorkflowProviders;
@@ -43,7 +43,7 @@ internal sealed class Program
             };
 
         // Use the generated provider to create a workflow instance.
-        Workflow workflow = TestWorkflowProvider.CreateWorkflow<string>(options);
+        Workflow workflow = WorkflowProvider.CreateWorkflow<string>(options);
 
         Notify("\nWORKFLOW: Starting...");
 
