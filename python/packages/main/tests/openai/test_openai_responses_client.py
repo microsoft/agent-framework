@@ -370,7 +370,7 @@ async def test_response_format_parse_path() -> None:
         )
 
         assert response.conversation_id == "parsed_response_123"
-        assert response.ai_model_id == "test-model"
+        assert response.model_id == "test-model"
 
 
 async def test_bad_request_error_non_content_filter() -> None:
@@ -783,7 +783,7 @@ def test_create_streaming_response_content_with_mcp_approval_request() -> None:
 
 @pytest.mark.parametrize("enable_otel", [False], indirect=True)
 @pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
-def test_end_to_end_mcp_approval_flow() -> None:
+def test_end_to_end_mcp_approval_flow(span_exporter) -> None:
     """End-to-end mocked test:
     model issues an mcp_approval_request, user approves, client sends mcp_approval_response.
     """
@@ -937,7 +937,7 @@ def test_streaming_response_basic_structure() -> None:
     # Should get a valid ChatResponseUpdate structure
     assert isinstance(response, ChatResponseUpdate)
     assert response.role == Role.ASSISTANT
-    assert response.ai_model_id == "test-model"
+    assert response.model_id == "test-model"
     assert isinstance(response.contents, list)
     assert response.raw_representation is mock_event
 

@@ -59,17 +59,12 @@ class FunctionExecutor(Executor):
 
         # Initialize parent WITHOUT calling _discover_handlers yet
         # We'll manually set up the attributes first
-        executor_id = id or getattr(func, "__name__", "FunctionExecutor")
-        kwargs = {"id": executor_id, "type": "FunctionExecutor"}
+        executor_id = str(id or getattr(func, "__name__", "FunctionExecutor"))
+        kwargs = {"type": "FunctionExecutor"}
 
-        # Set up the base class attributes manually to avoid _discover_handlers
-        from pydantic import BaseModel
-
-        BaseModel.__init__(self, **kwargs)
-
-        self._handlers: dict[type, Callable[[Any, WorkflowContext[Any]], Any]] = {}
-        self._request_interceptors: dict[type | str, list[dict[str, Any]]] = {}
-        self._handler_specs: list[dict[str, Any]] = []
+        super().__init__(id=executor_id, defer_discovery=True, **kwargs)
+        self._handlers = {}
+        self._handler_specs = []
 
         # Store the original function and whether it has context
         self._original_func = func
@@ -110,6 +105,11 @@ class FunctionExecutor(Executor):
 
         # Now we can safely call _discover_handlers (it won't find any class-level handlers)
         self._discover_handlers()
+
+        if not self._handlers:
+            raise ValueError(
+                f"FunctionExecutor {self.__class__.__name__} failed to register handler for {func.__name__}"
+            )
 
 
 @overload

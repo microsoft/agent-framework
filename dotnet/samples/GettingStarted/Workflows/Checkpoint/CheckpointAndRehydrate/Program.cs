@@ -3,7 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using Microsoft.Agents.Workflows;
+using Microsoft.Agents.AI.Workflows;
 
 namespace WorkflowCheckpointAndRehydrateSample;
 

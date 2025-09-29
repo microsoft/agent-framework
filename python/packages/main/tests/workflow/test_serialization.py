@@ -48,8 +48,8 @@ class TestSerializationWorkflowClasses:
         """Test that Executor can be serialized and has correct fields, including type."""
         executor = SampleExecutor(id="test-executor")
 
-        # Test model_dump
-        data = executor.model_dump(by_alias=True)
+        # Test to_dict
+        data = executor.to_dict()
         assert data["id"] == "test-executor"
 
         # Test type field
@@ -57,7 +57,7 @@ class TestSerializationWorkflowClasses:
         assert data["type"] == "SampleExecutor", f"Expected type 'SampleExecutor', got {data['type']}"
 
         # Test model_dump_json
-        json_str = executor.model_dump_json(by_alias=True)
+        json_str = executor.to_json()
         parsed = json.loads(json_str)
         assert parsed["id"] == "test-executor"
 
@@ -70,14 +70,14 @@ class TestSerializationWorkflowClasses:
         # Test edge without condition
         edge = Edge(source_id="source", target_id="target")
 
-        # Test model_dump
-        data = edge.model_dump()
+        # Test to_dict
+        data = edge.to_dict()
         assert data["source_id"] == "source"
         assert data["target_id"] == "target"
         assert "condition_name" not in data or data["condition_name"] is None
 
         # Test model_dump_json
-        json_str = edge.model_dump_json()
+        json_str = json.dumps(edge.to_dict())
         parsed = json.loads(json_str)
         assert parsed["source_id"] == "source"
         assert parsed["target_id"] == "target"
@@ -91,14 +91,14 @@ class TestSerializationWorkflowClasses:
 
         edge = Edge(source_id="source", target_id="target", condition=is_positive)
 
-        # Test model_dump
-        data = edge.model_dump()
+        # Test to_dict
+        data = edge.to_dict()
         assert data["source_id"] == "source"
         assert data["target_id"] == "target"
         assert data["condition_name"] == "is_positive"
 
         # Test model_dump_json
-        json_str = edge.model_dump_json()
+        json_str = json.dumps(edge.to_dict())
         parsed = json.loads(json_str)
         assert parsed["source_id"] == "source"
         assert parsed["target_id"] == "target"
@@ -108,14 +108,14 @@ class TestSerializationWorkflowClasses:
         """Test that Edge with lambda condition serializes condition_name as '<lambda>'."""
         edge = Edge(source_id="source", target_id="target", condition=lambda x: x > 0)
 
-        # Test model_dump
-        data = edge.model_dump()
+        # Test to_dict
+        data = edge.to_dict()
         assert data["source_id"] == "source"
         assert data["target_id"] == "target"
         assert data["condition_name"] == "<lambda>"
 
         # Test model_dump_json
-        json_str = edge.model_dump_json()
+        json_str = json.dumps(edge.to_dict())
         parsed = json.loads(json_str)
         assert parsed["source_id"] == "source"
         assert parsed["target_id"] == "target"
@@ -125,8 +125,8 @@ class TestSerializationWorkflowClasses:
         """Test that SingleEdgeGroup can be serialized and has correct fields, including edges and type."""
         edge_group = SingleEdgeGroup(source_id="source", target_id="target")
 
-        # Test model_dump
-        data = edge_group.model_dump(by_alias=True)
+        # Test to_dict
+        data = edge_group.to_dict()
         assert "id" in data
         assert data["id"].startswith("SingleEdgeGroup/")
 
@@ -144,7 +144,7 @@ class TestSerializationWorkflowClasses:
         assert edge["target_id"] == "target", f"Expected target_id 'target', got {edge['target_id']}"
 
         # Test model_dump_json
-        json_str = edge_group.model_dump_json()
+        json_str = json.dumps(edge_group.to_dict())
         parsed = json.loads(json_str)
         assert "id" in parsed
         assert parsed["id"].startswith("SingleEdgeGroup/")
@@ -164,8 +164,8 @@ class TestSerializationWorkflowClasses:
         """Test that FanOutEdgeGroup can be serialized and has correct fields, including edges and type."""
         edge_group = FanOutEdgeGroup(source_id="source", target_ids=["target1", "target2"])
 
-        # Test model_dump
-        data = edge_group.model_dump()
+        # Test to_dict
+        data = edge_group.to_dict()
         assert "id" in data
         assert data["id"].startswith("FanOutEdgeGroup/")
 
@@ -191,7 +191,7 @@ class TestSerializationWorkflowClasses:
         assert set(targets) == {"target1", "target2"}, f"Expected targets {{'target1', 'target2'}}, got {set(targets)}"
 
         # Test model_dump_json
-        json_str = edge_group.model_dump_json()
+        json_str = json.dumps(edge_group.to_dict())
         parsed = json.loads(json_str)
         assert "id" in parsed
         assert parsed["id"].startswith("FanOutEdgeGroup/")
@@ -227,15 +227,15 @@ class TestSerializationWorkflowClasses:
             source_id="source", target_ids=["target1", "target2"], selection_func=custom_selector
         )
 
-        # Test model_dump
-        data = edge_group.model_dump()
+        # Test to_dict
+        data = edge_group.to_dict()
         assert "selection_func_name" in data, "FanOutEdgeGroup should have 'selection_func_name' field"
         assert data["selection_func_name"] == "custom_selector", (
             f"Expected selection_func_name 'custom_selector', got {data['selection_func_name']}"
         )
 
         # Test model_dump_json
-        json_str = edge_group.model_dump_json()
+        json_str = json.dumps(edge_group.to_dict())
         parsed = json.loads(json_str)
         assert "selection_func_name" in parsed, "JSON should have 'selection_func_name' field"
         assert parsed["selection_func_name"] == "custom_selector", "JSON should preserve selection_func_name"
@@ -246,15 +246,15 @@ class TestSerializationWorkflowClasses:
             source_id="source", target_ids=["target1", "target2"], selection_func=lambda data, targets: targets[:1]
         )
 
-        # Test model_dump
-        data = edge_group.model_dump()
+        # Test to_dict
+        data = edge_group.to_dict()
         assert "selection_func_name" in data, "FanOutEdgeGroup should have 'selection_func_name' field"
         assert data["selection_func_name"] == "<lambda>", (
             f"Expected selection_func_name '<lambda>', got {data['selection_func_name']}"
         )
 
         # Test model_dump_json
-        json_str = edge_group.model_dump_json()
+        json_str = json.dumps(edge_group.to_dict())
         parsed = json.loads(json_str)
         assert "selection_func_name" in parsed, "JSON should have 'selection_func_name' field"
         assert parsed["selection_func_name"] == "<lambda>", "JSON should preserve selection_func_name as '<lambda>'"
@@ -263,8 +263,8 @@ class TestSerializationWorkflowClasses:
         """Test that FanInEdgeGroup can be serialized and has correct fields, including edges and type."""
         edge_group = FanInEdgeGroup(source_ids=["source1", "source2"], target_id="target")
 
-        # Test model_dump
-        data = edge_group.model_dump()
+        # Test to_dict
+        data = edge_group.to_dict()
         assert "id" in data
         assert data["id"].startswith("FanInEdgeGroup/")
 
@@ -284,7 +284,7 @@ class TestSerializationWorkflowClasses:
         assert all(target == "target" for target in targets), f"All edges should have target 'target', got {targets}"
 
         # Test model_dump_json
-        json_str = edge_group.model_dump_json()
+        json_str = json.dumps(edge_group.to_dict())
         parsed = json.loads(json_str)
         assert "id" in parsed
         assert parsed["id"].startswith("FanInEdgeGroup/")
@@ -311,8 +311,8 @@ class TestSerializationWorkflowClasses:
         ]
         edge_group = SwitchCaseEdgeGroup(source_id="source", cases=cases)
 
-        # Test model_dump
-        data = edge_group.model_dump()
+        # Test to_dict
+        data = edge_group.to_dict()
         assert "id" in data
         assert data["id"].startswith("SwitchCaseEdgeGroup/")
 
@@ -364,7 +364,7 @@ class TestSerializationWorkflowClasses:
         )
 
         # Test model_dump_json
-        json_str = edge_group.model_dump_json()
+        json_str = json.dumps(edge_group.to_dict())
         parsed = json.loads(json_str)
         assert "id" in parsed
         assert parsed["id"].startswith("SwitchCaseEdgeGroup/")
@@ -436,7 +436,7 @@ class TestSerializationWorkflowClasses:
         )
 
         # Test serialization of the nested structure
-        data = outer_workflow.model_dump(by_alias=True)
+        data = outer_workflow.to_dict()
 
         # Verify outer structure
         assert data["start_executor_id"] == "outer-exec"
@@ -475,7 +475,7 @@ class TestSerializationWorkflowClasses:
         assert "inner-exec" in innermost_workflow_data["executors"]
 
         # Test JSON serialization preserves the complete nested structure
-        json_str = outer_workflow.model_dump_json(by_alias=True)
+        json_str = outer_workflow.to_json()
         parsed = json.loads(json_str)
 
         # Verify the complete structure is preserved in JSON
@@ -501,7 +501,7 @@ class TestSerializationWorkflowClasses:
         assert "inner-exec" in innermost_workflow_json["executors"]
 
         # Test that WorkflowExecutor also serializes correctly when accessed directly
-        direct_middle_data = middle_workflow_executor.model_dump(by_alias=True)
+        direct_middle_data = middle_workflow_executor.to_dict()
         assert "workflow" in direct_middle_data
         assert direct_middle_data["type"] == "WorkflowExecutor"
         assert "executors" in direct_middle_data["workflow"]
@@ -519,8 +519,8 @@ class TestSerializationWorkflowClasses:
         ]
         edge_group = SwitchCaseEdgeGroup(source_id="source", cases=cases)
 
-        # Test model_dump
-        data = edge_group.model_dump()
+        # Test to_dict
+        data = edge_group.to_dict()
         assert "cases" in data, "SwitchCaseEdgeGroup should have 'cases' field"
 
         cases_data = data["cases"]
@@ -530,7 +530,7 @@ class TestSerializationWorkflowClasses:
         )
 
         # Test model_dump_json
-        json_str = edge_group.model_dump_json()
+        json_str = json.dumps(edge_group.to_dict())
         parsed = json.loads(json_str)
         json_cases = parsed["cases"]
         json_case_obj = json_cases[0]
@@ -544,7 +544,7 @@ class TestSerializationWorkflowClasses:
         workflow = WorkflowBuilder().add_edge(executor1, executor2).set_start_executor(executor1).build()
 
         # Test model_dump
-        data = workflow.model_dump()
+        data = workflow.to_dict()
         assert "edge_groups" in data
         assert "executors" in data
         assert "start_executor_id" in data
@@ -569,7 +569,7 @@ class TestSerializationWorkflowClasses:
         assert edge["target_id"] == "executor2", f"Expected target_id 'executor2', got {edge['target_id']}"
 
         # Test model_dump_json
-        json_str = workflow.model_dump_json()
+        json_str = workflow.to_json()
         parsed = json.loads(json_str)
         assert parsed["start_executor_id"] == "executor1"
         assert "executor1" in parsed["executors"]
@@ -592,7 +592,7 @@ class TestSerializationWorkflowClasses:
         workflow = WorkflowBuilder().add_edge(executor1, executor2).set_start_executor(executor1).build()
 
         # Test model_dump - should not include private runtime objects
-        data = workflow.model_dump()
+        data = workflow.to_dict()
 
         # These private runtime fields should not be in the serialized data
         assert "_runner_context" not in data
@@ -616,13 +616,11 @@ class TestSerializationWorkflowClasses:
         assert edge.target_id == "target"
 
         # Test validation failure for empty source_id
-        from pydantic import ValidationError
-
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValueError):
             Edge(source_id="", target_id="target")
 
         # Test validation failure for empty target_id
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValueError):
             Edge(source_id="source", target_id="")
 
 
@@ -660,7 +658,7 @@ def test_comprehensive_edge_groups_workflow_serialization() -> None:
     )
 
     # Test workflow serialization
-    data = workflow.model_dump()
+    data = workflow.to_dict()
 
     # Verify basic workflow structure
     assert "edge_groups" in data
@@ -683,7 +681,7 @@ def test_comprehensive_edge_groups_workflow_serialization() -> None:
     assert "SingleEdgeGroup" in edge_group_types, f"Expected SingleEdgeGroup in {edge_group_types}"
 
     # Test JSON serialization
-    json_str = workflow.model_dump_json()
+    json_str = workflow.to_json()
     parsed = json.loads(json_str)
 
     # Verify JSON structure matches model_dump
