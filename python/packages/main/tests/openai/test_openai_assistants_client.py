@@ -20,7 +20,6 @@ from agent_framework import (
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
-    ChatToolMode,
     FunctionCallContent,
     FunctionResultContent,
     HostedCodeInterpreterTool,
@@ -28,6 +27,7 @@ from agent_framework import (
     HostedVectorStoreContent,
     Role,
     TextContent,
+    ToolMode,
     UriContent,
     UsageContent,
     ai_function,
@@ -622,7 +622,7 @@ def test_openai_assistants_client_prepare_options_basic(mock_async_openai: Magic
     # Create basic chat options
     chat_options = ChatOptions(
         max_tokens=100,
-        ai_model_id="gpt-4",
+        model_id="gpt-4",
         temperature=0.7,
         top_p=0.9,
     )
@@ -716,7 +716,7 @@ def test_openai_assistants_client_prepare_options_required_function(mock_async_o
     chat_client = create_test_openai_assistants_client(mock_async_openai)
 
     # Create a required function tool choice
-    tool_choice = ChatToolMode(mode="required", required_function_name="specific_function")
+    tool_choice = ToolMode(mode="required", required_function_name="specific_function")
 
     chat_options = ChatOptions(
         tool_choice=tool_choice,

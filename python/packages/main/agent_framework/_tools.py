@@ -77,6 +77,14 @@ ArgsT = TypeVar("ArgsT", bound=BaseModel)
 ReturnT = TypeVar("ReturnT")
 
 
+class _NoOpHistogram:
+    def record(self, *args: Any, **kwargs: Any) -> None:  # pragma: no cover - trivial
+        return None
+
+
+_NOOP_HISTOGRAM = _NoOpHistogram()
+
+
 def _parse_inputs(
     inputs: "Contents | dict[str, Any] | str | list[Contents | dict[str, Any] | str] | None",
 ) -> list["Contents"]:
@@ -367,12 +375,24 @@ class HostedFileSearchTool(BaseTool):
 
 def _default_histogram() -> Histogram:
     """Get the default histogram for function invocation duration."""
-    return get_meter().create_histogram(
-        name=OtelAttr.MEASUREMENT_FUNCTION_INVOCATION_DURATION,
-        unit=OtelAttr.DURATION_UNIT,
-        description="Measures the duration of a function's execution",
-        explicit_bucket_boundaries_advisory=OPERATION_DURATION_BUCKET_BOUNDARIES,
-    )
+    from .observability import OBSERVABILITY_SETTINGS  # local import to avoid circulars
+
+    if not OBSERVABILITY_SETTINGS.ENABLED:  # type: ignore[name-defined]
+        return _NOOP_HISTOGRAM  # type: ignore[return-value]
+    meter = get_meter()
+    try:
+        return meter.create_histogram(
+            name=OtelAttr.MEASUREMENT_FUNCTION_INVOCATION_DURATION,
+            unit=OtelAttr.DURATION_UNIT,
+            description="Measures the duration of a function's execution",
+            explicit_bucket_boundaries_advisory=OPERATION_DURATION_BUCKET_BOUNDARIES,
+        )
+    except TypeError:
+        return meter.create_histogram(
+            name=OtelAttr.MEASUREMENT_FUNCTION_INVOCATION_DURATION,
+            unit=OtelAttr.DURATION_UNIT,
+            description="Measures the duration of a function's execution",
+        )
 
 
 class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):

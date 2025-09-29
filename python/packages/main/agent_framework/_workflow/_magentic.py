@@ -8,12 +8,10 @@ import re
 import sys
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import Annotated, Any, Literal, Protocol, TypeVar, Union, cast
+from typing import Any, Literal, Protocol, TypeVar, Union, cast
 from uuid import uuid4
-
-from pydantic import BaseModel, ConfigDict, Field
 
 from agent_framework import (
     AgentProtocol,
@@ -26,11 +24,11 @@ from agent_framework import (
     Role,
 )
 from agent_framework._agents import BaseAgent
-from agent_framework._pydantic import AFBaseModel
 
-from ._checkpoint import CheckpointStorage
+from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
 from ._events import WorkflowEvent
 from ._executor import Executor, RequestInfoMessage, RequestResponse, handler
+from ._model_utils import DictConvertible, encode_value
 from ._workflow import Workflow, WorkflowBuilder, WorkflowRunResult
 from ._workflow_context import WorkflowContext
 
@@ -50,6 +48,43 @@ ORCH_MSG_KIND_TASK_LEDGER = "task_ledger"
 # Newly surfaced kinds for unified callback consumers
 ORCH_MSG_KIND_INSTRUCTION = "instruction"
 ORCH_MSG_KIND_NOTICE = "notice"
+
+
+def _message_to_payload(message: ChatMessage) -> Any:
+    if hasattr(message, "to_dict") and callable(getattr(message, "to_dict", None)):
+        with contextlib.suppress(Exception):
+            return message.to_dict()  # type: ignore[attr-defined]
+    if hasattr(message, "to_json") and callable(getattr(message, "to_json", None)):
+        with contextlib.suppress(Exception):
+            json_payload = message.to_json()  # type: ignore[attr-defined]
+            if isinstance(json_payload, str):
+                with contextlib.suppress(Exception):
+                    return json.loads(json_payload)
+            return json_payload
+    if hasattr(message, "__dict__"):
+        return encode_value(message.__dict__)
+    return message
+
+
+def _message_from_payload(payload: Any) -> ChatMessage:
+    if isinstance(payload, ChatMessage):
+        return payload
+    if hasattr(ChatMessage, "from_dict") and isinstance(payload, dict):
+        with contextlib.suppress(Exception):
+            return ChatMessage.from_dict(payload)  # type: ignore[attr-defined,no-any-return]
+    if hasattr(ChatMessage, "from_json") and isinstance(payload, str):
+        with contextlib.suppress(Exception):
+            return ChatMessage.from_json(payload)  # type: ignore[attr-defined,no-any-return]
+    if isinstance(payload, dict):
+        with contextlib.suppress(Exception):
+            return ChatMessage(**payload)  # type: ignore[arg-type]
+    if isinstance(payload, str):
+        with contextlib.suppress(Exception):
+            decoded = json.loads(payload)
+            if isinstance(decoded, dict):
+                return _message_from_payload(decoded)
+    raise TypeError("Unable to reconstruct ChatMessage from payload")
+
 
 # region Unified callback API (developer-facing)
 
@@ -275,11 +310,18 @@ def _new_chat_history() -> list[ChatMessage]:
     return []
 
 
+def _new_participant_descriptions() -> dict[str, str]:
+    """Typed default factory for participant descriptions dict to satisfy type checkers."""
+    return {}
+
+
 @dataclass
 class MagenticStartMessage:
     """A message to start a magentic workflow."""
 
-    task: ChatMessage
+    def __init__(self, task: ChatMessage) -> None:
+        """Create the start message."""
+        self.task = task
 
     @classmethod
     def from_string(cls, task_text: str) -> "MagenticStartMessage":
@@ -293,6 +335,16 @@ class MagenticStartMessage:
         """
         return cls(task=ChatMessage(role=Role.USER, text=task_text))
 
+    def to_dict(self) -> dict[str, Any]:
+        """Create a dict representation of the message."""
+        return {"task": self.task.to_dict()}
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "MagenticStartMessage":
+        """Create from a dict."""
+        task = ChatMessage.from_dict(value["task"])
+        return cls(task=task)
+
 
 @dataclass
 class MagenticRequestMessage:
@@ -303,7 +355,6 @@ class MagenticRequestMessage:
     task_context: str = ""
 
 
-@dataclass
 class MagenticResponseMessage:
     """A response message type.
 
@@ -311,9 +362,27 @@ class MagenticResponseMessage:
     or target a specific agent by name.
     """
 
-    body: ChatMessage
-    target_agent: str | None = None  # deliver only to this agent if set
-    broadcast: bool = False  # deliver to all agents if True
+    def __init__(
+        self,
+        body: ChatMessage,
+        target_agent: str | None = None,  # deliver only to this agent if set
+        broadcast: bool = False,  # deliver to all agents if True
+    ) -> None:
+        self.body = body
+        self.target_agent = target_agent
+        self.broadcast = broadcast
+
+    def to_dict(self) -> dict[str, Any]:
+        """Create a dict representation of the message."""
+        return {"body": self.body.to_dict(), "target_agent": self.target_agent, "broadcast": self.broadcast}
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "MagenticResponseMessage":
+        """Create from a dict."""
+        body = ChatMessage.from_dict(value["body"])
+        target_agent = value.get("target_agent")
+        broadcast = value.get("broadcast", False)
+        return cls(body=body, target_agent=target_agent, broadcast=broadcast)
 
 
 @dataclass
@@ -342,21 +411,44 @@ class MagenticPlanReviewReply:
     comments: str | None = None  # guidance for replan if no edited text provided
 
 
-class MagenticTaskLedger(AFBaseModel):
+@dataclass
+class MagenticTaskLedger(DictConvertible):
     """Task ledger for the Standard Magentic manager."""
 
-    facts: Annotated[ChatMessage, Field(description="The facts about the task.")]
-    plan: Annotated[ChatMessage, Field(description="The plan for the task.")]
+    facts: ChatMessage
+    plan: ChatMessage
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"facts": _message_to_payload(self.facts), "plan": _message_to_payload(self.plan)}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "MagenticTaskLedger":
+        return cls(
+            facts=_message_from_payload(data.get("facts")),
+            plan=_message_from_payload(data.get("plan")),
+        )
 
 
-class MagenticProgressLedgerItem(AFBaseModel):
+@dataclass
+class MagenticProgressLedgerItem(DictConvertible):
     """A progress ledger item."""
 
     reason: str
     answer: str | bool
 
+    def to_dict(self) -> dict[str, Any]:
+        return {"reason": self.reason, "answer": self.answer}
 
-class MagenticProgressLedger(AFBaseModel):
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "MagenticProgressLedgerItem":
+        answer_value = data.get("answer")
+        if not isinstance(answer_value, (str, bool)):
+            answer_value = ""  # Default to empty string if not str or bool
+        return cls(reason=data.get("reason", ""), answer=answer_value)
+
+
+@dataclass
+class MagenticProgressLedger(DictConvertible):
     """A progress ledger for tracking workflow progress."""
 
     is_request_satisfied: MagenticProgressLedgerItem
@@ -365,20 +457,61 @@ class MagenticProgressLedger(AFBaseModel):
     next_speaker: MagenticProgressLedgerItem
     instruction_or_question: MagenticProgressLedgerItem
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "is_request_satisfied": self.is_request_satisfied.to_dict(),
+            "is_in_loop": self.is_in_loop.to_dict(),
+            "is_progress_being_made": self.is_progress_being_made.to_dict(),
+            "next_speaker": self.next_speaker.to_dict(),
+            "instruction_or_question": self.instruction_or_question.to_dict(),
+        }
 
-class MagenticContext(AFBaseModel):
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "MagenticProgressLedger":
+        return cls(
+            is_request_satisfied=MagenticProgressLedgerItem.from_dict(data.get("is_request_satisfied", {})),
+            is_in_loop=MagenticProgressLedgerItem.from_dict(data.get("is_in_loop", {})),
+            is_progress_being_made=MagenticProgressLedgerItem.from_dict(data.get("is_progress_being_made", {})),
+            next_speaker=MagenticProgressLedgerItem.from_dict(data.get("next_speaker", {})),
+            instruction_or_question=MagenticProgressLedgerItem.from_dict(data.get("instruction_or_question", {})),
+        )
+
+
+@dataclass
+class MagenticContext(DictConvertible):
     """Context for the Magentic manager."""
 
-    task: Annotated[ChatMessage, Field(description="The task to be completed.")]
-    chat_history: Annotated[list[ChatMessage], Field(description="The chat history to track conversation.")] = Field(
-        default_factory=_new_chat_history
-    )
-    participant_descriptions: Annotated[
-        dict[str, str], Field(description="The descriptions of the participants in the workflow.")
-    ]
-    round_count: Annotated[int, Field(description="The number of rounds completed.")] = 0
-    stall_count: Annotated[int, Field(description="The number of stalls detected.")] = 0
-    reset_count: Annotated[int, Field(description="The number of resets detected.")] = 0
+    task: ChatMessage
+    chat_history: list[ChatMessage] = field(default_factory=_new_chat_history)
+    participant_descriptions: dict[str, str] = field(default_factory=_new_participant_descriptions)
+    round_count: int = 0
+    stall_count: int = 0
+    reset_count: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "task": _message_to_payload(self.task),
+            "chat_history": [_message_to_payload(msg) for msg in self.chat_history],
+            "participant_descriptions": dict(self.participant_descriptions),
+            "round_count": self.round_count,
+            "stall_count": self.stall_count,
+            "reset_count": self.reset_count,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "MagenticContext":
+        chat_history_payload = data.get("chat_history", [])
+        history: list[ChatMessage] = []
+        for item in chat_history_payload:
+            history.append(_message_from_payload(item))
+        return cls(
+            task=_message_from_payload(data.get("task")),
+            chat_history=history,
+            participant_descriptions=dict(data.get("participant_descriptions", {})),
+            round_count=data.get("round_count", 0),
+            stall_count=data.get("stall_count", 0),
+            reset_count=data.get("reset_count", 0),
+        )
 
     def reset(self) -> None:
         """Reset the context.
@@ -454,12 +587,15 @@ def _extract_json(text: str) -> dict[str, Any]:
     raise ValueError("Unable to parse JSON from model output.")
 
 
-TModel = TypeVar("TModel", bound=AFBaseModel)
+T = TypeVar("T")
 
 
-def _pd_validate(model: type[TModel], data: dict[str, Any]) -> TModel:
-    """Validate against a Pydantic model and return a typed instance."""
-    return model.model_validate(data)  # type: ignore[attr-defined]
+def _coerce_model(model_cls: type[T], data: dict[str, Any]) -> T:
+    # Use type: ignore to suppress mypy errors for dynamic attribute access
+    # We check with hasattr() first, so this is safe
+    if hasattr(model_cls, "from_dict") and callable(model_cls.from_dict):  # type: ignore[attr-defined]
+        return model_cls.from_dict(data)  # type: ignore[attr-defined,return-value,no-any-return]
+    return model_cls(**data)  # type: ignore[arg-type,call-arg]
 
 
 # endregion Utilities
@@ -467,15 +603,21 @@ def _pd_validate(model: type[TModel], data: dict[str, Any]) -> TModel:
 # region Magentic Manager
 
 
-class MagenticManagerBase(AFBaseModel, ABC):
+class MagenticManagerBase(ABC):
     """Base class for the Magentic One manager."""
 
-    max_stall_count: Annotated[int, Field(description="Max number of stalls before a reset.", ge=0)] = 3
-    max_reset_count: Annotated[int | None, Field(description="Max number of resets allowed.", ge=0)] = None
-    max_round_count: Annotated[int | None, Field(description="Max number of agent responses allowed.", gt=0)] = None
-
-    # Base prompt surface for type safety; concrete managers may override with a str field
-    task_ledger_full_prompt: str = ORCHESTRATOR_TASK_LEDGER_FULL_PROMPT
+    def __init__(
+        self,
+        *,
+        max_stall_count: int = 3,
+        max_reset_count: int | None = None,
+        max_round_count: int | None = None,
+    ) -> None:
+        self.max_stall_count = max_stall_count
+        self.max_reset_count = max_reset_count
+        self.max_round_count = max_round_count
+        # Base prompt surface for type safety; concrete managers may override with a str field.
+        self.task_ledger_full_prompt: str = ORCHESTRATOR_TASK_LEDGER_FULL_PROMPT
 
     @abstractmethod
     async def plan(self, magentic_context: MagenticContext) -> ChatMessage:
@@ -517,28 +659,13 @@ class StandardMagenticManager(MagenticManagerBase):
     - Final answer synthesis
     """
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    chat_client: ChatClientProtocol
-    task_ledger: MagenticTaskLedger | None = None
-    instructions: str | None = None
-
-    # Prompts may be overridden if needed
-    task_ledger_facts_prompt: str = ORCHESTRATOR_TASK_LEDGER_FACTS_PROMPT
-    task_ledger_plan_prompt: str = ORCHESTRATOR_TASK_LEDGER_PLAN_PROMPT
-    task_ledger_full_prompt: str = ORCHESTRATOR_TASK_LEDGER_FULL_PROMPT
-    task_ledger_facts_update_prompt: str = ORCHESTRATOR_TASK_LEDGER_FACTS_UPDATE_PROMPT
-    task_ledger_plan_update_prompt: str = ORCHESTRATOR_TASK_LEDGER_PLAN_UPDATE_PROMPT
-    progress_ledger_prompt: str = ORCHESTRATOR_PROGRESS_LEDGER_PROMPT
-    final_answer_prompt: str = ORCHESTRATOR_FINAL_ANSWER_PROMPT
-
-    progress_ledger_retry_count: int = Field(default=3)
+    task_ledger: MagenticTaskLedger | None
 
     def snapshot_state(self) -> dict[str, Any]:
         state = super().snapshot_state()
         if self.task_ledger is not None:
             state = dict(state)
-            state["task_ledger"] = self.task_ledger.model_dump(mode="json")
+            state["task_ledger"] = self.task_ledger.to_dict()
         return state
 
     def restore_state(self, state: dict[str, Any]) -> None:
@@ -546,7 +673,7 @@ class StandardMagenticManager(MagenticManagerBase):
         ledger = state.get("task_ledger")
         if ledger is not None:
             try:
-                self.task_ledger = MagenticTaskLedger.model_validate(ledger)
+                self.task_ledger = MagenticTaskLedger.from_dict(ledger)
             except Exception:  # pragma: no cover - defensive
                 logger.warning("Failed to restore manager task ledger from checkpoint state")
 
@@ -586,42 +713,36 @@ class StandardMagenticManager(MagenticManagerBase):
             max_round_count: Maximum number of rounds allowed.
             progress_ledger_retry_count: Maximum number of retries for the progress ledger.
         """
-        args: dict[str, Any] = {
-            "chat_client": chat_client,
-            "instructions": instructions,
-            "max_stall_count": max_stall_count,
-            "max_reset_count": max_reset_count,
-            "max_round_count": max_round_count,
-        }
+        super().__init__(
+            max_stall_count=max_stall_count,
+            max_reset_count=max_reset_count,
+            max_round_count=max_round_count,
+        )
 
-        # Optional prompt overrides
-        if task_ledger_facts_prompt is not None:
-            args["task_ledger_facts_prompt"] = task_ledger_facts_prompt
-        if task_ledger_plan_prompt is not None:
-            args["task_ledger_plan_prompt"] = task_ledger_plan_prompt
-        if task_ledger_full_prompt is not None:
-            args["task_ledger_full_prompt"] = task_ledger_full_prompt
-        if task_ledger_facts_update_prompt is not None:
-            args["task_ledger_facts_update_prompt"] = task_ledger_facts_update_prompt
-        if task_ledger_plan_update_prompt is not None:
-            args["task_ledger_plan_update_prompt"] = task_ledger_plan_update_prompt
-        if progress_ledger_prompt is not None:
-            args["progress_ledger_prompt"] = progress_ledger_prompt
-        if final_answer_prompt is not None:
-            args["final_answer_prompt"] = final_answer_prompt
-        if progress_ledger_retry_count is not None:
-            args["progress_ledger_retry_count"] = progress_ledger_retry_count
+        self.chat_client: ChatClientProtocol = chat_client
+        self.instructions: str | None = instructions
+        self.task_ledger: MagenticTaskLedger | None = task_ledger
 
-        super().__init__(**args)
+        # Prompts may be overridden if needed
+        self.task_ledger_facts_prompt: str = task_ledger_facts_prompt or ORCHESTRATOR_TASK_LEDGER_FACTS_PROMPT
+        self.task_ledger_plan_prompt: str = task_ledger_plan_prompt or ORCHESTRATOR_TASK_LEDGER_PLAN_PROMPT
+        self.task_ledger_full_prompt = task_ledger_full_prompt or ORCHESTRATOR_TASK_LEDGER_FULL_PROMPT
+        self.task_ledger_facts_update_prompt: str = (
+            task_ledger_facts_update_prompt or ORCHESTRATOR_TASK_LEDGER_FACTS_UPDATE_PROMPT
+        )
+        self.task_ledger_plan_update_prompt: str = (
+            task_ledger_plan_update_prompt or ORCHESTRATOR_TASK_LEDGER_PLAN_UPDATE_PROMPT
+        )
+        self.progress_ledger_prompt: str = progress_ledger_prompt or ORCHESTRATOR_PROGRESS_LEDGER_PROMPT
+        self.final_answer_prompt: str = final_answer_prompt or ORCHESTRATOR_FINAL_ANSWER_PROMPT
 
-        if task_ledger is not None:
-            self.task_ledger = task_ledger
+        self.progress_ledger_retry_count: int = (
+            progress_ledger_retry_count if progress_ledger_retry_count is not None else 3
+        )
 
     async def _complete(
         self,
         messages: list[ChatMessage],
-        *,
-        response_format: type[BaseModel] | None = None,
     ) -> ChatMessage:
         """Call the underlying ChatClientProtocol directly and return the last assistant message.
 
@@ -636,7 +757,7 @@ class StandardMagenticManager(MagenticManagerBase):
         request_messages.extend(messages)
 
         # Invoke the chat client non-streaming API
-        response = await self.chat_client.get_response(request_messages, response_format=response_format)
+        response = await self.chat_client.get_response(request_messages)
         try:
             out_messages: list[ChatMessage] | None = list(response.messages)  # type: ignore[assignment]
         except Exception:
@@ -753,13 +874,10 @@ class StandardMagenticManager(MagenticManagerBase):
         attempts = 0
         last_error: Exception | None = None
         while attempts < self.progress_ledger_retry_count:
-            raw = await self._complete(
-                [*magentic_context.chat_history, user_message],
-                response_format=MagenticProgressLedger,
-            )
+            raw = await self._complete([*magentic_context.chat_history, user_message])
             try:
                 ledger_dict = _extract_json(raw.text)
-                return _pd_validate(MagenticProgressLedger, ledger_dict)
+                return _coerce_model(MagenticProgressLedger, ledger_dict)
             except Exception as ex:
                 last_error = ex
                 attempts += 1
@@ -871,9 +989,9 @@ class MagenticOrchestratorExecutor(Executor):
             "terminated": self._terminated,
         }
         if self._context is not None:
-            state["magentic_context"] = self._context.model_dump(mode="json")
+            state["magentic_context"] = self._context.to_dict()
         if self._task_ledger is not None:
-            state["task_ledger"] = self._task_ledger.model_dump(mode="json")
+            state["task_ledger"] = _message_to_payload(self._task_ledger)
         manager_state: dict[str, Any] | None = None
         with contextlib.suppress(Exception):
             manager_state = self._manager.snapshot_state()
@@ -885,14 +1003,17 @@ class MagenticOrchestratorExecutor(Executor):
         ctx_payload = state.get("magentic_context")
         if ctx_payload is not None:
             try:
-                self._context = MagenticContext.model_validate(ctx_payload)
+                if isinstance(ctx_payload, dict):
+                    self._context = MagenticContext.from_dict(ctx_payload)  # type: ignore[arg-type]
+                else:
+                    self._context = None
             except Exception as exc:  # pragma: no cover - defensive
                 logger.warning("Failed to restore magentic context: %s", exc)
                 self._context = None
         ledger_payload = state.get("task_ledger")
         if ledger_payload is not None:
             try:
-                self._task_ledger = ChatMessage.model_validate(ledger_payload)
+                self._task_ledger = _message_from_payload(ledger_payload)
             except Exception as exc:  # pragma: no cover
                 logger.warning("Failed to restore task ledger message: %s", exc)
                 self._task_ledger = None
@@ -989,7 +1110,7 @@ class MagenticOrchestratorExecutor(Executor):
                 await self._message_callback(self.id, message.task, ORCH_MSG_KIND_USER_TASK)
 
         # Initial planning using the manager with real model calls
-        self._task_ledger = await self._manager.plan(self._context.model_copy(deep=True))
+        self._task_ledger = await self._manager.plan(self._context.clone(deep=True))
 
         # If a human must sign off, ask now and return. The response handler will resume.
         if self._require_plan_signoff:
@@ -1057,7 +1178,7 @@ class MagenticOrchestratorExecutor(Executor):
             return
 
         human = response.data
-        if human is None:
+        if human is None:  # type: ignore[unreachable]
             # Defensive fallback: treat as revise with empty comments
             human = MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.REVISE, comments="")
 
@@ -1089,7 +1210,7 @@ class MagenticOrchestratorExecutor(Executor):
                     ChatMessage(role=Role.USER, text=f"Human plan feedback: {human.comments}")
                 )
                 # Ask the manager to replan based on comments; proceed immediately
-                self._task_ledger = await self._manager.replan(self._context.model_copy(deep=True))
+                self._task_ledger = await self._manager.replan(self._context.clone(deep=True))
 
             # Record the signed-off plan (no broadcast)
             if self._task_ledger:
@@ -1159,7 +1280,7 @@ class MagenticOrchestratorExecutor(Executor):
             )
 
         # Ask the manager to replan; this only adjusts the plan stage, not a full reset
-        self._task_ledger = await self._manager.replan(self._context.model_copy(deep=True))
+        self._task_ledger = await self._manager.replan(self._context.clone(deep=True))
         await self._send_plan_review_request(context)
 
     async def _run_outer_loop(
@@ -1215,7 +1336,7 @@ class MagenticOrchestratorExecutor(Executor):
 
         # Create progress ledger using the manager
         try:
-            current_progress_ledger = await self._manager.create_progress_ledger(ctx.model_copy(deep=True))
+            current_progress_ledger = await self._manager.create_progress_ledger(ctx.clone(deep=True))
         except Exception as ex:
             logger.warning("Magentic Orchestrator: Progress ledger creation failed, triggering reset: %s", ex)
             await self._reset_and_replan(context)
@@ -1298,7 +1419,7 @@ class MagenticOrchestratorExecutor(Executor):
         self._context.reset()
 
         # Replan
-        self._task_ledger = await self._manager.replan(self._context.model_copy(deep=True))
+        self._task_ledger = await self._manager.replan(self._context.clone(deep=True))
 
         # Internally reset all registered agent executors (no handler/messages involved)
         for agent in self._agent_executors.values():
@@ -1317,7 +1438,7 @@ class MagenticOrchestratorExecutor(Executor):
             return
 
         logger.info("Magentic Orchestrator: Preparing final answer")
-        final_answer = await self._manager.prepare_final_answer(self._context.model_copy(deep=True))
+        final_answer = await self._manager.prepare_final_answer(self._context.clone(deep=True))
 
         # Emit a completed event for the workflow
         await context.yield_output(final_answer)
@@ -1412,7 +1533,7 @@ class MagenticAgentExecutor(Executor):
 
     def snapshot_state(self) -> dict[str, Any]:
         return {
-            "chat_history": [msg.model_dump(mode="json") for msg in self._chat_history],
+            "chat_history": [_message_to_payload(msg) for msg in self._chat_history],
         }
 
     def restore_state(self, state: dict[str, Any]) -> None:
@@ -1423,7 +1544,7 @@ class MagenticAgentExecutor(Executor):
         restored: list[ChatMessage] = []
         for item in history_payload:
             try:
-                restored.append(ChatMessage.model_validate(item))
+                restored.append(_message_from_payload(item))
             except Exception as exc:  # pragma: no cover
                 logger.debug("Agent %s: Skipping invalid chat history item during restore: %s", self._agent_id, exc)
         self._chat_history = restored
@@ -1991,7 +2112,7 @@ class MagenticWorkflow:
         if not expected:
             return
 
-        checkpoint = None
+        checkpoint: WorkflowCheckpoint | None = None
         if checkpoint_storage is not None:
             try:
                 checkpoint = await checkpoint_storage.load_checkpoint(checkpoint_id)
@@ -2004,16 +2125,21 @@ class MagenticWorkflow:
             load_checkpoint = getattr(runner_context, "load_checkpoint", None)
             try:
                 if callable(has_checkpointing) and has_checkpointing() and callable(load_checkpoint):
-                    checkpoint = await load_checkpoint(checkpoint_id)  # type: ignore[func-returns-value]
+                    loaded_checkpoint = await load_checkpoint(checkpoint_id)  # type: ignore[misc]
+                    if loaded_checkpoint is not None:
+                        checkpoint = cast(WorkflowCheckpoint, loaded_checkpoint)
             except Exception:  # pragma: no cover - best effort
                 checkpoint = None
 
-        if checkpoint is None or not isinstance(getattr(checkpoint, "executor_states", None), dict):
+        if checkpoint is None:
             return
 
-        orchestrator_state = checkpoint.executor_states.get(getattr(orchestrator, "id", ""))
+        # At this point, checkpoint is guaranteed to be WorkflowCheckpoint
+        executor_states = checkpoint.executor_states
+        orchestrator_id = getattr(orchestrator, "id", "")
+        orchestrator_state = executor_states.get(orchestrator_id)
         if orchestrator_state is None:
-            orchestrator_state = checkpoint.executor_states.get("magentic_orchestrator")
+            orchestrator_state = executor_states.get("magentic_orchestrator")
 
         if not isinstance(orchestrator_state, dict):
             return
@@ -2022,11 +2148,13 @@ class MagenticWorkflow:
         if not isinstance(context_payload, dict):
             return
 
-        restored_participants = context_payload.get("participant_descriptions")
+        context_dict = cast(dict[str, Any], context_payload)
+        restored_participants = context_dict.get("participant_descriptions")
         if not isinstance(restored_participants, dict):
             return
 
-        restored_names = set(restored_participants.keys())
+        participants_dict = cast(dict[str, str], restored_participants)
+        restored_names: set[str] = set(participants_dict.keys())
         expected_names = set(expected.keys())
 
         if restored_names == expected_names:

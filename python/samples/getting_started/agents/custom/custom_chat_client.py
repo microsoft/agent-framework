@@ -113,7 +113,7 @@ class EchoingChatClient(BaseChatClient):
                     contents=[TextContent(text=char)],
                     role=Role.ASSISTANT,
                     response_id=f"echo-stream-resp-{random.randint(1000, 9999)}",
-                    ai_model_id="echo-model-v1",
+                    model_id="echo-model-v1",
                 )
                 await asyncio.sleep(0.05)
 

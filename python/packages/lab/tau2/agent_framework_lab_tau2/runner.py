@@ -194,7 +194,7 @@ class TaskRunner:
         return ChatAgent(
             chat_client=assistant_chat_client,
             instructions=assistant_system_prompt,
-            tools=ai_functions,  # type: ignore
+            tools=ai_functions,
             temperature=self.assistant_sampling_temperature,
             chat_message_store_factory=lambda: SlidingWindowChatMessageStore(
                 system_message=assistant_system_prompt,

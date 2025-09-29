@@ -90,14 +90,14 @@ def mock_a2a_client() -> MockA2AClient:
 @fixture
 def a2a_agent(mock_a2a_client: MockA2AClient) -> A2AAgent:
     """Fixture that provides an A2AAgent with a mock client."""
-    return A2AAgent.model_construct(name="Test Agent", id="test-agent", client=mock_a2a_client, _http_client=None)
+    return A2AAgent(name="Test Agent", id="test-agent", client=mock_a2a_client, http_client=None)
 
 
 def test_a2a_agent_initialization_with_client(mock_a2a_client: MockA2AClient) -> None:
     """Test A2AAgent initialization with provided client."""
     # Use model_construct to bypass Pydantic validation for mock objects
-    agent = A2AAgent.model_construct(
-        name="Test Agent", id="test-agent-123", description="A test agent", client=mock_a2a_client, _http_client=None
+    agent = A2AAgent(
+        name="Test Agent", id="test-agent-123", description="A test agent", client=mock_a2a_client, http_client=None
     )
 
     assert agent.name == "Test Agent"
@@ -266,7 +266,7 @@ def test_get_uri_data_invalid_uri() -> None:
 def test_a2a_parts_to_contents_conversion(a2a_agent: A2AAgent) -> None:
     """Test A2A parts to contents conversion."""
 
-    agent = A2AAgent.model_construct(name="Test Agent", client=MockA2AClient(), _http_client=None)
+    agent = A2AAgent(name="Test Agent", client=MockA2AClient(), _http_client=None)
 
     # Create A2A parts
     parts = [Part(root=TextPart(text="First part")), Part(root=TextPart(text="Second part"))]
@@ -369,7 +369,8 @@ async def test_context_manager_cleanup() -> None:
     mock_http_client = AsyncMock()
     mock_a2a_client = MagicMock()
 
-    agent = A2AAgent.model_construct(client=mock_a2a_client, _http_client=mock_http_client)
+    agent = A2AAgent(client=mock_a2a_client)
+    agent._http_client = mock_http_client
 
     # Test context manager cleanup
     async with agent:
@@ -384,7 +385,7 @@ async def test_context_manager_no_cleanup_when_no_http_client() -> None:
 
     mock_a2a_client = MagicMock()
 
-    agent = A2AAgent.model_construct(client=mock_a2a_client, _http_client=None)
+    agent = A2AAgent(client=mock_a2a_client, _http_client=None)
 
     # This should not raise any errors
     async with agent:
@@ -394,7 +395,7 @@ async def test_context_manager_no_cleanup_when_no_http_client() -> None:
 def test_chat_message_to_a2a_message_with_multiple_contents() -> None:
     """Test conversion of ChatMessage with multiple contents."""
 
-    agent = A2AAgent.model_construct(client=MagicMock(), _http_client=None)
+    agent = A2AAgent(client=MagicMock(), _http_client=None)
 
     # Create message with multiple content types
     message = ChatMessage(
@@ -422,7 +423,7 @@ def test_chat_message_to_a2a_message_with_multiple_contents() -> None:
 def test_a2a_parts_to_contents_with_data_part() -> None:
     """Test conversion of A2A DataPart."""
 
-    agent = A2AAgent.model_construct(client=MagicMock(), _http_client=None)
+    agent = A2AAgent(client=MagicMock(), _http_client=None)
 
     # Create DataPart
     data_part = Part(root=DataPart(data={"key": "value", "number": 42}, metadata={"source": "test"}))
@@ -438,7 +439,7 @@ def test_a2a_parts_to_contents_with_data_part() -> None:
 
 def test_a2a_parts_to_contents_unknown_part_kind() -> None:
     """Test error handling for unknown A2A part kind."""
-    agent = A2AAgent.model_construct(client=MagicMock(), _http_client=None)
+    agent = A2AAgent(client=MagicMock(), _http_client=None)
 
     # Create a mock part with unknown kind
     mock_part = MagicMock()
@@ -451,7 +452,7 @@ def test_a2a_parts_to_contents_unknown_part_kind() -> None:
 def test_chat_message_to_a2a_message_with_hosted_file() -> None:
     """Test conversion of ChatMessage with HostedFileContent to A2A message."""
 
-    agent = A2AAgent.model_construct(client=MagicMock(), _http_client=None)
+    agent = A2AAgent(client=MagicMock(), _http_client=None)
 
     # Create message with hosted file content
     message = ChatMessage(
@@ -477,7 +478,7 @@ def test_chat_message_to_a2a_message_with_hosted_file() -> None:
 def test_a2a_parts_to_contents_with_hosted_file_uri() -> None:
     """Test conversion of A2A FilePart with hosted file URI back to UriContent."""
 
-    agent = A2AAgent.model_construct(client=MagicMock(), _http_client=None)
+    agent = A2AAgent(client=MagicMock(), _http_client=None)
 
     # Create FilePart with hosted file URI (simulating what A2A would send back)
     file_part = Part(

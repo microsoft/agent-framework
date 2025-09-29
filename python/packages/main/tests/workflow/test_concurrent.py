@@ -159,7 +159,6 @@ def test_concurrent_custom_aggregator_uses_callback_name_for_id() -> None:
     assert aggregator.id == "summarize"
 
 
-@pytest.mark.asyncio
 async def test_concurrent_checkpoint_resume_round_trip() -> None:
     storage = InMemoryCheckpointStorage()
 
