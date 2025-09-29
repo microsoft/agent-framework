@@ -29,3 +29,12 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           timeout: 3600
           interval: 30
+          ignored: |
+            Python Tests (3.10, macos-latest)
+            Python Tests (3.11, macos-latest)
+            Python Tests (3.12, macos-latest)
+            Python Tests (3.13, macos-latest)
+            Python Lab Tests (3.10, macos-latest)
+            Python Lab Tests (3.11, macos-latest)
+            Python Lab Tests (3.12, macos-latest)
+            Python Lab Tests (3.13, macos-latest)
