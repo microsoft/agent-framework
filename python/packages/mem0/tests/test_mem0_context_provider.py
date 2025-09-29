@@ -4,7 +4,7 @@
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from agent_framework import ChatMessage, Context, Role, TextContent
+from agent_framework import ChatMessage, Context, Role
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.mem0 import Mem0Provider
 
@@ -348,7 +348,6 @@ class TestMem0ProviderModelInvoking:
         )
 
         assert context.messages
-        assert isinstance(context.messages[0], TextContent)
         assert context.messages[0].text == expected_instructions
 
     async def test_model_invoking_multiple_messages(
@@ -406,7 +405,7 @@ class TestMem0ProviderModelInvoking:
         context = await provider.model_invoking(message)
 
         assert isinstance(context, Context)
-        assert not context.contents
+        assert not context.messages
 
     async def test_model_invoking_filters_empty_message_text(self, mock_mem0_client: AsyncMock) -> None:
         """Test that empty message text is filtered out from query."""
@@ -439,9 +438,8 @@ class TestMem0ProviderModelInvoking:
         context = await provider.model_invoking(message)
 
         expected_instructions = "## Custom Context\nRemember these details:\nTest memory"
-        assert context.contents
-        assert isinstance(context.contents[0], TextContent)
-        assert context.contents[0].text == expected_instructions
+        assert context.messages
+        assert context.messages[0].text == expected_instructions
 
 
 class TestMem0ProviderValidation:
