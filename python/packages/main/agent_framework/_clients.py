@@ -207,9 +207,12 @@ class BaseChatClient(AFBaseModel, ABC):
     # This is used for OTel setup, should be overridden in subclasses
 
     def prepare_messages(
-        self, messages: str | ChatMessage | list[str] | list[ChatMessage]
+        self, messages: str | ChatMessage | list[str] | list[ChatMessage], chat_options: ChatOptions
     ) -> MutableSequence[ChatMessage]:
         """Turn the allowed input into a list of chat messages."""
+        if chat_options.instructions:
+            system_msg = ChatMessage(role="system", text=chat_options.instructions)
+            return [system_msg, *prepare_messages(messages)]
         return prepare_messages(messages)
 
     def _filter_internal_kwargs(self, kwargs: dict[str, Any]) -> dict[str, Any]:
@@ -368,7 +371,7 @@ class BaseChatClient(AFBaseModel, ABC):
                 user=user,
                 additional_properties=additional_properties or {},
             )
-        prepped_messages = self.prepare_messages(messages)
+        prepped_messages = self.prepare_messages(messages, chat_options)
         self._prepare_tool_choice(chat_options=chat_options)
 
         filtered_kwargs = self._filter_internal_kwargs(kwargs)
@@ -449,7 +452,7 @@ class BaseChatClient(AFBaseModel, ABC):
                 user=user,
                 additional_properties=additional_properties or {},
             )
-        prepped_messages = self.prepare_messages(messages)
+        prepped_messages = self.prepare_messages(messages, chat_options)
         self._prepare_tool_choice(chat_options=chat_options)
 
         filtered_kwargs = self._filter_internal_kwargs(kwargs)

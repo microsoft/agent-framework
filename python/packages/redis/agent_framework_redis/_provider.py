@@ -1,32 +1,28 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from __future__ import annotations
-
+import json
 import sys
 from collections.abc import MutableSequence, Sequence
 from functools import reduce
 from operator import and_
 from typing import Any, Literal, cast
 
-from agent_framework import ChatMessage, Context, ContextProvider, Role, TextContent
+import numpy as np
+from agent_framework import ChatMessage, Context, ContextProvider, Role
 from agent_framework.exceptions import (
     ServiceInitializationError,
     ServiceInvalidRequestError,
 )
-
-if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
-else:
-    from typing_extensions import Self  # pragma: no cover
-
-import json
-
-import numpy as np
 from redisvl.index import AsyncSearchIndex
 from redisvl.query import FilterQuery, HybridQuery, TextQuery
 from redisvl.query.filter import FilterExpression, Tag
 from redisvl.utils.token_escaper import TokenEscaper
 from redisvl.utils.vectorize import BaseVectorizer
+
+if sys.version_info >= (3, 11):
+    from typing import Self  # pragma: no cover
+else:
+    from typing_extensions import Self  # pragma: no cover
 
 
 class RedisProvider(ContextProvider):
@@ -36,41 +32,69 @@ class RedisProvider(ContextProvider):
     Uses full-text or optional hybrid vector search to ground model responses.
     """
 
-    # Connection and indexing
-    redis_url: str = "redis://localhost:6379"
-    index_name: str = "context"
-    prefix: str = "context"
+    def __init__(
+        self,
+        redis_url: str = "redis://localhost:6379",
+        index_name: str = "context",
+        prefix: str = "context",
+        # Redis vectorizer configuration (optional, injected by client)
+        redis_vectorizer: BaseVectorizer | None = None,
+        vector_field_name: str | None = None,
+        vector_algorithm: Literal["flat", "hnsw"] | None = None,
+        vector_distance_metric: Literal["cosine", "ip", "l2"] | None = None,
+        # Partition fields (indexed for filtering)
+        application_id: str | None = None,
+        agent_id: str | None = None,
+        user_id: str | None = None,
+        thread_id: str | None = None,
+        scope_to_per_operation_thread_id: bool = False,
+        # Prompt and runtime
+        context_prompt: str = ContextProvider.DEFAULT_CONTEXT_PROMPT,
+        redis_index: Any = None,
+        overwrite_index: bool = False,
+    ):
+        """Create a Redis Context Provider.
 
-    # Redis vectorizer configuration (optional, injected by client)
-    redis_vectorizer: BaseVectorizer | None = None
-    vector_field_name: str | None = None
-    vector_algorithm: Literal["flat", "hnsw"] | None = None
-    vector_distance_metric: Literal["cosine", "ip", "l2"] | None = None
+        Args:
+            redis_url: The Redis server URL.
+            index_name: The name of the Redis index.
+            prefix: The prefix for all keys in the Redis database.
+            redis_vectorizer: The vectorizer to use for Redis.
+            vector_field_name: The name of the vector field in Redis.
+            vector_algorithm: The algorithm to use for vector search.
+            vector_distance_metric: The distance metric to use for vector search.
+            application_id: The application ID to scope the context.
+            agent_id: The agent ID to scope the context.
+            user_id: The user ID to scope the context.
+            thread_id: The thread ID to scope the context.
+            scope_to_per_operation_thread_id: Whether to scope to the per-operation thread ID.
+            context_prompt: The context prompt to use for the provider.
+            redis_index: The Redis index to use for the provider.
+            overwrite_index: Whether to overwrite the existing Redis index.
 
-    # Partition fields (indexed for filtering)
-    application_id: str | None = None
-    agent_id: str | None = None
-    user_id: str | None = None
-    thread_id: str | None = None
-    scope_to_per_operation_thread_id: bool = False
-
-    # Prompt and runtime
-    context_prompt: str = ContextProvider.DEFAULT_CONTEXT_PROMPT
-    redis_index: Any = None
-    overwrite_index: bool = False
-    _per_operation_thread_id: str | None = None
-    _token_escaper: TokenEscaper = TokenEscaper()
-    _conversation_id: str | None = None
-    _index_initialized: bool = False
-    _schema_dict: dict[str, Any] | None = None
-
-    def model_post_init(self, __context: Any) -> None:
-        """Post-initialization hook to set up computed fields after Pydantic initialization.
-
-        This is called automatically by Pydantic after the model is initialized.
         """
-        # Create Redis index using the cached schema_dict property
-        self.redis_index = AsyncSearchIndex.from_dict(self.schema_dict, redis_url=self.redis_url, validate_on_load=True)
+        self.redis_url = redis_url
+        self.index_name = index_name
+        self.prefix = prefix
+        self.redis_vectorizer = redis_vectorizer
+        self.vector_field_name = vector_field_name
+        self.vector_algorithm: Literal["flat", "hnsw"] | None = vector_algorithm
+        self.vector_distance_metric: Literal["cosine", "ip", "l2"] | None = vector_distance_metric
+        self.application_id = application_id
+        self.agent_id = agent_id
+        self.user_id = user_id
+        self.thread_id = thread_id
+        self.scope_to_per_operation_thread_id = scope_to_per_operation_thread_id
+        self.context_prompt = context_prompt
+        self.overwrite_index = overwrite_index
+        self._per_operation_thread_id: str | None = None
+        self._token_escaper: TokenEscaper = TokenEscaper()
+        self._conversation_id: str | None = None
+        self._index_initialized: bool = False
+        self._schema_dict: dict[str, Any] | None = None
+        self.redis_index = redis_index or AsyncSearchIndex.from_dict(
+            self.schema_dict, redis_url=self.redis_url, validate_on_load=True
+        )
 
     @property
     def schema_dict(self) -> dict[str, Any]:
@@ -495,8 +519,12 @@ class RedisProvider(ContextProvider):
         line_separated_memories = "\n".join(
             str(memory.get("content", "")) for memory in memories if memory.get("content")
         )
-        content = TextContent(f"{self.context_prompt}\n{line_separated_memories}") if line_separated_memories else None
-        return Context(contents=[content] if content else None)
+
+        return Context(
+            messages=[ChatMessage(role="user", text=f"{self.context_prompt}\n{line_separated_memories}")]
+            if line_separated_memories
+            else None
+        )
 
     async def __aenter__(self) -> Self:
         """Async context manager entry.

@@ -35,6 +35,7 @@ class MiddlewareType(Enum):
 
 __all__ = [
     "AgentMiddleware",
+    "AgentMiddlewares",
     "AgentRunContext",
     "ChatContext",
     "ChatMiddleware",
@@ -230,6 +231,7 @@ Middleware: TypeAlias = (
     | ChatMiddleware
     | ChatMiddlewareCallable
 )
+AgentMiddlewares: TypeAlias = AgentMiddleware | AgentMiddlewareCallable
 
 
 # Middleware type markers for decorators

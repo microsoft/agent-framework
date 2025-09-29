@@ -1,11 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import Sequence
-from dataclasses import dataclass
-from typing import Any, Protocol, TypeVar, overload
+from collections.abc import MutableSequence, Sequence
+from typing import Any, Protocol, TypeVar
 
 from pydantic import model_validator
 
+from ._memory import Context, ContextProvider
 from ._pydantic import AFBaseModel
 from ._types import ChatMessage
 from .exceptions import AgentThreadException
@@ -181,44 +181,25 @@ class ChatMessageStore:
         return state.model_dump(**kwargs)
 
 
-@dataclass
+TAgentThread = TypeVar("TAgentThread", bound="AgentThread")
+
+
 class AgentThread:
     """The Agent thread class, this can represent both a locally managed thread or a thread managed by the service."""
 
-    _service_thread_id: str | None = None
-    _message_store: ChatMessageStoreProtocol | None = None
-
-    @overload
-    def __init__(self) -> None:
-        """Initialize an empty AgentThread with no service thread ID or message store."""
-        ...
-
-    @overload
-    def __init__(self, *, service_thread_id: str) -> None:
-        """Initialize an AgentThread with a service thread ID.
-
-        Args:
-            service_thread_id: The ID of the thread managed by the agent service.
-        """
-        ...
-
-    @overload
-    def __init__(self, *, message_store: ChatMessageStoreProtocol) -> None:
-        """Initialize an AgentThread with a custom message store.
-
-        Args:
-            message_store: The ChatMessageStore implementation for managing chat messages.
-        """
-        ...
-
     def __init__(
-        self, *, service_thread_id: str | None = None, message_store: ChatMessageStoreProtocol | None = None
+        self,
+        *,
+        service_thread_id: str | None = None,
+        message_store: ChatMessageStoreProtocol | None = None,
+        context_provider: ContextProvider | None = None,
     ) -> None:
-        """Initialize an AgentThread.
+        """Initialize an AgentThread, do not use this method manually, always use: agent.get_new_thread().
 
         Args:
             service_thread_id: Optional ID of the thread managed by the agent service.
             message_store: Optional ChatMessageStore implementation for managing chat messages.
+            context_provider: Optional ContextProvider for the thread.
 
         Note:
             Either service_thread_id or message_store may be set, but not both.
@@ -226,9 +207,9 @@ class AgentThread:
         if service_thread_id is not None and message_store is not None:
             raise AgentThreadException("Only the service_thread_id or message_store may be set, but not both.")
 
-        super().__init__()
         self._service_thread_id = service_thread_id
         self._message_store = message_store
+        self.context_provider = context_provider
 
     @property
     def is_initialized(self) -> bool:
@@ -281,22 +262,6 @@ class AgentThread:
 
         self._message_store = message_store
 
-    async def serialize(self, **kwargs: Any) -> dict[str, Any]:
-        """Serializes the current object's state.
-
-        Args:
-            **kwargs: Arguments for serialization.
-        """
-        chat_message_store_state = None
-        if self._message_store is not None:
-            chat_message_store_state = await self._message_store.serialize(**kwargs)
-
-        state = AgentThreadState(
-            service_thread_id=self._service_thread_id, chat_message_store_state=chat_message_store_state
-        )
-
-        return state.model_dump()
-
     async def on_new_messages(self, new_messages: ChatMessage | Sequence[ChatMessage]) -> None:
         """Invoked when a new message has been contributed to the chat by any participant."""
         if self._service_thread_id is not None:
@@ -312,14 +277,38 @@ class AgentThread:
             new_messages = [new_messages]
         await self._message_store.add_messages(new_messages)
 
+    async def invoke_context_provider(
+        self, messages: ChatMessage | MutableSequence[ChatMessage] | None
+    ) -> Context | None:
+        """Invoke the context_provider, if any."""
+        if not self.context_provider:
+            return None
+        async with self.context_provider:
+            return await self.context_provider.model_invoking(messages or [])
+
+    async def serialize(self, **kwargs: Any) -> dict[str, Any]:
+        """Serializes the current object's state.
+
+        Args:
+            **kwargs: Arguments for serialization.
+        """
+        chat_message_store_state = None
+        if self._message_store is not None:
+            chat_message_store_state = await self._message_store.serialize(**kwargs)
+
+        state = AgentThreadState(
+            service_thread_id=self._service_thread_id, chat_message_store_state=chat_message_store_state
+        )
+        return state.model_dump()
+
     @classmethod
     async def deserialize(
-        cls,
+        cls: type[TAgentThread],
         serialized_thread_state: dict[str, Any],
         *,
         message_store: ChatMessageStoreProtocol | None = None,
         **kwargs: Any,
-    ) -> "AgentThread":
+    ) -> TAgentThread:
         """Deserializes the state from a dictionary into a new AgentThread instance.
 
         Args:

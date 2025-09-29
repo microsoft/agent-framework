@@ -1799,6 +1799,7 @@ class ChatOptions(AFBaseModel):
     allow_multiple_tool_calls: bool | None = None
     conversation_id: str | None = None
     frequency_penalty: Annotated[float | None, Field(ge=-2.0, le=2.0)] = None
+    instructions: str | None = None
     logit_bias: MutableMapping[str | int, float] | None = None
     max_tokens: Annotated[int | None, Field(gt=0)] = None
     metadata: MutableMapping[str, str] | None = None
@@ -1902,11 +1903,13 @@ class ChatOptions(AFBaseModel):
         # tool_choice has a specialized serialize method. Save it here so we can fix it later.
         tool_choice = other.tool_choice or self.tool_choice
         updated_values = other.model_dump(exclude_none=True, exclude={"tools"})
+
         logit_bias = updated_values.pop("logit_bias", {})
         metadata = updated_values.pop("metadata", {})
         additional_properties = updated_values.pop("additional_properties", {})
         combined = self.model_copy(update=updated_values)
         combined.tool_choice = tool_choice
+        combined.instructions = " ".join([combined.instructions or "", other.instructions or ""])
         combined.logit_bias = {**(combined.logit_bias or {}), **logit_bias}
         combined.metadata = {**(combined.metadata or {}), **metadata}
         combined.additional_properties = {**(combined.additional_properties or {}), **additional_properties}

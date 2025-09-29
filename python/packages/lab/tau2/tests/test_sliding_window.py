@@ -47,7 +47,7 @@ def test_initialization_with_messages():
     assert len(sliding_window.truncated_messages) == 2
 
 
-@pytest.mark.asyncio
+
 async def test_add_messages_simple():
     """Test adding messages without truncation."""
     sliding_window = SlidingWindowChatMessageStore(max_tokens=10000)  # Large limit
@@ -65,7 +65,7 @@ async def test_add_messages_simple():
     assert messages[1].text == "I can help with that."
 
 
-@pytest.mark.asyncio
+
 async def test_list_all_messages_vs_list_messages():
     """Test difference between list_all_messages and list_messages."""
     sliding_window = SlidingWindowChatMessageStore(max_tokens=50)  # Small limit to force truncation
@@ -221,7 +221,7 @@ def test_estimate_any_object_token_count_non_serializable():
     assert token_count > 0
 
 
-@pytest.mark.asyncio
+
 async def test_real_world_scenario():
     """Test a realistic conversation scenario."""
     sliding_window = SlidingWindowChatMessageStore(
