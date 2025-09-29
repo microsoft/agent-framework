@@ -63,18 +63,6 @@ public static class WorkflowProvider
         }
     }
     
-    /// <summary>
-    /// Modify items in a list
-    /// </summary>
-    internal sealed class EditVarExecutor(FormulaSession session) : ActionExecutor(id: "edit_var", session)
-    {
-        // <inheritdoc />
-        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            return default;
-        }
-    }
-    
     public static Workflow CreateWorkflow<TInput>(
         DeclarativeWorkflowOptions options,
         Func<TInput, ChatMessage>? inputTransform = null) 
@@ -85,7 +73,6 @@ public static class WorkflowProvider
         MyWorkflowRootExecutor<TInput> myWorkflowRoot = new(options, inputTransform);
         DelegateExecutor myWorkflow = new(id: "my_workflow", myWorkflowRoot.Session);
         SetVarExecutor setVar = new(myWorkflowRoot.Session);
-        EditVarExecutor editVar = new(myWorkflowRoot.Session);
 
         // Define the workflow builder
         WorkflowBuilder builder = new(myWorkflowRoot);
@@ -93,7 +80,6 @@ public static class WorkflowProvider
         // Connect executors
         builder.AddEdge(myWorkflowRoot, myWorkflow);
         builder.AddEdge(myWorkflow, setVar);
-        builder.AddEdge(setVar, editVar);
 
         // Build the workflow
         return builder.Build();

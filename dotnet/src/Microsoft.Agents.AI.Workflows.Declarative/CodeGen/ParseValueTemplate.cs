@@ -72,17 +72,69 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.CodeGen
             
             #line default
             #line hidden
-            this.Write(";\n        object? parsedValue = await context.ConvertValueAsync(targetType, \"");
+            this.Write(";");
             
             #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\ParseValueTemplate.tt"
-            this.Write(this.ToStringHelper.ToStringWithCulture(this.Model.Value.ExpressionText));
+
+if (this.Model.Value.IsVariableReference && this.Model.Value.VariableReference.SegmentCount == 2)
+{
+            
+            #line default
+            #line hidden
+            this.Write("\n        object? parsedValue = await context.ConvertValueAsync(targetType, key: \"" +
+                    "");
+            
+            #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\ParseValueTemplate.tt"
+            this.Write(this.ToStringHelper.ToStringWithCulture(this.Model.Value.VariableReference.VariableName));
+            
+            #line default
+            #line hidden
+            this.Write("\", scopeName: \"");
+            
+            #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\ParseValueTemplate.tt"
+            this.Write(this.ToStringHelper.ToStringWithCulture(this.Model.Value.VariableReference.NamespaceAlias));
             
             #line default
             #line hidden
             this.Write("\", cancellationToken).ConfigureAwait(false);");
             
             #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\ParseValueTemplate.tt"
- // %%% TODO: Variable / Literal
+
+}
+else if (this.Model.Value.IsVariableReference)
+{
+            
+            #line default
+            #line hidden
+            this.Write("\n        object? parsedValue = await context.ConvertValueAsync(targetType, ");
+            
+            #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\ParseValueTemplate.tt"
+            this.Write(this.ToStringHelper.ToStringWithCulture(FormatStringValue(this.Model.Value.VariableReference.ToString())));
+            
+            #line default
+            #line hidden
+            this.Write(", cancellationToken).ConfigureAwait(false);");
+            
+            #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\ParseValueTemplate.tt"
+
+}
+else
+{
+            
+            #line default
+            #line hidden
+            this.Write("\n        object? parsedValue = await context.ConvertValueAsync(targetType, ");
+            
+            #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\ParseValueTemplate.tt"
+            this.Write(this.ToStringHelper.ToStringWithCulture(FormatStringValue(this.Model.Value.ExpressionText)));
+            
+            #line default
+            #line hidden
+            this.Write(", cancellationToken).ConfigureAwait(false);");
+            
+            #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\ParseValueTemplate.tt"
+
+}
         AssignVariable(this.Variable, "parsedValue"); 
             
             #line default

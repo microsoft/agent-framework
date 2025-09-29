@@ -44,7 +44,23 @@ public static class WorkflowProvider
         protected override async ValueTask ExecuteAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken)
         {
             // Initialize variables
+            await context.QueueStateUpdateAsync("MySource", UnassignedValue.Instance, "Local").ConfigureAwait(false);
             await context.QueueStateUpdateAsync("MyVar", UnassignedValue.Instance, "Local").ConfigureAwait(false);
+        }
+    }
+    
+    /// <summary>
+    /// Assigns an evaluated expression, other variable, or literal value to the  "Local.MySource" variable.
+    /// </summary>
+    internal sealed class SetVarExecutor(FormulaSession session) : ActionExecutor(id: "set_var", session)
+    {
+        // <inheritdoc />
+        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+        {
+            object? evaluatedValue = "42";
+            await context.QueueStateUpdateAsync(key: "MySource", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
+    
+            return default;
         }
     }
     
@@ -56,6 +72,10 @@ public static class WorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
+            VariableType targetType = typeof(decimal);
+            object? parsedValue = await context.ConvertValueAsync(targetType, key: "MySource", scopeName: "Local", cancellationToken).ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "MyVar", value: parsedValue, scopeName: "Local").ConfigureAwait(false);
+    
             return default;
         }
     }
@@ -69,6 +89,7 @@ public static class WorkflowProvider
         inputTransform ??= (message) => DeclarativeWorkflowBuilder.DefaultTransform(message);
         MyWorkflowRootExecutor<TInput> myWorkflowRoot = new(options, inputTransform);
         DelegateExecutor myWorkflow = new(id: "my_workflow", myWorkflowRoot.Session);
+        SetVarExecutor setVar = new(myWorkflowRoot.Session);
         ParseVarExecutor parseVar = new(myWorkflowRoot.Session);
 
         // Define the workflow builder
@@ -76,7 +97,8 @@ public static class WorkflowProvider
 
         // Connect executors
         builder.AddEdge(myWorkflowRoot, myWorkflow);
-        builder.AddEdge(myWorkflow, parseVar);
+        builder.AddEdge(myWorkflow, setVar);
+        builder.AddEdge(setVar, parseVar);
 
         // Build the workflow
         return builder.Build();

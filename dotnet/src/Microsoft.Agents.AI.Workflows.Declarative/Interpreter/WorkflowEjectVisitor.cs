@@ -55,15 +55,8 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
             // No completion for root scope
             if (this._workflowModel.GetDepth(item.Id.Value) > 1)
             {
-                //string? action = null; // %%% NEEDED - DoneAsync ???
-                //ConditionGroupExecutor? conditionGroup = this._workflowModel.LocateParent<ConditionGroupExecutor>(parentId);
-                //if (conditionGroup is not null)
-                //{
-                //    action = $"{conditionGroup.Id.FormatName()}.{nameof(ConditionGroupExecutor.DoneAsync)}";
-                //}
-
                 // Define post action for this scope
-                string completionId = this.ContinuationFor(item.Id.Value/*, action*/);
+                string completionId = this.ContinuationFor(item.Id.Value);
                 this._workflowModel.AddLinkFromPeer(item.Id.Value, completionId);
                 // Transition to post action of parent scope
                 this._workflowModel.AddLink(completionId, WorkflowActionVisitor.Steps.Post(parentId));
@@ -87,7 +80,7 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
             // Complete the condition item.
             void CompletionHandler()
             {
-                string completionId = this.ContinuationFor(stepId/*, /// %%% NEEDED ??? $"{conditionGroup.Id.FormatName()}.{nameof(ConditionGroupExecutor.DoneAsync)}"*/);
+                string completionId = this.ContinuationFor(stepId);
                 this._workflowModel.AddLink(completionId, WorkflowActionVisitor.Steps.Post(conditionGroup.Id));
 
                 // Merge link when no action group is defined
@@ -214,9 +207,10 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
 
     protected override void Visit(Question item)
     {
-        this.Trace(item);
+        this.NotSupported(item);
+        //this.Trace(item);
 
-        this.ContinueWith(new QuestionTemplate(item));  // %%% TODO
+        //this.ContinueWith(new QuestionTemplate(item));
     }
 
     protected override void Visit(EndDialog item)
@@ -320,16 +314,18 @@ internal sealed class WorkflowEjectVisitor : DialogActionVisitor
 
     protected override void Visit(EditTable item)
     {
-        this.Trace(item);
+        this.NotSupported(item);
+        //this.Trace(item);
 
         //this.ContinueWith(new EditTableTemplate(item));
     }
 
     protected override void Visit(EditTableV2 item)
     {
-        this.Trace(item);
+        this.NotSupported(item);
+        //this.Trace(item);
 
-        this.ContinueWith(new EditTableV2Template(item));
+        //this.ContinueWith(new EditTableV2Template(item));
     }
 
     protected override void Visit(ParseValue item)

@@ -3,6 +3,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Dynamic;
 using System.Linq;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
@@ -31,7 +32,7 @@ internal static class DataValueExtensions
             DateTime datetimeValue => DateTimeDataValue.Create(datetimeValue),
             TimeSpan timeValue => TimeDataValue.Create(timeValue),
             object when value is IDictionary dictionaryValue => dictionaryValue.ToRecordValue(),
-            //object when value is IEnumerable tableValue => tableValue.ToTable(),
+            //object when value is IEnumerable tableValue => tableValue.ToTable(), // %%% TODO
             _ => throw new DeclarativeModelException($"Unsupported variable type: {value.GetType().Name}"),
         };
 
@@ -130,6 +131,8 @@ internal static class DataValueExtensions
 
         IEnumerable<KeyValuePair<string, DataValue>> GetFields()
         {
+            yield return new KeyValuePair<string, DataValue>(TypeSchema.Discriminator, nameof(ExpandoObject).ToDataValue());
+
             foreach (string key in value.Keys)
             {
                 yield return new KeyValuePair<string, DataValue>(key, value[key].ToDataValue());
@@ -162,13 +165,16 @@ internal static class DataValueExtensions
                 record = singleColumn as RecordDataValue ?? record;
             }
 
-#pragma warning disable RCS1061 // %%% CONTINUE VALIDATION: Merge 'if' with nested 'if'
             if (record.Properties.TryGetValue(TypeSchema.Discriminator, out DataValue? value) && value is StringDataValue typeValue)
-#pragma warning restore RCS1061
             {
                 if (string.Equals(nameof(ChatMessage), typeValue.Value, StringComparison.Ordinal))
                 {
                     return table.ToChatMessages().ToArray();
+                }
+
+                if (string.Equals(nameof(ExpandoObject), typeValue.Value, StringComparison.Ordinal))
+                {
+                    return table.Values.Select(dataValue => dataValue.ToDictionary()).ToArray();
                 }
             }
         }
@@ -178,13 +184,16 @@ internal static class DataValueExtensions
 
     private static object ToObject(this RecordDataValue record)
     {
-#pragma warning disable RCS1061 // %%% CONTINUE VALIDATION: Merge 'if' with nested 'if'
         if (record.Properties.TryGetValue(TypeSchema.Discriminator, out DataValue? value) && value is StringDataValue typeValue)
-#pragma warning restore RCS1061
         {
             if (string.Equals(nameof(ChatMessage), typeValue.Value, StringComparison.Ordinal))
             {
                 return record.ToChatMessage();
+            }
+
+            if (string.Equals(nameof(ExpandoObject), typeValue.Value, StringComparison.Ordinal))
+            {
+                return record.ToDictionary();
             }
         }
 
@@ -194,6 +203,7 @@ internal static class DataValueExtensions
     private static Dictionary<string, object?> ToDictionary(this RecordDataValue record)
     {
         Dictionary<string, object?> result = [];
+        result[TypeSchema.Discriminator] = nameof(ExpandoObject);
         foreach (KeyValuePair<string, DataValue> property in record.Properties)
         {
             result[property.Key] = property.Value.ToObject();

@@ -49,7 +49,7 @@ internal static class ObjectExtensions
     {
         if (sourceValue is string sourceText)
         {
-            JsonDocument? document = JsonDocument.Parse(sourceText);
+            JsonDocument? document = JsonDocument.Parse(sourceText.TrimJsonDelimiter());
             return document.ParseRecord(targetType);
         }
 
