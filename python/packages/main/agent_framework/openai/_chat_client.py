@@ -119,7 +119,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
 
     # region content creation
 
-    def _chat_to_tool_spec(self, tools: list[ToolProtocol | MutableMapping[str, Any]]) -> list[dict[str, Any]]:
+    def _chat_to_tool_spec(self, tools: Sequence[ToolProtocol | MutableMapping[str, Any]]) -> list[dict[str, Any]]:
         chat_tools: list[dict[str, Any]] = []
         for tool in tools:
             if isinstance(tool, ToolProtocol):
@@ -132,7 +132,9 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
                 chat_tools.append(tool if isinstance(tool, dict) else dict(tool))
         return chat_tools
 
-    def _process_web_search_tool(self, tools: list[ToolProtocol | MutableMapping[str, Any]]) -> dict[str, Any] | None:
+    def _process_web_search_tool(
+        self, tools: Sequence[ToolProtocol | MutableMapping[str, Any]]
+    ) -> dict[str, Any] | None:
         for tool in tools:
             if isinstance(tool, HostedWebSearchTool):
                 # Web search tool requires special handling
@@ -152,6 +154,9 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
     def _prepare_options(self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions) -> dict[str, Any]:
         # Preprocess web search tool if it exists
         options_dict = chat_options.to_provider_settings()
+        instructions = options_dict.pop("instructions", None)
+        if instructions:
+            messages = [ChatMessage(role="system", text=instructions), *messages]
         if messages and "messages" not in options_dict:
             options_dict["messages"] = self._prepare_chat_history_for_request(messages)
         if "messages" not in options_dict:

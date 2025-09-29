@@ -8,6 +8,10 @@
     <VersionSuffix>alpha</VersionSuffix>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <InjectSharedThrow>true</InjectSharedThrow>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="A2A" />
 

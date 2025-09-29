@@ -27,10 +27,9 @@ public abstract class AgentThread
     /// Serializes the current object's state to a <see cref="JsonElement"/> using the specified serialization options.
     /// </summary>
     /// <param name="jsonSerializerOptions">The JSON serialization options to use.</param>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="JsonElement"/> representation of the object's state.</returns>
-    public virtual Task<JsonElement> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-        => Task.FromResult(default(JsonElement));
+    public virtual JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+        => default;
 
     /// <summary>
     /// This method is called when new messages have been contributed to the chat by any participant.

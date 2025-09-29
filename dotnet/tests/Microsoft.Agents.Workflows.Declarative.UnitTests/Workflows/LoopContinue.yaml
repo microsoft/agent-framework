@@ -3,12 +3,7 @@ trigger:
 
   kind: OnConversationStart
   id: my_workflow
-
   actions:
-    - kind: SetVariable
-      id: setVariable_count
-      variable: Local.Count
-      value: =0
 
     - kind: Foreach
       id: foreach_loop
@@ -16,14 +11,17 @@ trigger:
       index: Local.LoopIndex
       value: Local.LoopValue
       actions:
+
         - kind: ContinueLoop
-          id: continueLoop_now
+          id: continue_loop_now
+
         - kind: SetVariable
-          id: setVariable_loop
+          id: set_variable_inner
           variable: Local.Count
           value: =Local.Count + 1
+
         - kind: SendActivity
-          id: sendActivity_loop
+          id: send_activity_inner
           activity: x{Local.Count} - {Local.LoopIndex}:{Local.LoopValue}
 
     - kind: EndConversation
