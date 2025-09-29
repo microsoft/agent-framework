@@ -2,13 +2,11 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
-using Azure.AI.OpenAI;
-using Azure.Identity;
 using Microsoft.Agents.Workflows;
 using Microsoft.Agents.Workflows.Reflection;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
 
 namespace ConcurrentWithVisualizationSample;
 
@@ -35,44 +33,21 @@ public static class Program
 {
     private static async Task Main()
     {
-        // Set up the Azure OpenAI client
-        var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ??
-            throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-        var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
-        var chatClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
-            .GetChatClient(deploymentName).AsIChatClient();
+        // Create the mapper executors
+        const int NumberOfMappers = 3;
+        var mapperIds = Enumerable.Range(0, NumberOfMappers).Select(i => $"mapper_{i}");
+        var mappers = mapperIds.Select(id => new Mapper(id));
 
-        // Create domain expert agents
-        ChatClientAgent researcher = new(
-            chatClient,
-            name: "Researcher",
-            instructions: "You are an expert market and product researcher. Given a prompt, provide concise, " +
-                         "factual insights, opportunities, and risks. Focus on data-driven analysis."
-        );
+        // Create the data spitter executor
+        var splitter = new Split(mapperIds.ToArray());
 
-        ChatClientAgent marketer = new(
-            chatClient,
-            name: "Marketer",
-            instructions: "You are a creative marketing strategist. Craft compelling value propositions and " +
-                         "target messaging aligned to the prompt. Focus on customer appeal and market positioning."
-        );
-
-        ChatClientAgent legal = new(
-            chatClient,
-            name: "Legal",
-            instructions: "You are a cautious legal and compliance reviewer. Highlight constraints, disclaimers, " +
-                         "and policy concerns based on the prompt. Focus on risk mitigation and regulatory compliance."
-        );
-
-        // Create workflow orchestration executors
-        var dispatcher = new DispatchToExpertsExecutor(["Researcher", "Marketer", "Legal"]);
-        var aggregator = new AggregateInsightsExecutor(["Researcher", "Marketer", "Legal"]);
+        // Create the 
 
         // Build the concurrent workflow with fan-out/fan-in pattern
-        var workflow = new WorkflowBuilder(dispatcher)
-            .AddFanOutEdge(dispatcher, targets: [researcher, marketer, legal])
-            .AddFanInEdge(aggregator, sources: [researcher, marketer, legal])
-            .Build<string>();
+        var workflow = new WorkflowBuilder(splitter)
+            .AddFanOutEdge(splitter, targets: [.. mappers])
+            .AddFanInEdge(aggregator, sources: [.. mappers])
+            .Build();
 
         // Generate and display workflow visualization
         Console.WriteLine("=== WORKFLOW VISUALIZATION ===");
@@ -86,28 +61,123 @@ public static class Program
         Console.WriteLine("\n--- Mermaid Format ---");
         var mermaid = workflow.ToMermaidString();
         Console.WriteLine(mermaid);
+    }
+}
 
-        // Execute the workflow
-        Console.WriteLine("\n=== WORKFLOW EXECUTION ===");
-        const string Prompt = "We are launching a new budget-friendly electric bike for urban commuters.";
-        Console.WriteLine($"Input prompt: {Prompt}");
-        Console.WriteLine("\nExecuting concurrent analysis by domain experts...\n");
+internal sealed class SplitComplete : WorkflowEvent
+{
+}
 
-        StreamingRun run = await InProcessExecution.StreamAsync(workflow, Prompt);
-        await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
+internal sealed class MapComplete(string JobId, string MapperId) : WorkflowEvent()
+{
+    public string MapperId { get; } = MapperId;
+
+    public string JobId { get; } = JobId;
+}
+
+internal static class Constants
+{
+    public static string DataToProcessKey = "data_to_be_processed";
+}
+
+internal sealed class Split(string[] mapperIds) :
+    ReflectingExecutor<Split>("Split"),
+    IMessageHandler<string>
+{
+    private readonly string[] _mapperIds = mapperIds;
+    internal static readonly string[] lineSeparators = ["\r\n", "\r", "\n"];
+
+    /// <summary>
+    /// Handles the processing of a message by dividing it into chunks and notifying mappers for further processing.
+    /// </summary>
+    /// <remarks>This method processes the input message into a list of words, stores the processed data in
+    /// the workflow state,  and divides the data into chunks for each mapper. Each mapper is notified when its chunk is
+    /// ready for processing.</remarks>
+    /// <param name="message">The input message to be processed. Cannot be null or empty.</param>
+    /// <param name="context">The workflow context used for state updates and message communication. Cannot be null.</param>
+    /// <returns>A <see cref="ValueTask"/> that represents the asynchronous operation.</returns>
+    public async ValueTask HandleAsync(string message, IWorkflowContext context)
+    {
+        // Process the data into a list of words and remove any empty lines
+        var wordList = this.Preprocess(message);
+
+        // Store the tokenized words once so that all mappers can read by index
+        await context.QueueStateUpdateAsync(Constants.DataToProcessKey, wordList);
+
+        // Divide indices into contiguous slices for each mapper
+        var mapperCount = this._mapperIds.Length;
+        var chunkSize = wordList.Length / mapperCount;
+
+        async Task ProcessChunkAsync(int i)
         {
-            if (evt is WorkflowCompletedEvent completed)
-            {
-                Console.WriteLine("=== CONSOLIDATED EXPERT ANALYSIS ===");
-                Console.WriteLine(completed.Data);
-            }
+            // Determine the start and end indices for this mapper's chunk
+            var startIndex = i * chunkSize;
+            var endIndex = i < mapperCount - 1 ? startIndex + chunkSize : wordList.Length;
+
+            // Save the indices under the mappers Id
+            await context.QueueStateUpdateAsync(this._mapperIds[i], (startIndex, endIndex));
+
+            // Notify the mapper that data is ready
+            await context.SendMessageAsync(new SplitComplete(), targetId: this._mapperIds[i]);
         }
 
-        Console.WriteLine("\n=== WORKFLOW COMPLETED ===");
-        Console.WriteLine("Check the generated visualization files in the current directory:");
-        Console.WriteLine("- workflow.dot (GraphViz source)");
-        Console.WriteLine("- workflow.svg (if Graphviz is installed)");
-        Console.WriteLine("- workflow.png (if Graphviz is installed)");
+        // Process all the chunks
+        var tasks = Enumerable.Range(0, mapperCount).Select(i => ProcessChunkAsync(i));
+        await Task.WhenAll(tasks);
+    }
+
+    private string[] Preprocess(string data)
+    {
+        var lines = data.Split(lineSeparators, StringSplitOptions.RemoveEmptyEntries);
+        return lines.SelectMany(line => line.Split(' ')).ToArray();
+    }
+}
+
+internal sealed class Mapper(string id) : ReflectingExecutor<Mapper>(id), IMessageHandler<SplitComplete>
+{
+    public async ValueTask HandleAsync(SplitComplete message, IWorkflowContext context)
+    {
+        var dataToProcess = await context.ReadStateAsync<string[]>(Constants.DataToProcessKey);
+        (int start, int stop) chunk = await context.ReadStateAsync<(int, int)>(this.Id);
+
+        var mapped = dataToProcess?[chunk.start..chunk.stop].Select(data => (dataToProcess, 1));
+
+        var jobId = $"mapped_{this.Id}";
+        await context.QueueStateUpdateAsync(jobId, mapped);
+        await context.SendMessageAsync(new MapComplete(jobId, this.Id));
+    }
+}
+
+internal sealed class Shuffle : ReflectingExecutor<Shuffle>, IMessageHandler<MapComplete>
+{
+    private readonly string[] _mapperIds;
+    private readonly string[] _reducerIds;
+    private readonly HashSet<string> _outstandingMappers;
+    private readonly 
+
+    public Shuffle(string[] mapperIds, string[] reducerIds) : base("shuffle")
+    {
+        this._mapperIds = mapperIds;
+        this._reducerIds = reducerIds;
+        this._outstandingMappers = [.. reducerIds];
+    }
+
+    public async ValueTask HandleAsync(MapComplete message, IWorkflowContext context)
+    {
+        // Read the mapped data from state
+        await context.ReadStateAsync<(string, int)[]>(message.JobId);
+
+        async Task ProcessChunk()
+        {
+
+        }
+    }
+
+    private async Task PreprocessAsync(MapComplete message, IWorkflowContext context)
+    {
+        // Read the mapped chunk in from state
+        var mappedChunk = await context.ReadStateAsync<(string, int)[]>(message.JobId);
+        var sortedChunk = mappedChunk?.GroupBy(item => item.Item1);
     }
 }
 
@@ -193,7 +263,7 @@ internal sealed class AggregateInsightsExecutor(string[] expertIds) :
             var consolidatedReport = FormatConsolidatedReport(insights);
 
             // Complete the workflow with the aggregated result
-            await context.AddEventAsync(new WorkflowCompletedEvent(consolidatedReport));
+            await context.YieldOutputAsync(consolidatedReport);
         }
     }
 

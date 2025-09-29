@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
@@ -266,10 +267,15 @@ public static class WorkflowVisualizer
 #endif
     }
 
-    private static bool TryGetNestedWorkflow(ExecutorRegistration registration, out Workflow workflow)
+    private static bool TryGetNestedWorkflow(ExecutorRegistration registration, [NotNullWhen(true)] out Workflow? workflow)
     {
-        // TODO: Implement proper nested workflow detection once nested workflow support is in. (https://github.com/microsoft/agent-framework/issues/880)
-        workflow = null!;
+        if (registration.RawExecutorishData is Workflow subWorkflow)
+        {
+            workflow = subWorkflow;
+            return true;
+        }
+
+        workflow = null;
         return false;
     }
 

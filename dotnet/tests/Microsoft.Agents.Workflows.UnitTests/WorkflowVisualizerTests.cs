@@ -5,15 +5,15 @@ using FluentAssertions;
 
 namespace Microsoft.Agents.Workflows.UnitTests;
 
-public class WorkflowVizTests
+public class WorkflowVisualizerTests
 {
-    private sealed class MockExecutor(string? id = null) : Executor(id)
+    private sealed class MockExecutor(string id) : Executor(id)
     {
         protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
             routeBuilder.AddHandler<string>((msg, ctx) => ctx.SendMessageAsync(msg));
     }
 
-    private sealed class ListStrTargetExecutor(string? id = null) : Executor(id)
+    private sealed class ListStrTargetExecutor(string id) : Executor(id)
     {
         protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
             routeBuilder.AddHandler<string[]>((msgs, ctx) => ctx.SendMessageAsync(string.Join(",", msgs)));
@@ -28,7 +28,7 @@ public class WorkflowVizTests
 
         var workflow = new WorkflowBuilder("executor1")
             .AddEdge(executor1, executor2)
-            .Build<string>();
+            .Build();
 
         var dotContent = workflow.ToDotString();
 
@@ -55,7 +55,7 @@ public class WorkflowVizTests
             .AddEdge(executor1, executor3)
             .AddEdge(executor2, executor4)
             .AddEdge(executor3, executor4)
-            .Build<string>();
+            .Build();
 
         var dotContent = workflow.ToDotString();
 
@@ -89,7 +89,7 @@ public class WorkflowVizTests
         var workflow = new WorkflowBuilder("start")
             .AddEdge<string>(start, mid, OnlyIfFoo)
             .AddEdge(mid, end)
-            .Build<string>();
+            .Build();
 
         var dotContent = workflow.ToDotString();
 
@@ -113,7 +113,7 @@ public class WorkflowVizTests
         var workflow = new WorkflowBuilder("start")
             .AddFanOutEdge(start, s1, s2)
             .AddFanInEdge(t, s1, s2)  // AddFanInEdge(target, sources)
-            .Build<string>();
+            .Build();
 
         var dotContent = workflow.ToDotString();
 
@@ -175,7 +175,7 @@ public class WorkflowVizTests
 
         var workflow = new WorkflowBuilder("start")
             .AddFanOutEdge(start, target1, target2, target3)
-            .Build<string>();
+            .Build();
 
         var dotContent = workflow.ToDotString();
 
@@ -201,7 +201,7 @@ public class WorkflowVizTests
             .AddEdge<string>(start, a, Condition) // Conditional edge
             .AddFanOutEdge(a, b, c) // Fan-out
             .AddFanInEdge(end, b, c) // Fan-in - AddFanInEdge(target, sources)
-            .Build<string>();
+            .Build();
 
         var dotContent = workflow.ToDotString();
 
@@ -225,7 +225,7 @@ public class WorkflowVizTests
 
         var workflow = new WorkflowBuilder("single")
             .BindExecutor(executor)
-            .Build<string>();
+            .Build();
 
         var dotContent = workflow.ToDotString();
 
@@ -245,7 +245,7 @@ public class WorkflowVizTests
 
         var workflow = new WorkflowBuilder("loop")
             .AddEdge<string>(executor, executor, LoopCondition)
-            .Build<string>();
+            .Build();
 
         var dotContent = workflow.ToDotString();
 
@@ -262,7 +262,7 @@ public class WorkflowVizTests
 
         var workflow = new WorkflowBuilder("executor1")
             .AddEdge(executor1, executor2)
-            .Build<string>();
+            .Build();
 
         var mermaidContent = workflow.ToMermaidString();
 
@@ -286,7 +286,7 @@ public class WorkflowVizTests
         var workflow = new WorkflowBuilder("start")
             .AddEdge<string>(start, mid, OnlyIfFoo)
             .AddEdge(mid, end)
-            .Build<string>();
+            .Build();
 
         var mermaidContent = workflow.ToMermaidString();
 
@@ -309,7 +309,7 @@ public class WorkflowVizTests
         var workflow = new WorkflowBuilder("start")
             .AddFanOutEdge(start, s1, s2)
             .AddFanInEdge(t, s1, s2)
-            .Build<string>();
+            .Build();
 
         var mermaidContent = workflow.ToMermaidString();
 
@@ -347,7 +347,7 @@ public class WorkflowVizTests
             .AddEdge(executor1, executor3)
             .AddEdge(executor2, executor4)
             .AddEdge(executor3, executor4)
-            .Build<string>();
+            .Build();
 
         var mermaidContent = workflow.ToMermaidString();
 
@@ -380,7 +380,7 @@ public class WorkflowVizTests
             .AddEdge<string>(start, a, Condition) // Conditional edge
             .AddFanOutEdge(a, b, c) // Fan-out
             .AddFanInEdge(end, b, c) // Fan-in
-            .Build<string>();
+            .Build();
 
         var mermaidContent = workflow.ToMermaidString();
 
