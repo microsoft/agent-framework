@@ -15,7 +15,7 @@ using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests;
 
-public sealed class AzureAgentProviderTest(ITestOutputHelper output) : WorkflowTest(output)
+public sealed class AzureAgentProviderTest(ITestOutputHelper output) : IntegrationTest(output)
 {
     private AzureAIConfiguration? _configuration;
 

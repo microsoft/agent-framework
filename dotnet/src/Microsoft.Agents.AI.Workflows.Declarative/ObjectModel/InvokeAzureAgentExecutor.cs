@@ -28,71 +28,31 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
         string agentName = this.GetAgentName();
         string? additionalInstructions = this.GetAdditionalInstructions();
         bool autoSend = this.GetAutoSendValue();
-        DataValue? inputMessages = this.GetInputMessages();
+        IEnumerable<ChatMessage>? inputMessages = this.GetInputMessages();
 
-        AgentRunResponse agentResponse = InvokeAgentAsync().ToEnumerable().ToAgentRunResponse();
+        AgentRunResponse agentResponse = agentProvider.InvokeAgentAsync(this.Id, context, agentName, conversationId, autoSend, additionalInstructions, inputMessages, cancellationToken).ToEnumerable().ToAgentRunResponse();
 
         if (autoSend)
         {
             await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
         }
 
-        ChatMessage response = agentResponse.Messages[agentResponse.Messages.Count - 1];
-        await this.AssignAsync(this.AgentOutput?.Messages?.Path, response.ToRecord(), context).ConfigureAwait(false);
+        await this.AssignAsync(this.AgentOutput?.Messages?.Path, agentResponse.Messages.ToTable(), context).ConfigureAwait(false);
 
         return default;
-
-        async IAsyncEnumerable<AgentRunResponseUpdate> InvokeAgentAsync()
-        {
-            AIAgent agent = await agentProvider.GetAgentAsync(agentName, cancellationToken).ConfigureAwait(false);
-
-            ChatClientAgentRunOptions options =
-                new(
-                    new ChatOptions()
-                    {
-                        Instructions = additionalInstructions,
-                    });
-
-            AgentThread agentThread = conversationId is not null && agent is ChatClientAgent chatClientAgent ? chatClientAgent.GetNewThread(conversationId) : agent.GetNewThread();
-            IAsyncEnumerable<AgentRunResponseUpdate> agentUpdates =
-                inputMessages is not null ?
-                    agent.RunStreamingAsync([.. inputMessages.ToChatMessages()], agentThread, options, cancellationToken) :
-                    agent.RunStreamingAsync(agentThread, options, cancellationToken);
-
-            await foreach (AgentRunResponseUpdate update in agentUpdates.ConfigureAwait(false))
-            {
-                await AssignConversationIdAsync(((ChatResponseUpdate?)update.RawRepresentation)?.ConversationId).ConfigureAwait(false);
-
-                if (autoSend)
-                {
-                    await context.AddEventAsync(new AgentRunUpdateEvent(this.Id, update)).ConfigureAwait(false);
-                }
-
-                yield return update;
-            }
-        }
-
-        async ValueTask AssignConversationIdAsync(string? assignValue)
-        {
-            if (assignValue is not null && conversationId is null)
-            {
-                conversationId = assignValue;
-
-                await context.QueueConversationUpdateAsync(conversationId).ConfigureAwait(false);
-            }
-        }
     }
 
-    private DataValue? GetInputMessages()
+    private IEnumerable<ChatMessage>? GetInputMessages()
     {
         DataValue? userInput = null;
+
         if (this.AgentInput?.Messages is not null)
         {
             EvaluationResult<DataValue> expressionResult = this.Evaluator.GetValue(this.AgentInput.Messages);
             userInput = expressionResult.Value;
         }
 
-        return userInput;
+        return userInput?.ToChatMessages();
     }
 
     private string? GetConversationId()

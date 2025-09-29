@@ -2,6 +2,7 @@
 
 using System;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
+using Microsoft.Bot.ObjectModel;
 using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests;
@@ -17,6 +18,7 @@ public abstract class WorkflowTest : IDisposable
     {
         this.Output = new TestOutputAdapter(output);
         Console.SetOut(this.Output);
+        SetProduct();
     }
 
     public void Dispose()
@@ -30,6 +32,14 @@ public abstract class WorkflowTest : IDisposable
         if (isDisposing)
         {
             this.Output.Dispose();
+        }
+    }
+
+    protected static void SetProduct()
+    {
+        if (!ProductContext.IsLocalScopeSupported())
+        {
+            ProductContext.SetContext(Product.Foundry);
         }
     }
 

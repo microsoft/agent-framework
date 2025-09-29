@@ -29,9 +29,9 @@ internal sealed class QuestionExecutor(Question model, WorkflowFormulaState stat
     protected override bool IsDiscreteAction => false;
     protected override bool EmitResultEvent => false;
 
-    public static bool IsComplete(object? message)
+    public static bool IsComplete(object? message) // %%% BASE CLASS ???
     {
-        ExecutorResultMessage executorMessage = ExecutorResultMessage.ThrowIfNot(message);
+        ActionExecutorResult executorMessage = ActionExecutorResult.ThrowIfNot(message);
         return executorMessage.Result is null;
     }
 
@@ -69,7 +69,7 @@ internal sealed class QuestionExecutor(Question model, WorkflowFormulaState stat
         return default;
     }
 
-    public async ValueTask PrepareResponseAsync(IWorkflowContext context, ExecutorResultMessage message, CancellationToken cancellationToken)
+    public async ValueTask PrepareResponseAsync(IWorkflowContext context, ActionExecutorResult message, CancellationToken cancellationToken)
     {
         int count = await this._promptCount.ReadAsync(context).ConfigureAwait(false);
         InputRequest inputRequest = new(this.FormatPrompt(this.Model.Prompt));
@@ -111,7 +111,7 @@ internal sealed class QuestionExecutor(Question model, WorkflowFormulaState stat
         }
     }
 
-    public async ValueTask CompleteAsync(IWorkflowContext context, ExecutorResultMessage message, CancellationToken cancellationToken)
+    public async ValueTask CompleteAsync(IWorkflowContext context, ActionExecutorResult message, CancellationToken cancellationToken)
     {
         await context.RaiseCompletionEventAsync(this.Model).ConfigureAwait(false);
     }

@@ -383,7 +383,6 @@ async def test_openai_assistants_client_prepare_thread_existing_no_run(mock_asyn
     mock_async_openai.beta.threads.runs.cancel.assert_not_called()
 
 
-@pytest.mark.asyncio
 async def test_openai_assistants_client_process_stream_events_thread_run_created(mock_async_openai: MagicMock) -> None:
     """Test _process_stream_events with thread.run.created event."""
     chat_client = create_test_openai_assistants_client(mock_async_openai)
@@ -417,7 +416,6 @@ async def test_openai_assistants_client_process_stream_events_thread_run_created
     assert update.raw_representation == mock_response.data
 
 
-@pytest.mark.asyncio
 async def test_openai_assistants_client_process_stream_events_message_delta_text(mock_async_openai: MagicMock) -> None:
     """Test _process_stream_events with thread.message.delta event containing text."""
     chat_client = create_test_openai_assistants_client(mock_async_openai)
@@ -462,7 +460,6 @@ async def test_openai_assistants_client_process_stream_events_message_delta_text
     assert update.raw_representation == mock_message_delta
 
 
-@pytest.mark.asyncio
 async def test_openai_assistants_client_process_stream_events_requires_action(mock_async_openai: MagicMock) -> None:
     """Test _process_stream_events with thread.run.requires_action event."""
     chat_client = create_test_openai_assistants_client(mock_async_openai)
@@ -506,7 +503,6 @@ async def test_openai_assistants_client_process_stream_events_requires_action(mo
     chat_client._create_function_call_contents.assert_called_once_with(mock_run, None)  # type: ignore
 
 
-@pytest.mark.asyncio
 async def test_openai_assistants_client_process_stream_events_run_step_created(mock_async_openai: MagicMock) -> None:
     """Test _process_stream_events with thread.run.step.created event."""
 
@@ -539,7 +535,6 @@ async def test_openai_assistants_client_process_stream_events_run_step_created(m
     assert len(updates) == 0
 
 
-@pytest.mark.asyncio
 async def test_openai_assistants_client_process_stream_events_run_completed_with_usage(
     mock_async_openai: MagicMock,
 ) -> None:

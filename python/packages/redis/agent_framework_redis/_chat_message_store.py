@@ -22,7 +22,7 @@ class RedisStoreState(AFBaseModel):
 
 
 class RedisChatMessageStore:
-    """Redis-backed implementation of ChatMessageStore using Redis Lists.
+    """Redis-backed implementation of ChatMessageStoreProtocol using Redis Lists.
 
     This implementation provides persistent, thread-safe chat message storage using Redis Lists.
     Messages are stored as JSON-serialized strings in chronological order, with each conversation
@@ -153,9 +153,9 @@ class RedisChatMessageStore:
             await pipe.execute()
 
     async def add_messages(self, messages: Sequence[ChatMessage]) -> None:
-        """Add messages to the Redis store (ChatMessageStore protocol method).
+        """Add messages to the Redis store (ChatMessageStoreProtocol protocol method).
 
-        This method implements the required ChatMessageStore protocol for adding messages.
+        This method implements the required ChatMessageStoreProtocol protocol for adding messages.
         Messages are appended to the Redis list in chronological order, with automatic
         trimming if message limits are configured.
 
@@ -190,9 +190,9 @@ class RedisChatMessageStore:
                 await self._redis_client.ltrim(self.redis_key, -self.max_messages, -1)  # type: ignore[misc]
 
     async def list_messages(self) -> list[ChatMessage]:
-        """Get all messages from the store in chronological order (ChatMessageStore protocol method).
+        """Get all messages from the store in chronological order (ChatMessageStoreProtocol protocol method).
 
-        This method implements the required ChatMessageStore protocol for retrieving messages.
+        This method implements the required ChatMessageStoreProtocol protocol for retrieving messages.
         Returns all messages stored in Redis, ordered from oldest (index 0) to newest (index -1).
 
         Returns:
@@ -220,10 +220,10 @@ class RedisChatMessageStore:
 
         return messages
 
-    async def serialize_state(self, **kwargs: Any) -> Any:
-        """Serialize the current store state for persistence (ChatMessageStore protocol method).
+    async def serialize(self, **kwargs: Any) -> Any:
+        """Serialize the current store state for persistence (ChatMessageStoreProtocol protocol method).
 
-        This method implements the required ChatMessageStore protocol for state serialization.
+        This method implements the required ChatMessageStoreProtocol protocol for state serialization.
         Captures the Redis connection configuration and thread information needed to
         reconstruct the store and reconnect to the same conversation data.
 
@@ -243,10 +243,43 @@ class RedisChatMessageStore:
         )
         return state.model_dump(**kwargs)
 
-    async def deserialize_state(self, serialized_store_state: Any, **kwargs: Any) -> None:
-        """Deserialize state data into this store instance (ChatMessageStore protocol method).
+    @classmethod
+    async def deserialize(cls, serialized_store_state: Any, **kwargs: Any) -> RedisChatMessageStore:
+        """Deserialize state data into a new store instance (ChatMessageStoreProtocol protocol method).
 
-        This method implements the required ChatMessageStore protocol for state deserialization.
+        This method implements the required ChatMessageStoreProtocol protocol for state deserialization.
+        Creates a new RedisChatMessageStore instance from previously serialized data,
+        allowing the store to reconnect to the same conversation data in Redis.
+
+        Args:
+            serialized_store_state: Previously serialized state data from serialize_state().
+                                   Should be a dictionary with thread_id, redis_url, etc.
+            **kwargs: Additional arguments passed to Pydantic model validation.
+
+        Returns:
+            A new RedisChatMessageStore instance configured from the serialized state.
+
+        Raises:
+            ValueError: If required fields are missing or invalid in the serialized state.
+        """
+        if not serialized_store_state:
+            raise ValueError("serialized_store_state is required for deserialization")
+
+        # Validate and parse the serialized state using Pydantic
+        state = RedisStoreState.model_validate(serialized_store_state, **kwargs)
+
+        # Create and return a new store instance with the deserialized configuration
+        return cls(
+            redis_url=state.redis_url,
+            thread_id=state.thread_id,
+            key_prefix=state.key_prefix,
+            max_messages=state.max_messages,
+        )
+
+    async def update_from_state(self, serialized_store_state: Any, **kwargs: Any) -> None:
+        """Deserialize state data into this store instance (ChatMessageStoreProtocol protocol method).
+
+        This method implements the required ChatMessageStoreProtocol protocol for state deserialization.
         Restores the store configuration from previously serialized data, allowing the store
         to reconnect to the same conversation data in Redis.
 
