@@ -139,14 +139,6 @@ using var telemetryAgent = baseAgent.WithOpenTelemetry();
 var response = await telemetryAgent.RunAsync(messages);
 ```
 
-### Integration with AppContext Switch
-
-The implementation integrates with the standard .NET telemetry enablement pattern:
-
-```csharp
-AppContext.SetSwitch("Microsoft.Extensions.AI.Agents.EnableTelemetry", true);
-```
-
 ### Relationship to Microsoft.Extensions.AI
 
 This implementation follows the exact patterns established by Microsoft.Extensions.AI's OpenTelemetry instrumentation, ensuring consistency across the AI ecosystem and leveraging proven patterns for telemetry integration.

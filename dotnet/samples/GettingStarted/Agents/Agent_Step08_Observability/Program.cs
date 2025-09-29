@@ -16,9 +16,6 @@ var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT
 const string JokerName = "Joker";
 const string JokerInstructions = "You are good at telling jokes.";
 
-// Enable telemetry
-AppContext.SetSwitch("Microsoft.Extensions.AI.Agents.EnableTelemetry", true);
-
 // Create TracerProvider with console exporter
 // This will output the telemetry data to the console.
 string sourceName = Guid.NewGuid().ToString("N");

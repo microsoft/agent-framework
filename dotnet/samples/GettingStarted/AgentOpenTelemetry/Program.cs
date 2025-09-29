@@ -20,9 +20,6 @@ using OpenTelemetry.Trace;
 const string SourceName = "OpenTelemetryAspire.ConsoleApp";
 const string ServiceName = "AgentOpenTelemetry";
 
-// Enable telemetry for agents
-AppContext.SetSwitch("Microsoft.Extensions.AI.Agents.EnableTelemetry", true);
-
 // Configure OpenTelemetry for Aspire dashboard
 var otlpEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT") ?? "http://localhost:4318";
 
