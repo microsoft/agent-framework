@@ -412,7 +412,7 @@ class ChatAgent(BaseAgent):
         # We ignore the MCP Servers here and store them separately,
         # we add their functions to the tools list at runtime
         normalized_tools: list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] = (  # type:ignore[reportUnknownVariableType]
-            [] if tools is None else tools if isinstance(tools, list) else [tools]
+            [] if tools is None else tools if isinstance(tools, list) else [tools]  # type: ignore[list-item]
         )
         self._local_mcp_tools = [tool for tool in normalized_tools if isinstance(tool, MCPTool)]
         agent_tools = [tool for tool in normalized_tools if not isinstance(tool, MCPTool)]
@@ -430,7 +430,7 @@ class ChatAgent(BaseAgent):
             store=store,
             temperature=temperature,
             tool_choice=tool_choice,
-            tools=agent_tools,  # type: ignore[reportArgumentType]
+            tools=agent_tools,
             top_p=top_p,
             user=user,
             additional_properties=request_kwargs or {},  # type: ignore
