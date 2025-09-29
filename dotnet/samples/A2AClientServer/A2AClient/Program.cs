@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.CommandLine;
-using System.CommandLine.Invocation;
 using System.Reflection;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.Configuration;
@@ -15,13 +14,13 @@ public static class Program
     {
         // Create root command with options
         var rootCommand = new RootCommand("A2AClient");
-        rootCommand.SetHandler(HandleCommandsAsync);
+        rootCommand.SetAction((_, ct) => HandleCommandsAsync(ct));
 
         // Run the command
-        return await rootCommand.InvokeAsync(args);
+        return await rootCommand.Parse(args).InvokeAsync();
     }
 
-    public static async Task HandleCommandsAsync(InvocationContext context)
+    private static async Task HandleCommandsAsync(CancellationToken cancellationToken)
     {
         // Set up the logging
         using var loggerFactory = LoggerFactory.Create(builder =>
@@ -62,7 +61,7 @@ public static class Program
                     break;
                 }
 
-                var agentResponse = await hostAgent.Agent!.RunAsync(message, thread);
+                var agentResponse = await hostAgent.Agent!.RunAsync(message, thread, cancellationToken: cancellationToken);
                 foreach (var chatMessage in agentResponse.Messages)
                 {
                     Console.ForegroundColor = ConsoleColor.Cyan;

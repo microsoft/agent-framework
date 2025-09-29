@@ -2,6 +2,7 @@
 
 import asyncio
 
+from agent_framework import AgentRunResponse
 from agent_framework.openai import OpenAIResponsesClient
 from pydantic import BaseModel
 
@@ -13,24 +14,23 @@ class OutputStruct(BaseModel):
     description: str
 
 
-async def main():
-    print("=== OpenAI Responses Agent with Structured Output ===")
+async def non_streaming_example() -> None:
+    print("=== Non-streaming example ===")
 
-    # 1. Create an OpenAI Responses agent
+    # Create an OpenAI Responses agent
     agent = OpenAIResponsesClient().create_agent(
         name="CityAgent",
         instructions="You are a helpful agent that describes cities in a structured format.",
     )
 
-    # 2. Ask the agent about a city
+    # Ask the agent about a city
     query = "Tell me about Paris, France"
-
     print(f"User: {query}")
 
-    # 3. Get structured response from the agent using response_format parameter
+    # Get structured response from the agent using response_format parameter
     result = await agent.run(query, response_format=OutputStruct)
 
-    # 4. Access the structured output directly from the response value
+    # Access the structured output directly from the response value
     if result.value:
         structured_data = result.value
         print("Structured Output Agent (from result.value):")
@@ -38,6 +38,43 @@ async def main():
         print(f"Description: {structured_data.description}")
     else:
         print("Error: No structured data found in result.value")
+
+
+async def streaming_example() -> None:
+    print("=== Streaming example ===")
+
+    # Create an OpenAI Responses agent
+    agent = OpenAIResponsesClient().create_agent(
+        name="CityAgent",
+        instructions="You are a helpful agent that describes cities in a structured format.",
+    )
+
+    # Ask the agent about a city
+    query = "Tell me about Tokyo, Japan"
+    print(f"User: {query}")
+
+    # Get structured response from streaming agent using AgentRunResponse.from_agent_response_generator
+    # This method collects all streaming updates and combines them into a single AgentRunResponse
+    result = await AgentRunResponse.from_agent_response_generator(
+        agent.run_stream(query, response_format=OutputStruct),
+        output_format_type=OutputStruct,
+    )
+
+    # Access the structured output directly from the response value
+    if result.value:
+        structured_data = result.value
+        print("Structured Output (from streaming with AgentRunResponse.from_agent_response_generator):")
+        print(f"City: {structured_data.city}")
+        print(f"Description: {structured_data.description}")
+    else:
+        print("Error: No structured data found in result.value")
+
+
+async def main() -> None:
+    print("=== OpenAI Responses Agent with Structured Output ===")
+
+    await non_streaming_example()
+    await streaming_example()
 
 
 if __name__ == "__main__":

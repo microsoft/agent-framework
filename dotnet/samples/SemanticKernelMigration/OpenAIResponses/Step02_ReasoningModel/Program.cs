@@ -47,7 +47,8 @@ async Task SKAgentAsync()
 {
     Console.WriteLine("\n=== SK Agent ===\n");
 
-    OpenAIResponseAgent agent = new(new OpenAIClient(apiKey).GetOpenAIResponseClient(modelId))
+    var responseClient = new OpenAIClient(apiKey).GetOpenAIResponseClient(modelId);
+    OpenAIResponseAgent agent = new(responseClient)
     {
         Name = "Joker",
         Instructions = "You are good at telling jokes.",
@@ -66,7 +67,7 @@ async Task SKAgentAsync()
         }
     };
 
-    Microsoft.SemanticKernel.Agents.AgentThread? thread = null;
+    Microsoft.SemanticKernel.Agents.AgentThread? thread = new OpenAIResponseAgentThread(responseClient);
     await foreach (var item in agent.InvokeAsync(userInput, thread, agentOptions))
     {
         foreach (var content in item.Message.Items)

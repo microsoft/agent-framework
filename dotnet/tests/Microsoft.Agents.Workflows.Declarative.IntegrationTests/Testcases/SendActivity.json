@@ -1,5 +1,5 @@
 ﻿{
-  "description": "Send an activity message .",
+  "description": "Send an activity message.",
   "setup": {
     "input": {
       "type": "String",
@@ -7,6 +7,16 @@
     }
   },
   "validation": {
-    "action_count": 3
+    "min_action_count": 3,
+    "actions": {
+      "start": [
+        "set_user_input",
+        "set_user_name",
+        "send_result"
+      ],
+      "final": [
+        "send_result"
+      ]
+    }
   }
 }

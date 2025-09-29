@@ -6,12 +6,12 @@ from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
 __all__ = [
-    "Task",
-    "Prediction",
     "Evaluation",
+    "Evaluator",
+    "Prediction",
+    "Task",
     "TaskResult",
     "TaskRunner",
-    "Evaluator",
 ]
 
 

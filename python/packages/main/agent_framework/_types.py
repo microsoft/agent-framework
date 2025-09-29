@@ -1799,6 +1799,7 @@ class ChatOptions(AFBaseModel):
     allow_multiple_tool_calls: bool | None = None
     conversation_id: str | None = None
     frequency_penalty: Annotated[float | None, Field(ge=-2.0, le=2.0)] = None
+    instructions: str | None = None
     logit_bias: MutableMapping[str | int, float] | None = None
     max_tokens: Annotated[int | None, Field(gt=0)] = None
     metadata: MutableMapping[str, str] | None = None
@@ -1811,7 +1812,7 @@ class ChatOptions(AFBaseModel):
     store: bool | None = None
     temperature: Annotated[float | None, Field(ge=0.0, le=2.0)] = None
     tool_choice: ChatToolMode | Literal["auto", "required", "none"] | Mapping[str, Any] | None = None
-    tools: list[ToolProtocol | MutableMapping[str, Any]] | None = None
+    tools: MutableSequence[ToolProtocol | MutableMapping[str, Any]] | None = None
     top_p: Annotated[float | None, Field(ge=0.0, le=1.0)] = None
     user: str | None = None
 
@@ -1902,11 +1903,13 @@ class ChatOptions(AFBaseModel):
         # tool_choice has a specialized serialize method. Save it here so we can fix it later.
         tool_choice = other.tool_choice or self.tool_choice
         updated_values = other.model_dump(exclude_none=True, exclude={"tools"})
+
         logit_bias = updated_values.pop("logit_bias", {})
         metadata = updated_values.pop("metadata", {})
         additional_properties = updated_values.pop("additional_properties", {})
         combined = self.model_copy(update=updated_values)
         combined.tool_choice = tool_choice
+        combined.instructions = " ".join([combined.instructions or "", other.instructions or ""])
         combined.logit_bias = {**(combined.logit_bias or {}), **logit_bias}
         combined.metadata = {**(combined.metadata or {}), **metadata}
         combined.additional_properties = {**(combined.additional_properties or {}), **additional_properties}
@@ -2096,28 +2099,46 @@ class AgentRunResponse(AFBaseModel):
 
     @classmethod
     def from_agent_run_response_updates(
-        cls: type[TAgentRunResponse], updates: Sequence["AgentRunResponseUpdate"]
+        cls: type[TAgentRunResponse],
+        updates: Sequence["AgentRunResponseUpdate"],
+        *,
+        output_format_type: type[BaseModel] | None = None,
     ) -> TAgentRunResponse:
         """Joins multiple updates into a single AgentRunResponse."""
         msg = cls(messages=[])
         for update in updates:
             _process_update(msg, update)
         _finalize_response(msg)
+        if output_format_type:
+            msg.try_parse_value(output_format_type)
         return msg
 
     @classmethod
     async def from_agent_response_generator(
-        cls: type[TAgentRunResponse], updates: AsyncIterable["AgentRunResponseUpdate"]
+        cls: type[TAgentRunResponse],
+        updates: AsyncIterable["AgentRunResponseUpdate"],
+        *,
+        output_format_type: type[BaseModel] | None = None,
     ) -> TAgentRunResponse:
         """Joins multiple updates into a single AgentRunResponse."""
         msg = cls(messages=[])
         async for update in updates:
             _process_update(msg, update)
         _finalize_response(msg)
+        if output_format_type:
+            msg.try_parse_value(output_format_type)
         return msg
 
     def __str__(self) -> str:
         return self.text
+
+    def try_parse_value(self, output_format_type: type[BaseModel]) -> None:
+        """If there is a value, does nothing, otherwise tries to parse the text into the value."""
+        if self.value is None:
+            try:
+                self.value = output_format_type.model_validate_json(self.text)  # type: ignore[reportUnknownMemberType]
+            except ValidationError as ex:
+                logger.debug("Failed to parse value from agent run response text: %s", ex)
 
 
 # region AgentRunResponseUpdate
