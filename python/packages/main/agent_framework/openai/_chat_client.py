@@ -154,6 +154,9 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
     def _prepare_options(self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions) -> dict[str, Any]:
         # Preprocess web search tool if it exists
         options_dict = chat_options.to_provider_settings()
+        instructions = options_dict.pop("instructions", None)
+        if instructions:
+            messages = [ChatMessage(role="system", text=instructions), *messages]
         if messages and "messages" not in options_dict:
             options_dict["messages"] = self._prepare_chat_history_for_request(messages)
         if "messages" not in options_dict:

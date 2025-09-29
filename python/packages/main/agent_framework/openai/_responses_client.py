@@ -314,6 +314,8 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
             options_dict["user"] = chat_options.user
 
         # messages
+        if instructions := options_dict.pop("instructions", None):
+            messages = [ChatMessage(role="system", text=instructions), *messages]
         request_input = self._prepare_chat_messages_for_request(messages)
         if not request_input:
             raise ServiceInvalidRequestError("Messages are required for chat completions")

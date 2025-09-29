@@ -661,7 +661,7 @@ class AzureAIAgentClient(BaseChatClient):
                     )
                 )
 
-        instructions: list[str] = []
+        instructions: list[str] = [chat_options.instructions] if chat_options and chat_options.instructions else []
         required_action_results: list[FunctionResultContent | FunctionApprovalResponseContent] | None = None
 
         additional_messages: list[ThreadMessageOptions] | None = None
