@@ -145,18 +145,18 @@ internal class WorkflowHostExecutor : Executor, IResettableExecutor
 
     private ExternalResponse? CheckAndUnqualifyResponse([DisallowNull] ExternalResponse response)
     {
-        if (Throw.IfNull(response).PortInfo.PortId.StartsWith($"{this.Id}.", StringComparison.Ordinal))
+        if (!Throw.IfNull(response).PortInfo.PortId.StartsWith($"{this.Id}.", StringComparison.Ordinal))
         {
             return null;
         }
 
-        InputPortInfo unqualifiedPort = response.PortInfo with { PortId = response.PortInfo.PortId.Substring(this.Id.Length + 1) };
+        RequestPortInfo unqualifiedPort = response.PortInfo with { PortId = response.PortInfo.PortId.Substring(this.Id.Length + 1) };
         return response with { PortInfo = unqualifiedPort };
     }
 
     private ExternalRequest QualifyRequestPortId(ExternalRequest internalRequest)
     {
-        InputPortInfo requestPort = internalRequest.PortInfo with { PortId = $"{this.Id}.{internalRequest.PortInfo.PortId}" };
+        RequestPortInfo requestPort = internalRequest.PortInfo with { PortId = $"{this.Id}.{internalRequest.PortInfo.PortId}" };
         return internalRequest with { PortInfo = requestPort };
     }
 
@@ -170,12 +170,17 @@ internal class WorkflowHostExecutor : Executor, IResettableExecutor
             Task resultTask = Task.CompletedTask;
             switch (evt)
             {
+                case WorkflowStartedEvent:
+                case SuperStepStartedEvent:
+                case SuperStepCompletedEvent:
+                    // These events are internal to the subworkflow and do not need to be forwarded.
+                    break;
                 case RequestInfoEvent requestInfoEvt:
                     ExternalRequest request = requestInfoEvt.Request;
                     resultTask = this._joinContext?.SendMessageAsync(this.Id, this.QualifyRequestPortId(request)).AsTask() ?? Task.CompletedTask;
                     break;
                 case WorkflowErrorEvent errorEvent:
-                    resultTask = this._joinContext?.ForwardWorkflowEventAsync(new SubWorkflowErrorEvent(this.Id, errorEvent.Data as Exception)).AsTask() ?? Task.CompletedTask;
+                    resultTask = this._joinContext?.ForwardWorkflowEventAsync(new SubworkflowErrorEvent(this.Id, errorEvent.Data as Exception)).AsTask() ?? Task.CompletedTask;
                     break;
                 case WorkflowOutputEvent outputEvent:
                     if (this._joinContext != null &&
@@ -210,7 +215,7 @@ internal class WorkflowHostExecutor : Executor, IResettableExecutor
             // superstep, and those are driven by the parent through the ISuperStepJoinContext).
             try
             {
-                _ = this._joinContext?.ForwardWorkflowEventAsync(new SubWorkflowErrorEvent(this.Id, ex)).AsTask();
+                _ = this._joinContext?.ForwardWorkflowEventAsync(new SubworkflowErrorEvent(this.Id, ex)).AsTask();
             }
             catch
             { }

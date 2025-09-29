@@ -35,7 +35,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
     private readonly ConcurrentQueue<Func<ValueTask>> _queuedExternalDeliveries = new();
     private readonly ConcurrentQueue<ISuperStepRunner> _joinedSubworkflowRunners = new();
 
-    private readonly Dictionary<string, ExternalRequest> _externalRequests = [];
+    private readonly ConcurrentDictionary<string, ExternalRequest> _externalRequests = new();
 
     public InProcessRunnerContext(Workflow workflow, string runId, bool withCheckpointing, IStepTracer? stepTracer, object? workflowOwnership = null, bool subworkflow = false, ILogger? logger = null)
     {
@@ -129,8 +129,13 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         }
     }
 
-    public bool NextStepHasActions => this._nextStep.HasMessages || !this._queuedExternalDeliveries.IsEmpty;
-    public bool HasUnservicedRequests => this._externalRequests.Count > 0;
+    public bool HasQueuedExternalDeliveries => !this._queuedExternalDeliveries.IsEmpty;
+    public bool JoinedRunnersHaveActions => this._joinedSubworkflowRunners.Any(joinedRunner => joinedRunner.HasUnprocessedMessages);
+    public bool NextStepHasActions => this._nextStep.HasMessages ||
+                                      this.HasQueuedExternalDeliveries ||
+                                      this.JoinedRunnersHaveActions;
+    public bool HasUnservicedRequests => !this._externalRequests.IsEmpty ||
+                                      this._joinedSubworkflowRunners.Any(joinedRunner => joinedRunner.HasUnservicedRequests);
 
     public async ValueTask<StepContext> AdvanceAsync()
     {
@@ -195,14 +200,18 @@ internal sealed class InProcessRunnerContext : IRunnerContext
     public ValueTask PostAsync(ExternalRequest request)
     {
         this.CheckEnded();
-        this._externalRequests.Add(request.RequestId, request);
+        if (!this._externalRequests.TryAdd(request.RequestId, request))
+        {
+            throw new ArgumentException($"Pending request with id '{request.RequestId}' already exists.");
+        }
+
         return this.AddEventAsync(new RequestInfoEvent(request));
     }
 
     public bool CompleteRequest(string requestId)
     {
         this.CheckEnded();
-        return this._externalRequests.Remove(requestId);
+        return this._externalRequests.TryRemove(requestId, out _);
     }
 
     public readonly List<WorkflowEvent> QueuedEvents = [];

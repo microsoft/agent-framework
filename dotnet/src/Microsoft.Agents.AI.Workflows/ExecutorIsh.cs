@@ -60,7 +60,7 @@ public static class ExecutorIshConfigurationExtensions
         object ownershipToken = new();
         workflow.TakeOwnership(ownershipToken, subworkflow: true);
 
-        Configured<WorkflowHostExecutor, ExecutorOptions> configured = new(InitHostExecutorAsync, id, options);
+        Configured<WorkflowHostExecutor, ExecutorOptions> configured = new(InitHostExecutorAsync, id, options, raw: workflow);
         return new ExecutorIsh(configured.Super<WorkflowHostExecutor, Executor, ExecutorOptions>(), typeof(WorkflowHostExecutor), ExecutorIsh.Type.Workflow);
 
         ValueTask<WorkflowHostExecutor> InitHostExecutorAsync(Config<ExecutorOptions> config, string runId)
@@ -135,9 +135,9 @@ public sealed class ExecutorIsh :
         /// </summary>
         Function,
         /// <summary>
-        /// An <see cref="InputPort"/> for servicing external requests.
+        /// An <see cref="RequestPort"/> for servicing external requests.
         /// </summary>
-        InputPort,
+        RequestPort,
         /// <summary>
         /// An <see cref="AIAgent"/> instance.
         /// </summary>
@@ -158,7 +158,7 @@ public sealed class ExecutorIsh :
     private readonly Configured<Executor>? _configuredExecutor;
     private readonly System.Type? _configuredExecutorType;
 
-    internal readonly InputPort? _inputPortValue;
+    internal readonly RequestPort? _requestPortValue;
     private readonly AIAgent? _aiAgentValue;
 
     /// <summary>
@@ -193,10 +193,10 @@ public sealed class ExecutorIsh :
     /// Initializes a new instance of the ExecutorIsh class using the specified input port.
     /// </summary>
     /// <param name="port">The input port to associate to be wrapped.</param>
-    public ExecutorIsh(InputPort port)
+    public ExecutorIsh(RequestPort port)
     {
-        this.ExecutorType = Type.InputPort;
-        this._inputPortValue = Throw.IfNull(port);
+        this.ExecutorType = Type.RequestPort;
+        this._requestPortValue = Throw.IfNull(port);
     }
 
     /// <summary>
@@ -216,7 +216,7 @@ public sealed class ExecutorIsh :
     {
         Type.Unbound => this._idValue ?? throw new InvalidOperationException("This ExecutorIsh is unbound and has no ID."),
         Type.Executor => this._configuredExecutor!.Id,
-        Type.InputPort => this._inputPortValue!.Id,
+        Type.RequestPort => this._requestPortValue!.Id,
         Type.Agent => this._aiAgentValue!.Id,
         Type.Function => this._configuredExecutor!.Id,
         Type.Workflow => this._configuredExecutor!.Id,
@@ -227,7 +227,7 @@ public sealed class ExecutorIsh :
     {
         Type.Unbound => this._idValue,
         Type.Executor => this._configuredExecutor!.Raw ?? this._configuredExecutor,
-        Type.InputPort => this._inputPortValue,
+        Type.RequestPort => this._requestPortValue,
         Type.Agent => this._aiAgentValue,
         Type.Function => this._configuredExecutor!.Raw ?? this._configuredExecutor,
         Type.Workflow => this._configuredExecutor!.Raw ?? this._configuredExecutor,
@@ -246,7 +246,7 @@ public sealed class ExecutorIsh :
     {
         Type.Unbound => throw new InvalidOperationException($"ExecutorIsh with ID '{this.Id}' is unbound."),
         Type.Executor => this._configuredExecutorType!,
-        Type.InputPort => typeof(RequestInfoExecutor),
+        Type.RequestPort => typeof(RequestInfoExecutor),
         Type.Agent => typeof(AIAgentHostExecutor),
         Type.Function => this._configuredExecutorType!,
         Type.Workflow => this._configuredExecutorType!,
@@ -261,7 +261,7 @@ public sealed class ExecutorIsh :
     {
         Type.Unbound => throw new InvalidOperationException($"Executor with ID '{this.Id}' is unbound."),
         Type.Executor => this._configuredExecutor!.BoundFactoryAsync,
-        Type.InputPort => (runId) => new(new RequestInfoExecutor(this._inputPortValue!)),
+        Type.RequestPort => (runId) => new(new RequestInfoExecutor(this._requestPortValue!)),
         Type.Agent => (runId) => new(new AIAgentHostExecutor(this._aiAgentValue!)),
         Type.Function => this._configuredExecutor!.BoundFactoryAsync,
         Type.Workflow => this._configuredExecutor!.BoundFactoryAsync,
@@ -275,10 +275,10 @@ public sealed class ExecutorIsh :
     public static implicit operator ExecutorIsh(Executor executor) => new(executor);
 
     /// <summary>
-    /// Defines an implicit conversion from an <see cref="InputPort"/> to an <see cref="ExecutorIsh"/> instance.
+    /// Defines an implicit conversion from an <see cref="RequestPort"/> to an <see cref="ExecutorIsh"/> instance.
     /// </summary>
-    /// <param name="inputPort">The <see cref="InputPort"/> to convert to an <see cref="ExecutorIsh"/>.</param>
-    public static implicit operator ExecutorIsh(InputPort inputPort) => new(inputPort);
+    /// <param name="inputPort">The <see cref="RequestPort"/> to convert to an <see cref="ExecutorIsh"/>.</param>
+    public static implicit operator ExecutorIsh(RequestPort inputPort) => new(inputPort);
 
     /// <summary>
     /// Defines an implicit conversion from an <see cref="AIAgent"/> to an <see cref="ExecutorIsh"/> instance.
@@ -323,7 +323,7 @@ public sealed class ExecutorIsh :
     {
         Type.Unbound => $"'{this.Id}':<unbound>",
         Type.Executor => $"'{this.Id}':{this._configuredExecutorType!.Name}",
-        Type.InputPort => $"'{this.Id}':Input({this._inputPortValue!.Request.Name}->{this._inputPortValue!.Response.Name})",
+        Type.RequestPort => $"'{this.Id}':Input({this._requestPortValue!.Request.Name}->{this._requestPortValue!.Response.Name})",
         Type.Agent => $"{this.Id}':AIAgent(@{this._aiAgentValue!.GetType().Name})",
         Type.Function => $"'{this.Id}':{this._configuredExecutorType!.Name}",
         Type.Workflow => $"'{this.Id}':{this._configuredExecutorType!.Name}",

@@ -13,7 +13,7 @@ internal static class Step4EntryPoint
 
     public static Workflow CreateWorkflowInstance(out JudgeExecutor judge)
     {
-        InputPort guessNumber = InputPort.Create<NumberSignal, int>("GuessNumber");
+        RequestPort guessNumber = RequestPort.Create<NumberSignal, int>("GuessNumber");
         judge = new(JudgeId, 42); // Let's say the target number is 42
 
         return new WorkflowBuilder(guessNumber)

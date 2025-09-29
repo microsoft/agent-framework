@@ -13,7 +13,7 @@ namespace Microsoft.Agents.AI.Workflows;
 /// <param name="PortInfo">The port to invoke.</param>
 /// <param name="RequestId">A unique identifier for this request instance.</param>
 /// <param name="Data">The data contained in the request.</param>
-public record ExternalRequest(InputPortInfo PortInfo, string RequestId, PortableValue Data)
+public record ExternalRequest(RequestPortInfo PortInfo, string RequestId, PortableValue Data)
 {
     /// <summary>
     /// Attempts to retrieve the underlying data as the specified type.
@@ -30,6 +30,13 @@ public record ExternalRequest(InputPortInfo PortInfo, string RequestId, Portable
     public bool DataIs<TValue>() => this.Data.Is<TValue>();
 
     /// <summary>
+    /// Determines whether the underlying data is of the specified type and outputs the value if it is.
+    /// </summary>
+    /// <typeparam name="TValue">The type to compare with the underlying data.</typeparam>
+    /// <returns>true if the underlying data is of type TValue; otherwise, false.</returns>
+    public bool DataIs<TValue>([NotNullWhen(true)] out TValue? value) => this.Data.Is(out value);
+
+    /// <summary>
     /// Creates a new <see cref="ExternalRequest"/> for the specified input port and data payload.
     /// </summary>
     /// <param name="port">The port to invoke.</param>
@@ -37,7 +44,7 @@ public record ExternalRequest(InputPortInfo PortInfo, string RequestId, Portable
     /// <param name="requestId">An optional unique identifier for this request instance. If <c>null</c>, a UUID will be generated.</param>
     /// <returns>An <see cref="ExternalRequest"/> instance containing the specified port, data, and request identifier.</returns>
     /// <exception cref="InvalidOperationException">Thrown when the input data object does not match the expected request type.</exception>
-    public static ExternalRequest Create(InputPort port, [NotNull] object data, string? requestId = null)
+    public static ExternalRequest Create(RequestPort port, [NotNull] object data, string? requestId = null)
     {
         if (!port.Request.IsInstanceOfType(Throw.IfNull(data)))
         {
@@ -58,7 +65,7 @@ public record ExternalRequest(InputPortInfo PortInfo, string RequestId, Portable
     /// <param name="data">The data payload to include in the request. Must not be <c>null</c>.</param>
     /// <param name="requestId">An optional identifier for the request. If <c>null</c>, a default identifier may be assigned.</param>
     /// <returns>An <see cref="ExternalRequest"/> instance containing the specified port, data, and request identifier.</returns>
-    public static ExternalRequest Create<T>(InputPort port, T data, string? requestId = null) => Create(port, (object)Throw.IfNull(data), requestId);
+    public static ExternalRequest Create<T>(RequestPort port, T data, string? requestId = null) => Create(port, (object)Throw.IfNull(data), requestId);
 
     /// <summary>
     /// Creates a new <see cref="ExternalResponse"/> corresponding to the request, with the speicified data payload.

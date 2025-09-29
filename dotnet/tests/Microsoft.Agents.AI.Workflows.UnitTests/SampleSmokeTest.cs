@@ -215,6 +215,13 @@ public class SampleSmokeTest
             };
         }
     }
+
+    [Fact]
+    public async Task Test_RunSample_Step9Async()
+    {
+        using StringWriter writer = new();
+        _ = await Step9EntryPoint.RunAsync(writer);
+    }
 }
 
 internal sealed class VerifyingPlaybackResponder<TInput, TResponse>

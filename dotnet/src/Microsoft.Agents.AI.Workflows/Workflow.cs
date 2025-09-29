@@ -35,7 +35,7 @@ public class Workflow
         );
     }
 
-    internal Dictionary<string, InputPort> Ports { get; init; } = [];
+    internal Dictionary<string, RequestPort> Ports { get; init; } = [];
 
     /// <summary>
     /// Gets the collection of external request ports, keyed by their ID.
@@ -43,7 +43,7 @@ public class Workflow
     /// <remarks>
     /// Each port has a corresponding entry in the <see cref="Registrations"/> dictionary.
     /// </remarks>
-    public Dictionary<string, InputPortInfo> ReflectPorts()
+    public Dictionary<string, RequestPortInfo> ReflectPorts()
     {
         return this.Ports.Keys.ToDictionary(
             keySelector: key => key,

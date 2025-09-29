@@ -9,7 +9,7 @@ namespace Microsoft.Agents.AI.Workflows;
 /// </summary>
 /// <param name="subworkflowId">The ID of the subworkflow that encountered the error.</param>
 /// <param name="e">Optionally, the <see cref="Exception"/> representing the error.</param>
-public sealed class SubWorkflowErrorEvent(string subworkflowId, Exception? e) : WorkflowErrorEvent(e)
+public sealed class SubworkflowErrorEvent(string subworkflowId, Exception? e) : WorkflowErrorEvent(e)
 {
     /// <summary>
     /// Gets the ID of the subworkflow that encountered the error.

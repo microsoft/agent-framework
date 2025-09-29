@@ -178,7 +178,9 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingRunner
 
         StepContext currentStep = await this.RunContext.AdvanceAsync().ConfigureAwait(false);
 
-        if (currentStep.HasMessages)
+        if (currentStep.HasMessages ||
+            this.RunContext.HasQueuedExternalDeliveries ||
+            this.RunContext.JoinedRunnersHaveActions)
         {
             await this.RunSuperstepAsync(currentStep).ConfigureAwait(false);
             return true;
