@@ -66,8 +66,8 @@
     <File Path="samples/GettingStarted/Workflows/README.md" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflows/Concurrent/">
-    <Project Path="samples/GettingStarted/Workflows/Concurrent/Concurrent.csproj" />
-    <Project Path="samples/GettingStarted/Workflows/Visualization/MapReduce.csproj" />
+    <Project Path="samples/GettingStarted/Workflows/Concurrent/Concurrent/Concurrent.csproj" />
+    <Project Path="samples/GettingStarted/Workflows/Concurrent/MapReduce/MapReduce.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflows/ConditionalEdges/">
     <Project Path="samples/GettingStarted/Workflows/ConditionalEdges/01_EdgeCondition/01_EdgeCondition.csproj" />
@@ -105,7 +105,7 @@
     <Project Path="samples/GettingStarted/Workflows/HumanInTheLoop/HumanInTheLoopBasic/HumanInTheLoopBasic.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflows/Visualization/">
-    <Project Path="samples/GettingStarted/Workflow/Visualization/Visualization.csproj" Id="99bf0bc6-2440-428e-b3e7-d880e4b7a5fd" />
+    <Project Path="samples/GettingStarted/Workflows/Visualization/Visualization.csproj" Id="99bf0bc6-2440-428e-b3e7-d880e4b7a5fd" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflows/_Foundational/">
     <Project Path="samples/GettingStarted/Workflows/_Foundational/01_ExecutorsAndEdges/01_ExecutorsAndEdges.csproj" />

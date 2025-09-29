@@ -10,7 +10,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\..\..\src\Microsoft.Agents.AI.Workflows\Microsoft.Agents.AI.Workflows.csproj" />
-    <ProjectReference Include="..\..\Workflows\Visualization\MapReduce.csproj" />
+    <ProjectReference Include="..\Concurrent\MapReduce\MapReduce.csproj" />
   </ItemGroup>
 
 </Project>
