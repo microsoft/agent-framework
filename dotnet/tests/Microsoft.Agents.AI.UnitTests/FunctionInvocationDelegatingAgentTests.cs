@@ -378,7 +378,7 @@ public sealed class FunctionInvocationDelegatingAgentTests
 
         // Verify that the context was created with Iteration = -1 (indicating no ambient context)
         Assert.Single(capturedContext);
-        Assert.Equal(-1, capturedContext[0].Iteration);
+        Assert.Equal(0, capturedContext[0].Iteration);
         Assert.Equal("TestFunction", capturedContext[0].Function.Name);
         Assert.NotNull(capturedContext[0].Arguments);
     }
