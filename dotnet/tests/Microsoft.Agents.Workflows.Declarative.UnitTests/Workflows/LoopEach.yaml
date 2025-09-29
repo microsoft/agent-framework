@@ -7,22 +7,22 @@ trigger:
   actions:
     - kind: SetVariable
       id: setVariable_count
-      variable: Topic.Count
+      variable: Local.Count
       value: =0
 
     - kind: Foreach
       id: foreach_loop
       items: =["a", "b", "c", "d", "e", "f"]
-      index: Topic.LoopIndex
-      value: Topic.LoopValue
+      index: Local.LoopIndex
+      value: Local.LoopValue
       actions:
         - kind: SetVariable
           id: setVariable_loop
-          variable: Topic.Count
-          value: =Topic.Count + 1
+          variable: Local.Count
+          value: =Local.Count + 1
         - kind: SendActivity
           id: sendActivity_loop
-          activity: x{Topic.Count} - {Topic.LoopIndex}:{Topic.LoopValue}
+          activity: x{Local.Count} - {Local.LoopIndex}:{Local.LoopValue}
 
     - kind: EndConversation
       id: end_all

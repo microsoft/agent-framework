@@ -17,12 +17,11 @@ namespace Microsoft.Agents.Workflows.Declarative.PowerFx;
 /// </summary>
 internal sealed class WorkflowFormulaState
 {
-    // ISSUE #488 - Update default scope for workflows to `Workflow` (instead of `Topic`)
-    public const string DefaultScopeName = VariableScopeNames.Topic;
+    public const string DefaultScopeName = VariableScopeNames.Local;
 
     public static readonly FrozenSet<string> RestorableScopes =
         [
-            VariableScopeNames.Topic,
+            VariableScopeNames.Local,
             VariableScopeNames.Global,
             VariableScopeNames.System,
         ];
@@ -37,7 +36,8 @@ internal sealed class WorkflowFormulaState
 
     public WorkflowFormulaState(RecalcEngine engine)
     {
-        this._scopes = VariableScopeNames.AllScopes.ToDictionary(scopeName => scopeName, scopeName => new WorkflowScope());
+        this._scopes = VariableScopeNames.AllScopes.ToDictionary(scopeName => GetScopeName(scopeName), _ => new WorkflowScope());
+
         this.Engine = engine;
         this.Evaluator = new WorkflowExpressionEngine(engine);
         this.Bind();
@@ -87,11 +87,15 @@ internal sealed class WorkflowFormulaState
         }
     }
 
-    public void Bind(string? targetScope = null)
+    public void Bind(string? scopeNameToBind = null)
     {
-        if (targetScope is not null)
+        if (scopeNameToBind is not null)
         {
-            Bind(targetScope);
+            Bind(scopeNameToBind);
+            if (VariableScopeNames.GetNamespaceFromName(scopeNameToBind) == VariableNamespace.Component)
+            {
+                Bind(scopeNameToBind, VariableScopeNames.Topic);
+            }
         }
         else
         {
@@ -99,26 +103,38 @@ internal sealed class WorkflowFormulaState
             {
                 Bind(scopeName);
             }
+
+            Bind(DefaultScopeName, VariableScopeNames.Topic);
         }
 
-        void Bind(string scopeName)
+        void Bind(string scopeName, string? targetScope = null)
         {
+            targetScope = GetScopeName(targetScope ?? scopeName);
             RecordValue scopeRecord = this.GetScope(scopeName).ToRecord();
-            this.Engine.DeleteFormula(scopeName);
-            this.Engine.UpdateVariable(scopeName, scopeRecord);
+            this.Engine.DeleteFormula(targetScope);
+            this.Engine.UpdateVariable(targetScope, scopeRecord);
         }
     }
 
-    private WorkflowScope GetScope(string? scopeName)
-    {
-        scopeName ??= DefaultScopeName;
+    private WorkflowScope GetScope(string? scopeName) => this._scopes[GetScopeName(scopeName)];
 
-        if (!VariableScopeNames.IsValidName(scopeName))
+    public static string GetScopeName(string? scopeName)
+    {
+        if (!ProductContext.IsLocalScopeSupported())
         {
-            throw new DeclarativeActionException($"Invalid variable scope name: '{scopeName}'.");
+            ProductContext.SetContext(Product.Foundry);
         }
 
-        return this._scopes[scopeName];
+        scopeName ??= DefaultScopeName;
+
+        return
+            VariableScopeNames.GetNamespaceFromName(scopeName) switch
+            {
+                // Always alias component level scope as "Local"
+                VariableNamespace.Component => DefaultScopeName,
+                VariableNamespace.Unknown => throw new DeclarativeActionException($"Invalid variable scope name: '{scopeName}'."),
+                _ => scopeName,
+            };
     }
 
     /// <summary>

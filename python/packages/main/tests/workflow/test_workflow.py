@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import tempfile
 from dataclasses import dataclass
 from typing import Any
@@ -688,3 +689,101 @@ async def test_workflow_with_simple_cycle_and_exit_condition():
 
     # Should have multiple events due to cycling
     assert len(events) >= 4, f"Expected at least 4 events due to cycling, got {len(events)}"
+
+
+async def test_workflow_concurrent_execution_prevention():
+    """Test that concurrent workflow executions are prevented."""
+    # Create a simple workflow that takes some time to execute
+    executor = IncrementExecutor(id="slow_executor", limit=3, increment=1)
+    workflow = WorkflowBuilder().set_start_executor(executor).build()
+
+    # Create a task that will run the workflow
+    async def run_workflow():
+        return await workflow.run(NumberMessage(data=0))
+
+    # Start the first workflow execution
+    task1 = asyncio.create_task(run_workflow())
+
+    # Give it a moment to start
+    await asyncio.sleep(0.01)
+
+    # Try to start a second concurrent execution - this should fail
+    with pytest.raises(RuntimeError, match="Workflow is already running. Concurrent executions are not allowed."):
+        await workflow.run(NumberMessage(data=0))
+
+    # Wait for the first task to complete
+    result = await task1
+    assert result.get_final_state() == WorkflowRunState.IDLE
+
+    # After the first execution completes, we should be able to run again
+    result2 = await workflow.run(NumberMessage(data=0))
+    assert result2.get_final_state() == WorkflowRunState.IDLE
+
+
+async def test_workflow_concurrent_execution_prevention_streaming():
+    """Test that concurrent workflow streaming executions are prevented."""
+    # Create a simple workflow
+    executor = IncrementExecutor(id="slow_executor", limit=3, increment=1)
+    workflow = WorkflowBuilder().set_start_executor(executor).build()
+
+    # Create an async generator that will consume the stream slowly
+    async def consume_stream_slowly():
+        result = []
+        async for event in workflow.run_stream(NumberMessage(data=0)):
+            result.append(event)
+            await asyncio.sleep(0.01)  # Slow consumption
+        return result
+
+    # Start the first streaming execution
+    task1 = asyncio.create_task(consume_stream_slowly())
+
+    # Give it a moment to start
+    await asyncio.sleep(0.02)
+
+    # Try to start a second concurrent execution - this should fail
+    with pytest.raises(RuntimeError, match="Workflow is already running. Concurrent executions are not allowed."):
+        await workflow.run(NumberMessage(data=0))
+
+    # Wait for the first task to complete
+    result = await task1
+    assert len(result) > 0  # Should have received some events
+
+    # After the first execution completes, we should be able to run again
+    result2 = await workflow.run(NumberMessage(data=0))
+    assert result2.get_final_state() == WorkflowRunState.IDLE
+
+
+async def test_workflow_concurrent_execution_prevention_mixed_methods():
+    """Test that concurrent executions are prevented across different execution methods."""
+    # Create a simple workflow
+    executor = IncrementExecutor(id="slow_executor", limit=3, increment=1)
+    workflow = WorkflowBuilder().set_start_executor(executor).build()
+
+    # Start a streaming execution
+    async def consume_stream():
+        result = []
+        async for event in workflow.run_stream(NumberMessage(data=0)):
+            result.append(event)
+            await asyncio.sleep(0.01)
+        return result
+
+    task1 = asyncio.create_task(consume_stream())
+    await asyncio.sleep(0.02)  # Let it start
+
+    # Try different execution methods - all should fail
+    with pytest.raises(RuntimeError, match="Workflow is already running. Concurrent executions are not allowed."):
+        await workflow.run(NumberMessage(data=0))
+
+    with pytest.raises(RuntimeError, match="Workflow is already running. Concurrent executions are not allowed."):
+        async for _ in workflow.run_stream(NumberMessage(data=0)):
+            break
+
+    with pytest.raises(RuntimeError, match="Workflow is already running. Concurrent executions are not allowed."):
+        await workflow.send_responses({"test": "data"})
+
+    # Wait for the original task to complete
+    await task1
+
+    # Now all methods should work again
+    result = await workflow.run(NumberMessage(data=0))
+    assert result.get_final_state() == WorkflowRunState.IDLE

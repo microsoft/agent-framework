@@ -7,11 +7,11 @@ trigger:
 
     - kind: RetrieveConversationMessage
       id: get_message
-      message: Topic.MyMessage
+      message: Local.MyMessage
       conversationId: thread_T8xIzNrNcPkUkoCEGzxg80Vt
       messageId: msg_J4x6YZTDUUWNs60FOUAucldy
 
     - kind: SendActivity
       id: sendActivity_message
       activity: |-
-        {Topic.MyMessage}
+        {Local.MyMessage}
