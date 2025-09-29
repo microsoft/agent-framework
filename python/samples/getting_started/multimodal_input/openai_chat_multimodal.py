@@ -2,12 +2,14 @@
 
 import asyncio
 import base64
-import requests
 import struct
+
+import requests
 from agent_framework import ChatMessage, DataContent, Role, TextContent
 from agent_framework.openai import OpenAIChatClient
 
-async def test_image():
+
+async def test_image() -> None:
     """Test image analysis with OpenAI."""
     client = OpenAIChatClient(ai_model_id="gpt-4o")
 
@@ -19,26 +21,27 @@ async def test_image():
 
     message = ChatMessage(
         role=Role.USER,
-        contents=[
-            TextContent(text="What's in this image?"),
-            DataContent(uri=image_uri, media_type="image/jpeg")
-        ]
+        contents=[TextContent(text="What's in this image?"), DataContent(uri=image_uri, media_type="image/jpeg")],
     )
 
     response = await client.get_response(message)
     print(f"Image Response: {response}")
 
-async def test_audio():
+
+async def test_audio() -> None:
     """Test audio analysis with OpenAI."""
     client = OpenAIChatClient(ai_model_id="gpt-4o-audio-preview")
 
     # Create minimal WAV file (0.1 seconds of silence)
     wav_header = (
-        b'RIFF' + struct.pack('<I', 44) +  # file size
-        b'WAVEfmt ' + struct.pack('<I', 16) +  # fmt chunk
-        struct.pack('<HHIIHH', 1, 1, 8000, 16000, 2, 16) +  # PCM, mono, 8kHz
-        b'data' + struct.pack('<I', 1600) +  # data chunk
-        b'\x00' * 1600  # 0.1 sec silence
+        b"RIFF"
+        + struct.pack("<I", 44)  # file size
+        + b"WAVEfmt "
+        + struct.pack("<I", 16)  # fmt chunk
+        + struct.pack("<HHIIHH", 1, 1, 8000, 16000, 2, 16)  # PCM, mono, 8kHz
+        + b"data"
+        + struct.pack("<I", 1600)  # data chunk
+        + b"\x00" * 1600  # 0.1 sec silence
     )
     audio_b64 = base64.b64encode(wav_header).decode()
     audio_uri = f"data:audio/wav;base64,{audio_b64}"
@@ -47,17 +50,19 @@ async def test_audio():
         role=Role.USER,
         contents=[
             TextContent(text="What do you hear in this audio?"),
-            DataContent(uri=audio_uri, media_type="audio/wav")
-        ]
+            DataContent(uri=audio_uri, media_type="audio/wav"),
+        ],
     )
 
     response = await client.get_response(message)
     print(f"Audio Response: {response}")
 
-async def main():
+
+async def main() -> None:
     print("=== Testing OpenAI Multimodal ===")
     await test_image()
     await test_audio()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

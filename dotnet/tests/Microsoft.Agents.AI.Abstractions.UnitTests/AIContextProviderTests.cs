@@ -21,10 +21,10 @@ public class AIContextProviderTests
     }
 
     [Fact]
-    public async Task SerializeAsync_ReturnsEmptyElementAsync()
+    public void Serialize_ReturnsEmptyElement()
     {
         var provider = new TestAIContextProvider();
-        var actual = await provider.SerializeAsync();
+        var actual = provider.Serialize();
         Assert.Equal(default, actual);
     }
 
@@ -163,9 +163,9 @@ public class AIContextProviderTests
             return default;
         }
 
-        public override async ValueTask<JsonElement?> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
         {
-            return await base.SerializeAsync(jsonSerializerOptions, cancellationToken);
+            return base.Serialize(jsonSerializerOptions);
         }
     }
 }

@@ -39,20 +39,15 @@ public abstract class AIContextProvider
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A task that completes when the context has been rendered and returned.</returns>
     public virtual ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default)
-    {
-        return default;
-    }
+        => default;
 
     /// <summary>
     /// Serializes the current object's state to a <see cref="JsonElement"/> using the specified serialization options.
     /// </summary>
     /// <param name="jsonSerializerOptions">The JSON serialization options to use.</param>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="JsonElement"/> representation of the object's state.</returns>
-    public virtual ValueTask<JsonElement?> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-    {
-        return default;
-    }
+    public virtual JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+        => default;
 
     /// <summary>Asks the <see cref="AIContextProvider"/> for an object of the specified type <paramref name="serviceType"/>.</summary>
     /// <param name="serviceType">The type of object being requested.</param>

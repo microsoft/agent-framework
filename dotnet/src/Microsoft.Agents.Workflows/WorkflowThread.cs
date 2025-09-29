@@ -2,8 +2,6 @@
 
 using System;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
@@ -28,7 +26,8 @@ internal sealed class WorkflowThread : AgentThread
 
     public string ResponseId => $"{this.RunId}@{this.Halts}";
 
-    public override Task<JsonElement> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) => throw new NotImplementedException("Pending Checkpointing work.");
+    public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+        => throw new NotImplementedException("Pending Checkpointing work.");
 
     public AgentRunResponseUpdate CreateUpdate(params AIContent[] parts)
     {
