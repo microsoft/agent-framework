@@ -64,10 +64,10 @@ internal sealed class ParseValueExecutor(ParseValue model, WorkflowFormulaState 
         RecordValue ParseRecord(RecordDataType recordType, string rawText)
         {
             string jsonText = rawText.TrimJsonDelimiter();
-            using JsonDocument json = JsonDocument.Parse(jsonText);
+            using JsonDocument jsonDocument = JsonDocument.Parse(jsonText);
             try
             {
-                return recordType.ParseRecord(json.RootElement);
+                return jsonDocument.ParseRecord(recordType);
             }
             catch (Exception exception)
             {

@@ -20,7 +20,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.CodeGen
     /// Class to produce the template output
     /// </summary>
     
-    #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\ParseValueTemplate.tt"
+    #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\ParseValueTemplate.tt"
     [global::System.CodeDom.Compiler.GeneratedCodeAttribute("Microsoft.VisualStudio.TextTemplating", "17.0.0.0")]
     internal partial class ParseValueTemplate : ActionTemplate
     {
@@ -51,25 +51,47 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.CodeGen
                     "en the input is a string, it will be treated as JSON.\n/// </summary>\ninternal se" +
                     "aled class ");
             
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\ParseValueTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\ParseValueTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.Name));
             
             #line default
             #line hidden
             this.Write("Executor(FormulaSession session) : ActionExecutor(id: \"");
             
-            #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\ParseValueTemplate.tt"
+            #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\ParseValueTemplate.tt"
             this.Write(this.ToStringHelper.ToStringWithCulture(this.Id));
             
             #line default
             #line hidden
             this.Write("\", session)\n{\n    // <inheritdoc />\n    protected override async ValueTask<object" +
                     "?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)\n " +
-                    "   {\n        return default;\n    }\n}");
+                    "   { \n        VariableType targetType = ");
+            
+            #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\ParseValueTemplate.tt"
+            this.Write(this.ToStringHelper.ToStringWithCulture(this.GetVariableType()));
+            
+            #line default
+            #line hidden
+            this.Write(";\n        object? parsedValue = await context.ConvertValueAsync(targetType, \"");
+            
+            #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\ParseValueTemplate.tt"
+            this.Write(this.ToStringHelper.ToStringWithCulture(this.Model.Value.ExpressionText));
+            
+            #line default
+            #line hidden
+            this.Write("\", cancellationToken).ConfigureAwait(false);");
+            
+            #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\ParseValueTemplate.tt"
+ // %%% TODO: Variable / Literal
+        AssignVariable(this.Variable, "parsedValue"); 
+            
+            #line default
+            #line hidden
+            this.Write("\n        return default;\n    }\n}");
             return this.GenerationEnvironment.ToString();
         }
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\AssignVariableTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\AssignVariableTemplate.tt"
 
 void AssignVariable(PropertyPath targetVariable, string valueVariable, bool tightFormat = false)
 {
@@ -79,56 +101,56 @@ void AssignVariable(PropertyPath targetVariable, string valueVariable, bool tigh
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\AssignVariableTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\AssignVariableTemplate.tt"
 this.Write("\n        await context.QueueStateUpdateAsync(key: \"");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\AssignVariableTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\AssignVariableTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(VariableName(targetVariable)));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\AssignVariableTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\AssignVariableTemplate.tt"
 this.Write("\", value: ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\AssignVariableTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\AssignVariableTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(valueVariable));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\AssignVariableTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\AssignVariableTemplate.tt"
 this.Write(", scopeName: \"");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\AssignVariableTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\AssignVariableTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(VariableScope(targetVariable)));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\AssignVariableTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\AssignVariableTemplate.tt"
 this.Write("\").ConfigureAwait(false);");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\AssignVariableTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\AssignVariableTemplate.tt"
 
         if (!tightFormat)
         {
@@ -136,14 +158,14 @@ this.Write("\").ConfigureAwait(false);");
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\AssignVariableTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\AssignVariableTemplate.tt"
 this.Write("\n        ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\AssignVariableTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\AssignVariableTemplate.tt"
 }
     }
 }
@@ -152,7 +174,7 @@ this.Write("\n        ");
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
 
 void EvaluateBoolExpression(BoolExpression expression, string targetVariable, bool defaultValue = false)
 {
@@ -162,42 +184,42 @@ void EvaluateBoolExpression(BoolExpression expression, string targetVariable, bo
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
 this.Write("\n        bool ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
 this.Write(" = ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(FormatBoolValue(defaultValue)));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
 this.Write(";");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
  
     }
     else if (expression.IsLiteral)
@@ -206,42 +228,42 @@ this.Write(";");
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
 this.Write("\n        bool ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
 this.Write(" = ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(FormatBoolValue(expression.LiteralValue)));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
 this.Write(";");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
  
     }
     else if (expression.IsVariableReference && expression.VariableReference.SegmentCount == 2)
@@ -250,56 +272,56 @@ this.Write(";");
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
 this.Write("\n        bool ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
 this.Write(" = await context.ReadStateAsync<bool>(key: \"");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(expression.VariableReference.VariableName));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
 this.Write("\", scopeName: \"");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(expression.VariableReference.NamespaceAlias));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
 this.Write("\").ConfigureAwait(false);");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
 
     }
     else if (expression.IsVariableReference)
@@ -308,42 +330,42 @@ this.Write("\").ConfigureAwait(false);");
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
 this.Write("\n        bool ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
 this.Write(" = await context.EvaluateValueAsync<bool>>(");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(FormatStringValue(expression.VariableReference.ToString())));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
 this.Write(").ConfigureAwait(false);");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
  
     }
     else
@@ -352,42 +374,42 @@ this.Write(").ConfigureAwait(false);");
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
 this.Write("\n        bool ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
 this.Write(" = await context.EvaluateValueAsync<bool>(");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(FormatStringValue(expression.ExpressionText)));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
 this.Write(").ConfigureAwait(false);");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateBoolExpressionTemplate.tt"
  
     }
 }
@@ -396,7 +418,7 @@ this.Write(").ConfigureAwait(false);");
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 
 void EvaluateEnumExpression<TWrapper, TValue>(
     EnumExpression<TWrapper> expression, 
@@ -414,56 +436,56 @@ void EvaluateEnumExpression<TWrapper, TValue>(
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write("\n        ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(resultType));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(" ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(" = ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(FormatValue<TValue>(defaultValue)));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(";");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
  
     }
     else if (expression.IsLiteral)
@@ -475,70 +497,70 @@ this.Write(";");
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write("\n        ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(resultType));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(" ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(" = ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(GetTypeAlias<TValue>()));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(".");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(resultValue));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(";");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
  
         }
         else
@@ -547,56 +569,56 @@ this.Write(";");
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write("\n        ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(resultType));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(" ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(" = ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(FormatValue<TValue>(resultValue)));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(";");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
  
         }
     }
@@ -606,84 +628,84 @@ this.Write(";");
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write("\n        ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(resultType));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(" ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(" = await context.ReadStateAsync<");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(resultType));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(">(key: \"");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(expression.VariableReference.VariableName));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write("\", scopeName: \"");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(expression.VariableReference.NamespaceAlias));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write("\").ConfigureAwait(false);");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 
     }
     else if (expression.IsVariableReference)
@@ -692,70 +714,70 @@ this.Write("\").ConfigureAwait(false);");
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write("\n        ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(resultType));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write("? ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(" = await context.EvaluateValueAsync<");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(resultType));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(">(");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(FormatStringValue(expression.VariableReference.ToString())));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(").ConfigureAwait(false);");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
  
     }
     else
@@ -764,70 +786,70 @@ this.Write(").ConfigureAwait(false);");
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write("\n        ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(resultType));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(" ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(" = await context.EvaluateValueAsync<");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(resultType));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(">(");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(FormatStringValue(expression.ExpressionText)));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
 this.Write(").ConfigureAwait(false);");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateEnumExpressionTemplate.tt"
  
     }
 }
@@ -836,7 +858,7 @@ this.Write(").ConfigureAwait(false);");
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 
 void EvaluateIntExpression(IntExpression expression, string targetVariable, bool isNullable = false)
 {
@@ -847,56 +869,56 @@ void EvaluateIntExpression(IntExpression expression, string targetVariable, bool
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write("\n        ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(typeName));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write(" ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write(" = ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(isNullable ? "null" : "0"));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write(";");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
  
     }
     else if (expression.IsLiteral)
@@ -905,56 +927,56 @@ this.Write(";");
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write("\n        ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(typeName));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write(" ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write(" = ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(expression.LiteralValue));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write(";");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
  
     }
     else if (expression.IsVariableReference && expression.VariableReference.SegmentCount == 2)
@@ -963,70 +985,70 @@ this.Write(";");
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write("\n        ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(typeName));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write(" ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write(" = await context.ReadStateAsync<int>(key: \"");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(expression.VariableReference.VariableName));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write("\", scopeName: \"");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(expression.VariableReference.NamespaceAlias));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write("\").ConfigureAwait(false);");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 
     }
     else if (expression.IsVariableReference)
@@ -1035,70 +1057,70 @@ this.Write("\").ConfigureAwait(false);");
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write("\n        ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(typeName));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write("? ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write(" = await context.EvaluateValueAsync<");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(typeName));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write(">(");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(FormatStringValue(expression.VariableReference.ToString())));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write(").ConfigureAwait(false);");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
  
     }
     else
@@ -1107,70 +1129,70 @@ this.Write(").ConfigureAwait(false);");
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write("\n        ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(typeName));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write(" ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write(" = await context.EvaluateValueAsync<");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(typeName));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write(">(");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(FormatStringValue(expression.ExpressionText)));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
 this.Write(").ConfigureAwait(false);");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateIntExpressionTemplate.tt"
  
     }
 }
@@ -1179,7 +1201,7 @@ this.Write(").ConfigureAwait(false);");
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 
 void EvaluateListExpression<TElement>(ValueExpression expression, string targetVariable)
 {
@@ -1190,42 +1212,42 @@ void EvaluateListExpression<TElement>(ValueExpression expression, string targetV
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write("\n        IList<");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(typeName));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write(">? ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write(" = null;");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
  
     }
     else if (expression.IsLiteral)
@@ -1234,56 +1256,56 @@ this.Write(" = null;");
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write("\n        IList<");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(typeName));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write(">? ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write(" = ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(FormatDataValue(expression.LiteralValue)));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write(";");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
  
     }
     else if (expression.IsVariableReference && expression.VariableReference.SegmentCount == 2)
@@ -1292,84 +1314,84 @@ this.Write(";");
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write("\n        IList<");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(typeName));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write(">? ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write(" = await context.ReadListAsync<");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(GetTypeAlias<TElement>()));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write(">(key: \"");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(expression.VariableReference.VariableName));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write("\", scopeName: \"");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(expression.VariableReference.NamespaceAlias));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write("\").ConfigureAwait(false);");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 
     }
     else if (expression.IsVariableReference)
@@ -1378,70 +1400,70 @@ this.Write("\").ConfigureAwait(false);");
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write("\n        IList<");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(typeName));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write(">? ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write("> = await context.EvaluateListAsync<");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(typeName));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write(">(");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(FormatStringValue(expression.VariableReference.ToString())));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write(").ConfigureAwait(false);");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
  
     }
     else
@@ -1450,70 +1472,70 @@ this.Write(").ConfigureAwait(false);");
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write("\n        IList<");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(typeName));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write(">? ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write(" = await context.EvaluateListAsync<");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(typeName));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write(">(");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(FormatStringValue(expression.ExpressionText)));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
 this.Write(").ConfigureAwait(false);");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateListExpressionTemplate.tt"
  
     }
 }
@@ -1522,7 +1544,7 @@ this.Write(").ConfigureAwait(false);");
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 
 void EvaluateRecordExpression<TValue>(ObjectExpression<RecordDataValue> expression, string targetVariable)
 {
@@ -1533,42 +1555,42 @@ void EvaluateRecordExpression<TValue>(ObjectExpression<RecordDataValue> expressi
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write("\n        ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(resultTypeName));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write(" ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write(" = null;");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
  
     }
     else if (expression.IsLiteral)
@@ -1577,56 +1599,56 @@ this.Write(" = null;");
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write("\n        ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(resultTypeName));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write(" ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write(" =\n            ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(FormatDataValue(expression.LiteralValue)));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write(";");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
  
     }
     else if (expression.IsVariableReference && expression.VariableReference.SegmentCount == 2)
@@ -1635,84 +1657,84 @@ this.Write(";");
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write("\n        ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(resultTypeName));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write(" ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write(" = await context.ReadStateAsync<");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(resultTypeName));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write(">(key: \"");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(expression.VariableReference.VariableName));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write("\", scopeName: \"");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(expression.VariableReference.NamespaceAlias));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write("\").ConfigureAwait(false);");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 
     }
     else if (expression.IsVariableReference)
@@ -1721,70 +1743,70 @@ this.Write("\").ConfigureAwait(false);");
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write("\n        ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(resultTypeName));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write("? ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write(" = await context.EvaluateExpressionAsync<");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(resultTypeName));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write(">(");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(FormatStringValue(expression.VariableReference.ToString())));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write(").ConfigureAwait(false);");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
  
     }
     else
@@ -1793,70 +1815,70 @@ this.Write(").ConfigureAwait(false);");
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write("\n        ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(resultTypeName));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write(" ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write(" = await context.EvaluateExpressionAsync<");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(resultTypeName));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write(">(");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(FormatStringValue(expression.ExpressionText)));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
 this.Write(").ConfigureAwait(false);");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateRecordExpressionTemplate.tt"
  
     }
 }
@@ -1865,7 +1887,7 @@ this.Write(").ConfigureAwait(false);");
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 
 void EvaluateStringExpression(StringExpression expression, string targetVariable, bool isNullable = false)
 {
@@ -1876,56 +1898,56 @@ void EvaluateStringExpression(StringExpression expression, string targetVariable
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write("\n        ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(typeName));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write(" ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write(" = ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(isNullable ? "null" : "string.Empty"));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write(";");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
  
     }
     else if (expression.IsLiteral)
@@ -1936,56 +1958,56 @@ this.Write(";");
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write("\n        ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(typeName));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write(" ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write(" = \n            \"\"\"\n            ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(expression.LiteralValue));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write("\n            \"\"\";");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
  
         }
         else
@@ -1994,56 +2016,56 @@ this.Write("\n            \"\"\";");
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write("\n        ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(typeName));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write(" ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write(" = ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(FormatStringValue(expression.LiteralValue)));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write(";");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
  
         }
     }
@@ -2053,70 +2075,70 @@ this.Write(";");
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write("\n        ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(typeName));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write(" ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write(" = await context.ReadStateAsync<string>(key: \"");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(expression.VariableReference.VariableName));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write("\", scopeName: \"");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(expression.VariableReference.NamespaceAlias));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write("\").ConfigureAwait(false);");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 
     }
     else if (expression.IsVariableReference)
@@ -2125,56 +2147,56 @@ this.Write("\").ConfigureAwait(false);");
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write("\n        ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(typeName));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write(" ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write(" = await context.EvaluateValueAsync<string>(");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(FormatStringValue(expression.VariableReference.ToString())));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write(").ConfigureAwait(false);");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
  
     }
     else
@@ -2183,56 +2205,56 @@ this.Write(").ConfigureAwait(false);");
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write("\n        ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(typeName));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write(" ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write(" = await context.EvaluateValueAsync<string>(");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(FormatStringValue(expression.ExpressionText)));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
 this.Write(").ConfigureAwait(false);");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateStringExpressionTemplate.tt"
  
     }
 }
@@ -2241,7 +2263,7 @@ this.Write(").ConfigureAwait(false);");
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 
 void EvaluateValueExpression(ValueExpression expression, string targetVariable) =>
     EvaluateValueExpression<object>(expression, targetVariable);
@@ -2254,42 +2276,42 @@ void EvaluateValueExpression<TValue>(ValueExpression expression, string targetVa
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write("\n        ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(GetTypeAlias<TValue>()));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write("? ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write(" = null;");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
  
     }
     else if (expression.IsLiteral)
@@ -2298,56 +2320,56 @@ this.Write(" = null;");
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write("\n        ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(GetTypeAlias<TValue>()));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write("? ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write(" = ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(FormatDataValue(expression.LiteralValue)));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write(";");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
  
     }
     else if (expression.IsVariableReference && expression.VariableReference.SegmentCount == 2)
@@ -2356,84 +2378,84 @@ this.Write(";");
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write("\n        ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(GetTypeAlias<TValue>()));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write("? ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write(" = await context.ReadStateAsync<");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(GetTypeAlias<TValue>()));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write(">(key: \"");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(expression.VariableReference.VariableName));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write("\", scopeName: \"");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(expression.VariableReference.NamespaceAlias));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write("\").ConfigureAwait(false);");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 
     }
     else if (expression.IsVariableReference)
@@ -2442,70 +2464,70 @@ this.Write("\").ConfigureAwait(false);");
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write("\n        ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(GetTypeAlias<TValue>()));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write("? ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write(" = await context.EvaluateValueAsync<");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(GetTypeAlias<TValue>()));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write(">(");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(FormatStringValue(expression.VariableReference.ToString())));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write(").ConfigureAwait(false);");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
  
     }
     else
@@ -2514,70 +2536,70 @@ this.Write(").ConfigureAwait(false);");
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write("\n        ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(GetTypeAlias<TValue>()));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write("? ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(targetVariable));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write(" = await context.EvaluateValueAsync<");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(GetTypeAlias<TValue>()));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write(">(");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(FormatStringValue(expression.ExpressionText)));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
 this.Write(").ConfigureAwait(false);");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\EvaluateValueExpressionTemplate.tt"
  
     }
 }
@@ -2586,7 +2608,7 @@ this.Write(").ConfigureAwait(false);");
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\FormatMessageTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\FormatMessageTemplate.tt"
 
 void EvaluateMessageTemplate(TemplateLine templateLine, string variableName)
 {
@@ -2596,42 +2618,42 @@ void EvaluateMessageTemplate(TemplateLine templateLine, string variableName)
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\FormatMessageTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\FormatMessageTemplate.tt"
 this.Write("\n        string ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\FormatMessageTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\FormatMessageTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(variableName));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\FormatMessageTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\FormatMessageTemplate.tt"
 this.Write(" =\n            await context.FormatTemplateAsync(\n                \"\"\"");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\FormatMessageTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\FormatMessageTemplate.tt"
 
                 FormatMessageTemplate(templateLine); 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\FormatMessageTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\FormatMessageTemplate.tt"
 this.Write("\n                \"\"\");");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\FormatMessageTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\FormatMessageTemplate.tt"
 
     }
     else
@@ -2640,28 +2662,28 @@ this.Write("\n                \"\"\");");
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\FormatMessageTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\FormatMessageTemplate.tt"
 this.Write("\n        string? ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\FormatMessageTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\FormatMessageTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(variableName));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\FormatMessageTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\FormatMessageTemplate.tt"
 this.Write(" = null;");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\FormatMessageTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\FormatMessageTemplate.tt"
 
     }
 }
@@ -2674,21 +2696,21 @@ void FormatMessageTemplate(TemplateLine line)
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\FormatMessageTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\FormatMessageTemplate.tt"
 this.Write("\n                ");
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\FormatMessageTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\FormatMessageTemplate.tt"
 this.Write(this.ToStringHelper.ToStringWithCulture(text));
 
         
         #line default
         #line hidden
         
-        #line 1 "C:\Users\crickman\source\repos\af5\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\FormatMessageTemplate.tt"
+        #line 1 "C:\Users\crickman\source\repos\af4\dotnet\src\Microsoft.Agents.AI.Workflows.Declarative\CodeGen\Snippets\FormatMessageTemplate.tt"
 
     }
 }
