@@ -6,7 +6,7 @@ from collections.abc import AsyncIterable, Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, cast
 
-from pydantic import Field
+from pydantic import BaseModel
 
 from agent_framework import (
     AgentRunResponse,
@@ -21,7 +21,6 @@ from agent_framework import (
     UsageDetails,
 )
 
-from .._pydantic import AFBaseModel
 from ..exceptions import AgentExecutionException
 from ._events import (
     AgentRunUpdateEvent,
@@ -41,14 +40,9 @@ class WorkflowAgent(BaseAgent):
     # Class variable for the request info function name
     REQUEST_INFO_FUNCTION_NAME: ClassVar[str] = "request_info"
 
-    class RequestInfoFunctionArgs(AFBaseModel):
+    class RequestInfoFunctionArgs(BaseModel):
         request_id: str
         data: Any
-
-    workflow: "Workflow" = Field(description="The workflow wrapped as an agent")
-    pending_requests: dict[str, RequestInfoEvent] = Field(
-        default_factory=dict, description="Pending request info events"
-    )
 
     def __init__(
         self,
@@ -70,9 +64,6 @@ class WorkflowAgent(BaseAgent):
         """
         if id is None:
             id = f"WorkflowAgent_{uuid.uuid4().hex[:8]}"
-        # Initialize with standard BaseAgent parameters first
-        kwargs["workflow"] = workflow
-
         # Validate the workflow's start executor can handle agent-facing message inputs
         try:
             start_executor = workflow.get_start_executor()
@@ -83,6 +74,9 @@ class WorkflowAgent(BaseAgent):
             raise ValueError("Workflow's start executor cannot handle list[ChatMessage]")
 
         super().__init__(id=id, name=name, description=description, **kwargs)
+
+        self.workflow: "Workflow" = workflow
+        self.pending_requests: dict[str, RequestInfoEvent] = {}
 
     async def run(
         self,
@@ -116,8 +110,7 @@ class WorkflowAgent(BaseAgent):
         response = self.merge_updates(response_updates, response_id)
 
         # Notify thread of new messages (both input and response messages)
-        await self._notify_thread_of_new_messages(thread, input_messages)
-        await self._notify_thread_of_new_messages(thread, response.messages)
+        await self._notify_thread_of_new_messages(thread, input_messages, response.messages)
 
         return response
 
@@ -151,8 +144,7 @@ class WorkflowAgent(BaseAgent):
         response = self.merge_updates(response_updates, response_id)
 
         # Notify thread of new messages (both input and response messages)
-        await self._notify_thread_of_new_messages(thread, input_messages)
-        await self._notify_thread_of_new_messages(thread, response.messages)
+        await self._notify_thread_of_new_messages(thread, input_messages, response.messages)
 
     async def _run_stream_impl(
         self,

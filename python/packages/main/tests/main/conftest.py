@@ -141,7 +141,7 @@ class MockBaseChatClient(BaseChatClient):
         logger.debug(f"Running base chat client inner, with: {messages=}, {chat_options=}, {kwargs=}")
         self.call_count += 1
         if not self.run_responses:
-            return ChatResponse(messages=ChatMessage(role="assistant", text=f"test response - {messages[0].text}"))
+            return ChatResponse(messages=ChatMessage(role="assistant", text=f"test response - {messages[-1].text}"))
 
         response = self.run_responses.pop(0)
 

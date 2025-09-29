@@ -104,7 +104,8 @@ ignore = [
     "D104", # allow missing docstring in public package
     "D418", # allow overload to have a docstring
     "TD003", # allow missing link to todo issue
-    "FIX002" # allow todo
+    "FIX002", # allow todo
+    "B027" # allow empty non-abstract method in ABC
 ]
 
 [tool.ruff.lint.per-file-ignores]

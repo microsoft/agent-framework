@@ -187,5 +187,3 @@ __all__ = [
 with contextlib.suppress(AttributeError, TypeError, ValueError):
     # Rebuild WorkflowExecutor to resolve Workflow forward reference
     WorkflowExecutor.model_rebuild()
-    # Rebuild WorkflowAgent to resolve Workflow forward reference
-    WorkflowAgent.model_rebuild()

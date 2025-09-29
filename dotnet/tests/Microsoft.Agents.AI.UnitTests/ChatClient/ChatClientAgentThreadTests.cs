@@ -216,13 +216,13 @@ public class ChatClientAgentThreadTests
     /// Verify thread serialization to JSON when the thread has an id.
     /// </summary>
     [Fact]
-    public async Task VerifyThreadSerializationWithIdAsync()
+    public void VerifyThreadSerializationWithId()
     {
         // Arrange
         var thread = new ChatClientAgentThread { ConversationId = "TestConvId" };
 
         // Act
-        var json = await thread.SerializeAsync();
+        var json = thread.Serialize();
 
         // Assert
         Assert.Equal(JsonValueKind.Object, json.ValueKind);
@@ -237,14 +237,14 @@ public class ChatClientAgentThreadTests
     /// Verify thread serialization to JSON when the thread has messages.
     /// </summary>
     [Fact]
-    public async Task VerifyThreadSerializationWithMessagesAsync()
+    public void VerifyThreadSerializationWithMessages()
     {
         // Arrange
         InMemoryChatMessageStore store = [new(ChatRole.User, "TestContent") { AuthorName = "TestAuthor" }];
         var thread = new ChatClientAgentThread { MessageStore = store };
 
         // Act
-        var json = await thread.SerializeAsync();
+        var json = thread.Serialize();
 
         // Assert
         Assert.Equal(JsonValueKind.Object, json.ValueKind);
@@ -269,14 +269,13 @@ public class ChatClientAgentThreadTests
     }
 
     [Fact]
-    public async Task VerifyThreadSerializationWithWithAIContextProviderAsync()
+    public void VerifyThreadSerializationWithWithAIContextProvider()
     {
         // Arrange
         Mock<AIContextProvider> mockProvider = new();
-        var providerStateElement = JsonSerializer.SerializeToElement(["CP1"], TestJsonSerializerContext.Default.StringArray);
         mockProvider
-            .Setup(m => m.SerializeAsync(It.IsAny<JsonSerializerOptions?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(providerStateElement);
+            .Setup(m => m.Serialize(It.IsAny<JsonSerializerOptions?>()))
+            .Returns(JsonSerializer.SerializeToElement(["CP1"], TestJsonSerializerContext.Default.StringArray));
 
         var thread = new ChatClientAgentThread
         {
@@ -284,7 +283,7 @@ public class ChatClientAgentThreadTests
         };
 
         // Act
-        var json = await thread.SerializeAsync();
+        var json = thread.Serialize();
 
         // Assert
         Assert.Equal(JsonValueKind.Object, json.ValueKind);
@@ -292,14 +291,14 @@ public class ChatClientAgentThreadTests
         Assert.Equal(JsonValueKind.Array, providerStateProperty.ValueKind);
         Assert.Single(providerStateProperty.EnumerateArray());
         Assert.Equal("CP1", providerStateProperty.EnumerateArray().First().GetString());
-        mockProvider.Verify(m => m.SerializeAsync(It.IsAny<JsonSerializerOptions?>(), It.IsAny<CancellationToken>()), Times.Once);
+        mockProvider.Verify(m => m.Serialize(It.IsAny<JsonSerializerOptions?>()), Times.Once);
     }
 
     /// <summary>
     /// Verify thread serialization to JSON with custom options.
     /// </summary>
     [Fact]
-    public async Task VerifyThreadSerializationWithCustomOptionsAsync()
+    public void VerifyThreadSerializationWithCustomOptions()
     {
         // Arrange
         var thread = new ChatClientAgentThread();
@@ -312,12 +311,12 @@ public class ChatClientAgentThreadTests
 
         var messageStoreMock = new Mock<ChatMessageStore>();
         messageStoreMock
-            .Setup(m => m.SerializeStateAsync(options, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(storeStateElement);
+            .Setup(m => m.Serialize(options))
+            .Returns(storeStateElement);
         thread.MessageStore = messageStoreMock.Object;
 
         // Act
-        var json = await thread.SerializeAsync(options);
+        var json = thread.Serialize(options);
 
         // Assert
         Assert.Equal(JsonValueKind.Object, json.ValueKind);
@@ -330,7 +329,7 @@ public class ChatClientAgentThreadTests
         Assert.True(storeStateProperty.TryGetProperty("Key", out var keyProperty));
         Assert.Equal("TestValue", keyProperty.GetString());
 
-        messageStoreMock.Verify(m => m.SerializeStateAsync(options, It.IsAny<CancellationToken>()), Times.Once);
+        messageStoreMock.Verify(m => m.Serialize(options), Times.Once);
     }
 
     #endregion Serialize Tests

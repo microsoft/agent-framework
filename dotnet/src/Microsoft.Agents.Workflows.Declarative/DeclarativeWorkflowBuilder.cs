@@ -17,7 +17,7 @@ namespace Microsoft.Agents.Workflows.Declarative;
 public static class DeclarativeWorkflowBuilder
 {
     /// <summary>
-    /// Builds a workflow from the provided YAML definition.
+    /// Builder for converting a Foundry workflow object-model YAML definition into a process.
     /// </summary>
     /// <typeparam name="TInput">The type of the input message</typeparam>
     /// <param name="workflowFile">The path to the workflow.</param>
@@ -55,18 +55,19 @@ public static class DeclarativeWorkflowBuilder
             throw new DeclarativeModelException($"Unsupported root element: {rootElement.GetType().Name}. Expected an {nameof(Workflow)}.");
         }
 
-        string rootId = WorkflowActionVisitor.Steps.Root(workflowElement.BeginDialog?.Id.Value);
+        string rootId = WorkflowActionVisitor.Steps.Root(workflowElement);
 
         WorkflowFormulaState state = new(options.CreateRecalcEngine());
         state.Initialize(workflowElement.WrapWithBot(), options.Configuration);
         DeclarativeWorkflowExecutor<TInput> rootExecutor =
             new(rootId,
+                options.AgentProvider,
                 state,
                 message => inputTransform?.Invoke(message) ?? DefaultTransform(message));
 
         WorkflowActionVisitor visitor = new(rootExecutor, state, options);
         WorkflowElementWalker walker = new(visitor);
-        walker.Visit(rootElement);
+        walker.Visit(workflowElement);
 
         return visitor.Complete();
     }

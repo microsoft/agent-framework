@@ -246,6 +246,7 @@ class MCPTool:
         self.request_timeout = request_timeout
         self.chat_client = chat_client
         self.functions: list[AIFunction[Any, Any]] = []
+        self.is_connected: bool = False
 
     def __str__(self) -> str:
         return f"MCPTool(name={self.name}, description={self.description})"
@@ -282,6 +283,7 @@ class MCPTool:
             # If the session is not initialized, we need to reinitialize it
             await self.session.initialize()
         logger.debug("Connected to MCP server: %s", self.session)
+        self.is_connected = True
         if self.load_tools_flag:
             await self.load_tools()
         if self.load_prompts_flag:
@@ -434,6 +436,7 @@ class MCPTool:
         """Disconnect from the MCP server."""
         await self._exit_stack.aclose()
         self.session = None
+        self.is_connected = False
 
     @abstractmethod
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
