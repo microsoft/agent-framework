@@ -32,7 +32,7 @@ async def non_streaming_example() -> None:
 
     # Access the structured output directly from the response value
     if result.value:
-        structured_data = result.value
+        structured_data: OutputStruct = result.value  # type: ignore
         print("Structured Output Agent (from result.value):")
         print(f"City: {structured_data.city}")
         print(f"Description: {structured_data.description}")
@@ -62,7 +62,7 @@ async def streaming_example() -> None:
 
     # Access the structured output directly from the response value
     if result.value:
-        structured_data = result.value
+        structured_data: OutputStruct = result.value  # type: ignore
         print("Structured Output (from streaming with AgentRunResponse.from_agent_response_generator):")
         print(f"City: {structured_data.city}")
         print(f"Description: {structured_data.description}")

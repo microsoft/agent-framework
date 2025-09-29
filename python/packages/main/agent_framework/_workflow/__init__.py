@@ -1,7 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import contextlib
-
 from ._agent import WorkflowAgent
 from ._checkpoint import (
     CheckpointStorage,
@@ -182,8 +180,3 @@ __all__ = [
     "handler",
     "validate_workflow_graph",
 ]
-
-# Rebuild models to resolve forward references after all imports are complete
-with contextlib.suppress(AttributeError, TypeError, ValueError):
-    # Rebuild WorkflowExecutor to resolve Workflow forward reference
-    WorkflowExecutor.model_rebuild()
