@@ -6,8 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import numpy as np
 import pytest
 from agent_framework import ChatMessage, Role
-from agent_framework.exceptions import ServiceInitializationError
-from pydantic import ValidationError
+from agent_framework.exceptions import AgentException, ServiceInitializationError
 from redisvl.utils.vectorize import CustomTextVectorizer
 
 from agent_framework_redis import RedisProvider
@@ -181,8 +180,8 @@ class TestRedisProviderModelInvoking:
         assert "filter_expression" in kwargs
 
         # Context contains memories joined after the default prompt
-        assert ctx.contents is not None and len(ctx.contents) == 1
-        text = ctx.contents[0].text
+        assert ctx.messages is not None and len(ctx.messages) == 1
+        text = ctx.messages[0].text
         assert text.endswith("A\nB")
 
     # When no results are returned, Context should have no contents
@@ -192,7 +191,7 @@ class TestRedisProviderModelInvoking:
         mock_index.query = AsyncMock(return_value=[])
         provider = RedisProvider(user_id="u1")
         ctx = await provider.model_invoking([ChatMessage(role=Role.USER, text="any")])
-        assert ctx.contents is None
+        assert ctx.messages == []
 
     # Ensures hybrid vector-text search is used when a vectorizer and vector field are configured
     async def test_hybridquery_path_with_vectorizer(self, mock_index: AsyncMock, patch_index_from_dict, patch_queries):  # noqa: ARG002
@@ -212,7 +211,7 @@ class TestRedisProviderModelInvoking:
         assert "filter_expression" in k
 
         # Context assembled from returned memories
-        assert ctx.contents and "Hit" in ctx.contents[0].text
+        assert ctx.messages and "Hit" in ctx.messages[0].text
 
 
 class TestRedisProviderContextManager:
@@ -280,7 +279,7 @@ class TestIndexCreationPublicCalls:
     async def test_messages_adding_triggers_index_create_once_when_drop_true(
         self, mock_index: AsyncMock, patch_index_from_dict
     ):  # noqa: ARG002
-        provider = RedisProvider(user_id="u1", drop_redis_index=True)
+        provider = RedisProvider(user_id="u1")
         await provider.messages_adding("t1", ChatMessage(role=Role.USER, text="m1"))
         await provider.messages_adding("t1", ChatMessage(role=Role.USER, text="m2"))
         # create only on first call
@@ -291,7 +290,7 @@ class TestIndexCreationPublicCalls:
         self, mock_index: AsyncMock, patch_index_from_dict
     ):  # noqa: ARG002
         mock_index.exists = AsyncMock(return_value=False)
-        provider = RedisProvider(user_id="u1", drop_redis_index=False)
+        provider = RedisProvider(user_id="u1")
         mock_index.query = AsyncMock(return_value=[{"content": "C"}])
         await provider.model_invoking([ChatMessage(role=Role.USER, text="q")])
         assert mock_index.create.await_count == 1
@@ -349,7 +348,7 @@ class TestRedisProviderSchemaVectors:
         class DummyVectorizer:
             pass
 
-        with pytest.raises(ValidationError):
+        with pytest.raises(AgentException):
             RedisProvider(user_id="u1", redis_vectorizer=DummyVectorizer(), vector_field_name="vec")
 
 

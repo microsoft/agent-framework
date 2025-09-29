@@ -10,6 +10,7 @@ from typing import Any, Literal, cast
 import numpy as np
 from agent_framework import ChatMessage, Context, ContextProvider, Role
 from agent_framework.exceptions import (
+    AgentException,
     ServiceInitializationError,
     ServiceInvalidRequestError,
 )
@@ -76,6 +77,10 @@ class RedisProvider(ContextProvider):
         self.redis_url = redis_url
         self.index_name = index_name
         self.prefix = prefix
+        if redis_vectorizer is not None and not isinstance(redis_vectorizer, BaseVectorizer):
+            raise AgentException(
+                f"The redis vectorizer is not a valid type, got: {type(redis_vectorizer)}, expected: BaseVectorizer."
+            )
         self.redis_vectorizer = redis_vectorizer
         self.vector_field_name = vector_field_name
         self.vector_algorithm: Literal["flat", "hnsw"] | None = vector_algorithm
