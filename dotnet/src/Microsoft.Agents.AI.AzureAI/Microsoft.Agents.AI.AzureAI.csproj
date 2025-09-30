@@ -23,7 +23,7 @@
   <PropertyGroup>
     <!-- NuGet Package Settings -->
     <Title>Microsoft Agent Framework AzureAI</Title>
-    <Description>the Microsoft Agent Framework support for Azure AI.</Description>
+    <Description>Provides the Microsoft Agent Framework support for Azure AI.</Description>
   </PropertyGroup>
 
 </Project>
