@@ -179,10 +179,10 @@ dependencies
 ### Grafana dashboards with Azure Monitor data
 Besides the Azure Monitor native UI, you can also use Grafana to visualize the telemetry data in Azure Monitor. We have two tailored dashboards for you to get started quickly:
 
-##### [Agent overview dashboard](https://aka.ms/amg/dash/af-agent)
+#### [Agent overview dashboard](https://aka.ms/amg/dash/af-agent)
 ![Agent overview dashboard](./grafana-af-agent.gif)
 
-##### [Workflow overview dashboard](https://aka.ms/amg/dash/af-workflow)
+#### [Workflow overview dashboard](https://aka.ms/amg/dash/af-workflow)
 ![Workflow overview dashboard](./grafana-af-workflow.gif)
 
 ## Aspire Dashboard
