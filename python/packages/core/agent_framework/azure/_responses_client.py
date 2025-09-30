@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from collections.abc import Mapping
-from typing import TypeVar
+from typing import Any, TypeVar
 from urllib.parse import urljoin
 
 from azure.core.credentials import TokenCredential
@@ -43,6 +43,7 @@ class AzureOpenAIResponsesClient(AzureOpenAIConfigMixin, OpenAIBaseResponsesClie
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         instruction_role: str | None = None,
+        **kwargs: Any,
     ) -> None:
         """Initialize an AzureResponses service.
 
@@ -68,7 +69,10 @@ class AzureOpenAIResponsesClient(AzureOpenAIConfigMixin, OpenAIBaseResponsesClie
             env_file_encoding: The encoding of the environment settings file, defaults to 'utf-8'.
             instruction_role: The role to use for 'instruction' messages, for example, summarization
                 prompts could use `developer` or `system`. (Optional)
+            kwargs: Additional keyword arguments.
         """
+        if model_id := kwargs.pop("model_id", None) and not deployment_name:
+            deployment_name = str(model_id)
         try:
             azure_openai_settings = AzureOpenAISettings(
                 # pydantic settings will see if there is a value, if not, will try the env var or .env file

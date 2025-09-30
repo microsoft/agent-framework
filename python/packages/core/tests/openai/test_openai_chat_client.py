@@ -130,7 +130,6 @@ def test_serialize(openai_unit_test_env: dict[str, str]) -> None:
     open_ai_chat_completion = OpenAIChatClient.from_dict(settings)
     dumped_settings = open_ai_chat_completion.to_dict()
     assert dumped_settings["model_id"] == openai_unit_test_env["OPENAI_CHAT_MODEL_ID"]
-    assert dumped_settings["api_key"] == openai_unit_test_env["OPENAI_API_KEY"]
     # Assert that the default header we added is present in the dumped_settings default headers
     for key, value in default_headers.items():
         assert key in dumped_settings["default_headers"]
@@ -149,10 +148,9 @@ def test_serialize_with_org_id(openai_unit_test_env: dict[str, str]) -> None:
     open_ai_chat_completion = OpenAIChatClient.from_dict(settings)
     dumped_settings = open_ai_chat_completion.to_dict()
     assert dumped_settings["model_id"] == openai_unit_test_env["OPENAI_CHAT_MODEL_ID"]
-    assert dumped_settings["api_key"] == openai_unit_test_env["OPENAI_API_KEY"]
     assert dumped_settings["org_id"] == openai_unit_test_env["OPENAI_ORG_ID"]
     # Assert that the 'User-Agent' header is not present in the dumped_settings default headers
-    assert "User-Agent" not in dumped_settings["default_headers"]
+    assert "User-Agent" not in dumped_settings.get("default_headers", {})
 
 
 async def test_content_filter_exception_handling(openai_unit_test_env: dict[str, str]) -> None:

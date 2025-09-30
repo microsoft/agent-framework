@@ -284,7 +284,6 @@ def test_openai_assistants_client_serialize(openai_unit_test_env: dict[str, str]
     assert dumped_settings["assistant_id"] == "test-assistant-id"
     assert dumped_settings["assistant_name"] == "TestAssistant"
     assert dumped_settings["thread_id"] == "test-thread-id"
-    assert dumped_settings["api_key"] == openai_unit_test_env["OPENAI_API_KEY"]
     assert dumped_settings["org_id"] == openai_unit_test_env["OPENAI_ORG_ID"]
 
     # Assert that the default header we added is present in the dumped_settings default headers

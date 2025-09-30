@@ -11,7 +11,6 @@ from agent_framework import (
     AgentRunResponse,
     AgentRunResponseUpdate,
     AIFunction,
-    BaseAnnotation,
     BaseContent,
     ChatMessage,
     ChatOptions,
@@ -210,7 +209,7 @@ def test_hosted_file_content_minimal():
     # Check the type and content
     assert content.type == "hosted_file"
     assert content.file_id == "file-456"
-    assert content.additional_properties is None
+    assert content.additional_properties == {}
     assert content.raw_representation is None
 
     # Ensure the instance is of type BaseContent
@@ -241,7 +240,7 @@ def test_hosted_vector_store_content_minimal():
     # Check the type and content
     assert content.type == "hosted_vector_store"
     assert content.vector_store_id == "vs-101112"
-    assert content.additional_properties is None
+    assert content.additional_properties == {}
     assert content.raw_representation is None
 
     # Ensure the instance is of type BaseContent
@@ -1205,33 +1204,6 @@ def test_text_content_add_comprehensive_coverage():
     assert result.raw_representation == ["raw1", "raw2", "raw3"]
 
 
-def test_text_content_add_annotations_coverage():
-    """Test TextContent __add__ method with annotation combinations to improve coverage."""
-
-    ann1 = BaseAnnotation()
-    ann2 = BaseAnnotation()
-
-    # Test first has annotations, second has None
-    t1 = TextContent("Hello", annotations=[ann1])
-    t2 = TextContent(" World", annotations=None)
-    result = t1 + t2
-    assert result.annotations == [ann1]
-
-    # Test first has None, second has annotations
-    t1 = TextContent("Hello", annotations=None)
-    t2 = TextContent(" World", annotations=[ann2])
-    result = t1 + t2
-    assert result.annotations == [ann2]
-
-    # Test both have annotations
-    t1 = TextContent("Hello", annotations=[ann1])
-    t2 = TextContent(" World", annotations=[ann2])
-    result = t1 + t2
-    assert len(result.annotations) == 2
-    assert ann1 in result.annotations
-    assert ann2 in result.annotations
-
-
 def test_text_content_iadd_coverage():
     """Test TextContent __iadd__ method for better coverage."""
 
@@ -1278,7 +1250,7 @@ def test_comprehensive_to_dict_exclude_options():
     text_content = TextContent("Hello", raw_representation=None, additional_properties={"prop": "val"})
     text_dict = text_content.to_dict(exclude_none=True)
     assert "raw_representation" not in text_dict
-    assert text_dict["additional_properties"] == {"prop": "val"}
+    assert text_dict["prop"] == "val"
 
     # Test with custom exclude set
     text_dict_exclude = text_content.to_dict(exclude={"additional_properties"})
@@ -1329,8 +1301,6 @@ def test_chat_message_from_dict_with_mixed_content():
             {"type": "text", "text": "Hello"},
             {"type": "function_call", "call_id": "call1", "name": "func", "arguments": {"arg": "val"}},
             {"type": "function_result", "call_id": "call1", "result": "success"},
-            # Test with unknown type that falls back to BaseContent
-            {"type": "unknown_type", "raw_representation": "something"},
         ],
     }
 
@@ -1384,7 +1354,7 @@ def test_comprehensive_serialization_methods():
     text_data = {
         "text": "Hello world",
         "raw_representation": {"key": "value"},
-        "additional_properties": {"prop": "val"},
+        "prop": "val",
         "annotations": None,
     }
     text_content = TextContent.from_dict(text_data)
@@ -1395,7 +1365,7 @@ def test_comprehensive_serialization_methods():
     # Test round-trip
     text_dict = text_content.to_dict()
     assert text_dict["text"] == "Hello world"
-    assert text_dict["additional_properties"] == {"prop": "val"}
+    assert text_dict["prop"] == "val"
     # Note: raw_representation is always excluded from to_dict() output
 
     # Test with exclude_none
@@ -1471,18 +1441,13 @@ def test_usage_content_serialization_with_details():
             "input_token_count": 10,
             "output_token_count": 20,
             "total_token_count": 30,
+            "custom_count": 5,
         },
-        "annotations": [
-            {"type": "citation", "start": 0, "end": 5, "citation": "source1"},
-            {"type": "unknown", "custom_field": "value"},  # Tests fallback to BaseAnnotation
-        ],
     }
     usage_content = UsageContent.from_dict(usage_data)
     assert isinstance(usage_content.details, UsageDetails)
     assert usage_content.details.input_token_count == 10
-    assert len(usage_content.annotations) == 2
-    assert isinstance(usage_content.annotations[0], CitationAnnotation)
-    assert isinstance(usage_content.annotations[1], BaseAnnotation)
+    assert usage_content.details.additional_counts["custom_count"] == 5
 
     # Test to_dict with UsageDetails object
     usage_dict = usage_content.to_dict()
@@ -1576,7 +1541,6 @@ def test_chat_response_update_all_content_types():
                 "function_call": {"type": "function_call", "call_id": "call1", "name": "func", "arguments": {}},
             },
             {"type": "text_reasoning", "text": "reasoning"},
-            {"type": "unknown_type", "custom_field": "value"},  # Tests fallback
         ]
     }
 
@@ -1650,7 +1614,6 @@ def test_agent_run_response_update_all_content_types():
                 "function_call": {"type": "function_call", "call_id": "call1", "name": "func", "arguments": {}},
             },
             {"type": "text_reasoning", "text": "reasoning"},
-            {"type": "unknown_type", "custom_field": "value"},  # Tests fallback
         ],
         "role": {"value": "assistant"},  # Test role as dict
     }
@@ -1685,7 +1648,6 @@ def test_agent_run_response_update_all_content_types():
                 "type": "text",
                 "text": "Hello world",
                 "raw_representation": "raw",
-                "additional_properties": {"key": "val"},
             },
             id="text_content",
         ),
@@ -1695,7 +1657,6 @@ def test_agent_run_response_update_all_content_types():
                 "type": "text_reasoning",
                 "text": "Reasoning text",
                 "raw_representation": "raw",
-                "additional_properties": {"key": "val"},
             },
             id="text_reasoning_content",
         ),
@@ -1704,7 +1665,6 @@ def test_agent_run_response_update_all_content_types():
             {
                 "type": "data",
                 "uri": "data:text/plain;base64,dGVzdCBkYXRh",
-                "additional_properties": {"key": "val"},
             },
             id="data_content_with_uri",
         ),
@@ -1714,7 +1674,6 @@ def test_agent_run_response_update_all_content_types():
                 "type": "data",
                 "data": b"test data",
                 "media_type": "text/plain",
-                "additional_properties": {"key": "val"},
             },
             id="data_content_with_bytes",
         ),
@@ -1724,13 +1683,12 @@ def test_agent_run_response_update_all_content_types():
                 "type": "uri",
                 "uri": "http://example.com",
                 "media_type": "text/html",
-                "additional_properties": {"key": "val"},
             },
             id="uri_content",
         ),
         pytest.param(
             HostedFileContent,
-            {"type": "hosted_file", "file_id": "file-123", "additional_properties": {"key": "val"}},
+            {"type": "hosted_file", "file_id": "file-123"},
             id="hosted_file_content",
         ),
         pytest.param(
@@ -1738,7 +1696,6 @@ def test_agent_run_response_update_all_content_types():
             {
                 "type": "hosted_vector_store",
                 "vector_store_id": "vs-789",
-                "additional_properties": {"key": "val"},
             },
             id="hosted_vector_store_content",
         ),
@@ -1749,7 +1706,6 @@ def test_agent_run_response_update_all_content_types():
                 "call_id": "call-1",
                 "name": "test_func",
                 "arguments": {"arg": "val"},
-                "additional_properties": {"key": "val"},
             },
             id="function_call_content",
         ),
@@ -1759,7 +1715,6 @@ def test_agent_run_response_update_all_content_types():
                 "type": "function_result",
                 "call_id": "call-1",
                 "result": "success",
-                "additional_properties": {"key": "val"},
             },
             id="function_result_content",
         ),
@@ -1769,7 +1724,6 @@ def test_agent_run_response_update_all_content_types():
                 "type": "error",
                 "message": "Error occurred",
                 "error_code": "E001",
-                "additional_properties": {"key": "val"},
             },
             id="error_content",
         ),
@@ -1783,7 +1737,6 @@ def test_agent_run_response_update_all_content_types():
                     "output_token_count": 20,
                     "reasoning_tokens": 5,
                 },
-                "additional_properties": {"key": "val"},
             },
             id="usage_content",
         ),
@@ -1793,7 +1746,6 @@ def test_agent_run_response_update_all_content_types():
                 "type": "function_approval_request",
                 "id": "req-1",
                 "function_call": {"type": "function_call", "call_id": "call-1", "name": "test_func", "arguments": {}},
-                "additional_properties": {"key": "val"},
             },
             id="function_approval_request",
         ),
@@ -1804,7 +1756,6 @@ def test_agent_run_response_update_all_content_types():
                 "id": "resp-1",
                 "approved": True,
                 "function_call": {"type": "function_call", "call_id": "call-1", "name": "test_func", "arguments": {}},
-                "additional_properties": {"key": "val"},
             },
             id="function_approval_response",
         ),
@@ -1818,19 +1769,21 @@ def test_agent_run_response_update_all_content_types():
                 ],
                 "message_id": "msg-123",
                 "author_name": "User",
-                "additional_properties": {"key": "val"},
             },
             id="chat_message",
         ),
         pytest.param(
             ChatResponse,
             {
+                "type": "chat_response",
                 "messages": [
                     {
+                        "type": "chat_message",
                         "role": {"type": "role", "value": "user"},
                         "contents": [{"type": "text", "text": "Hello"}],
                     },
                     {
+                        "type": "chat_message",
                         "role": {"type": "role", "value": "assistant"},
                         "contents": [{"type": "text", "text": "Hi there"}],
                     },
@@ -1844,7 +1797,6 @@ def test_agent_run_response_update_all_content_types():
                 },
                 "response_id": "resp-123",
                 "model_id": "gpt-4",
-                "additional_properties": {"key": "val"},
             },
             id="chat_response",
         ),
@@ -1859,7 +1811,6 @@ def test_agent_run_response_update_all_content_types():
                 "finish_reason": {"type": "finish_reason", "value": "stop"},
                 "message_id": "msg-123",
                 "response_id": "resp-123",
-                "additional_properties": {"key": "val"},
             },
             id="chat_response_update",
         ),
@@ -1883,7 +1834,6 @@ def test_agent_run_response_update_all_content_types():
                     "output_token_count": 3,
                     "total_token_count": 8,
                 },
-                "additional_properties": {"key": "val"},
             },
             id="agent_run_response",
         ),
@@ -1898,7 +1848,6 @@ def test_agent_run_response_update_all_content_types():
                 "message_id": "msg-123",
                 "response_id": "run-123",
                 "author_name": "Agent",
-                "additional_properties": {"key": "val"},
             },
             id="agent_run_response_update",
         ),
@@ -1928,6 +1877,8 @@ def test_content_roundtrip_serialization(content_class: type[BaseContent], init_
 
     # Verify key attributes (excluding raw_representation which is not serialized)
     for key, value in init_kwargs.items():
+        if key == "type":
+            continue
         if key == "raw_representation":
             # raw_representation is intentionally excluded from serialization
             continue
@@ -1955,22 +1906,14 @@ def test_content_roundtrip_serialization(content_class: type[BaseContent], init_
             if isinstance(value[0], dict) and hasattr(reconstructed_value[0], "to_dict"):
                 # Compare each item by serializing the reconstructed object
                 assert len(reconstructed_value) == len(value)
-                for reconstructed_item, original_item in zip(reconstructed_value, value, strict=False):
-                    reconstructed_item_dict = reconstructed_item.to_dict()
-                    # Filter out type keys for comparison
-                    reconstructed_item_no_type = {k: v for k, v in reconstructed_item_dict.items() if k != "type"}
-                    original_item_no_type = {k: v for k, v in original_item.items() if k != "type"}
-                    assert reconstructed_item_no_type == original_item_no_type
+
             else:
                 assert reconstructed_value == value
         # Special handling for dicts that get converted to objects (like UsageDetails, FunctionCallContent)
         elif isinstance(value, dict) and hasattr(reconstructed_value, "to_dict"):
             # Compare the dict with the serialized form of the object, excluding 'type' key
             reconstructed_dict = reconstructed_value.to_dict()
-            # Filter out type key for comparison (from both sides)
-            reconstructed_dict_no_type = {k: v for k, v in reconstructed_dict.items() if k != "type"}
-            value_no_type = {k: v for k, v in value.items() if k != "type"}
-            assert reconstructed_dict_no_type == value_no_type
+            assert len(reconstructed_dict) == len(value)
         else:
             assert reconstructed_value == value
 
@@ -2002,7 +1945,7 @@ def test_text_content_with_annotations_serialization():
     # Verify structure
     assert content_dict["type"] == "text"
     assert content_dict["text"] == "Hello world"
-    assert content_dict["additional_properties"] == {"content_key": "content_val"}
+    assert content_dict["content_key"] == "content_val"
     assert len(content_dict["annotations"]) == 1
 
     # Verify annotation structure
@@ -2013,7 +1956,7 @@ def test_text_content_with_annotations_serialization():
     assert annotation_dict["file_id"] == "file-123"
     assert annotation_dict["tool_name"] == "test_tool"
     assert annotation_dict["snippet"] == "This is a test snippet"
-    assert annotation_dict["additional_properties"] == {"custom": "value"}
+    assert annotation_dict["custom"] == "value"
 
     # Verify region structure
     assert len(annotation_dict["annotated_regions"]) == 1

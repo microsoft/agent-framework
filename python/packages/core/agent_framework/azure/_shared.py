@@ -213,6 +213,7 @@ class AzureOpenAIConfigMixin(OpenAIBase):
         self.base_url = base_url
         self.api_version = api_version
         self.deployment_name = deployment_name
+        self.instruction_role = instruction_role
         # Store default_headers but filter out USER_AGENT_KEY for serialization
         if default_headers:
             from .._telemetry import USER_AGENT_KEY
@@ -222,10 +223,4 @@ class AzureOpenAIConfigMixin(OpenAIBase):
             def_headers = None
         self.default_headers = def_headers
 
-        args = {
-            "model_id": deployment_name,
-            "client": client,
-        }
-        if instruction_role:
-            args["instruction_role"] = instruction_role
-        super().__init__(**args, **kwargs)
+        super().__init__(model_id=deployment_name, client=client)

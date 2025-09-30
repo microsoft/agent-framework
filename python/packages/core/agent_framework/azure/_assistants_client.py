@@ -132,4 +132,5 @@ class AzureOpenAIAssistantsClient(OpenAIAssistantsClient):
             assistant_name=assistant_name,
             thread_id=thread_id,
             async_client=async_client,  # type: ignore[reportArgumentType]
+            default_headers=default_headers,
         )

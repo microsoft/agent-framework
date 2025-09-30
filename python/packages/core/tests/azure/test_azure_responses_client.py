@@ -124,14 +124,14 @@ def test_serialize(azure_openai_unit_test_env: dict[str, str]) -> None:
     default_headers = {"X-Unit-Test": "test-guid"}
 
     settings = {
-        "model_id": azure_openai_unit_test_env["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+        "deployment_name": azure_openai_unit_test_env["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
         "api_key": azure_openai_unit_test_env["AZURE_OPENAI_API_KEY"],
         "default_headers": default_headers,
     }
 
     azure_responses_client = AzureOpenAIResponsesClient.from_dict(settings)
     dumped_settings = azure_responses_client.to_dict()
-    assert dumped_settings["model_id"] == azure_openai_unit_test_env["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]
+    assert dumped_settings["deployment_name"] == azure_openai_unit_test_env["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]
     assert "api_key" not in dumped_settings
     # Assert that the default header we added is present in the dumped_settings default headers
     for key, value in default_headers.items():

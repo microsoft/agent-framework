@@ -1792,7 +1792,7 @@ class ChatResponse(SerializationMixin):
         raw_representation: The raw representation of the chat response from an underlying implementation.
     """
 
-    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"raw_representation"}
+    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"raw_representation", "additional_properties"}
 
     @overload
     def __init__(
@@ -1918,12 +1918,9 @@ class ChatResponse(SerializationMixin):
         self.finish_reason = finish_reason
         self.usage_details = usage_details
         self.value = value
-        self.additional_properties = additional_properties
+        self.additional_properties = additional_properties or {}
+        self.additional_properties.update(kwargs or {})
         self.raw_representation: Any | list[Any] | None = raw_representation
-
-        # Handle any additional kwargs
-        for key, value in kwargs.items():
-            setattr(self, key, value)
 
         if response_format:
             self.try_parse_value(output_format_type=response_format)
