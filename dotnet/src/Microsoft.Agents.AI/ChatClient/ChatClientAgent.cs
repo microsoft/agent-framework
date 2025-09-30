@@ -35,8 +35,8 @@ public sealed class ChatClientAgent : AIAgent
     /// <param name="description">Optional description for the agent.</param>
     /// <param name="tools">Optional list of tools that the agent can use during invocation.</param>
     /// <param name="loggerFactory">Optional logger factory to use for logging.</param>
-    /// <param name="functionInvocationServices">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
-    public ChatClientAgent(IChatClient chatClient, string? instructions = null, string? name = null, string? description = null, IList<AITool>? tools = null, ILoggerFactory? loggerFactory = null, IServiceProvider? functionInvocationServices = null)
+    /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
+    public ChatClientAgent(IChatClient chatClient, string? instructions = null, string? name = null, string? description = null, IList<AITool>? tools = null, ILoggerFactory? loggerFactory = null, IServiceProvider? services = null)
         : this(
               chatClient,
               new ChatClientAgentOptions
@@ -50,7 +50,7 @@ public sealed class ChatClientAgent : AIAgent
                   }
               },
               loggerFactory,
-              functionInvocationServices)
+              services)
     {
     }
 
@@ -60,8 +60,8 @@ public sealed class ChatClientAgent : AIAgent
     /// <param name="chatClient">The chat client to use for invoking the agent.</param>
     /// <param name="options">Full set of options to configure the agent.</param>
     /// <param name="loggerFactory">Optional logger factory to use for logging.</param>
-    /// <param name="functionInvocationServices">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
-    public ChatClientAgent(IChatClient chatClient, ChatClientAgentOptions? options, ILoggerFactory? loggerFactory = null, IServiceProvider? functionInvocationServices = null)
+    /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
+    public ChatClientAgent(IChatClient chatClient, ChatClientAgentOptions? options, ILoggerFactory? loggerFactory = null, IServiceProvider? services = null)
     {
         _ = Throw.IfNull(chatClient);
 
@@ -74,7 +74,7 @@ public sealed class ChatClientAgent : AIAgent
         this._chatClientType = chatClient.GetType();
 
         // If the user has not opted out of using our default decorators, we wrap the chat client.
-        this.ChatClient = options?.UseProvidedChatClientAsIs is true ? chatClient : chatClient.WithDefaultAgentMiddleware(options, functionInvocationServices);
+        this.ChatClient = options?.UseProvidedChatClientAsIs is true ? chatClient : chatClient.WithDefaultAgentMiddleware(options, services);
 
         this._logger = (loggerFactory ?? chatClient.GetService<ILoggerFactory>() ?? NullLoggerFactory.Instance).CreateLogger<ChatClientAgent>();
     }
