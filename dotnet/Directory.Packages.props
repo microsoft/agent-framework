@@ -7,23 +7,23 @@
   </PropertyGroup>
   <PropertyGroup>
     <!-- Aspire -->
-    <AspireAppHostSdkVersion>9.4.1</AspireAppHostSdkVersion>
+    <AspireAppHostSdkVersion>9.5.0</AspireAppHostSdkVersion>
   </PropertyGroup>
   <ItemGroup>
     <!-- Azure.* -->
-    <PackageVersion Include="Aspire.Azure.AI.OpenAI" Version="9.4.2-preview.1.25428.12" />
-    <PackageVersion Include="Aspire.Hosting.AppHost" Version="9.4.2" />
-    <PackageVersion Include="Aspire.Hosting.Azure.CognitiveServices" Version="9.4.2" />
-    <PackageVersion Include="Aspire.Microsoft.Azure.Cosmos" Version="9.4.2" />
-    <PackageVersion Include="Aspire.Hosting.Testing" Version="9.4.2" />
+    <PackageVersion Include="Aspire.Azure.AI.OpenAI" Version="9.5.0-preview.1.25474.7" />
+    <PackageVersion Include="Aspire.Hosting.AppHost" Version="$(AspireAppHostSdkVersion)" />
+    <PackageVersion Include="Aspire.Hosting.Azure.CognitiveServices" Version="$(AspireAppHostSdkVersion)" />
+    <PackageVersion Include="Aspire.Microsoft.Azure.Cosmos" Version="$(AspireAppHostSdkVersion)" />
+    <PackageVersion Include="Aspire.Hosting.Testing" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.5" />
     <PackageVersion Include="Azure.AI.OpenAI" Version="2.3.0-beta.2" />
     <PackageVersion Include="Azure.Identity" Version="1.16.0" />
-    <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="9.7.2" />
+    <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="9.8.0" />
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="9.0.9" />
     <PackageVersion Include="Microsoft.Extensions.AI.AzureAIInference" Version="9.9.1-preview.1.25474.6" />
     <PackageVersion Include="Microsoft.Extensions.Http.Resilience" Version="9.9.0" />
-    <PackageVersion Include="Microsoft.Extensions.ServiceDiscovery" Version="9.4.2" />
+    <PackageVersion Include="Microsoft.Extensions.ServiceDiscovery" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.12.0" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.12.0" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.12.0" />

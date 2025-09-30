@@ -50,25 +50,11 @@ internal static class Step2EntryPoint
     }
 }
 
-internal sealed class DetectSpamExecutor : ReflectingExecutor<DetectSpamExecutor>, IMessageHandler<string, bool>
+internal sealed class DetectSpamExecutor(string id, params string[] spamKeywords) :
+    ReflectingExecutor<DetectSpamExecutor>(id), IMessageHandler<string, bool>
 {
-    public string[] SpamKeywords { get; }
-
-    public DetectSpamExecutor(string id, params string[] spamKeywords) : base(id)
-    {
-        this.SpamKeywords = spamKeywords;
-    }
-
-    public async ValueTask<bool> HandleAsync(string message, IWorkflowContext context)
-    {
-#if NET5_0_OR_GREATER
-        bool isSpam = this.SpamKeywords.Any(keyword => message.Contains(keyword, StringComparison.OrdinalIgnoreCase));
-#else
-        bool isSpam = this.SpamKeywords.Any(keyword => message.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0);
-#endif
-
-        return isSpam;
-    }
+    public async ValueTask<bool> HandleAsync(string message, IWorkflowContext context) =>
+        spamKeywords.Any(keyword => message.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0);
 }
 
 internal sealed class RespondToMessageExecutor(string id) : ReflectingExecutor<RespondToMessageExecutor>(id), IMessageHandler<bool>
