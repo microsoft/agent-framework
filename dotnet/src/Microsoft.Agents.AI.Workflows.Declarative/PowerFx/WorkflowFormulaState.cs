@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
+using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.PowerFx;
 using Microsoft.PowerFx.Types;

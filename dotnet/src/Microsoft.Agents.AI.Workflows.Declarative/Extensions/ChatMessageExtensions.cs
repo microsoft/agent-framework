@@ -3,7 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using Microsoft.Agents.AI.Workflows.Declarative.PowerFx.Functions;
+using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.AI;
 using Microsoft.PowerFx.Types;

@@ -1,0 +1,27 @@
+﻿<#+
+void EvaluateRecordExpression<TValue>(ObjectExpression<RecordDataValue> expression, string targetVariable)
+{
+    string resultTypeName = $"Dictionary<string, {GetTypeAlias<TValue>()}?>?";
+    if (expression is null)
+    {#>
+        <#= resultTypeName #> <#= targetVariable #> = null;<#+ 
+    }
+    else if (expression.IsLiteral)
+    {#>
+        <#= resultTypeName #> <#= targetVariable #> =
+            <#= FormatDataValue(expression.LiteralValue) #>;<#+ 
+    }
+    else if (expression.IsVariableReference && expression.VariableReference.SegmentCount == 2)
+    {#>
+        <#= resultTypeName #> <#= targetVariable #> = await context.ReadStateAsync<<#= resultTypeName #>>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.NamespaceAlias #>").ConfigureAwait(false);<#+
+    }
+    else if (expression.IsVariableReference)
+    {#>
+        <#= resultTypeName #>? <#= targetVariable #> = await context.EvaluateExpressionAsync<<#= resultTypeName #>>(<#= FormatStringValue(expression.VariableReference.ToString()) #>).ConfigureAwait(false);<#+ 
+    }
+    else
+    {#>
+        <#= resultTypeName #> <#= targetVariable #> = await context.EvaluateExpressionAsync<<#= resultTypeName #>>(<#= FormatStringValue(expression.ExpressionText) #>).ConfigureAwait(false);<#+ 
+    }
+}
+#>

@@ -4,7 +4,7 @@ using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.Extensions;
 
-public class StringExtensionsTests
+public sealed class StringExtensionsTests
 {
     [Fact]
     public void TrimJsonWithDelimiter()

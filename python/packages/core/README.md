@@ -13,11 +13,9 @@ Highlights
 ## Quick Install
 
 ```bash
-pip install agent-framework[all]
+pip install agent-framework-core
 # Optional: Add Azure AI integration
 pip install agent-framework-azure-ai
-# Optional: Both
-pip install agent-framework-azure-ai agent-framework-copilotstudio
 ```
 
 Supported Platforms:

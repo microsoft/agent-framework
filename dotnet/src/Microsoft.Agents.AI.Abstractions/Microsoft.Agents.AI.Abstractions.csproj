@@ -21,8 +21,8 @@
 
   <PropertyGroup>
     <!-- NuGet Package Settings -->
-    <Title>Microsoft Extensions AI Agent Framework Abstractions</Title>
-    <Description>Contains the Microsoft Agent Framework interfaces and abstractions.</Description>
+    <Title>Microsoft Agent Framework Abstractions</Title>
+    <Description>Provides Microsoft Agent Framework interfaces and abstractions.</Description>
   </PropertyGroup>
 
   <ItemGroup>

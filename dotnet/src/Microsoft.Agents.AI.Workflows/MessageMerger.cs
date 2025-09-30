@@ -72,19 +72,7 @@ internal sealed class MessageMerger
                     throw new InvalidOperationException($"No updates found for message ID '{messageId}' in response '{this.ResponseId}'.");
                 }
 
-                return updates.Select(oldUpdate =>
-                    oldUpdate.RawRepresentation as ChatResponseUpdate ??
-                    new()
-                    {
-                        AdditionalProperties = oldUpdate.AdditionalProperties,
-                        AuthorName = oldUpdate.AuthorName,
-                        Contents = oldUpdate.Contents,
-                        CreatedAt = oldUpdate.CreatedAt,
-                        MessageId = oldUpdate.MessageId,
-                        RawRepresentation = oldUpdate.RawRepresentation,
-                        Role = oldUpdate.Role,
-                        ResponseId = oldUpdate.ResponseId,
-                    }).ToChatResponse().Messages;
+                return updates.Select(oldUpdate => oldUpdate.AsChatResponseUpdate()).ToChatResponse().Messages;
             }
         }
     }

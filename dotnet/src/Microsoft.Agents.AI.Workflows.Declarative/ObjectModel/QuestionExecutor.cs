@@ -6,6 +6,7 @@ using Microsoft.Agents.AI.Workflows.Declarative.Entities;
 using Microsoft.Agents.AI.Workflows.Declarative.Events;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
+using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.PowerFx.Types;
@@ -29,7 +30,8 @@ internal sealed class QuestionExecutor(Question model, WorkflowFormulaState stat
     protected override bool IsDiscreteAction => false;
     protected override bool EmitResultEvent => false;
 
-    public static bool IsComplete(object? message) // %%% BASE CLASS ???
+    // Input has been captured when Result is null
+    public static bool IsComplete(object? message)
     {
         ActionExecutorResult executorMessage = ActionExecutorResult.ThrowIfNot(message);
         return executorMessage.Result is null;

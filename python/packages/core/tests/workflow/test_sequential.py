@@ -117,7 +117,6 @@ async def test_sequential_with_custom_executor_summary() -> None:
     assert msgs[2].role == Role.ASSISTANT and msgs[2].text.startswith("Summary of users:")
 
 
-@pytest.mark.asyncio
 async def test_sequential_checkpoint_resume_round_trip() -> None:
     storage = InMemoryCheckpointStorage()
 
