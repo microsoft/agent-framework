@@ -10,7 +10,6 @@ Lab modules are extensions to the core Agent Framework that fall into
 one of the following categories:
 
 1. Incubation of new features that may get incorporated by the core framework.
-1. Incubation of new features that may get incorporated by the core framework.
 2. Research prototypes built on the core framework.
 3. Benchmarks and experimentation tools.
 
