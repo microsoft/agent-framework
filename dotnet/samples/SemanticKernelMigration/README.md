@@ -334,8 +334,8 @@ $env:OPENAI_API_KEY = "sk-..."
 
 **For Azure OpenAI and Azure OpenAI Assistants projects:**
 ```powershell
-$env:AZUREOPENAI_ENDPOINT = "https://<your-project>.cognitiveservices.azure.com/"
-$env:AZUREOPENAI_DEPLOYMENT_NAME = "gpt-4o" # Optional, defaults to gpt-4o
+$env:AZURE_OPENAI_ENDPOINT = "https://<your-project>.cognitiveservices.azure.com/"
+$env:AZURE_OPENAI_DEPLOYMENT_NAME = "gpt-4o" # Optional, defaults to gpt-4o
 ```
 
 **Optional debug mode:**

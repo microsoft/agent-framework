@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Diagnostics;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
@@ -10,7 +11,7 @@ namespace Microsoft.Extensions.AI;
 
 internal static class ChatClientExtensions
 {
-    internal static IChatClient WithDefaultAgentMiddleware(this IChatClient chatClient, ChatClientAgentOptions? options)
+    internal static IChatClient WithDefaultAgentMiddleware(this IChatClient chatClient, ChatClientAgentOptions? options, IServiceProvider? functionInvocationServices = null)
     {
         var chatBuilder = chatClient.AsBuilder();
 
@@ -24,7 +25,7 @@ internal static class ChatClientExtensions
             });
         }
 
-        var agentChatClient = chatBuilder.Build();
+        var agentChatClient = chatBuilder.Build(functionInvocationServices);
 
         if (options?.ChatOptions?.Tools is { Count: > 0 })
         {

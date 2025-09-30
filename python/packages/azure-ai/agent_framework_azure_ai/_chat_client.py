@@ -54,7 +54,6 @@ from azure.ai.agents.models import (
     CodeInterpreterToolDefinition,
     FileSearchTool,
     FunctionName,
-    FunctionToolOutput,
     ListSortOrder,
     McpTool,
     MessageDeltaChunk,
@@ -873,9 +872,9 @@ class AzureAIAgentClient(BaseChatClient):
                         else:
                             results.append(json.dumps(item))
                     if len(results) == 1:
-                        tool_outputs.append(FunctionToolOutput(tool_call_id=call_id, output=results[0]))
+                        tool_outputs.append(ToolOutput(tool_call_id=call_id, output=results[0]))
                     else:
-                        tool_outputs.append(FunctionToolOutput(tool_call_id=call_id, output=json.dumps(results)))
+                        tool_outputs.append(ToolOutput(tool_call_id=call_id, output=json.dumps(results)))
                 elif isinstance(content, FunctionApprovalResponseContent):
                     if tool_approvals is None:
                         tool_approvals = []

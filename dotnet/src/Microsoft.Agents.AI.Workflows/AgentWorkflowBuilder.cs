@@ -198,7 +198,7 @@ public static partial class AgentWorkflowBuilder
     /// </summary>
     private sealed class OutputMessagesExecutor() : ChatProtocolExecutor("OutputMessages"), IResettableExecutor
     {
-        protected override ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellation = default)
+        protected override ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellationToken = default)
             => context.YieldOutputAsync(messages);
 
         ValueTask IResettableExecutor.ResetAsync() => this.ResetAsync();
@@ -223,7 +223,7 @@ public static partial class AgentWorkflowBuilder
     /// </summary>
     private sealed class BatchChatMessagesToListExecutor(string id) : ChatProtocolExecutor(id), IResettableExecutor
     {
-        protected override ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellation = default)
+        protected override ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellationToken = default)
             => context.SendMessageAsync(messages);
 
         ValueTask IResettableExecutor.ResetAsync() => this.ResetAsync();
@@ -623,7 +623,7 @@ public static partial class AgentWorkflowBuilder
         /// Selects the next agent to participate in the group chat based on the provided chat history and team.
         /// </summary>
         /// <param name="history">The chat history to consider.</param>
-        /// <param name="cancellationToken">A cancellation token that can be used to cancel the operation.</param>
+        /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
         /// <returns>The next <see cref="AIAgent"/> to speak. This agent must be part of the chat.</returns>
         protected internal abstract ValueTask<AIAgent> SelectNextAgentAsync(
             IReadOnlyList<ChatMessage> history,
@@ -633,7 +633,7 @@ public static partial class AgentWorkflowBuilder
         /// Filters the chat history before it's passed to the next agent.
         /// </summary>
         /// <param name="history">The chat history to filter.</param>
-        /// <param name="cancellationToken">A cancellation token that can be used to cancel the operation.</param>
+        /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
         /// <returns>The filtered chat history.</returns>
         protected internal virtual ValueTask<IEnumerable<ChatMessage>> UpdateHistoryAsync(
             IReadOnlyList<ChatMessage> history,
@@ -644,7 +644,7 @@ public static partial class AgentWorkflowBuilder
         /// Determines whether the group chat should be terminated based on the provided chat history and iteration count.
         /// </summary>
         /// <param name="history">The chat history to consider.</param>
-        /// <param name="cancellationToken">A cancellation token that can be used to cancel the operation.</param>
+        /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
         /// <returns>A <see cref="bool"/> indicating whether the chat should be terminated.</returns>
         protected internal virtual ValueTask<bool> ShouldTerminateAsync(
             IReadOnlyList<ChatMessage> history,

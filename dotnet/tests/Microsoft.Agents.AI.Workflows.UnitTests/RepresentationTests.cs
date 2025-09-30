@@ -68,7 +68,7 @@ public class RepresentationTests
             testsRun++;
         }
 
-        async ValueTask MessageHandlerAsync(int message, IWorkflowContext workflowContext, CancellationToken cancellation = default)
+        async ValueTask MessageHandlerAsync(int message, IWorkflowContext workflowContext, CancellationToken cancellationToken = default)
         {
         }
     }
