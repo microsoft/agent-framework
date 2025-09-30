@@ -2,7 +2,7 @@
 
 using System.ClientModel.Primitives;
 
-namespace Microsoft.Agents.AI.OpenAI.ChatClient;
+namespace Microsoft.Agents.AI.OpenAI;
 
 internal sealed class StreamingUpdatePipelineResponse : PipelineResponse
 {

@@ -54,7 +54,6 @@ async def generate_af_docs(root_path: Path):
                         "undoc-members": True,
                         "show-inheritance": True,
                         "imported-members": True,
-                        "inherited-members": 'AFBaseModel',
                     },
                 },
             }

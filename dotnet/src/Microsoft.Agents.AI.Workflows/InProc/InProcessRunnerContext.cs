@@ -33,7 +33,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
     private readonly ConcurrentDictionary<string, Task<Executor>> _executors = new();
     private readonly ConcurrentQueue<Func<ValueTask>> _queuedExternalDeliveries = new();
 
-    private readonly Dictionary<string, ExternalRequest> _externalRequests = new();
+    private readonly Dictionary<string, ExternalRequest> _externalRequests = [];
 
     public InProcessRunnerContext(Workflow workflow, string runId, IStepTracer? stepTracer, ILogger? logger = null)
     {
@@ -238,7 +238,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         public IReadOnlyDictionary<string, string>? TraceContext => traceContext;
     }
 
-    internal Task PrepareForCheckpointAsync(CancellationToken cancellation = default)
+    internal Task PrepareForCheckpointAsync(CancellationToken cancellationToken = default)
     {
         this.CheckEnded();
 
@@ -247,11 +247,11 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         async Task InvokeCheckpointingAsync(Task<Executor> executorTask)
         {
             Executor executor = await executorTask.ConfigureAwait(false);
-            await executor.OnCheckpointingAsync(this.Bind(executor.Id), cancellation).ConfigureAwait(false);
+            await executor.OnCheckpointingAsync(this.Bind(executor.Id), cancellationToken).ConfigureAwait(false);
         }
     }
 
-    internal Task NotifyCheckpointLoadedAsync(CancellationToken cancellation = default)
+    internal Task NotifyCheckpointLoadedAsync(CancellationToken cancellationToken = default)
     {
         this.CheckEnded();
 
@@ -260,7 +260,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         async Task InvokeCheckpointRestoredAsync(Task<Executor> executorTask)
         {
             Executor executor = await executorTask.ConfigureAwait(false);
-            await executor.OnCheckpointRestoredAsync(this.Bind(executor.Id), cancellation).ConfigureAwait(false);
+            await executor.OnCheckpointRestoredAsync(this.Bind(executor.Id), cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -281,7 +281,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         return new(result);
     }
 
-    internal async ValueTask RepublishUnservicedRequestsAsync(CancellationToken cancellation = default)
+    internal async ValueTask RepublishUnservicedRequestsAsync(CancellationToken cancellationToken = default)
     {
         this.CheckEnded();
 

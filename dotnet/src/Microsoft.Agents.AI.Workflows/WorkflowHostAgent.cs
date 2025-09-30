@@ -53,7 +53,7 @@ internal sealed class WorkflowHostAgent : AIAgent
     private async
     IAsyncEnumerable<AgentRunResponseUpdate> InvokeStageAsync(
         WorkflowThread conversation,
-        [EnumeratorCancellation] CancellationToken cancellation = default)
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         string runId = conversation.RunId;
         List<ChatMessage> messages = conversation.MessageStore.GetFromBookmark().ToList();
@@ -64,7 +64,7 @@ internal sealed class WorkflowHostAgent : AIAgent
             // in the case of new threads.
             if (!this._runningWorkflows.TryGetValue(runId, out StreamingRun? run))
             {
-                run = await InProcessExecution.StreamAsync(this._workflow, messages, cancellation: cancellation)
+                run = await InProcessExecution.StreamAsync(this._workflow, messages, cancellationToken: cancellationToken)
                                                        .ConfigureAwait(false);
                 this._runningWorkflows[runId] = run;
             }
@@ -75,9 +75,9 @@ internal sealed class WorkflowHostAgent : AIAgent
             }
 
             await run.TrySendMessageAsync(new TurnToken(emitEvents: true)).ConfigureAwait(false);
-            await foreach (WorkflowEvent evt in run.WatchStreamAsync(blockOnPendingRequest: false, cancellation)
+            await foreach (WorkflowEvent evt in run.WatchStreamAsync(blockOnPendingRequest: false, cancellationToken)
                                                .ConfigureAwait(false)
-                                               .WithCancellation(cancellation))
+                                               .WithCancellation(cancellationToken))
             {
                 switch (evt)
                 {
@@ -99,7 +99,7 @@ internal sealed class WorkflowHostAgent : AIAgent
         }
     }
 
-    private async ValueTask<WorkflowThread> UpdateThreadAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, CancellationToken cancellation = default)
+    private async ValueTask<WorkflowThread> UpdateThreadAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, CancellationToken cancellationToken = default)
     {
         thread ??= this.GetNewThread();
 
@@ -108,7 +108,7 @@ internal sealed class WorkflowHostAgent : AIAgent
             throw new ArgumentException($"Incompatible thread type: {thread.GetType()} (expecting {typeof(WorkflowThread)})", nameof(thread));
         }
 
-        await workflowThread.MessageStore.AddMessagesAsync(messages, cancellation).ConfigureAwait(false);
+        await workflowThread.MessageStore.AddMessagesAsync(messages, cancellationToken).ConfigureAwait(false);
         return workflowThread;
     }
 

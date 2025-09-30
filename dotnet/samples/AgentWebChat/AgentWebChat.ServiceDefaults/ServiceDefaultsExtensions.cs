@@ -61,7 +61,7 @@ public static class ServiceDefaultsExtensions
             .WithTracing(tracing =>
             {
                 tracing.AddSource(builder.Environment.ApplicationName)
-                    .AddSource("Microsoft.Extensions.AI.Agents")
+                    .AddSource("*Microsoft.Agents.AI")
                     .AddSource("Microsoft.Agents.AI.Runtime.InProcess")
                     .AddSource("Microsoft.Agents.AI.Runtime.Abstractions.InMemoryActorStateStorage")
                     .AddAspNetCoreInstrumentation()

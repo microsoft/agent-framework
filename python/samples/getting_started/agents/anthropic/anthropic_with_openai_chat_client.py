@@ -38,7 +38,7 @@ async def non_streaming_example() -> None:
     agent = OpenAIChatClient(
         api_key=os.getenv("ANTHROPIC_API_KEY"),
         base_url="https://api.anthropic.com/v1/",
-        ai_model_id=os.getenv("ANTHROPIC_MODEL"),
+        model_id=os.getenv("ANTHROPIC_MODEL"),
     ).create_agent(
         name="WeatherAgent",
         instructions="You are a helpful weather agent.",
@@ -58,7 +58,7 @@ async def streaming_example() -> None:
     agent = OpenAIChatClient(
         api_key=os.getenv("ANTHROPIC_API_KEY"),
         base_url="https://api.anthropic.com/v1/",
-        ai_model_id=os.getenv("ANTHROPIC_MODEL"),
+        model_id=os.getenv("ANTHROPIC_MODEL"),
     ).create_agent(
         name="WeatherAgent",
         instructions="You are a helpful weather agent.",

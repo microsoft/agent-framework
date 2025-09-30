@@ -22,7 +22,7 @@ namespace Microsoft.Agents.AI;
 /// </para>
 /// <para>
 /// The relationship between <see cref="AgentRunResponse"/> and <see cref="AgentRunResponseUpdate"/> is
-/// codified in the <see cref="AgentRunResponseUpdateExtensions.ToAgentRunResponseAsync"/> and
+/// codified in the <see cref="AgentRunResponseExtensions.ToAgentRunResponseAsync"/> and
 /// <see cref="AgentRunResponse.ToAgentRunResponseUpdates"/>, which enable bidirectional conversions
 /// between the two. Note, however, that the provided conversions may be lossy, for example if multiple
 /// updates all have different <see cref="RawRepresentation"/> objects whereas there's only one slot for
@@ -135,7 +135,7 @@ public class AgentRunResponseUpdate
     /// Some providers may consider streaming responses to be a single message, and in that case
     /// the value of this property may be the same as the response ID.
     ///
-    /// This value is used when <see cref="AgentRunResponseUpdateExtensions.ToAgentRunResponseAsync(IAsyncEnumerable{AgentRunResponseUpdate}, System.Threading.CancellationToken)"/>
+    /// This value is used when <see cref="AgentRunResponseExtensions.ToAgentRunResponseAsync(IAsyncEnumerable{AgentRunResponseUpdate}, System.Threading.CancellationToken)"/>
     /// groups <see cref="AgentRunResponseUpdate"/> instances into <see cref="AgentRunResponse"/> instances.
     /// The value must be unique to each call to the underlying provider, and must be shared by
     /// all updates that are part of the same logical message within a streaming response.

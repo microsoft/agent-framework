@@ -3,7 +3,7 @@
   <PropertyGroup>
     <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
     <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugTargetFrameworks)</TargetFrameworks>
-    <VersionSuffix>alpha</VersionSuffix>
+    <VersionSuffix>preview</VersionSuffix>
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
@@ -20,8 +20,8 @@
   
   <PropertyGroup>
     <!-- NuGet Package Settings -->
-    <Title>Microsoft.Agents.AI.A2A</Title>
-    <Description>Defines AIAgent for interacting with application-to-application (A2A) agents.</Description>
+    <Title>Microsoft Agent Framework A2A</Title>
+    <Description>Provides Microsoft Agent Framework support for Agent2Agent (A2A) protocol.</Description>
   </PropertyGroup>
 
   <ItemGroup>

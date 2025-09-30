@@ -7,7 +7,6 @@ using System.Collections;
 using SystemEnvironment = System.Environment;
 
 namespace SampleHelpers;
-
 internal static class SampleEnvironment
 {
     public static string? GetEnvironmentVariable(string key)
@@ -129,7 +128,7 @@ internal static class SampleEnvironment
     public static bool HasShutdownStarted
         => SystemEnvironment.HasShutdownStarted;
 
-#if NET9_0_OR_GREATER
+#if NET
     public static int ProcessId
         => SystemEnvironment.ProcessId;
 

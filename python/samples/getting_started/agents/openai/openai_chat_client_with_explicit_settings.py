@@ -21,7 +21,7 @@ async def main() -> None:
     print("=== OpenAI Chat Client with Explicit Settings ===")
 
     agent = OpenAIChatClient(
-        ai_model_id=os.environ["OPENAI_CHAT_MODEL_ID"],
+        model_id=os.environ["OPENAI_CHAT_MODEL_ID"],
         api_key=os.environ["OPENAI_API_KEY"],
     ).create_agent(
         instructions="You are a helpful weather agent.",
