@@ -273,18 +273,11 @@
     <Project Path="src/Microsoft.Agents.AI.Hosting.A2A/Microsoft.Agents.AI.Hosting.A2A.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hosting/Microsoft.Agents.AI.Hosting.csproj" />
     <Project Path="src/Microsoft.Agents.AI.OpenAI/Microsoft.Agents.AI.OpenAI.csproj" />
-    <Project Path="src/Microsoft.Agents.AI.Runtime.Abstractions/Microsoft.Agents.AI.Runtime.Abstractions.csproj" />
-    <Project Path="src/Microsoft.Agents.AI.Runtime.Storage.CosmosDB/Microsoft.Agents.AI.Runtime.Storage.CosmosDB.csproj" />
-    <Project Path="src/Microsoft.Agents.AI.Runtime/Microsoft.Agents.AI.Runtime.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Workflows.Declarative/Microsoft.Agents.AI.Workflows.Declarative.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Workflows/Microsoft.Agents.AI.Workflows.csproj" />
     <Project Path="src/Microsoft.Agents.AI/Microsoft.Agents.AI.csproj" />
   </Folder>
   <Folder Name="/Tests/" />
-  <Folder Name="/Tests/Cosmos/">
-    <Project Path="tests/CosmosDB.IntegrationTests/CosmosDB.Testing.AppHost/CosmosDB.Testing.AppHost.csproj" />
-    <Project Path="tests/CosmosDB.IntegrationTests/Microsoft.Agents.AI.Runtime.Storage.CosmosDB.Tests/Microsoft.Agents.AI.Runtime.Storage.CosmosDB.Tests.csproj" />
-  </Folder>
   <Folder Name="/Tests/IntegrationTests/">
     <Project Path="tests/AgentConformance.IntegrationTests/AgentConformance.IntegrationTests.csproj" />
     <Project Path="tests/AzureAIAgentsPersistent.IntegrationTests/AzureAIAgentsPersistent.IntegrationTests.csproj" />
