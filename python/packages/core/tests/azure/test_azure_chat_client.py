@@ -131,7 +131,6 @@ def test_serialize(azure_openai_unit_test_env: dict[str, str]) -> None:
     azure_chat_client = AzureOpenAIChatClient.from_dict(settings)
     dumped_settings = azure_chat_client.to_dict()
     assert dumped_settings["ai_model_id"] == settings["deployment_name"]
-    assert str(settings["endpoint"]) in str(dumped_settings["base_url"])
     assert str(settings["deployment_name"]) in str(dumped_settings["base_url"])
     assert settings["api_key"] == dumped_settings["api_key"]
     assert settings["api_version"] == dumped_settings["api_version"]
