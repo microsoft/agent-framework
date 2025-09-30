@@ -9,7 +9,7 @@ namespace OpenAI;
 
 /// <summary>
 /// Provides extension methods for <see cref="AgentRunResponse"/> to extract native OpenAI response objects
-/// from the Microsoft Extensions AI Agent framework responses.
+/// from the Microsoft Agent Framework responses.
 /// </summary>
 /// <remarks>
 /// These extensions enable developers to access the underlying OpenAI SDK objects when working with
