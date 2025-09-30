@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
@@ -44,6 +45,17 @@ internal static class IWorkflowContextExtensions
         await context.QueueSystemUpdateAsync(SystemScope.Names.ConversationId, FormulaValue.New(conversationId)).ConfigureAwait(false);
 
         await context.AddEventAsync(new ConversationUpdateEvent(conversationId)).ConfigureAwait(false);
+    }
+
+    public static bool IsWorkflowConversation(this IWorkflowContext context, string? conversationId)
+    {
+        if (string.IsNullOrWhiteSpace(conversationId))
+        {
+            return false;
+        }
+
+        StringValue workflowId = (StringValue)context.ReadState(SystemScope.Names.ConversationId, VariableScopeNames.System);
+        return workflowId.Value.Equals(conversationId, StringComparison.Ordinal);
     }
 
     private static DeclarativeWorkflowContext DeclarativeContext(IWorkflowContext context)
