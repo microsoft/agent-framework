@@ -21,7 +21,7 @@ public static class WorkflowVisualizer
     /// <returns>A string representation of the workflow in DOT format.</returns>
     public static string ToDotString(this Workflow workflow)
     {
-        Throw.IfNull(workflow, nameof(workflow));
+        Throw.IfNull(workflow);
 
         var lines = new List<string>
     {

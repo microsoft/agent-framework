@@ -43,7 +43,7 @@ internal sealed class WorkflowExpressionEngine
 
     private EvaluationResult<bool> Evaluate(BoolExpression expression)
     {
-        Throw.IfNull(expression, nameof(expression));
+        Throw.IfNull(expression);
 
         if (expression.IsLiteral)
         {
@@ -67,7 +67,7 @@ internal sealed class WorkflowExpressionEngine
 
     private EvaluationResult<string> Evaluate(StringExpression expression)
     {
-        Throw.IfNull(expression, nameof(expression));
+        Throw.IfNull(expression);
 
         if (expression.IsLiteral)
         {
@@ -96,7 +96,7 @@ internal sealed class WorkflowExpressionEngine
 
     private EvaluationResult<long> Evaluate(IntExpression expression)
     {
-        Throw.IfNull(expression, nameof(expression));
+        Throw.IfNull(expression);
 
         if (expression.IsLiteral)
         {
@@ -120,7 +120,7 @@ internal sealed class WorkflowExpressionEngine
 
     private EvaluationResult<double> Evaluate(NumberExpression expression)
     {
-        Throw.IfNull(expression, nameof(expression));
+        Throw.IfNull(expression);
 
         if (expression.IsLiteral)
         {
@@ -149,7 +149,7 @@ internal sealed class WorkflowExpressionEngine
 
     private EvaluationResult<DataValue> Evaluate(ValueExpression expression)
     {
-        Throw.IfNull(expression, nameof(expression));
+        Throw.IfNull(expression);
 
         if (expression.IsLiteral)
         {
@@ -163,7 +163,7 @@ internal sealed class WorkflowExpressionEngine
 
     private EvaluationResult<TValue> Evaluate<TValue>(EnumExpression<TValue> expression) where TValue : EnumWrapper
     {
-        Throw.IfNull(expression, nameof(expression));
+        Throw.IfNull(expression);
 
         if (expression.IsLiteral)
         {
@@ -184,7 +184,7 @@ internal sealed class WorkflowExpressionEngine
 
     private EvaluationResult<TValue?> Evaluate<TValue>(ObjectExpression<TValue> expression) where TValue : BotElement
     {
-        Throw.IfNull(expression, nameof(expression));
+        Throw.IfNull(expression);
 
         if (expression.LiteralValue is not null)
         {
@@ -215,7 +215,7 @@ internal sealed class WorkflowExpressionEngine
 
     private EvaluationResult<ImmutableArray<TValue>> Evaluate<TValue>(ArrayExpression<TValue> expression)
     {
-        Throw.IfNull(expression, nameof(expression));
+        Throw.IfNull(expression);
 
         if (expression.IsLiteral)
         {
@@ -229,7 +229,7 @@ internal sealed class WorkflowExpressionEngine
 
     private EvaluationResult<ImmutableArray<TValue>> Evaluate<TValue>(ArrayExpressionOnly<TValue> expression)
     {
-        Throw.IfNull(expression, nameof(expression));
+        Throw.IfNull(expression);
 
         EvaluationResult<FormulaValue> expressionResult = this.EvaluateScope(expression);
 
