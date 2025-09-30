@@ -11,11 +11,8 @@
     <ProjectReference Include="..\..\..\src\Microsoft.Agents.AI.Workflows\Microsoft.Agents.AI.Workflows.csproj" />
     <ProjectReference Include="..\..\..\src\Microsoft.Agents.AI.Abstractions\Microsoft.Agents.AI.Abstractions.csproj" />
     <ProjectReference Include="..\..\..\src\Microsoft.Agents.AI.Hosting\Microsoft.Agents.AI.Hosting.csproj" />
-    <ProjectReference Include="..\..\..\src\Microsoft.Agents.AI.Runtime.Abstractions\Microsoft.Agents.AI.Runtime.Abstractions.csproj" />
-    <ProjectReference Include="..\..\..\src\Microsoft.Agents.AI.Runtime\Microsoft.Agents.AI.Runtime.csproj" />
     <ProjectReference Include="..\..\..\src\Microsoft.Agents.AI\Microsoft.Agents.AI.csproj" />
     <ProjectReference Include="..\..\..\src\Microsoft.Agents.AI.Hosting.A2A.AspNetCore\Microsoft.Agents.AI.Hosting.A2A.AspNetCore.csproj" />
-    <ProjectReference Include="..\..\..\src\Microsoft.Agents.AI.Runtime.Storage.CosmosDB\Microsoft.Agents.AI.Runtime.Storage.CosmosDB.csproj" />
     <ProjectReference Include="..\AgentWebChat.ServiceDefaults\AgentWebChat.ServiceDefaults.csproj" />
   </ItemGroup>
 

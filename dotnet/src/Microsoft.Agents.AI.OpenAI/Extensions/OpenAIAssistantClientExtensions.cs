@@ -13,7 +13,7 @@ namespace OpenAI;
 /// to simplify the creation of AI agents that work with OpenAI services.
 /// </summary>
 /// <remarks>
-/// These extensions bridge the gap between OpenAI SDK client objects and the Microsoft Extensions AI Agent framework,
+/// These extensions bridge the gap between OpenAI SDK client objects and the Microsoft Agent Framework,
 /// allowing developers to easily create AI agents that leverage OpenAI's chat completion and response services.
 /// The methods handle the conversion from OpenAI clients to <see cref="IChatClient"/> instances and then wrap them
 /// in <see cref="ChatClientAgent"/> objects that implement the <see cref="AIAgent"/> interface.

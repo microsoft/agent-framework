@@ -21,9 +21,9 @@ public class FunctionExecutor<TInput>(string id,
     {
         return RunActionAsync;
 
-        ValueTask RunActionAsync(TInput input, IWorkflowContext workflowContext, CancellationToken cancellation)
+        ValueTask RunActionAsync(TInput input, IWorkflowContext workflowContext, CancellationToken cancellationToken)
         {
-            handlerSync(input, workflowContext, cancellation);
+            handlerSync(input, workflowContext, cancellationToken);
             return default;
         }
     }
@@ -57,9 +57,9 @@ public class FunctionExecutor<TInput, TOutput>(string id,
     {
         return RunFuncAsync;
 
-        ValueTask<TOutput> RunFuncAsync(TInput input, IWorkflowContext workflowContext, CancellationToken cancellation)
+        ValueTask<TOutput> RunFuncAsync(TInput input, IWorkflowContext workflowContext, CancellationToken cancellationToken)
         {
-            TOutput result = handlerSync(input, workflowContext, cancellation);
+            TOutput result = handlerSync(input, workflowContext, cancellationToken);
             return new ValueTask<TOutput>(result);
         }
     }

@@ -1,9 +1,9 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
     <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugTargetFrameworks)</TargetFrameworks>
-    <VersionSuffix>alpha</VersionSuffix>
+    <VersionSuffix>preview</VersionSuffix>
     <NoWarn>$(NoWarn);MEAI001</NoWarn>
   </PropertyGroup>
 
@@ -11,6 +11,7 @@
     <InjectSharedThrow>true</InjectSharedThrow>
     <InjectDiagnosticClassesOnLegacy>true</InjectDiagnosticClassesOnLegacy>
     <InjectTrimAttributesOnLegacy>true</InjectTrimAttributesOnLegacy>
+    <InjectIsExternalInitOnLegacy>true</InjectIsExternalInitOnLegacy>
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
@@ -24,8 +25,8 @@
 
   <PropertyGroup>
     <!-- NuGet Package Settings -->
-    <Title>Microsoft Extensions AI Agent Framework</Title>
-    <Description>Contains the Microsoft Agent Framework core functionality.</Description>
+    <Title>Microsoft Agent Framework</Title>
+    <Description>Provides Microsoft Agent Framework core functionality.</Description>
   </PropertyGroup>
 
   <ItemGroup>

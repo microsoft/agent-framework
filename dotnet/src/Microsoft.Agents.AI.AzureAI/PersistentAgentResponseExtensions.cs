@@ -48,7 +48,7 @@ internal static class PersistentAgentResponseExtensions
             throw new ArgumentNullException(nameof(persistentAgentsClient));
         }
 
-        var chatClient = persistentAgentsClient.AsNewIChatClient(persistentAgentMetadata.Id);
+        var chatClient = persistentAgentsClient.AsIChatClient(persistentAgentMetadata.Id);
 
         if (clientFactory is not null)
         {
