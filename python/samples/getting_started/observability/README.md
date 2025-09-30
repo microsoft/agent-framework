@@ -177,7 +177,7 @@ dependencies
 ```
 
 ### Grafana dashboards with Azure Monitor data
-Besides the Azure Monitor native UI, you can also use Grafana to visualize the telemetry data in Azure Monitor. We have two tailored dashboards for you to get started quickly:
+Besides the Azure Monitor native UI, you can also use Grafana to visualize the telemetry data in Azure Monitor. There are two tailored dashboards available for you to get started quickly:
 
 #### Agent Overview dashboard
 Grafana Dashboard Gallery link: <https://aka.ms/amg/dash/af-agent>
