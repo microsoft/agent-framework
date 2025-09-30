@@ -41,7 +41,7 @@ internal abstract class ChatProtocolExecutor(string id, ChatProtocolExecutorOpti
     public async ValueTask TakeTurnAsync(TurnToken token, IWorkflowContext context)
     {
         await this.TakeTurnAsync(this._pendingMessages, context, token.EmitEvents).ConfigureAwait(false);
-        this._pendingMessages = new();
+        this._pendingMessages = [];
         await context.SendMessageAsync(token).ConfigureAwait(false);
     }
 

@@ -65,7 +65,7 @@ public class OpenTelemetryAgentTests
 
         // Verify activity tags
         Assert.Equal(OpenTelemetryConsts.GenAI.Operation.NameValues.InvokeAgent, activity.GetTagItem(OpenTelemetryConsts.GenAI.Operation.Name));
-        Assert.Equal(OpenTelemetryConsts.GenAI.SystemNameValues.MicrosoftExtensionsAIAgents, activity.GetTagItem(OpenTelemetryConsts.GenAI.SystemName));
+        Assert.Equal(OpenTelemetryConsts.GenAI.SystemNameValues.MicrosoftAgentsAI, activity.GetTagItem(OpenTelemetryConsts.GenAI.SystemName));
         Assert.Equal("test-agent-id", activity.GetTagItem(OpenTelemetryConsts.GenAI.Agent.Id));
         Assert.Equal("TestAgent", activity.GetTagItem(OpenTelemetryConsts.GenAI.Agent.Name));
         Assert.Equal("Test Description", activity.GetTagItem(OpenTelemetryConsts.GenAI.Agent.Description));
@@ -141,7 +141,7 @@ public class OpenTelemetryAgentTests
 
         // Verify activity tags
         Assert.Equal(OpenTelemetryConsts.GenAI.Operation.NameValues.InvokeAgent, activity.GetTagItem(OpenTelemetryConsts.GenAI.Operation.Name));
-        Assert.Equal(OpenTelemetryConsts.GenAI.SystemNameValues.MicrosoftExtensionsAIAgents, activity.GetTagItem(OpenTelemetryConsts.GenAI.SystemName));
+        Assert.Equal(OpenTelemetryConsts.GenAI.SystemNameValues.MicrosoftAgentsAI, activity.GetTagItem(OpenTelemetryConsts.GenAI.SystemName));
         Assert.Equal("test-agent-id", activity.GetTagItem(OpenTelemetryConsts.GenAI.Agent.Id));
         Assert.Equal("TestAgent", activity.GetTagItem(OpenTelemetryConsts.GenAI.Agent.Name));
         Assert.Equal("Test Description", activity.GetTagItem(OpenTelemetryConsts.GenAI.Agent.Description));
@@ -198,7 +198,7 @@ public class OpenTelemetryAgentTests
         var activity = Assert.Single(activities);
         Assert.Equal("You are a helpful assistant.", activity.GetTagItem(OpenTelemetryConsts.GenAI.Request.Instructions));
         // Should use default system when ChatClientMetadata is not available
-        Assert.Equal(OpenTelemetryConsts.GenAI.SystemNameValues.MicrosoftExtensionsAIAgents, activity.GetTagItem(OpenTelemetryConsts.GenAI.SystemName));
+        Assert.Equal(OpenTelemetryConsts.GenAI.SystemNameValues.MicrosoftAgentsAI, activity.GetTagItem(OpenTelemetryConsts.GenAI.SystemName));
     }
 
     [Fact]
@@ -270,7 +270,7 @@ public class OpenTelemetryAgentTests
         // Assert
         var activity = Assert.Single(activities);
         // Should use default system when agent is not a ChatClientAgent
-        Assert.Equal(OpenTelemetryConsts.GenAI.SystemNameValues.MicrosoftExtensionsAIAgents, activity.GetTagItem(OpenTelemetryConsts.GenAI.SystemName));
+        Assert.Equal(OpenTelemetryConsts.GenAI.SystemNameValues.MicrosoftAgentsAI, activity.GetTagItem(OpenTelemetryConsts.GenAI.SystemName));
     }
 
     [Theory]
@@ -1179,8 +1179,8 @@ public class OpenTelemetryAgentTests
         // Assert
         var activity = Assert.Single(activities);
 
-        // Verify that the system defaults to "microsoft.extensions.ai.agents" when no metadata is available
-        Assert.Equal("microsoft.extensions.ai.agents", activity.GetTagItem(OpenTelemetryConsts.GenAI.SystemName));
+        // Verify that the system defaults to "microsoft.agents.ai" when no metadata is available
+        Assert.Equal("microsoft.agents.ai", activity.GetTagItem(OpenTelemetryConsts.GenAI.SystemName));
 
         // Verify that GetService returns null provider name
         var agentMetadata = telemetryAgent.GetService(typeof(AIAgentMetadata)) as AIAgentMetadata;
@@ -1271,8 +1271,8 @@ public class OpenTelemetryAgentTests
         // Assert
         var activity = Assert.Single(activities);
 
-        // Verify that the system defaults to "microsoft.extensions.ai.agents" when no metadata is available
-        Assert.Equal("microsoft.extensions.ai.agents", activity.GetTagItem(OpenTelemetryConsts.GenAI.SystemName));
+        // Verify that the system defaults to "microsoft.agents.ai" when no metadata is available
+        Assert.Equal("microsoft.agents.ai", activity.GetTagItem(OpenTelemetryConsts.GenAI.SystemName));
 
         // Verify that GetService returns null for metadata
         var agentMetadata = telemetryAgent.GetService(typeof(AIAgentMetadata)) as AIAgentMetadata;
