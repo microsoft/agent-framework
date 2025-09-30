@@ -262,10 +262,8 @@ def test_get_input_model_from_mcp_tool_with_nested_object():
             "properties": {
                 "params": {
                     "type": "object",
-                    "properties": {
-                        "customer_id": {"type": "integer"}
-                    },
-                    "required": ["customer_id"]
+                    "properties": {"customer_id": {"type": "integer"}},
+                    "required": ["customer_id"],
                 }
             },
             "required": ["params"],
@@ -296,21 +294,15 @@ def test_get_input_model_from_mcp_tool_with_ref_schema():
         description="Get customer details",
         inputSchema={
             "type": "object",
-            "properties": {
-                "params": {
-                    "$ref": "#/$defs/CustomerIdParam"
-                }
-            },
+            "properties": {"params": {"$ref": "#/$defs/CustomerIdParam"}},
             "required": ["params"],
             "$defs": {
                 "CustomerIdParam": {
                     "type": "object",
-                    "properties": {
-                        "customer_id": {"type": "integer"}
-                    },
-                    "required": ["customer_id"]
+                    "properties": {"customer_id": {"type": "integer"}},
+                    "required": ["customer_id"],
                 }
-            }
+            },
         },
     )
     model = _get_input_model_from_mcp_tool(tool)
@@ -496,10 +488,8 @@ async def test_local_mcp_server_function_execution_with_nested_object():
                                 "properties": {
                                     "params": {
                                         "type": "object",
-                                        "properties": {
-                                            "customer_id": {"type": "integer"}
-                                        },
-                                        "required": ["customer_id"]
+                                        "properties": {"customer_id": {"type": "integer"}},
+                                        "required": ["customer_id"],
                                     }
                                 },
                                 "required": ["params"],
