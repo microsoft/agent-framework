@@ -67,7 +67,7 @@ internal sealed class AgentPlugin(WeatherProvider weatherProvider)
     /// Gets the current date and time for the specified location.
     /// </summary>
     /// <remarks>
-    /// This method demonstrated how to resolve a dependency using the service provider passed to the method.
+    /// This method demonstrates how to resolve a dependency using the service provider passed to the method.
     /// </remarks>
     /// <param name="sp">The service provider to resolve the <see cref="CurrentTimeProvider"/>.</param>
     /// <param name="location">The location to get the current time for.</param>
