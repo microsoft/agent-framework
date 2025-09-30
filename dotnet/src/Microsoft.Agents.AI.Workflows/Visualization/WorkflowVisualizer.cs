@@ -249,10 +249,7 @@ public static class WorkflowVisualizer
     {
         var sortedSources = sources.OrderBy(x => x, StringComparer.Ordinal).ToList();
         var input = target + "|" + string.Join("|", sortedSources);
-        using (var sha256 = SHA256.Create())
-        {
-            return ComputeShortHash(input);
-        }
+        return ComputeShortHash(input);
     }
 
     private static string ComputeShortHash(string input)
