@@ -28,6 +28,8 @@
     <PackageReference Include="Microsoft.Bot.ObjectModel.PowerFx" />
     <PackageReference Include="Microsoft.PowerFx.Interpreter" />
     <PackageReference Include="System.Collections.Immutable" />
+    <PackageReference Include="Microsoft.Extensions.Configuration" />
+    <PackageReference Include="Microsoft.Extensions.Logging" />
   </ItemGroup>
 
   <ItemGroup>
