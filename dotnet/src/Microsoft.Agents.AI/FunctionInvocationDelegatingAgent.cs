@@ -30,6 +30,8 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
     // Decorate options to add the middleware function
     private AgentRunOptions? AgentRunOptionsWithFunctionMiddleware(AgentRunOptions? options)
     {
+        options ??= new ChatClientAgentRunOptions();
+
         if (options is ChatClientAgentRunOptions aco)
         {
             var originalFactory = aco.ChatClientFactory;
