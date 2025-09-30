@@ -21,15 +21,15 @@ from agent_framework import (
 if TYPE_CHECKING:
     from _pytest.logging import LogCaptureFixture
 
-    from agent_framework._workflow._runner_context import InProcRunnerContext
+    from agent_framework._workflows._runner_context import InProcRunnerContext
 
 
 @asynccontextmanager
 async def make_context(
     executor_id: str = "exec",
 ) -> AsyncIterator[tuple[WorkflowContext[object], "InProcRunnerContext"]]:
-    from agent_framework._workflow._runner_context import InProcRunnerContext
-    from agent_framework._workflow._shared_state import SharedState
+    from agent_framework._workflows._runner_context import InProcRunnerContext
+    from agent_framework._workflows._shared_state import SharedState
 
     runner_ctx = InProcRunnerContext()
     shared_state = SharedState()

@@ -64,7 +64,6 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
                     Arguments = arguments,
                     Function = this.InnerFunction,
                     CallContent = new(string.Empty, this.InnerFunction.Name, new Dictionary<string, object?>(arguments)),
-                    Iteration = 0,  // Indicate this function was not invoked by a FICC and has no iteration flow.
                 };
 
             return await next(innerAgent, context, CoreLogicAsync, cancellationToken).ConfigureAwait(false);

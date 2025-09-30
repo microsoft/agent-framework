@@ -5,7 +5,7 @@ from typing import cast
 
 from agent_framework._agents import ChatAgent
 from agent_framework._types import AgentRunResponse, ChatMessage, Role
-from agent_framework._workflow import (
+from agent_framework._workflows import (
     AgentExecutor,
     AgentExecutorRequest,
     AgentExecutorResponse,

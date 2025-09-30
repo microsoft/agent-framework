@@ -3,22 +3,22 @@
 # Welcome to Microsoft Agent Framework!
 [![Microsoft Azure AI Foundry Discord](https://dcbadge.limes.pink/api/server/b5zjErwbQM)](https://discord.gg/b5zjErwbQM)
 
-
 Welcome to Microsoft's comprehensive multi-language framework for building, orchestrating, and deploying AI agents with support for both .NET and Python implementations. This framework provides everything from simple chat agents to complex multi-agent workflows with graph-based orchestration.
 
-### 📋 Getting Started
+## 📋 Getting Started
 
 **Quick Installation:**
+
 - **Python**: `pip install agent-framework`
 - **.NET**: `dotnet add package Microsoft.Agents.AI`
 
-**Complete Getting Started Guides:**
-- **[.NET Getting Started Guide](./user-documentation-dotnet/getting-started/README.md)** - Complete setup and usage instructions
-- **[Python Getting Started Guide](./user-documentation-python/getting-started/package_installation.md)** - Installation and first steps
+**Getting started documentation:**
+
+- **[Quick Start Guide](https://learn.microsoft.com/agent-framework/tutorials/quick-start)** - Simple getting started instructions
+- **[Tutorials](https://learn.microsoft.com/agent-framework/tutorials/overview)** - Step by step tutorials
 
 ### ✨ **Highlights**
-- **Multi-Agent Orchestration**: Coordinate multiple agents with sequential, concurrent, group chat, and handoff patterns
-  - [Python samples](./python/samples/getting_started/workflow/orchestration/) | [.NET samples](./dotnet/samples/GettingStarted/AgentOrchestration/)
+
 - **Graph-based Workflows**: Connect agents and deterministic functions using data flows with streaming, checkpointing, human-in-the-loop, and time-travel capabilities
   - [Python workflows](./python/samples/getting_started/workflow/) | [.NET workflows](./dotnet/samples/GettingStarted/Workflows/)
 - **AF Labs**: Experimental packages for cutting-edge features including benchmarking, reinforcement learning, and research initiatives
@@ -34,25 +34,27 @@ Welcome to Microsoft's comprehensive multi-language framework for building, orch
 - **Middleware**: Flexible middleware system for request/response processing, exception handling, and custom pipelines
   - [Python middleware](./python/samples/getting_started/middleware/) | [.NET middleware](./dotnet/samples/GettingStarted/Agents/Agent_Step14_Middleware/)
 
-### 💬 **We want your feedback!** 
+### 💬 **We want your feedback!**
+
 - For bugs, please file a [GitHub issue](https://github.com/microsoft/agent-framework/issues).
 
 ## More Examples & Samples
 
 ### Python
+
 - [Getting Started with Agents](./python/samples/getting_started/agents): basic agent creation and tool usage
 - [Chat Client Examples](./python/samples/getting_started/chat_client): direct chat client usage patterns
 - [Getting Started with Workflows](./python/samples/getting_started/workflow): basic workflow creation and integration with agents
 
 ### .NET
+
 - [Getting Started with Agents](./dotnet/samples/GettingStarted/Agents): basic agent creation and tool usage
 - [Agent Provider Samples](./dotnet/samples/GettingStarted/AgentProviders): samples showing different agent providers
 - [Workflow Samples](./dotnet/samples/GettingStarted/Workflows): advanced multi-agent patterns and workflow orchestration
 
 ## Agent Framework Documentation
 
-- [Python documentation](./user-documentation-python/README.md)
-- [DotNet documentation](./user-documentation-dotnet/README.md)
+- [Documentation](https://learn.microsoft.com/agent-framework/)
 - [Agent Framework Repository](https://github.com/microsoft/agent-framework)
 - [Design Documents](./docs/design)
 - [Architectural Decision Records](./docs/decisions)
