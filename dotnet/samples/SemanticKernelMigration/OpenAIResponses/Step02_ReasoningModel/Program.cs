@@ -50,8 +50,8 @@ async Task SKAgentAsync()
     var responseClient = new OpenAIClient(apiKey).GetOpenAIResponseClient(modelId);
     OpenAIResponseAgent agent = new(responseClient)
     {
-        Name = "Joker",
-        Instructions = "You are good at telling jokes.",
+        Name = "Thinker",
+        Instructions = "You are good at thinking hard before answering.",
         StoreEnabled = true
     };
 
@@ -94,6 +94,9 @@ async Task SKAgentAsync()
         thread = item.Thread;
         foreach (var content in item.Message.Items)
         {
+            // Currently SK Agent doesn't output thinking in streaming mode.
+            // SK Issue: https://github.com/microsoft/semantic-kernel/issues/13046
+            // OpenAI SDK Issue: https://github.com/openai/openai-dotnet/issues/643
             if (content is StreamingReasoningContent thinking)
             {
                 Console.WriteLine($"Thinking: [{thinking}]");
@@ -113,7 +116,7 @@ async Task AFAgentAsync()
     Console.WriteLine("\n=== AF Agent ===\n");
 
     var agent = new OpenAIClient(apiKey).GetOpenAIResponseClient(modelId)
-        .CreateAIAgent(name: "Joker", instructions: "You are good at telling jokes.");
+        .CreateAIAgent(name: "Thinker", instructions: "You are at thinking hard before answering.");
 
     var thread = agent.GetNewThread();
     var agentOptions = new ChatClientAgentRunOptions(new()
