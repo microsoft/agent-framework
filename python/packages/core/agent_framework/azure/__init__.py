@@ -22,7 +22,6 @@ def __getattr__(name: str) -> Any:
             return getattr(importlib.import_module(package_name), name)
         except ModuleNotFoundError as exc:
             raise ModuleNotFoundError(
-                f"The {' or '.join(package_extra)} extra is not installed, "
                 f"please use `pip install agent-framework-{package_extra}`, "
                 "or update your requirements.txt or pyproject.toml file."
             ) from exc
