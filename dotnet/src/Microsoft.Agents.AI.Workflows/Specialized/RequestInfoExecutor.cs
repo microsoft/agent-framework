@@ -57,7 +57,7 @@ internal sealed class RequestInfoExecutor : Executor
         object? maybeRequest = message.AsType(this.Port.Request);
         if (maybeRequest != null)
         {
-            Debug.Assert(this.Port.Request.IsAssignableFrom(maybeRequest.GetType()));
+            Debug.Assert(this.Port.Request.IsInstanceOfType(maybeRequest));
 
             ExternalRequest request = ExternalRequest.Create(this.Port, maybeRequest!);
             await this.RequestSink!.PostAsync(request).ConfigureAwait(false);
@@ -93,7 +93,7 @@ internal sealed class RequestInfoExecutor : Executor
     public async ValueTask<ExternalRequest> HandleAsync(object message, IWorkflowContext context)
     {
         Throw.IfNull(message);
-        Debug.Assert(this.Port.Request.IsAssignableFrom(message.GetType()));
+        Debug.Assert(this.Port.Request.IsInstanceOfType(message));
 
         ExternalRequest request = ExternalRequest.Create(this.Port, message);
         await this.RequestSink!.PostAsync(request).ConfigureAwait(false);

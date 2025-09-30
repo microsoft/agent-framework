@@ -158,7 +158,7 @@ public sealed class PortableValue
             this._deserializedValueCache ??= delayedDeserialization.Deserialize(targetType);
         }
 
-        if (this.Value is not null && targetType.IsAssignableFrom(this.Value.GetType()))
+        if (this.Value is not null && targetType.IsInstanceOfType(this.Value))
         {
             value = this.Value;
             return true;

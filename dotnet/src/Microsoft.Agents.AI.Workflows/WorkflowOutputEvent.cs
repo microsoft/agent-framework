@@ -33,7 +33,7 @@ public sealed class WorkflowOutputEvent : WorkflowEvent
     /// <returns>true if the underlying data is assignable to type T; otherwise, false.</returns>
     public bool IsType(Type type) => this.Data == null
                                    ? false
-                                   : type.IsAssignableFrom(this.Data.GetType());
+                                   : type.IsInstanceOfType(this.Data);
 
     /// <summary>
     /// Attempts to retrieve the underlying data as the specified type.
