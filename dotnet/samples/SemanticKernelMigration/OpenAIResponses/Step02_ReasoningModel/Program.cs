@@ -71,6 +71,7 @@ async Task SKAgentAsync()
     Microsoft.SemanticKernel.Agents.AgentThread? thread = null;
     await foreach (var item in agent.InvokeAsync(userInput, thread, agentOptions))
     {
+        thread = item.Thread;
         foreach (var content in item.Message.Items)
         {
             if (content is ReasoningContent thinking)
