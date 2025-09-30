@@ -12,7 +12,7 @@ using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 
-namespace WorkflowObservabilitysample;
+namespace WorkflowObservabilitySample;
 
 /// <summary>
 /// This sample shows how to enable observability in a workflow and send the traces
@@ -46,12 +46,13 @@ public static class Program
             .AddOtlpExporter(options => options.Endpoint = new Uri(otlpEndpoint))
             .Build();
 
+        // Start a root activity for the application
+        using var activity = s_activitySource.StartActivity("main");
+        Console.WriteLine($"Operation/Trace ID: {Activity.Current?.TraceId}");
+
         // Create the executors
         UppercaseExecutor uppercase = new();
         ReverseTextExecutor reverse = new();
-
-        using var activity = s_activitySource.StartActivity("main");
-        Console.WriteLine($"Operation/Trace ID: {Activity.Current?.TraceId}");
 
         // Build the workflow by connecting executors sequentially
         WorkflowBuilder builder = new(uppercase);
