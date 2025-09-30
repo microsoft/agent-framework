@@ -42,7 +42,7 @@ agent = ChatAgent(
     and forecasts for any location. Always be helpful and provide detailed
     weather information when asked.
     """,
-    chat_client=OpenAIChatClient(ai_model_id=os.environ.get("OPENAI_CHAT_MODEL_ID", "gpt-4o")),
+    chat_client=OpenAIChatClient(model_id=os.environ.get("OPENAI_CHAT_MODEL_ID", "gpt-4o")),
     tools=[get_weather, get_forecast],
 )
 

@@ -47,7 +47,7 @@ async def example_global_thread_scope() -> None:
     global_thread_id = str(uuid.uuid4())
 
     client = OpenAIChatClient(
-        ai_model_id=os.getenv("OPENAI_CHAT_MODEL_ID", "gpt-4o-mini"),
+        model_id=os.getenv("OPENAI_CHAT_MODEL_ID", "gpt-4o-mini"),
         api_key=os.getenv("OPENAI_API_KEY"),
     )
 
@@ -100,7 +100,7 @@ async def example_per_operation_thread_scope() -> None:
     print("-" * 40)
 
     client = OpenAIChatClient(
-        ai_model_id=os.getenv("OPENAI_CHAT_MODEL_ID", "gpt-4o-mini"),
+        model_id=os.getenv("OPENAI_CHAT_MODEL_ID", "gpt-4o-mini"),
         api_key=os.getenv("OPENAI_API_KEY"),
     )
 
@@ -168,7 +168,7 @@ async def example_multiple_agents() -> None:
     print("-" * 40)
 
     client = OpenAIChatClient(
-        ai_model_id=os.getenv("OPENAI_CHAT_MODEL_ID", "gpt-4o-mini"),
+        model_id=os.getenv("OPENAI_CHAT_MODEL_ID", "gpt-4o-mini"),
         api_key=os.getenv("OPENAI_API_KEY"),
     )
 

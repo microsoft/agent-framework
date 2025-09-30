@@ -127,7 +127,7 @@ class AzureOpenAIAssistantsClient(OpenAIAssistantsClient):
             async_client = AsyncAzureOpenAI(**client_params)
 
         super().__init__(
-            ai_model_id=azure_openai_settings.chat_deployment_name,
+            model_id=azure_openai_settings.chat_deployment_name,
             assistant_id=assistant_id,
             assistant_name=assistant_name,
             thread_id=thread_id,

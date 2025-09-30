@@ -32,7 +32,6 @@ from samples.getting_started.chat_client.openai_chat_client import (
 from samples.getting_started.chat_client.openai_responses_client import (
     main as openai_responses_client,
 )
-from tests.sample_utils import retry
 
 # Environment variable for controlling sample tests
 RUN_SAMPLES_TESTS = "RUN_SAMPLES_TESTS"
@@ -132,4 +131,4 @@ async def test_chat_client_samples(
         return responses.pop(0) if responses else "exit"
 
     monkeypatch.setattr("builtins.input", mock_input)
-    await retry(sample, retries=3, reset=reset)
+    await sample

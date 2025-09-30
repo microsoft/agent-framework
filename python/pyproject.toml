@@ -52,7 +52,6 @@ environments = [
 
 [tool.uv.workspace]
 members = [ "packages/*" ]
-exclude = [ "packages/agent_framework_project.egg-info" ]
 
 [tool.uv.sources]
 agent-framework = { workspace = true }
@@ -128,7 +127,8 @@ notice-rgx = "^# Copyright \\(c\\) Microsoft\\. All rights reserved\\."
 min-file-size = 1
 
 [tool.pytest.ini_options]
-testpaths = '**/tests'
+testpaths = 'packages/**/tests'
+norecursedirs = '**/lab/**'
 addopts = "-ra -q -r fEX"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

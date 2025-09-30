@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TypeVar
 from urllib.parse import urljoin
 
 from azure.core.credentials import TokenCredential
@@ -114,23 +114,4 @@ class AzureOpenAIResponsesClient(AzureOpenAIConfigMixin, OpenAIBaseResponsesClie
             default_headers=default_headers,
             client=async_client,
             instruction_role=instruction_role,
-        )
-
-    @classmethod
-    def from_dict(cls: type[TAzureOpenAIResponsesClient], settings: dict[str, Any]) -> TAzureOpenAIResponsesClient:
-        """Initialize an Open AI service from a dictionary of settings.
-
-        Args:
-            settings: A dictionary of settings for the service.
-        """
-        return cls(
-            api_key=settings.get("api_key"),
-            deployment_name=settings.get("deployment_name"),
-            endpoint=settings.get("endpoint"),
-            base_url=settings.get("base_url"),
-            api_version=settings.get("api_version"),
-            ad_token=settings.get("ad_token"),
-            ad_token_provider=settings.get("ad_token_provider"),
-            default_headers=settings.get("default_headers"),
-            env_file_path=settings.get("env_file_path"),
         )

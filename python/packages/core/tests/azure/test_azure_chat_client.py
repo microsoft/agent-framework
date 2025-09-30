@@ -53,7 +53,7 @@ def test_init(azure_openai_unit_test_env: dict[str, str]) -> None:
 
     assert azure_chat_client.client is not None
     assert isinstance(azure_chat_client.client, AsyncAzureOpenAI)
-    assert azure_chat_client.ai_model_id == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
+    assert azure_chat_client.model_id == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
     assert isinstance(azure_chat_client, BaseChatClient)
 
 
@@ -76,7 +76,7 @@ def test_init_base_url(azure_openai_unit_test_env: dict[str, str]) -> None:
 
     assert azure_chat_client.client is not None
     assert isinstance(azure_chat_client.client, AsyncAzureOpenAI)
-    assert azure_chat_client.ai_model_id == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
+    assert azure_chat_client.model_id == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
     assert isinstance(azure_chat_client, BaseChatClient)
     for key, value in default_headers.items():
         assert key in azure_chat_client.client.default_headers
@@ -89,7 +89,7 @@ def test_init_endpoint(azure_openai_unit_test_env: dict[str, str]) -> None:
 
     assert azure_chat_client.client is not None
     assert isinstance(azure_chat_client.client, AsyncAzureOpenAI)
-    assert azure_chat_client.ai_model_id == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
+    assert azure_chat_client.model_id == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
     assert isinstance(azure_chat_client, BaseChatClient)
 
 
@@ -130,10 +130,11 @@ def test_serialize(azure_openai_unit_test_env: dict[str, str]) -> None:
 
     azure_chat_client = AzureOpenAIChatClient.from_dict(settings)
     dumped_settings = azure_chat_client.to_dict()
-    assert dumped_settings["ai_model_id"] == settings["deployment_name"]
-    assert str(settings["deployment_name"]) in str(dumped_settings["base_url"])
-    assert settings["api_key"] == dumped_settings["api_key"]
+    assert dumped_settings["model_id"] == settings["deployment_name"]
+    assert str(settings["endpoint"]) in str(dumped_settings["endpoint"])
+    assert str(settings["deployment_name"]) == str(dumped_settings["deployment_name"])
     assert settings["api_version"] == dumped_settings["api_version"]
+    assert "api_key" not in dumped_settings
 
     # Assert that the default header we added is present in the dumped_settings default headers
     for key, value in default_headers.items():
@@ -608,6 +609,7 @@ def get_weather(location: str) -> str:
     return f"The weather in {location} is sunny and 72°F."
 
 
+@pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_azure_openai_chat_client_response() -> None:
     """Test Azure OpenAI chat completion responses."""
@@ -637,6 +639,7 @@ async def test_azure_openai_chat_client_response() -> None:
     )
 
 
+@pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_azure_openai_chat_client_response_tools() -> None:
     """Test AzureOpenAI chat completion responses."""
@@ -658,6 +661,7 @@ async def test_azure_openai_chat_client_response_tools() -> None:
     assert "scientists" in response.text
 
 
+@pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_azure_openai_chat_client_streaming() -> None:
     """Test Azure OpenAI chat completion responses."""
@@ -692,6 +696,7 @@ async def test_azure_openai_chat_client_streaming() -> None:
     assert "scientists" in full_message
 
 
+@pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_azure_openai_chat_client_streaming_tools() -> None:
     """Test AzureOpenAI chat completion responses."""
@@ -718,6 +723,7 @@ async def test_azure_openai_chat_client_streaming_tools() -> None:
     assert "scientists" in full_message
 
 
+@pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_azure_openai_chat_client_agent_basic_run():
     """Test Azure OpenAI chat client agent basic run functionality with AzureOpenAIChatClient."""
@@ -733,6 +739,7 @@ async def test_azure_openai_chat_client_agent_basic_run():
         assert "hello world" in response.text.lower()
 
 
+@pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_azure_openai_chat_client_agent_basic_run_streaming():
     """Test Azure OpenAI chat client agent basic streaming functionality with AzureOpenAIChatClient."""
@@ -750,6 +757,7 @@ async def test_azure_openai_chat_client_agent_basic_run_streaming():
         assert "streaming response test" in full_text.lower()
 
 
+@pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_azure_openai_chat_client_agent_thread_persistence():
     """Test Azure OpenAI chat client agent thread persistence across runs with AzureOpenAIChatClient."""
@@ -774,6 +782,7 @@ async def test_azure_openai_chat_client_agent_thread_persistence():
         assert "alice" in response2.text.lower()
 
 
+@pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_azure_openai_chat_client_agent_existing_thread():
     """Test Azure OpenAI chat client agent with existing thread to continue conversations across agent instances."""
@@ -808,6 +817,7 @@ async def test_azure_openai_chat_client_agent_existing_thread():
             assert "alice" in second_response.text.lower()
 
 
+@pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_azure_chat_client_agent_level_tool_persistence():
     """Test that agent-level tools persist across multiple runs with Azure Chat Client."""

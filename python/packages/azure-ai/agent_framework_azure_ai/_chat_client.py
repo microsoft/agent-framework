@@ -4,7 +4,7 @@ import json
 import os
 import sys
 from collections.abc import AsyncIterable, MutableMapping, MutableSequence, Sequence
-from typing import Any, ClassVar, TypeVar
+from typing import Any, ClassVar, TypeVar, cast
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -84,7 +84,7 @@ from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import ConnectionType
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import HttpResponseError, ResourceNotFoundError
-from pydantic import BaseModel, Field, PrivateAttr, ValidationError
+from pydantic import BaseModel, ValidationError
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -128,14 +128,6 @@ class AzureAIAgentClient(BaseChatClient):
     """Azure AI Agent Chat client."""
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai"  # type: ignore[reportIncompatibleVariableOverride, misc]
-    project_client: AIProjectClient = Field(...)
-    credential: AsyncTokenCredential | None = Field(...)
-    agent_id: str | None = Field(default=None)
-    agent_name: str | None = Field(default=None)
-    ai_model_id: str | None = Field(default=None)
-    thread_id: str | None = Field(default=None)
-    _should_delete_agent: bool = PrivateAttr(default=False)  # Track whether we should delete the agent
-    _should_close_client: bool = PrivateAttr(default=False)  # Track whether we should close client connection
 
     def __init__(
         self,
@@ -205,16 +197,18 @@ class AzureAIAgentClient(BaseChatClient):
             )
             should_close_client = True
 
-        super().__init__(
-            project_client=project_client,  # type: ignore[reportCallIssue]
-            credential=async_credential,  # type: ignore[reportCallIssue]
-            agent_id=agent_id,  # type: ignore[reportCallIssue]
-            thread_id=thread_id,  # type: ignore[reportCallIssue]
-            agent_name=agent_name,  # type: ignore[reportCallIssue]
-            ai_model_id=azure_ai_settings.model_deployment_name,  # type: ignore[reportCallIssue]
-            **kwargs,
-        )
-        self._should_close_client = should_close_client
+        # Initialize parent
+        super().__init__(**kwargs)
+
+        # Initialize instance variables
+        self.project_client = project_client
+        self.credential = async_credential
+        self.agent_id = agent_id
+        self.agent_name = agent_name
+        self.model_id = azure_ai_settings.model_deployment_name
+        self.thread_id = thread_id
+        self._should_delete_agent = False  # Track whether we should delete the agent
+        self._should_close_client = should_close_client  # Track whether we should close client connection
 
     async def setup_azure_ai_observability(self, enable_sensitive_data: bool | None = None) -> None:
         """Use this method to setup tracing in your Azure AI Project.
@@ -251,7 +245,7 @@ class AzureAIAgentClient(BaseChatClient):
         await self._close_client_if_needed()
 
     @classmethod
-    def from_dict(cls: type[TAzureAIAgentClient], settings: dict[str, Any]) -> TAzureAIAgentClient:
+    def from_settings(cls: type[TAzureAIAgentClient], settings: dict[str, Any]) -> TAzureAIAgentClient:
         """Initialize a AzureAIAgentClient from a dictionary of settings.
 
         Args:
@@ -317,11 +311,11 @@ class AzureAIAgentClient(BaseChatClient):
         """
         # If no agent_id is provided, create a temporary agent
         if self.agent_id is None:
-            if not self.ai_model_id:
+            if not self.model_id:
                 raise ServiceInitializationError("Model deployment name is required for agent creation.")
 
             agent_name: str = self.agent_name or "UnnamedAgent"
-            args: dict[str, Any] = {"model": self.ai_model_id, "name": agent_name}
+            args: dict[str, Any] = {"model": self.model_id, "name": agent_name}
             if run_options:
                 if "tools" in run_options:
                     args["tools"] = run_options["tools"]
@@ -866,8 +860,8 @@ class AzureAIAgentClient(BaseChatClient):
                 if isinstance(content, FunctionResultContent):
                     if tool_outputs is None:
                         tool_outputs = []
-                    result_contents: list[Any] = (  # type: ignore
-                        content.result if isinstance(content.result, list) else [content.result]  # type: ignore
+                    result_contents: list[Any] = cast(
+                        list[Any], content.result if isinstance(content.result, list) else [content.result]
                     )
                     results: list[Any] = []
                     for item in result_contents:
