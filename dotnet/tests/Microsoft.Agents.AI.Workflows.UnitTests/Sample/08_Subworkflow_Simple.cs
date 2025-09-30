@@ -43,7 +43,8 @@ internal static class Step8EntryPoint
 
         Run workflowRun = await InProcessExecution.RunAsync(workflow, textsToProcess);
 
-        workflowRun.Status.Should().Be(RunStatus.Idle);
+        RunStatus status = await workflowRun.GetStatusAsync();
+        status.Should().Be(RunStatus.Idle);
 
         List<TextProcessingResult> results = orchestrator.Results;
         results.Sort((left, right) => StringComparer.Ordinal.Compare(left.TaskId, right.TaskId));

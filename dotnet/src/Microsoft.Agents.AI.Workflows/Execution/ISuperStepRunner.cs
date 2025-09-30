@@ -15,13 +15,16 @@ internal interface ISuperStepRunner
     bool HasUnservicedRequests { get; }
     bool HasUnprocessedMessages { get; }
 
-    ValueTask EnqueueResponseAsync(ExternalResponse response);
-    ValueTask<bool> EnqueueMessageAsync<T>(T message);
-    ValueTask<bool> EnqueueMessageUntypedAsync(object message, Type declaredType);
+    ValueTask EnqueueResponseAsync(ExternalResponse response, CancellationToken cancellation = default);
 
-    event EventHandler<WorkflowEvent>? WorkflowEvent;
+    ValueTask<bool> IsValidInputTypeAsync<T>(CancellationToken cancellation = default);
+    ValueTask<bool> EnqueueMessageAsync<T>(T message, CancellationToken cancellation = default);
+    ValueTask<bool> EnqueueMessageUntypedAsync(object message, Type declaredType, CancellationToken cancellation = default);
+
+    ConcurrentEventSink OutgoingEvents { get; }
 
     ValueTask<bool> RunSuperStepAsync(CancellationToken cancellationToken);
 
+    // This cannot be cancelled
     ValueTask RequestEndRunAsync();
 }

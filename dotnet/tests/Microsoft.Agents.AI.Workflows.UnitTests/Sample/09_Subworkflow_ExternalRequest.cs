@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -173,15 +172,14 @@ internal static class Step9EntryPoint
 
     public static async ValueTask<List<RequestFinished>> RunAsync(TextWriter writer)
     {
+        RunStatus runStatus;
         List<RequestFinished> results = [];
 
         Run workflowRun = await InProcessExecution.RunAsync(WorkflowInstance, RequestsToProcess.ToList());
 
-        if (!Debugger.IsAttached)
-        {
-            RunStatus part1Status = ExpectedResponsesPart2.Length > 0 ? RunStatus.PendingRequests : RunStatus.Idle;
-            workflowRun.Status.Should().Be(part1Status);
-        }
+        RunStatus part1Status = ExpectedResponsesPart2.Length > 0 ? RunStatus.PendingRequests : RunStatus.Idle;
+        runStatus = await workflowRun.GetStatusAsync();
+        runStatus.Should().Be(part1Status);
 
         List<RequestFinished> finishedRequests = [];
         List<ExternalRequest> resourceRequests = [];
@@ -239,7 +237,8 @@ internal static class Step9EntryPoint
         }
 
         await workflowRun.ResumeAsync(responses: responses).ConfigureAwait(false);
-        workflowRun.Status.Should().Be(RunStatus.Idle);
+        runStatus = await workflowRun.GetStatusAsync();
+        runStatus.Should().Be(RunStatus.Idle);
 
         results = finishedRequests;
 
