@@ -36,8 +36,8 @@ gaia = [
 
 # Lightning RL training module dependencies
 lightning = [
-  # Install from test.pypi.org because agentlightning 0.2.0 is not yet released
-  "agentlightning @ https://test-files.pythonhosted.org/packages/31/5e/fc033862bfb83ba33b64eea7bff4d7bf980e57ecfcf3f176edb7368cbe2e/agentlightning-0.2.0.dev20250925060605-py3-none-any.whl#sha256=be468b44501380dc4d052e0f41b813a6ca8eb2b27a601c82d8b771817a1c0b2e",
+  # Till 0.2.0 is released
+  "agentlightning @ git+https://github.com/microsoft/agent-lightning@138ad0e48780b65ccefa628ee7a5fb9fb27aca01",
 ]
 
 # TAU2 benchmark module dependencies

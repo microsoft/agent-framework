@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.13' and sys_platform == 'darwin'",
@@ -275,7 +275,7 @@ tau2 = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework", editable = "packages/main" },
-    { name = "agentlightning", marker = "extra == 'lightning'", url = "https://test-files.pythonhosted.org/packages/31/5e/fc033862bfb83ba33b64eea7bff4d7bf980e57ecfcf3f176edb7368cbe2e/agentlightning-0.2.0.dev20250925060605-py3-none-any.whl" },
+    { name = "agentlightning", marker = "extra == 'lightning'", git = "https://github.com/microsoft/agent-lightning?rev=138ad0e48780b65ccefa628ee7a5fb9fb27aca01" },
     { name = "huggingface-hub", marker = "extra == 'gaia'", specifier = ">=0.20.0" },
     { name = "loguru", marker = "extra == 'tau2'", specifier = ">=0.7.3" },
     { name = "numpy", marker = "extra == 'tau2'" },
@@ -413,8 +413,8 @@ requires-dist = [{ name = "agent-framework", editable = "packages/main" }]
 
 [[package]]
 name = "agentlightning"
-version = "0.2.0.dev20250925060605"
-source = { url = "https://test-files.pythonhosted.org/packages/31/5e/fc033862bfb83ba33b64eea7bff4d7bf980e57ecfcf3f176edb7368cbe2e/agentlightning-0.2.0.dev20250925060605-py3-none-any.whl" }
+version = "0.2.0"
+source = { git = "https://github.com/microsoft/agent-lightning?rev=138ad0e48780b65ccefa628ee7a5fb9fb27aca01#138ad0e48780b65ccefa628ee7a5fb9fb27aca01" }
 dependencies = [
     { name = "agentops", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "aiohttp", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -430,56 +430,6 @@ dependencies = [
     { name = "setproctitle", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "uvicorn", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-wheels = [
-    { url = "https://test-files.pythonhosted.org/packages/31/5e/fc033862bfb83ba33b64eea7bff4d7bf980e57ecfcf3f176edb7368cbe2e/agentlightning-0.2.0.dev20250925060605-py3-none-any.whl", hash = "sha256:be468b44501380dc4d052e0f41b813a6ca8eb2b27a601c82d8b771817a1c0b2e" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "agentops", specifier = "<=0.4.21" },
-    { name = "aiohttp" },
-    { name = "autogen-agentchat", marker = "extra == 'agent'" },
-    { name = "autogen-ext", extras = ["openai"], marker = "extra == 'agent'" },
-    { name = "black", marker = "extra == 'dev'" },
-    { name = "fastapi" },
-    { name = "flake8", marker = "extra == 'dev'" },
-    { name = "flask" },
-    { name = "graphviz" },
-    { name = "hatch", marker = "extra == 'dev'" },
-    { name = "httpdbg" },
-    { name = "isort", marker = "extra == 'dev'" },
-    { name = "langchain", extras = ["openai"], marker = "extra == 'agent'" },
-    { name = "langchain-community", marker = "extra == 'agent'" },
-    { name = "langchain-text-splitters", marker = "extra == 'agent'" },
-    { name = "langgraph", marker = "extra == 'agent'" },
-    { name = "litellm", extras = ["proxy"], marker = "extra == 'agent'" },
-    { name = "mcp", marker = "extra == 'agent'" },
-    { name = "mike", marker = "extra == 'dev'" },
-    { name = "mkdocs", marker = "extra == 'dev'" },
-    { name = "mkdocs-git-authors-plugin", marker = "extra == 'dev'" },
-    { name = "mkdocs-git-revision-date-localized-plugin", marker = "extra == 'dev'" },
-    { name = "mkdocs-macros-plugin", marker = "extra == 'dev'" },
-    { name = "mkdocs-material", marker = "extra == 'dev'" },
-    { name = "mkdocstrings", extras = ["python"], marker = "extra == 'dev'" },
-    { name = "nltk", marker = "extra == 'agent'" },
-    { name = "openai" },
-    { name = "openai-agents", marker = "extra == 'agent'" },
-    { name = "opentelemetry-api", specifier = ">=1.35" },
-    { name = "opentelemetry-sdk", specifier = ">=1.35" },
-    { name = "pre-commit", marker = "extra == 'dev'" },
-    { name = "psutil" },
-    { name = "pydantic", specifier = ">=2.11" },
-    { name = "pyright", marker = "extra == 'dev'" },
-    { name = "pytest", marker = "extra == 'dev'" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'" },
-    { name = "pytest-rerunfailures", marker = "extra == 'dev'" },
-    { name = "random-word", marker = "extra == 'experiment'" },
-    { name = "setproctitle" },
-    { name = "sqlparse", marker = "extra == 'agent'" },
-    { name = "uv", marker = "extra == 'agent'" },
-    { name = "uvicorn" },
-]
-provides-extras = ["agent", "dev", "experiment"]
 
 [[package]]
 name = "agentops"
@@ -1479,7 +1429,7 @@ name = "exceptiongroup"
 version = "1.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "(python_full_version < '3.13' and sys_platform == 'darwin') or (python_full_version < '3.13' and sys_platform == 'linux') or (python_full_version < '3.13' and sys_platform == 'win32')" },
+    { name = "typing-extensions", marker = "(python_full_version < '3.11' and sys_platform == 'darwin') or (python_full_version < '3.11' and sys_platform == 'linux') or (python_full_version < '3.11' and sys_platform == 'win32')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/0b/9f/a65090624ecf468cdca03533906e7c69ed7588582240cfe7cc9e770b50eb/exceptiongroup-1.3.0.tar.gz", hash = "sha256:b241f5885f560bc56a59ee63ca4c6a8bfa46ae4ad651af316d4e81817bb9fd88", size = 29749, upload-time = "2025-05-10T17:42:51.123Z" }
 wheels = [
