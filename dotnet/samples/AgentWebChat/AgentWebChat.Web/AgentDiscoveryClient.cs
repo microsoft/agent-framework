@@ -16,7 +16,6 @@ public class AgentDiscoveryClient(HttpClient httpClient, ILogger<AgentDiscoveryC
         var agents = JsonSerializer.Deserialize<List<AgentDiscoveryCard>>(json, AgentHostingJsonUtilities.DefaultOptions) ?? [];
 
         logger.LogInformation("Retrieved {AgentCount} agents from the API", agents.Count);
-        _ = new HttpActorClient(null!);
         return agents;
     }
 
