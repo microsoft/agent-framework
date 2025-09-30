@@ -8,7 +8,7 @@ using Azure.Identity;
 using Microsoft.Agents.AI;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
-var model = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_MODEL_ID") ?? "gpt-4o-mini";
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 const string JokerName = "Joker";
 const string JokerInstructions = "You are good at telling jokes.";
@@ -18,7 +18,7 @@ var persistentAgentsClient = new PersistentAgentsClient(endpoint, new AzureCliCr
 
 // You can create a server side persistent agent with the Azure.AI.Agents.Persistent SDK.
 var agentMetadata = await persistentAgentsClient.Administration.CreateAgentAsync(
-    model: model,
+    model: deploymentName,
     name: JokerName,
     instructions: JokerInstructions);
 
@@ -27,7 +27,7 @@ AIAgent agent1 = await persistentAgentsClient.GetAIAgentAsync(agentMetadata.Valu
 
 // You can also create a server side persistent agent and return it as an AIAgent directly.
 AIAgent agent2 = await persistentAgentsClient.CreateAIAgentAsync(
-    model: model,
+    model: deploymentName,
     name: JokerName,
     instructions: JokerInstructions);
 
