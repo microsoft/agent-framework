@@ -230,7 +230,6 @@ public sealed class ChatClientAgent : AIAgent
             throw;
         }
 
-        string? messageId = null;
         while (hasUpdates)
         {
             var update = responseUpdatesEnumerator.Current;
@@ -238,7 +237,6 @@ public sealed class ChatClientAgent : AIAgent
             {
                 update.AuthorName ??= this.Name;
                 update.CreatedAt ??= DateTimeOffset.UtcNow;
-                update.MessageId ??= (messageId ??= Guid.NewGuid().ToString("N"));
 
                 responseUpdates.Add(update);
                 yield return new(update) { AgentId = this.Id };
