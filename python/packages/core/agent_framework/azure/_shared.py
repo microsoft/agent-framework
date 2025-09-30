@@ -217,9 +217,10 @@ class AzureOpenAIConfigMixin(OpenAIBase):
         if default_headers:
             from .._telemetry import USER_AGENT_KEY
 
-            self.default_headers = {k: v for k, v in default_headers.items() if k != USER_AGENT_KEY}
+            def_headers = {k: v for k, v in default_headers.items() if k != USER_AGENT_KEY}
         else:
-            self.default_headers = None
+            def_headers = None
+        self.default_headers = def_headers
 
         args = {
             "model_id": deployment_name,

@@ -206,7 +206,9 @@ class OpenAIConfigMixin(OpenAIBase):
         self.base_url = base_url
         # Store default_headers but filter out USER_AGENT_KEY for serialization
         if default_headers:
-            self.default_headers = {k: v for k, v in default_headers.items() if k != USER_AGENT_KEY}
+            self.default_headers: dict[str, Any] | None = {
+                k: v for k, v in default_headers.items() if k != USER_AGENT_KEY
+            }
         else:
             self.default_headers = None
 

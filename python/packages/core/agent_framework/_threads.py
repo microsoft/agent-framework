@@ -72,7 +72,7 @@ class ChatMessageStoreState(BaseModel):
 
     messages: list[ChatMessage]
 
-    config = ConfigDict(arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 class AgentThreadState(BaseModel):
@@ -86,7 +86,7 @@ class AgentThreadState(BaseModel):
     service_thread_id: str | None = None
     chat_message_store_state: ChatMessageStoreState | None = None
 
-    config = ConfigDict(arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     @model_validator(mode="before")
     def validate_only_one(cls, values: dict[str, Any]) -> dict[str, Any]:

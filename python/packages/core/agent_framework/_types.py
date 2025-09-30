@@ -13,7 +13,7 @@ from collections.abc import (
     Sequence,
 )
 from copy import deepcopy
-from typing import Any, ClassVar, Literal, TypeVar, cast, overload
+from typing import Any, ClassVar, Literal, TypeVar, overload
 
 from pydantic import BaseModel, ValidationError
 
@@ -88,6 +88,45 @@ class EnumLike(type):
         return cls
 
 
+def _parse_content(content_data: MutableMapping[str, Any]) -> "Contents":
+    """Parse a single content data dictionary into the appropriate Content object.
+
+    Args:
+        content_data: Content data (dict)
+
+    Returns:
+        Content object or raises ValidationError if parsing fails
+    """
+    content_type = str(content_data.get("type"))
+    match content_type:
+        case "text":
+            return TextContent.from_dict(content_data)
+        case "data":
+            return DataContent.from_dict(content_data)
+        case "uri":
+            return UriContent.from_dict(content_data)
+        case "error":
+            return ErrorContent.from_dict(content_data)
+        case "function_call":
+            return FunctionCallContent.from_dict(content_data)
+        case "function_result":
+            return FunctionResultContent.from_dict(content_data)
+        case "usage":
+            return UsageContent.from_dict(content_data)
+        case "hosted_file":
+            return HostedFileContent.from_dict(content_data)
+        case "hosted_vector_store":
+            return HostedVectorStoreContent.from_dict(content_data)
+        case "function_approval_request":
+            return FunctionApprovalRequestContent.from_dict(content_data)
+        case "function_approval_response":
+            return FunctionApprovalResponseContent.from_dict(content_data)
+        case "text_reasoning":
+            return TextReasoningContent.from_dict(content_data)
+        case _:
+            raise ValidationError([f"Unknown content type '{content_type}'"], model=Contents)  # type: ignore
+
+
 def _parse_content_list(contents_data: Sequence[Any]) -> list["Contents"]:
     """Parse a list of content data dictionaries into appropriate Content objects.
 
@@ -100,37 +139,11 @@ def _parse_content_list(contents_data: Sequence[Any]) -> list["Contents"]:
     contents: list["Contents"] = []
     for content_data in contents_data:
         if isinstance(content_data, dict):
-            content_data = cast(dict[str, Any], content_data)
-            # Determine the content type and create the appropriate class
-            content_type = str(content_data.get("type"))
-            match content_type:
-                case "text":
-                    contents.append(TextContent.from_dict(content_data))
-                case "data":
-                    contents.append(DataContent.from_dict(content_data))
-                case "uri":
-                    contents.append(UriContent.from_dict(content_data))
-                case "error":
-                    contents.append(ErrorContent.from_dict(content_data))
-                case "function_call":
-                    contents.append(FunctionCallContent.from_dict(content_data))
-                case "function_result":
-                    contents.append(FunctionResultContent.from_dict(content_data))
-                case "usage":
-                    contents.append(UsageContent.from_dict(content_data))
-                case "hosted_file":
-                    contents.append(HostedFileContent.from_dict(content_data))
-                case "hosted_vector_store":
-                    contents.append(HostedVectorStoreContent.from_dict(content_data))
-                case "function_approval_request":
-                    contents.append(FunctionApprovalRequestContent.from_dict(content_data))
-                case "function_approval_response":
-                    contents.append(FunctionApprovalResponseContent.from_dict(content_data))
-                case "text_reasoning":
-                    contents.append(TextReasoningContent.from_dict(content_data))
-                case _:
-                    # Log unknown content types and ignore them
-                    logger.warning(f"Unknown content type '{content_type}', ignoring: {content_data}")
+            try:
+                content = _parse_content(content_data)
+                contents.append(content)
+            except ValidationError as ve:
+                logger.warning(f"Skipping unknown content type or invalid content: {ve}")
         else:
             # If it's already a content object, keep it as is
             contents.append(content_data)
@@ -376,6 +389,7 @@ class BaseAnnotation(SerializationMixin):
             **kwargs: Additional keyword arguments (merged into additional_properties).
         """
         # Handle annotated_regions conversion from dict format (for SerializationMixin support)
+        self.annotated_regions: list[AnnotatedRegions] | None = None
         if annotated_regions is not None:
             converted_regions: list[AnnotatedRegions] = []
             for region_data in annotated_regions:
@@ -388,8 +402,6 @@ class BaseAnnotation(SerializationMixin):
                     # Already a region object, keep as is
                     converted_regions.append(region_data)
             self.annotated_regions = converted_regions
-        else:
-            self.annotated_regions = annotated_regions
 
         # Merge kwargs into additional_properties
         self.additional_properties = additional_properties or {}
@@ -510,6 +522,7 @@ class BaseContent(SerializationMixin):
             raw_representation: Optional raw representation of the content from an underlying implementation.
             **kwargs: Additional keyword arguments (merged into additional_properties).
         """
+        self.annotations: list[Annotations] | None = None
         # Handle annotations conversion from dict format (for SerializationMixin support)
         if annotations is not None:
             converted_annotations: list[Annotations] = []
@@ -525,8 +538,6 @@ class BaseContent(SerializationMixin):
                         f" with data: {annotation_data}"
                     )
             self.annotations = converted_annotations
-        else:
-            self.annotations = annotations
 
         # Merge kwargs into additional_properties
         self.additional_properties = additional_properties or {}
@@ -1559,7 +1570,7 @@ class ChatMessage(SerializationMixin):
         text: str,
         author_name: str | None = None,
         message_id: str | None = None,
-        additional_properties: dict[str, Any] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
     ) -> None:
@@ -1583,7 +1594,7 @@ class ChatMessage(SerializationMixin):
         contents: Sequence[Contents | Mapping[str, Any]],
         author_name: str | None = None,
         message_id: str | None = None,
-        additional_properties: dict[str, Any] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
     ) -> None:
@@ -1698,6 +1709,12 @@ def _process_update(
             if response.usage_details is None:
                 response.usage_details = UsageDetails()
             response.usage_details += content.details
+        elif isinstance(content, (dict, MutableMapping)):
+            try:
+                cont = _parse_content(content)
+                message.contents.append(cont)
+            except ValidationError as ve:
+                logger.warning(f"Skipping unknown content type or invalid content: {ve}")
         else:
             message.contents.append(content)
     # Incorporate the update's properties into the response.
@@ -1986,7 +2003,7 @@ class ChatResponseUpdate(SerializationMixin):
     def __init__(
         self,
         *,
-        contents: list[Contents] | list[dict[str, Any]] | None = None,
+        contents: Sequence[Contents | dict[str, Any]] | None = None,
         text: TextContent | str | None = None,
         role: Role | Literal["system", "user", "assistant", "tool"] | dict[str, Any] | None = None,
         author_name: str | None = None,
@@ -2210,14 +2227,14 @@ class AgentRunResponseUpdate(SerializationMixin):
     def __init__(
         self,
         *,
-        contents: list[Contents] | list[MutableMapping[str, Any]] | None = None,
+        contents: Sequence[Contents | MutableMapping[str, Any]] | None = None,
         text: TextContent | str | None = None,
         role: Role | MutableMapping[str, Any] | str | None = None,
         author_name: str | None = None,
         response_id: str | None = None,
         message_id: str | None = None,
         created_at: CreatedAtT | None = None,
-        additional_properties: dict[str, Any] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
     ) -> None:

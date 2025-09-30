@@ -4,7 +4,7 @@ import json
 import os
 import sys
 from collections.abc import AsyncIterable, MutableMapping, MutableSequence, Sequence
-from typing import Any, ClassVar, TypeVar, cast
+from typing import Any, ClassVar, TypeVar
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -860,8 +860,8 @@ class AzureAIAgentClient(BaseChatClient):
                 if isinstance(content, FunctionResultContent):
                     if tool_outputs is None:
                         tool_outputs = []
-                    result_contents: list[Any] = cast(
-                        list[Any], content.result if isinstance(content.result, list) else [content.result]
+                    result_contents: list[Any] = (
+                        content.result if isinstance(content.result, list) else [content.result]
                     )
                     results: list[Any] = []
                     for item in result_contents:

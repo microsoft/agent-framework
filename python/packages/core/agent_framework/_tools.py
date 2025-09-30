@@ -820,7 +820,7 @@ def _handle_function_calls_response(
                     # Use the stored middleware pipeline instead of extracting from kwargs
                     # because kwargs may have been modified by the underlying function
                     middleware_pipeline = stored_middleware_pipeline
-                    function_results = await execute_function_calls(
+                    function_call_results: list[Contents] = await execute_function_calls(
                         custom_args=kwargs,
                         attempt_idx=attempt_idx,
                         function_calls=function_calls,
@@ -828,7 +828,7 @@ def _handle_function_calls_response(
                         middleware_pipeline=middleware_pipeline,
                     )
                     # add a single ChatMessage to the response with the results
-                    result_message = ChatMessage(role="tool", contents=function_results)
+                    result_message = ChatMessage(role="tool", contents=function_call_results)
                     response.messages.append(result_message)
                     # response should contain 2 messages after this,
                     # one with function call contents

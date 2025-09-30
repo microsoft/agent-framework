@@ -76,7 +76,7 @@ class SerializationMixin:
                     ]
                 # Handle dicts containing SerializationProtocol values
                 elif isinstance(value, dict):
-                    serialized_dict = {}
+                    serialized_dict: dict[str, Any] = {}
                     for k, v in value.items():
                         if isinstance(v, SerializationProtocol):
                             serialized_dict[k] = v.to_dict(exclude=exclude, exclude_none=exclude_none)
@@ -188,7 +188,7 @@ class SerializationMixin:
             Type identifier string.
         """
         if (type_ := getattr(cls, "type", None)) and isinstance(type_, str):
-            return type_
+            return type_  # type:ignore[no-any-return]
 
         # Convert class name to snake_case
         return _CAMEL_TO_SNAKE_PATTERN.sub("_", cls.__name__).lower()
