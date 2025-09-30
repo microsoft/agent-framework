@@ -24,11 +24,7 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     // convention, then, and keep it up-to-date as the convention evolves, for now this implementation just delegates
     // to OpenTelemetryChatClient for the actual telemetry work. For RunAsync and RunStreamingAsync, it delegates to the
     // inner agent not directly but rather via OpenTelemetryChatClient, which wraps a ForwardingChatClient that in turn
-    // calls back into the inner agent. For state that we can't pass through directly (like AgentRunOptions), we pass that
-    // around the OpenTelemetryChatClient via an AsyncLocal.
-
-    /// <summary><see cref="AsyncLocal{ForwardedState}"/> that's used to pass input from this agent into the inner agent.</summary>
-    private static readonly AsyncLocal<ForwardedState?> s_forwardedState = new();
+    // calls back into the inner agent.
 
     /// <summary>The <see cref="OpenTelemetryChatClient"/> providing the bulk of the telemetry.</summary>
     private readonly OpenTelemetryChatClient _otelClient;
@@ -76,9 +72,9 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     public override async Task<AgentRunResponse> RunAsync(
         IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
-        s_forwardedState.Value = new(Activity.Current, thread, options);
+        ChatOptions co = new ForwardedOptions(options, thread, Activity.Current);
 
-        var response = await this._otelClient.GetResponseAsync(messages, (options as ChatClientAgentRunOptions)?.ChatOptions, cancellationToken).ConfigureAwait(false);
+        var response = await this._otelClient.GetResponseAsync(messages, co, cancellationToken).ConfigureAwait(false);
 
         return (AgentRunResponse)response.RawRepresentation!;
     }
@@ -87,9 +83,9 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
         IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        s_forwardedState.Value = new(Activity.Current, thread, options);
+        ChatOptions co = new ForwardedOptions(options, thread, Activity.Current);
 
-        await foreach (var update in this._otelClient.GetStreamingResponseAsync(messages, (options as ChatClientAgentRunOptions)?.ChatOptions, cancellationToken).ConfigureAwait(false))
+        await foreach (var update in this._otelClient.GetStreamingResponseAsync(messages, co, cancellationToken).ConfigureAwait(false))
         {
             yield return (AgentRunResponseUpdate)update.RawRepresentation!;
         }
@@ -132,10 +128,43 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     }
 
     /// <summary>State passed from this instance into the inner agent, circumventing the intermediate <see cref="OpenTelemetryChatClient"/>.</summary>
-    private sealed record ForwardedState(
-        Activity? CurrentActivity,
-        AgentThread? Thread,
-        AgentRunOptions? Options);
+    private sealed class ForwardedOptions : ChatOptions
+    {
+        public ForwardedOptions(AgentRunOptions? options, AgentThread? thread, Activity? currentActivity)
+        {
+            this.Options = options;
+            this.Thread = thread;
+            this.CurrentActivity = currentActivity;
+
+            if (options is ChatClientAgentRunOptions { ChatOptions: { } chatClientOptions })
+            {
+                // Keep this faux copy ctor in sync with public properties on ChatOptions.
+                this.AdditionalProperties = chatClientOptions.AdditionalProperties;
+                this.AllowMultipleToolCalls = chatClientOptions.AllowMultipleToolCalls;
+                this.ConversationId = chatClientOptions.ConversationId;
+                this.FrequencyPenalty = chatClientOptions.FrequencyPenalty;
+                this.Instructions = chatClientOptions.Instructions;
+                this.MaxOutputTokens = chatClientOptions.MaxOutputTokens;
+                this.ModelId = chatClientOptions.ModelId;
+                this.PresencePenalty = chatClientOptions.PresencePenalty;
+                this.RawRepresentationFactory = chatClientOptions.RawRepresentationFactory;
+                this.ResponseFormat = chatClientOptions.ResponseFormat;
+                this.Seed = chatClientOptions.Seed;
+                this.StopSequences = chatClientOptions.StopSequences;
+                this.Temperature = chatClientOptions.Temperature;
+                this.Tools = chatClientOptions.Tools;
+                this.ToolMode = chatClientOptions.ToolMode;
+                this.TopK = chatClientOptions.TopK;
+                this.TopP = chatClientOptions.TopP;
+            }
+        }
+
+        public AgentRunOptions? Options { get; }
+
+        public AgentThread? Thread { get; }
+
+        public Activity? CurrentActivity { get; }
+    }
 
     /// <summary>The stub <see cref="IChatClient"/> used to delegate from the <see cref="OpenTelemetryChatClient"/> into the inner <see cref="AIAgent"/>.</summary>
     /// <param name="parentAgent"></param>
@@ -144,14 +173,13 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
         public async Task<ChatResponse> GetResponseAsync(
             IEnumerable<ChatMessage> messages, ChatOptions? options, CancellationToken cancellationToken)
         {
-            // Grab the additional state provided by the parent agent.
-            ForwardedState state = s_forwardedState.Value!;
+            ForwardedOptions? fo = options as ForwardedOptions;
 
             // Update the current activity to reflect the agent invocation.
-            parentAgent.UpdateCurrentActivity(state.CurrentActivity);
+            parentAgent.UpdateCurrentActivity(fo?.CurrentActivity);
 
             // Invoke the inner agent.
-            var response = await parentAgent.InnerAgent.RunAsync(messages, state.Thread, state.Options, cancellationToken).ConfigureAwait(false);
+            var response = await parentAgent.InnerAgent.RunAsync(messages, fo?.Thread, fo?.Options, cancellationToken).ConfigureAwait(false);
 
             // Wrap the response in a ChatResponse so we can pass it back through OpenTelemetryChatClient.
             return new ChatResponse
@@ -168,14 +196,13 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
         public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
             IEnumerable<ChatMessage> messages, ChatOptions? options, [EnumeratorCancellation] CancellationToken cancellationToken)
         {
-            // Grab the additional state provided by the parent agent.
-            ForwardedState state = s_forwardedState.Value!;
+            ForwardedOptions? fo = options as ForwardedOptions;
 
             // Update the current activity to reflect the agent invocation.
-            parentAgent.UpdateCurrentActivity(state.CurrentActivity);
+            parentAgent.UpdateCurrentActivity(fo?.CurrentActivity);
 
             // Invoke the inner agent.
-            await foreach (var update in parentAgent.InnerAgent.RunStreamingAsync(messages, state.Thread, state.Options, cancellationToken).ConfigureAwait(false))
+            await foreach (var update in parentAgent.InnerAgent.RunStreamingAsync(messages, fo?.Thread, fo?.Options, cancellationToken).ConfigureAwait(false))
             {
                 // Wrap the response updates in ChatResponseUpdates so we can pass them back through OpenTelemetryChatClient.
                 yield return new ChatResponseUpdate
