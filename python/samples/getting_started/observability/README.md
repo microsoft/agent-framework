@@ -152,7 +152,7 @@ exporter = OTLPSpanExporter(endpoint="your-otlp-endpoint", compression=Compressi
 setup_observability(exporters=[exporter])
 ```
 
-## Logs
+### Logs
 
 When you are in Azure Monitor and want to have a overall view of the span, use this query in the logs section:
 
@@ -175,6 +175,15 @@ dependencies
 | project-keep timestamp, target, operation_Id, tool_call_duration, duration, gen_ai*
 | order by timestamp asc
 ```
+
+### Grafana dashboards with Azure Monitor data
+Besides the Azure Monitor native UI, you can also use Grafana to visualize the telemetry data in Azure Monitor. We have two tailored dashboards for you to get started quickly:
+
+##### [Agent overview dashboard](https://aka.ms/amg/dash/af-agent)
+![Agent overview dashboard](./grafana-af-agent.gif)
+
+##### [Workflow overview dashboard](https://aka.ms/amg/dash/af-workflow)
+![Workflow overview dashboard](./grafana-af-workflow.gif)
 
 ## Aspire Dashboard
 
