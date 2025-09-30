@@ -6,16 +6,17 @@
 # Base package including workflow support
 pip install agent-framework
 # Optional: Add Azure AI integration (Foundry)
-pip install agent-framework[azure-ai]
+pip install agent-framework-azure-ai
 # Optional: Add Microsoft integrations, currently only CopilotStudioAgents
-pip install agent-framework[microsoft]
+pip install agent-framework-microsoft
+# Or
+pip install agent-framework-copilotstudio
 # Optional: Both
-pip install agent-framework[microsoft,azure-ai]
-# All-in-one
-pip install agent-framework[all]
+pip install agent-framework-microsoft agent-framework-azure-ai
 ```
 
 Supported Platforms:
+
 - Python: 3.10+
 - OS: Windows, macOS, Linux
 

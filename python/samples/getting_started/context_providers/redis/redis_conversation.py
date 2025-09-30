@@ -7,7 +7,7 @@ conversational details. Pass it as a constructor argument to create_agent.
 
 Requirements:
   - A Redis instance with RediSearch enabled (e.g., Redis Stack)
-  - agent-framework with the Redis extra installed: pip install "agent-framework[redis]"
+  - agent-framework with the Redis extra installed: pip install "agent-framework-redis"
   - Optionally an OpenAI API key if enabling embeddings for hybrid search
 
 Run:
