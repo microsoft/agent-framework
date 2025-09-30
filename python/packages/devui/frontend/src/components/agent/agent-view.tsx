@@ -22,7 +22,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Send,
+  SendHorizontal,
   User,
   Bot,
   Plus,
@@ -1071,7 +1071,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
               {isSubmitting ? (
                 <LoadingSpinner size="sm" />
               ) : (
-                <Send className="h-4 w-4" />
+                <SendHorizontal className="h-4 w-4" />
               )}
             </Button>
           </form>

@@ -117,7 +117,6 @@ class AgentFrameworkExecutor:
         if thread_id not in self.thread_storage:
             return False
 
-        # Remove from agent mapping
         for _agent_id, thread_ids in self.agent_threads.items():
             if thread_id in thread_ids:
                 thread_ids.remove(thread_id)
@@ -399,7 +398,6 @@ class AgentFrameworkExecutor:
                 else:
                     logger.warning(f"Thread {thread_id} not found, proceeding without thread")
 
-            # Debug logging - handle both string and ChatMessage
             if isinstance(user_message, str):
                 logger.debug(f"Executing agent with text input: {user_message[:100]}...")
             else:
@@ -408,19 +406,15 @@ class AgentFrameworkExecutor:
             # Use Agent Framework's native streaming with optional thread
             if thread:
                 async for update in agent.run_stream(user_message, thread=thread):
-                    # Yield any pending trace events first
                     for trace_event in trace_collector.get_pending_events():
                         yield trace_event
 
-                    # Then yield the execution update
                     yield update
             else:
                 async for update in agent.run_stream(user_message):
-                    # Yield any pending trace events first
                     for trace_event in trace_collector.get_pending_events():
                         yield trace_event
 
-                    # Then yield the execution update
                     yield update
 
         except Exception as e:
@@ -592,10 +586,8 @@ class AgentFrameworkExecutor:
         if not contents:
             contents.append(TextContent(text=""))
 
-        # Create ChatMessage with user role
         chat_message = ChatMessage(role=Role.USER, contents=contents)
 
-        # Debug logging to verify content types
         logger.info(f"Created ChatMessage with {len(contents)} contents:")
         for idx, content in enumerate(contents):
             content_type = content.__class__.__name__

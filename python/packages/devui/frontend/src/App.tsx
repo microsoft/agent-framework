@@ -7,13 +7,13 @@ import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { AppHeader } from "@/components/shared/app-header";
 import { DebugPanel } from "@/components/shared/debug-panel";
-import { AboutModal } from "@/components/shared/about-modal";
+import { SettingsModal } from "@/components/shared/settings-modal";
 import { GalleryView } from "@/components/gallery";
 import { AgentView } from "@/components/agent/agent-view";
 import { WorkflowView } from "@/components/workflow/workflow-view";
 import { LoadingState } from "@/components/ui/loading-state";
 import { apiClient } from "@/services/api";
-import { ChevronLeft } from "lucide-react";
+import { ChevronLeft, ChevronDown, ServerOff } from "lucide-react";
 import type { SampleEntity } from "@/data/gallery";
 import type {
   AgentInfo,
@@ -274,20 +274,75 @@ export default function App() {
           onSelect={() => {}}
           onRemove={handleRemoveEntity}
           isLoading={false}
+          onSettingsClick={() => setShowAboutModal(true)}
         />
 
         {/* Error Content */}
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-center space-y-4 max-w-md">
-            <div className="text-destructive text-lg font-medium">
-              Failed to load agents and workflows
+        <div className="flex-1 flex items-center justify-center p-8">
+          <div className="text-center space-y-6 max-w-2xl">
+            {/* Icon */}
+            <div className="flex justify-center">
+              <div className="rounded-full bg-muted p-4 animate-pulse">
+                <ServerOff className="h-12 w-12 text-muted-foreground" />
+              </div>
             </div>
-            <p className="text-muted-foreground text-sm">{appState.error}</p>
-            <Button onClick={() => window.location.reload()} variant="outline">
-              Retry
+
+            {/* Heading */}
+            <div className="space-y-2">
+              <h2 className="text-2xl font-semibold text-foreground">
+                Can't Connect to Backend
+              </h2>
+              <p className="text-muted-foreground text-base">
+                No worries! Just start the DevUI backend server and you'll be good to go.
+              </p>
+            </div>
+
+            {/* Command Instructions */}
+            <div className="space-y-3">
+              <div className="text-left bg-muted/50 rounded-lg p-4 space-y-3">
+                <p className="text-sm font-medium text-foreground">Start the backend:</p>
+                <code className="block bg-background px-3 py-2 rounded border text-sm font-mono text-foreground">
+                  devui ./agents --port 8080
+                </code>
+                <p className="text-xs text-muted-foreground">
+                  Or launch programmatically with <code className="text-xs">serve(entities=[agent])</code>
+                </p>
+              </div>
+
+              <p className="text-xs text-muted-foreground">
+                Default: <span className="font-mono">http://localhost:8080</span>
+              </p>
+            </div>
+
+            {/* Error Details (Collapsible) */}
+            {appState.error && (
+              <details className="text-left group">
+                <summary className="text-sm text-muted-foreground cursor-pointer hover:text-foreground flex items-center gap-2">
+                  <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" />
+                  Error details
+                </summary>
+                <p className="mt-2 text-xs text-muted-foreground font-mono bg-muted/30 p-3 rounded border">
+                  {appState.error}
+                </p>
+              </details>
+            )}
+
+            {/* Retry Button */}
+            <Button
+              onClick={() => window.location.reload()}
+              variant="default"
+              className="mt-2"
+            >
+              Retry Connection
             </Button>
           </div>
         </div>
+
+        {/* Settings Modal */}
+        <SettingsModal
+          open={showAboutModal}
+          onOpenChange={setShowAboutModal}
+        />
       </div>
     );
   }
@@ -405,8 +460,8 @@ export default function App() {
         )}
       </div>
 
-      {/* About Modal */}
-      <AboutModal
+      {/* Settings Modal */}
+      <SettingsModal
         open={showAboutModal}
         onOpenChange={setShowAboutModal}
       />

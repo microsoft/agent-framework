@@ -55,16 +55,30 @@ interface ThreadApiObject {
   created_at?: string;
 }
 
-const API_BASE_URL =
+const DEFAULT_API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL !== undefined
     ? import.meta.env.VITE_API_BASE_URL
     : "http://localhost:8080";
 
+// Get backend URL from localStorage or default
+function getBackendUrl(): string {
+  return localStorage.getItem("devui_backend_url") || DEFAULT_API_BASE_URL;
+}
+
 class ApiClient {
   private baseUrl: string;
 
-  constructor(baseUrl: string = API_BASE_URL) {
-    this.baseUrl = baseUrl;
+  constructor(baseUrl?: string) {
+    this.baseUrl = baseUrl || getBackendUrl();
+  }
+
+  // Allow updating the base URL at runtime
+  setBaseUrl(url: string) {
+    this.baseUrl = url;
+  }
+
+  getBaseUrl(): string {
+    return this.baseUrl;
   }
 
   private async request<T>(

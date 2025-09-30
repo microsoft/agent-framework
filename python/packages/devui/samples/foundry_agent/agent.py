@@ -41,8 +41,8 @@ credential = AzureCliCredential()
 # Cleanup will happen when Python process exits
 client = AzureAIAgentClient(
     async_credential=credential,
-    project_endpoint=os.environ.get("AZURE_PROJECT_ENDPOINT"),
-    model_deployment_name=os.environ.get("AZURE_MODEL_DEPLOYMENT_NAME"),
+    project_endpoint=os.environ.get("AZURE_AI_PROJECT_ENDPOINT"),
+    model_deployment_name=os.environ.get("FOUNDRY_MODEL_DEPLOYMENT_NAME"),
 )
 
 # Agent instance following Agent Framework conventions

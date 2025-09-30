@@ -53,9 +53,13 @@ export function DialogContent({
   children,
   className = "",
 }: DialogContentProps) {
+  // Default width classes if none provided
+  const hasWidthClass = className.includes('w-[') || className.includes('w-full') || className.includes('max-w-');
+  const defaultWidthClasses = hasWidthClass ? '' : 'max-w-lg w-full';
+
   return (
     <div
-      className={`relative bg-background border rounded-lg shadow-lg max-w-lg w-full max-h-[90vh] overflow-hidden ${className}`}
+      className={`relative bg-background border rounded-lg shadow-lg max-h-[90vh] overflow-hidden ${defaultWidthClasses} ${className}`}
     >
       {children}
     </div>

@@ -20,8 +20,6 @@ from ._mapper import MessageMapper
 from .models import AgentFrameworkRequest, OpenAIError
 from .models._discovery_models import DiscoveryResponse, EntityInfo
 
-# Removed ExecutionEngine import - using direct executor approach
-
 logger = logging.getLogger(__name__)
 
 
@@ -337,7 +335,6 @@ class DevServer:
         async def create_response(request: AgentFrameworkRequest, raw_request: Request) -> Any:
             """OpenAI Responses API endpoint."""
             try:
-                # Debug: log the incoming request
                 raw_body = await raw_request.body()
                 logger.info(f"Raw request body: {raw_body.decode()}")
                 logger.info(f"Parsed request: model={request.model}, extra_body={request.extra_body}")
@@ -483,15 +480,21 @@ class DevServer:
         try:
             # Direct call to executor - simple and clean
             async for event in executor.execute_streaming(request):
-                if hasattr(event, "to_json") and callable(getattr(event, "to_json", None)):
-                    payload = event.to_json()  # type: ignore[attr-defined]
-                elif hasattr(event, "model_dump_json"):
+                # IMPORTANT: Check model_dump_json FIRST because to_json() can have newlines (pretty-printing)
+                # which breaks SSE format. model_dump_json() returns single-line JSON.
+                if hasattr(event, "model_dump_json"):
                     payload = event.model_dump_json()  # type: ignore[attr-defined]
+                elif hasattr(event, "to_json") and callable(getattr(event, "to_json", None)):
+                    payload = event.to_json()  # type: ignore[attr-defined]
+                    # Strip newlines from pretty-printed JSON for SSE compatibility
+                    payload = payload.replace("\n", "").replace("\r", "")
+                elif isinstance(event, dict):
+                    # Handle plain dict events (e.g., error events from executor)
+                    payload = json.dumps(event)
+                elif hasattr(event, "to_dict") and callable(getattr(event, "to_dict", None)):
+                    payload = json.dumps(event.to_dict())  # type: ignore[attr-defined]
                 else:
-                    if hasattr(event, "to_dict") and callable(getattr(event, "to_dict", None)):
-                        payload = json.dumps(event.to_dict())  # type: ignore[attr-defined]
-                    else:
-                        payload = json.dumps(str(event))
+                    payload = json.dumps(str(event))
                 yield f"data: {payload}\n\n"
 
             # Send final done event
@@ -500,7 +503,7 @@ class DevServer:
         except Exception as e:
             logger.error(f"Error in streaming execution: {e}")
             error_event = {"id": "error", "object": "error", "error": {"message": str(e), "type": "execution_error"}}
-            yield f"data: {error_event}\n\n"
+            yield f"data: {json.dumps(error_event)}\n\n"
 
     def _mount_ui(self, app: FastAPI) -> None:
         """Mount the UI as static files."""
