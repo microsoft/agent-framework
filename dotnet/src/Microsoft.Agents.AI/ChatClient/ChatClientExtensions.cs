@@ -11,7 +11,7 @@ namespace Microsoft.Extensions.AI;
 
 internal static class ChatClientExtensions
 {
-    internal static IChatClient WithDefaultAgentMiddleware(this IChatClient chatClient, ChatClientAgentOptions? options, IServiceProvider? functionInvocationServices = null)
+    internal static IChatClient WithDefaultAgentMiddleware(this IChatClient chatClient, ChatClientAgentOptions? options, IServiceProvider? services = null)
     {
         var chatBuilder = chatClient.AsBuilder();
 
@@ -25,7 +25,7 @@ internal static class ChatClientExtensions
             });
         }
 
-        var agentChatClient = chatBuilder.Build(functionInvocationServices);
+        var agentChatClient = chatBuilder.Build(services);
 
         if (options?.ChatOptions?.Tools is { Count: > 0 })
         {

@@ -12,7 +12,7 @@ namespace A2A;
 /// </summary>
 /// <remarks>
 /// These extensions bridge the gap between A2A SDK client objects
-/// and the Microsoft Extensions AI Agent framework.
+/// and the Microsoft Agent Framework.
 /// <para>
 /// They allow developers to easily create AI agents that can interact
 /// with A2A agents by handling the conversion from A2A clients to
