@@ -7,7 +7,7 @@ using System.IO;
 using System.Text.Json;
 using Azure.AI.OpenAI;
 using Azure.Identity;
-using Microsoft.Extensions.AI.Agents;
+using Microsoft.Agents.AI;
 using OpenAI;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
@@ -30,7 +30,7 @@ AgentThread thread = agent.GetNewThread();
 Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate.", thread));
 
 // Serialize the thread state to a JsonElement, so it can be stored for later use.
-JsonElement serializedThread = await thread.SerializeAsync();
+JsonElement serializedThread = thread.Serialize();
 
 // Save the serialized thread to a temporary file (for demonstration purposes).
 string tempFilePath = Path.GetTempFileName();

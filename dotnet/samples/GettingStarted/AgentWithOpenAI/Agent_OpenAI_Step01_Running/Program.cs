@@ -5,7 +5,7 @@
 using System;
 using System.ClientModel;
 using System.Linq;
-using Microsoft.Extensions.AI.Agents;
+using Microsoft.Agents.AI;
 using OpenAI;
 using OpenAI.Chat;
 

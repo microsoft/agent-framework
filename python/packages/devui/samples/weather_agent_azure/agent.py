@@ -5,7 +5,7 @@ import os
 from typing import Annotated
 
 from agent_framework import ChatAgent
-from agent_framework.azure import AzureChatClient
+from agent_framework.azure import AzureOpenAIChatClient
 
 
 def get_weather(
@@ -42,7 +42,7 @@ agent = ChatAgent(
     and forecasts for any location. Always be helpful and provide detailed
     weather information when asked.
     """,
-    chat_client=AzureChatClient(
+    chat_client=AzureOpenAIChatClient(
         api_key=os.environ.get("AZURE_OPENAI_API_KEY", ""),
     ),
     tools=[get_weather, get_forecast],

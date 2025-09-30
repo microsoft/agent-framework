@@ -4,7 +4,7 @@
 // WARNING: ONNX doesn't support function calling, so any function tools passed to the agent will be ignored.
 
 using System;
-using Microsoft.Extensions.AI.Agents;
+using Microsoft.Agents.AI;
 using Microsoft.ML.OnnxRuntimeGenAI;
 
 // E.g. C:\repos\Phi-4-mini-instruct-onnx\cpu_and_mobile\cpu-int4-rtn-block-32-acc-level-4

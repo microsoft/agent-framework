@@ -1,0 +1,72 @@
+name: Python - Lab Tests
+
+on:
+  pull_request:
+    branches: ["main", "feature*"]
+    paths:
+      - "python/packages/lab/**"
+  push:
+    branches: ["main"]
+    paths:
+      - "python/packages/lab/**"
+
+env:
+  # Configure a constant location for the uv cache
+  UV_CACHE_DIR: /tmp/.uv-cache
+
+jobs:
+  python-lab-tests:
+    name: Python Lab Tests
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        # TODO(ekzhu): re-enable macos-latest when this is fixed: https://github.com/actions/runner-images/issues/11881
+        os: [ubuntu-latest, windows-latest]
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up python and install the project
+        id: python-setup
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ matrix.python-version }}
+          os: ${{ runner.os }}
+        env:
+          # Configure a constant location for the uv cache
+          UV_CACHE_DIR: /tmp/.uv-cache
+
+      # Lab specific tests
+      - name: Run lab tests
+        run: cd packages/lab && uv run poe test
+
+      - name: Run lab lint
+        run: cd packages/lab && uv run poe lint
+
+      - name: Run lab format check
+        run: cd packages/lab && uv run poe fmt --check
+
+      - name: Run lab type checking
+        run: cd packages/lab && uv run poe pyright
+
+      - name: Run lab mypy
+        run: cd packages/lab && uv run poe mypy
+
+      # Surface failing tests
+      - name: Surface failing tests
+        if: always()
+        uses: pmeier/pytest-results-action@v0.7.2
+        with:
+          path: ./python/packages/lab/**.xml
+          summary: true
+          display-options: fEX
+          fail-on-empty: false
+          title: Lab Test Results

@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework.copilotstudio import CopilotStudioAgent
+from agent_framework.microsoft import CopilotStudioAgent
 
 # Environment variables needed:
 # COPILOTSTUDIOAGENT__ENVIRONMENTID - Environment ID where your copilot is deployed

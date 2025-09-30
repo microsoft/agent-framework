@@ -159,7 +159,7 @@ Alternatively, you can run them using VSCode Tasks. Open the command palette
 If you want to run the tests for a single package, you can use the `uv run poe test` command with the package name as an argument. For example, to run the tests for the `agent_framework` package, you can use:
 
 ```bash
-uv run poe --directory packages/main test
+uv run poe --directory packages/core test
 ```
 
 These commands also output the coverage report.
@@ -275,7 +275,7 @@ The package follows a flat import structure:
 - **Connectors**: Import from `agent_framework.<vendor/platform>`
   ```python
   from agent_framework.openai import OpenAIChatClient
-  from agent_framework.azure import AzureChatClient
+  from agent_framework.azure import AzureOpenAIChatClient
   ```
 
 ## Testing

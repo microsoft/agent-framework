@@ -8,8 +8,7 @@ Make sure to run 'az login' before starting devui.
 import os
 from typing import Annotated
 
-from agent_framework import ChatAgent
-from agent_framework.foundry import FoundryChatClient
+from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
 
 
@@ -38,21 +37,16 @@ def get_forecast(
     return f"Weather forecast for {location}:\n" + "\n".join(forecast)
 
 
-# Create Azure CLI credential (requires 'az login' to be run first)
-# The credential is kept alive for the lifetime of the process
 credential = AzureCliCredential()
-
-# Create Foundry client with credential
-# Note: Context manager not used here for module-level instantiation
 # Cleanup will happen when Python process exits
-client = FoundryChatClient(
+client = AzureAIAgentClient(
     async_credential=credential,
-    project_endpoint=os.environ.get("FOUNDRY_PROJECT_ENDPOINT"),
-    model_deployment_name=os.environ.get("FOUNDRY_MODEL_DEPLOYMENT_NAME"),
+    project_endpoint=os.environ.get("AZURE_PROJECT_ENDPOINT"),
+    model_deployment_name=os.environ.get("AZURE_MODEL_DEPLOYMENT_NAME"),
 )
 
 # Agent instance following Agent Framework conventions
-agent = ChatAgent(
+agent = client.create_agent(
     name="FoundryWeatherAgent",
     description="A helpful agent using Azure AI Foundry that provides weather information",
     instructions="""
@@ -60,7 +54,6 @@ agent = ChatAgent(
     current weather information and forecasts for any location. Always be helpful
     and provide detailed weather information when asked.
     """,
-    chat_client=client,
     tools=[get_weather, get_forecast],
 )
 

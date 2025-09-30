@@ -12,11 +12,6 @@ A lightweight, standalone sample app interface for running entities (agents/work
 ```bash
 # Install
 pip install agent-framework-devui
-
-# Launch web UI + API server
-devui ./agents --port 8080
-# → Web UI: http://localhost:8080
-# → API: http://localhost:8080/v1/*
 ```
 
 You can also launch it programmatically
@@ -42,21 +37,17 @@ serve(entities=[agent], auto_open=True)
 # → Opens browser to http://localhost:8080
 ```
 
-## Entity Gallery
-
-When DevUI starts with no discovered entities, it displays a **sample entity gallery** with curated examples from the Agent Framework repository. This helps you:
-
-- **Get started quickly** with working examples
-- **Learn Agent Framework patterns** from beginner to advanced
-- **Experiment** with different agent and workflow types
-
-## Viewing Telemetry (Otel Traces) in DevUI
-
-Agent Framework emits OpenTelemetry (Otel) traces for various operations. You can view these traces in DevUI by enabling tracing when starting the server.
+In addition, if you have agents/workflows defined in a specific directory structure (see below), you can launch DevUI from the _cli_ to discover and run them.
 
 ```bash
-devui ./agents --tracing framework
+
+# Launch web UI + API server
+devui ./agents --port 8080
+# → Web UI: http://localhost:8080
+# → API: http://localhost:8080/v1/*
 ```
+
+When DevUI starts with no discovered entities, it displays a **sample entity gallery** with curated examples from the Agent Framework repository to help you get started quickly.
 
 ## Directory Structure
 
@@ -77,6 +68,14 @@ agents/
 └── .env                 # Optional: shared environment variables
 ```
 
+## Viewing Telemetry (Otel Traces) in DevUI
+
+Agent Framework emits OpenTelemetry (Otel) traces for various operations. You can view these traces in DevUI by enabling tracing when starting the server.
+
+```bash
+devui ./agents --tracing framework
+```
+
 ## OpenAI-Compatible API
 
 For convenience, you can interact with the agents/workflows using the standard OpenAI API format. Just specify the `entity_id` in the `extra_body` field. This can be an `agent_id` or `workflow_id`.
@@ -91,26 +90,8 @@ curl -X POST http://localhost:8080/v1/responses \
   "input": "Hello world",
   "extra_body": {"entity_id": "weather_agent"}
 }
-EOF
+
 ```
-
-Messages and events from agents/workflows are mapped to OpenAI response types in `agent_framework_devui/_mapper.py`. See the mapping table below:
-
-| Agent Framework Content           | OpenAI Event                              | Type     |
-| --------------------------------- | ----------------------------------------- | -------- |
-| `TextContent`                     | `ResponseTextDeltaEvent`                  | Official |
-| `TextReasoningContent`            | `ResponseReasoningTextDeltaEvent`         | Official |
-| `FunctionCallContent`             | `ResponseFunctionCallArgumentsDeltaEvent` | Official |
-| `FunctionResultContent`           | `ResponseFunctionResultComplete`          | Custom   |
-| `ErrorContent`                    | `ResponseErrorEvent`                      | Official |
-| `UsageContent`                    | `ResponseUsageEventComplete`              | Custom   |
-| `DataContent`                     | `ResponseTraceEventComplete`              | Custom   |
-| `UriContent`                      | `ResponseTraceEventComplete`              | Custom   |
-| `HostedFileContent`               | `ResponseTraceEventComplete`              | Custom   |
-| `HostedVectorStoreContent`        | `ResponseTraceEventComplete`              | Custom   |
-| `FunctionApprovalRequestContent`  | Custom event                              | Custom   |
-| `FunctionApprovalResponseContent` | Custom event                              | Custom   |
-| `WorkflowEvent`                   | `ResponseWorkflowEventComplete`           | Custom   |
 
 ## CLI Options
 

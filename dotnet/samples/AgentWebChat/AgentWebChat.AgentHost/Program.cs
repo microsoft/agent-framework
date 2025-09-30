@@ -1,15 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Text.Json;
 using AgentWebChat.AgentHost;
 using AgentWebChat.AgentHost.Utilities;
-using Microsoft.Agents.Orchestration;
-using Microsoft.Azure.Cosmos;
+using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Hosting;
+using Microsoft.Agents.AI.Hosting.A2A.AspNetCore;
+using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
-using Microsoft.Extensions.AI.Agents.Hosting;
-using Microsoft.Extensions.AI.Agents.Hosting.A2A.AspNetCore;
-using Microsoft.Extensions.AI.Agents.Runtime.Storage.CosmosDB;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -19,19 +16,6 @@ builder.Services.AddOpenApi();
 
 // Add services to the container.
 builder.Services.AddProblemDetails();
-
-// Add CosmosDB client integration
-builder.AddAzureCosmosClient("agent-web-chat-cosmosdb", null, CosmosClientOptions =>
-{
-    CosmosClientOptions.ApplicationName = "AgentWebChat";
-    CosmosClientOptions.ConnectionMode = ConnectionMode.Direct;
-    CosmosClientOptions.ConsistencyLevel = ConsistencyLevel.Session;
-    CosmosClientOptions.UseSystemTextJsonSerializerWithOptions = new JsonSerializerOptions()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        TypeInfoResolver = CosmosActorStateJsonContext.Default
-    };
-});
 
 // Configure the chat model and our agent.
 builder.AddKeyedChatClient("chat-model");
@@ -74,11 +58,11 @@ builder.AddAIAgent("knights-and-knaves", (sp, key) =>
         If the user asks a general question about their surrounding, make something up which is consistent with the scenario.
         """, "Narrator");
 
-    return new ConcurrentOrchestration([knight, knave, narrator], name: key);
+    // TODO: How to avoid sync-over-async here?
+#pragma warning disable VSTHRD002 // Avoid problematic synchronous waits
+    return AgentWorkflowBuilder.BuildConcurrent([knight, knave, narrator]).AsAgentAsync(name: key).AsTask().GetAwaiter().GetResult();
+#pragma warning restore VSTHRD002
 });
-
-// Add CosmosDB state storage to override default storage
-builder.Services.AddCosmosActorStateStorage("actor-state-db", "ActorState");
 
 var app = builder.Build();
 
@@ -88,11 +72,9 @@ app.UseSwaggerUI(options => options.SwaggerEndpoint("/openapi/v1.json", "Agents 
 // Configure the HTTP request pipeline.
 app.UseExceptionHandler();
 
-app.MapActors();
-
 // attach a2a with simple message communication
-app.AttachA2A(agentName: "pirate", path: "/a2a/pirate");
-app.AttachA2A(agentName: "knights-and-knaves", path: "/a2a/knights-and-knaves", agentCard: new()
+app.MapA2A(agentName: "pirate", path: "/a2a/pirate");
+app.MapA2A(agentName: "knights-and-knaves", path: "/a2a/knights-and-knaves", agentCard: new()
 {
     Name = "Knights and Knaves",
     Description = "An agent that helps you solve the knights and knaves puzzle.",

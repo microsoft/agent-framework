@@ -8,11 +8,10 @@ import traceback
 from datetime import datetime
 from typing import Any
 
+from agent_framework.lab.tau2 import TaskRunner, patch_env_set_state
 from agent_framework.openai import OpenAIChatClient
 from loguru import logger
 from tau2.domains.airline.environment import get_tasks
-
-from agent_framework_lab_tau2 import TaskRunner, patch_env_set_state
 
 
 def to_dumpable(result: dict[str, Any]) -> dict[str, Any]:
@@ -33,16 +32,15 @@ def to_dumpable(result: dict[str, Any]) -> dict[str, Any]:
             "config": result["config"],
             "task": result["task"].model_dump(),
         }
-    else:
-        # Success case: full result structure
-        return {
-            "id": result["task"].id,
-            "evaluation": result["evaluation"].model_dump(),  # Detailed evaluation metrics
-            "config": result["config"],  # Model configuration used
-            "termination_reason": result["termination_reason"].value,  # Enum to string
-            "messages": [m.model_dump() for m in result["messages"]],  # Full conversation
-            "task": result["task"].model_dump(),  # Task specification
-        }
+    # Success case: full result structure
+    return {
+        "id": result["task"].id,
+        "evaluation": result["evaluation"].model_dump(),  # Detailed evaluation metrics
+        "config": result["config"],  # Model configuration used
+        "termination_reason": result["termination_reason"].value,  # Enum to string
+        "messages": [m.model_dump() for m in result["messages"]],  # Full conversation
+        "task": result["task"].model_dump(),  # Task specification
+    }
 
 
 async def run_benchmark(assistant_model: str, user_model: str, debug_task_id: str | None, max_steps: int):
@@ -66,15 +64,13 @@ async def run_benchmark(assistant_model: str, user_model: str, debug_task_id: st
         Creates timestamped JSONL file with detailed results for analysis
         Prints summary statistics to console with colored logging
     """
-
     # STEP 1: Configure output handling based on execution mode
-    result_fp = None
+    result_filename = None
     if debug_task_id is None:
         # Full benchmark mode: create timestamped results file
         timestamp = datetime.now().strftime("%m%d%H%M")  # Format: MMDDHHMM
         result_filename = f"results/{assistant_model}_user-{user_model}_{timestamp}.jsonl"
         os.makedirs("results", exist_ok=True)
-        result_fp = open(result_filename, "a")  # Append mode for resumability
         logger.info(f"Results will be saved to: {result_filename}")
     else:
         # Debug mode: single task, no file output, verbose logging
@@ -84,7 +80,7 @@ async def run_benchmark(assistant_model: str, user_model: str, debug_task_id: st
     tasks = get_tasks()  # Loads all tau2 airline customer service tasks
     logger.info(f"Found {len(tasks)} tasks in the dataset")
 
-    _logger = logger.opt(colors=True)  # Enable colored console output
+    logger_ = logger.opt(colors=True)  # Enable colored console output
 
     # Validate required OpenAI configuration
     # Both models use the same endpoint but can be different model types
@@ -121,67 +117,110 @@ async def run_benchmark(assistant_model: str, user_model: str, debug_task_id: st
     all_rewards: list[float] = []  # Stores reward scores for final statistics
     task_runner = TaskRunner(max_steps=max_steps)  # Reusable workflow orchestrator
 
-    # STEP 6: Execute benchmark across all tasks
-    for task in tasks:
-        _logger.info(f"<red>Testing task #{task.id}</red>")
-        _logger.info(f"<cyan>Purpose:</cyan> {task.description.purpose}")  # type: ignore
-
-        # Initialize result structure for this task
-        result: dict[str, Any] = {
-            "config": {
-                "assistant": assistant_chat_client.ai_model_id,
-                "user": user_simulator_chat_client.ai_model_id,
-            },
-            "task": task,
-        }
-
-        # Log user scenario context for transparency
-        if task.user_scenario and task.user_scenario.instructions:
-            _logger.info(f"<cyan>User scenario:</cyan> {task.user_scenario.instructions.reason_for_call}")  # type: ignore
-
-        try:
-            # Execute the workflow: agent + user simulator conversation
-            conversation = await task_runner.run(task, assistant_chat_client, user_simulator_chat_client)
-
-            # Evaluate performance using tau2's comprehensive metrics
-            reward_value = task_runner.evaluate(task, conversation, task_runner.termination_reason)
-
-            # Store detailed results for analysis
-            result["evaluation"] = task_runner.full_reward_info  # Full evaluation breakdown
-            result["messages"] = conversation  # Complete conversation history
-            result["termination_reason"] = task_runner.termination_reason  # How conversation ended
-
-            # Log evaluation results (escape HTML for colored output)
-            reward_str = str(task_runner.full_reward_info).replace("<", r"\<")
-            _logger.info(f"<cyan>Final evaluation:</cyan> {reward_str}")
-
-        except Exception as e:
-            # Robust error handling: capture all failures for analysis
-            _logger.error(f"<red>Error testing task #{task.id}:</red> {e}")
-            result["error"] = traceback.format_exc()  # Full stack trace for debugging
-
-            traceback.print_exc()  # Console output for immediate debugging
-            reward_value = 0.0  # Zero score for failed runs
-
-        # STEP 7: Persist results incrementally (enables partial analysis)
+    # STEP 6: Execute benchmark across all tasks with proper file handling
+    def write_result(result_fp, result):
+        """Write result to file if file pointer is provided."""
         if result_fp is not None:
             result_fp.write(json.dumps(to_dumpable(result), default=str) + "\n")
 
-        all_rewards.append(reward_value)  # Track for final statistics
+    # Use context manager for file handling
+    if result_filename:
+        with open(result_filename, "a") as result_fp:
+            for task in tasks:
+                logger_.info(f"<red>Testing task #{task.id}</red>")
+                logger_.info(f"<cyan>Purpose:</cyan> {task.description.purpose}")  # type: ignore
 
-        # Reset runner state for next task
-        task_runner.reinit()
+                # Initialize result structure for this task
+                result: dict[str, Any] = {
+                    "config": {
+                        "assistant": assistant_chat_client.ai_model_id,
+                        "user": user_simulator_chat_client.ai_model_id,
+                    },
+                    "task": task,
+                }
 
-    # STEP 8: Finalize and report aggregate results
-    if result_fp is not None:
-        result_fp.close()
+                # Log user scenario context for transparency
+                if task.user_scenario and task.user_scenario.instructions:
+                    logger_.info(f"<cyan>User scenario:</cyan> {task.user_scenario.instructions.reason_for_call}")  # type: ignore
 
-    # Calculate overall benchmark performance
+                try:
+                    # Execute the workflow: agent + user simulator conversation
+                    conversation = await task_runner.run(task, assistant_chat_client, user_simulator_chat_client)
+
+                    # Evaluate performance using tau2's comprehensive metrics
+                    reward_value = task_runner.evaluate(task, conversation, task_runner.termination_reason)
+
+                    # Store detailed results for analysis
+                    result["evaluation"] = task_runner.full_reward_info  # Full evaluation breakdown
+                    result["messages"] = conversation  # Complete conversation history
+                    result["termination_reason"] = task_runner.termination_reason  # How conversation ended
+
+                    # Log evaluation results (escape HTML for colored output)
+                    reward_str = str(task_runner.full_reward_info).replace("<", r"\<")
+                    logger_.info(f"<cyan>Final evaluation:</cyan> {reward_str}")
+
+                except Exception as e:
+                    # Robust error handling: capture all failures for analysis
+                    logger_.error(f"<red>Error testing task #{task.id}:</red> {e}")
+                    result["error"] = traceback.format_exc()  # Full stack trace for debugging
+
+                    traceback.print_exc()  # Console output for immediate debugging
+                    reward_value = 0.0  # Zero score for failed runs
+
+                # STEP 7: Persist results incrementally (enables partial analysis)
+                write_result(result_fp, result)
+
+                all_rewards.append(reward_value)  # Track for final statistics
+
+                # Reset runner state for next task
+                task_runner.reinit()
+    else:
+        # Debug mode without file output
+        for task in tasks:
+            logger_.info(f"<red>Testing task #{task.id}</red>")
+            logger_.info(f"<cyan>Purpose:</cyan> {task.description.purpose}")  # type: ignore
+
+            # Initialize result structure for this task
+            result: dict[str, Any] = {
+                "config": {
+                    "assistant": assistant_chat_client.ai_model_id,
+                    "user": user_simulator_chat_client.ai_model_id,
+                },
+                "task": task,
+            }
+
+            # Log user scenario context for transparency
+            if task.user_scenario and task.user_scenario.instructions:
+                logger_.info(f"<cyan>User scenario:</cyan> {task.user_scenario.instructions.reason_for_call}")  # type: ignore
+
+            try:
+                # Execute the workflow: agent + user simulator conversation
+                conversation = await task_runner.run(task, assistant_chat_client, user_simulator_chat_client)
+
+                # Evaluate performance using tau2's comprehensive metrics
+                reward_value = task_runner.evaluate(task, conversation, task_runner.termination_reason)
+
+                # Log evaluation results (escape HTML for colored output)
+                reward_str = str(task_runner.full_reward_info).replace("<", r"\<")
+                logger_.info(f"<cyan>Final evaluation:</cyan> {reward_str}")
+
+            except Exception as e:
+                # Robust error handling: capture all failures for analysis
+                logger_.error(f"<red>Error testing task #{task.id}:</red> {e}")
+                traceback.print_exc()  # Console output for immediate debugging
+                reward_value = 0.0  # Zero score for failed runs
+
+            all_rewards.append(reward_value)  # Track for final statistics
+
+            # Reset runner state for next task
+            task_runner.reinit()
+
+    # STEP 8: Calculate overall benchmark performance and report final statistics
     all_accuracy = sum(all_rewards) / len(all_rewards) if all_rewards else 0.0
 
     # Report final statistics with colored formatting
-    _logger.info("<green>Final Results:</green>")
-    _logger.info(f"<cyan>All tasks accuracy:</cyan> {all_accuracy:.2f} ({int(sum(all_rewards))}/{len(tasks)})")
+    logger_.info("<green>Final Results:</green>")
+    logger_.info(f"<cyan>All tasks accuracy:</cyan> {all_accuracy:.2f} ({int(sum(all_rewards))}/{len(tasks)})")
 
 
 if __name__ == "__main__":

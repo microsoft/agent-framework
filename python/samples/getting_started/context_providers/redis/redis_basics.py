@@ -27,21 +27,17 @@ Run:
   python redis_basics.py
 """
 
-import os
 import asyncio
+import os
 
 from agent_framework import ChatMessage, Role
-from agent_framework_redis._provider import RedisProvider
 from agent_framework.openai import OpenAIChatClient
-from redisvl.utils.vectorize import OpenAITextVectorizer
+from agent_framework_redis._provider import RedisProvider
 from redisvl.extensions.cache.embeddings import EmbeddingsCache
+from redisvl.utils.vectorize import OpenAITextVectorizer
 
 
-def search_flights(
-    origin_airport_code: str,
-    destination_airport_code: str,
-    detailed: bool = False
-) -> str:
+def search_flights(origin_airport_code: str, destination_airport_code: str, detailed: bool = False) -> str:
     """Simulated flight-search tool to demonstrate tool memory.
 
     The agent can call this function, and the returned details can be stored
@@ -50,9 +46,27 @@ def search_flights(
     """
     # Minimal static catalog used to simulate a tool's structured output
     flights = {
-        ("JFK", "LAX"): {"airline": "SkyJet", "duration": "6h 15m", "price": 325, "cabin": "Economy", "baggage": "1 checked bag"},
-        ("SFO", "SEA"): {"airline": "Pacific Air", "duration": "2h 5m", "price": 129, "cabin": "Economy", "baggage": "Carry-on only"},
-        ("LHR", "DXB"): {"airline": "EuroWings", "duration": "6h 50m", "price": 499, "cabin": "Business", "baggage": "2 bags included"},
+        ("JFK", "LAX"): {
+            "airline": "SkyJet",
+            "duration": "6h 15m",
+            "price": 325,
+            "cabin": "Economy",
+            "baggage": "1 checked bag",
+        },
+        ("SFO", "SEA"): {
+            "airline": "Pacific Air",
+            "duration": "2h 5m",
+            "price": 129,
+            "cabin": "Economy",
+            "baggage": "Carry-on only",
+        },
+        ("LHR", "DXB"): {
+            "airline": "EuroWings",
+            "duration": "6h 50m",
+            "price": 499,
+            "cabin": "Business",
+            "baggage": "2 bags included",
+        },
     }
 
     route = (origin_airport_code.upper(), destination_airport_code.upper())
@@ -97,7 +111,7 @@ async def main() -> None:
     )
     # The provider manages persistence and retrieval. application_id/agent_id/user_id
     # scope data for multi-tenant separation; thread_id (set later) narrows to a
-    # specific conversation. 
+    # specific conversation.
     provider = RedisProvider(
         redis_url="redis://localhost:6379",
         index_name="redis_basics",
@@ -109,7 +123,7 @@ async def main() -> None:
         vector_algorithm="hnsw",
         vector_distance_metric="cosine",
     )
-    
+
     # Build sample chat messages to persist to Redis
     messages = [
         ChatMessage(role=Role.USER, text="runA CONVO: User Message"),
@@ -121,14 +135,12 @@ async def main() -> None:
     # Threads are logical boundaries used by the provider to group and retrieve
     # conversation-specific context.
     await provider.thread_created(thread_id="runA")
-    await provider.messages_adding(thread_id="runA", new_messages=messages)
+    await provider.invoked(request_messages=messages)
 
     # Retrieve relevant memories for a hypothetical model call. The provider uses
     # the current request messages as the retrieval query and returns context to
     # be injected into the model's instructions.
-    ctx = await provider.model_invoking([
-        ChatMessage(role=Role.SYSTEM, text="B: Assistant Message")
-    ])
+    ctx = await provider.invoking([ChatMessage(role=Role.SYSTEM, text="B: Assistant Message")])
 
     # Inspect retrieved memories that would be injected into instructions
     # (Debug-only output so you can verify retrieval works as expected.)
@@ -167,13 +179,14 @@ async def main() -> None:
     # Create agent wired to the Redis context provider. The provider automatically
     # persists conversational details and surfaces relevant context on each turn.
     agent = client.create_agent(
-            name="MemoryEnhancedAssistant",
-            instructions=(
-                "You are a helpful assistant. Personalize replies using provided context. "
-                "Before answering, always check for stored context"
-            ),
-            tools=[],
-            context_providers=provider)
+        name="MemoryEnhancedAssistant",
+        instructions=(
+            "You are a helpful assistant. Personalize replies using provided context. "
+            "Before answering, always check for stored context"
+        ),
+        tools=[],
+        context_providers=provider,
+    )
 
     # Teach a user preference; the agent writes this to the provider's memory
     query = "Remember that I enjoy glugenflorgle"
@@ -201,20 +214,21 @@ async def main() -> None:
         prefix="context_3",
         application_id="matrix_of_kermits",
         agent_id="agent_kermit",
-        user_id="kermit"
+        user_id="kermit",
     )
 
     # Create agent exposing the flight search tool. Tool outputs are captured by the
     # provider and become retrievable context for later turns.
     client = OpenAIChatClient(ai_model_id=os.getenv("OPENAI_CHAT_MODEL_ID"), api_key=os.getenv("OPENAI_API_KEY"))
     agent = client.create_agent(
-            name="MemoryEnhancedAssistant",
-            instructions=(
-                "You are a helpful assistant. Personalize replies using provided context. "
-                "Before answering, always check for stored context"
-            ),
-            tools=search_flights,
-            context_providers=provider)
+        name="MemoryEnhancedAssistant",
+        instructions=(
+            "You are a helpful assistant. Personalize replies using provided context. "
+            "Before answering, always check for stored context"
+        ),
+        tools=search_flights,
+        context_providers=provider,
+    )
     # Invoke the tool; outputs become part of memory/context
     query = "Are there any flights from new york city (jfk) to la? Give me details"
     result = await agent.run(query)
@@ -228,6 +242,7 @@ async def main() -> None:
 
     # Drop / delete the provider index in Redis
     await provider.redis_index.delete()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

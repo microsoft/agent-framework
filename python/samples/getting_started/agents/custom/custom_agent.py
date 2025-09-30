@@ -101,8 +101,7 @@ class EchoAgent(BaseAgent):
 
         # Notify the thread of new messages if provided
         if thread is not None:
-            await self._notify_thread_of_new_messages(thread, normalized_messages)
-            await self._notify_thread_of_new_messages(thread, response_message)
+            await self._notify_thread_of_new_messages(thread, normalized_messages, response_message)
 
         return AgentRunResponse(messages=[response_message])
 
@@ -136,10 +135,6 @@ class EchoAgent(BaseAgent):
             else:
                 response_text = f"{self.echo_prefix}[Non-text message received]"
 
-        # Notify the thread of input messages if provided
-        if thread is not None:
-            await self._notify_thread_of_new_messages(thread, normalized_messages)
-
         # Simulate streaming by yielding the response word by word
         words = response_text.split()
         for i, word in enumerate(words):
@@ -157,7 +152,7 @@ class EchoAgent(BaseAgent):
         # Notify the thread of the complete response if provided
         if thread is not None:
             complete_response = ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text=response_text)])
-            await self._notify_thread_of_new_messages(thread, complete_response)
+            await self._notify_thread_of_new_messages(thread, normalized_messages, complete_response)
 
 
 async def main() -> None:

@@ -46,7 +46,7 @@ Your Azure AD App Registration should have:
 
 ```python
 import asyncio
-from agent_framework.copilotstudio import CopilotStudioAgent
+from agent_framework.microsoft import CopilotStudioAgent
 
 # Uses environment variables for configuration
 async def main():
@@ -63,7 +63,7 @@ asyncio.run(main())
 ### Explicit Configuration
 
 ```python
-from agent_framework.copilotstudio import CopilotStudioAgent, acquire_token
+from agent_framework.microsoft import CopilotStudioAgent, acquire_token
 from microsoft_agents.copilotstudio.client import ConnectionSettings, CopilotClient, PowerPlatformCloud, AgentType
 
 # Acquire token manually

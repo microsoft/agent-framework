@@ -1,6 +1,6 @@
 # Agent Examples
 
-This folder contains examples demonstrating how to create and use agents with different chat clients from the Agent Framework. Each sub-folder focuses on a specific provider and client type, showing various capabilities like function tools, code interpreter, thread management, and more.
+This folder contains examples demonstrating how to create and use agents with different chat clients from the Agent Framework. Each sub-folder focuses on a specific provider and client type, showing various capabilities like function tools, code interpreter, thread management, structured outputs, image processing, web search, Model Context Protocol (MCP) integration, and more.
 
 ## Examples by Provider
 
@@ -8,26 +8,34 @@ This folder contains examples demonstrating how to create and use agents with di
 
 | Folder | Description |
 |--------|-------------|
-| **[`foundry/`](foundry/)** | Create agents using Azure AI Foundry |
+| **[`azure_ai/`](azure_ai/)** | Create agents using Azure AI Foundry Agent Service with various tools including function tools, code interpreter, MCP integration, and thread management |
 
 ### Microsoft Copilot Studio Examples
 
 | Folder | Description |
 |--------|-------------|
-| **[`copilotstudio/`](copilotstudio/)** | Create agents using Microsoft Copilot Studio |
+| **[`copilotstudio/`](copilotstudio/)** | Create agents using Microsoft Copilot Studio with streaming and non-streaming responses, authentication handling, and explicit configuration options |
 
 ### Azure OpenAI Examples
 
 | Folder | Description |
 |--------|-------------|
-| **[`azure_assistants_client/`](azure_assistants_client/)** | Create agents using Azure OpenAI Assistants API |
-| **[`azure_chat_client/`](azure_chat_client/)** | Create agents using Azure OpenAI Chat Completions API |
-| **[`azure_responses_client/`](azure_responses_client/)** | Create agents using Azure OpenAI Responses API |
+| **[`azure_openai/`](azure_openai/)** | Create agents using Azure OpenAI APIs with multiple client types (Assistants, Chat, and Responses clients) supporting function tools, code interpreter, thread management, and more |
 
 ### OpenAI Examples
 
 | Folder | Description |
 |--------|-------------|
-| **[`openai_assistants_client/`](openai_assistants_client/)** | Create agents using OpenAI Assistants API |
-| **[`openai_chat_client/`](openai_chat_client/)** | Create agents using OpenAI Chat Completions API |
-| **[`openai_responses_client/`](openai_responses_client/)** | Create agents using OpenAI Responses API |
+| **[`openai/`](openai/)** | Create agents using OpenAI APIs with comprehensive examples including Assistants, Chat, and Responses clients featuring function tools, code interpreter, file search, web search, MCP integration, image analysis/generation, structured outputs, reasoning, and thread management |
+
+### Anthropic Examples
+
+| Folder | Description |
+|--------|-------------|
+| **[`anthropic/`](anthropic/)** | Create agents using Anthropic models through OpenAI Chat Client configuration, demonstrating tool calling capabilities |
+
+### Custom Implementation Examples
+
+| Folder | Description |
+|--------|-------------|
+| **[`custom/`](custom/)** | Create custom agents and chat clients by extending the base framework classes, showing complete control over agent behavior and backend integration |

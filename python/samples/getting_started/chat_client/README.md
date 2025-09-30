@@ -10,7 +10,7 @@ This folder contains simple examples demonstrating direct usage of various chat 
 | [`azure_chat_client.py`](azure_chat_client.py) | Direct usage of Azure Chat Client for chat interactions with Azure OpenAI models. |
 | [`azure_responses_client.py`](azure_responses_client.py) | Direct usage of Azure Responses Client for structured response generation with Azure OpenAI models. |
 | [`chat_response_cancellation.py`](chat_response_cancellation.py) | Demonstrates how to cancel chat responses during streaming, showing proper cancellation handling and cleanup. |
-| [`foundry_chat_client.py`](foundry_chat_client.py) | Direct usage of Foundry Chat Client for chat interactions with Azure AI Foundry models. |
+| [`azure_ai_chat_client.py`](azure_ai_chat_client.py) | Direct usage of Azure AI Chat Client for chat interactions with Azure AI models. |
 | [`openai_assistants_client.py`](openai_assistants_client.py) | Direct usage of OpenAI Assistants Client for basic chat interactions with OpenAI assistants. |
 | [`openai_chat_client.py`](openai_chat_client.py) | Direct usage of OpenAI Chat Client for chat interactions with OpenAI models. |
 | [`openai_responses_client.py`](openai_responses_client.py) | Direct usage of OpenAI Responses Client for structured response generation with OpenAI models. |
@@ -24,9 +24,9 @@ Depending on which client you're using, set the appropriate environment variable
 - `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`: The name of your Azure OpenAI chat deployment
 - `AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME`: The name of your Azure OpenAI responses deployment
 
-**For Foundry client:**
-- `FOUNDRY_PROJECT_ENDPOINT`: Your Azure AI Foundry project endpoint
-- `FOUNDRY_MODEL_DEPLOYMENT_NAME`: The name of your model deployment
+**For Azure AI client:**
+- `AZURE_AI_PROJECT_ENDPOINT`: Your Azure AI project endpoint
+- `AZURE_AI_MODEL_DEPLOYMENT_NAME`: The name of your model deployment
 
 **For OpenAI clients:**
 - `OPENAI_API_KEY`: Your OpenAI API key

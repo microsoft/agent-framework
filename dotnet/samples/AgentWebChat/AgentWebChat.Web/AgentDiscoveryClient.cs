@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Text.Json;
-using Microsoft.Extensions.AI.Agents.Hosting;
+using Microsoft.Agents.AI.Hosting;
 
 namespace AgentWebChat.Web;
 
@@ -16,7 +16,6 @@ public class AgentDiscoveryClient(HttpClient httpClient, ILogger<AgentDiscoveryC
         var agents = JsonSerializer.Deserialize<List<AgentDiscoveryCard>>(json, AgentHostingJsonUtilities.DefaultOptions) ?? [];
 
         logger.LogInformation("Retrieved {AgentCount} agents from the API", agents.Count);
-        _ = new HttpActorClient(null!);
         return agents;
     }
 

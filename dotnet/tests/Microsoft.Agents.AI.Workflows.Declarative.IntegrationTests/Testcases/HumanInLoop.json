@@ -1,0 +1,20 @@
+﻿{
+  "description": "Human in the loop sample - HumanInLoop.yaml.",
+  "setup": {
+    "input": {
+      "type": "String",
+      "value": "Iko"
+    }
+  },
+  "validation": {
+    "min_action_count": 1,
+    "actions": {
+      "start": [
+        "invoke_agent"
+      ],
+      "final": [
+        "invoke_agent"
+      ]
+    }
+  }
+}

@@ -3,7 +3,7 @@
 // This sample shows how to create and use a simple AI agent with Ollama as the backend.
 
 using System;
-using Microsoft.Extensions.AI.Agents;
+using Microsoft.Agents.AI;
 using OllamaSharp;
 
 var endpoint = Environment.GetEnvironmentVariable("OLLAMA_ENDPOINT") ?? throw new InvalidOperationException("OLLAMA_ENDPOINT is not set.");

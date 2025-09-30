@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 # Custom Agent Framework OpenAI event types for structured data
 
@@ -113,8 +113,7 @@ class AgentFrameworkExtraBody(BaseModel):
     thread_id: str | None = None
     input_data: dict[str, Any] | None = None
 
-    class Config:
-        extra = "allow"  # Allow additional fields
+    model_config = ConfigDict(extra="allow")
 
 
 # Agent Framework Request Model - Extending real OpenAI types
@@ -140,11 +139,9 @@ class AgentFrameworkRequest(BaseModel):
     # Agent Framework extension - strongly typed
     extra_body: AgentFrameworkExtraBody | None = None
 
-    class Config:
-        # Allow extra fields from OpenAI spec
-        extra = "allow"
-
     entity_id: str | None = None  # Allow entity_id as top-level field
+
+    model_config = ConfigDict(extra="allow")
 
     def get_entity_id(self) -> str | None:
         """Get entity_id from either top-level field or extra_body."""
@@ -186,6 +183,14 @@ class OpenAIError(BaseModel):
         """Create a standard OpenAI error response."""
         error_data = {"message": message, "type": type, "code": code}
         return cls(error=error_data)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the error payload as a plain mapping."""
+        return {"error": dict(self.error)}
+
+    def to_json(self) -> str:
+        """Return the error payload serialized to JSON."""
+        return self.model_dump_json()
 
 
 # Export all custom types

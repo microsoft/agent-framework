@@ -2,9 +2,9 @@
 
 using System;
 using Amazon.BedrockRuntime;
-using Microsoft.Agents.Workflows;
+using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
 
 // Define the topic discussion.
 const string Topic = "Goldendoodles make the best pets.";
@@ -58,7 +58,9 @@ AIAgent reporter = new ChatClientAgent(anthropic,
     description: "Summarize the researcher's essay into a single paragraph, focusing only on the fact checker's confirmed facts.");
 
 // Build a sequential workflow: Researcher -> Fact-Checker -> Reporter
-AIAgent workflowAgent = AgentWorkflowBuilder.BuildSequential(researcher, factChecker, reporter).AsAgent();
+AIAgent workflowAgent = await AgentWorkflowBuilder.BuildSequential(researcher, factChecker, reporter)
+                                                  .AsAgentAsync()
+                                                  .ConfigureAwait(false);
 
 // Run the workflow, streaming the output as it arrives.
 string? lastAuthor = null;

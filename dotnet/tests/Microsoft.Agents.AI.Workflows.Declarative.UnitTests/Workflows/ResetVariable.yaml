@@ -1,0 +1,15 @@
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: my_workflow
+  actions:
+
+    - kind: SetVariable
+      id: set_var
+      variable: Local.MyVar
+      value: 42
+    - kind: ResetVariable
+      id: clear_var
+      variable: Local.MyVar
+  

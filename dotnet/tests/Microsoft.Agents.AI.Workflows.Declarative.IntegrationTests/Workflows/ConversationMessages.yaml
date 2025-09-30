@@ -1,0 +1,43 @@
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: workflow_test
+  actions:
+
+    - kind: CreateConversation
+      id: conversation_create1
+      conversationId: Local.FirstConversationId
+
+    - kind: CreateConversation
+      id: conversation_create2
+      conversationId: Local.SecondConversationId
+
+    - kind: SendActivity
+      id: sendActivity_conversation
+      activity: |-
+        Conversation 1: {Local.FirstConversationId}
+        Conversation 2: {Local.SecondConversationId}
+
+    - kind: AddConversationMessage
+      id: add_message
+      message: Local.MyMessage1
+      role: User
+      conversationId: =Local.FirstConversationId
+      content:
+        - type: Text
+          value: {System.LastMessage.Text}
+
+    - kind: SendActivity
+      id: sendActivity_message
+      activity: |-
+        Messsage 1: {Local.MyMessage1}
+
+    - kind: CopyConversationMessages
+      id: copy_messages
+      conversationId: =Local.SecondConversationId
+      messages: =[Local.MyMessage1]
+
+    - kind: SendActivity
+      id: sendActivity_copy
+      activity: Done!

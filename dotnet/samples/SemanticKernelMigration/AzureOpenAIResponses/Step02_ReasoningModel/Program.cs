@@ -2,8 +2,8 @@
 
 using Azure.AI.OpenAI;
 using Azure.Identity;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.Agents.OpenAI;
 using Microsoft.SemanticKernel.ChatCompletion;
@@ -12,8 +12,8 @@ using OpenAI;
 #pragma warning disable SKEXP0110 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 #pragma warning disable OPENAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
-var endpoint = Environment.GetEnvironmentVariable("AZUREOPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZUREOPENAI_ENDPOINT is not set.");
-var deploymentName = System.Environment.GetEnvironmentVariable("AZUREOPENAI_DEPLOYMENT_NAME") ?? "o4-mini";
+var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+var deploymentName = System.Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "o4-mini";
 var userInput =
     """
     Instructions:
@@ -49,11 +49,13 @@ async Task SKAgentAsync()
 {
     Console.WriteLine("\n=== SK Agent ===\n");
 
-    OpenAIResponseAgent agent = new(new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
-        .GetOpenAIResponseClient(deploymentName))
+    var responseClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
+        .GetOpenAIResponseClient(deploymentName);
+    OpenAIResponseAgent agent = new(responseClient)
     {
-        Name = "Joker",
-        Instructions = "You are good at telling jokes.",
+        Name = "Thinker",
+        Instructions = "You are good at thinking hard before answering.",
+        StoreEnabled = true
     };
 
     var agentOptions = new OpenAIResponseAgentInvokeOptions()
@@ -72,10 +74,9 @@ async Task SKAgentAsync()
     Microsoft.SemanticKernel.Agents.AgentThread? thread = null;
     await foreach (var item in agent.InvokeAsync(userInput, thread, agentOptions))
     {
+        thread = item.Thread;
         foreach (var content in item.Message.Items)
         {
-            // Currently SK Responses Agent doesn't distinguish thinking from non-thinking content in non-streaming mode.
-            // SK Bugfix WIP: https://github.com/microsoft/semantic-kernel/issues/13046
             if (content is ReasoningContent thinking)
             {
                 Console.Write($"Thinking: \n{thinking}\n---\n");
@@ -96,7 +97,8 @@ async Task SKAgentAsync()
         foreach (var content in item.Message.Items)
         {
             // Currently SK Agent doesn't output thinking in streaming mode.
-            // SK Bugfix WIP: https://github.com/microsoft/semantic-kernel/issues/13046
+            // SK Issue: https://github.com/microsoft/semantic-kernel/issues/13046
+            // OpenAI SDK Issue: https://github.com/openai/openai-dotnet/issues/643
             if (content is StreamingReasoningContent thinking)
             {
                 Console.WriteLine($"Thinking: [{thinking}]");
@@ -117,7 +119,7 @@ async Task AFAgentAsync()
 
     var agent = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
         .GetOpenAIResponseClient(deploymentName)
-        .CreateAIAgent(name: "Joker", instructions: "You are good at telling jokes.");
+        .CreateAIAgent(name: "Thinker", instructions: "You are good at thinking hard before answering.");
 
     var thread = agent.GetNewThread();
     var agentOptions = new ChatClientAgentRunOptions(new()

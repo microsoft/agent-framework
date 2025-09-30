@@ -61,9 +61,9 @@ public static class ServiceDefaultsExtensions
             .WithTracing(tracing =>
             {
                 tracing.AddSource(builder.Environment.ApplicationName)
-                    .AddSource("Microsoft.Extensions.AI.Agents")
-                    .AddSource("Microsoft.Extensions.AI.Agents.Runtime.InProcess")
-                    .AddSource("Microsoft.Extensions.AI.Agents.Runtime.Abstractions.InMemoryActorStateStorage")
+                    .AddSource("*Microsoft.Agents.AI")
+                    .AddSource("Microsoft.Agents.AI.Runtime.InProcess")
+                    .AddSource("Microsoft.Agents.AI.Runtime.Abstractions.InMemoryActorStateStorage")
                     .AddAspNetCoreInstrumentation()
                     // Uncomment the following line to enable gRPC instrumentation (requires the OpenTelemetry.Instrumentation.GrpcNetClient package)
                     //.AddGrpcClientInstrumentation()

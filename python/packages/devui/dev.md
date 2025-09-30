@@ -1,6 +1,6 @@
 # Testing DevUI - Quick Setup Guide
 
-Hi everyone! Here are the step-by-step instructions to test the new DevUI feature:
+Here are the step-by-step instructions to test the new DevUI feature:
 
 ## 1. Get the Code
 
@@ -8,6 +8,8 @@ Hi everyone! Here are the step-by-step instructions to test the new DevUI featur
 git pull
 git checkout victordibia/devui
 ```
+
+(or use the latest main branch if merged)
 
 ## 2. Setup Environment
 
@@ -80,9 +82,29 @@ curl -X POST http://localhost:8080/v1/responses \
   }'
 ```
 
+## API Mapping
+
+Messages and events from agents/workflows are mapped to OpenAI response types in `agent_framework_devui/_mapper.py`. See the mapping table below:
+
+| Agent Framework Content           | OpenAI Event                              | Type     |
+| --------------------------------- | ----------------------------------------- | -------- |
+| `TextContent`                     | `ResponseTextDeltaEvent`                  | Official |
+| `TextReasoningContent`            | `ResponseReasoningTextDeltaEvent`         | Official |
+| `FunctionCallContent`             | `ResponseFunctionCallArgumentsDeltaEvent` | Official |
+| `FunctionResultContent`           | `ResponseFunctionResultComplete`          | Custom   |
+| `ErrorContent`                    | `ResponseErrorEvent`                      | Official |
+| `UsageContent`                    | `ResponseUsageEventComplete`              | Custom   |
+| `DataContent`                     | `ResponseTraceEventComplete`              | Custom   |
+| `UriContent`                      | `ResponseTraceEventComplete`              | Custom   |
+| `HostedFileContent`               | `ResponseTraceEventComplete`              | Custom   |
+| `HostedVectorStoreContent`        | `ResponseTraceEventComplete`              | Custom   |
+| `FunctionApprovalRequestContent`  | Custom event                              | Custom   |
+| `FunctionApprovalResponseContent` | Custom event                              | Custom   |
+| `WorkflowEvent`                   | `ResponseWorkflowEventComplete`           | Custom   |
+
 ## Troubleshooting
 
-- **Missing API key**: Make sure your `.env` file is in the `python/` directory with valid credentials
+- **Missing API key**: Make sure your `.env` file is in the `python/` directory with valid credentials. Or set environment variables directly in your shell before running DevUI.
 - **Import errors**: Run `uv sync --dev` again to ensure all dependencies are installed
 - **Port conflicts**: DevUI uses ports 8080 and 8090 by default - close other services using these ports
 

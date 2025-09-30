@@ -45,7 +45,7 @@ class EntityDiscovery:
             logger.info("No Agent Framework entities directory configured")
             return []
 
-        entities_dir = Path(self.entities_dir).resolve()
+        entities_dir = Path(self.entities_dir).resolve()  # noqa: ASYNC240
         await self._scan_entities_directory(entities_dir)
 
         logger.info(f"Discovered {len(self._entities)} Agent Framework entities")
@@ -160,7 +160,7 @@ class EntityDiscovery:
         Args:
             entities_dir: Directory to scan for entities
         """
-        if not entities_dir.exists():
+        if not entities_dir.exists():  # noqa: ASYNC240
             logger.warning(f"Entities directory not found: {entities_dir}")
             return
 
@@ -172,7 +172,7 @@ class EntityDiscovery:
             sys.path.insert(0, entities_dir_str)
 
         # Scan for directories and Python files
-        for item in entities_dir.iterdir():
+        for item in entities_dir.iterdir():  # noqa: ASYNC240
             if item.name.startswith(".") or item.name == "__pycache__":
                 continue
 
@@ -553,7 +553,9 @@ class EntityDiscovery:
 
         return f"{entity_type}_{source}_{base_name}_{short_uuid}"
 
-    async def fetch_remote_entity(self, url: str, metadata: dict | None = None) -> tuple[EntityInfo | None, str | None]:
+    async def fetch_remote_entity(
+        self, url: str, metadata: dict[str, Any] | None = None
+    ) -> tuple[EntityInfo | None, str | None]:
         """Fetch and register entity from URL.
 
         Args:
