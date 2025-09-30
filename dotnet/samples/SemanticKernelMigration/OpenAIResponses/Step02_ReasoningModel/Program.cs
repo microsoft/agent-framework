@@ -67,7 +67,7 @@ async Task SKAgentAsync()
         }
     };
 
-    Microsoft.SemanticKernel.Agents.AgentThread? thread = new OpenAIResponseAgentThread(responseClient);
+    Microsoft.SemanticKernel.Agents.AgentThread? thread = null;
     await foreach (var item in agent.InvokeAsync(userInput, thread, agentOptions))
     {
         foreach (var content in item.Message.Items)
@@ -88,6 +88,7 @@ async Task SKAgentAsync()
 
     Console.WriteLine("---");
     var userMessage = new ChatMessageContent(AuthorRole.User, userInput);
+    thread = null;
     await foreach (var item in agent.InvokeStreamingAsync(userMessage, thread, agentOptions))
     {
         thread = item.Thread;
