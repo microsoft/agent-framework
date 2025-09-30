@@ -10,9 +10,10 @@ using System.Threading.Tasks;
 using Azure;
 using Azure.AI.Agents.Persistent;
 using Azure.Core;
+using Microsoft.Extensions.AI;
 using Moq;
 
-namespace Microsoft.Extensions.AI.Agents.AzureAI.UnitTests.Extensions;
+namespace Microsoft.Agents.AI.AzureAI.UnitTests.Extensions;
 
 public sealed class PersistentAgentsClientExtensionsTests
 {

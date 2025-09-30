@@ -29,7 +29,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
     private readonly ConcurrentDictionary<string, Task<Executor>> _executors = new();
     private readonly ConcurrentQueue<Func<ValueTask>> _queuedExternalDeliveries = new();
 
-    private readonly Dictionary<string, ExternalRequest> _externalRequests = new();
+    private readonly Dictionary<string, ExternalRequest> _externalRequests = [];
 
     public InProcessRunnerContext(Workflow workflow, string runId, IStepTracer? stepTracer, ILogger? logger = null)
     {
