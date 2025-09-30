@@ -23,7 +23,7 @@ Welcome to Microsoft's comprehensive multi-language framework for building, orch
   - [Python workflows](./python/samples/getting_started/workflow/) | [.NET workflows](./dotnet/samples/GettingStarted/Workflows/)
 - **AF Labs**: Experimental packages for cutting-edge features including benchmarking, reinforcement learning, and research initiatives
   - [Labs directory](./python/packages/lab/)
-- **DevUI**: Interactive developer UI for agent development, testing, and debugging workflows
+- **DevUI**: Sample app with interactive UI for running and testing agents and workflows
   - [DevUI package](./python/packages/devui/)
 - **Python and C#/.NET Support**: Full framework support for both Python and C#/.NET implementations with consistent APIs
   - [Python packages](./python/packages/) | [.NET source](./dotnet/src/)
