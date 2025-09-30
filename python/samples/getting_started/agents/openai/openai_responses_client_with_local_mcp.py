@@ -5,6 +5,23 @@ import asyncio
 from agent_framework import ChatAgent, MCPStreamableHTTPTool
 from agent_framework.openai import OpenAIResponsesClient
 
+"""
+OpenAI Responses Client with Local MCP Example
+
+This sample demonstrates how to integrate Model Context Protocol (MCP) tools
+with OpenAI Responses Client for direct response generation. The example includes:
+
+- Local MCP server integration with responses client
+- Streamable HTTP tool integration
+- MCP protocol communication for external capabilities
+- Direct response generation with MCP tool results
+- Simplified interface for MCP-enhanced responses
+
+MCP integration with responses client provides streamlined access to
+external tools and services, ideal for applications requiring direct
+response generation with extended capabilities through MCP protocols.
+"""
+
 
 async def streaming_with_mcp(show_raw_stream: bool = False) -> None:
     """Example showing tools defined when creating the agent.

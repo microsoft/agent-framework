@@ -6,6 +6,23 @@ from agent_framework import AgentRunResponse
 from agent_framework.openai import OpenAIResponsesClient
 from pydantic import BaseModel
 
+"""
+OpenAI Responses Client with Structured Output Example
+
+This sample demonstrates how to use structured output capabilities with OpenAI
+Responses Client for formatted data extraction. The example includes:
+
+- Structured output using Pydantic models for type safety
+- JSON schema generation and validation
+- Formatted data extraction from unstructured text
+- Type-safe response parsing and handling
+- Integration with OpenAI's structured output features
+
+Structured output enables AI to generate responses in predefined formats,
+making it ideal for data extraction, API responses, form processing,
+and applications requiring consistent, parseable output structures.
+"""
+
 
 class OutputStruct(BaseModel):
     """A structured output for testing purposes."""

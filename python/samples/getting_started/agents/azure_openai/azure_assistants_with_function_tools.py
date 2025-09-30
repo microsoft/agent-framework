@@ -10,6 +10,23 @@ from agent_framework.azure import AzureOpenAIAssistantsClient
 from azure.identity import AzureCliCredential
 from pydantic import Field
 
+"""
+Azure OpenAI Assistants with Function Tools Example
+
+This sample demonstrates multiple function tool integration with Azure OpenAI Assistants.
+The example includes:
+
+- Agent-level tools defined during agent creation for persistent capabilities
+- Query-level tools provided dynamically with specific requests
+- Multiple function tools (weather and calculator) for diverse functionality
+- Demonstration of tool calling with various parameter types and use cases
+- Flexible tool management allowing different tools for different conversations
+
+This approach showcases how to build sophisticated agents with multiple capabilities,
+allowing for both consistent agent behavior and dynamic tool provisioning based
+on specific conversation requirements.
+"""
+
 
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],

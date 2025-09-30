@@ -13,6 +13,22 @@ from openai.types.beta.threads.runs import (
 )
 from openai.types.beta.threads.runs.code_interpreter_tool_call_delta import CodeInterpreter
 
+"""
+Azure OpenAI Assistants with Code Interpreter Example
+
+This sample demonstrates how to use the HostedCodeInterpreterTool with Azure OpenAI Assistants
+for code generation and execution. The example includes:
+
+- Creating agents with HostedCodeInterpreterTool for Python code execution
+- Mathematical problem solving using code generation and execution
+- Streaming responses to capture code execution in real-time
+- Working with code interpreter deltas and tool call updates
+- Integration of Azure OpenAI Assistants with computational capabilities
+
+The HostedCodeInterpreterTool enables agents to write, execute, and iterate on Python code,
+making it ideal for mathematical calculations, data analysis, and computational problem-solving tasks.
+"""
+
 
 def get_code_interpreter_chunk(chunk: AgentRunResponseUpdate) -> str | None:
     """Helper method to access code interpreter data."""

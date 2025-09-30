@@ -9,6 +9,24 @@ from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 
+"""
+Azure AI Agent with Thread Management Example
+
+This sample demonstrates advanced thread management with Azure AI Agents
+for maintaining conversation context. The example includes:
+
+- Automatic thread creation for stateless conversations
+- Explicit thread management for persistent conversation context
+- Comparison between stateless and stateful conversation patterns
+- Thread reuse across multiple agent interactions
+- Context preservation and memory management in multi-turn conversations
+- Async context management for proper resource cleanup
+
+This approach enables building conversational agents that can maintain context across multiple interactions,
+making them ideal for customer service, tutoring, and other applications requiring conversation continuity with
+the scalability and reliability of Azure AI's managed infrastructure.
+"""
+
 
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],

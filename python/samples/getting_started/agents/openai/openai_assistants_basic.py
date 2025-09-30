@@ -7,6 +7,19 @@ from typing import Annotated
 from agent_framework.openai import OpenAIAssistantsClient
 from pydantic import Field
 
+"""
+OpenAI Assistants Basic Example
+
+This sample demonstrates the fundamental usage of OpenAI Assistants with the Agent Framework.
+The example includes:
+
+- Creating agents using OpenAIAssistantsClient with automatic assistant lifecycle management
+- Function tool integration (weather function) for enhanced agent capabilities
+- Non-streaming response example to get complete results at once
+- Streaming response example to receive results as they are generated
+- Automatic assistant creation and cleanup using context managers
+"""
+
 
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],

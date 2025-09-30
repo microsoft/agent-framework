@@ -7,6 +7,23 @@ from agent_framework.openai import OpenAIResponsesClient
 from openai.types.responses.response import Response as OpenAIResponse
 from openai.types.responses.response_code_interpreter_tool_call import ResponseCodeInterpreterToolCall
 
+"""
+OpenAI Responses Client with Code Interpreter Example
+
+This sample demonstrates how to use the HostedCodeInterpreterTool with OpenAI Responses
+for code generation and execution. The example includes:
+
+- Creating agents with HostedCodeInterpreterTool for Python code execution
+- Mathematical problem solving using code generation and execution
+- Accessing and displaying the generated code from response data
+- Working with structured response data to extract code interpreter outputs
+- Integration of OpenAI Responses with computational capabilities
+
+The HostedCodeInterpreterTool enables agents to write, execute, and iterate on Python code,
+making it ideal for mathematical calculations, data analysis, and computational problem-solving
+tasks using OpenAI's advanced code interpretation capabilities.
+"""
+
 
 async def main() -> None:
     """Example showing how to use the HostedCodeInterpreterTool with OpenAI Responses."""

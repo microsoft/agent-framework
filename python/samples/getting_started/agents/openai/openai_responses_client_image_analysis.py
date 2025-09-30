@@ -5,6 +5,23 @@ import asyncio
 from agent_framework import ChatMessage, TextContent, UriContent
 from agent_framework.openai import OpenAIResponsesClient
 
+"""
+OpenAI Responses Client Image Analysis Example
+
+This sample demonstrates how to analyze images using OpenAI Responses Client
+with vision-enabled models. The example includes:
+
+- Image analysis using vision-capable models
+- Processing images from URLs and local files
+- Multi-modal content handling with text and images
+- Vision-based AI capabilities for image understanding
+- Content analysis and description generation
+
+Image analysis capabilities enable AI to understand and describe visual content,
+making it ideal for accessibility, content moderation, visual search,
+and automated image description applications.
+"""
+
 
 async def main():
     print("=== OpenAI Responses Agent with Image Analysis ===")

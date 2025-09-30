@@ -6,6 +6,25 @@ from agent_framework import ChatAgent, MCPStreamableHTTPTool
 from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
 
+"""
+Azure AI Agent with Local MCP Example
+
+This sample demonstrates integration of Azure AI Agents with local Model Context Protocol (MCP)
+servers for enhanced functionality. The example includes:
+
+- Integration with HTTP-based MCP servers for extended tool functionality
+- Agent-level vs run-level tool configuration patterns
+- Microsoft Learn MCP server integration for documentation queries
+- Demonstration of different tool attachment strategies
+- Async context management for MCP server connections
+- Real-world examples using Microsoft documentation queries
+
+MCP (Model Context Protocol) enables agents to connect to external services and tools.
+This local MCP approach allows for flexible tool integration where the MCP server
+runs as a separate service, ideal for scenarios requiring specialized tools,
+external API access, or custom functionality not available in built-in tools.
+"""
+
 
 async def mcp_tools_on_run_level() -> None:
     """Example showing MCP tools defined when running the agent."""

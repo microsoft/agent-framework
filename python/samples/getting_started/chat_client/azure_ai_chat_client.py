@@ -8,6 +8,22 @@ from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 
+"""
+Azure AI Agent Client Direct Usage Example
+
+This sample demonstrates direct usage of AzureAIAgentClient for chat interactions
+with Azure AI models without agent orchestration. The example includes:
+
+- Direct agent client instantiation with Azure AI endpoints
+- Function calling capabilities with custom business logic
+- Async Azure CLI credential authentication
+- Type-safe function definitions with Pydantic
+
+Direct agent client usage is ideal for simple conversational scenarios
+with function calling where you need direct model access without the
+overhead of agent workflows.
+"""
+
 
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],

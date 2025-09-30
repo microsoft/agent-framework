@@ -4,6 +4,19 @@ import asyncio
 
 from agent_framework.microsoft import CopilotStudioAgent
 
+"""
+Copilot Studio Agent Basic Example
+
+This sample demonstrates the fundamental usage of Microsoft Copilot Studio agents
+with the Agent Framework. The example includes:
+
+- Creating agents using CopilotStudioAgent with automatic configuration from environment variables
+- Non-streaming response example to get complete results at once
+- Streaming response example to receive results as they are generated
+- Simple question-answering interactions with published Copilot Studio agents
+- Automatic authentication handling with MSAL (Microsoft Authentication Library)
+"""
+
 # Environment variables needed:
 # COPILOTSTUDIOAGENT__ENVIRONMENTID - Environment ID where your copilot is deployed
 # COPILOTSTUDIOAGENT__SCHEMANAME - Agent identifier/schema name of your copilot

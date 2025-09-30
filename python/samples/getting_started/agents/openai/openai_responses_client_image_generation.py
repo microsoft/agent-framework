@@ -6,6 +6,22 @@ import base64
 from agent_framework import DataContent, UriContent
 from agent_framework.openai import OpenAIResponsesClient
 
+"""
+OpenAI Responses Client Image Generation Example
+
+This sample demonstrates how to generate images using OpenAI's DALL-E models
+through the Responses Client. The example includes:
+
+- Text-to-image conversion with detailed prompts
+- Base64 image data handling and processing
+- Image quality and size configuration
+- Generated image display and manipulation
+
+Image generation capabilities enable AI to create visual content from text,
+making it ideal for creative applications, content creation, design prototyping,
+and automated visual asset generation.
+"""
+
 
 def show_image_info(data_uri: str) -> None:
     """Display information about the generated image."""

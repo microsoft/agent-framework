@@ -10,6 +10,23 @@ from agent_framework.openai import OpenAIAssistantsClient
 from openai import AsyncOpenAI
 from pydantic import Field
 
+"""
+OpenAI Assistants with Existing Assistant Example
+
+This sample demonstrates how to use an existing OpenAI Assistant with the agent framework.
+The example includes:
+
+- Creating a new assistant programmatically with custom tools
+- Connecting to existing assistants by ID for reuse
+- Function calling with custom business logic
+- Assistant lifecycle management and cleanup
+- Integration with pre-configured OpenAI assistants
+
+This approach is ideal for scenarios where you have pre-built assistants
+with specific configurations, tools, and training that you want to reuse
+across multiple agent framework applications.
+"""
+
 
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],

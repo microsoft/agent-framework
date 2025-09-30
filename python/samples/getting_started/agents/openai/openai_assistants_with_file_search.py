@@ -5,6 +5,19 @@ import asyncio
 from agent_framework import ChatAgent, HostedFileSearchTool, HostedVectorStoreContent
 from agent_framework.openai import OpenAIAssistantsClient
 
+"""
+OpenAI Assistants with File Search Example
+
+This sample demonstrates how to use file search capabilities with OpenAI Assistants
+for document-based question answering. The example includes:
+
+- Uploading files to OpenAI for search indexing
+- Creating agents with file search tool enabled
+- Document-based question answering and information retrieval
+- Automatic file processing and vector search capabilities
+- Integration with OpenAI's advanced retrieval systems
+"""
+
 # Helper functions
 
 

@@ -9,6 +9,18 @@ from agent_framework.azure import AzureOpenAIAssistantsClient
 from azure.identity import AzureCliCredential
 from pydantic import Field
 
+"""
+Azure OpenAI Assistants with Explicit Settings Example
+
+This sample demonstrates how to create Azure OpenAI Assistants with explicit configuration
+settings rather than relying on environment variable defaults. The example includes:
+
+- Explicit configuration of deployment name, endpoint, and credentials
+- Environment variable usage for configuration management
+- Direct specification of Azure OpenAI resource parameters
+- Function tool integration with explicitly configured clients
+"""
+
 
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],

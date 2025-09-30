@@ -9,6 +9,23 @@ from agent_framework.azure import AzureOpenAIAssistantsClient
 from azure.identity import AzureCliCredential
 from pydantic import Field
 
+"""
+Azure OpenAI Assistants with Thread Management Example
+
+This sample demonstrates advanced thread management with Azure OpenAI Assistants
+for maintaining conversation context. The example includes:
+
+- Automatic thread creation for stateless conversations
+- Explicit thread management for persistent conversation context
+- Comparison between stateless and stateful conversation patterns
+- Thread reuse across multiple agent interactions
+- Context preservation and memory management in multi-turn conversations
+
+This approach enables building conversational agents that can maintain context
+across multiple interactions, making them ideal for customer service, tutoring,
+and other applications requiring conversation continuity.
+"""
+
 
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],

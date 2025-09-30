@@ -11,6 +11,24 @@ from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 
+"""
+Azure AI Agent with Existing Thread Example
+
+This sample demonstrates how to work with pre-existing conversation threads in Azure AI Agents
+rather than creating new ones for each interaction. The example includes:
+
+- Working with pre-existing threads by providing thread IDs
+- Proper thread lifecycle management and cleanup procedures
+- Integration with Azure AI Projects for thread discovery and management
+- Conversation context preservation across multiple interactions
+- Demonstrating thread reuse patterns for production scenarios
+- Direct integration with Azure AI Projects client for advanced thread management
+
+This approach is ideal for applications requiring persistent conversation history,
+such as customer service chatbots, tutoring systems, or any scenario where
+maintaining conversation context across sessions is important.
+"""
+
 
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
