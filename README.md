@@ -56,4 +56,4 @@ Welcome to Microsoft's comprehensive multi-language framework for building, orch
 - [Agent Framework Repository](https://github.com/microsoft/agent-framework)
 - [Design Documents](./docs/design)
 - [Architectural Decision Records](./docs/decisions)
-- [MSFT Learn Docs](https://review.learn.microsoft.com/en-us/agent-framework/overview/agent-framework-overview?branch=main)
+- [MSFT Learn Docs](https://learn.microsoft.com/agent-framework/overview/agent-framework-overview)
