@@ -1,6 +1,6 @@
-# DevUI - Agent Framework Debug Interface
+# DevUI - A Sample App for Running Agents and Workflows
 
-A lightweight, standalone sample app interface for running entities (agents/workflows) in the Microsoft Agent Framework supporting both **directory-based discovery** and **in-memory entity registration**.
+A lightweight, standalone sample app interface for running entities (agents/workflows) in the Microsoft Agent Framework supporting **directory-based discovery**, **in-memory entity registration**, and **sample entity gallery**.
 
 > [!IMPORTANT]
 > DevUI is a **sample app** to help you get started with the Agent Framework. It is **not** intended for production use. For production, or for features beyond what is provided in this sample app, it is recommended that you build your own custom interface and API server using the Agent Framework SDK.
@@ -40,6 +40,22 @@ agent = ChatAgent(
 # Launch debug UI - that's it!
 serve(entities=[agent], auto_open=True)
 # → Opens browser to http://localhost:8080
+```
+
+## Entity Gallery
+
+When DevUI starts with no discovered entities, it displays a **sample entity gallery** with curated examples from the Agent Framework repository. This helps you:
+
+- **Get started quickly** with working examples
+- **Learn Agent Framework patterns** from beginner to advanced
+- **Experiment** with different agent and workflow types
+
+## Viewing Telemetry (Otel Traces) in DevUI
+
+Agent Framework emits OpenTelemetry (Otel) traces for various operations. You can view these traces in DevUI by enabling tracing when starting the server.
+
+```bash
+devui ./agents --tracing framework
 ```
 
 ## Directory Structure
@@ -114,6 +130,8 @@ Options:
 
 - `GET /v1/entities` - List discovered agents/workflows
 - `GET /v1/entities/{entity_id}/info` - Get detailed entity information
+- `POST /v1/entities/add` - Add entity from URL (for gallery samples)
+- `DELETE /v1/entities/{entity_id}` - Remove remote entity
 - `POST /v1/responses` - Execute agent/workflow (streaming or sync)
 - `GET /health` - Health check
 - `POST /v1/threads` - Create thread for agent (optional)

@@ -29,6 +29,13 @@ import {
   AlertCircle,
   Paperclip,
   FileText,
+  ChevronDown,
+  Package,
+  FolderOpen,
+  Database,
+  Globe,
+  CheckCircle,
+  XCircle,
 } from "lucide-react";
 import { apiClient } from "@/services/api";
 import type {
@@ -147,6 +154,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
   const [pasteNotification, setPasteNotification] = useState<string | null>(
     null
   );
+  const [detailsExpanded, setDetailsExpanded] = useState(false);
 
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -406,6 +414,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
   const getFileType = (file: File): AttachmentItem["type"] => {
     if (file.type.startsWith("image/")) return "image";
     if (file.type === "application/pdf") return "pdf";
+    if (file.type.startsWith("audio/")) return "audio";
     return "other";
   };
 
@@ -811,22 +820,36 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
     <div className="flex h-[calc(100vh-3.5rem)] flex-col">
       {/* Header */}
       <div className="border-b pb-2  p-4 flex-shrink-0">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="font-semibold text-sm">
-            <div className="flex items-center gap-2">
-              <Bot className="h-4 w-4" />
-              Chat with {selectedAgent.name || selectedAgent.id}
-            </div>
-          </h2>
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <h2 className="font-semibold text-sm truncate">
+              <div className="flex items-center gap-2">
+                <Bot className="h-4 w-4 flex-shrink-0" />
+                <span className="truncate">Chat with {selectedAgent.name || selectedAgent.id}</span>
+              </div>
+            </h2>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setDetailsExpanded(!detailsExpanded)}
+              className="h-6 w-6 p-0 flex-shrink-0"
+            >
+              <ChevronDown
+                className={`h-4 w-4 transition-transform duration-200 ${
+                  detailsExpanded ? "rotate-180" : ""
+                }`}
+              />
+            </Button>
+          </div>
 
           {/* Thread Controls */}
-          <div className="flex items-center gap-2">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-shrink-0">
             <Select
               value={currentThread?.id || ""}
               onValueChange={handleThreadSelect}
               disabled={loadingThreads || isSubmitting}
             >
-              <SelectTrigger className="w-48">
+              <SelectTrigger className="w-full sm:w-48">
                 <SelectValue
                   placeholder={
                     loadingThreads
@@ -860,6 +883,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
               size="lg"
               onClick={handleNewThread}
               disabled={!selectedAgent || isSubmitting}
+              className="whitespace-nowrap"
             >
               <Plus className="h-4 w-4 mr-2" />
               New Thread
@@ -872,6 +896,68 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
             {selectedAgent.description}
           </p>
         )}
+
+        {/* Collapsible Details Section */}
+        <div
+          className={`overflow-hidden transition-all duration-200 ease-in-out ${
+            detailsExpanded ? "max-h-40 mt-3" : "max-h-0"
+          }`}
+        >
+          <div className="space-y-2 text-xs">
+            {/* Tools */}
+            <div className="flex items-center gap-2">
+              <Package className="h-3.5 w-3.5 text-muted-foreground" />
+              <span className="text-muted-foreground">Tools:</span>
+              <span className="font-mono">
+                {selectedAgent.tools.length > 0
+                  ? selectedAgent.tools.join(", ")
+                  : "No tools"}
+              </span>
+              <span className="text-muted-foreground">
+                ({selectedAgent.tools.length})
+              </span>
+            </div>
+
+            {/* Source */}
+            <div className="flex items-center gap-2">
+              {selectedAgent.source === "directory" ? (
+                <FolderOpen className="h-3.5 w-3.5 text-muted-foreground" />
+              ) : selectedAgent.source === "in_memory" ? (
+                <Database className="h-3.5 w-3.5 text-muted-foreground" />
+              ) : (
+                <Globe className="h-3.5 w-3.5 text-muted-foreground" />
+              )}
+              <span className="text-muted-foreground">Source:</span>
+              <span>
+                {selectedAgent.source === "directory"
+                  ? "Local"
+                  : selectedAgent.source === "in_memory"
+                  ? "In-Memory"
+                  : "Gallery"}
+              </span>
+              {selectedAgent.module_path && (
+                <span className="text-muted-foreground font-mono text-[11px]">
+                  ({selectedAgent.module_path})
+                </span>
+              )}
+            </div>
+
+            {/* Environment */}
+            <div className="flex items-center gap-2">
+              {selectedAgent.has_env ? (
+                <XCircle className="h-3.5 w-3.5 text-orange-500" />
+              ) : (
+                <CheckCircle className="h-3.5 w-3.5 text-green-500" />
+              )}
+              <span className="text-muted-foreground">Environment:</span>
+              <span>
+                {selectedAgent.has_env
+                  ? "Requires environment variables"
+                  : "No environment variables required"}
+              </span>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Messages */}

@@ -3,13 +3,13 @@
  */
 
 import { useState } from "react";
-import { FileText, Image, Trash2 } from "lucide-react";
+import { FileText, Image, Trash2, Music } from "lucide-react";
 
 export interface AttachmentItem {
   id: string;
   file: File;
   preview?: string; // Data URL for preview
-  type: "image" | "pdf" | "other";
+  type: "image" | "pdf" | "audio" | "other";
 }
 
 interface AttachmentGalleryProps {
@@ -66,6 +66,14 @@ function AttachmentPreview({ attachment, onRemove }: AttachmentPreviewProps) {
           <div className="flex flex-col items-center justify-center w-full h-full bg-red-50">
             <FileText className="h-6 w-6 text-red-500 mb-1" />
             <span className="text-xs text-red-600">PDF</span>
+          </div>
+        );
+
+      case "audio":
+        return (
+          <div className="flex flex-col items-center justify-center w-full h-full bg-purple-50">
+            <Music className="h-6 w-6 text-purple-500 mb-1" />
+            <span className="text-xs text-purple-600">AUDIO</span>
           </div>
         );
 

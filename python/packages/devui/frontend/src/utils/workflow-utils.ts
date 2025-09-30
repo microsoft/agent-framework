@@ -339,7 +339,7 @@ export function processWorkflowEvents(
         error = typeof eventData === "string" ? eventData : "Execution failed";
       } else if (eventType?.includes("Cancel")) {
         state = "cancelled";
-      } else if (eventType === "WorkflowCompletedEvent") {
+      } else if (eventType === "WorkflowCompletedEvent" || eventType === "WorkflowOutputEvent") {
         state = "completed";
       }
 

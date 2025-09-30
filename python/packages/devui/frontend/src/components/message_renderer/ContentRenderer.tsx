@@ -10,6 +10,7 @@ import {
   Code,
   ChevronDown,
   ChevronUp,
+  Music,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { RenderProps } from "./types";
@@ -25,7 +26,7 @@ function TextContentRenderer({ content, isStreaming, className }: RenderProps) {
   if (!isTextContent(content)) return null;
 
   const text = content.text;
-  const TRUNCATE_LENGTH = 1600; // Show first 600 characters
+  const TRUNCATE_LENGTH = 1600;
   const shouldTruncate = text.length > TRUNCATE_LENGTH && !isStreaming;
   const displayText =
     shouldTruncate && !isExpanded
@@ -36,9 +37,7 @@ function TextContentRenderer({ content, isStreaming, className }: RenderProps) {
     <div className={`whitespace-pre-wrap break-words ${className || ""}`}>
       <div
         className={
-          isExpanded && shouldTruncate
-            ? "max-h-96 overflow-y-auto"
-            : ""
+          isExpanded && shouldTruncate ? "max-h-96 overflow-y-auto" : ""
         }
       >
         {displayText}
@@ -85,6 +84,7 @@ function DataContentRenderer({ content, className }: RenderProps) {
 
   const isImage = mediaType.startsWith("image/");
   const isPdf = mediaType === "application/pdf";
+  const isAudio = mediaType.startsWith("audio/");
 
   if (isImage && !imageError) {
     return (
@@ -105,7 +105,23 @@ function DataContentRenderer({ content, className }: RenderProps) {
     );
   }
 
-  // Fallback for non-images or failed images
+  if (isAudio) {
+    return (
+      <div className={`my-2 p-3 border rounded-lg bg-purple-50 dark:bg-purple-950/20 ${className || ""}`}>
+        <div className="flex items-center gap-2 mb-2">
+          <Music className="h-4 w-4 text-purple-500" />
+          <span className="text-sm font-medium text-purple-800 dark:text-purple-300">Audio File</span>
+          <span className="text-xs text-muted-foreground">({mediaType})</span>
+        </div>
+        <audio controls className="w-full max-w-md">
+          <source src={dataUri} type={mediaType} />
+          Your browser does not support the audio element.
+        </audio>
+      </div>
+    );
+  }
+
+  // Fallback for non-images/non-audio or failed images
   return (
     <div className={`my-2 p-3 border rounded-lg bg-muted ${className || ""}`}>
       <div className="flex items-center gap-2">

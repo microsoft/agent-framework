@@ -12,6 +12,12 @@ import {
   Settings,
   RotateCcw,
   ChevronDown,
+  Package,
+  FolderOpen,
+  Database,
+  Globe,
+  XCircle,
+  Workflow as WorkflowIcon,
 } from "lucide-react";
 import { LoadingState } from "@/components/ui/loading-state";
 import { WorkflowInputForm } from "@/components/workflow/workflow-input-form";
@@ -267,6 +273,7 @@ export function WorkflowView({
   const [workflowResult, setWorkflowResult] = useState<string>("");
   const [workflowError, setWorkflowError] = useState<string>("");
   const accumulatedText = useRef<string>("");
+  const [detailsExpanded, setDetailsExpanded] = useState(false);
 
   // Panel resize state
   const [bottomPanelHeight, setBottomPanelHeight] = useState(() => {
@@ -467,7 +474,7 @@ export function WorkflowView({
               event_type?: string;
               data?: unknown;
             };
-            if (data.event_type === "WorkflowCompletedEvent" && data.data) {
+            if ((data.event_type === "WorkflowCompletedEvent" || data.event_type === "WorkflowOutputEvent") && data.data) {
               setWorkflowResult(String(data.data));
             }
           }
@@ -524,9 +531,23 @@ export function WorkflowView({
           <div className="border border-border rounded bg-card shadow-sm h-full flex flex-col">
             <div className="border-b border-border px-4 py-3 bg-muted rounded-t flex-shrink-0">
               <div className="flex items-center justify-between">
-                <h3 className="text-sm font-medium text-foreground">
-                  Workflow Visualization
-                </h3>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-medium text-foreground">
+                    {selectedWorkflow.name || selectedWorkflow.id}
+                  </h3>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setDetailsExpanded(!detailsExpanded)}
+                    className="h-6 w-6 p-0"
+                  >
+                    <ChevronDown
+                      className={`h-4 w-4 transition-transform duration-200 ${
+                        detailsExpanded ? "rotate-180" : ""
+                      }`}
+                    />
+                  </Button>
+                </div>
 
                 {/* Smart Run Workflow CTA - Show for all states */}
                 {workflowInfo && (
@@ -551,6 +572,85 @@ export function WorkflowView({
                 )}
 
                 {/* Status is now handled by the RunWorkflowButton component */}
+              </div>
+
+              {/* Description */}
+              {selectedWorkflow.description && (
+                <p className="text-sm text-muted-foreground mt-2">
+                  {selectedWorkflow.description}
+                </p>
+              )}
+
+              {/* Collapsible Details Section */}
+              <div
+                className={`overflow-hidden transition-all duration-200 ease-in-out ${
+                  detailsExpanded ? "max-h-40 mt-3" : "max-h-0"
+                }`}
+              >
+                <div className="space-y-2 text-xs">
+                  {/* Executors */}
+                  <div className="flex items-center gap-2">
+                    <Package className="h-3.5 w-3.5 text-muted-foreground" />
+                    <span className="text-muted-foreground">Executors:</span>
+                    <span className="font-mono">
+                      {selectedWorkflow.executors.length > 0
+                        ? selectedWorkflow.executors.slice(0, 3).join(", ")
+                        : "No executors"}
+                      {selectedWorkflow.executors.length > 3 && "..."}
+                    </span>
+                    <span className="text-muted-foreground">
+                      ({selectedWorkflow.executors.length})
+                    </span>
+                  </div>
+
+                  {/* Start Executor */}
+                  <div className="flex items-center gap-2">
+                    <WorkflowIcon className="h-3.5 w-3.5 text-muted-foreground" />
+                    <span className="text-muted-foreground">Start:</span>
+                    <span className="font-mono">
+                      {selectedWorkflow.start_executor_id}
+                    </span>
+                  </div>
+
+                  {/* Source */}
+                  <div className="flex items-center gap-2">
+                    {selectedWorkflow.source === "directory" ? (
+                      <FolderOpen className="h-3.5 w-3.5 text-muted-foreground" />
+                    ) : selectedWorkflow.source === "in_memory" ? (
+                      <Database className="h-3.5 w-3.5 text-muted-foreground" />
+                    ) : (
+                      <Globe className="h-3.5 w-3.5 text-muted-foreground" />
+                    )}
+                    <span className="text-muted-foreground">Source:</span>
+                    <span>
+                      {selectedWorkflow.source === "directory"
+                        ? "Local"
+                        : selectedWorkflow.source === "in_memory"
+                        ? "In-Memory"
+                        : "Gallery"}
+                    </span>
+                    {selectedWorkflow.module_path && (
+                      <span className="text-muted-foreground font-mono text-[11px]">
+                        ({selectedWorkflow.module_path})
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Environment */}
+                  <div className="flex items-center gap-2">
+                    {selectedWorkflow.has_env ? (
+                      <XCircle className="h-3.5 w-3.5 text-orange-500" />
+                    ) : (
+                      <CheckCircle className="h-3.5 w-3.5 text-green-500" />
+                    )}
+                    <span className="text-muted-foreground">Environment:</span>
+                    <span>
+                      {selectedWorkflow.has_env
+                        ? "Requires environment variables"
+                        : "No environment variables required"}
+                    </span>
+                  </div>
+                </div>
               </div>
             </div>
             <div className="flex-1 min-h-0">

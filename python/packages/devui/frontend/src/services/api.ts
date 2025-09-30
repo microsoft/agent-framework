@@ -5,6 +5,7 @@
 
 import type {
   AgentInfo,
+  AgentSource,
   HealthResponse,
   RunAgentRequest,
   RunWorkflowRequest,
@@ -22,6 +23,8 @@ interface EntityInfo {
   framework: string;
   tools?: (string | Record<string, unknown>)[];
   metadata: Record<string, unknown>;
+  source?: string;
+  original_url?: string;
   executors?: string[];
   workflow_dump?: Record<string, unknown>;
   input_schema?: Record<string, unknown>;
@@ -79,9 +82,17 @@ class ApiClient {
     });
 
     if (!response.ok) {
-      throw new Error(
-        `API request failed: ${response.status} ${response.statusText}`
-      );
+      // Try to extract error message from response body
+      let errorMessage = `API request failed: ${response.status} ${response.statusText}`;
+      try {
+        const errorData = await response.json();
+        if (errorData.detail) {
+          errorMessage = errorData.detail;
+        }
+      } catch {
+        // If parsing fails, use default message
+      }
+      throw new Error(errorMessage);
     }
 
     return response.json();
@@ -111,7 +122,7 @@ class ApiClient {
           name: entity.name,
           description: entity.description,
           type: "agent",
-          source: "directory", // Default source
+          source: (entity.source as AgentSource) || "directory",
           tools: (entity.tools || []).map((tool) =>
             typeof tool === "string" ? tool : JSON.stringify(tool)
           ),
@@ -130,7 +141,7 @@ class ApiClient {
           name: entity.name,
           description: entity.description,
           type: "workflow",
-          source: "directory",
+          source: (entity.source as AgentSource) || "directory",
           executors: (entity.tools || []).map((tool) =>
             typeof tool === "string" ? tool : JSON.stringify(tool)
           ),
@@ -439,6 +450,31 @@ class ApiClient {
       method: "POST",
       body: JSON.stringify(request),
     });
+  }
+
+  // Add entity from URL
+  async addEntity(url: string, metadata?: Record<string, unknown>): Promise<EntityInfo> {
+    const response = await this.request<{ success: boolean; entity: EntityInfo }>("/v1/entities/add", {
+      method: "POST",
+      body: JSON.stringify({ url, metadata }),
+    });
+
+    if (!response.success || !response.entity) {
+      throw new Error("Failed to add entity");
+    }
+
+    return response.entity;
+  }
+
+  // Remove entity by ID
+  async removeEntity(entityId: string): Promise<void> {
+    const response = await this.request<{ success: boolean }>(`/v1/entities/${entityId}`, {
+      method: "DELETE",
+    });
+
+    if (!response.success) {
+      throw new Error("Failed to remove entity");
+    }
   }
 }
 
