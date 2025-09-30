@@ -118,7 +118,7 @@ public static class IWorkflowContextExtensions
     public static async ValueTask<object?> ConvertValueAsync(this IWorkflowContext context, VariableType targetType, string expression, CancellationToken cancellationToken = default)
     {
         object? sourceValue = await context.EvaluateValueAsync(expression, cancellationToken).ConfigureAwait(false);
-        return sourceValue.Convert(targetType);
+        return sourceValue.ConvertType(targetType);
     }
 
     /// <summary>
@@ -133,7 +133,7 @@ public static class IWorkflowContextExtensions
     public static async ValueTask<object?> ConvertValueAsync(this IWorkflowContext context, VariableType targetType, string key, string? scopeName = null, CancellationToken cancellationToken = default)
     {
         object? sourceValue = await context.ReadStateAsync<object>(key, scopeName).ConfigureAwait(false);
-        return sourceValue.Convert(targetType);
+        return sourceValue.ConvertType(targetType);
     }
 
     /// <summary>

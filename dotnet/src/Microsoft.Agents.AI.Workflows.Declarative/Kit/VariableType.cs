@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections;
 using System.Collections.Frozen;
 using System.Collections.Generic;
 
@@ -13,7 +14,9 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Kit;
 public sealed class VariableType
 {
     // Canonical CLR type used to mark a "record" (object with named fields and per-field types).
-    private static readonly Type s_typeRecord = typeof(IDictionary<string, VariableType?>);
+    internal static readonly Type RecordType = typeof(IDictionary<string, object?>);
+    // Any list of primitive values or records.
+    internal static readonly Type ListType = typeof(IEnumerable);
 
     // All supported root CLR types (only these may appear directly as VariableType.Type).
     private static readonly FrozenSet<Type> s_supportedTypes =
@@ -27,8 +30,8 @@ public sealed class VariableType
             typeof(string),
             typeof(DateTime),
             typeof(TimeSpan),
-            s_typeRecord,                 // Record (object with fields)
-            typeof(IList<VariableType?>), // Homogeneous list of values (each element described by VariableType)
+            RecordType,
+            ListType,
         ];
 
     /// <summary>
@@ -52,7 +55,7 @@ public sealed class VariableType
     /// Each tuple's Key is the field name; Type is the declared VariableType (nullable to allow "unknown"/late binding).
     /// </summary>
     public static VariableType Record(params IEnumerable<(string Key, VariableType? Type)> fields) =>
-        new(typeof(IDictionary<string, VariableType?>))
+        new(typeof(IDictionary<string, object?>))
         {
             Schema = fields.ToFrozenDictionary(kv => kv.Key, kv => kv.Type),
         };
@@ -79,7 +82,12 @@ public sealed class VariableType
     /// <summary>
     /// True if this instance represents a record/object with a field schema.
     /// </summary>
-    public bool IsRecord => this.Type == s_typeRecord;
+    public bool IsList => ListType.IsAssignableFrom(this.Type);
+
+    /// <summary>
+    /// True if this instance represents a record/object with a field schema.
+    /// </summary>
+    public bool IsRecord => RecordType.IsAssignableFrom(this.Type);
 
     /// <summary>
     /// Instance convenience wrapper for <see cref="IsValid(Type)"/> on this VariableType's underlying CLR type.
