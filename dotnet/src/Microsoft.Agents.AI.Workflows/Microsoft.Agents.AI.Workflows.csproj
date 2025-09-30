@@ -29,6 +29,12 @@
     <InternalsVisibleTo Include="Microsoft.Agents.AI.Workflows.UnitTests" />
   </ItemGroup>
 
+  <PropertyGroup>
+    <!-- NuGet Package Settings -->
+    <Title>Microsoft Agent Framework Workflows</Title>
+    <Description>Provides Microsoft Agent Framework support for workflows.</Description>
+  </PropertyGroup>
+  
   <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
     <PackageReference Include="System.Text.Json" />
   </ItemGroup>

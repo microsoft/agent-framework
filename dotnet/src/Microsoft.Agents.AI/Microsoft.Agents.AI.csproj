@@ -25,8 +25,8 @@
 
   <PropertyGroup>
     <!-- NuGet Package Settings -->
-    <Title>Microsoft Extensions AI Agent Framework</Title>
-    <Description>Contains the Microsoft Agent Framework core functionality.</Description>
+    <Title>Microsoft Agent Framework</Title>
+    <Description>Provides Microsoft Agent Framework core functionality.</Description>
   </PropertyGroup>
 
   <ItemGroup>

@@ -42,4 +42,9 @@
     <InternalsVisibleTo Include="Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests" />
   </ItemGroup>
 
+  <PropertyGroup>
+    <!-- NuGet Package Settings -->
+    <Title>Microsoft Agent Framework Declarative Workflows</Title>
+    <Description>Provides Microsoft Agent Framework support for declarative workflows.</Description>
+  </PropertyGroup>
 </Project>
