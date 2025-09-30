@@ -10,8 +10,7 @@ from azure.core.credentials import TokenCredential
 from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
 from openai.types.chat.chat_completion import Choice
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
-from pydantic import SecretStr, ValidationError
-from pydantic.networks import AnyUrl
+from pydantic import ValidationError
 
 from agent_framework import (
     ChatResponse,
@@ -49,6 +48,7 @@ class AzureOpenAIChatClient(AzureOpenAIConfigMixin, OpenAIBaseChatClient):
 
     def __init__(
         self,
+        *,
         api_key: str | None = None,
         deployment_name: str | None = None,
         endpoint: str | None = None,
@@ -63,6 +63,7 @@ class AzureOpenAIChatClient(AzureOpenAIConfigMixin, OpenAIBaseChatClient):
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         instruction_role: str | None = None,
+        **kwargs: Any,
     ) -> None:
         """Initialize an AzureChatCompletion service.
 
@@ -88,13 +89,15 @@ class AzureOpenAIChatClient(AzureOpenAIConfigMixin, OpenAIBaseChatClient):
             env_file_encoding: The encoding of the environment settings file, defaults to 'utf-8'.
             instruction_role: The role to use for 'instruction' messages, for example, summarization
                 prompts could use `developer` or `system`. (Optional)
+            kwargs: Other keyword parameters.
         """
         try:
             # Filter out any None values from the arguments
             azure_openai_settings = AzureOpenAISettings(
-                api_key=SecretStr(api_key) if api_key else None,
-                base_url=AnyUrl(base_url) if base_url else None,
-                endpoint=AnyUrl(endpoint) if endpoint else None,
+                # pydantic settings will see if there is a value, if not, will try the env var or .env file
+                api_key=api_key,  # type: ignore
+                base_url=base_url,  # type: ignore
+                endpoint=endpoint,  # type: ignore
                 chat_deployment_name=deployment_name,
                 api_version=api_version,
                 env_file_path=env_file_path,
@@ -123,27 +126,7 @@ class AzureOpenAIChatClient(AzureOpenAIConfigMixin, OpenAIBaseChatClient):
             default_headers=default_headers,
             client=async_client,
             instruction_role=instruction_role,
-        )
-
-    @classmethod
-    def from_dict(cls: type[TAzureOpenAIChatClient], settings: dict[str, Any]) -> TAzureOpenAIChatClient:
-        """Initialize an Azure OpenAI service from a dictionary of settings.
-
-        Args:
-            settings: A dictionary of settings for the service.
-                should contain keys: service_id, and optionally:
-                ad_auth, ad_token_provider, default_headers
-        """
-        return cls(
-            api_key=settings.get("api_key"),
-            deployment_name=settings.get("deployment_name"),
-            endpoint=settings.get("endpoint"),
-            base_url=settings.get("base_url"),
-            api_version=settings.get("api_version"),
-            ad_token=settings.get("ad_token"),
-            ad_token_provider=settings.get("ad_token_provider"),
-            default_headers=settings.get("default_headers"),
-            env_file_path=settings.get("env_file_path"),
+            **kwargs,
         )
 
     @override

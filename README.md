@@ -44,7 +44,7 @@ Welcome to Microsoft's comprehensive multi-language framework for building, orch
 
 - [Getting Started with Agents](./python/samples/getting_started/agents): basic agent creation and tool usage
 - [Chat Client Examples](./python/samples/getting_started/chat_client): direct chat client usage patterns
-- [Getting Started with Workflows](./python/samples/getting_started/workflow): basic workflow creation and integration with agents
+- [Getting Started with Workflows](./python/samples/getting_started/workflows): basic workflow creation and integration with agents
 
 ### .NET
 

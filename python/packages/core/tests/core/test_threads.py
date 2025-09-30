@@ -377,10 +377,10 @@ class TestThreadState:
     def test_init_with_chat_message_store_state(self) -> None:
         """Test AgentThreadState initialization with chat_message_store_state."""
         store_data: dict[str, Any] = {"messages": []}
-        state = AgentThreadState(chat_message_store_state=store_data)
+        state = AgentThreadState.model_validate({"chat_message_store_state": store_data})
 
         assert state.service_thread_id is None
-        assert state.chat_message_store_state == store_data
+        assert state.chat_message_store_state.messages == []
 
     def test_init_with_both(self) -> None:
         """Test AgentThreadState initialization with both parameters."""

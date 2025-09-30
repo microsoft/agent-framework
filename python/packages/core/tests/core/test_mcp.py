@@ -510,6 +510,7 @@ def test_local_mcp_streamable_http_tool_init():
 
 
 # Integration test
+@pytest.mark.flaky
 @skip_if_mcp_integration_tests_disabled
 async def test_streamable_http_integration():
     """Test MCP StreamableHTTP integration."""

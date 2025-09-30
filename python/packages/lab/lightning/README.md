@@ -51,7 +51,7 @@ async def math_agent(task: TaskType, llm: LLM) -> float:
         MCPStdioTool(name="calculator", command="uvx", args=["mcp-server-calculator"]) as mcp_server,
         ChatAgent(
             chat_client=OpenAIChatClient(
-                ai_model_id=llm.model,
+                model_id=llm.model,
                 api_key="your-api-key",
                 base_url=llm.endpoint,
             ),

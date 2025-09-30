@@ -3,19 +3,13 @@
 
 from typing import Annotated, Any, ClassVar, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, UrlConstraints
+from pydantic import Field, UrlConstraints
 from pydantic.networks import AnyUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 HTTPsUrl = Annotated[AnyUrl, UrlConstraints(max_length=2083, allowed_schemes=["https"])]
 
-__all__ = ["AFBaseModel", "AFBaseSettings", "HTTPsUrl"]
-
-
-class AFBaseModel(BaseModel):
-    """Base class for all pydantic models in the Agent Framework."""
-
-    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True, validate_assignment=True)
+__all__ = ["AFBaseSettings", "HTTPsUrl"]
 
 
 TSettings = TypeVar("TSettings", bound="AFBaseSettings")

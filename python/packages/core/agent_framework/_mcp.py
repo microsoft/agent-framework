@@ -60,7 +60,7 @@ def _mcp_prompt_message_to_chat_message(
     """Convert a MCP container type to a Agent Framework type."""
     return ChatMessage(
         role=Role(value=mcp_type.role),
-        contents=[_mcp_type_to_ai_content(mcp_type.content)],  # type: ignore[call-arg]
+        contents=[_mcp_type_to_ai_content(mcp_type.content)],
         raw_representation=mcp_type,
     )
 

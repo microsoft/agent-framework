@@ -182,15 +182,7 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
             var response = await parentAgent.InnerAgent.RunAsync(messages, fo?.Thread, fo?.Options, cancellationToken).ConfigureAwait(false);
 
             // Wrap the response in a ChatResponse so we can pass it back through OpenTelemetryChatClient.
-            return new ChatResponse
-            {
-                AdditionalProperties = response.AdditionalProperties,
-                CreatedAt = response.CreatedAt,
-                Messages = response.Messages,
-                RawRepresentation = response,
-                ResponseId = response.ResponseId,
-                Usage = response.Usage,
-            };
+            return response.AsChatResponse();
         }
 
         public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
@@ -205,17 +197,7 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
             await foreach (var update in parentAgent.InnerAgent.RunStreamingAsync(messages, fo?.Thread, fo?.Options, cancellationToken).ConfigureAwait(false))
             {
                 // Wrap the response updates in ChatResponseUpdates so we can pass them back through OpenTelemetryChatClient.
-                yield return new ChatResponseUpdate
-                {
-                    AdditionalProperties = update.AdditionalProperties,
-                    AuthorName = update.AuthorName,
-                    Contents = update.Contents,
-                    CreatedAt = update.CreatedAt,
-                    MessageId = update.MessageId,
-                    RawRepresentation = update,
-                    ResponseId = update.ResponseId,
-                    Role = update.Role,
-                };
+                yield return update.AsChatResponseUpdate();
             }
         }
 

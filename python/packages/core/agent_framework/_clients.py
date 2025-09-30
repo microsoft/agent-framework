@@ -3,9 +3,9 @@
 import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, Callable, MutableMapping, MutableSequence, Sequence
-from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar, runtime_checkable
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, TypeVar, runtime_checkable
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from ._logging import get_logger
 from ._mcp import MCPTool
@@ -17,7 +17,7 @@ from ._middleware import (
     FunctionMiddlewareCallable,
     Middleware,
 )
-from ._pydantic import AFBaseModel
+from ._serialization import SerializationMixin
 from ._threads import ChatMessageStoreProtocol
 from ._tools import ToolProtocol
 from ._types import (
@@ -189,20 +189,60 @@ def prepare_messages(messages: str | ChatMessage | list[str] | list[ChatMessage]
     return return_messages
 
 
-class BaseChatClient(AFBaseModel, ABC):
+class BaseChatClient(SerializationMixin, ABC):
     """Base class for chat clients."""
 
-    additional_properties: dict[str, Any] = Field(default_factory=dict)
-    middleware: (
-        ChatMiddleware
-        | ChatMiddlewareCallable
-        | FunctionMiddleware
-        | FunctionMiddlewareCallable
-        | list[ChatMiddleware | ChatMiddlewareCallable | FunctionMiddleware | FunctionMiddlewareCallable]
-        | None
-    ) = None
-    OTEL_PROVIDER_NAME: str = "unknown"
+    OTEL_PROVIDER_NAME: ClassVar[str] = "unknown"
+    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"additional_properties"}
     # This is used for OTel setup, should be overridden in subclasses
+
+    def __init__(
+        self,
+        *,
+        middleware: (
+            ChatMiddleware
+            | ChatMiddlewareCallable
+            | FunctionMiddleware
+            | FunctionMiddlewareCallable
+            | list[ChatMiddleware | ChatMiddlewareCallable | FunctionMiddleware | FunctionMiddlewareCallable]
+            | None
+        ) = None,
+        additional_properties: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize BaseChatClient.
+
+        Args:
+            additional_properties: Additional properties for the client.
+            middleware: Middleware for the client.
+            **kwargs: Additional keyword arguments (merged into additional_properties).
+        """
+        # Merge kwargs into additional_properties
+        self.additional_properties = additional_properties or {}
+        self.additional_properties.update(kwargs)
+
+        self.middleware = middleware
+
+    def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
+        """Convert the instance to a dictionary.
+
+        Extracts additional_properties fields to the root level.
+
+        Args:
+            exclude: Set of field names to exclude from serialization.
+            exclude_none: Whether to exclude None values from the output. Defaults to True.
+
+        Returns:
+            Dictionary representation of the instance.
+        """
+        # Get the base dict from SerializationMixin
+        result = super().to_dict(exclude=exclude, exclude_none=exclude_none)
+
+        # Extract additional_properties to root level
+        if self.additional_properties:
+            result.update(self.additional_properties)
+
+        return result
 
     def prepare_messages(
         self, messages: str | ChatMessage | list[str] | list[ChatMessage], chat_options: ChatOptions

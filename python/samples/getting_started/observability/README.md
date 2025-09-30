@@ -88,6 +88,17 @@ setup_observability(exporters=[exporter])
 
 > Using this method implicitly enables telemetry, so you do not need to set the `ENABLE_OTEL` environment variable. You can still set `ENABLE_SENSITIVE_DATA` to control whether sensitive data is included in the telemetry, or call the `setup_observability()` function with the `enable_sensitive_data` parameter set to `True`.
 
+#### Logging
+You can control at what level logging happens and thus what logs get exported, you can do this, by adding this:
+
+```python
+import logging
+
+logger = logging.getLogger()
+logger.setLevel(logging.NOTSET)
+```
+This gets the root logger and sets the level of that, automatically other loggers inherit from that one, and you will get detailed logs in your telemetry.
+
 ## Samples
 
 This folder contains different samples demonstrating how to use telemetry in various scenarios.
