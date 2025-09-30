@@ -3,8 +3,6 @@
 import asyncio
 from typing import cast
 
-from typing_extensions import Never
-
 from agent_framework import (
     Executor,
     WorkflowBuilder,
@@ -12,6 +10,7 @@ from agent_framework import (
     WorkflowOutputEvent,
     handler,
 )
+from typing_extensions import Never
 
 """
 Sample: Sequential workflow with streaming.

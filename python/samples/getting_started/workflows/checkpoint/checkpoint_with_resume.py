@@ -23,7 +23,7 @@ from azure.identity import AzureCliCredential
 
 if TYPE_CHECKING:
     from agent_framework import Workflow
-    from agent_framework._workflow._checkpoint import WorkflowCheckpoint
+    from agent_framework._workflows._checkpoint import WorkflowCheckpoint
 
 """
 Sample: Checkpointing and Resuming a Workflow (with an Agent stage)
@@ -212,7 +212,7 @@ def _render_checkpoint_summary(checkpoints: list["WorkflowCheckpoint"]) -> None:
 async def main():
     # Clear existing checkpoints in this sample directory for a clean run.
     checkpoint_dir = Path(TEMP_DIR)
-    for file in checkpoint_dir.glob("*.json"):
+    for file in checkpoint_dir.glob("*.json"):  # noqa: ASYNC240
         file.unlink()
 
     # Backing store for checkpoints written by with_checkpointing.

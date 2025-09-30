@@ -27,7 +27,7 @@ from agent_framework import (  # noqa: E402
     handler,
 )
 from agent_framework.openai import OpenAIChatClient  # noqa: E402
-from getting_started.workflow.agents.workflow_as_agent_reflection_pattern import (  # noqa: E402
+from getting_started.workflows.agents.workflow_as_agent_reflection_pattern import (  # noqa: E402
     ReviewRequest,
     ReviewResponse,
     Worker,

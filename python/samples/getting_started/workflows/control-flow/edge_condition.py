@@ -4,8 +4,6 @@ import asyncio
 import os
 from typing import Any
 
-from typing_extensions import Never
-
 from agent_framework import (  # Core chat primitives used to build requests
     AgentExecutor,  # Wraps an LLM agent that can be invoked inside a workflow
     AgentExecutorRequest,  # Input message bundle for an AgentExecutor
@@ -19,6 +17,7 @@ from agent_framework import (  # Core chat primitives used to build requests
 from agent_framework.azure import AzureOpenAIChatClient  # Thin client wrapper for Azure OpenAI chat models
 from azure.identity import AzureCliCredential  # Uses your az CLI login for credentials
 from pydantic import BaseModel  # Structured outputs for safer parsing
+from typing_extensions import Never
 
 """
 Sample: Conditional routing with structured outputs

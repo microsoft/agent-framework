@@ -3,8 +3,6 @@
 import asyncio
 from dataclasses import dataclass
 
-from typing_extensions import Never
-
 from agent_framework import (
     AgentExecutor,
     AgentExecutorRequest,
@@ -21,6 +19,7 @@ from agent_framework import (
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
+from typing_extensions import Never
 
 """
 Sample: Concurrent (Fan-out/Fan-in) with Agents + Visualization

@@ -6,8 +6,6 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
-from typing_extensions import Never
-
 from agent_framework import (
     AgentExecutorRequest,
     AgentExecutorResponse,
@@ -20,6 +18,7 @@ from agent_framework import (
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel
+from typing_extensions import Never
 
 """
 Sample: Shared state with agents and conditional routing.
