@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -65,7 +66,14 @@ internal static class AgentProviderExtensions
 
         if (autoSend && !isWorkflowConversation && conversationId is not null)
         {
-            foreach (ChatMessage message in response.Messages)
+            // Copy messages with content that aren't function calls or results.
+            IEnumerable<ChatMessage> messages =
+                response.Messages.Where(
+                    message =>
+                        !string.IsNullOrEmpty(message.Text) &&
+                        !message.Contents.OfType<FunctionCallContent>().Any() &&
+                        !message.Contents.OfType<FunctionResultContent>().Any());
+            foreach (ChatMessage message in messages)
             {
                 await agentProvider.CreateMessageAsync(conversationId, message, cancellationToken).ConfigureAwait(false);
             }
