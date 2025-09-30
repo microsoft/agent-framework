@@ -68,9 +68,6 @@ class A2AAgent(BaseAgent):
     Can be initialized with a URL, AgentCard, or existing A2A Client instance.
     """
 
-    client: Client
-    _http_client: httpx.AsyncClient | None = None
-
     def __init__(
         self,
         *,
@@ -81,6 +78,7 @@ class A2AAgent(BaseAgent):
         url: str | None = None,
         client: Client | None = None,
         http_client: httpx.AsyncClient | None = None,
+        **kwargs: Any,
     ) -> None:
         """Initialize the A2AAgent.
 
@@ -92,42 +90,40 @@ class A2AAgent(BaseAgent):
             url: The URL for the A2A server.
             client: The A2A client for the agent.
             http_client: Optional httpx.AsyncClient to use.
+            kwargs: any additional properties, passed to BaseAgent.
         """
-        if client is None:
-            if agent_card is None:
-                if url is None:
-                    raise ValueError("Either agent_card or url must be provided")
-                # Create minimal agent card from URL
-                agent_card = minimal_agent_card(url, [TransportProtocol.jsonrpc])
+        super().__init__(id=id, name=name, description=description, **kwargs)
+        self._http_client: httpx.AsyncClient | None = http_client
+        if client is not None:
+            self.client = client
+            self._close_http_client = True
+            return
+        if agent_card is None:
+            if url is None:
+                raise ValueError("Either agent_card or url must be provided")
+            # Create minimal agent card from URL
+            agent_card = minimal_agent_card(url, [TransportProtocol.jsonrpc])
 
-            # Create or use provided httpx client
-            if http_client is None:
-                timeout = httpx.Timeout(
-                    connect=10.0,  # 10 seconds to establish connection
-                    read=60.0,  # 60 seconds to read response (A2A operations can take time)
-                    write=10.0,  # 10 seconds to send request
-                    pool=5.0,  # 5 seconds to get connection from pool
-                )
-                headers = prepend_agent_framework_to_user_agent()
-                http_client = httpx.AsyncClient(timeout=timeout, headers=headers)
-                self._http_client = http_client  # Store for cleanup
-
-            # Create A2A client using factory
-            config = ClientConfig(
-                httpx_client=http_client,
-                supported_transports=[TransportProtocol.jsonrpc],
+        # Create or use provided httpx client
+        if http_client is None:
+            timeout = httpx.Timeout(
+                connect=10.0,  # 10 seconds to establish connection
+                read=60.0,  # 60 seconds to read response (A2A operations can take time)
+                write=10.0,  # 10 seconds to send request
+                pool=5.0,  # 5 seconds to get connection from pool
             )
-            factory = ClientFactory(config)
-            client = factory.create(agent_card)
+            headers = prepend_agent_framework_to_user_agent()
+            http_client = httpx.AsyncClient(timeout=timeout, headers=headers)
+            self._http_client = http_client  # Store for cleanup
+            self._close_http_client = True
 
-        args: dict[str, Any] = {"client": client}
-        if name:
-            args["name"] = name
-        if id:
-            args["id"] = id
-        if description:
-            args["description"] = description
-        super().__init__(**args)
+        # Create A2A client using factory
+        config = ClientConfig(
+            httpx_client=http_client,
+            supported_transports=[TransportProtocol.jsonrpc],
+        )
+        factory = ClientFactory(config)
+        self.client = factory.create(agent_card)
 
     async def __aenter__(self) -> "A2AAgent":
         """Async context manager entry."""
@@ -141,7 +137,7 @@ class A2AAgent(BaseAgent):
     ) -> None:
         """Async context manager exit with httpx client cleanup."""
         # Close our httpx client if we created it
-        if self._http_client is not None:
+        if self._http_client is not None and self._close_http_client:
             await self._http_client.aclose()
 
     async def run(

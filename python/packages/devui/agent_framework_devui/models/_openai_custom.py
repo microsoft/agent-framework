@@ -182,6 +182,14 @@ class OpenAIError(BaseModel):
         error_data = {"message": message, "type": type, "code": code}
         return cls(error=error_data)
 
+    def to_dict(self) -> dict[str, Any]:
+        """Return the error payload as a plain mapping."""
+        return {"error": dict(self.error)}
+
+    def to_json(self) -> str:
+        """Return the error payload serialized to JSON."""
+        return self.model_dump_json()
+
 
 # Export all custom types
 __all__ = [

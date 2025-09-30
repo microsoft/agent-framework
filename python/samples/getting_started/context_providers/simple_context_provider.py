@@ -53,7 +53,7 @@ class UserInfoMemory(ContextProvider):
                 )
 
                 # Update user info with extracted data
-                if result.value:
+                if result.value and isinstance(result.value, UserInfo):
                     if self.user_info.name is None and result.value.name:
                         self.user_info.name = result.value.name
                     if self.user_info.age is None and result.value.age:
