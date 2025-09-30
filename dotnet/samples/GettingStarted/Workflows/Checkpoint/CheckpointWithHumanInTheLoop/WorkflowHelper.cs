@@ -13,7 +13,7 @@ internal static class WorkflowHelper
     /// Get a workflow that plays a number guessing game with human-in-the-loop interaction.
     /// An input port allows the external world to provide inputs to the workflow upon requests.
     /// </summary>
-    internal static ValueTask<Workflow<NumberSignal>> GetWorkflowAsync()
+    internal static ValueTask<Workflow<SignalWithNumber>> GetWorkflowAsync()
     {
         // Create the executors
         InputPort numberInputPort = InputPort.Create<SignalWithNumber, int>("GuessNumber");
@@ -24,7 +24,7 @@ internal static class WorkflowHelper
             .AddEdge(numberInputPort, judgeExecutor)
             .AddEdge(judgeExecutor, numberInputPort)
             .WithOutputFrom(judgeExecutor)
-            .BuildAsync<NumberSignal>();
+            .BuildAsync<SignalWithNumber>();
     }
 }
 
