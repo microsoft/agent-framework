@@ -103,7 +103,7 @@ using var instrumentedChatClient = new AzureOpenAIClient(new Uri(endpoint), new 
         .AsIChatClient() // Converts a native OpenAI SDK ChatClient into a Microsoft.Extensions.AI.IChatClient
         .AsBuilder()
         .UseFunctionInvocation()
-        .UseOpenTelemetry(loggerFactory: loggerFactory, sourceName: SourceName, (cfg) => cfg.EnableSensitiveData = true)
+        .UseOpenTelemetry(sourceName: SourceName, configure: (cfg) => cfg.EnableSensitiveData = true)
         .Build();
 
 appLogger.LogInformation("Creating Agent with OpenTelemetry instrumentation");
@@ -112,7 +112,7 @@ using var agent = new ChatClientAgent(instrumentedChatClient,
             name: "OpenTelemetryDemoAgent",
             instructions: "You are a helpful assistant that provides concise and informative responses.",
             tools: [AIFunctionFactory.Create(GetWeatherAsync)])
-        .WithOpenTelemetry(loggerFactory, SourceName); // Enable telemetry on the agent
+        .WithOpenTelemetry(SourceName); // Enable telemetry on the agent
 
 var thread = agent.GetNewThread();
 

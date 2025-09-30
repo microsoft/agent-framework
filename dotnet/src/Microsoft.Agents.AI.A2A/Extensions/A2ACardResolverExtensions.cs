@@ -16,7 +16,7 @@ namespace A2A;
 /// </summary>
 /// <remarks>
 /// These extensions bridge the gap between A2A SDK client objects
-/// and the Microsoft Extensions AI Agent framework.
+/// and the Microsoft Agent Framework.
 /// <para>
 /// They allow developers to easily create AI agents that can interact
 /// with A2A agents by handling the conversion from A2A clients to
@@ -38,7 +38,7 @@ public static class A2ACardResolverExtensions
     /// <param name="resolver">The <see cref="A2ACardResolver" /> to use for the agent creation.</param>
     /// <param name="httpClient">The <see cref="HttpClient"/> to use for HTTP requests.</param>
     /// <param name="loggerFactory">The logger factory for enabling logging within the agent.</param>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to use when retrieving the agent card.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>An <see cref="AIAgent"/> instance backed by the A2A agent.</returns>
     public static async Task<AIAgent> GetAIAgentAsync(this A2ACardResolver resolver, HttpClient? httpClient = null, ILoggerFactory? loggerFactory = null, CancellationToken cancellationToken = default)
     {

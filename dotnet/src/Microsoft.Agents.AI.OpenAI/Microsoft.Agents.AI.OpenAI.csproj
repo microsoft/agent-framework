@@ -22,8 +22,7 @@
 
   <PropertyGroup>
     <!-- NuGet Package Settings -->
-    <Title>Microsoft.Agents.AI.OpenAI</Title>
-    <Description>Implementation of generative AI abstractions for OpenAI Agents.</Description>
+    <Title>Microsoft Agent Framework OpenAI</Title>
+    <Description>Provides Microsoft Agent Framework support for OpenAI.</Description>
   </PropertyGroup>
-
 </Project>

@@ -108,7 +108,7 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingRunner
         this.WorkflowEvent?.Invoke(this, workflowEvent);
     }
 
-    public async ValueTask<StreamingRun> ResumeStreamAsync(CheckpointInfo checkpoint, CancellationToken cancellation = default)
+    public async ValueTask<StreamingRun> ResumeStreamAsync(CheckpointInfo checkpoint, CancellationToken cancellationToken = default)
     {
         this.RunContext.CheckEnded();
         Throw.IfNull(checkpoint);
@@ -117,12 +117,12 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingRunner
             throw new InvalidOperationException("This runner was not configured with a CheckpointManager, so it cannot restore checkpoints.");
         }
 
-        await this.RestoreCheckpointAsync(checkpoint, cancellation).ConfigureAwait(false);
+        await this.RestoreCheckpointAsync(checkpoint, cancellationToken).ConfigureAwait(false);
 
         return new StreamingRun(this);
     }
 
-    public async ValueTask<StreamingRun> StreamAsync(object input, CancellationToken cancellation = default)
+    public async ValueTask<StreamingRun> StreamAsync(object input, CancellationToken cancellationToken = default)
     {
         this.RunContext.CheckEnded();
         await this.EnqueueMessageAsync(input).ConfigureAwait(false);
@@ -130,7 +130,7 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingRunner
         return new StreamingRun(this);
     }
 
-    public async ValueTask<StreamingRun> StreamAsync<TInput>(TInput input, CancellationToken cancellation = default)
+    public async ValueTask<StreamingRun> StreamAsync<TInput>(TInput input, CancellationToken cancellationToken = default)
     {
         this.RunContext.CheckEnded();
         await this.EnqueueMessageAsync(input).ConfigureAwait(false);
@@ -138,31 +138,31 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingRunner
         return new StreamingRun(this);
     }
 
-    internal async ValueTask<Run> ResumeAsync(CheckpointInfo checkpoint, CancellationToken cancellation = default)
+    internal async ValueTask<Run> ResumeAsync(CheckpointInfo checkpoint, CancellationToken cancellationToken = default)
     {
         this.RunContext.CheckEnded();
-        StreamingRun streamingRun = await this.ResumeStreamAsync(checkpoint, cancellation).ConfigureAwait(false);
-        cancellation.ThrowIfCancellationRequested();
+        StreamingRun streamingRun = await this.ResumeStreamAsync(checkpoint, cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
 
-        return await Run.CaptureStreamAsync(streamingRun, cancellation).ConfigureAwait(false);
+        return await Run.CaptureStreamAsync(streamingRun, cancellationToken).ConfigureAwait(false);
     }
 
-    public async ValueTask<Run> RunAsync(object input, CancellationToken cancellation = default)
+    public async ValueTask<Run> RunAsync(object input, CancellationToken cancellationToken = default)
     {
         this.RunContext.CheckEnded();
-        StreamingRun streamingRun = await this.StreamAsync(input, cancellation).ConfigureAwait(false);
-        cancellation.ThrowIfCancellationRequested();
+        StreamingRun streamingRun = await this.StreamAsync(input, cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
 
-        return await Run.CaptureStreamAsync(streamingRun, cancellation).ConfigureAwait(false);
+        return await Run.CaptureStreamAsync(streamingRun, cancellationToken).ConfigureAwait(false);
     }
 
-    public async ValueTask<Run> RunAsync<TInput>(TInput input, CancellationToken cancellation = default)
+    public async ValueTask<Run> RunAsync<TInput>(TInput input, CancellationToken cancellationToken = default)
     {
         this.RunContext.CheckEnded();
-        StreamingRun streamingRun = await this.StreamAsync(input, cancellation).ConfigureAwait(false);
-        cancellation.ThrowIfCancellationRequested();
+        StreamingRun streamingRun = await this.StreamAsync(input, cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
 
-        return await Run.CaptureStreamAsync(streamingRun, cancellation).ConfigureAwait(false);
+        return await Run.CaptureStreamAsync(streamingRun, cancellationToken).ConfigureAwait(false);
     }
 
     bool ISuperStepRunner.HasUnservicedRequests => this.RunContext.HasUnservicedRequests;
@@ -170,10 +170,10 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingRunner
 
     public IReadOnlyList<CheckpointInfo> Checkpoints => this._checkpoints;
 
-    async ValueTask<bool> ISuperStepRunner.RunSuperStepAsync(CancellationToken cancellation)
+    async ValueTask<bool> ISuperStepRunner.RunSuperStepAsync(CancellationToken cancellationToken)
     {
         this.RunContext.CheckEnded();
-        if (cancellation.IsCancellationRequested)
+        if (cancellationToken.IsCancellationRequested)
         {
             return false;
         }
@@ -239,7 +239,7 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingRunner
 
     private WorkflowInfo? _workflowInfoCache;
     private readonly List<CheckpointInfo> _checkpoints = [];
-    internal async ValueTask CheckpointAsync(CancellationToken cancellation = default)
+    internal async ValueTask CheckpointAsync(CancellationToken cancellationToken = default)
     {
         this.RunContext.CheckEnded();
         if (this.CheckpointManager is null)
@@ -250,7 +250,7 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingRunner
         }
 
         // Notify all the executors that they should prepare for checkpointing.
-        Task prepareTask = this.RunContext.PrepareForCheckpointAsync(cancellation);
+        Task prepareTask = this.RunContext.PrepareForCheckpointAsync(cancellationToken);
 
         // Create a representation of the current workflow if it does not already exist.
         this._workflowInfoCache ??= this.Workflow.ToWorkflowInfo();
@@ -269,7 +269,7 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingRunner
         this._checkpoints.Add(checkpointInfo);
     }
 
-    public async ValueTask RestoreCheckpointAsync(CheckpointInfo checkpointInfo, CancellationToken cancellation = default)
+    public async ValueTask RestoreCheckpointAsync(CheckpointInfo checkpointInfo, CancellationToken cancellationToken = default)
     {
         this.RunContext.CheckEnded();
         Throw.IfNull(checkpointInfo);
@@ -291,8 +291,8 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingRunner
         await this.RunContext.StateManager.ImportStateAsync(checkpoint).ConfigureAwait(false);
         await this.RunContext.ImportStateAsync(checkpoint).ConfigureAwait(false);
 
-        Task executorNotifyTask = this.RunContext.NotifyCheckpointLoadedAsync(cancellation);
-        ValueTask republishRequestsTask = this.RunContext.RepublishUnservicedRequestsAsync(cancellation);
+        Task executorNotifyTask = this.RunContext.NotifyCheckpointLoadedAsync(cancellationToken);
+        ValueTask republishRequestsTask = this.RunContext.RepublishUnservicedRequestsAsync(cancellationToken);
 
         await this.EdgeMap.ImportStateAsync(checkpoint).ConfigureAwait(false);
         await Task.WhenAll(executorNotifyTask, republishRequestsTask.AsTask()).ConfigureAwait(false);
