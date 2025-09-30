@@ -2,12 +2,10 @@
 
 from collections.abc import Mapping
 from typing import Any, TypeVar
-from urllib.parse import urljoin
 
 from azure.core.credentials import TokenCredential
 from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
-from pydantic import SecretStr, ValidationError
-from pydantic.networks import AnyUrl
+from pydantic import ValidationError
 
 from agent_framework import use_chat_middleware, use_function_invocation
 from agent_framework.exceptions import ServiceInitializationError
@@ -71,11 +69,11 @@ class AzureOpenAIResponsesClient(AzureOpenAIConfigMixin, OpenAIBaseResponsesClie
                 prompts could use `developer` or `system`. (Optional)
         """
         try:
-            # Filter out any None values from the arguments
             azure_openai_settings = AzureOpenAISettings(
-                api_key=SecretStr(api_key) if api_key else None,
-                base_url=AnyUrl(base_url) if base_url else None,
-                endpoint=AnyUrl(endpoint) if endpoint else None,
+                # pydantic settings will see if there is a value, if not, will try the env var or .env file
+                api_key=api_key,  # type: ignore
+                base_url=base_url,  # type: ignore
+                endpoint=endpoint,  # type: ignore
                 responses_deployment_name=deployment_name,
                 api_version=api_version,
                 env_file_path=env_file_path,
@@ -83,15 +81,6 @@ class AzureOpenAIResponsesClient(AzureOpenAIConfigMixin, OpenAIBaseResponsesClie
                 token_endpoint=token_endpoint,
                 default_api_version="preview",
             )
-            # TODO(peterychang): This is a temporary hack to ensure that the base_url is set correctly
-            # while this feature is in preview.
-            # But we should only do this if we're on azure. Private deployments may not need this.
-            if (
-                not azure_openai_settings.base_url
-                and azure_openai_settings.endpoint
-                and str(azure_openai_settings.endpoint).rstrip("/").endswith("openai.azure.com")
-            ):
-                azure_openai_settings.base_url = AnyUrl(urljoin(str(azure_openai_settings.endpoint), "/openai/v1/"))
         except ValidationError as exc:
             raise ServiceInitializationError(f"Failed to validate settings: {exc}") from exc
 

@@ -4,8 +4,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
-from pydantic import SecretStr, ValidationError
-from pydantic.networks import AnyUrl
+from pydantic import ValidationError
 
 from ..exceptions import ServiceInitializationError
 from ..openai import OpenAIAssistantsClient
@@ -72,9 +71,10 @@ class AzureOpenAIAssistantsClient(OpenAIAssistantsClient):
         """
         try:
             azure_openai_settings = AzureOpenAISettings(
-                api_key=SecretStr(api_key) if api_key else None,
-                base_url=AnyUrl(base_url) if base_url else None,
-                endpoint=AnyUrl(endpoint) if endpoint else None,
+                # pydantic settings will see if there is a value, if not, will try the env var or .env file
+                api_key=api_key,  # type: ignore
+                base_url=base_url,  # type: ignore
+                endpoint=endpoint,  # type: ignore
                 chat_deployment_name=deployment_name,
                 api_version=api_version,
                 env_file_path=env_file_path,
