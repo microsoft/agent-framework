@@ -204,17 +204,19 @@ def _get_input_model_from_mcp_tool(tool: types.Tool) -> type[BaseModel]:
 
         # Map JSON Schema types to Python types
         json_type = prop_details.get("type", "string")
-        if json_type == "integer":
-            return int
-        if json_type == "number":
-            return float
-        if json_type == "boolean":
-            return bool
-        if json_type == "array":
-            return list
-        if json_type == "object":
-            return dict
-        return str  # default
+        match json_type:
+            case "integer":
+                return int
+            case "number":
+                return float
+            case "boolean":
+                return bool
+            case "array":
+                return list
+            case "object":
+                return dict
+            case _:
+                return str  # default
 
     field_definitions: dict[str, Any] = {}
     for prop_name, prop_details in properties.items():
