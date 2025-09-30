@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Observability;
@@ -364,9 +365,25 @@ public class WorkflowBuilder
             OutputExecutors = this._outputExecutors
         };
 
-        // Using the start executor ID as a proxy for the workflow ID    
+        // Using the start executor ID as a proxy for the workflow ID
         activity?.SetTag(Tags.WorkflowId, workflow.StartExecutorId);
-        // TODO(@taochen): Capture the workflow definition
+        if (activity is not null)
+        {
+            var workflowJsonDefinitionData = new WorkflowJsonDefinitionData
+            {
+                StartExecutorId = this._startExecutorId,
+                Edges = this._edges.Values.SelectMany(e => e),
+                Ports = this._inputPorts.Values,
+                OutputExecutors = this._outputExecutors
+            };
+            activity.SetTag(
+                Tags.WorkflowDefinition,
+                JsonSerializer.Serialize(
+                    workflowJsonDefinitionData,
+                    WorkflowJsonDefinitionJsonContext.Default.WorkflowJsonDefinitionData
+                )
+            );
+        }
 
         return workflow;
     }

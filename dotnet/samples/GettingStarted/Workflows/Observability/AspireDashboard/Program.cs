@@ -41,7 +41,7 @@ public static class Program
 
         using var traceProvider = Sdk.CreateTracerProviderBuilder()
             .SetResourceBuilder(resourceBuilder)
-            .AddSource("Microsoft.Agents.Workflows*")
+            .AddSource("Microsoft.Agents.AI.Workflows*")
             .AddSource(SourceName)
             .AddOtlpExporter(options => options.Endpoint = new Uri(otlpEndpoint))
             .Build();
