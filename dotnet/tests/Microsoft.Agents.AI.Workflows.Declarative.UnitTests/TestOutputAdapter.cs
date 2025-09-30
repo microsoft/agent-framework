@@ -21,13 +21,13 @@ public sealed class TestOutputAdapter(ITestOutputHelper output) : TextWriter, IL
 
     public bool IsEnabled(LogLevel logLevel) => true;
 
-    public override void WriteLine(object? value = null) => this.SafeWrite($"{value}");
+    public override void WriteLine(object? value) => this.SafeWrite($"{value}");
 
     public override void WriteLine(string? format, params object?[] arg) => this.SafeWrite(string.Format(format ?? string.Empty, arg));
 
     public override void WriteLine(string? value) => this.SafeWrite(value ?? string.Empty);
 
-    public override void Write(object? value = null) => this.SafeWrite($"{value}");
+    public override void Write(object? value) => this.SafeWrite($"{value}");
 
     public override void Write(char[]? buffer) => this.SafeWrite(new string(buffer));
 

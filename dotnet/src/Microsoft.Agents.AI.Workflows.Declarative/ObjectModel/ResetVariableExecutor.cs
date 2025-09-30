@@ -14,7 +14,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 internal sealed class ResetVariableExecutor(ResetVariable model, WorkflowFormulaState state) :
     DeclarativeActionExecutor<ResetVariable>(model, state)
 {
-    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(this.Model.Variable, $"{nameof(this.Model)}.{nameof(model.Variable)}");
         await context.QueueStateResetAsync(this.Model.Variable).ConfigureAwait(false);
