@@ -14,25 +14,6 @@ namespace Microsoft.Agents.AI;
 public static class AgentExtensions
 {
     /// <summary>
-    /// Wraps the agent with OpenTelemetry instrumentation.
-    /// </summary>
-    /// <param name="agent">The agent to wrap.</param>
-    /// <param name="sourceName">An optional source name that will be used on the telemetry data.</param>
-    /// <param name="enableSensitiveData">When <see langword="true"/> indicates whether potentially sensitive information should be included in telemetry. Default is <see langword="false"/></param>
-    /// <returns>An <see cref="OpenTelemetryAgent"/> that wraps the original agent with telemetry.</returns>
-    public static OpenTelemetryAgent WithOpenTelemetry(this AIAgent agent, string? sourceName = null, bool? enableSensitiveData = null)
-    {
-        OpenTelemetryAgent otel = new(agent, sourceName);
-
-        if (enableSensitiveData is not null)
-        {
-            otel.EnableSensitiveData = enableSensitiveData.Value;
-        }
-
-        return otel;
-    }
-
-    /// <summary>
     /// Creates a <see cref="AIFunction"/> that will invoke the provided Agent.
     /// </summary>
     /// <param name="agent">The <see cref="AIAgent" /> to be represented via the created <see cref="AIFunction"/>.</param>

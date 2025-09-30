@@ -97,22 +97,23 @@ static async Task<string> GetWeatherAsync([Description("The location to get the 
     return $"The weather in {location} is cloudy with a high of 15°C.";
 }
 
-// To ensure chat client's function calling is captured in the open telemetry, the chat client needs to have UseOpenTelemetry after UseFunctionInvocation
 using var instrumentedChatClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
     .GetChatClient(deploymentName)
         .AsIChatClient() // Converts a native OpenAI SDK ChatClient into a Microsoft.Extensions.AI.IChatClient
         .AsBuilder()
         .UseFunctionInvocation()
-        .UseOpenTelemetry(sourceName: SourceName, configure: (cfg) => cfg.EnableSensitiveData = true)
+        .UseOpenTelemetry(sourceName: SourceName, configure: (cfg) => cfg.EnableSensitiveData = true) // enable telemetry at the chat client level
         .Build();
 
 appLogger.LogInformation("Creating Agent with OpenTelemetry instrumentation");
 // Create the agent with the instrumented chat client
-using var agent = new ChatClientAgent(instrumentedChatClient,
-            name: "OpenTelemetryDemoAgent",
-            instructions: "You are a helpful assistant that provides concise and informative responses.",
-            tools: [AIFunctionFactory.Create(GetWeatherAsync)])
-        .WithOpenTelemetry(SourceName); // Enable telemetry on the agent
+var agent = new ChatClientAgent(instrumentedChatClient,
+    name: "OpenTelemetryDemoAgent",
+    instructions: "You are a helpful assistant that provides concise and informative responses.",
+    tools: [AIFunctionFactory.Create(GetWeatherAsync)])
+    .AsBuilder()
+    .UseOpenTelemetry(SourceName) // enable telemetry at the agent level
+    .Build();
 
 var thread = agent.GetNewThread();
 
