@@ -2,7 +2,7 @@
 
 using System.ClientModel;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.OpenAI.ChatClient;
+using Microsoft.Agents.AI.OpenAI;
 using Microsoft.Shared.Diagnostics;
 using OpenAI.Chat;
 
