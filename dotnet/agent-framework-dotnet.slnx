@@ -166,7 +166,6 @@
   <Folder Name="/Solution Items/.github/workflows/">
     <File Path="../.github/workflows/dotnet-build-and-test.yml" />
     <File Path="../.github/workflows/dotnet-check-coverage.ps1" />
-    <File Path="../.github/workflows/dotnet-cosmosdb-integration-tests.yml" />
     <File Path="../.github/workflows/dotnet-format.yml" />
   </Folder>
   <Folder Name="/Solution Items/demos/">
@@ -274,15 +273,8 @@
     <Project Path="src/Microsoft.Agents.AI.Hosting.A2A.AspNetCore/Microsoft.Agents.AI.Hosting.A2A.AspNetCore.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hosting.A2A/Microsoft.Agents.AI.Hosting.A2A.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hosting/Microsoft.Agents.AI.Hosting.csproj" />
-    <Project Path="src/Microsoft.Agents.AI.Runtime.Abstractions/Microsoft.Agents.AI.Runtime.Abstractions.csproj" />
-    <Project Path="src/Microsoft.Agents.AI.Runtime.Storage.CosmosDB/Microsoft.Agents.AI.Runtime.Storage.CosmosDB.csproj" />
-    <Project Path="src/Microsoft.Agents.AI.Runtime/Microsoft.Agents.AI.Runtime.csproj" />
   </Folder>
   <Folder Name="/Tests/" />
-  <Folder Name="/Tests/Cosmos/">
-    <Project Path="tests/CosmosDB.IntegrationTests/CosmosDB.Testing.AppHost/CosmosDB.Testing.AppHost.csproj" />
-    <Project Path="tests/CosmosDB.IntegrationTests/Microsoft.Agents.AI.Runtime.Storage.CosmosDB.Tests/Microsoft.Agents.AI.Runtime.Storage.CosmosDB.Tests.csproj" />
-  </Folder>
   <Folder Name="/Tests/IntegrationTests/">
     <Project Path="tests/AgentConformance.IntegrationTests/AgentConformance.IntegrationTests.csproj" />
     <Project Path="tests/AzureAIAgentsPersistent.IntegrationTests/AzureAIAgentsPersistent.IntegrationTests.csproj" />
@@ -302,6 +294,5 @@
     <Project Path="tests/Microsoft.Agents.AI.Hosting.A2A.Tests/Microsoft.Agents.AI.Hosting.A2A.Tests.csproj" Id="2a1c544d-237d-4436-8732-ba0c447ac06b" />
     <Project Path="tests/Microsoft.Agents.AI.Hosting.UnitTests/Microsoft.Agents.AI.Hosting.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.OpenAI.UnitTests/Microsoft.Agents.AI.OpenAI.UnitTests.csproj" />
-    <Project Path="tests/Microsoft.Agents.AI.Runtime.Abstractions.UnitTests/Microsoft.Agents.AI.Runtime.Abstractions.UnitTests.csproj" />
   </Folder>
 </Solution>

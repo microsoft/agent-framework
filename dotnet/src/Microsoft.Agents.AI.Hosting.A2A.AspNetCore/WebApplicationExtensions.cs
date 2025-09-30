@@ -2,7 +2,6 @@
 
 using A2A;
 using A2A.AspNetCore;
-using Microsoft.Agents.AI.Runtime;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -24,9 +23,8 @@ public static class WebApplicationExtensions
     {
         var agent = app.Services.GetRequiredKeyedService<AIAgent>(agentName);
         var loggerFactory = app.Services.GetRequiredService<ILoggerFactory>();
-        var actorClient = app.Services.GetRequiredService<IActorClient>();
 
-        var taskManager = agent.MapA2A(actorClient, loggerFactory: loggerFactory);
+        var taskManager = agent.MapA2A(loggerFactory: loggerFactory);
         app.MapA2A(taskManager, path);
     }
 
@@ -45,9 +43,8 @@ public static class WebApplicationExtensions
     {
         var agent = app.Services.GetRequiredKeyedService<AIAgent>(agentName);
         var loggerFactory = app.Services.GetRequiredService<ILoggerFactory>();
-        var actorClient = app.Services.GetRequiredService<IActorClient>();
 
-        var taskManager = agent.MapA2A(actorClient, agentCard: agentCard, loggerFactory: loggerFactory);
+        var taskManager = agent.MapA2A(agentCard: agentCard, loggerFactory: loggerFactory);
         app.MapA2A(taskManager, path);
     }
 
@@ -63,7 +60,7 @@ public static class WebApplicationExtensions
         // note: current SDK version registers multiple `.well-known/agent.json` handlers here.
         // it makes app return HTTP 500, but will be fixed once new A2A SDK is released.
         // see https://github.com/microsoft/agent-framework/issues/476 for details
-        app.MapA2A(taskManager, path);
+        A2ARouteBuilderExtensions.MapA2A(app, taskManager, path);
 
         app.MapHttpA2A(taskManager, path);
     }

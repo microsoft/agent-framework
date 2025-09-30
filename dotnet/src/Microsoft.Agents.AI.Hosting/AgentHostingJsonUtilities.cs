@@ -3,7 +3,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Microsoft.Agents.AI.Runtime;
 
 namespace Microsoft.Agents.AI.Hosting;
 
@@ -40,9 +39,8 @@ public static partial class AgentHostingJsonUtilities
         // Copy the configuration from the source generated context.
         JsonSerializerOptions options = new(JsonContext.Default.Options);
 
-        // Chain with all supported types from Microsoft.Extensions.AI.Agents.Abstractions.
+        // Chain with all supported types from Microsoft.Agents.AI.Abstractions.
         options.TypeInfoResolverChain.Add(AgentAbstractionsJsonUtilities.DefaultOptions.TypeInfoResolver!);
-        options.TypeInfoResolverChain.Add(AgentRuntimeAbstractionsJsonUtilities.DefaultOptions.TypeInfoResolver!);
 
         options.MakeReadOnly();
         return options;
@@ -52,8 +50,6 @@ public static partial class AgentHostingJsonUtilities
     [JsonSourceGenerationOptions(JsonSerializerDefaults.Web,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         NumberHandling = JsonNumberHandling.AllowReadingFromString)]
-    [JsonSerializable(typeof(AgentRunRequest))]
-    [JsonSerializable(typeof(AgentProxyThread))]
     [JsonSerializable(typeof(AgentThread))]
     [ExcludeFromCodeCoverage]
     internal sealed partial class JsonContext : JsonSerializerContext;
