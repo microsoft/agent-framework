@@ -1679,3 +1679,63 @@ async def test_azure_ai_chat_client_agent_level_tool_persistence():
         assert second_response.text is not None
         # Should use the agent-level weather tool again
         assert any(term in second_response.text.lower() for term in ["miami", "sunny", "25"])
+
+
+@skip_if_azure_ai_integration_tests_disabled
+async def test_azure_ai_chat_client_agent_chat_options_run_level() -> None:
+    """Test ChatOptions parameter coverage at run level."""
+    async with ChatAgent(
+        chat_client=AzureAIAgentClient(async_credential=AzureCliCredential()),
+        instructions="You are a helpful assistant.",
+    ) as agent:
+        response = await agent.run(
+            "Provide a brief, helpful response.",
+            max_tokens=100,
+            temperature=0.7,
+            top_p=0.9,
+            seed=123,
+            user="comprehensive-test-user",
+            tools=[get_weather],
+            tool_choice="auto",
+            frequency_penalty=0.1,
+            presence_penalty=0.1,
+            stop=["END"],
+            store=True,
+            logit_bias={"test": 1},
+            metadata={"test": "value"},
+            additional_properties={"custom_param": "test_value"},
+        )
+
+        assert isinstance(response, AgentRunResponse)
+        assert response.text is not None
+        assert len(response.text) > 0
+
+
+@skip_if_azure_ai_integration_tests_disabled
+async def test_azure_ai_chat_client_agent_chat_options_agent_level() -> None:
+    """Test ChatOptions parameter coverage agent level."""
+    async with ChatAgent(
+        chat_client=AzureAIAgentClient(async_credential=AzureCliCredential()),
+        instructions="You are a helpful assistant.",
+        max_tokens=100,
+        temperature=0.7,
+        top_p=0.9,
+        seed=123,
+        user="comprehensive-test-user",
+        tools=[get_weather],
+        tool_choice="auto",
+        frequency_penalty=0.1,
+        presence_penalty=0.1,
+        stop=["END"],
+        store=True,
+        logit_bias={"test": 1},
+        metadata={"test": "value"},
+        request_kwargs={"custom_param": "test_value"},
+    ) as agent:
+        response = await agent.run(
+            "Provide a brief, helpful response.",
+        )
+
+        assert isinstance(response, AgentRunResponse)
+        assert response.text is not None
+        assert len(response.text) > 0
