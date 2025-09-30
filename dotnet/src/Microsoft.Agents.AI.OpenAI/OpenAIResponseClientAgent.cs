@@ -15,7 +15,7 @@ namespace OpenAI;
 public class OpenAIResponseClientAgent : DelegatingAIAgent
 {
     /// <summary>
-    /// Initialize an instance of <see cref="OpenAIResponseClient"/>
+    /// Initialize an instance of <see cref="OpenAIResponseClientAgent"/>.
     /// </summary>
     /// <param name="client">Instance of <see cref="OpenAIResponseClient"/></param>
     /// <param name="instructions">Optional instructions for the agent.</param>
@@ -38,7 +38,7 @@ public class OpenAIResponseClientAgent : DelegatingAIAgent
     }
 
     /// <summary>
-    /// Initialize an instance of <see cref="OpenAIResponseClientAgent"/>
+    /// Initialize an instance of <see cref="OpenAIResponseClientAgent"/>.
     /// </summary>
     /// <param name="client">Instance of <see cref="OpenAIResponseClient"/></param>
     /// <param name="options">Options to create the agent.</param>
@@ -110,6 +110,6 @@ public class OpenAIResponseClientAgent : DelegatingAIAgent
         base.RunAsync(messages, thread, options, cancellationToken);
 
     /// <inheritdoc/>
-    public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
+    public sealed override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
         base.RunStreamingAsync(messages, thread, options, cancellationToken);
 }

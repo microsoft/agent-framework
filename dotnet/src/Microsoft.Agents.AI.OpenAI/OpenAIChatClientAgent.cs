@@ -5,7 +5,6 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Shared.Diagnostics;
 using OpenAI.Chat;
-using OpenAI.Responses;
 using ChatMessage = OpenAI.Chat.ChatMessage;
 
 namespace OpenAI;
@@ -66,7 +65,7 @@ public class OpenAIChatClientAgent : DelegatingAIAgent
     {
         var response = await this.RunAsync(messages.AsChatMessages(), thread, options, cancellationToken).ConfigureAwait(false);
 
-        return response.AsChatCompletion();
+        return response.AsOpenAIChatCompletion();
     }
 
     /// <summary>

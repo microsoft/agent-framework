@@ -19,7 +19,7 @@ public static class AgentRunResponseExtensions
     /// <param name="response">The agent response.</param>
     /// <returns>The OpenAI <see cref="ChatCompletion"/> object.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="response"/> is <see langword="null"/>.</exception>
-    public static ChatCompletion AsChatCompletion(this AgentRunResponse response)
+    public static ChatCompletion AsOpenAIChatCompletion(this AgentRunResponse response)
     {
         Throw.IfNull(response);
 
