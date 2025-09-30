@@ -103,14 +103,14 @@ class Tau2Agent(LitAgent):
         assistant_chat_client = OpenAIChatClient(
             base_url=llm.endpoint,  # vLLM endpoint for the model being trained
             api_key=openai_api_key,
-            ai_model_id=llm.model,  # Model ID being trained
+            model_id=llm.model,  # Model ID being trained
         )
 
         # User simulator: uses a fixed, capable model for consistent simulation
         user_simulator_chat_client = OpenAIChatClient(
             base_url=openai_base_url,  # External API endpoint
             api_key=openai_api_key,
-            ai_model_id="gpt-4.1",  # Fixed model for user simulator
+            model_id="gpt-4.1",  # Fixed model for user simulator
         )
 
         try:

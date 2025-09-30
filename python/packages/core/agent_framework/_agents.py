@@ -16,6 +16,7 @@ from ._logging import get_logger
 from ._mcp import MCPTool
 from ._memory import AggregateContextProvider, Context, ContextProvider
 from ._middleware import Middleware, use_agent_middleware
+from ._serialization import SerializationMixin
 from ._threads import AgentThread, ChatMessageStoreProtocol
 from ._tools import FUNCTION_INVOKING_CHAT_CLIENT_MARKER, AIFunction, ToolProtocol
 from ._types import (
@@ -135,26 +136,20 @@ class AgentProtocol(Protocol):
 # region BaseAgent
 
 
-class BaseAgent:
-    """Base class for all Agent Framework agents.
+class BaseAgent(SerializationMixin):
+    """Base class for all Agent Framework agents."""
 
-    Attributes:
-       id: The unique identifier of the agent  If no id is provided,
-           a new UUID will be generated.
-       name: The name of the agent, can be None.
-       description: The description of the agent.
-       display_name: The display name of the agent, which is either the name or id.
-       context_providers: The collection of multiple context providers to include during agent invocation.
-       middleware: List of middleware to intercept agent and function invocations.
-    """
+    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"additional_properties"}
 
     def __init__(
         self,
+        *,
         id: str | None = None,
         name: str | None = None,
         description: str | None = None,
         context_providers: ContextProvider | Sequence[ContextProvider] | None = None,
         middleware: Middleware | Sequence[Middleware] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
         """Base class for all Agent Framework agents.
@@ -167,7 +162,8 @@ class BaseAgent:
             display_name: The display name of the agent, which is either the name or id.
             context_providers: The collection of multiple context providers to include during agent invocation.
             middleware: List of middleware to intercept agent and function invocations.
-            kwargs: will be stored in `additional_properties`
+            additional_properties: Additional properties set on the agent.
+            kwargs: Additional keyword arguments (merged into additional_properties).
         """
         if id is None:
             id = str(uuid4())
@@ -179,7 +175,10 @@ class BaseAgent:
             self.middleware: list[Middleware] | None = cast(list[Middleware], middleware) if middleware else None
         else:
             self.middleware = [middleware]
-        self.additional_properties = kwargs
+
+        # Merge kwargs into additional_properties
+        self.additional_properties: dict[str, Any] = cast(dict[str, Any], additional_properties or {})
+        self.additional_properties.update(kwargs)
 
     async def _notify_thread_of_new_messages(
         self,
@@ -213,7 +212,7 @@ class BaseAgent:
     async def deserialize_thread(self, serialized_thread: Any, **kwargs: Any) -> AgentThread:
         """Deserializes the thread."""
         thread: AgentThread = self.get_new_thread()
-        await thread.deserialize(serialized_thread, **kwargs)
+        await thread.update_from_thread_state(serialized_thread, **kwargs)
         return thread
 
     def as_tool(
@@ -700,7 +699,7 @@ class ChatAgent(BaseAgent):
                 store=store,
                 temperature=temperature,
                 tool_choice=tool_choice,
-                tools=final_tools,  # type: ignore[reportArgumentType]
+                tools=final_tools,
                 top_p=top_p,
                 user=user,
                 additional_properties=additional_properties or {},

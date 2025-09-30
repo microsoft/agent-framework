@@ -11,7 +11,7 @@ async def main() -> None:
     Creates a task for the chat request, waits briefly, then cancels it to show proper cleanup.
 
     Configuration:
-    - OpenAI model ID: Use "ai_model_id" parameter or "OPENAI_CHAT_MODEL_ID" environment variable
+    - OpenAI model ID: Use "model_id" parameter or "OPENAI_CHAT_MODEL_ID" environment variable
     - OpenAI API key: Use "api_key" parameter or "OPENAI_API_KEY" environment variable
     """
     chat_client = OpenAIChatClient()

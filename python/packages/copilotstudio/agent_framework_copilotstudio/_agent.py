@@ -268,7 +268,6 @@ class CopilotStudioAgent(BaseAgent):
             yield AgentRunResponseUpdate(
                 role=message.role,
                 contents=message.contents,
-                additional_properties=message.additional_properties,
                 author_name=message.author_name,
                 raw_representation=message.raw_representation,
                 response_id=message.message_id,

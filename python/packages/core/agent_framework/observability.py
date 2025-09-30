@@ -145,6 +145,7 @@ class OtelAttr(str, Enum):
     TOOL_DESCRIPTION = "gen_ai.tool.description"
     TOOL_NAME = "gen_ai.tool.name"
     TOOL_TYPE = "gen_ai.tool.type"
+    TOOL_DEFINITIONS = "gen_ai.tool.definitions"
     TOOL_ARGUMENTS = "gen_ai.tool.call.arguments"
     TOOL_RESULT = "gen_ai.tool.call.result"
     # Agent attributes
@@ -993,7 +994,6 @@ def _trace_agent_run(
         if not OBSERVABILITY_SETTINGS.ENABLED:
             # If model diagnostics are not enabled, just return the completion
             return await run_func(self, messages=messages, thread=thread, **kwargs)
-
         attributes = _get_span_attributes(
             operation_name=OtelAttr.AGENT_INVOKE_OPERATION,
             provider_name=provider_name,
@@ -1001,6 +1001,7 @@ def _trace_agent_run(
             agent_name=self.display_name,
             agent_description=self.description,
             thread_id=thread.service_thread_id if thread else None,
+            chat_options=getattr(self, "chat_options", None),
             **kwargs,
         )
         with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
@@ -1070,6 +1071,7 @@ def _trace_agent_run_stream(
             agent_name=self.display_name,
             agent_description=self.description,
             thread_id=thread.service_thread_id if thread else None,
+            chat_options=getattr(self, "chat_options", None),
             **kwargs,
         )
         with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
@@ -1182,13 +1184,17 @@ def _get_span(
 
 def _get_span_attributes(**kwargs: Any) -> dict[str, Any]:
     """Get the span attributes from a kwargs dictionary."""
+    from ._tools import _tools_to_dict
+    from ._types import ChatOptions
+
     attributes: dict[str, Any] = {}
+    chat_options: ChatOptions | None = kwargs.get("chat_options")
+    if chat_options is None:
+        chat_options = ChatOptions()
     if operation_name := kwargs.get("operation_name"):
         attributes[OtelAttr.OPERATION] = operation_name
     if choice_count := kwargs.get("choice_count", 1):
         attributes[OtelAttr.CHOICE_COUNT] = choice_count
-    if operation_name := kwargs.get("operation_name"):
-        attributes[OtelAttr.OPERATION] = operation_name
     if system_name := kwargs.get("system_name"):
         attributes[SpanAttributes.LLM_SYSTEM] = system_name
     if provider_name := kwargs.get("provider_name"):
@@ -1196,21 +1202,21 @@ def _get_span_attributes(**kwargs: Any) -> dict[str, Any]:
     attributes[SpanAttributes.LLM_REQUEST_MODEL] = kwargs.get("model_id", "unknown")
     if service_url := kwargs.get("service_url"):
         attributes[OtelAttr.ADDRESS] = service_url
-    if conversation_id := kwargs.get("conversation_id"):
+    if conversation_id := kwargs.get("conversation_id", chat_options.conversation_id):
         attributes[OtelAttr.CONVERSATION_ID] = conversation_id
-    if seed := kwargs.get("seed"):
+    if seed := kwargs.get("seed", chat_options.seed):
         attributes[OtelAttr.SEED] = seed
-    if frequency_penalty := kwargs.get("frequency_penalty"):
+    if frequency_penalty := kwargs.get("frequency_penalty", chat_options.frequency_penalty):
         attributes[OtelAttr.FREQUENCY_PENALTY] = frequency_penalty
-    if max_tokens := kwargs.get("max_tokens"):
+    if max_tokens := kwargs.get("max_tokens", chat_options.max_tokens):
         attributes[SpanAttributes.LLM_REQUEST_MAX_TOKENS] = max_tokens
-    if stop := kwargs.get("stop"):
+    if stop := kwargs.get("stop", chat_options.stop):
         attributes[OtelAttr.STOP_SEQUENCES] = stop
-    if temperature := kwargs.get("temperature"):
+    if temperature := kwargs.get("temperature", chat_options.temperature):
         attributes[SpanAttributes.LLM_REQUEST_TEMPERATURE] = temperature
-    if top_p := kwargs.get("top_p"):
+    if top_p := kwargs.get("top_p", chat_options.top_p):
         attributes[SpanAttributes.LLM_REQUEST_TOP_P] = top_p
-    if presence_penalty := kwargs.get("presence_penalty"):
+    if presence_penalty := kwargs.get("presence_penalty", chat_options.presence_penalty):
         attributes[OtelAttr.PRESENCE_PENALTY] = presence_penalty
     if top_k := kwargs.get("top_k"):
         attributes[OtelAttr.TOP_K] = top_k
@@ -1218,6 +1224,10 @@ def _get_span_attributes(**kwargs: Any) -> dict[str, Any]:
         attributes[OtelAttr.ENCODING_FORMATS] = json.dumps(
             encoding_formats if isinstance(encoding_formats, list) else [encoding_formats]
         )
+    if tools := kwargs.get("tools", chat_options.tools):
+        tools_as_json_list = _tools_to_dict(tools)
+        if tools_as_json_list:
+            attributes[OtelAttr.TOOL_DEFINITIONS] = json.dumps(tools_as_json_list)
     if error := kwargs.get("error"):
         attributes[OtelAttr.ERROR_TYPE] = type(error).__name__
     # agent attributes

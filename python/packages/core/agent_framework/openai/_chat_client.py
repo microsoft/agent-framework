@@ -14,7 +14,7 @@ from openai.types.chat.chat_completion import ChatCompletion, Choice
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from openai.types.chat.chat_completion_message_custom_tool_call import ChatCompletionMessageCustomToolCall
-from pydantic import BaseModel, SecretStr, ValidationError
+from pydantic import BaseModel, ValidationError
 
 from .._clients import BaseChatClient
 from .._logging import get_logger
@@ -172,7 +172,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
             options_dict.pop("tool_choice", None)
 
         if "model" not in options_dict:
-            options_dict["model"] = self.ai_model_id
+            options_dict["model"] = self.model_id
         if (
             chat_options.response_format
             and isinstance(chat_options.response_format, type)
@@ -464,7 +464,7 @@ class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient):
 
     def __init__(
         self,
-        ai_model_id: str | None = None,
+        model_id: str | None = None,
         api_key: str | None = None,
         org_id: str | None = None,
         default_headers: Mapping[str, str] | None = None,
@@ -477,7 +477,7 @@ class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient):
         """Initialize an OpenAIChatCompletion service.
 
         Args:
-            ai_model_id: OpenAI model name, see
+            model_id: OpenAI model name, see
                 https://platform.openai.com/docs/models
             api_key: The optional API key to use. If provided will override,
                 the env vars or .env file value.
@@ -497,10 +497,10 @@ class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient):
         """
         try:
             openai_settings = OpenAISettings(
-                api_key=SecretStr(api_key) if api_key else None,
+                api_key=api_key,  # type: ignore[reportArgumentType]
                 base_url=base_url,
                 org_id=org_id,
-                chat_model_id=ai_model_id,
+                chat_model_id=model_id,
                 env_file_path=env_file_path,
                 env_file_encoding=env_file_encoding,
             )
@@ -514,11 +514,11 @@ class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient):
         if not openai_settings.chat_model_id:
             raise ServiceInitializationError(
                 "OpenAI model ID is required. "
-                "Set via 'ai_model_id' parameter or 'OPENAI_CHAT_MODEL_ID' environment variable."
+                "Set via 'model_id' parameter or 'OPENAI_CHAT_MODEL_ID' environment variable."
             )
 
         super().__init__(
-            ai_model_id=openai_settings.chat_model_id,
+            model_id=openai_settings.chat_model_id,
             api_key=openai_settings.api_key.get_secret_value() if openai_settings.api_key else None,
             base_url=openai_settings.base_url if openai_settings.base_url else None,
             org_id=openai_settings.org_id,
@@ -526,15 +526,3 @@ class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient):
             client=async_client,
             instruction_role=instruction_role,
         )
-
-    @classmethod
-    def from_dict(cls: type[TOpenAIChatClient], settings: dict[str, Any]) -> TOpenAIChatClient:
-        """Initialize an Open AI Chat Client from a dictionary of settings.
-
-        Args:
-            settings: A dictionary of settings for the service.
-        """
-        return cls(**settings)
-
-
-# endregion

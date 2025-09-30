@@ -68,23 +68,26 @@ def create_test_azure_ai_chat_client(
     should_delete_agent: bool = False,
     agent_name: str | None = None,
 ) -> AzureAIAgentClient:
-    """Helper function to create AzureAIAgentClient instances for testing, bypassing Pydantic validation."""
+    """Helper function to create AzureAIAgentClient instances for testing, bypassing normal validation."""
     if azure_ai_settings is None:
         azure_ai_settings = AzureAISettings(env_file_path="test.env")
 
-    # Use model_construct to properly initialize the Pydantic model
-    return AzureAIAgentClient.model_construct(
-        project_client=mock_ai_project_client,
-        credential=None,
-        agent_id=agent_id,
-        agent_name=None,
-        ai_model_id=azure_ai_settings.model_deployment_name,
-        thread_id=thread_id,
-        _should_delete_agent=should_delete_agent,
-        _should_close_client=False,
-        additional_properties={},
-        middleware=None,
-    )
+    # Create client instance directly
+    client = object.__new__(AzureAIAgentClient)
+
+    # Set attributes directly
+    client.project_client = mock_ai_project_client
+    client.credential = None
+    client.agent_id = agent_id
+    client.agent_name = None
+    client.model_id = azure_ai_settings.model_deployment_name
+    client.thread_id = thread_id
+    client._should_delete_agent = should_delete_agent
+    client._should_close_client = False
+    client.additional_properties = {}
+    client.middleware = None
+
+    return client
 
 
 def test_azure_ai_settings_init(azure_ai_unit_test_env: dict[str, str]) -> None:
@@ -125,14 +128,19 @@ def test_azure_ai_chat_client_init_auto_create_client(
 ) -> None:
     """Test AzureAIAgentClient initialization with auto-created project_client."""
     azure_ai_settings = AzureAISettings(**azure_ai_unit_test_env)  # type: ignore
-    chat_client = AzureAIAgentClient.model_construct(
-        project_client=mock_ai_project_client,
-        agent_id=None,
-        thread_id=None,
-        _should_delete_agent=False,
-        _azure_ai_settings=azure_ai_settings,
-        credential=None,
-    )
+
+    # Create client instance directly
+    chat_client = object.__new__(AzureAIAgentClient)
+    chat_client.project_client = mock_ai_project_client
+    chat_client.agent_id = None
+    chat_client.thread_id = None
+    chat_client._should_delete_agent = False
+    chat_client._should_close_client = False
+    chat_client.credential = None
+    chat_client.model_id = azure_ai_settings.model_deployment_name
+    chat_client.agent_name = None
+    chat_client.additional_properties = {}
+    chat_client.middleware = None
 
     assert chat_client.project_client is mock_ai_project_client
     assert chat_client.agent_id is None
@@ -1363,6 +1371,7 @@ def get_weather(
     return f"The weather in {location} is sunny with a high of 25°C."
 
 
+@pytest.mark.flaky
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_get_response() -> None:
     """Test Azure AI Chat Client response."""
@@ -1387,6 +1396,7 @@ async def test_azure_ai_chat_client_get_response() -> None:
         assert any(word in response.text.lower() for word in ["sunny", "25"])
 
 
+@pytest.mark.flaky
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_get_response_tools() -> None:
     """Test Azure AI Chat Client response with tools."""
@@ -1408,6 +1418,7 @@ async def test_azure_ai_chat_client_get_response_tools() -> None:
         assert any(word in response.text.lower() for word in ["sunny", "25"])
 
 
+@pytest.mark.flaky
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_streaming() -> None:
     """Test Azure AI Chat Client streaming response."""
@@ -1438,6 +1449,7 @@ async def test_azure_ai_chat_client_streaming() -> None:
         assert any(word in full_message.lower() for word in ["sunny", "25"])
 
 
+@pytest.mark.flaky
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_streaming_tools() -> None:
     """Test Azure AI Chat Client streaming response with tools."""
@@ -1464,6 +1476,7 @@ async def test_azure_ai_chat_client_streaming_tools() -> None:
         assert any(word in full_message.lower() for word in ["sunny", "25"])
 
 
+@pytest.mark.flaky
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_basic_run() -> None:
     """Test ChatAgent basic run functionality with AzureAIAgentClient."""
@@ -1480,6 +1493,7 @@ async def test_azure_ai_chat_client_agent_basic_run() -> None:
         assert "Hello World" in response.text
 
 
+@pytest.mark.flaky
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_basic_run_streaming() -> None:
     """Test ChatAgent basic streaming functionality with AzureAIAgentClient."""
@@ -1499,6 +1513,7 @@ async def test_azure_ai_chat_client_agent_basic_run_streaming() -> None:
         assert "streaming response test" in full_message.lower()
 
 
+@pytest.mark.flaky
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_thread_persistence() -> None:
     """Test ChatAgent thread persistence across runs with AzureAIAgentClient."""
@@ -1524,6 +1539,7 @@ async def test_azure_ai_chat_client_agent_thread_persistence() -> None:
         assert "42" in second_response.text
 
 
+@pytest.mark.flaky
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_existing_thread_id() -> None:
     """Test ChatAgent existing thread ID functionality with AzureAIAgentClient."""
@@ -1561,6 +1577,7 @@ async def test_azure_ai_chat_client_agent_existing_thread_id() -> None:
         assert "alice" in response2.text.lower()
 
 
+@pytest.mark.flaky
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_code_interpreter():
     """Test ChatAgent with code interpreter through AzureAIAgentClient."""
@@ -1580,6 +1597,7 @@ async def test_azure_ai_chat_client_agent_code_interpreter():
         assert "120" in response.text or "factorial" in response.text.lower()
 
 
+@pytest.mark.flaky
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_file_search():
     """Test ChatAgent with file search through AzureAIAgentClient."""
@@ -1657,6 +1675,7 @@ async def test_azure_ai_chat_client_agent_hosted_mcp_tool() -> None:
         assert any(term in response.text.lower() for term in ["azure", "storage", "account", "cli"])
 
 
+@pytest.mark.flaky
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_level_tool_persistence():
     """Test that agent-level tools persist across multiple runs with AzureAIAgentClient."""

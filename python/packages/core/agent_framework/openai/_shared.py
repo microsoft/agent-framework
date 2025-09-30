@@ -4,7 +4,7 @@ import json
 import logging
 from collections.abc import Mapping
 from copy import copy
-from typing import Annotated, Any, ClassVar, Union
+from typing import Any, ClassVar, Union
 
 from openai import (
     AsyncOpenAI,
@@ -17,11 +17,11 @@ from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from openai.types.images_response import ImagesResponse
 from openai.types.responses.response import Response
 from openai.types.responses.response_stream_event import ResponseStreamEvent
-from pydantic import ConfigDict, Field, SecretStr, validate_call
-from pydantic.types import StringConstraints
+from pydantic import SecretStr
 
 from .._logging import get_logger
-from .._pydantic import AFBaseModel, AFBaseSettings
+from .._pydantic import AFBaseSettings
+from .._serialization import SerializationMixin
 from .._telemetry import APP_INFO, USER_AGENT_KEY, prepend_agent_framework_to_user_agent
 from .._types import ChatOptions, Contents
 from ..exceptions import ServiceInitializationError
@@ -106,11 +106,45 @@ class OpenAISettings(AFBaseSettings):
     responses_model_id: str | None = None
 
 
-class OpenAIBase(AFBaseModel):
+class OpenAIBase(SerializationMixin):
     """Base class for OpenAI Clients."""
 
-    client: AsyncOpenAI
-    ai_model_id: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+    INJECTABLE: ClassVar[set[str]] = {"client"}
+
+    def __init__(self, *, client: AsyncOpenAI, model_id: str, **kwargs: Any) -> None:
+        """Initialize OpenAIBase.
+
+        Args:
+            client: The AsyncOpenAI client instance.
+            model_id: The AI model ID to use (non-empty, whitespace stripped).
+            **kwargs: Additional keyword arguments.
+        """
+        if not model_id or not model_id.strip():
+            raise ValueError("model_id must be a non-empty string")
+        self.client = client
+        self.model_id = model_id.strip()
+
+        # Call super().__init__() to continue MRO chain (e.g., BaseChatClient)
+        # Extract known kwargs that belong to other base classes
+        additional_properties = kwargs.pop("additional_properties", None)
+        middleware = kwargs.pop("middleware", None)
+        instruction_role = kwargs.pop("instruction_role", None)
+
+        # Build super().__init__() args
+        super_kwargs = {}
+        if additional_properties is not None:
+            super_kwargs["additional_properties"] = additional_properties
+        if middleware is not None:
+            super_kwargs["middleware"] = middleware
+
+        # Call super().__init__() with filtered kwargs
+        super().__init__(**super_kwargs)
+
+        # Store instruction_role and any remaining kwargs as instance attributes
+        if instruction_role is not None:
+            self.instruction_role = instruction_role
+        for key, value in kwargs.items():
+            setattr(self, key, value)
 
 
 class OpenAIConfigMixin(OpenAIBase):
@@ -118,11 +152,10 @@ class OpenAIConfigMixin(OpenAIBase):
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
 
-    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def __init__(
         self,
-        ai_model_id: str = Field(min_length=1),
-        api_key: str | None = Field(min_length=1),
+        model_id: str,
+        api_key: str | None = None,
         org_id: str | None = None,
         default_headers: Mapping[str, str] | None = None,
         client: AsyncOpenAI | None = None,
@@ -136,7 +169,7 @@ class OpenAIConfigMixin(OpenAIBase):
         different types of AI model interactions, like chat or text completion.
 
         Args:
-            ai_model_id: OpenAI model identifier. Must be non-empty.
+            model_id: OpenAI model identifier. Must be non-empty.
                 Default to a preset value.
             api_key: OpenAI API key for authentication.
                 Must be non-empty. (Optional)
@@ -167,32 +200,25 @@ class OpenAIConfigMixin(OpenAIBase):
             if base_url:
                 args["base_url"] = base_url
             client = AsyncOpenAI(**args)
+
+        # Store configuration as instance attributes for serialization
+        self.org_id = org_id
+        self.base_url = str(base_url)
+        # Store default_headers but filter out USER_AGENT_KEY for serialization
+        if default_headers:
+            self.default_headers: dict[str, Any] | None = {
+                k: v for k, v in default_headers.items() if k != USER_AGENT_KEY
+            }
+        else:
+            self.default_headers = None
+
         args = {
-            "ai_model_id": ai_model_id,
+            "model_id": model_id,
             "client": client,
         }
         if instruction_role:
             args["instruction_role"] = instruction_role
-        super().__init__(**args, **kwargs)
 
-    def to_dict(self) -> dict[str, Any]:
-        """Create a dict of the service settings."""
-        client_settings = {
-            "api_key": self.client.api_key,
-            "default_headers": {k: v for k, v in self.client.default_headers.items() if k != USER_AGENT_KEY},
-        }
-        if self.client.organization:
-            client_settings["org_id"] = self.client.organization
-        base = self.model_dump(
-            exclude={
-                "prompt_tokens",
-                "completion_tokens",
-                "total_tokens",
-                "api_type",
-                "client",
-            },
-            by_alias=True,
-            exclude_none=True,
-        )
-        base.update(client_settings)
-        return base
+        # Ensure additional_properties and middleware are passed through kwargs to BaseChatClient
+        # These are consumed by BaseChatClient.__init__ via kwargs
+        super().__init__(**args, **kwargs)

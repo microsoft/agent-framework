@@ -102,7 +102,7 @@ async def main() -> None:
 
     # Create executors for the workflow.
     print("Creating chat client and executors...")
-    mini_chat_client = OpenAIChatClient(ai_model_id="gpt-4.1-nano")
+    mini_chat_client = OpenAIChatClient(model_id="gpt-4.1-nano")
     worker = Worker(id="sub-worker", chat_client=mini_chat_client)
     request_info_executor = RequestInfoExecutor(id="request_info")
     reviewer = ReviewerWithHumanInTheLoop(worker_id=worker.id, request_info_id=request_info_executor.id)
