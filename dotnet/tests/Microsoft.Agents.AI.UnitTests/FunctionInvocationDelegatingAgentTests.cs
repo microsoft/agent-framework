@@ -344,7 +344,7 @@ public sealed class FunctionInvocationDelegatingAgentTests
                 if (options?.Tools?.FirstOrDefault() is AIFunction function)
                 {
                     executionOrder.Add("Direct-Function-Invocation");
-                    await function.InvokeAsync(new AIFunctionArguments(), ct);
+                    await function.InvokeAsync([], ct);
                 }
                 return new ChatResponse([new ChatMessage(ChatRole.Assistant, "Response after direct invocation")]);
             });
