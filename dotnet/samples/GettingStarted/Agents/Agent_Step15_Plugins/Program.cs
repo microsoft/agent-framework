@@ -40,7 +40,7 @@ AIAgent agent = new AzureOpenAIClient(
         instructions: AgentInstructions,
         name: AgentName,
         tools: [.. serviceProvider.GetRequiredService<AgentPlugin>().AsAITools()],
-        functionInvocationServices: serviceProvider); // Pass the service provider to the agent so it will be available to plugin functions to resolve dependencies.
+        services: serviceProvider); // Pass the service provider to the agent so it will be available to plugin functions to resolve dependencies.
 
 Console.WriteLine(await agent.RunAsync("Tell me current time and weather in Seattle."));
 
