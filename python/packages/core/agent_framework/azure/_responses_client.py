@@ -2,6 +2,7 @@
 
 from collections.abc import Mapping
 from typing import Any, TypeVar
+from urllib.parse import urljoin
 
 from azure.core.credentials import TokenCredential
 from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
@@ -81,6 +82,16 @@ class AzureOpenAIResponsesClient(AzureOpenAIConfigMixin, OpenAIBaseResponsesClie
                 token_endpoint=token_endpoint,
                 default_api_version="preview",
             )
+            # TODO(peterychang): This is a temporary hack to ensure that the base_url is set correctly
+            # while this feature is in preview.
+            # But we should only do this if we're on azure. Private deployments may not need this.
+            if (
+                not azure_openai_settings.base_url
+                and azure_openai_settings.endpoint
+                and azure_openai_settings.endpoint.host
+                and azure_openai_settings.endpoint.host.endswith(".openai.azure.com")
+            ):
+                azure_openai_settings.base_url = urljoin(str(azure_openai_settings.endpoint), "/openai/v1/")  # type: ignore
         except ValidationError as exc:
             raise ServiceInitializationError(f"Failed to validate settings: {exc}") from exc
 
