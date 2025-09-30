@@ -1,10 +1,10 @@
 [project]
-name = "agent-framework-runtime"
-description = "Runtime integration for Microsoft Agent Framework."
+name = "agent-framework-core"
+description = "Microsoft Agent Framework for building AI Agents with Python. This is the core package that has all the core abstractions and implementations."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "0.1.0b1"
+version = "1.0.0-b251001"
 license-files = ["LICENSE"]
 urls.homepage = "https://learn.microsoft.com/en-us/semantic-kernel/overview/"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -23,7 +23,24 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework",
+    "openai>=1.99.0",
+    "pydantic>=2,<3",
+    "pydantic-settings>=2,<3",
+    "typing-extensions",
+    "opentelemetry-api>=1.24",
+    "opentelemetry-sdk>=1.24",
+    "mcp[ws]>=1.13",
+    "azure-monitor-opentelemetry>=1.7.0",
+    "azure-monitor-opentelemetry-exporter>=1.0.0b41",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.36.0",
+    "opentelemetry-semantic-conventions-ai>=0.4.13",
+    "aiofiles>=24.1.0",
+    "azure-identity>=1,<2",
+]
+
+[project.optional-dependencies]
+viz = [
+    "graphviz>=0.20.0"
 ]
 
 [tool.uv]
@@ -36,21 +53,30 @@ environments = [
 
 [tool.uv-dynamic-versioning]
 fallback-version = "0.0.0"
+
 [tool.pytest.ini_options]
-testpaths = 'tests'
+testpaths = [
+    'tests',
+    'packages/core/tests',
+    'packages/a2a/tests',
+    'packages/azure-ai/tests',
+    'packages/copilotstudio/tests',
+    'packages/mem0/tests',
+    'packages/runtime/tests'
+]
 addopts = "-ra -q -r fEX"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 filterwarnings = []
 timeout = 120
 
-[tool.ruff]
-extend = "../../pyproject.toml"
-
 [tool.coverage.run]
 omit = [
     "**/__init__.py"
 ]
+
+[tool.ruff]
+extend = "../../pyproject.toml"
 
 [tool.pyright]
 extend = "../../pyproject.toml"
@@ -71,16 +97,19 @@ disallow_incomplete_defs = true
 disallow_untyped_decorators = true
 
 [tool.bandit]
-targets = ["agent_framework_runtime"]
+targets = ["agent_framework"]
 exclude_dirs = ["tests"]
 
 [tool.poe]
 executor.type = "uv"
 include = "../../shared_tasks.toml"
 [tool.poe.tasks]
-mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_runtime"
-test = "pytest --cov=agent_framework_runtime --cov-report=term-missing:skip-covered tests"
+mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework"
+test = "pytest --cov=agent_framework --cov-report=term-missing:skip-covered tests"
+
+[tool.flit.module]
+name = "agent_framework"
 
 [build-system]
-requires = ["flit-core >= 3.9,<4.0"]
+requires = ["flit-core >= 3.11,<4.0"]
 build-backend = "flit_core.buildapi"
