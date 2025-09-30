@@ -197,8 +197,8 @@ async def main() -> None:
 
     # Initialize chat clients and executors.
     print("Creating chat client and executors...")
-    mini_chat_client = OpenAIChatClient(ai_model_id="gpt-4.1-nano")
-    chat_client = OpenAIChatClient(ai_model_id="gpt-4.1")
+    mini_chat_client = OpenAIChatClient(model_id="gpt-4.1-nano")
+    chat_client = OpenAIChatClient(model_id="gpt-4.1")
     reviewer = Reviewer(id="reviewer", chat_client=chat_client)
     worker = Worker(id="worker", chat_client=mini_chat_client)
 

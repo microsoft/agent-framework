@@ -146,7 +146,6 @@ from samples.getting_started.agents.openai.openai_responses_client_with_thread i
 from samples.getting_started.agents.openai.openai_responses_client_with_web_search import (
     main as openai_responses_client_with_web_search,
 )
-from tests.sample_utils import retry
 
 # Environment variable for controlling sample tests
 RUN_SAMPLES_TESTS = "RUN_SAMPLES_TESTS"
@@ -579,6 +578,7 @@ agent_samples = [
 ]
 
 
+@pytest.mark.flaky
 @mark.parametrize("sample, responses", agent_samples)
 async def test_agent_samples(sample: Callable[..., Awaitable[Any]], responses: list[str], monkeypatch: MonkeyPatch):
     """Test agent samples with input mocking and retry logic."""
@@ -592,4 +592,4 @@ async def test_agent_samples(sample: Callable[..., Awaitable[Any]], responses: l
         return responses.pop(0) if responses else "exit"
 
     monkeypatch.setattr("builtins.input", mock_input)
-    await retry(sample, retries=3, reset=reset)
+    await sample

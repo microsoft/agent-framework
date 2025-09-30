@@ -14,8 +14,7 @@ def __getattr__(name: str) -> Any:
             return getattr(importlib.import_module(PACKAGE_NAME), name)
         except ModuleNotFoundError as exc:
             raise ModuleNotFoundError(
-                f"The '{PACKAGE_EXTRA}' extra is not installed, "
-                f"please do `pip install agent-framework[{PACKAGE_EXTRA}]`"
+                f"The '{PACKAGE_EXTRA}' extra is not installed, please do `pip install agent-framework-{PACKAGE_EXTRA}`"
             ) from exc
     raise AttributeError(f"Module {PACKAGE_NAME} has no attribute {name}.")
 

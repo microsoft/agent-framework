@@ -8,7 +8,7 @@ from typing import Any
 from unittest.mock import patch
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from pytest import fixture
 
 from agent_framework import (
@@ -116,9 +116,11 @@ class MockChatClient:
 class MockBaseChatClient(BaseChatClient):
     """Mock implementation of the BaseChatClient."""
 
-    run_responses: list[ChatResponse] = Field(default_factory=list)
-    streaming_responses: list[list[ChatResponseUpdate]] = Field(default_factory=list)
-    call_count: int = Field(default=0)
+    def __init__(self, **kwargs: Any):
+        super().__init__(**kwargs)
+        self.run_responses: list[ChatResponse] = []
+        self.streaming_responses: list[list[ChatResponseUpdate]] = []
+        self.call_count: int = 0
 
     @override
     async def _inner_get_response(

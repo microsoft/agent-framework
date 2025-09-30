@@ -18,10 +18,6 @@ from openai.types.chat import ChatCompletion, ChatCompletionMessage
 from openai.types.chat.chat_completion import Choice
 
 
-def test_import():
-    """Test that the module can be imported."""
-
-
 @pytest.fixture
 def workflow_two_agents():
     """Test a workflow with two OpenAI chat agents where first agent's result passes to second agent."""
@@ -111,14 +107,12 @@ def workflow_two_agents():
             yield workflow
 
 
-@pytest.mark.asyncio
 async def test_openai_workflow_two_agents(workflow_two_agents):
     events = await workflow_two_agents.run("Please analyze the quarterly sales data")
 
     assert "Based on the analysis 'Analyzed data shows trend upward', I recommend investing" in events.get_outputs()
 
 
-@pytest.mark.asyncio
 async def test_observability(workflow_two_agents):
     r"""Expected trace tree:
 

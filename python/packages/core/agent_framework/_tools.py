@@ -11,6 +11,7 @@ from typing import (
     TYPE_CHECKING,
     Annotated,
     Any,
+    ClassVar,
     Final,
     Generic,
     Literal,
@@ -22,10 +23,10 @@ from typing import (
 )
 
 from opentelemetry.metrics import Histogram
-from pydantic import AnyUrl, BaseModel, Field, PrivateAttr, ValidationError, create_model, field_validator
+from pydantic import AnyUrl, BaseModel, Field, ValidationError, create_model
 
 from ._logging import get_logger
-from ._pydantic import AFBaseModel
+from ._serialization import SerializationMixin
 from .exceptions import ChatClientInitializationError, ToolException
 from .observability import (
     OPERATION_DURATION_BUCKET_BOUNDARIES,
@@ -150,7 +151,7 @@ class ToolProtocol(Protocol):
         ...
 
 
-class BaseTool(AFBaseModel):
+class BaseTool(SerializationMixin):
     """Base class for AI tools, providing common attributes and methods.
 
     Args:
@@ -159,9 +160,29 @@ class BaseTool(AFBaseModel):
         additional_properties: Additional properties associated with the tool.
     """
 
-    name: str = Field(..., kw_only=False)
-    description: str = ""
-    additional_properties: dict[str, Any] | None = None
+    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"additional_properties"}
+
+    def __init__(
+        self,
+        *,
+        name: str,
+        description: str = "",
+        additional_properties: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize the BaseTool.
+
+        Args:
+            name: The name of the tool.
+            description: A description of the tool.
+            additional_properties: Additional properties associated with the tool.
+            **kwargs: Additional keyword arguments.
+        """
+        self.name = name
+        self.description = description
+        self.additional_properties = additional_properties
+        for key, value in kwargs.items():
+            setattr(self, key, value)
 
     def __str__(self) -> str:
         """Return a string representation of the tool."""
@@ -176,8 +197,6 @@ class HostedCodeInterpreterTool(BaseTool):
     This tool does not implement code interpretation itself. It serves as a marker to inform a service
     that it is allowed to execute generated code if the service is capable of doing so.
     """
-
-    inputs: list[Any] = Field(default_factory=list)
 
     def __init__(
         self,
@@ -202,18 +221,17 @@ class HostedCodeInterpreterTool(BaseTool):
             additional_properties: Additional properties associated with the tool.
             **kwargs: Additional keyword arguments to pass to the base class.
         """
-        args: dict[str, Any] = {
-            "name": "code_interpreter",
-        }
-        if inputs:
-            args["inputs"] = _parse_inputs(inputs)
-        if description is not None:
-            args["description"] = description
-        if additional_properties is not None:
-            args["additional_properties"] = additional_properties
         if "name" in kwargs:
             raise ValueError("The 'name' argument is reserved for the HostedCodeInterpreterTool and cannot be set.")
-        super().__init__(**args, **kwargs)
+
+        self.inputs = _parse_inputs(inputs) if inputs else []
+
+        super().__init__(
+            name="code_interpreter",
+            description=description or "",
+            additional_properties=additional_properties,
+            **kwargs,
+        )
 
 
 class HostedWebSearchTool(BaseTool):
@@ -263,11 +281,6 @@ class HostedMCPSpecificApproval(TypedDict, total=False):
 class HostedMCPTool(BaseTool):
     """Represents a MCP tool that is managed and executed by the service."""
 
-    url: AnyUrl
-    approval_mode: Literal["always_require", "never_require"] | HostedMCPSpecificApproval | None = None
-    allowed_tools: set[str] | None = None
-    headers: dict[str, str] | None = None
-
     def __init__(
         self,
         *,
@@ -296,42 +309,44 @@ class HostedMCPTool(BaseTool):
             additional_properties: Additional properties to include in the tool definition.
             **kwargs: Additional keyword arguments to pass to the base class.
         """
-        args: dict[str, Any] = {
-            "name": name,
-            "url": url,
-        }
-        if allowed_tools is not None:
-            args["allowed_tools"] = allowed_tools
-        if approval_mode is not None:
-            args["approval_mode"] = approval_mode
-        if headers is not None:
-            args["headers"] = headers
-        if description is not None:
-            args["description"] = description
-        if additional_properties is not None:
-            args["additional_properties"] = additional_properties
         try:
-            super().__init__(**args, **kwargs)
-        except ValidationError as err:
-            raise ToolException(f"Error initializing HostedMCPTool: {err}", inner_exception=err) from err
+            # Validate approval_mode
+            if approval_mode is not None:
+                if isinstance(approval_mode, str):
+                    if approval_mode not in ("always_require", "never_require"):
+                        raise ValueError(
+                            f"Invalid approval_mode: {approval_mode}. "
+                            "Must be 'always_require', 'never_require', or a dict with 'always_require_approval' "
+                            "or 'never_require_approval' keys."
+                        )
+                elif isinstance(approval_mode, dict):
+                    # Validate that the dict has sets
+                    for key, value in approval_mode.items():
+                        if not isinstance(value, set):
+                            approval_mode[key] = set(value)  # type: ignore
 
-    @field_validator("approval_mode")
-    def validate_approval_mode(cls, approval_mode: str | dict[str, Any] | None) -> str | dict[str, Any] | None:
-        """Validate the approval_mode field to ensure it is one of the accepted values."""
-        if approval_mode is None or not isinstance(approval_mode, dict):
-            return approval_mode
-        # Validate that the dict has sets
-        for key, value in approval_mode.items():
-            if not isinstance(value, set):
-                approval_mode[key] = set(value)  # Convert to set if it's a list or other collection
-        return approval_mode
+            # Validate allowed_tools
+            if allowed_tools is not None and isinstance(allowed_tools, dict):
+                raise TypeError(
+                    f"allowed_tools must be a sequence of strings, not a dict. Got: {type(allowed_tools).__name__}"
+                )
+
+            super().__init__(
+                name=name,
+                description=description or "",
+                additional_properties=additional_properties,
+                **kwargs,
+            )
+            self.url = url if isinstance(url, AnyUrl) else AnyUrl(url)
+            self.approval_mode = approval_mode
+            self.allowed_tools = set(allowed_tools) if allowed_tools else None
+            self.headers = headers
+        except (ValidationError, ValueError, TypeError) as err:
+            raise ToolException(f"Error initializing HostedMCPTool: {err}", inner_exception=err) from err
 
 
 class HostedFileSearchTool(BaseTool):
     """Represents a file search tool that can be specified to an AI service to enable it to perform file searches."""
-
-    inputs: list[Any] | None = None
-    max_results: int | None = None
 
     def __init__(
         self,
@@ -357,20 +372,18 @@ class HostedFileSearchTool(BaseTool):
             additional_properties: Additional properties associated with the tool.
             **kwargs: Additional keyword arguments to pass to the base class.
         """
-        args: dict[str, Any] = {
-            "name": "file_search",
-        }
-        if inputs:
-            args["inputs"] = _parse_inputs(inputs)
-        if max_results:
-            args["max_results"] = max_results
-        if description is not None:
-            args["description"] = description
-        if additional_properties is not None:
-            args["additional_properties"] = additional_properties
         if "name" in kwargs:
             raise ValueError("The 'name' argument is reserved for the HostedFileSearchTool and cannot be set.")
-        super().__init__(**args, **kwargs)
+
+        self.inputs = _parse_inputs(inputs) if inputs else None
+        self.max_results = max_results
+
+        super().__init__(
+            name="file_search",
+            description=description or "",
+            additional_properties=additional_properties,
+            **kwargs,
+        )
 
 
 def _default_histogram() -> Histogram:
@@ -406,9 +419,38 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
         input_model: The Pydantic model that defines the input parameters for the function.
     """
 
-    func: Callable[..., Awaitable[ReturnT] | ReturnT]
-    input_model: type[ArgsT]
-    _invocation_duration_histogram: Histogram = PrivateAttr(default_factory=_default_histogram)
+    INJECTABLE: ClassVar[set[str]] = {"func"}
+    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"input_model", "_invocation_duration_histogram"}
+
+    def __init__(
+        self,
+        *,
+        name: str,
+        description: str = "",
+        additional_properties: dict[str, Any] | None = None,
+        func: Callable[..., Awaitable[ReturnT] | ReturnT],
+        input_model: type[ArgsT],
+        **kwargs: Any,
+    ) -> None:
+        """Initialize the AIFunction.
+
+        Args:
+            name: The name of the function.
+            description: A description of the function.
+            additional_properties: Additional properties to set on the function.
+            func: The function to wrap.
+            input_model: The Pydantic model that defines the input parameters for the function.
+            **kwargs: Additional keyword arguments.
+        """
+        super().__init__(
+            name=name,
+            description=description,
+            additional_properties=additional_properties,
+            **kwargs,
+        )
+        self.func = func
+        self.input_model = input_model
+        self._invocation_duration_histogram = _default_histogram()
 
     def __call__(self, *args: Any, **kwargs: Any) -> ReturnT | Awaitable[ReturnT]:
         """Call the wrapped function with the provided arguments."""
@@ -668,7 +710,7 @@ def _get_tool_map(
     tools: "ToolProtocol \
     | Callable[..., Any] \
     | MutableMapping[str, Any] \
-    | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]",
+    | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]",
 ) -> dict[str, AIFunction[Any, Any]]:
     ai_function_list: dict[str, AIFunction[Any, Any]] = {}
     for tool in tools if isinstance(tools, list) else [tools]:
@@ -689,7 +731,7 @@ async def execute_function_calls(
     tools: "ToolProtocol \
     | Callable[..., Any] \
     | MutableMapping[str, Any] \
-    | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]",
+    | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]",
     middleware_pipeline: Any = None,  # Optional MiddlewarePipeline to avoid circular imports
 ) -> list["Contents"]:
     tool_map = _get_tool_map(tools)
@@ -778,7 +820,7 @@ def _handle_function_calls_response(
                     # Use the stored middleware pipeline instead of extracting from kwargs
                     # because kwargs may have been modified by the underlying function
                     middleware_pipeline = stored_middleware_pipeline
-                    function_results = await execute_function_calls(
+                    function_call_results: list[Contents] = await execute_function_calls(
                         custom_args=kwargs,
                         attempt_idx=attempt_idx,
                         function_calls=function_calls,
@@ -786,7 +828,7 @@ def _handle_function_calls_response(
                         middleware_pipeline=middleware_pipeline,
                     )
                     # add a single ChatMessage to the response with the results
-                    result_message = ChatMessage(role="tool", contents=function_results)  # type: ignore[call-overload]
+                    result_message = ChatMessage(role="tool", contents=function_call_results)
                     response.messages.append(result_message)
                     # response should contain 2 messages after this,
                     # one with function call contents
@@ -891,7 +933,7 @@ def _handle_function_calls_streaming_response(
                     update_conversation_id(kwargs, response.conversation_id)
                     prepped_messages = []
 
-                tools = kwargs.get("tools")
+                tools: Sequence[ToolProtocol | MutableMapping[str, Any]] | None = kwargs.get("tools")
                 if not tools and (chat_options := kwargs.get("chat_options")) and isinstance(chat_options, ChatOptions):
                     tools = chat_options.tools
 
@@ -903,7 +945,7 @@ def _handle_function_calls_streaming_response(
                         custom_args=kwargs,
                         attempt_idx=attempt_idx,
                         function_calls=function_calls,
-                        tools=tools,  # type: ignore[reportArgumentType]
+                        tools=tools,
                         middleware_pipeline=middleware_pipeline,
                     )
                     function_result_msg = ChatMessage(role="tool", contents=function_results)

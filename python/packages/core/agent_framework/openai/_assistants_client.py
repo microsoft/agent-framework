@@ -18,7 +18,7 @@ from openai.types.beta.threads import (
 from openai.types.beta.threads.run_create_params import AdditionalMessage
 from openai.types.beta.threads.run_submit_tool_outputs_params import ToolOutput
 from openai.types.beta.threads.runs import RunStep
-from pydantic import Field, PrivateAttr, SecretStr, ValidationError
+from pydantic import ValidationError
 
 from .._clients import BaseChatClient
 from .._middleware import use_chat_middleware
@@ -57,28 +57,25 @@ __all__ = ["OpenAIAssistantsClient"]
 class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
     """OpenAI Assistants client."""
 
-    assistant_id: str | None = Field(default=None)
-    assistant_name: str | None = Field(default=None)
-    thread_id: str | None = Field(default=None)
-    _should_delete_assistant: bool = PrivateAttr(default=False)  # Track whether we should delete the assistant
-
     def __init__(
         self,
-        ai_model_id: str | None = None,
+        model_id: str | None = None,
         assistant_id: str | None = None,
         assistant_name: str | None = None,
         thread_id: str | None = None,
         api_key: str | None = None,
         org_id: str | None = None,
+        base_url: str | None = None,
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncOpenAI | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
+        **kwargs: Any,
     ) -> None:
         """Initialize an OpenAI Assistants client.
 
         Args:
-            ai_model_id: OpenAI model name, see
+            model_id: OpenAI model name, see
                 https://platform.openai.com/docs/models
             assistant_id: The ID of an OpenAI assistant to use.
                 If not provided, a new assistant will be created (and deleted after the request).
@@ -90,18 +87,21 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
                 the env vars or .env file value.
             org_id: The optional org ID to use. If provided will override,
                 the env vars or .env file value.
+            base_url: The optional base URL to use. If provided will override,
             default_headers: The default headers mapping of string keys to
                 string values for HTTP requests. (Optional)
             async_client: An existing client to use. (Optional)
             env_file_path: Use the environment settings file as a fallback
                 to environment variables. (Optional)
             env_file_encoding: The encoding of the environment settings file. (Optional)
+            kwargs: Other keyword parameters.
         """
         try:
             openai_settings = OpenAISettings(
-                api_key=SecretStr(api_key) if api_key else None,
+                api_key=api_key,  # type: ignore[reportArgumentType]
+                base_url=base_url,
                 org_id=org_id,
-                chat_model_id=ai_model_id,
+                chat_model_id=model_id,
                 env_file_path=env_file_path,
                 env_file_encoding=env_file_encoding,
             )
@@ -119,15 +119,17 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
             )
 
         super().__init__(
-            ai_model_id=openai_settings.chat_model_id,
-            assistant_id=assistant_id,  # type: ignore[reportCallIssue]
-            assistant_name=assistant_name,  # type: ignore[reportCallIssue]
-            thread_id=thread_id,  # type: ignore[reportCallIssue]
+            model_id=openai_settings.chat_model_id,
             api_key=openai_settings.api_key.get_secret_value() if openai_settings.api_key else None,
             org_id=openai_settings.org_id,
             default_headers=default_headers,
             client=async_client,
+            base_url=openai_settings.base_url,
         )
+        self.assistant_id: str | None = assistant_id
+        self.assistant_name: str | None = assistant_name
+        self.thread_id: str | None = thread_id
+        self._should_delete_assistant: bool = False
 
     async def __aenter__(self) -> "Self":
         """Async context manager entry."""
@@ -141,8 +143,8 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
         """Clean up any assistants we created."""
         if self._should_delete_assistant and self.assistant_id is not None:
             await self.client.beta.assistants.delete(self.assistant_id)
-            self.assistant_id = None
-            self._should_delete_assistant = False
+            object.__setattr__(self, "assistant_id", None)
+            object.__setattr__(self, "_should_delete_assistant", False)
 
     async def _inner_get_response(
         self,
@@ -194,10 +196,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
         """
         # If no assistant is provided, create a temporary assistant
         if self.assistant_id is None:
-            created_assistant = await self.client.beta.assistants.create(
-                name=self.assistant_name, model=self.ai_model_id
-            )
-
+            created_assistant = await self.client.beta.assistants.create(name=self.assistant_name, model=self.model_id)
             self.assistant_id = created_assistant.id
             self._should_delete_assistant = True
 
@@ -495,4 +494,4 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
         # This is a no-op in the base class, but can be overridden by subclasses
         # to update the agent name in the client.
         if agent_name and not self.assistant_name:
-            self.assistant_name = agent_name
+            object.__setattr__(self, "assistant_name", agent_name)

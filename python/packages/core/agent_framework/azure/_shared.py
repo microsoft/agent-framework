@@ -8,10 +8,10 @@ from typing import Any, ClassVar, Final
 
 from azure.core.credentials import TokenCredential
 from openai.lib.azure import AsyncAzureOpenAI
-from pydantic import ConfigDict, SecretStr, model_validator, validate_call
+from pydantic import SecretStr, model_validator
 
 from .._pydantic import AFBaseSettings, HTTPsUrl
-from .._telemetry import APP_INFO, USER_AGENT_KEY, prepend_agent_framework_to_user_agent
+from .._telemetry import APP_INFO, prepend_agent_framework_to_user_agent
 from ..exceptions import ServiceInitializationError
 from ..openai._shared import OpenAIBase
 from ._entra_id_authentication import get_entra_auth_token
@@ -124,9 +124,9 @@ class AzureOpenAISettings(AFBaseSettings):
 class AzureOpenAIConfigMixin(OpenAIBase):
     """Internal class for configuring a connection to an Azure OpenAI service."""
 
-    OTEL_PROVIDER_NAME: ClassVar[str] = "azure_openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
+    OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai.openai"
+    # Note: INJECTABLE = {"client"} is inherited from OpenAIBase
 
-    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def __init__(
         self,
         deployment_name: str,
@@ -207,36 +207,20 @@ class AzureOpenAIConfigMixin(OpenAIBase):
                 args["websocket_base_url"] = kwargs.pop("websocket_base_url")
 
             client = AsyncAzureOpenAI(**args)
-        args = {
-            "ai_model_id": deployment_name,
-            "client": client,
-        }
-        if instruction_role:
-            args["instruction_role"] = instruction_role
-        super().__init__(**args, **kwargs)
 
-    def to_dict(self) -> dict[str, Any]:
-        """Convert the configuration to a dictionary."""
-        client_settings = {
-            "base_url": str(self.client.base_url),
-            "api_version": self.client._custom_query["api-version"],  # type: ignore
-            "api_key": self.client.api_key,
-            "ad_token": getattr(self.client, "_azure_ad_token", None),
-            "ad_token_provider": getattr(self.client, "_azure_ad_token_provider", None),
-            "default_headers": {k: v for k, v in self.client.default_headers.items() if k != USER_AGENT_KEY},
-        }
-        base = self.model_dump(
-            exclude={
-                "prompt_tokens",
-                "completion_tokens",
-                "total_tokens",
-                "api_type",
-                "org_id",
-                "service_id",
-                "client",
-            },
-            by_alias=True,
-            exclude_none=True,
-        )
-        base.update(client_settings)
-        return base
+        # Store configuration as instance attributes for serialization
+        self.endpoint = str(endpoint)
+        self.base_url = str(base_url)
+        self.api_version = api_version
+        self.deployment_name = deployment_name
+        self.instruction_role = instruction_role
+        # Store default_headers but filter out USER_AGENT_KEY for serialization
+        if default_headers:
+            from .._telemetry import USER_AGENT_KEY
+
+            def_headers = {k: v for k, v in default_headers.items() if k != USER_AGENT_KEY}
+        else:
+            def_headers = None
+        self.default_headers = def_headers
+
+        super().__init__(model_id=deployment_name, client=client)
