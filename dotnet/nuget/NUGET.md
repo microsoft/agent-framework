@@ -15,7 +15,7 @@ Whether you're building simple AI assistants or complex multi-agent systems, Mic
 
 # Getting Started ⚡
 
-- Learn more at the [documentation site](https://review.learn.microsoft.com/en-us/agent-framework/overview/agent-framework-overview?branch=main).
+- Learn more at the [documentation site](https://learn.microsoft.com/agent-framework/overview/agent-framework-overview).
 - Join the [Discord community](https://discord.gg/b5zjErwbQM).
 - Follow the team on [Semantic Kernel blog](https://devblogs.microsoft.com/semantic-kernel/).
 - Check out the [GitHub repository](https://github.com/microsoft/agent-framework) for the latest updates.
