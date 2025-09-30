@@ -467,7 +467,7 @@ public sealed class ChatClientAgent : AIAgent
     /// <param name="thread">The conversation thread to use or create.</param>
     /// <param name="inputMessages">The input messages to use.</param>
     /// <param name="runOptions">Optional parameters for agent invocation.</param>
-    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A tuple containing the thread, chat options, and thread messages.</returns>
     private async Task<(ChatClientAgentThread AgentThread, ChatOptions? ChatOptions, List<ChatMessage> ThreadMessages)> PrepareThreadAndMessagesAsync(
         AgentThread? thread,
