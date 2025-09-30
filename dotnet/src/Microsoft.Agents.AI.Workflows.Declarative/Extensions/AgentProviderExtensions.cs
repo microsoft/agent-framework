@@ -28,15 +28,15 @@ internal static class AgentProviderExtensions
             new(
                 new ChatOptions()
                 {
+                    ConversationId = conversationId,
                     Instructions = additionalInstructions,
                 });
 
         // Initialize the agent thread.
-        AgentThread agentThread = conversationId is not null && agent is ChatClientAgent chatClientAgent ? chatClientAgent.GetNewThread(conversationId) : agent.GetNewThread();
         IAsyncEnumerable<AgentRunResponseUpdate> agentUpdates =
             inputMessages is not null ?
-                agent.RunStreamingAsync([.. inputMessages], agentThread, options, cancellationToken) :
-                agent.RunStreamingAsync(agentThread, options, cancellationToken);
+                agent.RunStreamingAsync([.. inputMessages], null, options, cancellationToken) :
+                agent.RunStreamingAsync(null, options, cancellationToken);
 
         // Enable "autoSend" behavior if this is the workflow conversation.
         bool isWorkflowConversation = context.IsWorkflowConversation(conversationId);
