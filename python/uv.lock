@@ -164,7 +164,7 @@ dependencies = [
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "aiohttp", specifier = "~=3.8" },
-    { name = "azure-ai-agents", specifier = "==1.2.0b4" },
+    { name = "azure-ai-agents", specifier = "==1.2.0b5" },
     { name = "azure-ai-projects", specifier = ">=1.0.0b11" },
 ]
 
@@ -581,16 +581,16 @@ wheels = [
 
 [[package]]
 name = "azure-ai-agents"
-version = "1.2.0b4"
+version = "1.2.0b5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "azure-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "isodate", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "typing-extensions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/30/db/cdf0ab3cf642ef766d193fadfee4cc8e70867a051c800f9e1091feb76337/azure_ai_agents-1.2.0b4.tar.gz", hash = "sha256:3da41c0f17282dd76bff7d370c714ef2d17140a119a1eb88d8653311835bbe85", size = 383620, upload-time = "2025-09-13T02:04:47.301Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ed/57/8adeed578fa8984856c67b4229e93a58e3f6024417d448d0037aafa4ee9b/azure_ai_agents-1.2.0b5.tar.gz", hash = "sha256:1a16ef3f305898aac552269f01536c34a00473dedee0bca731a21fdb739ff9d5", size = 394876, upload-time = "2025-09-30T01:55:02.328Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3c/08/571e60c5f76c3ba20e6a99de636335e2480941816344dfad971a2e362c12/azure_ai_agents-1.2.0b4-py3-none-any.whl", hash = "sha256:8cfc4cd19d7d2087858148eba8b9b424a5d30fafbda87ca2d12ea5a066bec051", size = 214705, upload-time = "2025-09-13T02:04:49.171Z" },
+    { url = "https://files.pythonhosted.org/packages/6d/6d/15070d23d7a94833a210da09d5d7ed3c24838bb84f0463895e5d159f1695/azure_ai_agents-1.2.0b5-py3-none-any.whl", hash = "sha256:257d0d24a6bf13eed4819cfa5c12fb222e5908deafb3cbfd5711d3a511cc4e88", size = 217948, upload-time = "2025-09-30T01:55:04.155Z" },
 ]
 
 [[package]]
