@@ -8,8 +8,6 @@ from dataclasses import dataclass
 from typing import Literal
 from uuid import uuid4
 
-from typing_extensions import Never
-
 from agent_framework import (
     AgentExecutor,
     AgentExecutorRequest,
@@ -25,6 +23,7 @@ from agent_framework import (
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel
+from typing_extensions import Never
 
 """
 Sample: Multi-Selection Edge Group for email triage and response.

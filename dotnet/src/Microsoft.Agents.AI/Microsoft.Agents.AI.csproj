@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
@@ -11,6 +11,7 @@
     <InjectSharedThrow>true</InjectSharedThrow>
     <InjectDiagnosticClassesOnLegacy>true</InjectDiagnosticClassesOnLegacy>
     <InjectTrimAttributesOnLegacy>true</InjectTrimAttributesOnLegacy>
+    <InjectIsExternalInitOnLegacy>true</InjectIsExternalInitOnLegacy>
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />

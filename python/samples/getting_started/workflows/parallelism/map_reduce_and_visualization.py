@@ -7,8 +7,6 @@ from collections import defaultdict
 from dataclasses import dataclass
 
 import aiofiles
-from typing_extensions import Never
-
 from agent_framework import (
     Executor,  # Base class for custom workflow steps
     WorkflowBuilder,  # Fluent builder for executors and edges
@@ -17,6 +15,7 @@ from agent_framework import (
     WorkflowViz,  # Utility to visualize a workflow graph
     handler,  # Decorator to expose an Executor method as a step
 )
+from typing_extensions import Never
 
 """
 Sample: Map reduce word count with fan out and fan in over file backed intermediate results

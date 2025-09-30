@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 
 from agent_framework import Executor, WorkflowBuilder, WorkflowContext, handler
-from agent_framework._workflow._edge import (
+from agent_framework._workflows._edge import (
     Case,
     Default,
     Edge,
@@ -17,7 +17,7 @@ from agent_framework._workflow._edge import (
     SwitchCaseEdgeGroupCase,
     SwitchCaseEdgeGroupDefault,
 )
-from agent_framework._workflow._workflow_executor import (
+from agent_framework._workflows._workflow_executor import (
     WorkflowExecutor,
 )
 
