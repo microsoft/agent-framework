@@ -43,6 +43,6 @@
   <PropertyGroup>
     <!-- NuGet Package Settings -->
     <Title>Microsoft Agent Framework Hosting</Title>
-    <Description>Provides the Microsoft Agent Framework support for hosting agents.</Description>
+    <Description>Provides Microsoft Agent Framework support for hosting agents.</Description>
   </PropertyGroup>
 </Project>

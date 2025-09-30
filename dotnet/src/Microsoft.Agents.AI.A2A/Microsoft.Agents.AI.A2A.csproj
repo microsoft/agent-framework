@@ -21,7 +21,7 @@
   <PropertyGroup>
     <!-- NuGet Package Settings -->
     <Title>Microsoft Agent Framework A2A</Title>
-    <Description>Provides the Microsoft Agent Framework support for Agent2Agent (A2A) protocol.</Description>
+    <Description>Provides Microsoft Agent Framework support for Agent2Agent (A2A) protocol.</Description>
   </PropertyGroup>
 
   <ItemGroup>

@@ -22,7 +22,7 @@
   <PropertyGroup>
     <!-- NuGet Package Settings -->
     <Title>Microsoft Agent Framework Abstractions</Title>
-    <Description>Provides the Microsoft Agent Framework interfaces and abstractions.</Description>
+    <Description>Provides Microsoft Agent Framework interfaces and abstractions.</Description>
   </PropertyGroup>
 
   <ItemGroup>

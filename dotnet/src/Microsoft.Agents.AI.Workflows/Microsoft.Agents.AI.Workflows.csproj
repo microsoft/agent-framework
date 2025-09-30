@@ -32,7 +32,7 @@
   <PropertyGroup>
     <!-- NuGet Package Settings -->
     <Title>Microsoft Agent Framework Workflows</Title>
-    <Description>Provides the Microsoft Agent Framework support for workflows.</Description>
+    <Description>Provides Microsoft Agent Framework support for workflows.</Description>
   </PropertyGroup>
   
   <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">

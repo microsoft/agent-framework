@@ -45,6 +45,6 @@
   <PropertyGroup>
     <!-- NuGet Package Settings -->
     <Title>Microsoft Agent Framework Declarative Workflows</Title>
-    <Description>Provides the Microsoft Agent Framework support for declarative workflows.</Description>
+    <Description>Provides Microsoft Agent Framework support for declarative workflows.</Description>
   </PropertyGroup>
 </Project>

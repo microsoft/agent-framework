@@ -22,6 +22,6 @@
   <PropertyGroup>
     <!-- NuGet Package Settings -->
     <Title>Microsoft Agent Framework Hosting A2A ASP.NET Core</Title>
-    <Description>Provides the Microsoft Agent Framework support for hosting A2A agents in an ASP.NET Core context.</Description>
+    <Description>Provides Microsoft Agent Framework support for hosting A2A agents in an ASP.NET Core context.</Description>
   </PropertyGroup>
 </Project>

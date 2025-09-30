@@ -23,6 +23,6 @@
   <PropertyGroup>
     <!-- NuGet Package Settings -->
     <Title>Microsoft Agent Framework OpenAI</Title>
-    <Description>Provides the Microsoft Agent Framework support for OpenAI.</Description>
+    <Description>Provides Microsoft Agent Framework support for OpenAI.</Description>
   </PropertyGroup>
 </Project>
