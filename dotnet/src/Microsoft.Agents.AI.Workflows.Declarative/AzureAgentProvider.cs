@@ -1,4 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
+
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
@@ -8,7 +9,6 @@ using System.Threading.Tasks;
 using Azure.AI.Agents.Persistent;
 using Azure.Core;
 using Azure.Core.Pipeline;
-using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative;
