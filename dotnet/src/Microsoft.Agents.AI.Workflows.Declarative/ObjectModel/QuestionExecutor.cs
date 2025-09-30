@@ -37,7 +37,7 @@ internal sealed class QuestionExecutor(Question model, WorkflowFormulaState stat
         return executorMessage.Result is null;
     }
 
-    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         await this._promptCount.WriteAsync(context, 0).ConfigureAwait(false);
 

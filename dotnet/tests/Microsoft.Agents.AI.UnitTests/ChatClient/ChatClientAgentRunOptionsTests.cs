@@ -320,7 +320,7 @@ public class ChatClientAgentRunOptionsTests
         // Arrange
         var originalClient = new Mock<IChatClient>();
 
-        IChatClient ClientFactory(IChatClient client) => null!;
+        static IChatClient ClientFactory(IChatClient client) => null!;
 
         var agent = new ChatClientAgent(originalClient.Object);
         var messages = new List<ChatMessage> { new(ChatRole.User, "Test message") };

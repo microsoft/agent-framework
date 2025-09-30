@@ -13,7 +13,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 internal sealed class SetTextVariableExecutor(SetTextVariable model, WorkflowFormulaState state)
     : DeclarativeActionExecutor<SetTextVariable>(model, state)
 {
-    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         if (this.Model.Value is null)
         {

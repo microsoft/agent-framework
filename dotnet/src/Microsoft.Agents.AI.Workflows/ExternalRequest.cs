@@ -39,7 +39,7 @@ public record ExternalRequest(InputPortInfo PortInfo, string RequestId, Portable
     /// <exception cref="InvalidOperationException">Thrown when the input data object does not match the expected request type.</exception>
     public static ExternalRequest Create(InputPort port, [NotNull] object data, string? requestId = null)
     {
-        if (!port.Request.IsAssignableFrom(Throw.IfNull(data).GetType()))
+        if (!port.Request.IsInstanceOfType(Throw.IfNull(data)))
         {
             throw new InvalidOperationException(
                 $"Message type {data.GetType().Name} is not assignable to the request type {port.Request.Name} of input port {port.Id}.");

@@ -103,7 +103,7 @@ public class EdgeRunnerTests
                                     && (!targetMatch.HasValue || targetMatch.Value);
         bool expectForwardFrom3 = !assignerSelectsEmpty.HasValue && !targetMatch.HasValue; // if there is a target, it is never executor3
 
-        HashSet<string> expectedReceivers = new();
+        HashSet<string> expectedReceivers = [];
         if (expectForwardFrom2)
         {
             expectedReceivers.Add("executor2");
