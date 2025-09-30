@@ -18,7 +18,7 @@ from agent_framework import (
     WorkflowStatusEvent,
     handler,
 )
-from agent_framework._workflow._checkpoint import InMemoryCheckpointStorage
+from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
 
 
 class _FakeAgentExec(Executor):

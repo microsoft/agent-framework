@@ -16,10 +16,10 @@ from agent_framework import (
     WorkflowStatusEvent,
     handler,
 )
-from agent_framework._workflow._edge import SingleEdgeGroup
-from agent_framework._workflow._runner import Runner
-from agent_framework._workflow._runner_context import InProcRunnerContext, Message, RunnerContext
-from agent_framework._workflow._shared_state import SharedState
+from agent_framework._workflows._edge import SingleEdgeGroup
+from agent_framework._workflows._runner import Runner
+from agent_framework._workflows._runner_context import InProcRunnerContext, Message, RunnerContext
+from agent_framework._workflows._shared_state import SharedState
 
 
 @dataclass
