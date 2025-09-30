@@ -30,12 +30,76 @@ class SerializationProtocol(Protocol):
         ...
 
 
+def is_serializable(value: Any) -> bool:
+    """Check if a value is JSON serializable."""
+    return isinstance(value, (str, int, float, bool, type(None), list, dict))
+
+
 class SerializationMixin:
     """Mixin class providing serialization and deserialization capabilities.
 
     Classes using this mixin should handle MutableMapping inputs in their __init__ method
     for any parameters that expect SerializationMixin/SerializationProtocol instances.
     The __init__ should check if the value is a MutableMapping and call from_dict() to convert it.
+
+    So take the two classes below as an example. The first purely uses base types, strings in this case.
+    The second has a param that is of the type of the first class.
+    Because we setup the __init__ method to handle MutableMapping,
+    we can pass in a dict to the second class and it will convert it to an instance of the first class.
+
+    Example:
+        .. code-block:: python
+
+        class SerializableMixinType(SerializationMixin):
+            def __init__(self, param1: str, param2: int) -> None:
+                self.param1 = param1
+                self.param2 = param2
+
+        class MyClass(SerializationMixin):
+            def __init__(self,
+                regular_param: str,
+                param: SerializableMixinType | MutableMapping[str, Any] | None = None,
+                ) -> None:
+                if isinstance(param, MutableMapping):
+                    self.param = self.from_dict(param)
+                else:
+                    self.param = param
+                self.regular_param = regular_param
+
+        instance = MyClass.from_dict({
+            "regular_param": "value",
+            "param": {"param1": "value1", "param2": 42}
+        })
+
+    A more complex use case involves a injectable dependency that is not serialized.
+    In this case, the dependency is passed in via the dependencies parameter to from_dict/from_json.
+
+    Example:
+        .. code-block:: python
+        from libary import Client
+
+        class MyClass(SerializationMixin):
+            INJECTABLE = {"client"}
+
+            def __init__(self, regular_param: str, client: Client) -> None:
+                self.client = client
+                self.regular_param = regular_param
+
+        json_of_class = MyClass(regular_param="value", client=Client()).to_json()
+        # this looks like: {"type": "my_class", "regular_param": "value"}
+
+        instance = MyClass.from_dict(json_of_class, dependencies={"my_class.client": Client()})
+
+    During serialization, the field listed as INJECTABLE (and also DEFAULT_EXCLUDE) will be excluded from the output.
+    Then in deserialization,
+    the dependencies dict is checked for any keys matching the formats:
+    - "<type>.<parameter>"
+    - "<type>.<dict-parameter>.<key>"
+    where <type> is the type identifier for the class (either the value of the 'type' class variable or
+    the snake_cased class name if 'type' is not present),
+    <parameter> is the name of the parameter in the __init__ method,
+    <dict-parameter> is the name of a parameter that is a dict,
+    and <key> is a key in that dict parameter.
     """
 
     DEFAULT_EXCLUDE: ClassVar[set[str]] = set()
@@ -66,23 +130,31 @@ class SerializationMixin:
                 # Recursively serialize SerializationProtocol objects
                 if isinstance(value, SerializationProtocol):
                     result[key] = value.to_dict(exclude=exclude, exclude_none=exclude_none)
+                    continue
                 # Handle lists containing SerializationProtocol objects
-                elif isinstance(value, list):
-                    result[key] = [
-                        item.to_dict(exclude=exclude, exclude_none=exclude_none)
-                        if isinstance(item, SerializationProtocol)
-                        else item
-                        for item in value
-                    ]
+                if isinstance(value, list):
+                    value_as_list: list[Any] = []
+                    for item in value:
+                        if isinstance(item, SerializationProtocol):
+                            value_as_list.append(item.to_dict(exclude=exclude, exclude_none=exclude_none))
+                            continue
+                        if is_serializable(item):
+                            value_as_list.append(item)
+                            continue
+                        logger.debug(
+                            f"Skipping non-serializable item in list attribute '{key}' of type {type(item).__name__}"
+                        )
+                    result[key] = value_as_list
+                    continue
                 # Handle dicts containing SerializationProtocol values
-                elif isinstance(value, dict):
+                if isinstance(value, dict):
                     serialized_dict: dict[str, Any] = {}
                     for k, v in value.items():
                         if isinstance(v, SerializationProtocol):
                             serialized_dict[k] = v.to_dict(exclude=exclude, exclude_none=exclude_none)
                             continue
                         # Check if the value is JSON serializable
-                        if isinstance(v, (str, int, float, bool, type(None), list, dict)):
+                        if is_serializable(v):
                             serialized_dict[k] = v
                             continue
                         logger.debug(
@@ -90,8 +162,12 @@ class SerializationMixin:
                             f"of type {type(v).__name__}"
                         )
                     result[key] = serialized_dict
-                else:
+                    continue
+                # Directly include JSON serializable values
+                if is_serializable(value):
                     result[key] = value
+                    continue
+                logger.debug(f"Skipping non-serializable attribute '{key}' of type {type(value).__name__}")
 
         return result
 
