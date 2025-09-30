@@ -3,6 +3,7 @@
 from collections.abc import AsyncIterable
 from typing import Any
 
+import pytest
 from pydantic import BaseModel, ValidationError
 from pytest import fixture, mark, raises
 
@@ -10,7 +11,6 @@ from agent_framework import (
     AgentRunResponse,
     AgentRunResponseUpdate,
     AIFunction,
-    BaseAnnotation,
     BaseContent,
     ChatMessage,
     ChatOptions,
@@ -209,7 +209,7 @@ def test_hosted_file_content_minimal():
     # Check the type and content
     assert content.type == "hosted_file"
     assert content.file_id == "file-456"
-    assert content.additional_properties is None
+    assert content.additional_properties == {}
     assert content.raw_representation is None
 
     # Ensure the instance is of type BaseContent
@@ -240,7 +240,7 @@ def test_hosted_vector_store_content_minimal():
     # Check the type and content
     assert content.type == "hosted_vector_store"
     assert content.vector_store_id == "vs-101112"
-    assert content.additional_properties is None
+    assert content.additional_properties == {}
     assert content.raw_representation is None
 
     # Ensure the instance is of type BaseContent
@@ -1204,33 +1204,6 @@ def test_text_content_add_comprehensive_coverage():
     assert result.raw_representation == ["raw1", "raw2", "raw3"]
 
 
-def test_text_content_add_annotations_coverage():
-    """Test TextContent __add__ method with annotation combinations to improve coverage."""
-
-    ann1 = BaseAnnotation()
-    ann2 = BaseAnnotation()
-
-    # Test first has annotations, second has None
-    t1 = TextContent("Hello", annotations=[ann1])
-    t2 = TextContent(" World", annotations=None)
-    result = t1 + t2
-    assert result.annotations == [ann1]
-
-    # Test first has None, second has annotations
-    t1 = TextContent("Hello", annotations=None)
-    t2 = TextContent(" World", annotations=[ann2])
-    result = t1 + t2
-    assert result.annotations == [ann2]
-
-    # Test both have annotations
-    t1 = TextContent("Hello", annotations=[ann1])
-    t2 = TextContent(" World", annotations=[ann2])
-    result = t1 + t2
-    assert len(result.annotations) == 2
-    assert ann1 in result.annotations
-    assert ann2 in result.annotations
-
-
 def test_text_content_iadd_coverage():
     """Test TextContent __iadd__ method for better coverage."""
 
@@ -1277,7 +1250,7 @@ def test_comprehensive_to_dict_exclude_options():
     text_content = TextContent("Hello", raw_representation=None, additional_properties={"prop": "val"})
     text_dict = text_content.to_dict(exclude_none=True)
     assert "raw_representation" not in text_dict
-    assert text_dict["additional_properties"] == {"prop": "val"}
+    assert text_dict["prop"] == "val"
 
     # Test with custom exclude set
     text_dict_exclude = text_content.to_dict(exclude={"additional_properties"})
@@ -1328,8 +1301,6 @@ def test_chat_message_from_dict_with_mixed_content():
             {"type": "text", "text": "Hello"},
             {"type": "function_call", "call_id": "call1", "name": "func", "arguments": {"arg": "val"}},
             {"type": "function_result", "call_id": "call1", "result": "success"},
-            # Test with unknown type that falls back to BaseContent
-            {"type": "unknown_type", "raw_representation": "something"},
         ],
     }
 
@@ -1383,7 +1354,7 @@ def test_comprehensive_serialization_methods():
     text_data = {
         "text": "Hello world",
         "raw_representation": {"key": "value"},
-        "additional_properties": {"prop": "val"},
+        "prop": "val",
         "annotations": None,
     }
     text_content = TextContent.from_dict(text_data)
@@ -1394,7 +1365,7 @@ def test_comprehensive_serialization_methods():
     # Test round-trip
     text_dict = text_content.to_dict()
     assert text_dict["text"] == "Hello world"
-    assert text_dict["additional_properties"] == {"prop": "val"}
+    assert text_dict["prop"] == "val"
     # Note: raw_representation is always excluded from to_dict() output
 
     # Test with exclude_none
@@ -1464,18 +1435,19 @@ def test_usage_content_serialization_with_details():
 
     # Test from_dict with details as dict
     usage_data = {
-        "details": {"input_token_count": 10, "output_token_count": 20, "total_token_count": 30},
-        "annotations": [
-            {"type": "citation", "start": 0, "end": 5, "citation": "source1"},
-            {"type": "unknown", "custom_field": "value"},  # Tests fallback to BaseAnnotation
-        ],
+        "type": "usage",
+        "details": {
+            "type": "usage_details",
+            "input_token_count": 10,
+            "output_token_count": 20,
+            "total_token_count": 30,
+            "custom_count": 5,
+        },
     }
     usage_content = UsageContent.from_dict(usage_data)
     assert isinstance(usage_content.details, UsageDetails)
     assert usage_content.details.input_token_count == 10
-    assert len(usage_content.annotations) == 2
-    assert isinstance(usage_content.annotations[0], CitationAnnotation)
-    assert isinstance(usage_content.annotations[1], BaseAnnotation)
+    assert usage_content.details.additional_counts["custom_count"] == 5
 
     # Test to_dict with UsageDetails object
     usage_dict = usage_content.to_dict()
@@ -1488,9 +1460,15 @@ def test_function_approval_response_content_serialization():
 
     # Test from_dict with function_call as dict
     response_data = {
+        "type": "function_approval_response",
         "id": "response123",
         "approved": True,
-        "function_call": {"call_id": "call123", "name": "test_func", "arguments": {"param": "value"}},
+        "function_call": {
+            "type": "function_call",
+            "call_id": "call123",
+            "name": "test_func",
+            "arguments": {"param": "value"},
+        },
     }
     response_content = FunctionApprovalResponseContent.from_dict(response_data)
     assert isinstance(response_content.function_call, FunctionCallContent)
@@ -1512,7 +1490,12 @@ def test_chat_response_complex_serialization():
             {"role": "assistant", "contents": [{"type": "text", "text": "Hi there"}]},
         ],
         "finish_reason": {"value": "stop"},
-        "usage_details": {"input_token_count": 5, "output_token_count": 8, "total_token_count": 13},
+        "usage_details": {
+            "type": "usage_details",
+            "input_token_count": 5,
+            "output_token_count": 8,
+            "total_token_count": 13,
+        },
         "model_id": "gpt-4",  # Test alias handling
     }
 
@@ -1543,22 +1526,21 @@ def test_chat_response_update_all_content_types():
             {"type": "error", "error": "An error occurred"},
             {"type": "function_call", "call_id": "call1", "name": "func", "arguments": {}},
             {"type": "function_result", "call_id": "call1", "result": "success"},
-            {"type": "usage", "details": {"input_token_count": 1}},
+            {"type": "usage", "details": {"type": "usage_details", "input_token_count": 1}},
             {"type": "hosted_file", "file_id": "file123"},
             {"type": "hosted_vector_store", "vector_store_id": "vs123"},
             {
                 "type": "function_approval_request",
                 "id": "req1",
-                "function_call": {"call_id": "call1", "name": "func", "arguments": {}},
+                "function_call": {"type": "function_call", "call_id": "call1", "name": "func", "arguments": {}},
             },
             {
                 "type": "function_approval_response",
                 "id": "resp1",
                 "approved": True,
-                "function_call": {"call_id": "call1", "name": "func", "arguments": {}},
+                "function_call": {"type": "function_call", "call_id": "call1", "name": "func", "arguments": {}},
             },
             {"type": "text_reasoning", "text": "reasoning"},
-            {"type": "unknown_type", "custom_field": "value"},  # Tests fallback
         ]
     }
 
@@ -1586,7 +1568,12 @@ def test_agent_run_response_complex_serialization():
             {"role": "user", "contents": [{"type": "text", "text": "Hello"}]},
             {"role": "assistant", "contents": [{"type": "text", "text": "Hi"}]},
         ],
-        "usage_details": {"input_token_count": 3, "output_token_count": 2, "total_token_count": 5},
+        "usage_details": {
+            "type": "usage_details",
+            "input_token_count": 3,
+            "output_token_count": 2,
+            "total_token_count": 5,
+        },
     }
 
     response = AgentRunResponse.from_dict(response_data)
@@ -1612,22 +1599,21 @@ def test_agent_run_response_update_all_content_types():
             {"type": "error", "error": "An error occurred"},
             {"type": "function_call", "call_id": "call1", "name": "func", "arguments": {}},
             {"type": "function_result", "call_id": "call1", "result": "success"},
-            {"type": "usage", "details": {"input_token_count": 1}},
+            {"type": "usage", "details": {"type": "usage_details", "input_token_count": 1}},
             {"type": "hosted_file", "file_id": "file123"},
             {"type": "hosted_vector_store", "vector_store_id": "vs123"},
             {
                 "type": "function_approval_request",
                 "id": "req1",
-                "function_call": {"call_id": "call1", "name": "func", "arguments": {}},
+                "function_call": {"type": "function_call", "call_id": "call1", "name": "func", "arguments": {}},
             },
             {
                 "type": "function_approval_response",
                 "id": "resp1",
                 "approved": True,
-                "function_call": {"call_id": "call1", "name": "func", "arguments": {}},
+                "function_call": {"type": "function_call", "call_id": "call1", "name": "func", "arguments": {}},
             },
             {"type": "text_reasoning", "text": "reasoning"},
-            {"type": "unknown_type", "custom_field": "value"},  # Tests fallback
         ],
         "role": {"value": "assistant"},  # Test role as dict
     }
@@ -1648,3 +1634,394 @@ def test_agent_run_response_update_all_content_types():
     update_str = AgentRunResponseUpdate.from_dict(update_data_str_role)
     assert isinstance(update_str.role, Role)
     assert update_str.role.value == "user"
+
+
+# region Serialization
+
+
+@mark.parametrize(
+    "content_class,init_kwargs",
+    [
+        pytest.param(
+            TextContent,
+            {
+                "type": "text",
+                "text": "Hello world",
+                "raw_representation": "raw",
+            },
+            id="text_content",
+        ),
+        pytest.param(
+            TextReasoningContent,
+            {
+                "type": "text_reasoning",
+                "text": "Reasoning text",
+                "raw_representation": "raw",
+            },
+            id="text_reasoning_content",
+        ),
+        pytest.param(
+            DataContent,
+            {
+                "type": "data",
+                "uri": "data:text/plain;base64,dGVzdCBkYXRh",
+            },
+            id="data_content_with_uri",
+        ),
+        pytest.param(
+            DataContent,
+            {
+                "type": "data",
+                "data": b"test data",
+                "media_type": "text/plain",
+            },
+            id="data_content_with_bytes",
+        ),
+        pytest.param(
+            UriContent,
+            {
+                "type": "uri",
+                "uri": "http://example.com",
+                "media_type": "text/html",
+            },
+            id="uri_content",
+        ),
+        pytest.param(
+            HostedFileContent,
+            {"type": "hosted_file", "file_id": "file-123"},
+            id="hosted_file_content",
+        ),
+        pytest.param(
+            HostedVectorStoreContent,
+            {
+                "type": "hosted_vector_store",
+                "vector_store_id": "vs-789",
+            },
+            id="hosted_vector_store_content",
+        ),
+        pytest.param(
+            FunctionCallContent,
+            {
+                "type": "function_call",
+                "call_id": "call-1",
+                "name": "test_func",
+                "arguments": {"arg": "val"},
+            },
+            id="function_call_content",
+        ),
+        pytest.param(
+            FunctionResultContent,
+            {
+                "type": "function_result",
+                "call_id": "call-1",
+                "result": "success",
+            },
+            id="function_result_content",
+        ),
+        pytest.param(
+            ErrorContent,
+            {
+                "type": "error",
+                "message": "Error occurred",
+                "error_code": "E001",
+            },
+            id="error_content",
+        ),
+        pytest.param(
+            UsageContent,
+            {
+                "type": "usage",
+                "details": {
+                    "type": "usage_details",
+                    "input_token_count": 10,
+                    "output_token_count": 20,
+                    "reasoning_tokens": 5,
+                },
+            },
+            id="usage_content",
+        ),
+        pytest.param(
+            FunctionApprovalRequestContent,
+            {
+                "type": "function_approval_request",
+                "id": "req-1",
+                "function_call": {"type": "function_call", "call_id": "call-1", "name": "test_func", "arguments": {}},
+            },
+            id="function_approval_request",
+        ),
+        pytest.param(
+            FunctionApprovalResponseContent,
+            {
+                "type": "function_approval_response",
+                "id": "resp-1",
+                "approved": True,
+                "function_call": {"type": "function_call", "call_id": "call-1", "name": "test_func", "arguments": {}},
+            },
+            id="function_approval_response",
+        ),
+        pytest.param(
+            ChatMessage,
+            {
+                "role": {"type": "role", "value": "user"},
+                "contents": [
+                    {"type": "text", "text": "Hello"},
+                    {"type": "function_call", "call_id": "call-1", "name": "test_func", "arguments": {}},
+                ],
+                "message_id": "msg-123",
+                "author_name": "User",
+            },
+            id="chat_message",
+        ),
+        pytest.param(
+            ChatResponse,
+            {
+                "type": "chat_response",
+                "messages": [
+                    {
+                        "type": "chat_message",
+                        "role": {"type": "role", "value": "user"},
+                        "contents": [{"type": "text", "text": "Hello"}],
+                    },
+                    {
+                        "type": "chat_message",
+                        "role": {"type": "role", "value": "assistant"},
+                        "contents": [{"type": "text", "text": "Hi there"}],
+                    },
+                ],
+                "finish_reason": {"type": "finish_reason", "value": "stop"},
+                "usage_details": {
+                    "type": "usage_details",
+                    "input_token_count": 10,
+                    "output_token_count": 20,
+                    "total_token_count": 30,
+                },
+                "response_id": "resp-123",
+                "model_id": "gpt-4",
+            },
+            id="chat_response",
+        ),
+        pytest.param(
+            ChatResponseUpdate,
+            {
+                "contents": [
+                    {"type": "text", "text": "Hello"},
+                    {"type": "function_call", "call_id": "call-1", "name": "test_func", "arguments": {}},
+                ],
+                "role": {"type": "role", "value": "assistant"},
+                "finish_reason": {"type": "finish_reason", "value": "stop"},
+                "message_id": "msg-123",
+                "response_id": "resp-123",
+            },
+            id="chat_response_update",
+        ),
+        pytest.param(
+            AgentRunResponse,
+            {
+                "messages": [
+                    {
+                        "role": {"type": "role", "value": "user"},
+                        "contents": [{"type": "text", "text": "Question"}],
+                    },
+                    {
+                        "role": {"type": "role", "value": "assistant"},
+                        "contents": [{"type": "text", "text": "Answer"}],
+                    },
+                ],
+                "response_id": "run-123",
+                "usage_details": {
+                    "type": "usage_details",
+                    "input_token_count": 5,
+                    "output_token_count": 3,
+                    "total_token_count": 8,
+                },
+            },
+            id="agent_run_response",
+        ),
+        pytest.param(
+            AgentRunResponseUpdate,
+            {
+                "contents": [
+                    {"type": "text", "text": "Streaming"},
+                    {"type": "function_call", "call_id": "call-1", "name": "test_func", "arguments": {}},
+                ],
+                "role": {"type": "role", "value": "assistant"},
+                "message_id": "msg-123",
+                "response_id": "run-123",
+                "author_name": "Agent",
+            },
+            id="agent_run_response_update",
+        ),
+    ],
+)
+def test_content_roundtrip_serialization(content_class: type[BaseContent], init_kwargs: dict[str, Any]):
+    """Test to_dict/from_dict roundtrip for all content types."""
+    # Create instance
+    content = content_class(**init_kwargs)
+
+    # Serialize to dict
+    content_dict = content.to_dict()
+
+    # Verify type key is in serialized dict
+    assert "type" in content_dict
+    if hasattr(content, "type"):
+        assert content_dict["type"] == content.type  # type: ignore[attr-defined]
+
+    # Deserialize from dict
+    reconstructed = content_class.from_dict(content_dict)
+
+    # Verify type
+    assert isinstance(reconstructed, content_class)
+    # Check type attribute dynamically
+    if hasattr(content, "type"):
+        assert reconstructed.type == content.type  # type: ignore[attr-defined]
+
+    # Verify key attributes (excluding raw_representation which is not serialized)
+    for key, value in init_kwargs.items():
+        if key == "type":
+            continue
+        if key == "raw_representation":
+            # raw_representation is intentionally excluded from serialization
+            continue
+
+        # Special handling for DataContent created with 'data' parameter
+        if content_class == DataContent and key == "data":
+            # DataContent converts 'data' to 'uri', so we skip checking 'data' attribute
+            # Instead we verify that uri and media_type are set correctly
+            assert hasattr(reconstructed, "uri")
+            assert hasattr(reconstructed, "media_type")
+            assert reconstructed.media_type == init_kwargs.get("media_type")
+            # Verify the uri contains the encoded data
+            assert reconstructed.uri.startswith(f"data:{init_kwargs.get('media_type')};base64,")
+            continue
+
+        reconstructed_value = getattr(reconstructed, key)
+
+        # Special handling for nested SerializationMixin objects
+        if hasattr(value, "to_dict"):
+            # Compare the serialized forms
+            assert reconstructed_value.to_dict() == value.to_dict()
+        # Special handling for lists that may contain dicts converted to objects
+        elif isinstance(value, list) and value and isinstance(reconstructed_value, list):
+            # Check if this is a list of objects that were created from dicts
+            if isinstance(value[0], dict) and hasattr(reconstructed_value[0], "to_dict"):
+                # Compare each item by serializing the reconstructed object
+                assert len(reconstructed_value) == len(value)
+
+            else:
+                assert reconstructed_value == value
+        # Special handling for dicts that get converted to objects (like UsageDetails, FunctionCallContent)
+        elif isinstance(value, dict) and hasattr(reconstructed_value, "to_dict"):
+            # Compare the dict with the serialized form of the object, excluding 'type' key
+            reconstructed_dict = reconstructed_value.to_dict()
+            assert len(reconstructed_dict) == len(value)
+        else:
+            assert reconstructed_value == value
+
+
+def test_text_content_with_annotations_serialization():
+    """Test TextContent with CitationAnnotation and TextSpanRegion roundtrip serialization."""
+    # Create TextSpanRegion
+    region = TextSpanRegion(start_index=0, end_index=5)
+
+    # Create CitationAnnotation with region
+    citation = CitationAnnotation(
+        title="Test Citation",
+        url="http://example.com/citation",
+        file_id="file-123",
+        tool_name="test_tool",
+        snippet="This is a test snippet",
+        annotated_regions=[region],
+        additional_properties={"custom": "value"},
+    )
+
+    # Create TextContent with annotation
+    content = TextContent(
+        text="Hello world", annotations=[citation], additional_properties={"content_key": "content_val"}
+    )
+
+    # Serialize to dict
+    content_dict = content.to_dict()
+
+    # Verify structure
+    assert content_dict["type"] == "text"
+    assert content_dict["text"] == "Hello world"
+    assert content_dict["content_key"] == "content_val"
+    assert len(content_dict["annotations"]) == 1
+
+    # Verify annotation structure
+    annotation_dict = content_dict["annotations"][0]
+    assert annotation_dict["type"] == "citation"
+    assert annotation_dict["title"] == "Test Citation"
+    assert annotation_dict["url"] == "http://example.com/citation"
+    assert annotation_dict["file_id"] == "file-123"
+    assert annotation_dict["tool_name"] == "test_tool"
+    assert annotation_dict["snippet"] == "This is a test snippet"
+    assert annotation_dict["custom"] == "value"
+
+    # Verify region structure
+    assert len(annotation_dict["annotated_regions"]) == 1
+    region_dict = annotation_dict["annotated_regions"][0]
+    assert region_dict["type"] == "text_span"
+    assert region_dict["start_index"] == 0
+    assert region_dict["end_index"] == 5
+
+    # Deserialize from dict
+    reconstructed = TextContent.from_dict(content_dict)
+
+    # Verify reconstructed content
+    assert isinstance(reconstructed, TextContent)
+    assert reconstructed.text == "Hello world"
+    assert reconstructed.type == "text"
+    assert reconstructed.additional_properties == {"content_key": "content_val"}
+
+    # Verify reconstructed annotation
+    assert len(reconstructed.annotations) == 1  # type: ignore[arg-type]
+    recon_annotation = reconstructed.annotations[0]  # type: ignore[index]
+    assert isinstance(recon_annotation, CitationAnnotation)
+    assert recon_annotation.title == "Test Citation"
+    assert recon_annotation.url == "http://example.com/citation"
+    assert recon_annotation.file_id == "file-123"
+    assert recon_annotation.tool_name == "test_tool"
+    assert recon_annotation.snippet == "This is a test snippet"
+    assert recon_annotation.additional_properties == {"custom": "value"}
+
+    # Verify reconstructed region
+    assert len(recon_annotation.annotated_regions) == 1  # type: ignore[arg-type]
+    recon_region = recon_annotation.annotated_regions[0]  # type: ignore[index]
+    assert isinstance(recon_region, TextSpanRegion)
+    assert recon_region.start_index == 0
+    assert recon_region.end_index == 5
+    assert recon_region.type == "text_span"
+
+
+def test_text_content_with_multiple_annotations_serialization():
+    """Test TextContent with multiple annotations roundtrip serialization."""
+    # Create multiple regions
+    region1 = TextSpanRegion(start_index=0, end_index=5)
+    region2 = TextSpanRegion(start_index=6, end_index=11)
+
+    # Create multiple citations
+    citation1 = CitationAnnotation(title="Citation 1", url="http://example.com/1", annotated_regions=[region1])
+
+    citation2 = CitationAnnotation(title="Citation 2", url="http://example.com/2", annotated_regions=[region2])
+
+    # Create TextContent with multiple annotations
+    content = TextContent(text="Hello world", annotations=[citation1, citation2])
+
+    # Serialize
+    content_dict = content.to_dict()
+
+    # Verify we have 2 annotations
+    assert len(content_dict["annotations"]) == 2
+    assert content_dict["annotations"][0]["title"] == "Citation 1"
+    assert content_dict["annotations"][1]["title"] == "Citation 2"
+
+    # Deserialize
+    reconstructed = TextContent.from_dict(content_dict)
+
+    # Verify reconstruction
+    assert len(reconstructed.annotations) == 2
+    assert all(isinstance(ann, CitationAnnotation) for ann in reconstructed.annotations)
+    assert reconstructed.annotations[0].title == "Citation 1"
+    assert reconstructed.annotations[1].title == "Citation 2"
+    assert all(isinstance(ann.annotated_regions[0], TextSpanRegion) for ann in reconstructed.annotations)

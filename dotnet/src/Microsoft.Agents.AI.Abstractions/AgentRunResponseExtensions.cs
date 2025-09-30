@@ -14,10 +14,91 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Agents.AI;
 
 /// <summary>
-/// Provides extension methods for working with <see cref="AgentRunResponseUpdate"/> instances.
+/// Provides extension methods for working with <see cref="AgentRunResponse"/> and <see cref="AgentRunResponseUpdate"/> instances.
 /// </summary>
-public static class AgentRunResponseUpdateExtensions
+public static class AgentRunResponseExtensions
 {
+    /// <summary>
+    /// Creates a <see cref="ChatResponse"/> from an <see cref="AgentRunResponse"/>.
+    /// </summary>
+    /// <param name="response">The <see cref="AgentRunResponse"/>.</param>
+    /// <returns>A <see cref="ChatResponse"/> built from <paramref name="response"/>.</returns>
+    /// <remarks>
+    /// If the <paramref name="response"/>'s <see cref="AgentRunResponse.RawRepresentation"/> is a
+    /// <see cref="ChatResponse"/> instance, that instance is returned directly. Otherwise, a new
+    /// <see cref="ChatResponse"/> is created and populated with the data from the <paramref name="response"/>.
+    /// The instance is a shallow copy; any reference-type members (e.g. <see cref="AgentRunResponse.Messages"/>)
+    /// will be shared between the two instances.
+    /// </remarks>
+    public static ChatResponse AsChatResponse(this AgentRunResponse response)
+    {
+        Throw.IfNull(response);
+
+        return
+            response.RawRepresentation as ChatResponse ??
+            new()
+            {
+                AdditionalProperties = response.AdditionalProperties,
+                CreatedAt = response.CreatedAt,
+                Messages = response.Messages,
+                RawRepresentation = response,
+                ResponseId = response.ResponseId,
+                Usage = response.Usage,
+            };
+    }
+
+    /// <summary>
+    /// Creates a <see cref="ChatResponseUpdate"/> from an <see cref="AgentRunResponseUpdate"/>.
+    /// </summary>
+    /// <param name="responseUpdate">The <see cref="AgentRunResponseUpdate"/>.</param>
+    /// <returns>A <see cref="ChatResponseUpdate"/> built from <paramref name="responseUpdate"/>.</returns>
+    /// <remarks>
+    /// If the <paramref name="responseUpdate"/>'s <see cref="AgentRunResponseUpdate.RawRepresentation"/> is a
+    /// <see cref="ChatResponseUpdate"/> instance, that instance is returned directly. Otherwise, a new
+    /// <see cref="ChatResponseUpdate"/> is created and populated with the data from the <paramref name="responseUpdate"/>.
+    /// The instance is a shallow copy; any reference-type members (e.g. <see cref="AgentRunResponseUpdate.Contents"/>)
+    /// will be shared between the two instances.
+    /// </remarks>
+    public static ChatResponseUpdate AsChatResponseUpdate(this AgentRunResponseUpdate responseUpdate)
+    {
+        Throw.IfNull(responseUpdate);
+
+        return
+            responseUpdate.RawRepresentation as ChatResponseUpdate ??
+            new()
+            {
+                AdditionalProperties = responseUpdate.AdditionalProperties,
+                AuthorName = responseUpdate.AuthorName,
+                Contents = responseUpdate.Contents,
+                CreatedAt = responseUpdate.CreatedAt,
+                MessageId = responseUpdate.MessageId,
+                RawRepresentation = responseUpdate,
+                ResponseId = responseUpdate.ResponseId,
+                Role = responseUpdate.Role,
+            };
+    }
+
+    /// <summary>
+    /// Creates an asynchronous enumerable of <see cref="ChatResponseUpdate"/> instances from an asynchronous
+    /// enumerable of <see cref="AgentRunResponseUpdate"/> instances.
+    /// </summary>
+    /// <param name="responseUpdates">The sequence <see cref="AgentRunResponseUpdate"/>.</param>
+    /// <returns>A sequence of <see cref="ChatResponseUpdate"/> instances built from <paramref name="responseUpdates"/>.</returns>
+    /// <remarks>
+    /// Each <see cref="AgentRunResponseUpdate"/> is converted to a <see cref="ChatResponseUpdate"/> using
+    /// <see cref="AsChatResponseUpdate"/>.
+    /// </remarks>
+    public static async IAsyncEnumerable<ChatResponseUpdate> AsChatResponseUpdatesAsync(
+        this IAsyncEnumerable<AgentRunResponseUpdate> responseUpdates)
+    {
+        Throw.IfNull(responseUpdates);
+
+        await foreach (var responseUpdate in responseUpdates.ConfigureAwait(false))
+        {
+            yield return responseUpdate.AsChatResponseUpdate();
+        }
+    }
+
     /// <summary>Combines <see cref="AgentRunResponseUpdate"/> instances into a single <see cref="AgentRunResponse"/>.</summary>
     /// <param name="updates">The updates to be combined.</param>
     /// <returns>The combined <see cref="AgentRunResponse"/>.</returns>

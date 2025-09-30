@@ -40,17 +40,20 @@ def create_test_azure_assistants_client(
     thread_id: str | None = None,
     should_delete_assistant: bool = False,
 ) -> AzureOpenAIAssistantsClient:
-    """Helper function to create AzureOpenAIAssistantsClient instances for testing, bypassing Pydantic validation."""
-    return AzureOpenAIAssistantsClient.model_construct(
-        ai_model_id=deployment_name or "test_chat_deployment",
+    """Helper function to create AzureOpenAIAssistantsClient instances for testing."""
+    client = AzureOpenAIAssistantsClient(
+        deployment_name=deployment_name or "test_chat_deployment",
         assistant_id=assistant_id,
         assistant_name=assistant_name,
         thread_id=thread_id,
         api_key="test-api-key",
         endpoint="https://test-endpoint.com",
-        client=mock_async_azure_openai,
-        _should_delete_assistant=should_delete_assistant,
+        async_client=mock_async_azure_openai,
     )
+    # Set the _should_delete_assistant flag directly if needed
+    if should_delete_assistant:
+        object.__setattr__(client, "_should_delete_assistant", True)
+    return client
 
 
 @pytest.fixture
@@ -88,7 +91,7 @@ def test_azure_assistants_client_init_with_client(mock_async_azure_openai: Magic
     )
 
     assert chat_client.client is mock_async_azure_openai
-    assert chat_client.ai_model_id == "test_chat_deployment"
+    assert chat_client.model_id == "test_chat_deployment"
     assert chat_client.assistant_id == "existing-assistant-id"
     assert chat_client.thread_id == "test-thread-id"
     assert not chat_client._should_delete_assistant  # type: ignore
@@ -100,19 +103,16 @@ def test_azure_assistants_client_init_auto_create_client(
     mock_async_azure_openai: MagicMock,
 ) -> None:
     """Test AzureOpenAIAssistantsClient initialization with auto-created client."""
-    chat_client = AzureOpenAIAssistantsClient.model_construct(
-        ai_model_id=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
-        assistant_id=None,
+    chat_client = AzureOpenAIAssistantsClient(
+        deployment_name=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
         assistant_name="TestAssistant",
-        thread_id=None,
         api_key=azure_openai_unit_test_env["AZURE_OPENAI_API_KEY"],
         endpoint=azure_openai_unit_test_env["AZURE_OPENAI_ENDPOINT"],
-        client=mock_async_azure_openai,
-        _should_delete_assistant=False,
+        async_client=mock_async_azure_openai,
     )
 
     assert chat_client.client is mock_async_azure_openai
-    assert chat_client.ai_model_id == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
+    assert chat_client.model_id == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
     assert chat_client.assistant_id is None
     assert chat_client.assistant_name == "TestAssistant"
     assert not chat_client._should_delete_assistant  # type: ignore
@@ -145,7 +145,7 @@ def test_azure_assistants_client_init_with_default_headers(azure_openai_unit_tes
         default_headers=default_headers,
     )
 
-    assert chat_client.ai_model_id == "test_chat_deployment"
+    assert chat_client.model_id == "test_chat_deployment"
     assert isinstance(chat_client, ChatClientProtocol)
 
     # Assert that the default header we added is present in the client's default headers
@@ -241,11 +241,10 @@ def test_azure_assistants_client_serialize(azure_openai_unit_test_env: dict[str,
 
     dumped_settings = chat_client.to_dict()
 
-    assert dumped_settings["ai_model_id"] == "test_chat_deployment"
+    assert dumped_settings["model_id"] == "test_chat_deployment"
     assert dumped_settings["assistant_id"] == "test-assistant-id"
     assert dumped_settings["assistant_name"] == "TestAssistant"
     assert dumped_settings["thread_id"] == "test-thread-id"
-    assert dumped_settings["api_key"] == azure_openai_unit_test_env["AZURE_OPENAI_API_KEY"]
 
     # Assert that the default header we added is present in the dumped_settings default headers
     for key, value in default_headers.items():
@@ -262,6 +261,7 @@ def get_weather(
     return f"The weather in {location} is sunny with a high of 25°C."
 
 
+@pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_client_get_response() -> None:
     """Test Azure Assistants Client response."""
@@ -286,6 +286,7 @@ async def test_azure_assistants_client_get_response() -> None:
         assert any(word in response.text.lower() for word in ["sunny", "25", "weather", "seattle"])
 
 
+@pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_client_get_response_tools() -> None:
     """Test Azure Assistants Client response with tools."""
@@ -307,6 +308,7 @@ async def test_azure_assistants_client_get_response_tools() -> None:
         assert any(word in response.text.lower() for word in ["sunny", "25", "weather"])
 
 
+@pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_client_streaming() -> None:
     """Test Azure Assistants Client streaming response."""
@@ -337,6 +339,7 @@ async def test_azure_assistants_client_streaming() -> None:
         assert any(word in full_message.lower() for word in ["sunny", "25", "weather", "seattle"])
 
 
+@pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_client_streaming_tools() -> None:
     """Test Azure Assistants Client streaming response with tools."""
@@ -363,6 +366,7 @@ async def test_azure_assistants_client_streaming_tools() -> None:
         assert any(word in full_message.lower() for word in ["sunny", "25", "weather"])
 
 
+@pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_client_with_existing_assistant() -> None:
     """Test Azure Assistants Client with existing assistant ID."""
@@ -390,6 +394,7 @@ async def test_azure_assistants_client_with_existing_assistant() -> None:
             assert len(response.text) > 0
 
 
+@pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_agent_basic_run():
     """Test ChatAgent basic run functionality with AzureOpenAIAssistantsClient."""
@@ -406,6 +411,7 @@ async def test_azure_assistants_agent_basic_run():
         assert "Hello World" in response.text
 
 
+@pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_agent_basic_run_streaming():
     """Test ChatAgent basic streaming functionality with AzureOpenAIAssistantsClient."""
@@ -425,6 +431,7 @@ async def test_azure_assistants_agent_basic_run_streaming():
         assert "streaming response test" in full_message.lower()
 
 
+@pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_agent_thread_persistence():
     """Test ChatAgent thread persistence across runs with AzureOpenAIAssistantsClient."""
@@ -453,6 +460,7 @@ async def test_azure_assistants_agent_thread_persistence():
         assert thread.service_thread_id is not None
 
 
+@pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_agent_existing_thread_id():
     """Test ChatAgent with existing thread ID to continue conversations across agent instances."""
@@ -497,6 +505,7 @@ async def test_azure_assistants_agent_existing_thread_id():
         assert "paris" in response2.text.lower()
 
 
+@pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_agent_code_interpreter():
     """Test ChatAgent with code interpreter through AzureOpenAIAssistantsClient."""
@@ -516,6 +525,7 @@ async def test_azure_assistants_agent_code_interpreter():
         assert "120" in response.text or "factorial" in response.text.lower()
 
 
+@pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_client_agent_level_tool_persistence():
     """Test that agent-level tools persist across multiple runs with Azure Assistants Client."""

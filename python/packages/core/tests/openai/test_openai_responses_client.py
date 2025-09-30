@@ -96,22 +96,22 @@ def test_init(openai_unit_test_env: dict[str, str]) -> None:
     # Test successful initialization
     openai_responses_client = OpenAIResponsesClient()
 
-    assert openai_responses_client.ai_model_id == openai_unit_test_env["OPENAI_RESPONSES_MODEL_ID"]
+    assert openai_responses_client.model_id == openai_unit_test_env["OPENAI_RESPONSES_MODEL_ID"]
     assert isinstance(openai_responses_client, ChatClientProtocol)
 
 
 def test_init_validation_fail() -> None:
     # Test successful initialization
     with pytest.raises(ServiceInitializationError):
-        OpenAIResponsesClient(api_key="34523", ai_model_id={"test": "dict"})  # type: ignore
+        OpenAIResponsesClient(api_key="34523", model_id={"test": "dict"})  # type: ignore
 
 
-def test_init_ai_model_id_constructor(openai_unit_test_env: dict[str, str]) -> None:
+def test_init_model_id_constructor(openai_unit_test_env: dict[str, str]) -> None:
     # Test successful initialization
-    ai_model_id = "test_model_id"
-    openai_responses_client = OpenAIResponsesClient(ai_model_id=ai_model_id)
+    model_id = "test_model_id"
+    openai_responses_client = OpenAIResponsesClient(model_id=model_id)
 
-    assert openai_responses_client.ai_model_id == ai_model_id
+    assert openai_responses_client.model_id == model_id
     assert isinstance(openai_responses_client, ChatClientProtocol)
 
 
@@ -123,7 +123,7 @@ def test_init_with_default_header(openai_unit_test_env: dict[str, str]) -> None:
         default_headers=default_headers,
     )
 
-    assert openai_responses_client.ai_model_id == openai_unit_test_env["OPENAI_RESPONSES_MODEL_ID"]
+    assert openai_responses_client.model_id == openai_unit_test_env["OPENAI_RESPONSES_MODEL_ID"]
     assert isinstance(openai_responses_client, ChatClientProtocol)
 
     # Assert that the default header we added is present in the client's default headers
@@ -142,11 +142,11 @@ def test_init_with_empty_model_id(openai_unit_test_env: dict[str, str]) -> None:
 
 @pytest.mark.parametrize("exclude_list", [["OPENAI_API_KEY"]], indirect=True)
 def test_init_with_empty_api_key(openai_unit_test_env: dict[str, str]) -> None:
-    ai_model_id = "test_model_id"
+    model_id = "test_model_id"
 
     with pytest.raises(ServiceInitializationError):
         OpenAIResponsesClient(
-            ai_model_id=ai_model_id,
+            model_id=model_id,
             env_file_path="test.env",
         )
 
@@ -155,15 +155,14 @@ def test_serialize(openai_unit_test_env: dict[str, str]) -> None:
     default_headers = {"X-Unit-Test": "test-guid"}
 
     settings = {
-        "ai_model_id": openai_unit_test_env["OPENAI_RESPONSES_MODEL_ID"],
+        "model_id": openai_unit_test_env["OPENAI_RESPONSES_MODEL_ID"],
         "api_key": openai_unit_test_env["OPENAI_API_KEY"],
         "default_headers": default_headers,
     }
 
     openai_responses_client = OpenAIResponsesClient.from_dict(settings)
     dumped_settings = openai_responses_client.to_dict()
-    assert dumped_settings["ai_model_id"] == openai_unit_test_env["OPENAI_RESPONSES_MODEL_ID"]
-    assert dumped_settings["api_key"] == openai_unit_test_env["OPENAI_API_KEY"]
+    assert dumped_settings["model_id"] == openai_unit_test_env["OPENAI_RESPONSES_MODEL_ID"]
     # Assert that the default header we added is present in the dumped_settings default headers
     for key, value in default_headers.items():
         assert key in dumped_settings["default_headers"]
@@ -174,24 +173,23 @@ def test_serialize(openai_unit_test_env: dict[str, str]) -> None:
 
 def test_serialize_with_org_id(openai_unit_test_env: dict[str, str]) -> None:
     settings = {
-        "ai_model_id": openai_unit_test_env["OPENAI_RESPONSES_MODEL_ID"],
+        "model_id": openai_unit_test_env["OPENAI_RESPONSES_MODEL_ID"],
         "api_key": openai_unit_test_env["OPENAI_API_KEY"],
         "org_id": openai_unit_test_env["OPENAI_ORG_ID"],
     }
 
     openai_responses_client = OpenAIResponsesClient.from_dict(settings)
     dumped_settings = openai_responses_client.to_dict()
-    assert dumped_settings["ai_model_id"] == openai_unit_test_env["OPENAI_RESPONSES_MODEL_ID"]
-    assert dumped_settings["api_key"] == openai_unit_test_env["OPENAI_API_KEY"]
+    assert dumped_settings["model_id"] == openai_unit_test_env["OPENAI_RESPONSES_MODEL_ID"]
     assert dumped_settings["org_id"] == openai_unit_test_env["OPENAI_ORG_ID"]
     # Assert that the 'User-Agent' header is not present in the dumped_settings default headers
-    assert "User-Agent" not in dumped_settings["default_headers"]
+    assert "User-Agent" not in dumped_settings.get("default_headers", {})
 
 
 def test_get_response_with_invalid_input() -> None:
     """Test get_response with invalid inputs to trigger exception handling."""
 
-    client = OpenAIResponsesClient(ai_model_id="invalid-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="invalid-model", api_key="test-key")
 
     # Test with empty messages which should trigger ServiceInvalidRequestError
     with pytest.raises(ServiceInvalidRequestError, match="Messages are required"):
@@ -200,7 +198,7 @@ def test_get_response_with_invalid_input() -> None:
 
 def test_get_response_with_all_parameters() -> None:
     """Test get_response with all possible parameters to cover parameter handling logic."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Test with comprehensive parameter set - should fail due to invalid API key
     with pytest.raises(ServiceResponseException):
@@ -232,7 +230,7 @@ def test_get_response_with_all_parameters() -> None:
 
 def test_web_search_tool_with_location() -> None:
     """Test HostedWebSearchTool with location parameters."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Test web search tool with location
     web_search_tool = HostedWebSearchTool(
@@ -254,7 +252,7 @@ def test_web_search_tool_with_location() -> None:
 
 def test_file_search_tool_with_invalid_inputs() -> None:
     """Test HostedFileSearchTool with invalid vector store inputs."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Test with invalid inputs type (should trigger ValueError)
     file_search_tool = HostedFileSearchTool(inputs=[HostedFileContent(file_id="invalid")])
@@ -268,7 +266,7 @@ def test_file_search_tool_with_invalid_inputs() -> None:
 
 def test_code_interpreter_tool_variations() -> None:
     """Test HostedCodeInterpreterTool with and without file inputs."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Test code interpreter without files
     code_tool_empty = HostedCodeInterpreterTool()
@@ -293,7 +291,7 @@ def test_code_interpreter_tool_variations() -> None:
 
 def test_content_filter_exception() -> None:
     """Test that content filter errors in get_response are properly handled."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Mock a BadRequestError with content_filter code
     mock_error = BadRequestError(
@@ -313,7 +311,7 @@ def test_content_filter_exception() -> None:
 def test_hosted_file_search_tool_validation() -> None:
     """Test get_response HostedFileSearchTool validation."""
 
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Test HostedFileSearchTool without inputs (should raise ValueError)
     empty_file_search_tool = HostedFileSearchTool()
@@ -326,7 +324,7 @@ def test_hosted_file_search_tool_validation() -> None:
 
 def test_chat_message_parsing_with_function_calls() -> None:
     """Test get_response message preparation with function call and result content types in conversation flow."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Create messages with function call and result content
     function_call = FunctionCallContent(
@@ -351,7 +349,7 @@ def test_chat_message_parsing_with_function_calls() -> None:
 
 async def test_response_format_parse_path() -> None:
     """Test get_response response_format parsing path."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Mock successful parse response
     mock_parsed_response = MagicMock()
@@ -375,7 +373,7 @@ async def test_response_format_parse_path() -> None:
 
 async def test_bad_request_error_non_content_filter() -> None:
     """Test get_response BadRequestError without content_filter."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Mock a BadRequestError without content_filter code
     mock_error = BadRequestError(
@@ -396,7 +394,7 @@ async def test_bad_request_error_non_content_filter() -> None:
 
 async def test_streaming_content_filter_exception_handling() -> None:
     """Test that content filter errors in get_streaming_response are properly handled."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Mock the OpenAI client to raise a BadRequestError with content_filter code
     with patch.object(client.client.responses, "create") as mock_create:
@@ -413,10 +411,11 @@ async def test_streaming_content_filter_exception_handling() -> None:
                 break
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_get_streaming_response_with_all_parameters() -> None:
     """Test get_streaming_response with all possible parameters."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Should fail due to invalid API key
     with pytest.raises(ServiceResponseException):
@@ -449,7 +448,7 @@ async def test_get_streaming_response_with_all_parameters() -> None:
 
 def test_response_content_creation_with_annotations() -> None:
     """Test _create_response_content with different annotation types."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Create a mock response with annotated text content
     mock_response = MagicMock()
@@ -489,7 +488,7 @@ def test_response_content_creation_with_annotations() -> None:
 
 def test_response_content_creation_with_refusal() -> None:
     """Test _create_response_content with refusal content."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Create a mock response with refusal content
     mock_response = MagicMock()
@@ -519,7 +518,7 @@ def test_response_content_creation_with_refusal() -> None:
 
 def test_response_content_creation_with_reasoning() -> None:
     """Test _create_response_content with reasoning content."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Create a mock response with reasoning content
     mock_response = MagicMock()
@@ -550,7 +549,7 @@ def test_response_content_creation_with_reasoning() -> None:
 def test_response_content_creation_with_code_interpreter() -> None:
     """Test _create_response_content with code interpreter outputs."""
 
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Create a mock response with code interpreter outputs
     mock_response = MagicMock()
@@ -588,7 +587,7 @@ def test_response_content_creation_with_code_interpreter() -> None:
 
 def test_response_content_creation_with_function_call() -> None:
     """Test _create_response_content with function call content."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Create a mock response with function call
     mock_response = MagicMock()
@@ -620,7 +619,7 @@ def test_response_content_creation_with_function_call() -> None:
 
 def test_tools_to_response_tools_with_hosted_mcp() -> None:
     """Test that HostedMCPTool is converted to the correct response tool dict."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     tool = HostedMCPTool(
         name="My MCP",
@@ -650,7 +649,7 @@ def test_tools_to_response_tools_with_hosted_mcp() -> None:
 
 def test_create_response_content_with_mcp_approval_request() -> None:
     """Test that a non-streaming mcp_approval_request is parsed into FunctionApprovalRequestContent."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     mock_response = MagicMock()
     mock_response.output_parsed = None
@@ -681,7 +680,7 @@ def test_create_response_content_with_mcp_approval_request() -> None:
 
 def test_tools_to_response_tools_with_raw_image_generation() -> None:
     """Test that raw image_generation tool dict is handled correctly with parameter mapping."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Test with raw tool dict using user-friendly parameter names
     tool = {
@@ -710,7 +709,7 @@ def test_tools_to_response_tools_with_raw_image_generation() -> None:
 
 def test_tools_to_response_tools_with_raw_image_generation_openai_responses_params() -> None:
     """Test raw image_generation tool with OpenAI-specific parameters."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Test with OpenAI-specific parameters
     tool = {
@@ -742,7 +741,7 @@ def test_tools_to_response_tools_with_raw_image_generation_openai_responses_para
 
 def test_tools_to_response_tools_with_raw_image_generation_minimal() -> None:
     """Test raw image_generation tool with minimal configuration."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Test with minimal parameters (just type)
     tool = {"type": "image_generation"}
@@ -760,7 +759,7 @@ def test_tools_to_response_tools_with_raw_image_generation_minimal() -> None:
 
 def test_create_streaming_response_content_with_mcp_approval_request() -> None:
     """Test that a streaming mcp_approval_request event is parsed into FunctionApprovalRequestContent."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
     chat_options = ChatOptions()
     function_call_ids: dict[int, tuple[str, str]] = {}
 
@@ -787,7 +786,7 @@ def test_end_to_end_mcp_approval_flow(span_exporter) -> None:
     """End-to-end mocked test:
     model issues an mcp_approval_request, user approves, client sends mcp_approval_response.
     """
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # First mocked response: model issues an mcp_approval_request
     mock_response1 = MagicMock()
@@ -851,7 +850,7 @@ def test_end_to_end_mcp_approval_flow(span_exporter) -> None:
 
 def test_usage_details_basic() -> None:
     """Test _usage_details_from_openai without cached or reasoning tokens."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     mock_usage = MagicMock()
     mock_usage.input_tokens = 100
@@ -869,7 +868,7 @@ def test_usage_details_basic() -> None:
 
 def test_usage_details_with_cached_tokens() -> None:
     """Test _usage_details_from_openai with cached input tokens."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     mock_usage = MagicMock()
     mock_usage.input_tokens = 200
@@ -887,7 +886,7 @@ def test_usage_details_with_cached_tokens() -> None:
 
 def test_usage_details_with_reasoning_tokens() -> None:
     """Test _usage_details_from_openai with reasoning tokens."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     mock_usage = MagicMock()
     mock_usage.input_tokens = 150
@@ -905,7 +904,7 @@ def test_usage_details_with_reasoning_tokens() -> None:
 
 def test_get_metadata_from_response() -> None:
     """Test the _get_metadata_from_response method."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Test with logprobs
     mock_output_with_logprobs = MagicMock()
@@ -925,7 +924,7 @@ def test_get_metadata_from_response() -> None:
 
 def test_streaming_response_basic_structure() -> None:
     """Test that _create_streaming_response_content returns proper structure."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
     chat_options = ChatOptions(store=True)
     function_call_ids: dict[int, tuple[str, str]] = {}
 
@@ -942,6 +941,7 @@ def test_streaming_response_basic_structure() -> None:
     assert response.raw_representation is mock_event
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_responses_client_response() -> None:
     """Test OpenAI chat completion responses."""
@@ -986,6 +986,7 @@ async def test_openai_responses_client_response() -> None:
     assert output.weather is not None
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_responses_client_response_tools() -> None:
     """Test OpenAI chat completion responses."""
@@ -1025,6 +1026,7 @@ async def test_openai_responses_client_response_tools() -> None:
     assert "sunny" in output.weather.lower()
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_responses_client_streaming() -> None:
     """Test OpenAI chat completion responses."""
@@ -1071,6 +1073,7 @@ async def test_openai_responses_client_streaming() -> None:
     assert output.weather is not None
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_responses_client_streaming_tools() -> None:
     """Test OpenAI chat completion responses."""
@@ -1118,6 +1121,7 @@ async def test_openai_responses_client_streaming_tools() -> None:
     assert "sunny" in output.weather.lower()
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_responses_client_web_search() -> None:
     openai_responses_client = OpenAIResponsesClient()
@@ -1157,6 +1161,7 @@ async def test_openai_responses_client_web_search() -> None:
     assert response.text is not None
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_responses_client_web_search_streaming() -> None:
     openai_responses_client = OpenAIResponsesClient()
@@ -1210,6 +1215,7 @@ async def test_openai_responses_client_web_search_streaming() -> None:
     assert full_message is not None
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_responses_client_file_search() -> None:
     openai_responses_client = OpenAIResponsesClient()
@@ -1234,6 +1240,7 @@ async def test_openai_responses_client_file_search() -> None:
     assert "75" in response.text
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_responses_client_streaming_file_search() -> None:
     openai_responses_client = OpenAIResponsesClient()
@@ -1268,6 +1275,7 @@ async def test_openai_responses_client_streaming_file_search() -> None:
     assert "75" in full_message
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_responses_client_agent_basic_run():
     """Test OpenAI Responses Client agent basic run functionality with OpenAIResponsesClient."""
@@ -1284,6 +1292,7 @@ async def test_openai_responses_client_agent_basic_run():
     assert "hello world" in response.text.lower()
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_responses_client_agent_basic_run_streaming():
     """Test OpenAI Responses Client agent basic streaming functionality with OpenAIResponsesClient."""
@@ -1301,6 +1310,7 @@ async def test_openai_responses_client_agent_basic_run_streaming():
         assert "streaming response test" in full_text.lower()
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_responses_client_agent_thread_persistence():
     """Test OpenAI Responses Client agent thread persistence across runs with OpenAIResponsesClient."""
@@ -1324,6 +1334,7 @@ async def test_openai_responses_client_agent_thread_persistence():
         assert second_response.text is not None
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_responses_client_agent_thread_storage_with_store_true():
     """Test OpenAI Responses Client agent with store=True to verify service_thread_id is returned."""
@@ -1355,6 +1366,7 @@ async def test_openai_responses_client_agent_thread_storage_with_store_true():
         assert len(thread.service_thread_id) > 0
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_responses_client_agent_existing_thread():
     """Test OpenAI Responses Client agent with existing thread to continue conversations across agent instances."""
@@ -1389,6 +1401,7 @@ async def test_openai_responses_client_agent_existing_thread():
             assert "photography" in second_response.text.lower()
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_responses_client_agent_hosted_code_interpreter_tool():
     """Test OpenAI Responses Client agent with HostedCodeInterpreterTool through OpenAIResponsesClient."""
@@ -1410,6 +1423,7 @@ async def test_openai_responses_client_agent_hosted_code_interpreter_tool():
         assert contains_relevant_content or len(response.text.strip()) > 10
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_responses_client_agent_raw_image_generation_tool():
     """Test OpenAI Responses Client agent with raw image_generation tool through OpenAIResponsesClient."""
@@ -1446,6 +1460,7 @@ async def test_openai_responses_client_agent_raw_image_generation_tool():
         assert image_content_found, "Expected to find image content in response"
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_responses_client_agent_level_tool_persistence():
     """Test that agent-level tools persist across multiple runs with OpenAI Responses Client."""
@@ -1472,6 +1487,7 @@ async def test_openai_responses_client_agent_level_tool_persistence():
         assert any(term in second_response.text.lower() for term in ["miami", "sunny", "72"])
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_responses_client_run_level_tool_isolation():
     """Test that run-level tools are isolated to specific runs and don't persist with OpenAI Responses Client."""
@@ -1511,6 +1527,7 @@ async def test_openai_responses_client_run_level_tool_isolation():
         assert call_count == 1
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_responses_client_agent_chat_options_run_level() -> None:
     """Integration test for comprehensive ChatOptions parameter coverage with OpenAI Response Agent."""
@@ -1534,6 +1551,7 @@ async def test_openai_responses_client_agent_chat_options_run_level() -> None:
         assert len(response.text) > 0
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_responses_client_agent_chat_options_agent_level() -> None:
     """Integration test for comprehensive ChatOptions parameter coverage with OpenAI Response Agent."""
@@ -1557,6 +1575,7 @@ async def test_openai_responses_client_agent_chat_options_agent_level() -> None:
         assert len(response.text) > 0
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_responses_client_agent_hosted_mcp_tool() -> None:
     """Integration test for HostedMCPTool with OpenAI Response Agent using Microsoft Learn MCP."""
@@ -1587,7 +1606,7 @@ async def test_openai_responses_client_agent_hosted_mcp_tool() -> None:
 
 def test_service_response_exception_includes_original_error_details() -> None:
     """Test that ServiceResponseException messages include original error details in the new format."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
     messages = [ChatMessage(role="user", text="test message")]
 
     mock_response = MagicMock()
@@ -1612,7 +1631,7 @@ def test_service_response_exception_includes_original_error_details() -> None:
 
 def test_get_streaming_response_with_response_format() -> None:
     """Test get_streaming_response with response_format."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
     messages = [ChatMessage(role="user", text="Test streaming with format")]
 
     # It will fail due to invalid API key, but exercises the code path
@@ -1627,7 +1646,7 @@ def test_get_streaming_response_with_response_format() -> None:
 
 def test_openai_content_parser_image_content() -> None:
     """Test _openai_content_parser with image content variations."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Test image content with detail parameter and file_id
     image_content_with_detail = UriContent(
@@ -1651,7 +1670,7 @@ def test_openai_content_parser_image_content() -> None:
 
 def test_openai_content_parser_audio_content() -> None:
     """Test _openai_content_parser with audio content variations."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Test WAV audio content
     wav_content = UriContent(uri="data:audio/wav;base64,abc123", media_type="audio/wav")
@@ -1669,7 +1688,7 @@ def test_openai_content_parser_audio_content() -> None:
 
 def test_openai_content_parser_unsupported_content() -> None:
     """Test _openai_content_parser with unsupported content types."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Test unsupported audio format
     unsupported_audio = UriContent(uri="data:audio/ogg;base64,ghi789", media_type="audio/ogg")
@@ -1684,7 +1703,7 @@ def test_openai_content_parser_unsupported_content() -> None:
 
 def test_create_streaming_response_content_code_interpreter() -> None:
     """Test _create_streaming_response_content with code_interpreter_call."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
     chat_options = ChatOptions()
     function_call_ids: dict[int, tuple[str, str]] = {}
 
@@ -1708,7 +1727,7 @@ def test_create_streaming_response_content_code_interpreter() -> None:
 
 def test_create_streaming_response_content_reasoning() -> None:
     """Test _create_streaming_response_content with reasoning content."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
     chat_options = ChatOptions()
     function_call_ids: dict[int, tuple[str, str]] = {}
 
@@ -1732,7 +1751,7 @@ def test_create_streaming_response_content_reasoning() -> None:
 
 def test_openai_content_parser_text_reasoning_comprehensive() -> None:
     """Test _openai_content_parser with TextReasoningContent all additional properties."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Test TextReasoningContent with all additional properties
     comprehensive_reasoning = TextReasoningContent(
@@ -1754,7 +1773,7 @@ def test_openai_content_parser_text_reasoning_comprehensive() -> None:
 
 def test_streaming_reasoning_text_delta_event() -> None:
     """Test reasoning text delta event creates TextReasoningContent."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
     chat_options = ChatOptions()
     function_call_ids: dict[int, tuple[str, str]] = {}
 
@@ -1779,7 +1798,7 @@ def test_streaming_reasoning_text_delta_event() -> None:
 
 def test_streaming_reasoning_text_done_event() -> None:
     """Test reasoning text done event creates TextReasoningContent with complete text."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
     chat_options = ChatOptions()
     function_call_ids: dict[int, tuple[str, str]] = {}
 
@@ -1805,7 +1824,7 @@ def test_streaming_reasoning_text_done_event() -> None:
 
 def test_streaming_reasoning_summary_text_delta_event() -> None:
     """Test reasoning summary text delta event creates TextReasoningContent."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
     chat_options = ChatOptions()
     function_call_ids: dict[int, tuple[str, str]] = {}
 
@@ -1830,7 +1849,7 @@ def test_streaming_reasoning_summary_text_delta_event() -> None:
 
 def test_streaming_reasoning_summary_text_done_event() -> None:
     """Test reasoning summary text done event creates TextReasoningContent with complete text."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
     chat_options = ChatOptions()
     function_call_ids: dict[int, tuple[str, str]] = {}
 
@@ -1856,7 +1875,7 @@ def test_streaming_reasoning_summary_text_done_event() -> None:
 
 def test_streaming_reasoning_events_preserve_metadata() -> None:
     """Test that reasoning events preserve metadata like regular text events."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
     chat_options = ChatOptions()
     function_call_ids: dict[int, tuple[str, str]] = {}
 
@@ -1894,7 +1913,7 @@ def test_streaming_reasoning_events_preserve_metadata() -> None:
 
 def test_create_response_content_image_generation_raw_base64():
     """Test image generation response parsing with raw base64 string."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Create a mock response with raw base64 image data (PNG signature)
     mock_response = MagicMock()
@@ -1928,7 +1947,7 @@ def test_create_response_content_image_generation_raw_base64():
 
 def test_create_response_content_image_generation_existing_data_uri():
     """Test image generation response parsing with existing data URI."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Create a mock response with existing data URI
     mock_response = MagicMock()
@@ -1961,7 +1980,7 @@ def test_create_response_content_image_generation_existing_data_uri():
 
 def test_create_response_content_image_generation_format_detection():
     """Test different image format detection from base64 data."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Test JPEG detection
     jpeg_signature = b"\xff\xd8\xff"
@@ -2014,7 +2033,7 @@ def test_create_response_content_image_generation_format_detection():
 
 def test_create_response_content_image_generation_fallback():
     """Test image generation with invalid base64 falls back to PNG."""
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Create a mock response with invalid base64
     mock_response = MagicMock()
@@ -2046,7 +2065,7 @@ def test_create_response_content_image_generation_fallback():
 
 
 def test_prepare_options_store_parameter_handling() -> None:
-    client = OpenAIResponsesClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
     messages = [ChatMessage(role="user", text="Test message")]
 
     test_conversation_id = "test-conversation-123"

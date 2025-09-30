@@ -294,6 +294,26 @@ tau2 = [
     { name = "tiktoken", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "mypy", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "poethepoet", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pre-commit", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pyright", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pytest", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pytest-asyncio", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pytest-cov", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pytest-env", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pytest-retry", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pytest-timeout", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pytest-xdist", extra = ["psutil"], marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "rich", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "ruff", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "tomli", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "tomli-w", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "uv", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
@@ -311,6 +331,26 @@ requires-dist = [
     { name = "tqdm", marker = "extra == 'gaia'", specifier = ">=4.60.0" },
 ]
 provides-extras = ["gaia", "lightning", "tau2", "math"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "mypy", specifier = ">=1.16.1" },
+    { name = "poethepoet", specifier = ">=0.36.0" },
+    { name = "pre-commit", specifier = ">=3.7" },
+    { name = "pyright", specifier = ">=1.1.402" },
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+    { name = "pytest-cov", specifier = ">=6.2.1" },
+    { name = "pytest-env", specifier = ">=1.1.5" },
+    { name = "pytest-retry", specifier = ">=1" },
+    { name = "pytest-timeout", specifier = ">=2.3.1" },
+    { name = "pytest-xdist", extras = ["psutil"], specifier = ">=3.8.0" },
+    { name = "rich" },
+    { name = "ruff", specifier = ">=0.11.8" },
+    { name = "tomli" },
+    { name = "tomli-w" },
+    { name = "uv", specifier = ">=0.8.2,<0.9.0" },
+]
 
 [[package]]
 name = "agent-framework-mem0"

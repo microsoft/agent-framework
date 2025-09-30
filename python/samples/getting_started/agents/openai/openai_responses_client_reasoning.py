@@ -10,7 +10,7 @@ async def reasoning_example() -> None:
     """Example of reasoning response (get results as they are generated)."""
     print("=== Reasoning Example ===")
 
-    agent = OpenAIResponsesClient(ai_model_id="gpt-5").create_agent(
+    agent = OpenAIResponsesClient(model_id="gpt-5").create_agent(
         name="MathHelper",
         instructions="You are a personal math tutor. When asked a math question, "
         "write and run code using the python tool to answer the question.",

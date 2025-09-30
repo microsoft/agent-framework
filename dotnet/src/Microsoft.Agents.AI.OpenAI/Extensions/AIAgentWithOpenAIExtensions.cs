@@ -2,7 +2,7 @@
 
 using System.ClientModel;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.OpenAI.ChatClient;
+using Microsoft.Agents.AI.OpenAI;
 using Microsoft.Shared.Diagnostics;
 using OpenAI.Chat;
 
@@ -34,7 +34,7 @@ public static class AIAgentWithOpenAIExtensions
     /// <exception cref="NotSupportedException">Thrown when any message in <paramref name="messages"/> has a type that is not supported by the message conversion method.</exception>
     /// <remarks>
     /// This method converts the OpenAI chat messages to the Microsoft Extensions AI format using the appropriate conversion method,
-    /// runs the agent with the converted message collection, and then extracts the native OpenAI <see cref="ChatCompletion"/> from the response using <see cref="AgentRunResponseExtensions.AsChatCompletion"/>.
+    /// runs the agent with the converted message collection, and then extracts the native OpenAI <see cref="ChatCompletion"/> from the response using <see cref="AgentRunResponseExtensions.AsOpenAIChatCompletion"/>.
     /// </remarks>
     public static async Task<ChatCompletion> RunAsync(this AIAgent agent, IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
@@ -43,7 +43,7 @@ public static class AIAgentWithOpenAIExtensions
 
         var response = await agent.RunAsync([.. messages.AsChatMessages()], thread, options, cancellationToken).ConfigureAwait(false);
 
-        return response.AsChatCompletion();
+        return response.AsOpenAIChatCompletion();
     }
 
     /// <summary>
@@ -60,7 +60,7 @@ public static class AIAgentWithOpenAIExtensions
     /// <exception cref="NotSupportedException">Thrown when the <paramref name="messages"/> type is not supported by the message conversion method.</exception>
     /// <remarks>
     /// This method converts the OpenAI chat messages to the Microsoft Extensions AI format using the appropriate conversion method,
-    /// runs the agent, and then extracts the native OpenAI <see cref="ChatCompletion"/> from the response using <see cref="AgentRunResponseExtensions.AsChatCompletion"/>.
+    /// runs the agent, and then extracts the native OpenAI <see cref="ChatCompletion"/> from the response using <see cref="AgentRunResponseExtensions.AsOpenAIChatCompletion"/>.
     /// </remarks>
     public static AsyncCollectionResult<StreamingChatCompletionUpdate> RunStreamingAsync(this AIAgent agent, IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {

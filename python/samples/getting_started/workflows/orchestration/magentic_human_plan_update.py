@@ -58,7 +58,7 @@ async def main() -> None:
         # This agent requires the gpt-4o-search-preview model to perform web searches.
         # Feel free to explore with other agents that support web search, for example,
         # the `OpenAIResponseAgent` or `AzureAgentProtocol` with bing grounding.
-        chat_client=OpenAIChatClient(ai_model_id="gpt-4o-search-preview"),
+        chat_client=OpenAIChatClient(model_id="gpt-4o-search-preview"),
     )
 
     coder_agent = ChatAgent(
