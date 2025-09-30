@@ -181,11 +181,11 @@ Besides the Application Insights native UI, you can also use Grafana to visualiz
 
 #### Agent Overview dashboard
 Grafana Dashboard Gallery link: <https://aka.ms/amg/dash/af-agent>
-![Agent overview dashboard](https://github.com/Azure/azure-managed-grafana/raw/main/samples/assets/grafana-af-agent.gif)
+![Agent Overview dashboard](https://github.com/Azure/azure-managed-grafana/raw/main/samples/assets/grafana-af-agent.gif)
 
 #### Workflow Overview dashboard
 Grafana Dashboard Gallery link: <https://aka.ms/amg/dash/af-workflow>
-![Workflow overview dashboard](https://github.com/Azure/azure-managed-grafana/raw/main/samples/assets/grafana-af-workflow.gif)
+![Workflow Overview dashboard](https://github.com/Azure/azure-managed-grafana/raw/main/samples/assets/grafana-af-workflow.gif)
 
 ## Aspire Dashboard
 
