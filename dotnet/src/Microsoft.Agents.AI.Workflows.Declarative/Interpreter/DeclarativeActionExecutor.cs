@@ -118,7 +118,7 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
             $"""
             STATE: {this.GetType().Name} [{this.Id}]
              NAME: {targetPath}
-            VALUE:{valuePosition}{result.Format()} ({result.GetType().Name})
+            VALUE:{valuePosition}{resultValue} ({result.GetType().Name})
             """);
 #endif
     }
