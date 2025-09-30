@@ -32,6 +32,8 @@ from ._message_utils import flip_messages, log_messages
 from ._sliding_window import SlidingWindowChatMessageStore
 from ._tau2_utils import convert_agent_framework_messages_to_tau2_messages, convert_tau2_tool_to_ai_function
 
+__all__ = ["ASSISTANT_AGENT_ID", "ORCHESTRATOR_ID", "USER_SIMULATOR_ID", "TaskRunner"]
+
 # Agent instructions matching tau2's LLMAgent
 ASSISTANT_AGENT_INSTRUCTION = """
 You are a customer service agent that helps the user according to the <policy> provided below.
@@ -413,5 +415,8 @@ class TaskRunner:
             domain="airline",
         )
 
-        logger.info(f"Evaluation completed - Reward: {self.full_reward_info.reward}, Info: {self.full_reward_info}")
-        return self.full_reward_info.reward  # type: ignore[no-any-return]
+        logger.info(
+            f"Evaluation completed - Reward: {self.full_reward_info.reward if self.full_reward_info else None}, "
+            f"Info: {self.full_reward_info}"
+        )
+        return self.full_reward_info.reward if self.full_reward_info else 0.0
