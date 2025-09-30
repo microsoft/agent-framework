@@ -54,7 +54,7 @@ internal sealed class AgentPlugin(WeatherProvider weatherProvider)
     /// Gets the weather information for the specified location.
     /// </summary>
     /// <remarks>
-    /// This method demonstrated how to use the dependency that was injected into the plugin class.
+    /// This method demonstrates how to use the dependency that was injected into the plugin class.
     /// </remarks>
     /// <param name="location">The location to get the weather for.</param>
     /// <returns>The weather information for the specified location.</returns>
