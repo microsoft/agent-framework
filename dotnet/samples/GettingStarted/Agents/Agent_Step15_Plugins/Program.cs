@@ -39,7 +39,7 @@ AIAgent agent = new AzureOpenAIClient(
      .CreateAIAgent(
         instructions: AgentInstructions,
         name: AgentName,
-        tools: serviceProvider.GetRequiredService<AgentPlugin>().AsAITools(),
+        tools: [.. serviceProvider.GetRequiredService<AgentPlugin>().AsAITools()],
         functionInvocationServices: serviceProvider); // Pass the service provider to the agent so it will be available to plugin functions to resolve dependencies.
 
 Console.WriteLine(await agent.RunAsync("Tell me current time and weather in Seattle."));
@@ -88,12 +88,10 @@ internal sealed class AgentPlugin(WeatherProvider weatherProvider)
     /// This method demonstrates how to explicitly specify which methods should be exposed to the AI agent.
     /// </remarks>
     /// <returns>The functions provided by this plugin.</returns>
-    public IList<AITool> AsAITools()
+    public IEnumerable<AITool> AsAITools()
     {
-        return [
-            AIFunctionFactory.Create(this.GetWeather),
-            AIFunctionFactory.Create(this.GetCurrentTime)
-        ];
+        yield return AIFunctionFactory.Create(this.GetWeather);
+        yield return AIFunctionFactory.Create(this.GetCurrentTime);
     }
 }
 
