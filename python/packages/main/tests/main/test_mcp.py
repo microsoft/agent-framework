@@ -277,7 +277,7 @@ def test_get_input_model_from_mcp_tool_with_nested_object():
     instance = model(params={"customer_id": 251})
     assert instance.params == {"customer_id": 251}
     assert isinstance(instance.params, dict)
-    
+
     # Verify model_dump produces the correct nested structure
     dumped = instance.model_dump()
     assert dumped == {"params": {"customer_id": 251}}
@@ -285,7 +285,7 @@ def test_get_input_model_from_mcp_tool_with_nested_object():
 
 def test_get_input_model_from_mcp_tool_with_ref_schema():
     """Test creation of input model from MCP tool with $ref schema.
-    
+
     This simulates a FastMCP tool that uses Pydantic models with $ref in the schema.
     The schema should be resolved and nested objects should be preserved.
     """
@@ -319,7 +319,7 @@ def test_get_input_model_from_mcp_tool_with_ref_schema():
     instance = model(params={"customer_id": 251})
     assert instance.params == {"customer_id": 251}
     assert isinstance(instance.params, dict)
-    
+
     # Verify model_dump produces the correct nested structure
     dumped = instance.model_dump()
     assert dumped == {"params": {"customer_id": 251}}
@@ -521,13 +521,13 @@ async def test_local_mcp_server_function_execution_with_nested_object():
     async with server:
         await server.load_tools()
         func = server.functions[0]
-        
+
         # Call with nested object
         result = await func.invoke(params={"customer_id": 251})
 
         assert len(result) == 1
         assert isinstance(result[0], TextContent)
-        
+
         # Verify the session.call_tool was called with the correct nested structure
         server.session.call_tool.assert_called_once()
         call_args = server.session.call_tool.call_args

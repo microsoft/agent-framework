@@ -182,7 +182,7 @@ def _get_input_model_from_mcp_tool(tool: types.Tool) -> type[BaseModel]:
     properties = tool.inputSchema.get("properties", None)
     required = tool.inputSchema.get("required", [])
     definitions = tool.inputSchema.get("$defs", {})
-    
+
     # Check if 'properties' is missing or not a dictionary
     if not properties:
         return create_model(f"{tool.name}_input")
@@ -201,26 +201,25 @@ def _get_input_model_from_mcp_tool(tool: types.Tool) -> type[BaseModel]:
                     return resolve_type(resolved)
             # If we can't resolve the ref, default to dict for safety
             return dict
-        
+
         # Map JSON Schema types to Python types
         json_type = prop_details.get("type", "string")
         if json_type == "integer":
             return int
-        elif json_type == "number":
+        if json_type == "number":
             return float
-        elif json_type == "boolean":
+        if json_type == "boolean":
             return bool
-        elif json_type == "array":
+        if json_type == "array":
             return list
-        elif json_type == "object":
+        if json_type == "object":
             return dict
-        else:
-            return str  # default
+        return str  # default
 
     field_definitions: dict[str, Any] = {}
     for prop_name, prop_details in properties.items():
         prop_details = json.loads(prop_details) if isinstance(prop_details, str) else prop_details
-        
+
         python_type = resolve_type(prop_details)
 
         # Create field definition for create_model
