@@ -17,7 +17,7 @@ public interface IActor : IAsyncDisposable
     /// When the value returned from this method completes, the actor is considered stopped.
     /// IActor is expected to call IActorContext.WatchMessagesAsync() to receive messages.
     /// </summary>
-    /// <param name="cancellationToken">A token to cancel the start operation.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A task representing the start operation.</returns>
     ValueTask RunAsync(CancellationToken cancellationToken);
 }

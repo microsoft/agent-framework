@@ -136,7 +136,7 @@ internal sealed class LazyCosmosContainer : IAsyncDisposable
             HttpStatusCode.RequestTimeout => true,      // 408 - Request timeout
             _ => false
         },
-        TaskCanceledException or OperationCanceledException or ArgumentException => false,
+        OperationCanceledException or ArgumentException => false,
         _ => true // Retry other exceptions (network issues, etc.)
     };
 

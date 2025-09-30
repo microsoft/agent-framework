@@ -3,8 +3,8 @@
 from dataclasses import dataclass
 from typing import Any, Generic, TypeVar, Union
 
-from agent_framework._workflow import RequestInfoMessage, RequestResponse
-from agent_framework._workflow._typing_utils import is_instance_of
+from agent_framework._workflows import RequestInfoMessage, RequestResponse
+from agent_framework._workflows._typing_utils import is_instance_of
 
 
 def test_basic_types() -> None:

@@ -33,8 +33,8 @@ from agent_framework import (
     WorkflowStatusEvent,
     handler,
 )
-from agent_framework._workflow._checkpoint import InMemoryCheckpointStorage
-from agent_framework._workflow._magentic import (
+from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
+from agent_framework._workflows._magentic import (
     MagenticAgentExecutor,
     MagenticContext,
     MagenticOrchestratorExecutor,
@@ -533,7 +533,7 @@ async def _collect_agent_responses_setup(participant_obj: object):
     captured: list[ChatMessage] = []
 
     async def sink(event) -> None:  # type: ignore[no-untyped-def]
-        from agent_framework._workflow._magentic import MagenticAgentMessageEvent
+        from agent_framework._workflows._magentic import MagenticAgentMessageEvent
 
         if isinstance(event, MagenticAgentMessageEvent) and event.message is not None:
             captured.append(event.message)

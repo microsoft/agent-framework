@@ -22,8 +22,8 @@ from agent_framework import (
     WorkflowStatusEvent,
     handler,
 )
-from agent_framework._workflow._executor import AgentExecutorResponse, Executor
-from agent_framework._workflow._workflow_context import WorkflowContext
+from agent_framework._workflows._executor import AgentExecutorResponse, Executor
+from agent_framework._workflows._workflow_context import WorkflowContext
 
 
 class _SimpleAgent(BaseAgent):

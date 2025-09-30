@@ -2,9 +2,8 @@
 
 import asyncio
 
-from typing_extensions import Never
-
 from agent_framework import WorkflowBuilder, WorkflowContext, WorkflowOutputEvent, executor
+from typing_extensions import Never
 
 """
 Sample: Foundational sequential workflow with streaming using function-style executors.

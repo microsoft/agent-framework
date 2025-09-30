@@ -17,7 +17,7 @@ public interface IActorStateStorage
     /// <param name="actorId">The identifier of the actor whose state is being modified.</param>
     /// <param name="operations">The collection of write operations to perform.</param>
     /// <param name="etag">The expected ETag for optimistic concurrency control.</param>
-    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A task representing the write response with success status and updated ETag.</returns>
     ValueTask<WriteResponse> WriteStateAsync(ActorId actorId, IReadOnlyCollection<ActorStateWriteOperation> operations, string etag, CancellationToken cancellationToken = default);
 
@@ -26,7 +26,7 @@ public interface IActorStateStorage
     /// </summary>
     /// <param name="actorId">The identifier of the actor whose state is being read.</param>
     /// <param name="operations">The collection of read operations to perform.</param>
-    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A task representing the read response with results and current ETag.</returns>
     ValueTask<ReadResponse> ReadStateAsync(ActorId actorId, IReadOnlyCollection<ActorStateReadOperation> operations, CancellationToken cancellationToken = default);
 }

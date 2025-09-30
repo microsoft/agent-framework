@@ -1,6 +1,6 @@
-# Get Started with Microsoft Agent Framework Workflow
+# Get Started with Microsoft Agent Framework Workflows
 
-Workflow capabilities now ship with the core `agent-framework` package.
+Workflow capabilities ship with the core `agent-framework` package.
 
 ```bash
 pip install agent-framework

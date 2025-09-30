@@ -63,7 +63,7 @@ public static class WebApplicationExtensions
         // note: current SDK version registers multiple `.well-known/agent.json` handlers here.
         // it makes app return HTTP 500, but will be fixed once new A2A SDK is released.
         // see https://github.com/microsoft/agent-framework/issues/476 for details
-        app.MapA2A(taskManager, path);
+        A2ARouteBuilderExtensions.MapA2A(app, taskManager, path);
 
         app.MapHttpA2A(taskManager, path);
     }

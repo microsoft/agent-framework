@@ -7,11 +7,11 @@ from opentelemetry import trace
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from agent_framework import WorkflowBuilder
-from agent_framework._workflow._executor import Executor, handler
-from agent_framework._workflow._runner_context import InProcRunnerContext, Message
-from agent_framework._workflow._shared_state import SharedState
-from agent_framework._workflow._workflow import Workflow
-from agent_framework._workflow._workflow_context import WorkflowContext
+from agent_framework._workflows._executor import Executor, handler
+from agent_framework._workflows._runner_context import InProcRunnerContext, Message
+from agent_framework._workflows._shared_state import SharedState
+from agent_framework._workflows._workflow import Workflow
+from agent_framework._workflows._workflow_context import WorkflowContext
 from agent_framework.observability import (
     OtelAttr,
     create_processing_span,

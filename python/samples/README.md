@@ -7,7 +7,7 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 For step-by-step tutorials and examples, see the [getting_started](./getting_started/) directory:
 
 - **[Agents](./getting_started/agents/)** - Learn how to create and use agents with various providers (Azure OpenAI, OpenAI, Azure AI, etc.)
-- **[Workflow](./getting_started/workflow/)** - Explore workflow patterns for orchestrating multiple agents
+- **[Workflows](./getting_started/workflows/)** - Explore workflow patterns for orchestrating multiple agents
 - **[Chat Client](./getting_started/chat_client/)** - Examples of using chat clients directly
 - **[Threads](./getting_started/threads/)** - Manage conversation threads and chat message stores
 - **[Context Providers](./getting_started/context_providers/)** - Integrate with context providers like Mem0 and Redis

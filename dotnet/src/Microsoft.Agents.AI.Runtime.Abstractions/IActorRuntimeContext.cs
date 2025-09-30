@@ -20,7 +20,7 @@ public interface IActorRuntimeContext
     /// <summary>
     /// Watches for incoming requests and responses in the actor's inbox and outbox.
     /// </summary>
-    /// <param name="cancellationToken">A token to cancel the watch operation.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>An asynchronous enumerable of actor notifications.</returns>
     IAsyncEnumerable<ActorMessage> WatchMessagesAsync(CancellationToken cancellationToken = default);
 
@@ -28,7 +28,7 @@ public interface IActorRuntimeContext
     /// Performs a batch of write operations atomically.
     /// </summary>
     /// <param name="operations">The batch of write operations to perform.</param>
-    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A task representing the write response.</returns>
     ValueTask<WriteResponse> WriteAsync(ActorWriteOperationBatch operations, CancellationToken cancellationToken = default);
 
@@ -36,7 +36,7 @@ public interface IActorRuntimeContext
     /// Performs a batch of read operations.
     /// </summary>
     /// <param name="operations">The batch of read operations to perform.</param>
-    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A task representing the read response.</returns>
     ValueTask<ReadResponse> ReadAsync(ActorReadOperationBatch operations, CancellationToken cancellationToken = default);
 
