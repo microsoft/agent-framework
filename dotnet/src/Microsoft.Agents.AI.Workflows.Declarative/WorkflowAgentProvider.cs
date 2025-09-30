@@ -16,7 +16,7 @@ public abstract class WorkflowAgentProvider
     /// Asynchronously retrieves an AI agent by its unique identifier.
     /// </summary>
     /// <param name="agentId">The unique identifier of the AI agent to retrieve. Cannot be null or empty.</param>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <param name="cancellationToken">A token that propagates notification when operation should be canceled.</param>
     /// <returns>The task result contains the <see cref="AIAgent"/> associated.</returns>
     public abstract Task<AIAgent> GetAgentAsync(string agentId, CancellationToken cancellationToken = default);
 

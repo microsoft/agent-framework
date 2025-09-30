@@ -84,7 +84,7 @@ public class WorkflowVisualizerTests
         var end = new MockExecutor("end");
 
         // Condition that is never used during viz, but presence should mark the edge
-        bool OnlyIfFoo(string? msg) => msg == "foo";
+        static bool OnlyIfFoo(string? msg) => msg == "foo";
 
         var workflow = new WorkflowBuilder("start")
             .AddEdge<string>(start, mid, OnlyIfFoo)
@@ -195,7 +195,7 @@ public class WorkflowVisualizerTests
         var c = new MockExecutor("c");
         var end = new ListStrTargetExecutor("end");
 
-        bool Condition(string? msg) => msg?.Contains("test") ?? false;
+        static bool Condition(string? msg) => msg?.Contains("test") ?? false;
 
         var workflow = new WorkflowBuilder("start")
             .AddEdge<string>(start, a, Condition) // Conditional edge
@@ -241,7 +241,7 @@ public class WorkflowVisualizerTests
         // Test visualization of self-loop edge
         var executor = new MockExecutor("loop");
 
-        bool LoopCondition(string? msg) => (msg?.Length ?? 0) < 10;
+        static bool LoopCondition(string? msg) => (msg?.Length ?? 0) < 10;
 
         var workflow = new WorkflowBuilder("loop")
             .AddEdge<string>(executor, executor, LoopCondition)
@@ -281,7 +281,7 @@ public class WorkflowVisualizerTests
         var mid = new MockExecutor("mid");
         var end = new MockExecutor("end");
 
-        bool OnlyIfFoo(string? msg) => msg == "foo";
+        static bool OnlyIfFoo(string? msg) => msg == "foo";
 
         var workflow = new WorkflowBuilder("start")
             .AddEdge<string>(start, mid, OnlyIfFoo)
@@ -374,7 +374,7 @@ public class WorkflowVisualizerTests
         var c = new MockExecutor("c");
         var end = new ListStrTargetExecutor("end");
 
-        bool Condition(string? msg) => msg?.Contains("test") ?? false;
+        static bool Condition(string? msg) => msg?.Contains("test") ?? false;
 
         var workflow = new WorkflowBuilder("start")
             .AddEdge<string>(start, a, Condition) // Conditional edge

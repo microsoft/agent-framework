@@ -545,6 +545,47 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
         }
 
 
+def _tools_to_dict(
+    tools: (
+        ToolProtocol
+        | Callable[..., Any]
+        | MutableMapping[str, Any]
+        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | None
+    ),
+) -> list[str | dict[str, Any]] | None:
+    """Parse the tools to a dict."""
+    if not tools:
+        return None
+    if not isinstance(tools, list):
+        if isinstance(tools, AIFunction):
+            return [tools.to_json_schema_spec()]
+        if isinstance(tools, SerializationMixin):
+            return [tools.to_dict()]
+        if isinstance(tools, dict):
+            return [tools]
+        if callable(tools):
+            return [ai_function(tools).to_json_schema_spec()]
+        logger.warning("Can't parse tool.")
+        return None
+    results: list[str | dict[str, Any]] = []
+    for tool in tools:
+        if isinstance(tool, AIFunction):
+            results.append(tool.to_json_schema_spec())
+            continue
+        if isinstance(tool, SerializationMixin):
+            results.append(tool.to_dict())
+            continue
+        if isinstance(tool, dict):
+            results.append(tool)
+            continue
+        if callable(tool):
+            results.append(ai_function(tool).to_json_schema_spec())
+            continue
+        logger.warning("Can't parse tool.")
+    return results
+
+
 # region AI Function Decorator
 
 

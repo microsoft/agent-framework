@@ -21,7 +21,7 @@ internal sealed class MessageEnvelope(object message, ExecutorIdentity source, T
     internal MessageEnvelope(object message, ExecutorIdentity source, Type declaredType, string? targetId = null)
         : this(message, source, new TypeId(declaredType), targetId)
     {
-        if (!declaredType.IsAssignableFrom(message.GetType()))
+        if (!declaredType.IsInstanceOfType(message))
         {
             throw new ArgumentException($"The declared type {declaredType} is not compatible with the message instance of type {message.GetType()}");
         }

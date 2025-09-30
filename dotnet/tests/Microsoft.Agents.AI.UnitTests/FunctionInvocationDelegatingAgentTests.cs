@@ -344,7 +344,7 @@ public sealed class FunctionInvocationDelegatingAgentTests
                 if (options?.Tools?.FirstOrDefault() is AIFunction function)
                 {
                     executionOrder.Add("Direct-Function-Invocation");
-                    await function.InvokeAsync(new AIFunctionArguments(), ct);
+                    await function.InvokeAsync([], ct);
                 }
                 return new ChatResponse([new ChatMessage(ChatRole.Assistant, "Response after direct invocation")]);
             });
@@ -476,7 +476,7 @@ public sealed class FunctionInvocationDelegatingAgentTests
         var messages = new List<ChatMessage> { new(ChatRole.User, "Test message") };
         const string ModifiedResult = "Modified by middleware";
 
-        async ValueTask<object?> MiddlewareCallbackAsync(AIAgent agent, FunctionInvocationContext context, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next, CancellationToken cancellationToken)
+        static async ValueTask<object?> MiddlewareCallbackAsync(AIAgent agent, FunctionInvocationContext context, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next, CancellationToken cancellationToken)
         {
             await next(context, cancellationToken);
             return ModifiedResult; // Return the modified result instead of setting context property
@@ -770,7 +770,7 @@ public sealed class FunctionInvocationDelegatingAgentTests
         var innerAgent = new ChatClientAgent(mockChatClient.Object);
         var messages = new List<ChatMessage> { new(ChatRole.User, "Test message") };
 
-        ValueTask<object?> MiddlewareCallbackAsync(AIAgent agent, FunctionInvocationContext context, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next, CancellationToken cancellationToken)
+        static ValueTask<object?> MiddlewareCallbackAsync(AIAgent agent, FunctionInvocationContext context, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next, CancellationToken cancellationToken)
         {
             // Don't call next() - this should prevent function execution
             // Return the blocked result directly

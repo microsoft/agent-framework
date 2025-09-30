@@ -171,7 +171,7 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     private sealed class ForwardingChatClient(OpenTelemetryAgent parentAgent) : IChatClient
     {
         public async Task<ChatResponse> GetResponseAsync(
-            IEnumerable<ChatMessage> messages, ChatOptions? options, CancellationToken cancellationToken)
+            IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
         {
             ForwardedOptions? fo = options as ForwardedOptions;
 
@@ -186,7 +186,7 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
         }
 
         public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
-            IEnumerable<ChatMessage> messages, ChatOptions? options, [EnumeratorCancellation] CancellationToken cancellationToken)
+            IEnumerable<ChatMessage> messages, ChatOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             ForwardedOptions? fo = options as ForwardedOptions;
 

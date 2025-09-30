@@ -14,7 +14,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 internal sealed class SetMultipleVariablesExecutor(SetMultipleVariables model, WorkflowFormulaState state)
     : DeclarativeActionExecutor<SetMultipleVariables>(model, state)
 {
-    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         foreach (VariableAssignment assignment in this.Model.Assignments)
         {

@@ -24,7 +24,7 @@ internal sealed class WorkflowHostAgent : AIAgent
 
     public WorkflowHostAgent(Workflow<List<ChatMessage>> workflow, string? id = null, string? name = null)
     {
-        this._workflow = Throw.IfNull(workflow, nameof(workflow));
+        this._workflow = Throw.IfNull(workflow);
 
         this._id = id;
         this.Name = name;

@@ -1,0 +1,57 @@
+﻿<#@ template language="C#" inherits="ActionTemplate" visibility="internal" #>
+<#@ output extension=".cs" #>
+<#@ assembly name="System.Core" #>
+<#@ include file="Snippets/Index.tt" once="true" #>
+
+/// <summary>
+/// Adds a new message to the specified agent conversation
+/// </summary>
+internal sealed class <#= this.Name #>Executor(FormulaSession session, WorkflowAgentProvider agentProvider) : ActionExecutor(id: "<#= this.Id #>", session)
+{
+    // <inheritdoc />
+    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    {<# 
+        EvaluateStringExpression(this.Model.ConversationId, "conversationId", isNullable: true); #>
+        ArgumentNullException.ThrowIfNull(conversationId, nameof(conversationId));
+        ChatMessage newMessage = new(ChatRole.<#= FormatEnum(this.Model.Role, RoleMap) #>, [.. this.GetContentAsync(context).ToEnumerable()]) { AdditionalProperties = this.GetMetadata() };
+        await agentProvider.CreateMessageAsync(conversationId, newMessage, cancellationToken).ConfigureAwait(false);<#
+        AssignVariable(this.Message, "newMessage");
+        #>
+        return default;
+    }
+
+    private async IAsyncEnumerable<AIContent> GetContentAsync(IWorkflowContext context)
+    {<#
+        int index = 0;
+        foreach (AddConversationMessageContent content in this.Model.Content)
+        {
+           ++index;
+            EvaluateMessageTemplate(content.Value, $"contentValue{index}");
+            AgentMessageContentType contentType = content.Type.Value;
+            if (contentType == AgentMessageContentType.ImageUrl)
+            {#>
+        yield return new UriContent(contentValue, "image/*");<#
+            }
+            else if (contentType == AgentMessageContentType.ImageFile)
+            {#>
+        yield return new HostedFileContent(contentValue);<#
+            }
+            else
+            {#>
+        yield return new TextContent(contentValue<#= index #>);<#
+            }
+        }#>
+    }
+
+    private AdditionalPropertiesDictionary? GetMetadata()
+    {<# 
+        EvaluateRecordExpression<object>(this.Model.Metadata, "metadata"); #>
+
+        if (metadata is null)
+        {
+            return null;    
+        }
+
+        return new AdditionalPropertiesDictionary(metadata);
+    }
+}

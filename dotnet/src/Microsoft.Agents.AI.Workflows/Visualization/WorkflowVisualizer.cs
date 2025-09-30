@@ -21,7 +21,7 @@ public static class WorkflowVisualizer
     /// <returns>A string representation of the workflow in DOT format.</returns>
     public static string ToDotString(this Workflow workflow)
     {
-        Throw.IfNull(workflow, nameof(workflow));
+        Throw.IfNull(workflow);
 
         var lines = new List<string>
     {
@@ -249,10 +249,7 @@ public static class WorkflowVisualizer
     {
         var sortedSources = sources.OrderBy(x => x, StringComparer.Ordinal).ToList();
         var input = target + "|" + string.Join("|", sortedSources);
-        using (var sha256 = SHA256.Create())
-        {
-            return ComputeShortHash(input);
-        }
+        return ComputeShortHash(input);
     }
 
     private static string ComputeShortHash(string input)

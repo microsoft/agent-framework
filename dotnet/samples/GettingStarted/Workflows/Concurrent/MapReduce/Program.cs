@@ -219,7 +219,7 @@ internal sealed class Shuffler(string[] reducerIds, string[] mapperIds, string i
 {
     private readonly string[] _reducerIds = reducerIds;
     private readonly string[] _mapperIds = mapperIds;
-    private readonly List<MapComplete> _mapResults = new();
+    private readonly List<MapComplete> _mapResults = [];
 
     /// <summary>
     /// Aggregate mapper outputs and write one partition file per reducer.

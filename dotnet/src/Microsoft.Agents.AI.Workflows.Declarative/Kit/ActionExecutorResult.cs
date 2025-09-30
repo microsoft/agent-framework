@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-namespace Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
+namespace Microsoft.Agents.AI.Workflows.Declarative.Kit;
 
 /// <summary>
 /// Message sent to initiate a transition to another <see cref="Executor"/>.

@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-namespace Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
+namespace Microsoft.Agents.AI.Workflows.Declarative.Kit;
 
 /// <summary>
 /// Represents the absence of an assigned value for a variable used in an expression.

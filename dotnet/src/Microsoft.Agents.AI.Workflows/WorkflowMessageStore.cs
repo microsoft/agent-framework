@@ -45,14 +45,14 @@ internal sealed class WorkflowMessageStore : ChatMessageStore
 
     internal void AddMessages(params IEnumerable<ChatMessage> messages) => this._chatMessages.AddRange(messages);
 
-    public override Task AddMessagesAsync(IEnumerable<ChatMessage> messages, CancellationToken cancellationToken)
+    public override Task AddMessagesAsync(IEnumerable<ChatMessage> messages, CancellationToken cancellationToken = default)
     {
         this._chatMessages.AddRange(messages);
 
         return Task.CompletedTask;
     }
 
-    public override Task<IEnumerable<ChatMessage>> GetMessagesAsync(CancellationToken cancellationToken) => Task.FromResult<IEnumerable<ChatMessage>>(this._chatMessages.AsReadOnly());
+    public override Task<IEnumerable<ChatMessage>> GetMessagesAsync(CancellationToken cancellationToken = default) => Task.FromResult<IEnumerable<ChatMessage>>(this._chatMessages.AsReadOnly());
 
     public IEnumerable<ChatMessage> GetFromBookmark()
     {
