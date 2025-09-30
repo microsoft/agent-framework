@@ -550,7 +550,7 @@ def _tools_to_dict(
         ToolProtocol
         | Callable[..., Any]
         | MutableMapping[str, Any]
-        | list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
         | None
     ),
 ) -> list[str | dict[str, Any]] | None:
@@ -560,8 +560,8 @@ def _tools_to_dict(
     if not isinstance(tools, list):
         if isinstance(tools, AIFunction):
             return [tools.to_json_schema_spec()]
-        if isinstance(tools, BaseTool):
-            return [tools.model_dump()]
+        if isinstance(tools, SerializationMixin):
+            return [tools.to_dict()]
         if isinstance(tools, dict):
             return [tools]
         if callable(tools):
@@ -573,8 +573,8 @@ def _tools_to_dict(
         if isinstance(tool, AIFunction):
             results.append(tool.to_json_schema_spec())
             continue
-        if isinstance(tool, BaseTool):
-            results.append(tool.model_dump())
+        if isinstance(tool, SerializationMixin):
+            results.append(tool.to_dict())
             continue
         if isinstance(tool, dict):
             results.append(tool)
