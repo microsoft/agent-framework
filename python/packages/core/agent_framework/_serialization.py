@@ -48,47 +48,52 @@ class SerializationMixin:
     we can pass in a dict to the second class and it will convert it to an instance of the first class.
 
     Example:
+
         .. code-block:: python
 
-        class SerializableMixinType(SerializationMixin):
-            def __init__(self, param1: str, param2: int) -> None:
-                self.param1 = param1
-                self.param2 = param2
+            class SerializableMixinType(SerializationMixin):
+                def __init__(self, param1: str, param2: int) -> None:
+                    self.param1 = param1
+                    self.param2 = param2
 
-        class MyClass(SerializationMixin):
-            def __init__(self,
-                regular_param: str,
-                param: SerializableMixinType | MutableMapping[str, Any] | None = None,
+
+            class MyClass(SerializationMixin):
+                def __init__(
+                    self,
+                    regular_param: str,
+                    param: SerializableMixinType | MutableMapping[str, Any] | None = None,
                 ) -> None:
-                if isinstance(param, MutableMapping):
-                    self.param = self.from_dict(param)
-                else:
-                    self.param = param
-                self.regular_param = regular_param
+                    if isinstance(param, MutableMapping):
+                        self.param = self.from_dict(param)
+                    else:
+                        self.param = param
+                    self.regular_param = regular_param
 
-        instance = MyClass.from_dict({
-            "regular_param": "value",
-            "param": {"param1": "value1", "param2": 42}
-        })
+
+            instance = MyClass.from_dict({"regular_param": "value", "param": {"param1": "value1", "param2": 42}})
 
     A more complex use case involves a injectable dependency that is not serialized.
     In this case, the dependency is passed in via the dependencies parameter to from_dict/from_json.
 
     Example:
+
         .. code-block:: python
-        from libary import Client
 
-        class MyClass(SerializationMixin):
-            INJECTABLE = {"client"}
+            from libary import Client
 
-            def __init__(self, regular_param: str, client: Client) -> None:
-                self.client = client
-                self.regular_param = regular_param
 
-        json_of_class = MyClass(regular_param="value", client=Client()).to_json()
-        # this looks like: {"type": "my_class", "regular_param": "value"}
+            class MyClass(SerializationMixin):
+                INJECTABLE = {"client"}
 
-        instance = MyClass.from_dict(json_of_class, dependencies={"my_class.client": Client()})
+                def __init__(self, regular_param: str, client: Client) -> None:
+                    self.client = client
+                    self.regular_param = regular_param
+
+
+            json_of_class = MyClass(regular_param="value", client=Client()).to_json()
+            # this looks like: {"type": "my_class", "regular_param": "value"}
+
+            instance = MyClass.from_dict(json_of_class, dependencies={"my_class.client": Client()})
 
     During serialization, the field listed as INJECTABLE (and also DEFAULT_EXCLUDE) will be excluded from the output.
     Then in deserialization,
