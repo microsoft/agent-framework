@@ -22,15 +22,15 @@ internal sealed class <#= this.Name #>Executor(FormulaSession session, WorkflowA
         EvaluateMessageTemplate(this.Model.Input?.AdditionalInstructions, "additionalInstructions");
         EvaluateListExpression<ChatMessage>(this.Model.Input?.Messages, "inputMessages");#>
         
-        AgentRunResponse agentResponse = 
-            InvokeAgentAsync(
+        AgentRunResponse agentResponse =
+            await InvokeAgentAsync(
                 context,
                 agentName,
                 conversationId, 
                 autoSend, 
                 additionalInstructions, 
                 inputMessages, 
-                cancellationToken).ToEnumerable().ToAgentRunResponse();
+                cancellationToken).ConfigureAwait(false);
 
         if (autoSend)
         {

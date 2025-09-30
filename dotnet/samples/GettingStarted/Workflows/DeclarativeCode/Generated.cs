@@ -230,14 +230,14 @@ public static class TestWorkflowProvider
             IList<ChatMessage>? inputMessages = await context.EvaluateListAsync<ChatMessage>("UserMessage(Local.InputTask)").ConfigureAwait(false);
 
             AgentRunResponse agentResponse =
-                InvokeAgentAsync(
+                await InvokeAgentAsync(
                     context,
                     agentName,
                     conversationId,
                     autoSend,
                     additionalInstructions,
                     inputMessages,
-                    cancellationToken).ToEnumerable().ToAgentRunResponse();
+                    cancellationToken).ConfigureAwait(false);
 
             if (autoSend)
             {
@@ -304,14 +304,14 @@ public static class TestWorkflowProvider
             IList<ChatMessage>? inputMessages = await context.EvaluateListAsync<ChatMessage>("UserMessage(Local.InputTask)").ConfigureAwait(false);
 
             AgentRunResponse agentResponse =
-                InvokeAgentAsync(
+                await InvokeAgentAsync(
                     context,
                     agentName,
                     conversationId,
                     autoSend,
                     additionalInstructions,
                     inputMessages,
-                    cancellationToken).ToEnumerable().ToAgentRunResponse();
+                    cancellationToken).ConfigureAwait(false);
 
             if (autoSend)
             {
@@ -447,14 +447,14 @@ public static class TestWorkflowProvider
             IList<ChatMessage>? inputMessages = await context.EvaluateListAsync<ChatMessage>("UserMessage(Local.AgentResponseText)").ConfigureAwait(false);
 
             AgentRunResponse agentResponse =
-                InvokeAgentAsync(
+                await InvokeAgentAsync(
                     context,
                     agentName,
                     conversationId,
                     autoSend,
                     additionalInstructions,
                     inputMessages,
-                    cancellationToken).ToEnumerable().ToAgentRunResponse();
+                    cancellationToken).ConfigureAwait(false);
 
             if (autoSend)
             {
@@ -576,14 +576,14 @@ public static class TestWorkflowProvider
             IList<ChatMessage>? inputMessages = await context.ReadListAsync<ChatMessage>(key: "SeedTask", scopeName: "Local").ConfigureAwait(false);
 
             AgentRunResponse agentResponse =
-                InvokeAgentAsync(
+                await InvokeAgentAsync(
                     context,
                     agentName,
                     conversationId,
                     autoSend,
                     additionalInstructions,
                     inputMessages,
-                    cancellationToken).ToEnumerable().ToAgentRunResponse();
+                    cancellationToken).ConfigureAwait(false);
 
             if (autoSend)
             {
@@ -814,14 +814,14 @@ public static class TestWorkflowProvider
     """).ConfigureAwait(false);
 
             AgentRunResponse agentResponse =
-                InvokeAgentAsync(
+                await InvokeAgentAsync(
                     context,
                     agentName,
                     conversationId,
                     autoSend,
                     additionalInstructions,
                     inputMessages,
-                    cancellationToken).ToEnumerable().ToAgentRunResponse();
+                    cancellationToken).ConfigureAwait(false);
 
             if (autoSend)
             {
@@ -885,14 +885,14 @@ public static class TestWorkflowProvider
             IList<ChatMessage>? inputMessages = null;
 
             AgentRunResponse agentResponse =
-                InvokeAgentAsync(
+                await InvokeAgentAsync(
                     context,
                     agentName,
                     conversationId,
                     autoSend,
                     additionalInstructions,
                     inputMessages,
-                    cancellationToken).ToEnumerable().ToAgentRunResponse();
+                    cancellationToken).ConfigureAwait(false);
 
             if (autoSend)
             {
@@ -1069,14 +1069,14 @@ public static class TestWorkflowProvider
             IList<ChatMessage>? inputMessages = await context.ReadListAsync<ChatMessage>(key: "SeedTask", scopeName: "Local").ConfigureAwait(false);
 
             AgentRunResponse agentResponse =
-                InvokeAgentAsync(
+                await InvokeAgentAsync(
                     context,
                     agentName,
                     conversationId,
                     autoSend,
                     additionalInstructions,
                     inputMessages,
-                    cancellationToken).ToEnumerable().ToAgentRunResponse();
+                    cancellationToken).ConfigureAwait(false);
 
             if (autoSend)
             {

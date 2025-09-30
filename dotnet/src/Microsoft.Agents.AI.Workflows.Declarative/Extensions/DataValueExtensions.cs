@@ -3,6 +3,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Dynamic;
 using System.Linq;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
@@ -21,6 +22,7 @@ internal static class DataValueExtensions
             null => DataValue.Blank(),
             UnassignedValue => DataValue.Blank(),
             FormulaValue formulaValue => formulaValue.ToDataValue(),
+            DataValue dataValue => dataValue,
             bool booleanValue => BooleanDataValue.Create(booleanValue),
             int decimalValue => NumberDataValue.Create(decimalValue),
             long decimalValue => NumberDataValue.Create(decimalValue),
@@ -32,7 +34,7 @@ internal static class DataValueExtensions
             DateTime datetimeValue => DateTimeDataValue.Create(datetimeValue),
             TimeSpan timeValue => TimeDataValue.Create(timeValue),
             object when value is IDictionary dictionaryValue => dictionaryValue.ToRecordValue(),
-            //object when value is IEnumerable tableValue => tableValue.ToTable(), // %%% TODO
+            object when value is IEnumerable tableValue => tableValue.ToTableValue(),
             _ => throw new DeclarativeModelException($"Unsupported variable type: {value.GetType().Name}"),
         };
 
@@ -98,6 +100,21 @@ internal static class DataValueExtensions
             _ => throw new DeclarativeModelException($"Unsupported {nameof(DataValue)} type: {value.GetType().Name}"),
         };
 
+    public static Type ToClrType(this DataType type) =>
+        type switch
+        {
+            BooleanDataType => typeof(bool),
+            NumberDataType => typeof(decimal),
+            FloatDataType => typeof(double),
+            StringDataType => typeof(string),
+            DateTimeDataType => typeof(DateTime),
+            DateDataType => typeof(DateTime),
+            TimeDataType => typeof(TimeSpan),
+            TableDataType tableType => VariableType.ListType,
+            RecordDataType recordValue => VariableType.RecordType,
+            _ => throw new DeclarativeModelException($"Unsupported {nameof(DataValue)} type: {type.GetType().Name}"),
+        };
+
     public static IList<TElement>? AsList<TElement>(this DataValue? value)
     {
         if (value is null || value is BlankDataValue)
@@ -136,6 +153,38 @@ internal static class DataValueExtensions
             foreach (string key in value.Keys)
             {
                 yield return new KeyValuePair<string, DataValue>(key, value[key].ToDataValue());
+            }
+        }
+    }
+
+    public static TableDataValue ToTableValue(this IEnumerable values)
+    {
+        IEnumerator enumerator = values.GetEnumerator();
+        if (!enumerator.MoveNext())
+        {
+            return DataValue.EmptyTable;
+        }
+
+        if (enumerator.Current is IDictionary)
+        {
+            DataValue.TableFromRecords(GetFields().ToImmutableArray());
+        }
+
+        return DataValue.TableFromValues(GetValues().ToImmutableArray());
+
+        IEnumerable<RecordDataValue> GetFields()
+        {
+            foreach (IDictionary value in values)
+            {
+                yield return value.ToRecordValue();
+            }
+        }
+
+        IEnumerable<DataValue> GetValues()
+        {
+            foreach (object value in values)
+            {
+                yield return value.ToDataValue();
             }
         }
     }

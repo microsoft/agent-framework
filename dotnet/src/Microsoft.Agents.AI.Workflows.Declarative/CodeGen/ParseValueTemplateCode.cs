@@ -33,7 +33,7 @@ internal partial class ParseValueTemplate
                 DateDataType => "typeof(DateTime)",
                 TimeDataType => "typeof(TimeSpan)",
                 RecordDataType recordType => $"\nVariableType.Record(\n{string.Join(",\n    ", recordType.Properties.Select(property => @$"( ""{property.Key}"", {GetVariableType(property.Value.Type)} )"))})",
-                //TableDataType => // %%% TODO
+                TableDataType tableType => $"\nVariableType.Record(\n{string.Join(",\n    ", tableType.Properties.Select(property => @$"( ""{property.Key}"", {GetVariableType(property.Value.Type)} )"))})",
                 _ => throw new DeclarativeModelException($"Unsupported data type: {dataType}"),
             };
     }

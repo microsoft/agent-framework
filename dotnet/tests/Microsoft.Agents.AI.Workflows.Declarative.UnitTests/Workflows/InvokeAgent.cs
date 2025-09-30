@@ -72,14 +72,14 @@ public static class WorkflowProvider
             IList<ChatMessage>? inputMessages = await context.EvaluateListAsync<ChatMessage>("[UserMessage(System.LastMessageText)]").ConfigureAwait(false);
     
             AgentRunResponse agentResponse =
-                InvokeAgentAsync(
+                await InvokeAgentAsync(
                     context,
                     agentName,
                     conversationId,
                     autoSend,
                     additionalInstructions,
                     inputMessages,
-                    cancellationToken).ToEnumerable().ToAgentRunResponse();
+                    cancellationToken).ConfigureAwait(false);
     
             if (autoSend)
             {

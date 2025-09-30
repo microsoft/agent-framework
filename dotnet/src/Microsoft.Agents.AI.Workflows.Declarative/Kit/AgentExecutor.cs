@@ -2,6 +2,7 @@
 
 using System.Collections.Generic;
 using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Extensions.AI;
 
@@ -26,7 +27,7 @@ public abstract class AgentExecutor(string id, FormulaSession session, WorkflowA
     /// <param name="inputMessages">Optional messages to add to the conversation prior to invocation.</param>
     /// <param name="cancellationToken">A token that can be used to observe cancellation.</param>
     /// <returns></returns>
-    protected IAsyncEnumerable<AgentRunResponseUpdate> InvokeAgentAsync(
+    protected ValueTask<AgentRunResponse> InvokeAgentAsync(
         IWorkflowContext context,
         string agentName,
         string? conversationId,

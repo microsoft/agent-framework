@@ -4,6 +4,8 @@ using System;
 using System.Collections;
 using System.Collections.Frozen;
 using System.Collections.Generic;
+using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
+using Microsoft.Bot.ObjectModel;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.Kit;
 
@@ -59,6 +61,39 @@ public sealed class VariableType
         {
             Schema = fields.ToFrozenDictionary(kv => kv.Key, kv => kv.Type),
         };
+
+    /// <summary>
+    /// Initializes a new instance wrapping the given CLR <paramref name="type"/> (which should be one of the supported types).
+    /// </summary>
+    internal VariableType(DataType type)
+    {
+        this.Type = type.ToClrType();
+
+        if (type is RecordDataType recordType)
+        {
+            this.Schema = CreateSchema(recordType.Properties);
+        }
+        else if (type is TableDataType tableDataType)
+        {
+            this.Schema = CreateSchema(tableDataType.Properties);
+        }
+
+        static FrozenDictionary<string, VariableType?> CreateSchema(IEnumerable<KeyValuePair<string, PropertyInfo>> properties)
+        {
+            Dictionary<string, VariableType?> schema = [];
+
+            foreach (KeyValuePair<string, PropertyInfo> field in properties)
+            {
+                if (field.Value.Type is null)
+                {
+                    continue;
+                }
+
+                schema[field.Key] = new VariableType(field.Value.Type);
+            }
+            return schema.ToFrozenDictionary();
+        }
+    }
 
     /// <summary>
     /// Initializes a new instance wrapping the given CLR <paramref name="type"/> (which should be one of the supported types).
