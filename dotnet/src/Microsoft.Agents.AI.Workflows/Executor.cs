@@ -139,16 +139,16 @@ public abstract class Executor : IIdentified
     /// </summary>
     /// <param name="context">The workflow context.</param>
     /// <returns>A ValueTask representing the asynchronous operation.</returns>
-    /// <param name="cancellation"></param>
-    protected internal virtual ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellation = default) => default;
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    protected internal virtual ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default) => default;
 
     /// <summary>
     /// Invoked after a checkpoint is loaded, allowing custom post-load logic in derived classes.
     /// </summary>
     /// <param name="context">The workflow context.</param>
     /// <returns>A ValueTask representing the asynchronous operation.</returns>
-    /// <param name="cancellation"></param>
-    protected internal virtual ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellation = default) => default;
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    protected internal virtual ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default) => default;
 
     /// <summary>
     /// A set of <see cref="Type"/>s, representing the messages this executor can handle.

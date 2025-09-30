@@ -39,7 +39,7 @@ public static partial class AgentHostingJsonUtilities
         // Copy the configuration from the source generated context.
         JsonSerializerOptions options = new(JsonContext.Default.Options);
 
-        // Chain with all supported types from Microsoft.Extensions.AI.Agents.Abstractions.
+        // Chain with all supported types from Microsoft.Agents.AI.Abstractions.
         options.TypeInfoResolverChain.Add(AgentAbstractionsJsonUtilities.DefaultOptions.TypeInfoResolver!);
 
         options.MakeReadOnly();
