@@ -345,13 +345,13 @@ public class WorkflowBuilder
         {
             this.Validate();
         }
-        catch (Exception ex)
+        catch (Exception ex) when (activity is not null)
         {
-            activity?.AddEvent(new ActivityEvent(EventNames.BuildError, tags: new() {
+            activity.AddEvent(new ActivityEvent(EventNames.BuildError, tags: new() {
                 { Tags.BuildErrorMessage, ex.Message },
                 { Tags.BuildErrorType, ex.GetType().FullName }
             }));
-            activity?.CaptureException(ex);
+            activity.CaptureException(ex);
             throw;
         }
 

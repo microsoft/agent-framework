@@ -117,13 +117,13 @@ public sealed class StreamingRun
                 {
                     await this._stepRunner.RunSuperStepAsync(cancellationToken).ConfigureAwait(false);
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (activity is not null)
                 {
-                    activity?.AddEvent(new ActivityEvent(EventNames.WorkflowError, tags: new() {
+                    activity.AddEvent(new ActivityEvent(EventNames.WorkflowError, tags: new() {
                         { Tags.ErrorType, ex.GetType().FullName },
                         { Tags.BuildErrorMessage, ex.Message },
                     }));
-                    activity?.CaptureException(ex);
+                    activity.CaptureException(ex);
                     throw;
                 }
 

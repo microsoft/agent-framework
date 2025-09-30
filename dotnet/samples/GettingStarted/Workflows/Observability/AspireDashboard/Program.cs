@@ -55,9 +55,9 @@ public static class Program
         ReverseTextExecutor reverse = new();
 
         // Build the workflow by connecting executors sequentially
-        WorkflowBuilder builder = new(uppercase);
-        builder.AddEdge(uppercase, reverse).WithOutputFrom(reverse);
-        var workflow = builder.Build();
+        var workflow = new WorkflowBuilder(uppercase)
+            .AddEdge(uppercase, reverse)
+            .Build();
 
         // Execute the workflow with input data
         Run run = await InProcessExecution.RunAsync(workflow, "Hello, World!");
@@ -97,9 +97,5 @@ internal sealed class ReverseTextExecutor() : ReflectingExecutor<ReverseTextExec
     /// <param name="message">The input text to reverse</param>
     /// <param name="context">Workflow context for accessing workflow services and adding events</param>
     /// <returns>The input text reversed</returns>
-    public async ValueTask<string> HandleAsync(string message, IWorkflowContext context)
-    {
-        // Because we do not suppress it, the returned result will be yielded as an output from this executor.
-        return string.Concat(message.Reverse());
-    }
+    public async ValueTask<string> HandleAsync(string message, IWorkflowContext context) => new string(message.Reverse().ToArray());
 }
