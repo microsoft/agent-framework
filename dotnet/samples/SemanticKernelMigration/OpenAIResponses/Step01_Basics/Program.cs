@@ -25,6 +25,7 @@ async Task SKAgentAsync()
     {
         Name = "Joker",
         Instructions = "You are good at telling jokes.",
+        StoreEnabled = true
     };
 
     var agentOptions = new OpenAIResponseAgentInvokeOptions() { ResponseCreationOptions = new() { MaxOutputTokenCount = 1000 } };
@@ -37,7 +38,6 @@ async Task SKAgentAsync()
     }
 
     Console.WriteLine("---");
-    thread = null;
     await foreach (var item in agent.InvokeStreamingAsync(userInput, thread, agentOptions))
     {
         // Thread need to be updated for subsequent calls

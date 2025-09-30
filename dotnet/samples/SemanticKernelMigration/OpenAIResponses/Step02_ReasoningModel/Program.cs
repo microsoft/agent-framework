@@ -52,6 +52,7 @@ async Task SKAgentAsync()
     {
         Name = "Joker",
         Instructions = "You are good at telling jokes.",
+        StoreEnabled = true
     };
 
     var agentOptions = new OpenAIResponseAgentInvokeOptions()
@@ -72,8 +73,6 @@ async Task SKAgentAsync()
     {
         foreach (var content in item.Message.Items)
         {
-            // Currently SK Responses Agent doesn't distinguish thinking from non-thinking content in non-streaming mode.
-            // SK Bugfix WIP: https://github.com/microsoft/semantic-kernel/issues/13046
             if (content is ReasoningContent thinking)
             {
                 Console.Write($"Thinking: \n{thinking}\n---\n");
@@ -94,8 +93,6 @@ async Task SKAgentAsync()
         thread = item.Thread;
         foreach (var content in item.Message.Items)
         {
-            // Currently SK Agent doesn't output thinking in streaming mode.
-            // SK Bugfix WIP: https://github.com/microsoft/semantic-kernel/issues/13046
             if (content is StreamingReasoningContent thinking)
             {
                 Console.WriteLine($"Thinking: [{thinking}]");
