@@ -83,7 +83,7 @@ from azure.ai.agents.models import (
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import ConnectionType
 from azure.core.credentials_async import AsyncTokenCredential
-from azure.core.exceptions import HttpResponseError
+from azure.core.exceptions import HttpResponseError, ResourceNotFoundError
 from pydantic import BaseModel, Field, PrivateAttr, ValidationError
 
 if sys.version_info >= (3, 11):
@@ -216,17 +216,25 @@ class AzureAIAgentClient(BaseChatClient):
         )
         self._should_close_client = should_close_client
 
-    async def setup_observability(self) -> None:
+    async def setup_azure_ai_observability(self, enable_sensitive_data: bool | None = None) -> None:
         """Use this method to setup tracing in your Azure AI Project.
 
         This will take the connection string from the project project_client.
         It will override any connection string that is set in the environment variables.
         It will disable any OTLP endpoint that might have been set.
         """
+        try:
+            conn_string = await self.project_client.telemetry.get_application_insights_connection_string()
+        except ResourceNotFoundError:
+            logger.warning(
+                "No Application Insights connection string found for the Azure AI Project, "
+                "please call setup_observability() manually."
+            )
+            return
         from agent_framework.observability import setup_observability
 
         setup_observability(
-            applicationinsights_connection_string=await self.project_client.telemetry.get_application_insights_connection_string(),  # noqa: E501
+            applicationinsights_connection_string=conn_string, enable_sensitive_data=enable_sensitive_data
         )
 
     async def __aenter__(self) -> "Self":
