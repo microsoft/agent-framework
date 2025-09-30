@@ -48,8 +48,9 @@
     <Project Path="samples/GettingStarted/Agents/Agent_Step10_AsMcpTool/Agent_Step10_AsMcpTool.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step11_UsingImages/Agent_Step11_UsingImages.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step12_AsFunctionTool/Agent_Step12_AsFunctionTool.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Agent_Step14_Middleware/Agent_Step14_Middleware.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step13_Memory/Agent_Step13_Memory.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agent_Step14_Middleware/Agent_Step14_Middleware.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agent_Step15_Plugins/Agent_Step15_Plugins.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/AgentWithOpenAI/">
     <File Path="samples/GettingStarted/AgentWithOpenAI/README.md" />
