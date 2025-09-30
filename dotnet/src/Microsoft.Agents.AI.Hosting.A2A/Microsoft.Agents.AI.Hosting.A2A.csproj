@@ -5,7 +5,7 @@
     <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsCoreTargetFrameworks)</TargetFrameworks>
     <NoWarn>$(NoWarn);IDE1006;IDE0130;NU1504</NoWarn>
     <RootNamespace>Microsoft.Agents.AI.Hosting.A2A</RootNamespace>
-    <VersionSuffix>alpha</VersionSuffix>
+    <VersionSuffix>preview</VersionSuffix>
   </PropertyGroup>
 
   <PropertyGroup>
