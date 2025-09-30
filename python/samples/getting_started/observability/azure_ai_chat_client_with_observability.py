@@ -68,7 +68,7 @@ async def main() -> None:
         # This will enable tracing and configure the application to send telemetry data to the
         # Application Insights instance attached to the Azure AI project.
         # This will override any existing configuration.
-        await client.setup_observability()
+        await client.setup_azure_ai_observability()
 
         with get_tracer().start_as_current_span(
             name="Foundry Telemetry from Agent Framework", kind=SpanKind.CLIENT

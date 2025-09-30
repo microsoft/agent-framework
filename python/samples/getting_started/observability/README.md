@@ -152,7 +152,7 @@ exporter = OTLPSpanExporter(endpoint="your-otlp-endpoint", compression=Compressi
 setup_observability(exporters=[exporter])
 ```
 
-## Logs
+### Logs
 
 When you are in Azure Monitor and want to have a overall view of the span, use this query in the logs section:
 
@@ -175,6 +175,17 @@ dependencies
 | project-keep timestamp, target, operation_Id, tool_call_duration, duration, gen_ai*
 | order by timestamp asc
 ```
+
+### Grafana dashboards with Application Insights data
+Besides the Application Insights native UI, you can also use Grafana to visualize the telemetry data in Application Insights. There are two tailored dashboards for you to get started quickly:
+
+#### Agent Overview dashboard
+Grafana Dashboard Gallery link: <https://aka.ms/amg/dash/af-agent>
+![Agent Overview dashboard](https://github.com/Azure/azure-managed-grafana/raw/main/samples/assets/grafana-af-agent.gif)
+
+#### Workflow Overview dashboard
+Grafana Dashboard Gallery link: <https://aka.ms/amg/dash/af-workflow>
+![Workflow Overview dashboard](https://github.com/Azure/azure-managed-grafana/raw/main/samples/assets/grafana-af-workflow.gif)
 
 ## Aspire Dashboard
 

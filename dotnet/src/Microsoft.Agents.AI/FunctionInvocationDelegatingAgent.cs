@@ -33,7 +33,7 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
         if (options is ChatClientAgentRunOptions aco)
         {
             var originalFactory = aco.ChatClientFactory;
-            aco.ChatClientFactory = (IChatClient chatClient) =>
+            aco.ChatClientFactory = chatClient =>
             {
                 var builder = chatClient.AsBuilder();
 
@@ -44,9 +44,7 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
 
                 return builder.ConfigureOptions(co
                     => co.Tools = co.Tools?.Select(tool => tool is AIFunction aiFunction
-                            ? aiFunction is ApprovalRequiredAIFunction approvalRequiredAiFunction
-                            ? new ApprovalRequiredAIFunction(new MiddlewareEnabledFunction(this, approvalRequiredAiFunction, this._delegateFunc))
-                            : new MiddlewareEnabledFunction(this.InnerAgent, aiFunction, this._delegateFunc)
+                            ? new MiddlewareEnabledFunction(this.InnerAgent, aiFunction, this._delegateFunc)
                             : tool)
                         .ToList())
                     .Build();
@@ -66,7 +64,6 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
                     Arguments = arguments,
                     Function = this.InnerFunction,
                     CallContent = new(string.Empty, this.InnerFunction.Name, new Dictionary<string, object?>(arguments)),
-                    Iteration = 0,  // Indicate this function was not invoked by a FICC and has no iteration flow.
                 };
 
             return await next(innerAgent, context, CoreLogicAsync, cancellationToken).ConfigureAwait(false);

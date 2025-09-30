@@ -6,7 +6,6 @@ using System.Threading.Tasks;
 using Azure;
 using Azure.AI.Agents.Persistent;
 using Azure.Identity;
-using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Framework;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;

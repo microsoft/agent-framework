@@ -4,7 +4,6 @@ using System.ComponentModel;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.Logging;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -18,15 +17,20 @@ public static class AgentExtensions
     /// Wraps the agent with OpenTelemetry instrumentation.
     /// </summary>
     /// <param name="agent">The agent to wrap.</param>
-    /// <param name="loggerFactory">The <see cref="ILogger"/> to use for emitting events.</param>
     /// <param name="sourceName">An optional source name that will be used on the telemetry data.</param>
     /// <param name="enableSensitiveData">When <see langword="true"/> indicates whether potentially sensitive information should be included in telemetry. Default is <see langword="false"/></param>
     /// <returns>An <see cref="OpenTelemetryAgent"/> that wraps the original agent with telemetry.</returns>
-    public static OpenTelemetryAgent WithOpenTelemetry(this AIAgent agent, ILoggerFactory? loggerFactory = null, string? sourceName = null, bool? enableSensitiveData = null) =>
-        new(agent, loggerFactory?.CreateLogger(typeof(OpenTelemetryAgent)), sourceName)
+    public static OpenTelemetryAgent WithOpenTelemetry(this AIAgent agent, string? sourceName = null, bool? enableSensitiveData = null)
+    {
+        OpenTelemetryAgent otel = new(agent, sourceName);
+
+        if (enableSensitiveData is not null)
         {
-            EnableSensitiveData = enableSensitiveData ?? false
-        };
+            otel.EnableSensitiveData = enableSensitiveData.Value;
+        }
+
+        return otel;
+    }
 
     /// <summary>
     /// Creates a <see cref="AIFunction"/> that will invoke the provided Agent.

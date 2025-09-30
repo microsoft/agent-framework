@@ -7,7 +7,7 @@ from agent_framework.openai import OpenAIChatClient
 
 
 async def main() -> None:
-    client = OpenAIChatClient(ai_model_id="gpt-4o-search-preview")
+    client = OpenAIChatClient(model_id="gpt-4o-search-preview")
 
     message = "What is the current weather? Do not ask for my current location."
     # Test that the client will use the web search tool with location

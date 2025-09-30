@@ -38,7 +38,7 @@ async def main() -> None:
         AzureAIAgentClient(async_credential=credential) as chat_client,
     ):
         # enable azure-ai observability
-        await chat_client.setup_observability()
+        await chat_client.setup_azure_ai_observability()
         agent = chat_client.create_agent(
             name="DocsAgent",
             instructions="You are a helpful assistant that can help with microsoft documentation questions.",
