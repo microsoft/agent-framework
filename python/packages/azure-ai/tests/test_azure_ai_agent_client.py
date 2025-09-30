@@ -243,6 +243,26 @@ def test_azure_ai_chat_client_init_validation_error(mock_azure_credential: Magic
             )
 
 
+def test_azure_ai_chat_client_from_settings() -> None:
+    """Test from_settings class method."""
+    mock_project_client = MagicMock()
+    settings = {
+        "project_client": mock_project_client,
+        "agent_id": "test-agent",
+        "thread_id": "test-thread",
+        "project_endpoint": "https://test.com",
+        "model_deployment_name": "test-model",
+        "agent_name": "TestAgent",
+    }
+
+    client = AzureAIAgentClient.from_settings(settings)
+
+    assert client.project_client is mock_project_client
+    assert client.agent_id == "test-agent"
+    assert client.thread_id == "test-thread"
+    assert client.agent_name == "TestAgent"
+
+
 async def test_azure_ai_chat_client_get_agent_id_or_create_existing_agent(
     mock_ai_project_client: MagicMock,
 ) -> None:
@@ -1231,22 +1251,6 @@ async def test_azure_ai_chat_client_create_function_call_contents_approval_reque
     assert result[0].function_call.call_id == '["response_123", "approval_call_123"]'
 
 
-async def test_azure_ai_chat_client_from_dict_complete_settings(mock_ai_project_client: MagicMock) -> None:
-    """Test from_dict class method with model_construct."""
-    # Use model_construct directly which is what from_dict uses internally
-    chat_client = AzureAIAgentClient.model_construct(
-        project_client=mock_ai_project_client,
-        agent_id="test-agent-id",
-        thread_id="test-thread-id",
-        ai_model_id="test-model",
-        _should_delete_agent=False,
-    )
-
-    assert chat_client.agent_id == "test-agent-id"
-    assert chat_client.thread_id == "test-thread-id"
-    assert chat_client.project_client is mock_ai_project_client
-
-
 async def test_azure_ai_chat_client_get_agent_id_or_create_with_agent_name(
     mock_ai_project_client: MagicMock, azure_ai_unit_test_env: dict[str, str]
 ) -> None:
@@ -1302,20 +1306,6 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_with_tool_resources(
     mock_ai_project_client.agents.create_agent.assert_called_once()
     call_kwargs = mock_ai_project_client.agents.create_agent.call_args[1]
     assert call_kwargs["tool_resources"] == {"vector_store_ids": ["vs-123"]}
-
-
-async def test_azure_ai_chat_client_setup_observability_method(mock_ai_project_client: MagicMock) -> None:
-    """Test setup_observability method."""
-    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client)
-
-    # Mock telemetry method
-    mock_ai_project_client.telemetry.get_application_insights_connection_string = AsyncMock(
-        return_value="InstrumentationKey=test-key"
-    )
-
-    with patch("agent_framework.observability.setup_observability") as mock_setup:
-        await chat_client.setup_observability()
-        mock_setup.assert_called_once_with(applicationinsights_connection_string="InstrumentationKey=test-key")
 
 
 async def test_azure_ai_chat_client_close_method(mock_ai_project_client: MagicMock) -> None:
