@@ -128,7 +128,7 @@ internal sealed class SloganWriterExecutor
         {
             ChatOptions = new()
             {
-                ResponseFormat = ChatResponseFormat.ForJsonSchema(AIJsonUtilities.CreateJsonSchema(typeof(SloganResult)))
+                ResponseFormat = ChatResponseFormat.ForJsonSchema<SloganResult>()
             }
         };
 
@@ -199,7 +199,7 @@ internal sealed class FeedbackExecutor : ReflectingExecutor<FeedbackExecutor>, I
         {
             ChatOptions = new()
             {
-                ResponseFormat = ChatResponseFormat.ForJsonSchema(AIJsonUtilities.CreateJsonSchema(typeof(FeedbackResult)))
+                ResponseFormat = ChatResponseFormat.ForJsonSchema<FeedbackResult>()
             }
         };
 

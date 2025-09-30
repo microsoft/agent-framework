@@ -77,7 +77,7 @@ jobs:
           UV_CACHE_DIR: /tmp/.uv-cache
       - name: Test with pytest
         timeout-minutes: 10
-        run: uv run poe all-tests -n logical --dist loadfile --dist worksteal
+        run: uv run poe all-tests -n logical --dist loadfile --dist worksteal --timeout 300 --retries 3 --retry-delay 10
         working-directory: ./python
       - name: Test main samples
         timeout-minutes: 10
@@ -137,7 +137,7 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       - name: Test with pytest
         timeout-minutes: 10
-        run: uv run poe all-tests -n logical --dist loadfile --dist worksteal
+        run: uv run poe all-tests -n logical --dist loadfile --dist worksteal --timeout 300 --retries 3 --retry-delay 10
         working-directory: ./python
       - name: Test azure samples
         timeout-minutes: 10

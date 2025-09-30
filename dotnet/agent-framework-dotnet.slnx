@@ -168,7 +168,6 @@
   <Folder Name="/Solution Items/.github/workflows/">
     <File Path="../.github/workflows/dotnet-build-and-test.yml" />
     <File Path="../.github/workflows/dotnet-check-coverage.ps1" />
-    <File Path="../.github/workflows/dotnet-cosmosdb-integration-tests.yml" />
     <File Path="../.github/workflows/dotnet-format.yml" />
   </Folder>
   <Folder Name="/Solution Items/demos/">
@@ -265,6 +264,7 @@
     <File Path="tests/Directory.Build.props" />
   </Folder>
   <Folder Name="/src/">
+    <Project Path="src/Microsoft.Agents.AI/Microsoft.Agents.AI.csproj" />
     <Project Path="src/Microsoft.Agents.AI.A2A/Microsoft.Agents.AI.A2A.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Abstractions/Microsoft.Agents.AI.Abstractions.csproj" />
     <Project Path="src/Microsoft.Agents.AI.AzureAI/Microsoft.Agents.AI.AzureAI.csproj" />
@@ -278,13 +278,8 @@
     <Project Path="src/Microsoft.Agents.AI.Runtime/Microsoft.Agents.AI.Runtime.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Workflows.Declarative/Microsoft.Agents.AI.Workflows.Declarative.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Workflows/Microsoft.Agents.AI.Workflows.csproj" />
-    <Project Path="src/Microsoft.Agents.AI/Microsoft.Agents.AI.csproj" />
   </Folder>
   <Folder Name="/Tests/" />
-  <Folder Name="/Tests/Cosmos/">
-    <Project Path="tests/CosmosDB.IntegrationTests/CosmosDB.Testing.AppHost/CosmosDB.Testing.AppHost.csproj" />
-    <Project Path="tests/CosmosDB.IntegrationTests/Microsoft.Agents.AI.Runtime.Storage.CosmosDB.Tests/Microsoft.Agents.AI.Runtime.Storage.CosmosDB.Tests.csproj" />
-  </Folder>
   <Folder Name="/Tests/IntegrationTests/">
     <Project Path="tests/AgentConformance.IntegrationTests/AgentConformance.IntegrationTests.csproj" />
     <Project Path="tests/AzureAIAgentsPersistent.IntegrationTests/AzureAIAgentsPersistent.IntegrationTests.csproj" />
