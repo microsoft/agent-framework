@@ -60,7 +60,7 @@ internal static class AgentProviderExtensions
 
         if (autoSend)
         {
-            await context.AddEventAsync(new AgentRunResponseEvent(executorId, updates.ToAgentRunResponse())).ConfigureAwait(false);
+            await context.AddEventAsync(new AgentRunResponseEvent(executorId, response)).ConfigureAwait(false);
         }
 
         if (autoSend && !isWorkflowConversation && conversationId is not null)
