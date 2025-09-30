@@ -44,7 +44,7 @@ internal static partial class Log
     [LoggerMessage(
         Level = LogLevel.Warning,
         Message = "SSE streaming cancelled: RequestId={RequestId}")]
-    public static partial void SseStreamingCancelled(ILogger logger, string requestId);
+    public static partial void SseStreamingCanceled(ILogger logger, string requestId);
 
     [LoggerMessage(
         Level = LogLevel.Error,

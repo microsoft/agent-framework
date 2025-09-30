@@ -210,7 +210,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
             => RunnerContext.StateManager.ClearStateAsync(ExecutorId, scopeName);
     }
 
-    internal Task PrepareForCheckpointAsync(CancellationToken cancellation = default)
+    internal Task PrepareForCheckpointAsync(CancellationToken cancellationToken = default)
     {
         this.CheckEnded();
 
@@ -219,11 +219,11 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         async Task InvokeCheckpointingAsync(Task<Executor> executorTask)
         {
             Executor executor = await executorTask.ConfigureAwait(false);
-            await executor.OnCheckpointingAsync(this.Bind(executor.Id), cancellation).ConfigureAwait(false);
+            await executor.OnCheckpointingAsync(this.Bind(executor.Id), cancellationToken).ConfigureAwait(false);
         }
     }
 
-    internal Task NotifyCheckpointLoadedAsync(CancellationToken cancellation = default)
+    internal Task NotifyCheckpointLoadedAsync(CancellationToken cancellationToken = default)
     {
         this.CheckEnded();
 
@@ -232,7 +232,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         async Task InvokeCheckpointRestoredAsync(Task<Executor> executorTask)
         {
             Executor executor = await executorTask.ConfigureAwait(false);
-            await executor.OnCheckpointRestoredAsync(this.Bind(executor.Id), cancellation).ConfigureAwait(false);
+            await executor.OnCheckpointRestoredAsync(this.Bind(executor.Id), cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -253,7 +253,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         return new(result);
     }
 
-    internal async ValueTask RepublishUnservicedRequestsAsync(CancellationToken cancellation = default)
+    internal async ValueTask RepublishUnservicedRequestsAsync(CancellationToken cancellationToken = default)
     {
         this.CheckEnded();
 

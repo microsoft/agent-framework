@@ -79,17 +79,17 @@ public sealed class StreamingRun
     /// <remarks>This method yields <see cref="WorkflowEvent"/> instances in real time as the workflow
     /// progresses. The stream completes when a <see cref="RequestHaltEvent"/> is encountered. Events are
     /// delivered in the order they are raised.</remarks>
-    /// <param name="cancellation">A <see cref="CancellationToken"/> that can be used to cancel the streaming operation. If cancellation is
+    /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel the streaming operation. If cancellation is
     /// requested, the stream will end and no further events will be yielded.</param>
     /// <returns>An asynchronous stream of <see cref="WorkflowEvent"/> objects representing significant workflow state changes.
     /// The stream ends when the workflow completes or when cancellation is requested.</returns>
     public IAsyncEnumerable<WorkflowEvent> WatchStreamAsync(
-        CancellationToken cancellation = default)
-        => this.WatchStreamAsync(blockOnPendingRequest: true, cancellation);
+        CancellationToken cancellationToken = default)
+        => this.WatchStreamAsync(blockOnPendingRequest: true, cancellationToken);
 
     internal async IAsyncEnumerable<WorkflowEvent> WatchStreamAsync(
         bool blockOnPendingRequest,
-        [EnumeratorCancellation] CancellationToken cancellation = default)
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         List<WorkflowEvent> eventSink = [];
 
@@ -100,8 +100,8 @@ public sealed class StreamingRun
             do
             {
                 // Drain SuperSteps while there are steps to run
-                await this._stepRunner.RunSuperStepAsync(cancellation).ConfigureAwait(false);
-                if (cancellation.IsCancellationRequested)
+                await this._stepRunner.RunSuperStepAsync(cancellationToken).ConfigureAwait(false);
+                if (cancellationToken.IsCancellationRequested)
                 {
                     yield break; // Exit if cancellation is requested
                 }
@@ -109,7 +109,7 @@ public sealed class StreamingRun
                 bool hadCompletionEvent = false;
                 foreach (WorkflowEvent raisedEvent in Interlocked.Exchange(ref eventSink, []))
                 {
-                    if (cancellation.IsCancellationRequested)
+                    if (cancellationToken.IsCancellationRequested)
                     {
                         yield break; // Exit if cancellation is requested
                     }
@@ -140,7 +140,7 @@ public sealed class StreamingRun
                 {
                     this._waitForResponseSource ??= new();
 
-                    using CancellationTokenRegistration registration = cancellation.Register(() => this._waitForResponseSource?.SetResult(new()));
+                    using CancellationTokenRegistration registration = cancellationToken.Register(() => this._waitForResponseSource?.SetResult(new()));
 
                     await this._waitForResponseSource.Task.ConfigureAwait(false);
                     this._waitForResponseSource = null;
@@ -182,14 +182,14 @@ public static class StreamingRunExtensions
     /// <param name="eventCallback">An optional callback function invoked for each <see cref="WorkflowEvent"/> received from the stream.
     /// The callback can return a response object to be sent back to the workflow, or <see langword="null"/> if no response
     /// is required.</param>
-    /// <param name="cancellation">A <see cref="CancellationToken"/> to observe while waiting for events. </param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ValueTask"/> that represents the asynchronous operation. The task completes when the workflow
     /// execution stream is fully processed.</returns>
-    public static async ValueTask RunToCompletionAsync(this StreamingRun handle, Func<WorkflowEvent, ExternalResponse?>? eventCallback = null, CancellationToken cancellation = default)
+    public static async ValueTask RunToCompletionAsync(this StreamingRun handle, Func<WorkflowEvent, ExternalResponse?>? eventCallback = null, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(handle);
 
-        await foreach (WorkflowEvent @event in handle.WatchStreamAsync(cancellation).ConfigureAwait(false))
+        await foreach (WorkflowEvent @event in handle.WatchStreamAsync(cancellationToken).ConfigureAwait(false))
         {
             ExternalResponse? maybeResponse = eventCallback?.Invoke(@event);
             if (maybeResponse is not null)

@@ -15,7 +15,7 @@ public interface IActorClient
     /// This method is idempotent: if the request is already in progress, it will return the existing response.
     /// </summary>
     /// <param name="request">The request to send to the actor.</param>
-    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A task representing the actor response handle.</returns>
     ValueTask<ActorResponseHandle> SendRequestAsync(ActorRequest request, CancellationToken cancellationToken);
 
@@ -24,7 +24,7 @@ public interface IActorClient
     /// </summary>
     /// <param name="actorId">The identifier of the actor processing the request.</param>
     /// <param name="messageId">The unique identifier of the request message.</param>
-    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A task representing the actor response handle.</returns>
     ValueTask<ActorResponseHandle> GetResponseAsync(ActorId actorId, string messageId, CancellationToken cancellationToken);
 }

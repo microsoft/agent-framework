@@ -25,12 +25,12 @@ internal abstract class TestingExecutor<TIn, TOut> : Executor, IDisposable
         this._actions = actions;
     }
 
-    public void UnlinkCancellation(CancellationToken token) =>
-        this._linkedTokens.Remove(token);
+    public void UnlinkCancellation(CancellationToken cancellationToken) =>
+        this._linkedTokens.Remove(cancellationToken);
 
-    public void LinkCancellation(CancellationToken token)
+    public void LinkCancellation(CancellationToken cancellationToken)
     {
-        this._linkedTokens.Add(token);
+        this._linkedTokens.Add(cancellationToken);
         CancellationTokenSource tokenSource = CancellationTokenSource.CreateLinkedTokenSource(this._linkedTokens.ToArray());
         tokenSource = Interlocked.Exchange(ref this._internalCts, tokenSource);
         tokenSource.Dispose();

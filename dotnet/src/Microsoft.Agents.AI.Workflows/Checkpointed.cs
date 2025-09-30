@@ -47,6 +47,6 @@ public class Checkpointed<TRun>
     }
 
     /// <inheritdoc cref="ICheckpointingRunner.RestoreCheckpointAsync"/>
-    public ValueTask RestoreCheckpointAsync(CheckpointInfo checkpointInfo, CancellationToken cancellation = default)
-        => this._runner.RestoreCheckpointAsync(checkpointInfo, cancellation);
+    public ValueTask RestoreCheckpointAsync(CheckpointInfo checkpointInfo, CancellationToken cancellationToken = default)
+        => this._runner.RestoreCheckpointAsync(checkpointInfo, cancellationToken);
 }

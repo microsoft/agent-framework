@@ -113,12 +113,12 @@ internal sealed class JudgeExecutor : ReflectingExecutor<JudgeExecutor>, IMessag
             NumberSignal.Above;
     }
 
-    protected internal override ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellation = default)
+    protected internal override ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         return context.QueueStateUpdateAsync("TryCount", this.Tries);
     }
 
-    protected internal override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellation = default)
+    protected internal override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         this.Tries = await context.ReadStateAsync<int?>("TryCount").ConfigureAwait(false) ?? 0;
     }

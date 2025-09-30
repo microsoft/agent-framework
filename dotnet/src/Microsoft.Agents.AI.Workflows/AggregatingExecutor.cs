@@ -35,17 +35,17 @@ public class AggregatingExecutor<TInput, TAggregate>(string id,
     }
 
     /// <inheritdoc/>
-    protected internal override async ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellation = default)
+    protected internal override async ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         await context.QueueStateUpdateAsync(AggregateStateKey, this._runningAggregate).ConfigureAwait(false);
 
-        await base.OnCheckpointingAsync(context, cancellation).ConfigureAwait(false);
+        await base.OnCheckpointingAsync(context, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc/>
-    protected internal override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellation = default)
+    protected internal override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        await base.OnCheckpointRestoredAsync(context, cancellation).ConfigureAwait(false);
+        await base.OnCheckpointRestoredAsync(context, cancellationToken).ConfigureAwait(false);
 
         this._runningAggregate = await context.ReadStateAsync<TAggregate>(AggregateStateKey).ConfigureAwait(false);
     }

@@ -62,7 +62,7 @@ public sealed class A2AHostAgent
     /// Handle a received message
     /// </summary>
     /// <param name="messageSend">The <see cref="MessageSendParams"/> to handle</param>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to cancel the operation</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     public async Task<Message> OnMessageReceivedAsync(MessageSendParams messageSend, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(messageSend);
@@ -92,8 +92,8 @@ public sealed class A2AHostAgent
     /// Return the <see cref="AgentCard"/> associated with this hosted agent.
     /// </summary>
     /// <param name="agentUrl">Current URL for the agent</param>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to cancel the operation</param>
-    public Task<AgentCard> GetAgentCardAsync(string agentUrl, CancellationToken cancellationToken)
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    public Task<AgentCard> GetAgentCardAsync(string agentUrl, CancellationToken cancellationToken = default)
     {
         // Ensure the URL is in the correct format
         Uri uri = new(agentUrl);

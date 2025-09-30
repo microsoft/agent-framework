@@ -28,7 +28,7 @@ public abstract class ActorResponseHandle : IDisposable
     /// <summary>
     /// Gets the response from the completed request.
     /// </summary>
-    /// <param name="cancellationToken">A token to cancel the wait operation.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A task that completes when the request is finished.</returns>
     public abstract ValueTask<ActorResponse> GetResponseAsync(CancellationToken cancellationToken);
 
@@ -41,7 +41,7 @@ public abstract class ActorResponseHandle : IDisposable
     /// <summary>
     /// Watches for status and data updates to the request.
     /// </summary>
-    /// <param name="cancellationToken">A token to cancel the watch operation.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>An asynchronous enumerable of request updates.</returns>
     public abstract IAsyncEnumerable<ActorRequestUpdate> WatchUpdatesAsync(CancellationToken cancellationToken);
 

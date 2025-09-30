@@ -45,10 +45,10 @@ internal abstract class ChatProtocolExecutor(string id, ChatProtocolExecutorOpti
         await context.SendMessageAsync(token).ConfigureAwait(false);
     }
 
-    protected abstract ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellation = default);
+    protected abstract ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellationToken = default);
 
     private const string PendingMessagesStateKey = nameof(_pendingMessages);
-    protected internal override async ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellation = default)
+    protected internal override async ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         Task messagesTask = Task.CompletedTask;
         if (this._pendingMessages.Count > 0)
@@ -60,7 +60,7 @@ internal abstract class ChatProtocolExecutor(string id, ChatProtocolExecutorOpti
         await messagesTask.ConfigureAwait(false);
     }
 
-    protected internal override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellation = default)
+    protected internal override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         JsonElement? messagesValue = await context.ReadStateAsync<JsonElement?>(PendingMessagesStateKey).ConfigureAwait(false);
         if (messagesValue.HasValue)

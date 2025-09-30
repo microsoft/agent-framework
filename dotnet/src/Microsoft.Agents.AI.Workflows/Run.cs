@@ -40,10 +40,10 @@ public enum RunStatus
 /// </summary>
 public sealed class Run
 {
-    internal static async ValueTask<Run> CaptureStreamAsync(StreamingRun run, CancellationToken cancellation = default)
+    internal static async ValueTask<Run> CaptureStreamAsync(StreamingRun run, CancellationToken cancellationToken = default)
     {
         Run result = new(run);
-        await result.RunToNextHaltAsync(cancellation).ConfigureAwait(false);
+        await result.RunToNextHaltAsync(cancellationToken).ConfigureAwait(false);
         return result;
     }
 
@@ -54,11 +54,11 @@ public sealed class Run
         this._streamingRun = streamingRun;
     }
 
-    internal async ValueTask<bool> RunToNextHaltAsync(CancellationToken cancellation = default)
+    internal async ValueTask<bool> RunToNextHaltAsync(CancellationToken cancellationToken = default)
     {
         bool hadEvents = false;
         this.Status = RunStatus.Running;
-        await foreach (WorkflowEvent evt in this._streamingRun.WatchStreamAsync(blockOnPendingRequest: false, cancellation).ConfigureAwait(false))
+        await foreach (WorkflowEvent evt in this._streamingRun.WatchStreamAsync(blockOnPendingRequest: false, cancellationToken).ConfigureAwait(false))
         {
             hadEvents = true;
             this._eventSink.Add(evt);
@@ -113,31 +113,31 @@ public sealed class Run
     /// <summary>
     /// Resume execution of the workflow with the provided external responses.
     /// </summary>
-    /// <param name="cancellation">A <see cref="CancellationToken"/> that can be used to cancel the workflow execution.</param>
     /// <param name="responses">An array of <see cref="ExternalResponse"/> objects to send to the workflow.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns><c>true</c> if the workflow had any output events, <c>false</c> otherwise.</returns>
-    public async ValueTask<bool> ResumeAsync(CancellationToken cancellation = default, params IEnumerable<ExternalResponse> responses)
+    public async ValueTask<bool> ResumeAsync(IEnumerable<ExternalResponse> responses, CancellationToken cancellationToken = default)
     {
         foreach (ExternalResponse response in responses)
         {
             await this._streamingRun.SendResponseAsync(response).ConfigureAwait(false);
         }
 
-        return await this.RunToNextHaltAsync(cancellation).ConfigureAwait(false);
+        return await this.RunToNextHaltAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
     /// Resume execution of the workflow with the provided external responses.
     /// </summary>
-    /// <param name="cancellation">A <see cref="CancellationToken"/> that can be used to cancel the workflow execution.</param>
     /// <param name="messages">An array of messages to send to the workflow. Messages will only be sent if they are valid
     /// input types to the starting executor or a <see cref="ExternalResponse"/>.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns><c>true</c> if the workflow had any output events, <c>false</c> otherwise.</returns>
-    public async ValueTask<bool> ResumeAsync<T>(CancellationToken cancellation = default, params IEnumerable<T> messages)
+    public async ValueTask<bool> ResumeAsync<T>(IEnumerable<T> messages, CancellationToken cancellationToken = default)
     {
         if (messages is IEnumerable<ExternalResponse> responses)
         {
-            return await this.ResumeAsync(cancellation, responses).ConfigureAwait(false);
+            return await this.ResumeAsync(responses, cancellationToken).ConfigureAwait(false);
         }
 
         foreach (T message in messages)
@@ -145,7 +145,7 @@ public sealed class Run
             await this._streamingRun.TrySendMessageAsync(message).ConfigureAwait(false);
         }
 
-        return await this.RunToNextHaltAsync(cancellation).ConfigureAwait(false);
+        return await this.RunToNextHaltAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc cref="StreamingRun.EndRunAsync"/>

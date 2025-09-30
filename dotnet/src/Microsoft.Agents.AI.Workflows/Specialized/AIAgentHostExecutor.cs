@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.Specialized;
@@ -25,7 +24,7 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
         this._thread ??= this._agent.GetNewThread();
 
     private const string ThreadStateKey = nameof(_thread);
-    protected internal override async ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellation = default)
+    protected internal override async ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         Task threadTask = Task.CompletedTask;
         if (this._thread is not null)
@@ -34,12 +33,12 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
             threadTask = context.QueueStateUpdateAsync(ThreadStateKey, threadValue).AsTask();
         }
 
-        Task baseTask = base.OnCheckpointingAsync(context, cancellation).AsTask();
+        Task baseTask = base.OnCheckpointingAsync(context, cancellationToken).AsTask();
 
         await Task.WhenAll(threadTask, baseTask).ConfigureAwait(false);
     }
 
-    protected internal override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellation = default)
+    protected internal override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         JsonElement? threadValue = await context.ReadStateAsync<JsonElement?>(ThreadStateKey).ConfigureAwait(false);
         if (threadValue.HasValue)
@@ -47,13 +46,13 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
             this._thread = this._agent.DeserializeThread(threadValue.Value);
         }
 
-        await base.OnCheckpointRestoredAsync(context, cancellation).ConfigureAwait(false);
+        await base.OnCheckpointRestoredAsync(context, cancellationToken).ConfigureAwait(false);
     }
 
-    protected override async ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellation = default)
+    protected override async ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellationToken = default)
     {
         emitEvents ??= this._emitEvents;
-        IAsyncEnumerable<AgentRunResponseUpdate> agentStream = this._agent.RunStreamingAsync(messages, this.EnsureThread(context), cancellationToken: cancellation);
+        IAsyncEnumerable<AgentRunResponseUpdate> agentStream = this._agent.RunStreamingAsync(messages, this.EnsureThread(context), cancellationToken: cancellationToken);
 
         List<AIContent> updates = [];
         ChatMessage? currentStreamingMessage = null;

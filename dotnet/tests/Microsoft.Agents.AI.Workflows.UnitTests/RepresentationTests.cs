@@ -6,7 +6,6 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
-using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Sample;
 using Microsoft.Agents.AI.Workflows.Specialized;
@@ -69,7 +68,7 @@ public class RepresentationTests
             testsRun++;
         }
 
-        async ValueTask MessageHandlerAsync(int message, IWorkflowContext workflowContext, CancellationToken cancellation = default)
+        async ValueTask MessageHandlerAsync(int message, IWorkflowContext workflowContext, CancellationToken cancellationToken = default)
         {
         }
     }

@@ -11,5 +11,5 @@ internal interface ICheckpointingRunner
     // TODO: Convert this to a multi-timeline (e.g.: Live timeline + forks for orphaned checkpoints due to timetravel)
     IReadOnlyList<CheckpointInfo> Checkpoints { get; }
 
-    ValueTask RestoreCheckpointAsync(CheckpointInfo checkpointInfo, CancellationToken cancellation = default);
+    ValueTask RestoreCheckpointAsync(CheckpointInfo checkpointInfo, CancellationToken cancellationToken = default);
 }
