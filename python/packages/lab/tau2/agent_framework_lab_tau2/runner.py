@@ -29,8 +29,10 @@ from tau2.user.user_simulator import (  # type: ignore[import-untyped]
 from tau2.utils.utils import get_now  # type: ignore[import-untyped]
 
 from ._message_utils import flip_messages, log_messages
-from ._sliding_window import SlidingWindowChatMessageList
+from ._sliding_window import SlidingWindowChatMessageStore
 from ._tau2_utils import convert_agent_framework_messages_to_tau2_messages, convert_tau2_tool_to_ai_function
+
+__all__ = ["ASSISTANT_AGENT_ID", "ORCHESTRATOR_ID", "USER_SIMULATOR_ID", "TaskRunner"]
 
 # Agent instructions matching tau2's LLMAgent
 ASSISTANT_AGENT_INSTRUCTION = """
@@ -194,9 +196,9 @@ class TaskRunner:
         return ChatAgent(
             chat_client=assistant_chat_client,
             instructions=assistant_system_prompt,
-            tools=ai_functions,  # type: ignore
+            tools=ai_functions,
             temperature=self.assistant_sampling_temperature,
-            chat_message_store_factory=lambda: SlidingWindowChatMessageList(
+            chat_message_store_factory=lambda: SlidingWindowChatMessageStore(
                 system_message=assistant_system_prompt,
                 tool_definitions=[tool.openai_schema for tool in tools],
                 max_tokens=self.assistant_window_size,
@@ -352,7 +354,7 @@ class TaskRunner:
         # 2. The assistant's message store (not just the truncated window)
         # 3. The final user message (if any)
         assistant_executor = cast(AgentExecutor, self._assistant_executor)
-        message_store = cast(SlidingWindowChatMessageList, assistant_executor._agent_thread.message_store)
+        message_store = cast(SlidingWindowChatMessageStore, assistant_executor._agent_thread.message_store)
         full_conversation = [first_message] + await message_store.list_all_messages()
         if self._final_user_message is not None:
             full_conversation.extend(self._final_user_message)
@@ -413,5 +415,8 @@ class TaskRunner:
             domain="airline",
         )
 
-        logger.info(f"Evaluation completed - Reward: {self.full_reward_info.reward}, Info: {self.full_reward_info}")
-        return self.full_reward_info.reward  # type: ignore[no-any-return]
+        logger.info(
+            f"Evaluation completed - Reward: {self.full_reward_info.reward if self.full_reward_info else None}, "
+            f"Info: {self.full_reward_info}"
+        )
+        return self.full_reward_info.reward if self.full_reward_info else 0.0

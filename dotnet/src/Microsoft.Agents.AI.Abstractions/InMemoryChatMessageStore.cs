@@ -121,14 +121,14 @@ public sealed class InMemoryChatMessageStore : ChatMessageStore, IList<ChatMessa
     }
 
     /// <inheritdoc />
-    public override ValueTask<JsonElement?> SerializeStateAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
     {
         StoreState state = new()
         {
             Messages = this._messages,
         };
 
-        return new ValueTask<JsonElement?>(JsonSerializer.SerializeToElement(state, AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(StoreState))));
+        return JsonSerializer.SerializeToElement(state, AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(StoreState)));
     }
 
     /// <inheritdoc />

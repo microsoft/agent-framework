@@ -5,7 +5,7 @@ namespace Microsoft.Agents.AI;
 /// <summary>Provides constants used by various telemetry services.</summary>
 internal static class OpenTelemetryConsts
 {
-    public const string DefaultSourceName = "Experimental.Microsoft.Extensions.AI.Agents";
+    public const string DefaultSourceName = "Experimental.Microsoft.Agents.AI";
 
     public const string SecondsUnit = "s";
     public const string TokensUnit = "token";
@@ -28,7 +28,7 @@ internal static class OpenTelemetryConsts
 
         public static class SystemNameValues
         {
-            public const string MicrosoftExtensionsAIAgents = "microsoft.extensions.ai.agents";
+            public const string MicrosoftAgentsAI = "microsoft.agents.ai";
         }
 
         public const string Chat = "chat";

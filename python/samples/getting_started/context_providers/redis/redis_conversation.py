@@ -2,7 +2,7 @@
 
 """Redis Context Provider: Basic usage and agent integration
 
-This example demonstrates how to use the Redis ChatMessageStore to persist
+This example demonstrates how to use the Redis ChatMessageStoreProtocol to persist
 conversational details. Pass it as a constructor argument to create_agent.
 
 Requirements:
@@ -14,15 +14,14 @@ Run:
   python redis_conversation.py
 """
 
-import os
 import asyncio
+import os
 
-from agent_framework_redis._provider import RedisProvider
-from agent_framework_redis._chat_message_store import RedisChatMessageStore
 from agent_framework.openai import OpenAIChatClient
-from redisvl.utils.vectorize import OpenAITextVectorizer
+from agent_framework_redis._chat_message_store import RedisChatMessageStore
+from agent_framework_redis._provider import RedisProvider
 from redisvl.extensions.cache.embeddings import EmbeddingsCache
-
+from redisvl.utils.vectorize import OpenAITextVectorizer
 
 
 async def main() -> None:
@@ -65,15 +64,15 @@ async def main() -> None:
     # Create agent wired to the Redis context provider. The provider automatically
     # persists conversational details and surfaces relevant context on each turn.
     agent = client.create_agent(
-            name="MemoryEnhancedAssistant",
-            instructions=(
-                "You are a helpful assistant. Personalize replies using provided context. "
-                "Before answering, always check for stored context"
-            ),
-            tools=[],
-            context_providers=provider,
-            chat_message_store_factory=chat_message_store_factory,
-        )
+        name="MemoryEnhancedAssistant",
+        instructions=(
+            "You are a helpful assistant. Personalize replies using provided context. "
+            "Before answering, always check for stored context"
+        ),
+        tools=[],
+        context_providers=provider,
+        chat_message_store_factory=chat_message_store_factory,
+    )
 
     # Teach a user preference; the agent writes this to the provider's memory
     query = "Remember that I enjoy gumbo"
@@ -108,6 +107,7 @@ async def main() -> None:
     print("Agent: ", result)
     # Drop / delete the provider index in Redis
     await provider.redis_index.delete()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

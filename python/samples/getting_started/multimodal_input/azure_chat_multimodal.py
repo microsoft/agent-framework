@@ -6,11 +6,12 @@ import base64
 import requests
 from agent_framework import ChatMessage, DataContent, Role, TextContent
 from agent_framework.azure import AzureOpenAIChatClient
+from azure.identity import AzureCliCredential
 
 
-async def test_image():
+async def test_image() -> None:
     """Test image analysis with Azure."""
-    client = AzureOpenAIChatClient()
+    client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     # Fetch image from httpbin
     image_url = "https://httpbin.org/image/jpeg"
@@ -27,7 +28,7 @@ async def test_image():
     print(f"Image Response: {response}")
 
 
-async def main():
+async def main() -> None:
     print("=== Testing Azure Multimodal ===")
     await test_image()
 

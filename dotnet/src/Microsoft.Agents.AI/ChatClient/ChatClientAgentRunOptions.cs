@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI;
@@ -20,4 +21,9 @@ public sealed class ChatClientAgentRunOptions : AgentRunOptions
 
     /// <summary>Gets or sets optional chat options to pass to the agent's invocation.</summary>
     public ChatOptions? ChatOptions { get; set; }
+
+    /// <summary>
+    /// Gets or sets the factory method used to modify instances of <see cref="IChatClient"/> per-request.
+    /// </summary>
+    public Func<IChatClient, IChatClient>? ChatClientFactory { get; set; }
 }

@@ -33,8 +33,8 @@ trigger:
 
     - kind: SetVariable
       id: set_project
-      variable: Local.Project
-      value: =System.LastMessage.Text
+      variable: Local.InputTask
+      value: =UserMessage(System.LastMessageText)
 
     - kind: InvokeAzureAgent
       id: question_student
@@ -42,11 +42,11 @@ trigger:
       agent:
         name: =Env.FOUNDRY_AGENT_STUDENT
       input:
-        messages: =[UserMessage(Local.Project)]
+        messages: =Local.InputTask
 
     - kind: ResetVariable
       id: reset_project
-      variable: Local.Project
+      variable: Local.InputTask
 
     - kind: InvokeAzureAgent
       id: question_teacher
@@ -65,7 +65,7 @@ trigger:
       id: check_completion
       conditions:
 
-        - condition: =!IsBlank(Find("CONGRATULATIONS", Upper(Local.TeacherResponse.Text)))
+        - condition: =!IsBlank(Find("CONGRATULATIONS", Upper(Last(Local.TeacherResponse).Text)))
           id: check_turn_done
           actions:
 

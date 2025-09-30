@@ -1,0 +1,15 @@
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: workflow_test
+  actions:
+
+    - kind: InvokeAzureAgent
+      id: invoke_agent
+      agent:
+        name: =Env.FOUNDRY_AGENT_TEST
+      input:
+        messages: =[UserMessage(System.LastMessageText)]
+      output:
+        messages: Local.Answer

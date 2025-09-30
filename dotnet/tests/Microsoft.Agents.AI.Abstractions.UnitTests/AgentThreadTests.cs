@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 
 #pragma warning disable CA1861 // Avoid constant arrays as arguments
@@ -15,10 +14,10 @@ namespace Microsoft.Agents.AI.Abstractions.UnitTests;
 public class AgentThreadTests
 {
     [Fact]
-    public async Task SerializeAsync_ReturnsDefaultJsonElementAsync()
+    public void Serialize_ReturnsDefaultJsonElement()
     {
         var thread = new TestAgentThread();
-        var result = await thread.SerializeAsync();
+        var result = thread.Serialize();
         Assert.Equal(default, result);
     }
 

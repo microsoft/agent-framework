@@ -2,7 +2,6 @@
 
 using System;
 using System.Text.Json;
-using System.Threading.Tasks;
 
 namespace Microsoft.Agents.AI.Abstractions.UnitTests;
 
@@ -74,13 +73,13 @@ public class ServiceIdAgentThreadTests
     #region SerializeAsync Tests
 
     [Fact]
-    public async Task SerializeAsync_ReturnsCorrectJson_WhenServiceThreadIdIsSetAsync()
+    public void Serialize_ReturnsCorrectJson_WhenServiceThreadIdIsSet()
     {
         // Arrange
         var thread = new TestServiceIdAgentThread("service-id-789");
 
         // Act
-        var json = await thread.SerializeAsync();
+        var json = thread.Serialize();
 
         // Assert
         Assert.Equal(JsonValueKind.Object, json.ValueKind);
@@ -89,13 +88,13 @@ public class ServiceIdAgentThreadTests
     }
 
     [Fact]
-    public async Task SerializeAsync_ReturnsUndefinedServiceThreadId_WhenNotSetAsync()
+    public void Serialize_ReturnsUndefinedServiceThreadId_WhenNotSet()
     {
         // Arrange
         var thread = new TestServiceIdAgentThread();
 
         // Act
-        var json = await thread.SerializeAsync();
+        var json = thread.Serialize();
 
         // Assert
         Assert.Equal(JsonValueKind.Object, json.ValueKind);

@@ -1,13 +1,13 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using A2A;
 using Microsoft.Agents.AI.Hosting.A2A.Converters;
 using Microsoft.Agents.AI.Runtime;
 using Microsoft.Extensions.Logging;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Hosting.A2A.Internal;
 
@@ -16,51 +16,26 @@ namespace Microsoft.Agents.AI.Hosting.A2A.Internal;
 /// </summary>
 internal sealed class A2AAgentWrapper
 {
-    private readonly AIAgent _innerAgent;
-    private readonly IActorClient _actorClient;
+    private readonly AgentProxy _agentProxy;
 
     public A2AAgentWrapper(
         IActorClient actorClient,
         AIAgent innerAgent,
         ILoggerFactory? loggerFactory = null)
     {
-        this._actorClient = actorClient;
-        this._innerAgent = innerAgent ?? throw new ArgumentNullException(nameof(innerAgent));
+        Throw.IfNullOrEmpty(innerAgent.Name);
+
+        this._agentProxy = new AgentProxy(innerAgent.Name, actorClient);
     }
 
     public async Task<Message> ProcessMessageAsync(MessageSendParams messageSendParams, CancellationToken cancellationToken)
     {
         var contextId = messageSendParams.Message.ContextId ?? Guid.NewGuid().ToString("N");
-        var messageId = messageSendParams.Message.MessageId;
-
-        var actorId = new ActorId(type: this.GetActorType(), key: contextId!);
-
-        // Verify request does not exist already
-        var existingResponseHandle = await this._actorClient.GetResponseAsync(actorId, messageId, cancellationToken).ConfigureAwait(false);
-        var existingResponse = await existingResponseHandle.GetResponseAsync(cancellationToken).ConfigureAwait(false);
-        if (existingResponse.Status is RequestStatus.Completed or RequestStatus.Failed)
-        {
-            return existingResponse.ToMessage();
-        }
-
-        // here we know we did not yet send the request, so lets do it
         var chatMessages = messageSendParams.ToChatMessages();
-        var runRequest = new AgentRunRequest
-        {
-            Messages = chatMessages
-        };
-        var @params = JsonSerializer.SerializeToElement(runRequest, AgentHostingJsonUtilities.DefaultOptions.GetTypeInfo(typeof(AgentRunRequest)));
 
-        var requestHandle = await this._actorClient.SendRequestAsync(new ActorRequest(actorId, messageId, method: "Run" /* ?refer to const here? */, @params: @params), cancellationToken).ConfigureAwait(false);
-        var response = await requestHandle.GetResponseAsync(cancellationToken).ConfigureAwait(false);
+        var thread = this._agentProxy.GetNewThread(contextId);
+        var response = await this._agentProxy.RunAsync(messages: chatMessages, thread: thread, options: null, cancellationToken: cancellationToken).ConfigureAwait(false);
 
-        return response.ToMessage();
-    }
-
-    private ActorType GetActorType()
-    {
-        // agent is registered in DI via name
-        ArgumentException.ThrowIfNullOrEmpty(this._innerAgent.Name);
-        return new ActorType(this._innerAgent.Name);
+        return response.ToMessage(contextId);
     }
 }

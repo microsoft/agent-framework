@@ -9,9 +9,9 @@ using System.Reflection;
 using System.Threading.Tasks;
 using Azure.AI.Agents.Persistent;
 using Azure.Identity;
-using Microsoft.Agents.Workflows;
-using Microsoft.Agents.Workflows.Declarative;
-using Microsoft.Agents.Workflows.Declarative.Events;
+using Microsoft.Agents.AI.Workflows;
+using Microsoft.Agents.AI.Workflows.Declarative;
+using Microsoft.Agents.AI.Workflows.Declarative.Events;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 

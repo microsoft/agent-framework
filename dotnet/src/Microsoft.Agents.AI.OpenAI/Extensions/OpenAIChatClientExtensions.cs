@@ -28,10 +28,18 @@ public static class OpenAIChatClientExtensions
     /// <param name="name">Optional name for the agent for identification purposes.</param>
     /// <param name="description">Optional description of the agent's capabilities and purpose.</param>
     /// <param name="tools">Optional collection of AI tools that the agent can use during conversations.</param>
+    /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <param name="loggerFactory">Optional logger factory for enabling logging within the agent.</param>
     /// <returns>An <see cref="AIAgent"/> instance backed by the OpenAI Chat Completion service.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> is <see langword="null"/>.</exception>
-    public static AIAgent CreateAIAgent(this ChatClient client, string? instructions = null, string? name = null, string? description = null, IList<AITool>? tools = null, ILoggerFactory? loggerFactory = null) =>
+    public static AIAgent CreateAIAgent(
+        this ChatClient client,
+        string? instructions = null,
+        string? name = null,
+        string? description = null,
+        IList<AITool>? tools = null,
+        Func<IChatClient, IChatClient>? clientFactory = null,
+        ILoggerFactory? loggerFactory = null) =>
         client.CreateAIAgent(
             new ChatClientAgentOptions()
             {
@@ -43,6 +51,7 @@ public static class OpenAIChatClientExtensions
                     Tools = tools,
                 }
             },
+            clientFactory,
             loggerFactory);
 
     /// <summary>
@@ -50,15 +59,26 @@ public static class OpenAIChatClientExtensions
     /// </summary>
     /// <param name="client">The OpenAI <see cref="ChatClient"/> to use for the agent.</param>
     /// <param name="options">Full set of options to configure the agent.</param>
+    /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <param name="loggerFactory">Optional logger factory for enabling logging within the agent.</param>
     /// <returns>An <see cref="AIAgent"/> instance backed by the OpenAI Chat Completion service.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> or <paramref name="options"/> is <see langword="null"/>.</exception>
-    public static AIAgent CreateAIAgent(this ChatClient client, ChatClientAgentOptions options, ILoggerFactory? loggerFactory = null)
+    public static AIAgent CreateAIAgent(
+        this ChatClient client,
+        ChatClientAgentOptions options,
+        Func<IChatClient, IChatClient>? clientFactory = null,
+        ILoggerFactory? loggerFactory = null)
     {
         Throw.IfNull(client);
         Throw.IfNull(options);
 
         var chatClient = client.AsIChatClient();
+
+        if (clientFactory is not null)
+        {
+            chatClient = clientFactory(chatClient);
+        }
+
         return new ChatClientAgent(chatClient, options, loggerFactory);
     }
 }

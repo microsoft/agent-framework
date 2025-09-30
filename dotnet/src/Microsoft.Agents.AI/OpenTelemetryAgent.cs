@@ -50,7 +50,7 @@ public sealed partial class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
         this._activitySource = new(name);
         this._meter = new(name);
         this._logger = logger ?? NullLogger.Instance;
-        this._system = this.GetService<AIAgentMetadata>()?.ProviderName ?? OpenTelemetryConsts.GenAI.SystemNameValues.MicrosoftExtensionsAIAgents;
+        this._system = this.GetService<AIAgentMetadata>()?.ProviderName ?? OpenTelemetryConsts.GenAI.SystemNameValues.MicrosoftAgentsAI;
 
         // Attempt to get the open telemetry chat client if the inner agent is a ChatClientAgent.
         this._openTelemetryChatClient = (this.InnerAgent as ChatClientAgent)?.ChatClient.GetService<OpenTelemetryChatClient>();

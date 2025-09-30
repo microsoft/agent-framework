@@ -4,7 +4,7 @@ description = "Experimental modules for Microsoft Agent Framework"
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "0.1.0b1"
+version = "1.0.0-b251001"
 license-files = ["LICENSE"]
 urls.homepage = "https://learn.microsoft.com/en-us/semantic-kernel/overview/"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -21,7 +21,7 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-  "agent-framework",
+  "agent-framework-core",
 ]
 
 [project.optional-dependencies]
@@ -36,7 +36,8 @@ gaia = [
 
 # Lightning RL training module dependencies
 lightning = [
-  "pydantic>=2.0.0",
+  # Till 0.2.0 is released
+  "agentlightning @ git+https://github.com/microsoft/agent-lightning@138ad0e48780b65ccefa628ee7a5fb9fb27aca01",
 ]
 
 # TAU2 benchmark module dependencies
@@ -48,6 +49,10 @@ tau2 = [
   "tau2@ git+https://github.com/sierra-research/tau2-bench@5ba9e3e56db57c5e4114bf7f901291f09b2c5619",
 ]
 
+# Dependencies for math-related training
+math = [
+  "sympy>=1.13.0",
+]
 
 [project.scripts]
 gaia_viewer = "agent_framework_lab_gaia:viewer_main"
@@ -82,6 +87,7 @@ agent_framework_lab_tau2 = ["py.typed"]
 
 [tool.ruff]
 extend = "../../pyproject.toml"
+extend-exclude = ["**/data/**"]
 
 [tool.ruff.lint]
 ignore = ["T201", "ASYNC230", "INP001"]  # Allow print statements, blocking file operations, and implicit namespace packages in lab modules
@@ -130,6 +136,8 @@ test-tau2 = "pytest tau2/tests --cov=agent_framework_lab_tau2 --cov-report=term-
 [tool.pytest.ini_options]
 pythonpath = ["."]
 addopts = "--strict-markers --strict-config"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 markers = [
   "unit: marks tests as unit tests",
   "integration: marks tests as integration tests",

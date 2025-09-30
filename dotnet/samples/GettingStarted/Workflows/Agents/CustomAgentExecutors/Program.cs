@@ -7,8 +7,8 @@ using System.Threading.Tasks;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.Workflows;
-using Microsoft.Agents.Workflows.Reflection;
+using Microsoft.Agents.AI.Workflows;
+using Microsoft.Agents.AI.Workflows.Reflection;
 using Microsoft.Extensions.AI;
 
 namespace WorkflowCustomAgentExecutorsSample;
@@ -128,7 +128,7 @@ internal sealed class SloganWriterExecutor
         {
             ChatOptions = new()
             {
-                ResponseFormat = ChatResponseFormat.ForJsonSchema(AIJsonUtilities.CreateJsonSchema(typeof(SloganResult)))
+                ResponseFormat = ChatResponseFormat.ForJsonSchema<SloganResult>()
             }
         };
 
@@ -199,7 +199,7 @@ internal sealed class FeedbackExecutor : ReflectingExecutor<FeedbackExecutor>, I
         {
             ChatOptions = new()
             {
-                ResponseFormat = ChatResponseFormat.ForJsonSchema(AIJsonUtilities.CreateJsonSchema(typeof(FeedbackResult)))
+                ResponseFormat = ChatResponseFormat.ForJsonSchema<FeedbackResult>()
             }
         };
 

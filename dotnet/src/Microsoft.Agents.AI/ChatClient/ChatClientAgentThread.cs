@@ -149,21 +149,16 @@ public class ChatClientAgentThread : AgentThread
     /// </summary>
     public AIContextProvider? AIContextProvider { get; internal set; }
 
-    /// <summary>
-    /// Serializes the current object's state to a <see cref="JsonElement"/> using the specified serialization options.
-    /// </summary>
-    /// <param name="jsonSerializerOptions">The JSON serialization options to use.</param>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A <see cref="JsonElement"/> representation of the object's state.</returns>
-    public override async Task<JsonElement> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    /// <inheritdoc/>
+    public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
     {
-        var storeState = this._messageStore is null ?
+        JsonElement? storeState = this._messageStore is null ?
             null :
-            await this._messageStore.SerializeStateAsync(jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
+            this._messageStore.Serialize(jsonSerializerOptions);
 
-        var aiContextProviderState = this.AIContextProvider is null ?
+        JsonElement? aiContextProviderState = this.AIContextProvider is null ?
             null :
-            await this.AIContextProvider.SerializeAsync(jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
+            this.AIContextProvider.Serialize(jsonSerializerOptions);
 
         var state = new ThreadState
         {

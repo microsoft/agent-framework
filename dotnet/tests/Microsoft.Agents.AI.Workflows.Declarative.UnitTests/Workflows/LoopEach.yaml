@@ -1,0 +1,25 @@
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: my_workflow
+  actions:
+
+    - kind: Foreach
+      id: foreach_loop
+      items: =["a", "b", "c", "d", "e", "f"]
+      index: Local.LoopIndex
+      value: Local.LoopValue
+      actions:
+
+        - kind: SetVariable
+          id: set_variable_inner
+          variable: Local.Count
+          value: =Local.Count + 1
+
+        - kind: SendActivity
+          id: send_activity_inner
+          activity: x{Local.Count} - {Local.LoopIndex}:{Local.LoopValue}
+
+    - kind: EndConversation
+      id: end_all

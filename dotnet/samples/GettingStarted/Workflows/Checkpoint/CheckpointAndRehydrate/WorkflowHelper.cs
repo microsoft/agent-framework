@@ -2,8 +2,8 @@
 
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.Workflows;
-using Microsoft.Agents.Workflows.Reflection;
+using Microsoft.Agents.AI.Workflows;
+using Microsoft.Agents.AI.Workflows.Reflection;
 
 namespace WorkflowCheckpointAndRehydrateSample;
 

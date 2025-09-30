@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import Collection
 from typing import Any
 
-from agent_framework import ChatMessage, ChatMessageStore
+from agent_framework import ChatMessage, ChatMessageStoreProtocol
 from agent_framework.openai import OpenAIChatClient
 from pydantic import BaseModel
 
@@ -15,7 +15,7 @@ class CustomStoreState(BaseModel):
     messages: list[ChatMessage]
 
 
-class CustomChatMessageStore(ChatMessageStore):
+class CustomChatMessageStore(ChatMessageStoreProtocol):
     """Implementation of custom chat message store.
     In real applications, this can be an implementation of relational database or vector store."""
 
