@@ -203,7 +203,7 @@ class OpenAIConfigMixin(OpenAIBase):
 
         # Store configuration as instance attributes for serialization
         self.org_id = org_id
-        self.base_url = base_url
+        self.base_url = str(base_url)
         # Store default_headers but filter out USER_AGENT_KEY for serialization
         if default_headers:
             self.default_headers: dict[str, Any] | None = {

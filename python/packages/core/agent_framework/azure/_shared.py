@@ -209,8 +209,8 @@ class AzureOpenAIConfigMixin(OpenAIBase):
             client = AsyncAzureOpenAI(**args)
 
         # Store configuration as instance attributes for serialization
-        self.endpoint = endpoint
-        self.base_url = base_url
+        self.endpoint = str(endpoint)
+        self.base_url = str(base_url)
         self.api_version = api_version
         self.deployment_name = deployment_name
         self.instruction_role = instruction_role
