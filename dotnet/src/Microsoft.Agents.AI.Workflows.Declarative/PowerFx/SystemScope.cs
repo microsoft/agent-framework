@@ -5,6 +5,7 @@ using System.Collections.Frozen;
 using System.Globalization;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
+using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.SystemVariables;
 using Microsoft.Extensions.AI;

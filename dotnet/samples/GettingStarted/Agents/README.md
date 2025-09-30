@@ -40,6 +40,7 @@ Before you begin, ensure you have the following prerequisites:
 |[Exposing a simple agent as a function tool](./Agent_Step12_AsFunctionTool/)|This sample demonstrates how to expose an agent as a function tool|
 |[Using memory with an agent](./Agent_Step13_Memory/)|This sample demonstrates how to create a simple memory component and use it with an agent|
 |[Using middleware with an agent](./Agent_Step14_Middleware/)|This sample demonstrates how to use middleware with an agent|
+|[Using plugins with an agent](./Agent_Step15_Plugins/)|This sample demonstrates how to use plugins with an agent|
 
 ## Running the samples from the console
 

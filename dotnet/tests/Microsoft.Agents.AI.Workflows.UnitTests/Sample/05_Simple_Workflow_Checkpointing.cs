@@ -13,7 +13,7 @@ internal static class Step5EntryPoint
 {
     public static async ValueTask<string> RunAsync(TextWriter writer, Func<string, int> userGuessCallback, bool rehydrateToRestore = false, CheckpointManager? checkpointManager = null)
     {
-        Dictionary<CheckpointInfo, (NumberSignal signal, string? prompt)> checkpointedOutputs = new();
+        Dictionary<CheckpointInfo, (NumberSignal signal, string? prompt)> checkpointedOutputs = [];
 
         NumberSignal signal = NumberSignal.Init;
         string? prompt = Step4EntryPoint.UpdatePrompt(null, signal);
@@ -41,7 +41,7 @@ internal static class Step5EntryPoint
         {
             await handle.EndRunAsync().ConfigureAwait(false);
 
-            checkpointed = await InProcessExecution.ResumeStreamAsync(workflow, targetCheckpoint, checkpointManager, runId: handle.RunId, cancellation: CancellationToken.None)
+            checkpointed = await InProcessExecution.ResumeStreamAsync(workflow, targetCheckpoint, checkpointManager, runId: handle.RunId, cancellationToken: CancellationToken.None)
                                                    .ConfigureAwait(false);
             handle = checkpointed.Run;
         }

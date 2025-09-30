@@ -5,8 +5,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-import pytest
-
 from agent_framework._workflows._checkpoint import CheckpointStorage, WorkflowCheckpoint
 from agent_framework._workflows._events import RequestInfoEvent, WorkflowEvent
 from agent_framework._workflows._executor import (
@@ -295,7 +293,6 @@ def test_restore_state_falls_back_to_base_request_type() -> None:
     assert isinstance(restored.data, RequestInfoMessage)
 
 
-@pytest.mark.asyncio
 async def test_run_persists_pending_requests_in_runner_state() -> None:
     shared_state = SharedState()
     runner_ctx = _StubRunnerContext()

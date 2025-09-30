@@ -5,8 +5,8 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
+using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
-using Microsoft.Agents.AI.Workflows.Reflection;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.PowerFx.Types;
 using Xunit.Abstractions;
@@ -68,11 +68,9 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
         return (TAction)model.Actions[0];
     }
 
-    internal sealed class TestWorkflowExecutor() :
-        ReflectingExecutor<TestWorkflowExecutor>(nameof(TestWorkflowExecutor)),
-        IMessageHandler<WorkflowFormulaState>
+    internal sealed class TestWorkflowExecutor() : Executor<WorkflowFormulaState>("test_workflow")
     {
-        public async ValueTask HandleAsync(WorkflowFormulaState message, IWorkflowContext context) =>
+        public override async ValueTask HandleAsync(WorkflowFormulaState message, IWorkflowContext context) =>
             await context.SendMessageAsync(new ActionExecutorResult(this.Id)).ConfigureAwait(false);
     }
 }

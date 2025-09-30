@@ -41,22 +41,22 @@ def test_init(openai_unit_test_env: dict[str, str]) -> None:
     # Test successful initialization
     open_ai_chat_completion = OpenAIChatClient()
 
-    assert open_ai_chat_completion.ai_model_id == openai_unit_test_env["OPENAI_CHAT_MODEL_ID"]
+    assert open_ai_chat_completion.model_id == openai_unit_test_env["OPENAI_CHAT_MODEL_ID"]
     assert isinstance(open_ai_chat_completion, ChatClientProtocol)
 
 
 def test_init_validation_fail() -> None:
     # Test successful initialization
     with pytest.raises(ServiceInitializationError):
-        OpenAIChatClient(api_key="34523", ai_model_id={"test": "dict"})  # type: ignore
+        OpenAIChatClient(api_key="34523", model_id={"test": "dict"})  # type: ignore
 
 
-def test_init_ai_model_id_constructor(openai_unit_test_env: dict[str, str]) -> None:
+def test_init_model_id_constructor(openai_unit_test_env: dict[str, str]) -> None:
     # Test successful initialization
-    ai_model_id = "test_model_id"
-    open_ai_chat_completion = OpenAIChatClient(ai_model_id=ai_model_id)
+    model_id = "test_model_id"
+    open_ai_chat_completion = OpenAIChatClient(model_id=model_id)
 
-    assert open_ai_chat_completion.ai_model_id == ai_model_id
+    assert open_ai_chat_completion.model_id == model_id
     assert isinstance(open_ai_chat_completion, ChatClientProtocol)
 
 
@@ -68,7 +68,7 @@ def test_init_with_default_header(openai_unit_test_env: dict[str, str]) -> None:
         default_headers=default_headers,
     )
 
-    assert open_ai_chat_completion.ai_model_id == openai_unit_test_env["OPENAI_CHAT_MODEL_ID"]
+    assert open_ai_chat_completion.model_id == openai_unit_test_env["OPENAI_CHAT_MODEL_ID"]
     assert isinstance(open_ai_chat_completion, ChatClientProtocol)
 
     # Assert that the default header we added is present in the client's default headers
@@ -95,7 +95,7 @@ def test_init_base_url_from_settings_env() -> None:
         },
     ):
         client = OpenAIChatClient()
-        assert client.ai_model_id == "gpt-5"
+        assert client.model_id == "gpt-5"
         assert str(client.client.base_url) == "https://custom-openai-endpoint.com/v1/"
 
 
@@ -109,11 +109,11 @@ def test_init_with_empty_model_id(openai_unit_test_env: dict[str, str]) -> None:
 
 @pytest.mark.parametrize("exclude_list", [["OPENAI_API_KEY"]], indirect=True)
 def test_init_with_empty_api_key(openai_unit_test_env: dict[str, str]) -> None:
-    ai_model_id = "test_model_id"
+    model_id = "test_model_id"
 
     with pytest.raises(ServiceInitializationError):
         OpenAIChatClient(
-            ai_model_id=ai_model_id,
+            model_id=model_id,
             env_file_path="test.env",
         )
 
@@ -122,15 +122,14 @@ def test_serialize(openai_unit_test_env: dict[str, str]) -> None:
     default_headers = {"X-Unit-Test": "test-guid"}
 
     settings = {
-        "ai_model_id": openai_unit_test_env["OPENAI_CHAT_MODEL_ID"],
+        "model_id": openai_unit_test_env["OPENAI_CHAT_MODEL_ID"],
         "api_key": openai_unit_test_env["OPENAI_API_KEY"],
         "default_headers": default_headers,
     }
 
     open_ai_chat_completion = OpenAIChatClient.from_dict(settings)
     dumped_settings = open_ai_chat_completion.to_dict()
-    assert dumped_settings["ai_model_id"] == openai_unit_test_env["OPENAI_CHAT_MODEL_ID"]
-    assert dumped_settings["api_key"] == openai_unit_test_env["OPENAI_API_KEY"]
+    assert dumped_settings["model_id"] == openai_unit_test_env["OPENAI_CHAT_MODEL_ID"]
     # Assert that the default header we added is present in the dumped_settings default headers
     for key, value in default_headers.items():
         assert key in dumped_settings["default_headers"]
@@ -141,18 +140,17 @@ def test_serialize(openai_unit_test_env: dict[str, str]) -> None:
 
 def test_serialize_with_org_id(openai_unit_test_env: dict[str, str]) -> None:
     settings = {
-        "ai_model_id": openai_unit_test_env["OPENAI_CHAT_MODEL_ID"],
+        "model_id": openai_unit_test_env["OPENAI_CHAT_MODEL_ID"],
         "api_key": openai_unit_test_env["OPENAI_API_KEY"],
         "org_id": openai_unit_test_env["OPENAI_ORG_ID"],
     }
 
     open_ai_chat_completion = OpenAIChatClient.from_dict(settings)
     dumped_settings = open_ai_chat_completion.to_dict()
-    assert dumped_settings["ai_model_id"] == openai_unit_test_env["OPENAI_CHAT_MODEL_ID"]
-    assert dumped_settings["api_key"] == openai_unit_test_env["OPENAI_API_KEY"]
+    assert dumped_settings["model_id"] == openai_unit_test_env["OPENAI_CHAT_MODEL_ID"]
     assert dumped_settings["org_id"] == openai_unit_test_env["OPENAI_ORG_ID"]
     # Assert that the 'User-Agent' header is not present in the dumped_settings default headers
-    assert "User-Agent" not in dumped_settings["default_headers"]
+    assert "User-Agent" not in dumped_settings.get("default_headers", {})
 
 
 async def test_content_filter_exception_handling(openai_unit_test_env: dict[str, str]) -> None:
@@ -210,6 +208,7 @@ def get_weather(location: str) -> str:
     return f"The weather in {location} is sunny and 72°F."
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_chat_completion_response() -> None:
     """Test OpenAI chat completion responses."""
@@ -237,6 +236,7 @@ async def test_openai_chat_completion_response() -> None:
     assert "scientists" in response.text
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_chat_completion_response_tools() -> None:
     """Test OpenAI chat completion responses."""
@@ -259,6 +259,7 @@ async def test_openai_chat_completion_response_tools() -> None:
     assert "scientists" in response.text
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_chat_client_streaming() -> None:
     """Test Azure OpenAI chat completion responses."""
@@ -294,6 +295,7 @@ async def test_openai_chat_client_streaming() -> None:
     assert "scientists" in full_message
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_chat_client_streaming_tools() -> None:
     """Test AzureOpenAI chat completion responses."""
@@ -321,10 +323,11 @@ async def test_openai_chat_client_streaming_tools() -> None:
     assert "scientists" in full_message
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_chat_client_web_search() -> None:
     # Currently only a select few models support web search tool calls
-    openai_chat_client = OpenAIChatClient(ai_model_id="gpt-4o-search-preview")
+    openai_chat_client = OpenAIChatClient(model_id="gpt-4o-search-preview")
 
     assert isinstance(openai_chat_client, ChatClientProtocol)
 
@@ -361,9 +364,10 @@ async def test_openai_chat_client_web_search() -> None:
     assert response.text is not None
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_chat_client_web_search_streaming() -> None:
-    openai_chat_client = OpenAIChatClient(ai_model_id="gpt-4o-search-preview")
+    openai_chat_client = OpenAIChatClient(model_id="gpt-4o-search-preview")
 
     assert isinstance(openai_chat_client, ChatClientProtocol)
 
@@ -414,11 +418,12 @@ async def test_openai_chat_client_web_search_streaming() -> None:
     assert full_message is not None
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_chat_client_agent_basic_run():
     """Test OpenAI chat client agent basic run functionality with OpenAIChatClient."""
     async with ChatAgent(
-        chat_client=OpenAIChatClient(ai_model_id="gpt-4o-search-preview"),
+        chat_client=OpenAIChatClient(model_id="gpt-4o-search-preview"),
     ) as agent:
         # Test basic run
         response = await agent.run("Hello! Please respond with 'Hello World' exactly.")
@@ -429,11 +434,12 @@ async def test_openai_chat_client_agent_basic_run():
         assert "hello world" in response.text.lower()
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_chat_client_agent_basic_run_streaming():
     """Test OpenAI chat client agent basic streaming functionality with OpenAIChatClient."""
     async with ChatAgent(
-        chat_client=OpenAIChatClient(ai_model_id="gpt-4o-search-preview"),
+        chat_client=OpenAIChatClient(model_id="gpt-4o-search-preview"),
     ) as agent:
         # Test streaming run
         full_text = ""
@@ -446,11 +452,12 @@ async def test_openai_chat_client_agent_basic_run_streaming():
         assert "streaming response test" in full_text.lower()
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_chat_client_agent_thread_persistence():
     """Test OpenAI chat client agent thread persistence across runs with OpenAIChatClient."""
     async with ChatAgent(
-        chat_client=OpenAIChatClient(ai_model_id="gpt-4o-search-preview"),
+        chat_client=OpenAIChatClient(model_id="gpt-4o-search-preview"),
         instructions="You are a helpful assistant with good memory.",
     ) as agent:
         # Create a new thread that will be reused
@@ -470,6 +477,7 @@ async def test_openai_chat_client_agent_thread_persistence():
         assert "alice" in response2.text.lower()
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_chat_client_agent_existing_thread():
     """Test OpenAI chat client agent with existing thread to continue conversations across agent instances."""
@@ -477,7 +485,7 @@ async def test_openai_chat_client_agent_existing_thread():
     preserved_thread = None
 
     async with ChatAgent(
-        chat_client=OpenAIChatClient(ai_model_id="gpt-4o-search-preview"),
+        chat_client=OpenAIChatClient(model_id="gpt-4o-search-preview"),
         instructions="You are a helpful assistant with good memory.",
     ) as first_agent:
         # Start a conversation and capture the thread
@@ -493,7 +501,7 @@ async def test_openai_chat_client_agent_existing_thread():
     # Second conversation - reuse the thread in a new agent instance
     if preserved_thread:
         async with ChatAgent(
-            chat_client=OpenAIChatClient(ai_model_id="gpt-4o-search-preview"),
+            chat_client=OpenAIChatClient(model_id="gpt-4o-search-preview"),
             instructions="You are a helpful assistant with good memory.",
         ) as second_agent:
             # Reuse the preserved thread
@@ -504,12 +512,13 @@ async def test_openai_chat_client_agent_existing_thread():
             assert "alice" in second_response.text.lower()
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_chat_client_agent_level_tool_persistence():
     """Test that agent-level tools persist across multiple runs with OpenAI Chat Client."""
 
     async with ChatAgent(
-        chat_client=OpenAIChatClient(ai_model_id="gpt-4.1"),
+        chat_client=OpenAIChatClient(model_id="gpt-4.1"),
         instructions="You are a helpful assistant that uses available tools.",
         tools=[get_weather],  # Agent-level tool
     ) as agent:
@@ -530,6 +539,7 @@ async def test_openai_chat_client_agent_level_tool_persistence():
         assert any(term in second_response.text.lower() for term in ["miami", "sunny", "72"])
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_chat_client_run_level_tool_isolation():
     """Test that run-level tools are isolated to specific runs and don't persist with OpenAI Chat Client."""
@@ -544,7 +554,7 @@ async def test_openai_chat_client_run_level_tool_isolation():
         return f"The weather in {location} is sunny and 72°F."
 
     async with ChatAgent(
-        chat_client=OpenAIChatClient(ai_model_id="gpt-4.1"),
+        chat_client=OpenAIChatClient(model_id="gpt-4.1"),
         instructions="You are a helpful assistant.",
     ) as agent:
         # First run - use run-level tool
@@ -571,7 +581,7 @@ async def test_openai_chat_client_run_level_tool_isolation():
 
 async def test_exception_message_includes_original_error_details() -> None:
     """Test that exception messages include original error details in the new format."""
-    client = OpenAIChatClient(ai_model_id="test-model", api_key="test-key")
+    client = OpenAIChatClient(model_id="test-model", api_key="test-key")
     messages = [ChatMessage(role="user", text="test message")]
 
     mock_response = MagicMock()

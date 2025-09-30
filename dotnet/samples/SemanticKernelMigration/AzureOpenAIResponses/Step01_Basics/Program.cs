@@ -9,8 +9,8 @@ using OpenAI;
 #pragma warning disable SKEXP0110 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 #pragma warning disable OPENAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
-var endpoint = Environment.GetEnvironmentVariable("AZUREOPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZUREOPENAI_ENDPOINT is not set.");
-var deploymentName = System.Environment.GetEnvironmentVariable("AZUREOPENAI_DEPLOYMENT_NAME") ?? "gpt-4o";
+var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+var deploymentName = System.Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o";
 var userInput = "Tell me a joke about a pirate.";
 
 Console.WriteLine($"User Input: {userInput}");
@@ -28,20 +28,21 @@ async Task SKAgentAsync()
     {
         Name = "Joker",
         Instructions = "You are good at telling jokes.",
+        StoreEnabled = true
     };
 
     var agentOptions = new OpenAIResponseAgentInvokeOptions() { ResponseCreationOptions = new() { MaxOutputTokenCount = 1000 } };
 
-    Microsoft.SemanticKernel.Agents.AgentThread? thread = new OpenAIResponseAgentThread(responseClient);
+    Microsoft.SemanticKernel.Agents.AgentThread? thread = null;
     await foreach (var item in agent.InvokeAsync(userInput, thread, agentOptions))
     {
+        thread = item.Thread;
         Console.WriteLine(item.Message);
     }
 
     Console.WriteLine("---");
     await foreach (var item in agent.InvokeStreamingAsync(userInput, thread, agentOptions))
     {
-        // Thread need to be updated for subsequent calls
         thread = item.Thread;
         Console.Write(item.Message);
     }

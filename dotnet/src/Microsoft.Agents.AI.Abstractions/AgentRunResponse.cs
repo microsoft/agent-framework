@@ -1,14 +1,14 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-#if NET9_0_OR_GREATER
+#if NET
 using System.Buffers;
 #endif
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 
-#if NET9_0_OR_GREATER
+#if NET
 using System.Text;
 #endif
 using System.Text.Json;

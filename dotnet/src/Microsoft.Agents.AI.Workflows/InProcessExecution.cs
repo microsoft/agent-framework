@@ -19,61 +19,61 @@ public static class InProcessExecution
         where TInput : notnull
         => new(checkedWorkflow, checkpointManager, runId, [typeof(TInput)]);
 
-    private static ValueTask<StreamingRun> StreamAsync<TInput>(InProcessRunner runner, TInput input, CancellationToken cancellation = default)
-        => runner.StreamAsync(input, cancellation);
+    private static ValueTask<StreamingRun> StreamAsync<TInput>(InProcessRunner runner, TInput input, CancellationToken cancellationToken = default)
+        => runner.StreamAsync(input, cancellationToken);
 
-    private static ValueTask<StreamingRun> StreamAsync(InProcessRunner runner, object input, CancellationToken cancellation = default)
-        => runner.StreamAsync(input, cancellation);
+    private static ValueTask<StreamingRun> StreamAsync(InProcessRunner runner, object input, CancellationToken cancellationToken = default)
+        => runner.StreamAsync(input, cancellationToken);
 
-    private static ValueTask<Run> RunAsync<TInput>(InProcessRunner runner, TInput input, CancellationToken cancellation = default)
-        => runner.RunAsync(input, cancellation);
+    private static ValueTask<Run> RunAsync<TInput>(InProcessRunner runner, TInput input, CancellationToken cancellationToken = default)
+        => runner.RunAsync(input, cancellationToken);
 
-    private static ValueTask<Run> RunAsync(InProcessRunner runner, object input, CancellationToken cancellation = default)
-        => runner.RunAsync(input, cancellation);
+    private static ValueTask<Run> RunAsync(InProcessRunner runner, object input, CancellationToken cancellationToken = default)
+        => runner.RunAsync(input, cancellationToken);
 
-    private static async ValueTask<Checkpointed<StreamingRun>> StreamCheckpointedAsync<TInput>(InProcessRunner runner, TInput input, CancellationToken cancellation = default)
+    private static async ValueTask<Checkpointed<StreamingRun>> StreamCheckpointedAsync<TInput>(InProcessRunner runner, TInput input, CancellationToken cancellationToken = default)
         where TInput : notnull
     {
-        StreamingRun run = await StreamAsync(runner, input, cancellation).ConfigureAwait(false);
-        await runner.CheckpointAsync(cancellation).ConfigureAwait(false);
+        StreamingRun run = await StreamAsync(runner, input, cancellationToken).ConfigureAwait(false);
+        await runner.CheckpointAsync(cancellationToken).ConfigureAwait(false);
 
         return new(run, runner);
     }
 
-    private static async ValueTask<Checkpointed<StreamingRun>> StreamCheckpointedAsync(InProcessRunner runner, object input, CancellationToken cancellation = default)
+    private static async ValueTask<Checkpointed<StreamingRun>> StreamCheckpointedAsync(InProcessRunner runner, object input, CancellationToken cancellationToken = default)
     {
-        StreamingRun run = await StreamAsync(runner, input, cancellation).ConfigureAwait(false);
-        await runner.CheckpointAsync(cancellation).ConfigureAwait(false);
+        StreamingRun run = await StreamAsync(runner, input, cancellationToken).ConfigureAwait(false);
+        await runner.CheckpointAsync(cancellationToken).ConfigureAwait(false);
 
         return new(run, runner);
     }
 
-    private static async ValueTask<Checkpointed<Run>> RunCheckpointedAsync<TInput>(InProcessRunner runner, TInput input, CancellationToken cancellation = default)
+    private static async ValueTask<Checkpointed<Run>> RunCheckpointedAsync<TInput>(InProcessRunner runner, TInput input, CancellationToken cancellationToken = default)
         where TInput : notnull
     {
-        Run run = await RunAsync(runner, input, cancellation).ConfigureAwait(false);
-        await runner.CheckpointAsync(cancellation).ConfigureAwait(false);
+        Run run = await RunAsync(runner, input, cancellationToken).ConfigureAwait(false);
+        await runner.CheckpointAsync(cancellationToken).ConfigureAwait(false);
 
         return new(run, runner);
     }
 
-    private static async ValueTask<Checkpointed<Run>> RunCheckpointedAsync(InProcessRunner runner, object input, CancellationToken cancellation = default)
+    private static async ValueTask<Checkpointed<Run>> RunCheckpointedAsync(InProcessRunner runner, object input, CancellationToken cancellationToken = default)
     {
-        Run run = await RunAsync(runner, input, cancellation).ConfigureAwait(false);
-        await runner.CheckpointAsync(cancellation).ConfigureAwait(false);
+        Run run = await RunAsync(runner, input, cancellationToken).ConfigureAwait(false);
+        await runner.CheckpointAsync(cancellationToken).ConfigureAwait(false);
 
         return new(run, runner);
     }
 
-    private static async ValueTask<Checkpointed<StreamingRun>> ResumeStreamCheckpointedAsync(InProcessRunner runner, CheckpointInfo fromCheckpoint, CancellationToken cancellation = default)
+    private static async ValueTask<Checkpointed<StreamingRun>> ResumeStreamCheckpointedAsync(InProcessRunner runner, CheckpointInfo fromCheckpoint, CancellationToken cancellationToken = default)
     {
-        StreamingRun run = await runner.ResumeStreamAsync(fromCheckpoint, cancellation).ConfigureAwait(false);
+        StreamingRun run = await runner.ResumeStreamAsync(fromCheckpoint, cancellationToken).ConfigureAwait(false);
         return new(run, runner);
     }
 
-    private static async ValueTask<Checkpointed<Run>> ResumeRunCheckpointedAsync(InProcessRunner runner, CheckpointInfo fromCheckpoint, CancellationToken cancellation = default)
+    private static async ValueTask<Checkpointed<Run>> ResumeRunCheckpointedAsync(InProcessRunner runner, CheckpointInfo fromCheckpoint, CancellationToken cancellationToken = default)
     {
-        Run run = await runner.ResumeAsync(fromCheckpoint, cancellation).ConfigureAwait(false);
+        Run run = await runner.ResumeAsync(fromCheckpoint, cancellationToken).ConfigureAwait(false);
         return new(run, runner);
     }
 
@@ -87,17 +87,17 @@ public static class InProcessExecution
     /// <param name="workflow">The workflow to be executed. Must not be <c>null</c>.</param>
     /// <param name="input">The input message to be processed as part of the streaming run.</param>
     /// <param name="runId">An optional unique identifier for the run. If not provided, a new identifier will be generated.</param>
-    /// <param name="cancellation">A <see cref="CancellationToken"/> that can be used to cancel the streaming operation.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ValueTask{StreamingRun}"/> that represents the asynchronous operation. The result contains a <see
     /// cref="StreamingRun"/> for managing and interacting with the streaming run.</returns>
     public static ValueTask<StreamingRun> StreamAsync<TInput>(
         Workflow workflow,
         TInput input,
         string? runId = null,
-        CancellationToken cancellation = default) where TInput : notnull
+        CancellationToken cancellationToken = default) where TInput : notnull
     {
         InProcessRunner runner = CreateRunner(workflow, checkpointManager: null, runId);
-        return StreamAsync(runner, (object)input, cancellation);
+        return StreamAsync(runner, (object)input, cancellationToken);
     }
 
     /// <summary>
@@ -110,17 +110,17 @@ public static class InProcessExecution
     /// <param name="workflow">The workflow to be executed. Must not be <c>null</c>.</param>
     /// <param name="input">The input message to be processed as part of the streaming run.</param>
     /// <param name="runId">An optional unique identifier for the run. If not provided, a new identifier will be generated.</param>
-    /// <param name="cancellation">A <see cref="CancellationToken"/> that can be used to cancel the streaming operation.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ValueTask{StreamingRun}"/> that represents the asynchronous operation. The result contains a <see
     /// cref="StreamingRun"/> for managing and interacting with the streaming run.</returns>
     public static ValueTask<StreamingRun> StreamAsync<TInput>(
         Workflow<TInput> workflow,
         TInput input,
         string? runId = null,
-        CancellationToken cancellation = default) where TInput : notnull
+        CancellationToken cancellationToken = default) where TInput : notnull
     {
         InProcessRunner runner = CreateRunner(workflow, checkpointManager: null, runId);
-        return StreamAsync(runner, input, cancellation);
+        return StreamAsync(runner, input, cancellationToken);
     }
 
     /// <summary>
@@ -134,7 +134,7 @@ public static class InProcessExecution
     /// <param name="input">The input message to be processed as part of the streaming run.</param>
     /// <param name="checkpointManager">The <see cref="CheckpointManager"/> to use with this run.</param>
     /// <param name="runId">An optional unique identifier for the run. If not provided, a new identifier will be generated.</param>
-    /// <param name="cancellation">A <see cref="CancellationToken"/> that can be used to cancel the streaming operation.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ValueTask{StreamingRun}"/> that represents the asynchronous operation. The result contains a <see
     /// cref="StreamingRun"/> for managing and interacting with the streaming run.</returns>
     public static ValueTask<Checkpointed<StreamingRun>> StreamAsync<TInput>(
@@ -142,10 +142,10 @@ public static class InProcessExecution
         TInput input,
         CheckpointManager checkpointManager,
         string? runId = null,
-        CancellationToken cancellation = default) where TInput : notnull
+        CancellationToken cancellationToken = default) where TInput : notnull
     {
         InProcessRunner runner = CreateRunner(workflow, checkpointManager, runId);
-        return StreamCheckpointedAsync(runner, (object)input, cancellation);
+        return StreamCheckpointedAsync(runner, (object)input, cancellationToken);
     }
 
     /// <summary>
@@ -159,7 +159,7 @@ public static class InProcessExecution
     /// <param name="input">The input message to be processed as part of the streaming run.</param>
     /// <param name="checkpointManager">The <see cref="CheckpointManager"/> to use with this run.</param>
     /// <param name="runId">An optional unique identifier for the run. If not provided, a new identifier will be generated.</param>
-    /// <param name="cancellation">A <see cref="CancellationToken"/> that can be used to cancel the streaming operation.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ValueTask{StreamingRun}"/> that represents the asynchronous operation. The result contains a <see
     /// cref="StreamingRun"/> for managing and interacting with the streaming run.</returns>
     public static ValueTask<Checkpointed<StreamingRun>> StreamAsync<TInput>(
@@ -167,55 +167,55 @@ public static class InProcessExecution
         TInput input,
         CheckpointManager checkpointManager,
         string? runId = null,
-        CancellationToken cancellation = default) where TInput : notnull
+        CancellationToken cancellationToken = default) where TInput : notnull
     {
         InProcessRunner runner = CreateRunner(workflow, checkpointManager, runId);
-        return StreamCheckpointedAsync(runner, input, cancellation);
+        return StreamCheckpointedAsync(runner, input, cancellationToken);
     }
 
     /// <summary>
     /// Resumes an asynchronous streaming execution for the specified input from a checkpoint.
     /// </summary>
-    /// <remarks>If the operation is cancelled via the <paramref name="cancellation"/> token, the streaming execution will
+    /// <remarks>If the operation is cancelled via the <paramref name="cancellationToken"/> token, the streaming execution will
     /// be terminated.</remarks>
     /// <param name="workflow">The workflow to be executed. Must not be <c>null</c>.</param>
     /// <param name="fromCheckpoint">The <see cref="CheckpointInfo"/> corresponding to the checkpoint from which to resume.</param>
     /// <param name="checkpointManager">The <see cref="CheckpointManager"/> to use with this run.</param>
     /// <param name="runId">An optional unique identifier for the run. If not provided, a new identifier will be generated.</param>
-    /// <param name="cancellation">A <see cref="CancellationToken"/> that can be used to cancel the streaming operation.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="StreamingRun"/> that provides access to the results of the streaming run.</returns>
     public static ValueTask<Checkpointed<StreamingRun>> ResumeStreamAsync(
         Workflow workflow,
         CheckpointInfo fromCheckpoint,
         CheckpointManager checkpointManager,
         string? runId = null,
-        CancellationToken cancellation = default)
+        CancellationToken cancellationToken = default)
     {
         InProcessRunner runner = CreateRunner(workflow, checkpointManager, runId);
-        return ResumeStreamCheckpointedAsync(runner, fromCheckpoint, cancellation);
+        return ResumeStreamCheckpointedAsync(runner, fromCheckpoint, cancellationToken);
     }
 
     /// <summary>
     /// Resumes an asynchronous streaming execution for the specified input from a checkpoint.
     /// </summary>
-    /// <remarks>If the operation is cancelled via the <paramref name="cancellation"/> token, the streaming execution will
+    /// <remarks>If the operation is cancelled via the <paramref name="cancellationToken"/> token, the streaming execution will
     /// be terminated.</remarks>
     /// <typeparam name="TInput">The type of input accepted by the workflow. Must be non-nullable.</typeparam>
     /// <param name="workflow">The workflow to be executed. Must not be <c>null</c>.</param>
     /// <param name="fromCheckpoint">The <see cref="CheckpointInfo"/> corresponding to the checkpoint from which to resume.</param>
     /// <param name="checkpointManager">The <see cref="CheckpointManager"/> to use with this run.</param>
     /// <param name="runId">An optional unique identifier for the run. If not provided, a new identifier will be generated.</param>
-    /// <param name="cancellation">A <see cref="CancellationToken"/> that can be used to cancel the streaming operation.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="StreamingRun"/> that provides access to the results of the streaming run.</returns>
     public static ValueTask<Checkpointed<StreamingRun>> ResumeStreamAsync<TInput>(
         Workflow<TInput> workflow,
         CheckpointInfo fromCheckpoint,
         CheckpointManager checkpointManager,
         string? runId = null,
-        CancellationToken cancellation = default) where TInput : notnull
+        CancellationToken cancellationToken = default) where TInput : notnull
     {
         InProcessRunner runner = CreateRunner(workflow, checkpointManager, runId);
-        return ResumeStreamCheckpointedAsync(runner, fromCheckpoint, cancellation);
+        return ResumeStreamCheckpointedAsync(runner, fromCheckpoint, cancellationToken);
     }
 
     /// <summary>
@@ -227,17 +227,17 @@ public static class InProcessExecution
     /// <param name="workflow">The workflow to be executed. Must not be <c>null</c>.</param>
     /// <param name="input">The input message to be processed as part of the run.</param>
     /// <param name="runId">An optional unique identifier for the run. If not provided, a new identifier will be generated.</param>
-    /// <param name="cancellation">A <see cref="CancellationToken"/> that can be used to cancel the streaming operation.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ValueTask{Run}"/> that represents the asynchronous operation. The result contains a <see
     /// cref="Run"/> for managing and interacting with the streaming run.</returns>
     public static ValueTask<Run> RunAsync<TInput>(
         Workflow workflow,
         TInput input,
         string? runId = null,
-        CancellationToken cancellation = default) where TInput : notnull
+        CancellationToken cancellationToken = default) where TInput : notnull
     {
         InProcessRunner runner = CreateRunner(workflow, checkpointManager: null, runId);
-        return RunAsync(runner, (object)input, cancellation);
+        return RunAsync(runner, (object)input, cancellationToken);
     }
 
     /// <summary>
@@ -249,17 +249,17 @@ public static class InProcessExecution
     /// <param name="workflow">The workflow to be executed. Must not be <c>null</c>.</param>
     /// <param name="input">The input message to be processed as part of the run.</param>
     /// <param name="runId">An optional unique identifier for the run. If not provided, a new identifier will be generated.</param>
-    /// <param name="cancellation">A <see cref="CancellationToken"/> that can be used to cancel the streaming operation.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ValueTask{Run}"/> that represents the asynchronous operation. The result contains a <see
     /// cref="Run"/> for managing and interacting with the streaming run.</returns>
     public static ValueTask<Run> RunAsync<TInput>(
         Workflow<TInput> workflow,
         TInput input,
         string? runId = null,
-        CancellationToken cancellation = default) where TInput : notnull
+        CancellationToken cancellationToken = default) where TInput : notnull
     {
         InProcessRunner runner = CreateRunner(workflow, checkpointManager: null, runId);
-        return RunAsync(runner, input, cancellation);
+        return RunAsync(runner, input, cancellationToken);
     }
 
     /// <summary>
@@ -272,7 +272,7 @@ public static class InProcessExecution
     /// <param name="input">The input message to be processed as part of the run.</param>
     /// <param name="checkpointManager">The <see cref="CheckpointManager"/> to use with this run.</param>
     /// <param name="runId">An optional unique identifier for the run. If not provided, a new identifier will be generated.</param>
-    /// <param name="cancellation">A <see cref="CancellationToken"/> that can be used to cancel the streaming operation.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ValueTask{Run}"/> that represents the asynchronous operation. The result contains a <see
     /// cref="Run"/> for managing and interacting with the streaming run.</returns>
     public static ValueTask<Checkpointed<Run>> RunAsync<TInput>(
@@ -280,10 +280,10 @@ public static class InProcessExecution
         TInput input,
         CheckpointManager checkpointManager,
         string? runId = null,
-        CancellationToken cancellation = default) where TInput : notnull
+        CancellationToken cancellationToken = default) where TInput : notnull
     {
         InProcessRunner runner = CreateRunner(workflow, checkpointManager: checkpointManager, runId);
-        return RunCheckpointedAsync(runner, (object)input, cancellation);
+        return RunCheckpointedAsync(runner, (object)input, cancellationToken);
     }
 
     /// <summary>
@@ -296,7 +296,7 @@ public static class InProcessExecution
     /// <param name="input">The input message to be processed as part of the run.</param>
     /// <param name="checkpointManager">The <see cref="CheckpointManager"/> to use with this run.</param>
     /// <param name="runId">An optional unique identifier for the run. If not provided, a new identifier will be generated.</param>
-    /// <param name="cancellation">A <see cref="CancellationToken"/> that can be used to cancel the streaming operation.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ValueTask{Run}"/> that represents the asynchronous operation. The result contains a <see
     /// cref="Run"/> for managing and interacting with the streaming run.</returns>
     public static ValueTask<Checkpointed<Run>> RunAsync<TInput>(
@@ -304,10 +304,10 @@ public static class InProcessExecution
         TInput input,
         CheckpointManager checkpointManager,
         string? runId = null,
-        CancellationToken cancellation = default) where TInput : notnull
+        CancellationToken cancellationToken = default) where TInput : notnull
     {
         InProcessRunner runner = CreateRunner(workflow, checkpointManager: checkpointManager, runId);
-        return RunCheckpointedAsync(runner, input, cancellation);
+        return RunCheckpointedAsync(runner, input, cancellationToken);
     }
 
     /// <summary>
@@ -319,7 +319,7 @@ public static class InProcessExecution
     /// <param name="fromCheckpoint">The <see cref="CheckpointInfo"/> corresponding to the checkpoint from which to resume.</param>
     /// <param name="checkpointManager">The <see cref="CheckpointManager"/> to use with this run.</param>
     /// <param name="runId">An optional unique identifier for the run. If not provided, a new identifier will be generated.</param>
-    /// <param name="cancellation">A <see cref="CancellationToken"/> that can be used to cancel the streaming operation.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ValueTask{Run}"/> that represents the asynchronous operation. The result contains a <see
     /// cref="Run"/> for managing and interacting with the streaming run.</returns>
     public static ValueTask<Checkpointed<Run>> ResumeAsync(
@@ -327,10 +327,10 @@ public static class InProcessExecution
         CheckpointInfo fromCheckpoint,
         CheckpointManager checkpointManager,
         string? runId = null,
-        CancellationToken cancellation = default)
+        CancellationToken cancellationToken = default)
     {
         InProcessRunner runner = CreateRunner(workflow, checkpointManager, runId);
-        return ResumeRunCheckpointedAsync(runner, fromCheckpoint, cancellation);
+        return ResumeRunCheckpointedAsync(runner, fromCheckpoint, cancellationToken);
     }
 
     /// <summary>
@@ -342,7 +342,7 @@ public static class InProcessExecution
     /// <param name="fromCheckpoint">The <see cref="CheckpointInfo"/> corresponding to the checkpoint from which to resume.</param>
     /// <param name="checkpointManager">The <see cref="CheckpointManager"/> to use with this run.</param>
     /// <param name="runId">An optional unique identifier for the run. If not provided, a new identifier will be generated.</param>
-    /// <param name="cancellation">A <see cref="CancellationToken"/> that can be used to cancel the streaming operation.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ValueTask{Run}"/> that represents the asynchronous operation. The result contains a <see
     /// cref="Run"/> for managing and interacting with the streaming run.</returns>
     public static ValueTask<Checkpointed<Run>> ResumeAsync<TInput>(
@@ -350,9 +350,9 @@ public static class InProcessExecution
         CheckpointInfo fromCheckpoint,
         CheckpointManager checkpointManager,
         string? runId = null,
-        CancellationToken cancellation = default) where TInput : notnull
+        CancellationToken cancellationToken = default) where TInput : notnull
     {
         InProcessRunner runner = CreateRunner(workflow, checkpointManager, runId);
-        return ResumeRunCheckpointedAsync(runner, fromCheckpoint, cancellation);
+        return ResumeRunCheckpointedAsync(runner, fromCheckpoint, cancellationToken);
     }
 }

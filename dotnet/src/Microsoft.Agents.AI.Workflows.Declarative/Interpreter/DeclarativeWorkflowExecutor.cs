@@ -16,8 +16,7 @@ internal sealed class DeclarativeWorkflowExecutor<TInput>(
     WorkflowAgentProvider agentProvider,
     WorkflowFormulaState state,
     Func<TInput, ChatMessage> inputTransform) :
-    Executor<TInput>(workflowId)
-    where TInput : notnull
+    Executor<TInput>(workflowId), IModeledAction where TInput : notnull
 {
     public override async ValueTask HandleAsync(TInput message, IWorkflowContext context)
     {

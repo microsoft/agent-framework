@@ -31,9 +31,7 @@ public sealed class WorkflowOutputEvent : WorkflowEvent
     /// </summary>
     /// <param name="type">The type to compare with the type of the underlying data.</param>
     /// <returns>true if the underlying data is assignable to type T; otherwise, false.</returns>
-    public bool IsType(Type type) => this.Data == null
-                                   ? false
-                                   : type.IsAssignableFrom(this.Data.GetType());
+    public bool IsType(Type type) => this.Data is { } data && type.IsInstanceOfType(data);
 
     /// <summary>
     /// Attempts to retrieve the underlying data as the specified type.

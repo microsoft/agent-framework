@@ -25,14 +25,16 @@ async Task SKAgentAsync()
     {
         Name = "Joker",
         Instructions = "You are good at telling jokes.",
+        StoreEnabled = true
     };
 
     var agentOptions = new OpenAIResponseAgentInvokeOptions() { ResponseCreationOptions = new() { MaxOutputTokenCount = 1000 } };
 
-    Microsoft.SemanticKernel.Agents.AgentThread? thread = new OpenAIResponseAgentThread(responseClient);
+    Microsoft.SemanticKernel.Agents.AgentThread? thread = null;
     await foreach (var item in agent.InvokeAsync(userInput, thread, agentOptions))
     {
         Console.WriteLine(item.Message);
+        thread = item.Thread;
     }
 
     Console.WriteLine("---");

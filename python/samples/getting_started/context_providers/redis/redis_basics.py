@@ -20,7 +20,7 @@ realistic scenarios:
 
 Requirements:
   - A Redis instance with RediSearch enabled (e.g., Redis Stack)
-  - agent-framework with the Redis extra installed: pip install "agent-framework[redis]"
+  - agent-framework with the Redis extra installed: pip install "agent-framework-redis"
   - Optionally an OpenAI API key if enabling embeddings for hybrid search
 
 Run:
@@ -175,7 +175,7 @@ async def main() -> None:
     )
 
     # Create chat client for the agent
-    client = OpenAIChatClient(ai_model_id=os.getenv("OPENAI_CHAT_MODEL_ID"), api_key=os.getenv("OPENAI_API_KEY"))
+    client = OpenAIChatClient(model_id=os.getenv("OPENAI_CHAT_MODEL_ID"), api_key=os.getenv("OPENAI_API_KEY"))
     # Create agent wired to the Redis context provider. The provider automatically
     # persists conversational details and surfaces relevant context on each turn.
     agent = client.create_agent(
@@ -219,7 +219,7 @@ async def main() -> None:
 
     # Create agent exposing the flight search tool. Tool outputs are captured by the
     # provider and become retrievable context for later turns.
-    client = OpenAIChatClient(ai_model_id=os.getenv("OPENAI_CHAT_MODEL_ID"), api_key=os.getenv("OPENAI_API_KEY"))
+    client = OpenAIChatClient(model_id=os.getenv("OPENAI_CHAT_MODEL_ID"), api_key=os.getenv("OPENAI_API_KEY"))
     agent = client.create_agent(
         name="MemoryEnhancedAssistant",
         instructions=(

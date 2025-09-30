@@ -19,7 +19,7 @@ trigger:
       conversationId: =System.ConversationId
       content:
         - type: Text
-          value: {System.LastMessage.Text}   
+          value: {System.LastMessage.Text}
 
     - kind: InvokeAzureAgent
       id: invoke_analyst

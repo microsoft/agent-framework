@@ -9,10 +9,10 @@ from uuid import uuid4
 
 import redis.asyncio as redis
 from agent_framework import ChatMessage
-from agent_framework._pydantic import AFBaseModel
+from pydantic import BaseModel
 
 
-class RedisStoreState(AFBaseModel):
+class RedisStoreState(BaseModel):
     """State model for serializing and deserializing Redis chat message store data."""
 
     thread_id: str

@@ -11,7 +11,7 @@ from agent_framework.openai import OpenAIChatClient
 
 async def test_image() -> None:
     """Test image analysis with OpenAI."""
-    client = OpenAIChatClient(ai_model_id="gpt-4o")
+    client = OpenAIChatClient(model_id="gpt-4o")
 
     # Fetch image from httpbin
     image_url = "https://httpbin.org/image/jpeg"
@@ -30,7 +30,7 @@ async def test_image() -> None:
 
 async def test_audio() -> None:
     """Test audio analysis with OpenAI."""
-    client = OpenAIChatClient(ai_model_id="gpt-4o-audio-preview")
+    client = OpenAIChatClient(model_id="gpt-4o-audio-preview")
 
     # Create minimal WAV file (0.1 seconds of silence)
     wav_header = (

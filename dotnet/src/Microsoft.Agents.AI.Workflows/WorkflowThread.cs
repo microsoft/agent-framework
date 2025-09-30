@@ -12,7 +12,7 @@ internal sealed class WorkflowThread : AgentThread
     public WorkflowThread(string workflowId, string? workflowName, string runId)
     {
         this.MessageStore = new();
-        this.RunId = Throw.IfNullOrEmpty(runId, nameof(runId));
+        this.RunId = Throw.IfNullOrEmpty(runId);
     }
 
     public WorkflowThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)

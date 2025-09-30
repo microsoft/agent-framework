@@ -1,14 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Diagnostics;
-using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
+using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
-
-internal delegate ValueTask DelegateAction<TMessage>(IWorkflowContext context, TMessage message, CancellationToken cancellationToken) where TMessage : notnull;
 
 internal sealed class DelegateActionExecutor(string actionId, WorkflowFormulaState state, DelegateAction<ActionExecutorResult>? action = null, bool emitResult = true)
     : DelegateActionExecutor<ActionExecutorResult>(actionId, state, action, emitResult)
@@ -21,7 +19,7 @@ internal sealed class DelegateActionExecutor(string actionId, WorkflowFormulaSta
     }
 }
 
-internal class DelegateActionExecutor<TMessage> : Executor<TMessage> where TMessage : notnull
+internal class DelegateActionExecutor<TMessage> : Executor<TMessage>, IModeledAction where TMessage : notnull
 {
     private readonly WorkflowFormulaState _state;
     private readonly DelegateAction<TMessage>? _action;

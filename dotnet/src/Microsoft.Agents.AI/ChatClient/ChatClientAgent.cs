@@ -35,8 +35,8 @@ public sealed class ChatClientAgent : AIAgent
     /// <param name="description">Optional description for the agent.</param>
     /// <param name="tools">Optional list of tools that the agent can use during invocation.</param>
     /// <param name="loggerFactory">Optional logger factory to use for logging.</param>
-    /// <param name="functionInvocationServices">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
-    public ChatClientAgent(IChatClient chatClient, string? instructions = null, string? name = null, string? description = null, IList<AITool>? tools = null, ILoggerFactory? loggerFactory = null, IServiceProvider? functionInvocationServices = null)
+    /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
+    public ChatClientAgent(IChatClient chatClient, string? instructions = null, string? name = null, string? description = null, IList<AITool>? tools = null, ILoggerFactory? loggerFactory = null, IServiceProvider? services = null)
         : this(
               chatClient,
               new ChatClientAgentOptions
@@ -50,7 +50,7 @@ public sealed class ChatClientAgent : AIAgent
                   }
               },
               loggerFactory,
-              functionInvocationServices)
+              services)
     {
     }
 
@@ -60,8 +60,8 @@ public sealed class ChatClientAgent : AIAgent
     /// <param name="chatClient">The chat client to use for invoking the agent.</param>
     /// <param name="options">Full set of options to configure the agent.</param>
     /// <param name="loggerFactory">Optional logger factory to use for logging.</param>
-    /// <param name="functionInvocationServices">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
-    public ChatClientAgent(IChatClient chatClient, ChatClientAgentOptions? options, ILoggerFactory? loggerFactory = null, IServiceProvider? functionInvocationServices = null)
+    /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
+    public ChatClientAgent(IChatClient chatClient, ChatClientAgentOptions? options, ILoggerFactory? loggerFactory = null, IServiceProvider? services = null)
     {
         _ = Throw.IfNull(chatClient);
 
@@ -74,7 +74,7 @@ public sealed class ChatClientAgent : AIAgent
         this._chatClientType = chatClient.GetType();
 
         // If the user has not opted out of using our default decorators, we wrap the chat client.
-        this.ChatClient = options?.UseProvidedChatClientAsIs is true ? chatClient : chatClient.WithDefaultAgentMiddleware(options, functionInvocationServices);
+        this.ChatClient = options?.UseProvidedChatClientAsIs is true ? chatClient : chatClient.WithDefaultAgentMiddleware(options, services);
 
         this._logger = (loggerFactory ?? chatClient.GetService<ILoggerFactory>() ?? NullLoggerFactory.Instance).CreateLogger<ChatClientAgent>();
     }
@@ -145,8 +145,6 @@ public sealed class ChatClientAgent : AIAgent
         foreach (ChatMessage chatResponseMessage in chatResponse.Messages)
         {
             chatResponseMessage.AuthorName ??= agentName;
-            chatResponseMessage.MessageId ??= Guid.NewGuid().ToString("N");
-            chatResponseMessage.CreatedAt ??= DateTimeOffset.UtcNow;
         }
 
         // Only notify the thread of new messages if the chatResponse was successful to avoid inconsistent message state in the thread.
@@ -233,15 +231,12 @@ public sealed class ChatClientAgent : AIAgent
             throw;
         }
 
-        string? messageId = null;
         while (hasUpdates)
         {
             var update = responseUpdatesEnumerator.Current;
             if (update is not null)
             {
                 update.AuthorName ??= this.Name;
-                update.CreatedAt ??= DateTimeOffset.UtcNow;
-                update.MessageId ??= (messageId ??= Guid.NewGuid().ToString("N"));
 
                 responseUpdates.Add(update);
                 yield return new(update) { AgentId = this.Id };
@@ -467,7 +462,7 @@ public sealed class ChatClientAgent : AIAgent
     /// <param name="thread">The conversation thread to use or create.</param>
     /// <param name="inputMessages">The input messages to use.</param>
     /// <param name="runOptions">Optional parameters for agent invocation.</param>
-    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A tuple containing the thread, chat options, and thread messages.</returns>
     private async Task<(ChatClientAgentThread AgentThread, ChatOptions? ChatOptions, List<ChatMessage> ThreadMessages)> PrepareThreadAndMessagesAsync(
         AgentThread? thread,

@@ -7,6 +7,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
+using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.AI;
@@ -147,7 +148,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     [InlineData("EndDialog.yaml", 1, "end_all")]
     [InlineData("EditTable.yaml", 2, "edit_var")]
     [InlineData("EditTableV2.yaml", 2, "edit_var")]
-    [InlineData("ParseValue.yaml", 1, "parse_var")]
+    [InlineData("ParseValue.yaml", 2, "parse_var")]
     [InlineData("SendActivity.yaml", 2, "activity_input")]
     [InlineData("SetVariable.yaml", 1, "set_var")]
     [InlineData("SetTextVariable.yaml", 1, "set_text")]

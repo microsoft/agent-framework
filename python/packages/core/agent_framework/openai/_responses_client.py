@@ -22,7 +22,7 @@ from openai.types.responses.tool_param import (
 )
 from openai.types.responses.web_search_tool_param import UserLocation as WebSearchUserLocation
 from openai.types.responses.web_search_tool_param import WebSearchToolParam
-from pydantic import BaseModel, SecretStr, ValidationError
+from pydantic import BaseModel, ValidationError
 
 from .._clients import BaseChatClient
 from .._logging import get_logger
@@ -333,7 +333,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         if chat_options.conversation_id:
             options_dict["previous_response_id"] = chat_options.conversation_id
         if "model" not in options_dict:
-            options_dict["model"] = self.ai_model_id
+            options_dict["model"] = self.model_id
         return options_dict
 
     def _prepare_chat_messages_for_request(self, chat_messages: Sequence[ChatMessage]) -> list[dict[str, Any]]:
@@ -731,7 +731,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         metadata: dict[str, Any] = {}
         contents: list[Contents] = []
         conversation_id: str | None = None
-        model = self.ai_model_id
+        model = self.model_id
         # TODO(peterychang): Add support for other content types
         match event.type:
             # types:
@@ -942,24 +942,27 @@ class OpenAIResponsesClient(OpenAIConfigMixin, OpenAIBaseResponsesClient):
 
     def __init__(
         self,
-        ai_model_id: str | None = None,
+        model_id: str | None = None,
         api_key: str | None = None,
         org_id: str | None = None,
+        base_url: str | None = None,
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncOpenAI | None = None,
         instruction_role: str | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
+        **kwargs: Any,
     ) -> None:
         """Initialize an OpenAIChatCompletion service.
 
         Args:
-            ai_model_id: OpenAI model name, see
+            model_id: OpenAI model name, see
                 https://platform.openai.com/docs/models
             api_key: The optional API key to use. If provided will override,
                 the env vars or .env file value.
             org_id: The optional org ID to use. If provided will override,
                 the env vars or .env file value.
+            base_url: The optional base URL to use. If provided will override,
             default_headers: The default headers mapping of string keys to
                 string values for HTTP requests. (Optional)
             async_client: An existing client to use. (Optional)
@@ -968,12 +971,14 @@ class OpenAIResponsesClient(OpenAIConfigMixin, OpenAIBaseResponsesClient):
             env_file_path: Use the environment settings file as a fallback
                 to environment variables. (Optional)
             env_file_encoding: The encoding of the environment settings file. (Optional)
+            kwargs: Other keyword parameters.
         """
         try:
             openai_settings = OpenAISettings(
-                api_key=SecretStr(api_key) if api_key else None,
+                api_key=api_key,  # type: ignore[reportArgumentType]
                 org_id=org_id,
-                responses_model_id=ai_model_id,
+                base_url=base_url,
+                responses_model_id=model_id,
                 env_file_path=env_file_path,
                 env_file_encoding=env_file_encoding,
             )
@@ -987,26 +992,15 @@ class OpenAIResponsesClient(OpenAIConfigMixin, OpenAIBaseResponsesClient):
         if not openai_settings.responses_model_id:
             raise ServiceInitializationError(
                 "OpenAI model ID is required. "
-                "Set via 'ai_model_id' parameter or 'OPENAI_RESPONSES_MODEL_ID' environment variable."
+                "Set via 'model_id' parameter or 'OPENAI_RESPONSES_MODEL_ID' environment variable."
             )
 
         super().__init__(
-            ai_model_id=openai_settings.responses_model_id,
+            model_id=openai_settings.responses_model_id,
             api_key=openai_settings.api_key.get_secret_value() if openai_settings.api_key else None,
             org_id=openai_settings.org_id,
             default_headers=default_headers,
             client=async_client,
             instruction_role=instruction_role,
+            base_url=openai_settings.base_url,
         )
-
-    @classmethod
-    def from_dict(cls: type[TOpenAIResponsesClient], settings: dict[str, Any]) -> TOpenAIResponsesClient:
-        """Initialize an Open AI service from a dictionary of settings.
-
-        Args:
-            settings: A dictionary of settings for the service.
-        """
-        return cls(**settings)
-
-
-# endregion

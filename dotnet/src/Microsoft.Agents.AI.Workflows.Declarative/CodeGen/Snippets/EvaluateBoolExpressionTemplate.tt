@@ -1,0 +1,25 @@
+﻿<#+
+void EvaluateBoolExpression(BoolExpression expression, string targetVariable, bool defaultValue = false)
+{
+    if (expression is null)
+    {#>
+        bool <#= targetVariable #> = <#= FormatBoolValue(defaultValue) #>;<#+ 
+    }
+    else if (expression.IsLiteral)
+    {#>
+        bool <#= targetVariable #> = <#= FormatBoolValue(expression.LiteralValue) #>;<#+ 
+    }
+    else if (expression.IsVariableReference && expression.VariableReference.SegmentCount == 2)
+    {#>
+        bool <#= targetVariable #> = await context.ReadStateAsync<bool>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.NamespaceAlias #>").ConfigureAwait(false);<#+
+    }
+    else if (expression.IsVariableReference)
+    {#>
+        bool <#= targetVariable #> = await context.EvaluateValueAsync<bool>>(<#= FormatStringValue(expression.VariableReference.ToString()) #>).ConfigureAwait(false);<#+ 
+    }
+    else
+    {#>
+        bool <#= targetVariable #> = await context.EvaluateValueAsync<bool>(<#= FormatStringValue(expression.ExpressionText) #>).ConfigureAwait(false);<#+ 
+    }
+}
+#>
