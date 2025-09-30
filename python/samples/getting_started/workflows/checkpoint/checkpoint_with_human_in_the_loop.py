@@ -35,7 +35,7 @@ from azure.identity import AzureCliCredential
 
 if TYPE_CHECKING:
     from agent_framework import Workflow
-    from agent_framework._workflow._checkpoint import WorkflowCheckpoint
+    from agent_framework._workflows._checkpoint import WorkflowCheckpoint
 
 """
 Sample: Checkpoint + human-in-the-loop quickstart.

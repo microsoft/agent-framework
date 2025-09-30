@@ -3,8 +3,6 @@
 import asyncio
 from typing import Any
 
-from typing_extensions import Never
-
 from agent_framework import (
     ChatMessage,
     Executor,
@@ -15,6 +13,7 @@ from agent_framework import (
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
+from typing_extensions import Never
 
 """
 Sample: Sequential workflow mixing agents and a custom summarizer executor

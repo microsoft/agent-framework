@@ -1,8 +1,8 @@
-# Workflow Getting Started Samples
+# Workflows Getting Started Samples
 
 ## Installation
 
-Workflow support ships with the core `agent-framework` package, so no extra installation step is required.
+Microsoft Agent Framework Workflows support ships with the core `agent-framework` or `agent-framework-core` package, so no extra installation step is required.
 
 To install with visualization support:
 

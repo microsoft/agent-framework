@@ -43,13 +43,13 @@ class Writer(Executor):
 
     def __init__(self, chat_client: AzureOpenAIChatClient, id: str = "writer"):
         # Create a domain specific agent using your configured AzureOpenAIChatClient.
-        agent = chat_client.create_agent(
+        self.agent = chat_client.create_agent(
             instructions=(
                 "You are an excellent content writer. You create new content and edit contents based on the feedback."
             ),
         )
         # Associate the agent with this executor node. The base Executor stores it on self.agent.
-        super().__init__(agent=agent, id=id)
+        super().__init__(id=id)
 
     @handler
     async def handle(self, message: ChatMessage, ctx: WorkflowContext[list[ChatMessage], str]) -> None:
@@ -85,12 +85,12 @@ class Reviewer(Executor):
 
     def __init__(self, chat_client: AzureOpenAIChatClient, id: str = "reviewer"):
         # Create a domain specific agent that evaluates and refines content.
-        agent = chat_client.create_agent(
+        self.agent = chat_client.create_agent(
             instructions=(
                 "You are an excellent content reviewer. You review the content and provide feedback to the writer."
             ),
         )
-        super().__init__(agent=agent, id=id)
+        super().__init__(id=id)
 
     @handler
     async def handle(self, messages: list[ChatMessage], ctx: WorkflowContext[list[ChatMessage], str]) -> None:

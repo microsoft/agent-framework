@@ -40,14 +40,14 @@ class ResearcherExec(Executor):
     agent: ChatAgent
 
     def __init__(self, chat_client: AzureOpenAIChatClient, id: str = "researcher"):
-        agent = chat_client.create_agent(
+        self.agent = chat_client.create_agent(
             instructions=(
                 "You're an expert market and product researcher. Given a prompt, provide concise, factual insights,"
                 " opportunities, and risks."
             ),
             name=id,
         )
-        super().__init__(agent=agent, id=id)
+        super().__init__(id=id)
 
     @handler
     async def run(self, request: AgentExecutorRequest, ctx: WorkflowContext[AgentExecutorResponse]) -> None:
@@ -60,14 +60,14 @@ class MarketerExec(Executor):
     agent: ChatAgent
 
     def __init__(self, chat_client: AzureOpenAIChatClient, id: str = "marketer"):
-        agent = chat_client.create_agent(
+        self.agent = chat_client.create_agent(
             instructions=(
                 "You're a creative marketing strategist. Craft compelling value propositions and target messaging"
                 " aligned to the prompt."
             ),
             name=id,
         )
-        super().__init__(agent=agent, id=id)
+        super().__init__(id=id)
 
     @handler
     async def run(self, request: AgentExecutorRequest, ctx: WorkflowContext[AgentExecutorResponse]) -> None:
@@ -80,14 +80,14 @@ class LegalExec(Executor):
     agent: ChatAgent
 
     def __init__(self, chat_client: AzureOpenAIChatClient, id: str = "legal"):
-        agent = chat_client.create_agent(
+        self.agent = chat_client.create_agent(
             instructions=(
                 "You're a cautious legal/compliance reviewer. Highlight constraints, disclaimers, and policy concerns"
                 " based on the prompt."
             ),
             name=id,
         )
-        super().__init__(agent=agent, id=id)
+        super().__init__(id=id)
 
     @handler
     async def run(self, request: AgentExecutorRequest, ctx: WorkflowContext[AgentExecutorResponse]) -> None:

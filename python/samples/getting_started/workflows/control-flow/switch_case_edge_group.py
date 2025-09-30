@@ -6,8 +6,6 @@ from dataclasses import dataclass
 from typing import Any, Literal
 from uuid import uuid4
 
-from typing_extensions import Never
-
 from agent_framework import (  # Core chat primitives used to form LLM requests
     AgentExecutor,  # Wraps an agent so it can run inside a workflow
     AgentExecutorRequest,  # Message bundle sent to an AgentExecutor
@@ -23,6 +21,7 @@ from agent_framework import (  # Core chat primitives used to form LLM requests
 from agent_framework.azure import AzureOpenAIChatClient  # Thin client for Azure OpenAI chat models
 from azure.identity import AzureCliCredential  # Uses your az CLI login for credentials
 from pydantic import BaseModel  # Structured outputs with validation
+from typing_extensions import Never
 
 """
 Sample: Switch-Case Edge Group with an explicit Uncertain branch.

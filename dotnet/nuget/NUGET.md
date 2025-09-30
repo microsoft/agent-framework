@@ -5,7 +5,7 @@ Microsoft Agent Framework is a comprehensive .NET library for building, orchestr
 ## Key Features
 
 - **Multi-Agent Orchestration**: Coordinate multiple agents using sequential, concurrent, group chat, and handoff patterns
-- **Graph-based Workflows**: Connect agents and deterministic functions with streaming, checkpointing, and human-in-the-loop capabilities
+- **Graph-based Workflows**: Connect agents and functions with streaming, checkpointing, and human-in-the-loop capabilities, with both imperative or declarative workflow support
 - **Multiple Provider Support**: Seamlessly integrate with various LLM providers with more being added continuously
 - **Extensible Middleware**: Flexible request/response processing with custom pipelines and exception handling
 - **Built-in Observability**: OpenTelemetry integration for distributed tracing, monitoring, and debugging
