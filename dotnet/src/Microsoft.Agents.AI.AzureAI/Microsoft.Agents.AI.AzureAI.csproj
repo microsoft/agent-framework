@@ -22,8 +22,8 @@
 
   <PropertyGroup>
     <!-- NuGet Package Settings -->
-    <Title>Microsoft.Agents.AI.AzureAI</Title>
-    <Description>Implementation of generative AI abstractions for Azure AI Persistent Agents.</Description>
+    <Title>Microsoft Agent Framework AzureAI</Title>
+    <Description>Provides Microsoft Agent Framework support for Azure AI.</Description>
   </PropertyGroup>
 
 </Project>
