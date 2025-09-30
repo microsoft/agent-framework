@@ -37,4 +37,9 @@
     <PackageReference Include="System.Diagnostics.DiagnosticSource" />
   </ItemGroup>
 
+  <PropertyGroup>
+    <!-- NuGet Package Settings -->
+    <Title>Microsoft Agent Framework Runtime Abstractions</Title>
+    <Description>Provides the Microsoft Agent Framework shared agent runtime abstractions.</Description>
+  </PropertyGroup>
 </Project>

@@ -21,4 +21,10 @@
     <InternalsVisibleTo Include="Microsoft.Agents.AI.Runtime.Storage.CosmosDB.Tests" />
   </ItemGroup>
 
+
+  <PropertyGroup>
+    <!-- NuGet Package Settings -->
+    <Title>Microsoft Agent Framework Runtime Storage CosmosDB</Title>
+    <Description>Provides the Microsoft Agent Framework shared agent runtime storage using CosmosDB.</Description>
+  </PropertyGroup>
 </Project>

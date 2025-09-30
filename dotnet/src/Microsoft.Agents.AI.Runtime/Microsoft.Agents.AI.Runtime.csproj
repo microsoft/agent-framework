@@ -37,4 +37,9 @@
     <ProjectReference Include="..\Microsoft.Agents.AI.Runtime.Abstractions\Microsoft.Agents.AI.Runtime.Abstractions.csproj" />
   </ItemGroup>
 
+  <PropertyGroup>
+    <!-- NuGet Package Settings -->
+    <Title>Microsoft Agent Framework Runtime</Title>
+    <Description>Provides the Microsoft Agent Framework shared agent runtime.</Description>
+  </PropertyGroup>
 </Project>
