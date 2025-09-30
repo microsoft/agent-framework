@@ -72,13 +72,18 @@ def create_test_azure_ai_chat_client(
     if azure_ai_settings is None:
         azure_ai_settings = AzureAISettings(env_file_path="test.env")
 
+    # Use model_construct to properly initialize the Pydantic model
     return AzureAIAgentClient.model_construct(
         project_client=mock_ai_project_client,
+        credential=None,
         agent_id=agent_id,
+        agent_name=None,
+        ai_model_id=azure_ai_settings.model_deployment_name,
         thread_id=thread_id,
         _should_delete_agent=should_delete_agent,
-        ai_model_id=azure_ai_settings.model_deployment_name,
-        agent_name=agent_name,
+        _should_close_client=False,
+        additional_properties={},
+        middleware=None,
     )
 
 
@@ -248,9 +253,7 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_create_new(
 ) -> None:
     """Test _get_agent_id_or_create when creating a new agent."""
     azure_ai_settings = AzureAISettings(model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"])
-    chat_client = create_test_azure_ai_chat_client(
-        mock_ai_project_client, azure_ai_settings=azure_ai_settings, agent_name="TestAgent"
-    )
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, azure_ai_settings=azure_ai_settings)
 
     agent_id = await chat_client._get_agent_id_or_create()  # type: ignore
 
@@ -538,9 +541,7 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_with_run_options(
 ) -> None:
     """Test _get_agent_id_or_create with run_options containing tools and instructions."""
     azure_ai_settings = AzureAISettings(model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"])
-    chat_client = create_test_azure_ai_chat_client(
-        mock_ai_project_client, azure_ai_settings=azure_ai_settings, agent_name="TestAgent"
-    )
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, azure_ai_settings=azure_ai_settings)
 
     run_options = {
         "tools": [{"type": "function", "function": {"name": "test_tool"}}],
