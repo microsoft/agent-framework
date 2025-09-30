@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Microsoft.Extensions.AI.Agents;
+using Microsoft.Agents.AI;
 using Microsoft.SemanticKernel.Agents.OpenAI;
 using OpenAI;
 
@@ -20,10 +20,12 @@ async Task SKAgentAsync()
 {
     Console.WriteLine("\n=== SK Agent ===\n");
 
-    OpenAIResponseAgent agent = new(new OpenAIClient(apiKey).GetOpenAIResponseClient(modelId))
+    var responseClient = new OpenAIClient(apiKey).GetOpenAIResponseClient(modelId);
+    OpenAIResponseAgent agent = new(responseClient)
     {
         Name = "Joker",
         Instructions = "You are good at telling jokes.",
+        StoreEnabled = true
     };
 
     var agentOptions = new OpenAIResponseAgentInvokeOptions() { ResponseCreationOptions = new() { MaxOutputTokenCount = 1000 } };
@@ -32,6 +34,7 @@ async Task SKAgentAsync()
     await foreach (var item in agent.InvokeAsync(userInput, thread, agentOptions))
     {
         Console.WriteLine(item.Message);
+        thread = item.Thread;
     }
 
     Console.WriteLine("---");

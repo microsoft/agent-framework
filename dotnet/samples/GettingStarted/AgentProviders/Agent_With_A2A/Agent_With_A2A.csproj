@@ -15,7 +15,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\..\..\src\Microsoft.Extensions.AI.Agents.A2A\Microsoft.Extensions.AI.Agents.A2A.csproj" />
+    <ProjectReference Include="..\..\..\..\src\Microsoft.Agents.AI.A2A\Microsoft.Agents.AI.A2A.csproj" />
   </ItemGroup>
 
 </Project>

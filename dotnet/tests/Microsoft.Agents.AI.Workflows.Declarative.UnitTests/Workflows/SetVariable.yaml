@@ -1,0 +1,11 @@
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: my_workflow
+  actions:
+
+    - kind: SetVariable
+      id: set_var
+      variable: Local.TestVar
+      value: =3

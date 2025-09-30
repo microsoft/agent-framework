@@ -5,7 +5,7 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import ChatResponse
-from agent_framework.azure import AzureResponsesClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel, Field
 
@@ -28,7 +28,7 @@ class OutputStruct(BaseModel):
 async def main() -> None:
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
-    client = AzureResponsesClient(credential=AzureCliCredential())
+    client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
     message = "What's the weather in Amsterdam and in Paris?"
     stream = True
     print(f"User: {message}")

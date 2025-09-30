@@ -2,24 +2,59 @@
 
 """Tests for tau2 utils module."""
 
-from typing import Any, cast
-from pydantic import BaseModel
+import urllib.request
+from pathlib import Path
 
+import pytest
 from agent_framework._tools import AIFunction
-from agent_framework._types import ChatMessage, Role, TextContent, FunctionCallContent, FunctionResultContent
+from agent_framework._types import ChatMessage, FunctionCallContent, FunctionResultContent, Role, TextContent
 from agent_framework_lab_tau2._tau2_utils import (
-    convert_tau2_tool_to_ai_function,
     convert_agent_framework_messages_to_tau2_messages,
+    convert_tau2_tool_to_ai_function,
 )
-from tau2.data_model.message import SystemMessage, UserMessage, AssistantMessage, ToolMessage, ToolCall
-from tau2.domains.airline.environment import get_environment
+from tau2.data_model.message import AssistantMessage, SystemMessage, ToolCall, ToolMessage, UserMessage
+from tau2.domains.airline.data_model import FlightDB
+from tau2.domains.airline.tools import AirlineTools
+from tau2.environment.environment import Environment
 
 
-def test_convert_tau2_tool_to_ai_function_basic():
+@pytest.fixture(scope="session")
+def tau2_airline_environment() -> Environment:
+    airline_db_remote_path = "https://raw.githubusercontent.com/sierra-research/tau2-bench/5ba9e3e56db57c5e4114bf7f901291f09b2c5619/data/tau2/domains/airline/db.json"
+    airline_policy_remote_path = "https://raw.githubusercontent.com/sierra-research/tau2-bench/5ba9e3e56db57c5e4114bf7f901291f09b2c5619/data/tau2/domains/airline/policy.md"
+
+    # Create cache directory
+    cache_dir = Path(__file__).parent / "data"
+    cache_dir.mkdir(exist_ok=True)
+
+    # Define cache file paths
+    db_cache_path = cache_dir / "airline_db.json"
+    policy_cache_path = cache_dir / "airline_policy.md"
+
+    # Download files only if they don't exist in cache
+    if not db_cache_path.exists():
+        urllib.request.urlretrieve(airline_db_remote_path, db_cache_path)
+
+    if not policy_cache_path.exists():
+        urllib.request.urlretrieve(airline_policy_remote_path, policy_cache_path)
+
+    # Load data from cached files
+    db = FlightDB.load(str(db_cache_path))
+    tools = AirlineTools(db)
+    with open(policy_cache_path) as fp:
+        policy = fp.read()
+
+    yield Environment(
+        domain_name="airline",
+        policy=policy,
+        tools=tools,
+    )
+
+
+def test_convert_tau2_tool_to_ai_function_basic(tau2_airline_environment):
     """Test basic conversion from tau2 tool to AIFunction."""
     # Get real tools from tau2 environment
-    env = get_environment()
-    tools = env.get_tools()
+    tools = tau2_airline_environment.get_tools()
 
     # Use the first available tool for testing
     assert len(tools) > 0, "No tools available in environment"
@@ -38,17 +73,16 @@ def test_convert_tau2_tool_to_ai_function_basic():
     assert callable(ai_function.func)
 
 
-def test_convert_tau2_tool_to_ai_function_multiple_tools():
+def test_convert_tau2_tool_to_ai_function_multiple_tools(tau2_airline_environment):
     """Test conversion with multiple tau2 tools."""
     # Get real tools from tau2 environment
-    env = get_environment()
-    tools = env.get_tools()
+    tools = tau2_airline_environment.get_tools()
 
     # Convert multiple tools
     ai_functions = [convert_tau2_tool_to_ai_function(tool) for tool in tools[:3]]  # Test first 3 tools
 
     # Verify all conversions
-    for ai_function, tau2_tool in zip(ai_functions, tools[:3]):
+    for ai_function, tau2_tool in zip(ai_functions, tools[:3], strict=False):
         assert isinstance(ai_function, AIFunction)
         assert ai_function.name == tau2_tool.name
         assert ai_function.description == tau2_tool._get_description()

@@ -5,12 +5,14 @@
 ```bash
 # Base package including workflow support
 pip install agent-framework
-# Optional: Add Azure integration
-pip install agent-framework[azure]
-# Optional: Add Foundry integration
-pip install agent-framework[foundry]
+# Optional: Add Azure AI integration (Foundry)
+pip install agent-framework[azure-ai]
+# Optional: Add Microsoft integrations, currently only CopilotStudioAgents
+pip install agent-framework[microsoft]
 # Optional: Both
-pip install agent-framework[azure,foundry]
+pip install agent-framework[microsoft,azure-ai]
+# All-in-one
+pip install agent-framework[all]
 ```
 
 Supported Platforms:
@@ -29,16 +31,16 @@ AZURE_OPENAI_API_KEY=...
 AZURE_OPENAI_ENDPOINT=...
 AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=...
 ...
-FOUNDRY_PROJECT_ENDPOINT=...
-FOUNDRY_MODEL_DEPLOYMENT_NAME=...
+AZURE_AI_PROJECT_ENDPOINT=...
+AZURE_AI_MODEL_DEPLOYMENT_NAME=...
 ```
 
 You can also override environment variables by explicitly passing configuration parameters to the chat client constructor:
 
 ```python
-from agent_framework.azure import AzureChatClient
+from agent_framework.azure import AzureOpenAIChatClient
 
-chat_client = AzureChatClient(
+chat_client = AzureOpenAIChatClient(
     api_key='',
     endpoint='',
     deployment_name='',
@@ -215,8 +217,8 @@ if __name__ == "__main__":
 
 - [Getting Started with Agents](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/agents): Basic agent creation and tool usage
 - [Chat Client Examples](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/chat_client): Direct chat client usage patterns
-- [Azure Integration](https://github.com/microsoft/agent-framework/tree/main/python/packages/azure): Azure OpenAI and AI Foundry integration
-- [.NET Orchestration Samples](https://github.com/microsoft/agent-framework/tree/main/dotnet/samples/GettingStarted/Orchestration): Advanced multi-agent patterns (.NET)
+- [Azure AI Integration](https://github.com/microsoft/agent-framework/tree/main/python/packages/azure-ai): Azure AI integration
+- [Workflow Samples](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/workflow): Advanced multi-agent patterns
 
 ## Agent Framework Documentation
 

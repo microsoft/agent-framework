@@ -2,7 +2,7 @@
 
 using System;
 using System.Threading.Tasks;
-using Microsoft.Extensions.AI.Agents;
+using Microsoft.Agents.AI;
 
 namespace AgentConformance.IntegrationTests.Support;
 

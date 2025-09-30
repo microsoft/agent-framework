@@ -51,7 +51,7 @@ def log_messages(messages: list[ChatMessage]) -> None:
     Provides visual debugging by color-coding different message roles and
     content types. Escapes HTML-like characters to prevent log formatting issues.
     """
-    _logger = logger.opt(colors=True)
+    logger_ = logger.opt(colors=True)
     for msg in messages:
         # Handle different content types
         if hasattr(msg, "contents") and msg.contents:
@@ -60,53 +60,53 @@ def log_messages(messages: list[ChatMessage]) -> None:
                     if content.type == "text":
                         escape_text = content.text.replace("<", r"\<")
                         if msg.role == Role.SYSTEM:
-                            _logger.info(f"<cyan>[SYSTEM]</cyan> {escape_text}")
+                            logger_.info(f"<cyan>[SYSTEM]</cyan> {escape_text}")
                         elif msg.role == Role.USER:
-                            _logger.info(f"<green>[USER]</green> {escape_text}")
+                            logger_.info(f"<green>[USER]</green> {escape_text}")
                         elif msg.role == Role.ASSISTANT:
-                            _logger.info(f"<blue>[ASSISTANT]</blue> {escape_text}")
+                            logger_.info(f"<blue>[ASSISTANT]</blue> {escape_text}")
                         elif msg.role == Role.TOOL:
-                            _logger.info(f"<yellow>[TOOL]</yellow> {escape_text}")
+                            logger_.info(f"<yellow>[TOOL]</yellow> {escape_text}")
                         else:
-                            _logger.info(f"<magenta>[{msg.role.value.upper()}]</magenta> {escape_text}")
+                            logger_.info(f"<magenta>[{msg.role.value.upper()}]</magenta> {escape_text}")
                     elif content.type == "function_call":
                         function_call_text = f"{content.name}({content.arguments})"
                         function_call_text = function_call_text.replace("<", r"\<")
-                        _logger.info(f"<yellow>[TOOL_CALL]</yellow> 🔧 {function_call_text}")
+                        logger_.info(f"<yellow>[TOOL_CALL]</yellow> 🔧 {function_call_text}")
                     elif content.type == "function_result":
                         function_result_text = f"ID:{content.call_id} -> {content.result}"
                         function_result_text = function_result_text.replace("<", r"\<")
-                        _logger.info(f"<yellow>[TOOL_RESULT]</yellow> 🔨 {function_result_text}")
+                        logger_.info(f"<yellow>[TOOL_RESULT]</yellow> 🔨 {function_result_text}")
                     else:
                         content_text = str(content).replace("<", r"\<")
-                        _logger.info(f"<magenta>[{msg.role.value.upper()}] ({content.type})</magenta> {content_text}")
+                        logger_.info(f"<magenta>[{msg.role.value.upper()}] ({content.type})</magenta> {content_text}")
                 else:
                     # Fallback for content without type
                     text_content = str(content).replace("<", r"\<")
                     if msg.role == Role.SYSTEM:
-                        _logger.info(f"<cyan>[SYSTEM]</cyan> {text_content}")
+                        logger_.info(f"<cyan>[SYSTEM]</cyan> {text_content}")
                     elif msg.role == Role.USER:
-                        _logger.info(f"<green>[USER]</green> {text_content}")
+                        logger_.info(f"<green>[USER]</green> {text_content}")
                     elif msg.role == Role.ASSISTANT:
-                        _logger.info(f"<blue>[ASSISTANT]</blue> {text_content}")
+                        logger_.info(f"<blue>[ASSISTANT]</blue> {text_content}")
                     elif msg.role == Role.TOOL:
-                        _logger.info(f"<yellow>[TOOL]</yellow> {text_content}")
+                        logger_.info(f"<yellow>[TOOL]</yellow> {text_content}")
                     else:
-                        _logger.info(f"<magenta>[{msg.role.value.upper()}]</magenta> {text_content}")
+                        logger_.info(f"<magenta>[{msg.role.value.upper()}]</magenta> {text_content}")
         elif hasattr(msg, "text") and msg.text:
             # Handle simple text messages
             text_content = msg.text.replace("<", r"\<")
             if msg.role == Role.SYSTEM:
-                _logger.info(f"<cyan>[SYSTEM]</cyan> {text_content}")
+                logger_.info(f"<cyan>[SYSTEM]</cyan> {text_content}")
             elif msg.role == Role.USER:
-                _logger.info(f"<green>[USER]</green> {text_content}")
+                logger_.info(f"<green>[USER]</green> {text_content}")
             elif msg.role == Role.ASSISTANT:
-                _logger.info(f"<blue>[ASSISTANT]</blue> {text_content}")
+                logger_.info(f"<blue>[ASSISTANT]</blue> {text_content}")
             elif msg.role == Role.TOOL:
-                _logger.info(f"<yellow>[TOOL]</yellow> {text_content}")
+                logger_.info(f"<yellow>[TOOL]</yellow> {text_content}")
             else:
-                _logger.info(f"<magenta>[{msg.role.value.upper()}]</magenta> {text_content}")
+                logger_.info(f"<magenta>[{msg.role.value.upper()}]</magenta> {text_content}")
         else:
             # Fallback for other message formats
             text_content = str(msg).replace("<", r"\<")
-            _logger.info(f"<magenta>[{msg.role.value.upper()}]</magenta> {text_content}")
+            logger_.info(f"<magenta>[{msg.role.value.upper()}]</magenta> {text_content}")

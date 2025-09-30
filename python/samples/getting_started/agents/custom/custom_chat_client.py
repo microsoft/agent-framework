@@ -13,6 +13,7 @@ from agent_framework import (
     ChatResponseUpdate,
     Role,
     TextContent,
+    use_chat_middleware,
     use_function_invocation,
 )
 
@@ -37,6 +38,7 @@ custom client with ChatAgent through the create_agent() method.
 
 
 @use_function_invocation
+@use_chat_middleware
 class EchoingChatClient(BaseChatClient):
     """A custom chat client that echoes messages back with modifications.
 
@@ -111,7 +113,7 @@ class EchoingChatClient(BaseChatClient):
                     contents=[TextContent(text=char)],
                     role=Role.ASSISTANT,
                     response_id=f"echo-stream-resp-{random.randint(1000, 9999)}",
-                    ai_model_id="echo-model-v1",
+                    model_id="echo-model-v1",
                 )
                 await asyncio.sleep(0.05)
 

@@ -183,7 +183,7 @@
             "args": [
                 "run",
                 "poe",
-                "uv-setup",
+                "setup",
                 "--python=${input:py_version}"
             ],
             "presentation": {

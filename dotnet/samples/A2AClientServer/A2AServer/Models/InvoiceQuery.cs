@@ -118,7 +118,7 @@ public class InvoiceQuery
     public static DateTime GetRandomDateWithinLastTwoMonths()
     {
         // Get the current date and time  
-        DateTime endDate = DateTime.Now;
+        DateTime endDate = DateTime.UtcNow;
 
         // Calculate the start date, which is two months before the current date  
         DateTime startDate = endDate.AddMonths(-2);

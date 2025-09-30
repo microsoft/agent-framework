@@ -10,7 +10,7 @@ from agent_framework import (
     AgentRunContext,
     FunctionInvocationContext,
 )
-from agent_framework.foundry import FoundryChatClient
+from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 
@@ -83,7 +83,7 @@ async def main() -> None:
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        FoundryChatClient(async_credential=credential).create_agent(
+        AzureAIAgentClient(async_credential=credential).create_agent(
             name="WeatherAgent",
             instructions="You are a helpful weather assistant.",
             tools=get_weather,

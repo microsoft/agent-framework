@@ -4,7 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.Workflows;
+using Microsoft.Agents.AI.Workflows;
 
 namespace WorkflowCheckpointAndResumeSample;
 
@@ -28,7 +28,7 @@ public static class Program
     private static async Task Main()
     {
         // Create the workflow
-        var workflow = WorkflowHelper.GetWorkflow();
+        var workflow = await WorkflowHelper.GetWorkflowAsync().ConfigureAwait(false);
 
         // Create checkpoint manager
         var checkpointManager = CheckpointManager.Default;
@@ -57,9 +57,9 @@ public static class Program
                 }
             }
 
-            if (evt is WorkflowCompletedEvent workflowCompletedEvt)
+            if (evt is WorkflowOutputEvent workflowOutputEvt)
             {
-                Console.WriteLine($"Workflow completed with result: {workflowCompletedEvt.Data}");
+                Console.WriteLine($"Workflow completed with result: {workflowOutputEvt.Data}");
             }
         }
 
@@ -82,9 +82,9 @@ public static class Program
                 Console.WriteLine($"* Executor {executorCompletedEvt.ExecutorId} completed.");
             }
 
-            if (evt is WorkflowCompletedEvent workflowCompletedEvt)
+            if (evt is WorkflowOutputEvent workflowOutputEvt)
             {
-                Console.WriteLine($"Workflow completed with result: {workflowCompletedEvt.Data}");
+                Console.WriteLine($"Workflow completed with result: {workflowOutputEvt.Data}");
             }
         }
     }

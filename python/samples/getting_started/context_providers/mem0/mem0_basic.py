@@ -3,7 +3,7 @@
 import asyncio
 import uuid
 
-from agent_framework.foundry import FoundryChatClient
+from agent_framework.azure import AzureAIAgentClient
 from agent_framework.mem0 import Mem0Provider
 from azure.identity.aio import AzureCliCredential
 
@@ -32,7 +32,7 @@ async def main() -> None:
     # For Mem0 authentication, set Mem0 API key via "api_key" parameter or MEM0_API_KEY environment variable.
     async with (
         AzureCliCredential() as credential,
-        FoundryChatClient(async_credential=credential).create_agent(
+        AzureAIAgentClient(async_credential=credential).create_agent(
             name="FriendlyAssistant",
             instructions="You are a friendly assistant.",
             tools=retrieve_company_report,

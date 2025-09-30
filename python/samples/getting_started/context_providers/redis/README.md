@@ -63,7 +63,7 @@ The provider supports both full‑text only and hybrid vector search:
 
 `redis_basics.py` walks through three scenarios:
 
-1. Standalone provider usage: adds messages and retrieves context via `model_invoking`.
+1. Standalone provider usage: adds messages and retrieves context via `invoking`.
 2. Agent integration: teaches the agent a preference and verifies it is remembered across turns.
 3. Agent + tool: calls a sample tool (flight search) and then asks the agent to recall details remembered from the tool output.
 
@@ -108,5 +108,3 @@ You should see the agent responses and, when using embeddings, context retrieved
 - Ensure at least one of `application_id`, `agent_id`, `user_id`, or `thread_id` is set; the provider requires a scope.
 - If using embeddings, verify `OPENAI_API_KEY` is set and reachable.
 - Make sure Redis exposes RediSearch (Redis Stack image or managed service with search enabled).
-
-
