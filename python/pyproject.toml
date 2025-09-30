@@ -143,10 +143,14 @@ omit = [
 
 [tool.pyright]
 include = ["agent_framework", "samples"]
-exclude = ["**/tests/**", "docs", "**/.venv/**"]
+exclude = ["**/tests/**", "docs", "**/.venv/**", "samples/semantic-kernel-migration/**"]
 typeCheckingMode = "strict"
 reportUnnecessaryIsInstance = false
 reportMissingTypeStubs = false
+
+[[tool.pyright.executionEnvironments]]
+root = "samples/semantic-kernel-migration"
+typeCheckingMode = "off"
 
 [tool.mypy]
 plugins = ['pydantic.mypy']

@@ -3,6 +3,7 @@
 """Side-by-side sequential orchestrations for Agent Framework and Semantic Kernel."""
 
 import asyncio
+from collections.abc import Sequence
 from typing import cast
 
 from agent_framework import ChatMessage, Role, SequentialBuilder, WorkflowOutputEvent
@@ -16,14 +17,17 @@ from semantic_kernel.contents import ChatMessageContent
 PROMPT = "Write a tagline for a budget-friendly eBike."
 
 
+######################################################################
+# Semantic Kernel orchestration path
+######################################################################
+
+
 def build_semantic_kernel_agents() -> list[Agent]:
     credential = AzureCliCredential()
 
     writer_agent = ChatCompletionAgent(
         name="WriterAgent",
-        instructions=(
-            "You are a concise copywriter. Provide a single, punchy marketing sentence based on the prompt."
-        ),
+        instructions=("You are a concise copywriter. Provide a single, punchy marketing sentence based on the prompt."),
         service=AzureChatCompletion(credential=credential),
     )
 
@@ -36,18 +40,31 @@ def build_semantic_kernel_agents() -> list[Agent]:
     return [writer_agent, reviewer_agent]
 
 
-def sk_agent_response_callback(message: ChatMessageContent) -> None:
-    content = message.content or ""
-    print(f"# {message.name}\n{content}\n")
+async def sk_agent_response_callback(
+    message: ChatMessageContent | Sequence[ChatMessageContent],
+) -> None:
+    if isinstance(message, ChatMessageContent):
+        messages: Sequence[ChatMessageContent] = [message]
+    elif isinstance(message, Sequence) and not isinstance(message, (str, bytes)):
+        messages = list(message)
+    else:
+        messages = [cast(ChatMessageContent, message)]
+
+    for item in messages:
+        content = item.content or ""
+        print(f"# {item.name}\n{content}\n")
+
+
+######################################################################
+# Agent Framework orchestration path
+######################################################################
 
 
 async def run_agent_framework_example(prompt: str) -> list[ChatMessage]:
     chat_client = AzureChatClient(credential=AzureCliCredential())
 
     writer = chat_client.create_agent(
-        instructions=(
-            "You are a concise copywriter. Provide a single, punchy marketing sentence based on the prompt."
-        ),
+        instructions=("You are a concise copywriter. Provide a single, punchy marketing sentence based on the prompt."),
         name="writer",
     )
 

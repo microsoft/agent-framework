@@ -35,7 +35,9 @@ dependencies = [
     "opentelemetry-exporter-otlp-proto-grpc>=1.36.0",
     "opentelemetry-semantic-conventions-ai>=0.4.13",
     "aiofiles>=24.1.0",
-    "azure-identity>=1,<2"
+    "azure-identity>=1,<2",
+    # temp only!!
+    "semantic-kernel>=1.37.0",
 ]
 
 [project.optional-dependencies]
