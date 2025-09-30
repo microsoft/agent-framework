@@ -50,8 +50,8 @@ internal static partial class WorkflowsJsonUtilities
         // Copy the configuration from the source generated context.
         JsonSerializerOptions options = new(JsonContext.Default.Options);
 
-        // Chain with all supported types from Microsoft.Extensions.AI.Abstractions. and Microsoft.Extensions.AI.Agents.Abstractions.
-        options.TypeInfoResolverChain.Add(AIJsonUtilities.DefaultOptions.TypeInfoResolver!);
+        // Chain with all supported types from Microsoft.Extensions.AI.Abstractions and Microsoft.Agents.AI.Abstractions.
+        options.TypeInfoResolverChain.Add(AgentAbstractionsJsonUtilities.DefaultOptions.TypeInfoResolver!);
 
         options.MakeReadOnly();
         return options;

@@ -24,7 +24,7 @@ public abstract class AgentCatalog
     /// <summary>
     /// Asynchronously retrieves all registered AI agents from the catalog.
     /// </summary>
-    /// <param name="cancellationToken">A cancellation token that can be used to cancel the enumeration operation.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>
     /// An asynchronous enumerable of <see cref="AIAgent"/> instances representing all registered agents.
     /// The enumeration will only include agents that are successfully resolved from the service provider.

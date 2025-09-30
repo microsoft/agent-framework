@@ -1,7 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Microsoft.Agents.AI;
-
 namespace Microsoft.Agents.AI.Workflows;
 
 /// <summary>
