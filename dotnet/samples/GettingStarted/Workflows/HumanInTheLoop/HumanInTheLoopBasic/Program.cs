@@ -2,7 +2,7 @@
 
 using System;
 using System.Threading.Tasks;
-using Microsoft.Agents.Workflows;
+using Microsoft.Agents.AI.Workflows;
 
 namespace WorkflowHumanInTheLoopBasicSample;
 

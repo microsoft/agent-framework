@@ -340,8 +340,8 @@ class RedisChatMessageStore:
         Returns:
             JSON string representation of the message.
         """
-        # Convert ChatMessage to dictionary using Pydantic serialization
-        message_dict = message.model_dump()
+        # Convert ChatMessage to dictionary using custom serialization
+        message_dict = message.to_dict()
         # Serialize to compact JSON (no extra whitespace for Redis efficiency)
         return json.dumps(message_dict, separators=(",", ":"))
 
@@ -356,8 +356,8 @@ class RedisChatMessageStore:
         """
         # Parse JSON string back to dictionary
         message_dict = json.loads(serialized_message)
-        # Reconstruct ChatMessage using Pydantic validation
-        return ChatMessage.model_validate(message_dict)
+        # Reconstruct ChatMessage using custom deserialization
+        return ChatMessage.from_dict(message_dict)
 
     # ============================================================================
     # List-like Convenience Methods (Redis-optimized async versions)
