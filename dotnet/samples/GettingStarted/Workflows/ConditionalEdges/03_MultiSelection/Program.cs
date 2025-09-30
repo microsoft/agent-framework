@@ -148,7 +148,7 @@ public static class Program
         {
             ChatOptions = new()
             {
-                ResponseFormat = ChatResponseFormat.ForJsonSchema(AIJsonUtilities.CreateJsonSchema(typeof(AnalysisResult)))
+                ResponseFormat = ChatResponseFormat.ForJsonSchema<AnalysisResult>()
             }
         });
 
@@ -161,7 +161,7 @@ public static class Program
         {
             ChatOptions = new()
             {
-                ResponseFormat = ChatResponseFormat.ForJsonSchema(AIJsonUtilities.CreateJsonSchema(typeof(EmailResponse)))
+                ResponseFormat = ChatResponseFormat.ForJsonSchema<EmailResponse>()
             }
         });
 
@@ -174,7 +174,7 @@ public static class Program
         {
             ChatOptions = new()
             {
-                ResponseFormat = ChatResponseFormat.ForJsonSchema(AIJsonUtilities.CreateJsonSchema(typeof(EmailSummary)))
+                ResponseFormat = ChatResponseFormat.ForJsonSchema<EmailSummary>()
             }
         });
 }

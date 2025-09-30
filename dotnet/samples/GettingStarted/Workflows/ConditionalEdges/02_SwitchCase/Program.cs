@@ -107,7 +107,7 @@ public static class Program
         {
             ChatOptions = new()
             {
-                ResponseFormat = ChatResponseFormat.ForJsonSchema(AIJsonUtilities.CreateJsonSchema(typeof(DetectionResult)))
+                ResponseFormat = ChatResponseFormat.ForJsonSchema<DetectionResult>()
             }
         });
 
@@ -120,7 +120,7 @@ public static class Program
         {
             ChatOptions = new()
             {
-                ResponseFormat = ChatResponseFormat.ForJsonSchema(AIJsonUtilities.CreateJsonSchema(typeof(EmailResponse)))
+                ResponseFormat = ChatResponseFormat.ForJsonSchema<EmailResponse>()
             }
         });
 }

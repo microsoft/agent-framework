@@ -119,39 +119,6 @@ public sealed class PersistentAgentsClientExtensionsTests
     }
 
     /// <summary>
-    /// Verify that AsNewIChatClient throws ArgumentNullException when client is null.
-    /// </summary>
-    [Fact]
-    public void AsNewIChatClient_WithNullClient_ThrowsArgumentNullException()
-    {
-        // Act & Assert
-        var exception = Assert.Throws<ArgumentNullException>(() =>
-            ((PersistentAgentsClient)null!).AsNewIChatClient("test-agent"));
-
-        Assert.Equal("client", exception.ParamName);
-    }
-
-    /// <summary>
-    /// Verify that AsNewIChatClient throws ArgumentException when assistantId is null or empty.
-    /// </summary>
-    [Fact]
-    public void AsNewIChatClient_WithNullOrEmptyAssistantId_ThrowsArgumentException()
-    {
-        // Arrange
-        var mockClient = new Mock<PersistentAgentsClient>();
-
-        // Act & Assert - null assistantId throws ArgumentNullException
-        var exception1 = Assert.Throws<ArgumentNullException>(() =>
-            mockClient.Object.AsNewIChatClient(null!));
-        Assert.Equal("assistantId", exception1.ParamName);
-
-        // Act & Assert - empty assistantId throws ArgumentException
-        var exception2 = Assert.Throws<ArgumentException>(() =>
-            mockClient.Object.AsNewIChatClient(""));
-        Assert.Equal("assistantId", exception2.ParamName);
-    }
-
-    /// <summary>
     /// Verify that GetAIAgent with clientFactory parameter correctly applies the factory.
     /// </summary>
     [Fact]

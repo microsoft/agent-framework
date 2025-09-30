@@ -15,7 +15,7 @@ var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? th
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 // Create an MCPClient for the GitHub server
-await using var mcpClient = await McpClientFactory.CreateAsync(new StdioClientTransport(new()
+await using var mcpClient = await McpClient.CreateAsync(new StdioClientTransport(new()
 {
     Name = "MCPServer",
     Command = "npx",

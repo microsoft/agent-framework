@@ -22,7 +22,7 @@
     <PackageVersion Include="Azure.Identity" Version="1.16.0" />
     <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="9.7.2" />
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="9.0.9" />
-    <PackageVersion Include="Microsoft.Extensions.AI.AzureAIInference" Version="9.9.0-preview.1.25458.4" />
+    <PackageVersion Include="Microsoft.Extensions.AI.AzureAIInference" Version="9.9.1-preview.1.25474.6" />
     <PackageVersion Include="Microsoft.Extensions.Http.Resilience" Version="9.9.0" />
     <PackageVersion Include="Microsoft.Extensions.ServiceDiscovery" Version="9.4.2" />
     <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.12.0" />
@@ -37,7 +37,7 @@
     <PackageVersion Include="System.Linq.Async" Version="6.0.3" />
     <PackageVersion Include="System.Net.ServerSentEvents" Version="9.0.9" />
     <PackageVersion Include="System.Text.Json" Version="9.0.9" />
-    <PackageVersion Include="System.CodeDom" Version="9.0.8" />
+    <PackageVersion Include="System.CodeDom" Version="9.0.9" />
     <PackageVersion Include="System.Collections.Immutable" Version="9.0.9" />
     <PackageVersion Include="System.CommandLine" Version="2.0.0-rc.1.25451.107" />
     <PackageVersion Include="System.Diagnostics.DiagnosticSource" Version="9.0.9" />
@@ -52,9 +52,9 @@
     <PackageVersion Include="Microsoft.Bcl.HashCode" Version="6.0.0" />
     <PackageVersion Include="Microsoft.Bcl.AsyncInterfaces" Version="9.0.9" />
     <PackageVersion Include="OpenAI" Version="2.4.0" />
-    <PackageVersion Include="Microsoft.Extensions.AI" Version="9.9.0" />
+    <PackageVersion Include="Microsoft.Extensions.AI" Version="9.9.1" />
+    <PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="9.9.1" />
     <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="9.9.0-preview.1.25458.4" />
-    <PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="9.9.0" />
     <PackageVersion Include="Microsoft.Extensions.Configuration" Version="9.0.9" />
     <PackageVersion Include="Microsoft.Extensions.Configuration.Abstractions" Version="9.0.9" />
     <PackageVersion Include="Microsoft.Extensions.Configuration.Binder" Version="9.0.9" />
@@ -81,12 +81,12 @@
     <PackageVersion Include="A2A" Version="0.1.0-preview.2" />
     <PackageVersion Include="A2A.AspNetCore" Version="0.1.0-preview.2" />
     <!-- MCP -->
-    <PackageVersion Include="ModelContextProtocol" Version="0.3.0-preview.4" />
+    <PackageVersion Include="ModelContextProtocol" Version="0.4.0-preview.1" />
     <!-- Inference SDKs -->
     <PackageVersion Include="Anthropic.SDK" Version="5.5.2" />
     <PackageVersion Include="AWSSDK.Extensions.Bedrock.MEAI" Version="4.0.3.2" />
     <PackageVersion Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.9.2" />
-    <PackageVersion Include="OllamaSharp" Version="5.4.6" />
+    <PackageVersion Include="OllamaSharp" Version="5.4.7" />
     <!-- Identity -->
     <PackageVersion Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.77.0" />
     <!-- Workflows -->
