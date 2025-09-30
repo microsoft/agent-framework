@@ -80,17 +80,15 @@ class SerializationMixin:
                     for k, v in value.items():
                         if isinstance(v, SerializationProtocol):
                             serialized_dict[k] = v.to_dict(exclude=exclude, exclude_none=exclude_none)
-                        else:
-                            # Check if the value is JSON serializable
-                            try:
-                                json.dumps(v)
-                                serialized_dict[k] = v
-                            except (TypeError, OverflowError):
-                                # Skip non-serializable values
-                                logger.debug(
-                                    f"Skipping non-serializable value for key '{k}' in dict attribute '{key}' "
-                                    f"of type {type(v).__name__}"
-                                )
+                            continue
+                        # Check if the value is JSON serializable
+                        if isinstance(v, (str, int, float, bool, type(None), list, dict)):
+                            serialized_dict[k] = v
+                            continue
+                        logger.debug(
+                            f"Skipping non-serializable value for key '{k}' in dict attribute '{key}' "
+                            f"of type {type(v).__name__}"
+                        )
                     result[key] = serialized_dict
                 else:
                     result[key] = value
