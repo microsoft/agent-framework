@@ -96,7 +96,7 @@ namespace SampleApp
 
         public string? ThreadDbKey { get; private set; }
 
-        public override async Task AddMessagesAsync(IEnumerable<ChatMessage> messages, CancellationToken cancellationToken)
+        public override async Task AddMessagesAsync(IEnumerable<ChatMessage> messages, CancellationToken cancellationToken = default)
         {
             this.ThreadDbKey ??= Guid.NewGuid().ToString("N");
 
@@ -113,7 +113,7 @@ namespace SampleApp
             }), cancellationToken);
         }
 
-        public override async Task<IEnumerable<ChatMessage>> GetMessagesAsync(CancellationToken cancellationToken)
+        public override async Task<IEnumerable<ChatMessage>> GetMessagesAsync(CancellationToken cancellationToken = default)
         {
             var collection = this._vectorStore.GetCollection<string, ChatHistoryItem>("ChatHistory");
             await collection.EnsureCollectionExistsAsync(cancellationToken);

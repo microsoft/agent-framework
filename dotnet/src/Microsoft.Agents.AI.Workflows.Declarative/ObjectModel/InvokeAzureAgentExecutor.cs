@@ -20,7 +20,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
     private AzureAgentInput? AgentInput => this.Model.Input;
     private AzureAgentOutput? AgentOutput => this.Model.Output;
 
-    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         string? conversationId = this.GetConversationId();
         string agentName = this.GetAgentName();

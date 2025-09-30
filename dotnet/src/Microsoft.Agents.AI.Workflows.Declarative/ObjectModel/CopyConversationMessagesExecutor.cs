@@ -16,7 +16,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 internal sealed class CopyConversationMessagesExecutor(CopyConversationMessages model, WorkflowAgentProvider agentProvider, WorkflowFormulaState state) :
     DeclarativeActionExecutor<CopyConversationMessages>(model, state)
 {
-    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(this.Model.ConversationId, $"{nameof(this.Model)}.{nameof(this.Model.ConversationId)}");
         string conversationId = this.Evaluator.GetValue(this.Model.ConversationId).Value;

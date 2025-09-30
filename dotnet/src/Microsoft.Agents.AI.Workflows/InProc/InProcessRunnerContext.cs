@@ -3,15 +3,19 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Execution;
+using Microsoft.Agents.AI.Workflows.Observability;
 using Microsoft.Agents.AI.Workflows.Specialized;
 using Microsoft.Extensions.Logging;
 using Microsoft.Shared.Diagnostics;
+using OpenTelemetry;
+using OpenTelemetry.Context.Propagation;
 
 namespace Microsoft.Agents.AI.Workflows.InProc;
 
@@ -132,10 +136,25 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         return default;
     }
 
+    private static readonly string s_namespace = typeof(IWorkflowContext).Namespace!;
+    private static readonly ActivitySource s_activitySource = new(s_namespace);
+
     public async ValueTask SendMessageAsync(string sourceId, object message, string? targetId = null)
     {
+        using Activity? activity = s_activitySource.StartActivity(ActivityNames.MessageSend, ActivityKind.Producer);
+        // Create a carrier for trace context propagation
+        var traceContext = activity is null ? null : new Dictionary<string, string>();
+        if (traceContext is not null)
+        {
+            // Inject the current activity context into the carrier
+            Propagators.DefaultTextMapPropagator.Inject(
+                new PropagationContext(activity?.Context ?? default, Baggage.Current),
+                traceContext,
+                (carrier, key, value) => carrier[key] = value);
+        }
+
         this.CheckEnded();
-        MessageEnvelope envelope = new(message, sourceId, targetId: targetId);
+        MessageEnvelope envelope = new(message, sourceId, targetId: targetId, traceContext: traceContext);
 
         if (this._workflow.Edges.TryGetValue(sourceId, out HashSet<Edge>? edges))
         {
@@ -150,10 +169,10 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         }
     }
 
-    public IWorkflowContext Bind(string executorId)
+    public IWorkflowContext Bind(string executorId, Dictionary<string, string>? traceContext = null)
     {
         this.CheckEnded();
-        return new BoundContext(this, executorId, this._outputFilter);
+        return new BoundContext(this, executorId, this._outputFilter, traceContext);
     }
 
     public ValueTask PostAsync(ExternalRequest request)
@@ -173,10 +192,18 @@ internal sealed class InProcessRunnerContext : IRunnerContext
 
     internal StateManager StateManager { get; } = new();
 
-    private sealed class BoundContext(InProcessRunnerContext RunnerContext, string ExecutorId, OutputFilter outputFilter) : IWorkflowContext
+    private sealed class BoundContext(
+        InProcessRunnerContext RunnerContext,
+        string ExecutorId,
+        OutputFilter outputFilter,
+        Dictionary<string, string>? traceContext) : IWorkflowContext
     {
         public ValueTask AddEventAsync(WorkflowEvent workflowEvent) => RunnerContext.AddEventAsync(workflowEvent);
-        public ValueTask SendMessageAsync(object message, string? targetId = null) => RunnerContext.SendMessageAsync(ExecutorId, message, targetId);
+
+        public ValueTask SendMessageAsync(object message, string? targetId = null)
+        {
+            return RunnerContext.SendMessageAsync(ExecutorId, message, targetId);
+        }
 
         public async ValueTask YieldOutputAsync(object output)
         {
@@ -208,6 +235,8 @@ internal sealed class InProcessRunnerContext : IRunnerContext
 
         public ValueTask QueueClearScopeAsync(string? scopeName = null)
             => RunnerContext.StateManager.ClearStateAsync(ExecutorId, scopeName);
+
+        public IReadOnlyDictionary<string, string>? TraceContext => traceContext;
     }
 
     internal Task PrepareForCheckpointAsync(CancellationToken cancellationToken = default)

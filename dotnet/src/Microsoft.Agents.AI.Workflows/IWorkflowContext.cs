@@ -92,4 +92,9 @@ public interface IWorkflowContext
     /// <param name="scopeName">An optional name that specifies the scope to clear. If null, the default scope is used.</param>
     /// <returns>A ValueTask that represents the asynchronous clear operation.</returns>
     ValueTask QueueClearScopeAsync(string? scopeName = null);
+
+    /// <summary>
+    /// The trace context associated with the current message about to be processed by the executor, if any.
+    /// </summary>
+    IReadOnlyDictionary<string, string>? TraceContext { get; }
 }

@@ -15,7 +15,7 @@ public sealed class DeclarativeWorkflowOptions(WorkflowAgentProvider agentProvid
     /// <summary>
     /// Defines the agent provider.
     /// </summary>
-    public WorkflowAgentProvider AgentProvider { get; } = Throw.IfNull(agentProvider, nameof(agentProvider));
+    public WorkflowAgentProvider AgentProvider { get; } = Throw.IfNull(agentProvider);
 
     /// <summary>
     /// Defines the configuration settings for the workflow.

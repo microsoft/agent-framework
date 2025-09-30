@@ -29,6 +29,10 @@
     <InternalsVisibleTo Include="Microsoft.Agents.AI.Workflows.UnitTests" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="OpenTelemetry.Api" />
+  </ItemGroup>
+
   <PropertyGroup>
     <!-- NuGet Package Settings -->
     <Title>Microsoft Agent Framework Workflows</Title>
