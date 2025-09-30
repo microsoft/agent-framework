@@ -10,7 +10,6 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.Sample;
