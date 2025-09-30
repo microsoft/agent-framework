@@ -25,13 +25,13 @@ public static class Program
         // Set up the Azure OpenAI client
         var endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT")
             ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
-        var model = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_MODEL_ID") ?? "gpt-4o-mini";
+        var deploymentName = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
         var persistentAgentsClient = new PersistentAgentsClient(endpoint, new AzureCliCredential());
 
         // Create agents
-        AIAgent frenchAgent = await GetTranslationAgentAsync("French", persistentAgentsClient, model);
-        AIAgent spanishAgent = await GetTranslationAgentAsync("Spanish", persistentAgentsClient, model);
-        AIAgent englishAgent = await GetTranslationAgentAsync("English", persistentAgentsClient, model);
+        AIAgent frenchAgent = await GetTranslationAgentAsync("French", persistentAgentsClient, deploymentName);
+        AIAgent spanishAgent = await GetTranslationAgentAsync("Spanish", persistentAgentsClient, deploymentName);
+        AIAgent englishAgent = await GetTranslationAgentAsync("English", persistentAgentsClient, deploymentName);
 
         // Build the workflow by adding executors and connecting them
         var workflow = new WorkflowBuilder(frenchAgent)

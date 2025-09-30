@@ -223,7 +223,7 @@ export interface ChatResponseUpdate {
   response_id?: string;
   message_id?: string;
   conversation_id?: string;
-  ai_model_id?: string;
+  model_id?: string;
   created_at?: CreatedAtT;
   finish_reason?: FinishReason;
   additional_properties?: Record<string, unknown>;

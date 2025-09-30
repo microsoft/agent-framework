@@ -3,7 +3,7 @@
 import asyncio
 import random
 from collections.abc import AsyncIterable, MutableSequence
-from typing import Any
+from typing import Any, ClassVar
 
 from agent_framework import (
     BaseChatClient,
@@ -46,9 +46,7 @@ class EchoingChatClient(BaseChatClient):
     and implementing the required _inner_get_response() and _inner_get_streaming_response() methods.
     """
 
-    OTEL_PROVIDER_NAME: str = "EchoingChatClient"
-
-    prefix: str = "Echo:"
+    OTEL_PROVIDER_NAME: ClassVar[str] = "EchoingChatClient"
 
     def __init__(self, *, prefix: str = "Echo:", **kwargs: Any) -> None:
         """Initialize the EchoingChatClient.
@@ -57,10 +55,8 @@ class EchoingChatClient(BaseChatClient):
             prefix: Prefix to add to echoed messages.
             **kwargs: Additional keyword arguments passed to BaseChatClient.
         """
-        super().__init__(
-            prefix=prefix,  # type: ignore
-            **kwargs,
-        )
+        super().__init__(**kwargs)
+        self.prefix = prefix
 
     async def _inner_get_response(
         self,

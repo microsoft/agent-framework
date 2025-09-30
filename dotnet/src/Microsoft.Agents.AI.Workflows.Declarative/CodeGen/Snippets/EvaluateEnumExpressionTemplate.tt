@@ -1,0 +1,41 @@
+﻿<#+
+void EvaluateEnumExpression<TWrapper, TValue>(
+    EnumExpression<TWrapper> expression, 
+    string targetVariable,
+    IDictionary<TWrapper, string> resultMap,
+    string defaultValue = null,
+    bool qualifyResult = false,
+    bool isNullable = false)
+        where TWrapper : EnumWrapper
+{
+    string resultType = $"{GetTypeAlias<TValue>()}{(isNullable ? "?" : "")}";
+    if (expression is null)
+    {#>
+        <#= resultType #> <#= targetVariable #> = <#= FormatValue<TValue>(defaultValue) #>;<#+ 
+    }
+    else if (expression.IsLiteral)
+    { 
+        resultMap.TryGetValue(expression.LiteralValue, out string resultValue);
+        if (qualifyResult)
+        {#>
+        <#= resultType #> <#= targetVariable #> = <#= GetTypeAlias<TValue>() #>.<#= resultValue #>;<#+ 
+        }
+        else
+        {#>
+        <#= resultType #> <#= targetVariable #> = <#= FormatValue<TValue>(resultValue) #>;<#+ 
+        }
+    }
+    else if (expression.IsVariableReference && expression.VariableReference.SegmentCount == 2)
+    {#>
+        <#= resultType #> <#= targetVariable #> = await context.ReadStateAsync<<#= resultType #>>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.NamespaceAlias #>").ConfigureAwait(false);<#+
+    }
+    else if (expression.IsVariableReference)
+    {#>
+        <#= resultType #>? <#= targetVariable #> = await context.EvaluateValueAsync<<#= resultType #>>(<#= FormatStringValue(expression.VariableReference.ToString()) #>).ConfigureAwait(false);<#+ 
+    }
+    else
+    {#>
+        <#= resultType #> <#= targetVariable #> = await context.EvaluateValueAsync<<#= resultType #>>(<#= FormatStringValue(expression.ExpressionText) #>).ConfigureAwait(false);<#+ 
+    }
+}
+#>

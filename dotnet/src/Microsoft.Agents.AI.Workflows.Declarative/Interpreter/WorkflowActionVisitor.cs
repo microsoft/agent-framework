@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Linq;
 using Microsoft.Agents.AI.Workflows.Declarative.Events;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
+using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
@@ -26,8 +27,8 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         public static string Restart(string actionId) => $"{actionId}_{nameof(Restart)}";
     }
 
-    private readonly WorkflowBuilder _workflowBuilder;
-    private readonly DeclarativeWorkflowModel _workflowModel;
+    private readonly Executor _rootAction;
+    private readonly WorkflowModel<Func<object?, bool>> _workflowModel;
     private readonly DeclarativeWorkflowOptions _workflowOptions;
     private readonly WorkflowFormulaState _workflowState;
 
@@ -36,8 +37,8 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         WorkflowFormulaState state,
         DeclarativeWorkflowOptions options)
     {
-        this._workflowBuilder = new WorkflowBuilder(rootAction);
-        this._workflowModel = new DeclarativeWorkflowModel(rootAction);
+        this._rootAction = rootAction;
+        this._workflowModel = new WorkflowModel<Func<object?, bool>>((IModeledAction)rootAction);
         this._workflowOptions = options;
         this._workflowState = state;
     }
@@ -46,11 +47,12 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
     public Workflow Complete()
     {
-        // Process the cached links
-        this._workflowModel.ConnectNodes(this._workflowBuilder);
+        WorkflowModelBuilder builder = new(this._rootAction);
+
+        this._workflowModel.Build(builder);
 
         // Build final workflow
-        return this._workflowBuilder.Build();
+        return builder.WorkflowBuilder.Build();
     }
 
     protected override void Visit(ActionScope item)
@@ -250,9 +252,8 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
         // Define input action
         string inputId = QuestionExecutor.Steps.Input(actionId);
-        //ModeledPort inputPort = new(InputPort.Create<InputRequest, InputResponse>(inputId)); // %%% MODELING
-        InputPort inputPort = InputPort.Create<InputRequest, InputResponse>(inputId);
-        this._workflowModel.AddPort(inputPort, parentId);
+        InputPortAction inputPort = new(InputPort.Create<InputRequest, InputResponse>(inputId));
+        this._workflowModel.AddNode(inputPort, parentId);
         this._workflowModel.AddLinkFromPeer(parentId, inputId);
 
         // Capture input response
@@ -474,13 +475,13 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     }
 
     private void ContinueWith(
-        Executor executor,
+        IModeledAction action,
         string parentId,
         Func<object?, bool>? condition = null,
         Action? completionHandler = null)
     {
-        this._workflowModel.AddNode(executor, parentId, completionHandler);
-        this._workflowModel.AddLinkFromPeer(parentId, executor.Id, condition);
+        this._workflowModel.AddNode(action, parentId, completionHandler);
+        this._workflowModel.AddLinkFromPeer(parentId, action.Id, condition);
     }
 
     private string ContinuationFor(string parentId, DelegateAction<ActionExecutorResult>? stepAction = null) => this.ContinuationFor(parentId, parentId, stepAction);
@@ -493,7 +494,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     }
 
     private void RestartAfter(string actionId, string parentId) =>
-        this._workflowModel.AddNode(new DelegateActionExecutor($"{actionId}_Continue", this._workflowState), parentId);
+        this._workflowModel.AddNode(new DelegateActionExecutor(Steps.Restart(actionId), this._workflowState), parentId);
 
     private static string GetParentId(BotElement item) =>
         item.GetParentId() ??

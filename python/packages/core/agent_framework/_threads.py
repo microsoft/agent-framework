@@ -3,10 +3,9 @@
 from collections.abc import Sequence
 from typing import Any, Protocol, TypeVar
 
-from pydantic import model_validator
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from ._memory import AggregateContextProvider
-from ._pydantic import AFBaseModel
 from ._types import ChatMessage
 from .exceptions import AgentThreadException
 
@@ -64,7 +63,19 @@ class ChatMessageStoreProtocol(Protocol):
         ...
 
 
-class AgentThreadState(AFBaseModel):
+class ChatMessageStoreState(BaseModel):
+    """State model for serializing and deserializing chat message store data.
+
+    Attributes:
+        messages: List of chat messages stored in the message store.
+    """
+
+    messages: list[ChatMessage]
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+
+class AgentThreadState(BaseModel):
     """State model for serializing and deserializing thread information.
 
     Attributes:
@@ -73,7 +84,9 @@ class AgentThreadState(AFBaseModel):
     """
 
     service_thread_id: str | None = None
-    chat_message_store_state: Any | None = None
+    chat_message_store_state: ChatMessageStoreState | None = None
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     @model_validator(mode="before")
     def validate_only_one(cls, values: dict[str, Any]) -> dict[str, Any]:
@@ -84,16 +97,6 @@ class AgentThreadState(AFBaseModel):
         ):
             raise AgentThreadException("Only one of service_thread_id or chat_message_store_state may be set.")
         return values
-
-
-class ChatMessageStoreState(AFBaseModel):
-    """State model for serializing and deserializing chat message store data.
-
-    Attributes:
-        messages: List of chat messages stored in the message store.
-    """
-
-    messages: list[ChatMessage]
 
 
 TChatMessageStore = TypeVar("TChatMessageStore", bound="ChatMessageStore")

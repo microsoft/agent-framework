@@ -76,7 +76,7 @@ def test_init(azure_openai_unit_test_env: dict[str, str]) -> None:
     # Test successful initialization
     azure_responses_client = AzureOpenAIResponsesClient()
 
-    assert azure_responses_client.ai_model_id == azure_openai_unit_test_env["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]
+    assert azure_responses_client.model_id == azure_openai_unit_test_env["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]
     assert isinstance(azure_responses_client, ChatClientProtocol)
 
 
@@ -86,12 +86,12 @@ def test_init_validation_fail() -> None:
         AzureOpenAIResponsesClient(api_key="34523", deployment_name={"test": "dict"})  # type: ignore
 
 
-def test_init_ai_model_id_constructor(azure_openai_unit_test_env: dict[str, str]) -> None:
+def test_init_model_id_constructor(azure_openai_unit_test_env: dict[str, str]) -> None:
     # Test successful initialization
-    ai_model_id = "test_model_id"
-    azure_responses_client = AzureOpenAIResponsesClient(deployment_name=ai_model_id)
+    model_id = "test_model_id"
+    azure_responses_client = AzureOpenAIResponsesClient(deployment_name=model_id)
 
-    assert azure_responses_client.ai_model_id == ai_model_id
+    assert azure_responses_client.model_id == model_id
     assert isinstance(azure_responses_client, ChatClientProtocol)
 
 
@@ -103,7 +103,7 @@ def test_init_with_default_header(azure_openai_unit_test_env: dict[str, str]) ->
         default_headers=default_headers,
     )
 
-    assert azure_responses_client.ai_model_id == azure_openai_unit_test_env["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]
+    assert azure_responses_client.model_id == azure_openai_unit_test_env["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]
     assert isinstance(azure_responses_client, ChatClientProtocol)
 
     # Assert that the default header we added is present in the client's default headers
@@ -124,15 +124,15 @@ def test_serialize(azure_openai_unit_test_env: dict[str, str]) -> None:
     default_headers = {"X-Unit-Test": "test-guid"}
 
     settings = {
-        "ai_model_id": azure_openai_unit_test_env["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+        "deployment_name": azure_openai_unit_test_env["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
         "api_key": azure_openai_unit_test_env["AZURE_OPENAI_API_KEY"],
         "default_headers": default_headers,
     }
 
     azure_responses_client = AzureOpenAIResponsesClient.from_dict(settings)
     dumped_settings = azure_responses_client.to_dict()
-    assert dumped_settings["ai_model_id"] == azure_openai_unit_test_env["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]
-    assert dumped_settings["api_key"] == azure_openai_unit_test_env["AZURE_OPENAI_API_KEY"]
+    assert dumped_settings["deployment_name"] == azure_openai_unit_test_env["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]
+    assert "api_key" not in dumped_settings
     # Assert that the default header we added is present in the dumped_settings default headers
     for key, value in default_headers.items():
         assert key in dumped_settings["default_headers"]
@@ -141,6 +141,7 @@ def test_serialize(azure_openai_unit_test_env: dict[str, str]) -> None:
     assert "User-Agent" not in dumped_settings["default_headers"]
 
 
+@pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_azure_responses_client_response() -> None:
     """Test azure responses client responses."""
@@ -184,6 +185,7 @@ async def test_azure_responses_client_response() -> None:
     assert "sunny" in structured_response.value.weather.lower()
 
 
+@pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_azure_responses_client_response_tools() -> None:
     """Test azure responses client tools."""
@@ -223,6 +225,7 @@ async def test_azure_responses_client_response_tools() -> None:
     assert "sunny" in structured_response.value.weather.lower()
 
 
+@pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_azure_responses_client_streaming() -> None:
     """Test Azure azure responses client streaming responses."""
@@ -273,6 +276,7 @@ async def test_azure_responses_client_streaming() -> None:
     assert "sunny" in structured_response.value.weather.lower()
 
 
+@pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_azure_responses_client_streaming_tools() -> None:
     """Test azure responses client streaming tools."""
@@ -320,6 +324,7 @@ async def test_azure_responses_client_streaming_tools() -> None:
     assert "sunny" in output.weather.lower()
 
 
+@pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_azure_responses_client_agent_basic_run():
     """Test Azure Responses Client agent basic run functionality with AzureOpenAIResponsesClient."""
@@ -336,6 +341,7 @@ async def test_azure_responses_client_agent_basic_run():
     assert "hello world" in response.text.lower()
 
 
+@pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_azure_responses_client_agent_basic_run_streaming():
     """Test Azure Responses Client agent basic streaming functionality with AzureOpenAIResponsesClient."""
@@ -353,6 +359,7 @@ async def test_azure_responses_client_agent_basic_run_streaming():
         assert "streaming response test" in full_text.lower()
 
 
+@pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_azure_responses_client_agent_thread_persistence():
     """Test Azure Responses Client agent thread persistence across runs with AzureOpenAIResponsesClient."""
@@ -376,6 +383,7 @@ async def test_azure_responses_client_agent_thread_persistence():
         assert second_response.text is not None
 
 
+@pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_azure_responses_client_agent_thread_storage_with_store_true():
     """Test Azure Responses Client agent with store=True to verify service_thread_id is returned."""
@@ -407,6 +415,7 @@ async def test_azure_responses_client_agent_thread_storage_with_store_true():
         assert len(thread.service_thread_id) > 0
 
 
+@pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_azure_responses_client_agent_existing_thread():
     """Test Azure Responses Client agent with existing thread to continue conversations across agent instances."""
@@ -441,6 +450,7 @@ async def test_azure_responses_client_agent_existing_thread():
             assert "photography" in second_response.text.lower()
 
 
+@pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_azure_responses_client_agent_hosted_code_interpreter_tool():
     """Test Azure Responses Client agent with HostedCodeInterpreterTool through AzureOpenAIResponsesClient."""
@@ -462,6 +472,7 @@ async def test_azure_responses_client_agent_hosted_code_interpreter_tool():
         assert contains_relevant_content or len(response.text.strip()) > 10
 
 
+@pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_azure_responses_client_agent_level_tool_persistence():
     """Test that agent-level tools persist across multiple runs with Azure Responses Client."""
@@ -488,6 +499,7 @@ async def test_azure_responses_client_agent_level_tool_persistence():
         assert any(term in second_response.text.lower() for term in ["miami", "sunny", "72"])
 
 
+@pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_azure_responses_client_agent_chat_options_run_level() -> None:
     """Integration test for comprehensive ChatOptions parameter coverage with Azure Response Agent."""
@@ -511,6 +523,7 @@ async def test_azure_responses_client_agent_chat_options_run_level() -> None:
         assert len(response.text) > 0
 
 
+@pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_azure_responses_client_agent_chat_options_agent_level() -> None:
     """Integration test for comprehensive ChatOptions parameter coverage with Azure Response Agent."""
@@ -534,6 +547,7 @@ async def test_azure_responses_client_agent_chat_options_agent_level() -> None:
         assert len(response.text) > 0
 
 
+@pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 async def test_azure_responses_client_agent_hosted_mcp_tool() -> None:
     """Integration test for HostedMCPTool with Azure Response Agent using Microsoft Learn MCP."""
@@ -562,6 +576,7 @@ async def test_azure_responses_client_agent_hosted_mcp_tool() -> None:
         assert any(term in response.text.lower() for term in ["azure", "storage", "account", "cli"])
 
 
+@pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 @pytest.mark.skip(reason="File search requires API key auth, subscription only allows token auth")
 async def test_azure_responses_client_file_search() -> None:
@@ -588,6 +603,7 @@ async def test_azure_responses_client_file_search() -> None:
     assert "75" in response.text
 
 
+@pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
 @pytest.mark.skip(reason="File search requires API key auth, subscription only allows token auth")
 async def test_azure_responses_client_file_search_streaming() -> None:

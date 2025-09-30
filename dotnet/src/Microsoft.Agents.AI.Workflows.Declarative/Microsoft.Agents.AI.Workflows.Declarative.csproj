@@ -27,6 +27,7 @@
     <PackageReference Include="Microsoft.Bot.ObjectModel.Json" />
     <PackageReference Include="Microsoft.Bot.ObjectModel.PowerFx" />
     <PackageReference Include="Microsoft.PowerFx.Interpreter" />
+    <PackageReference Include="System.CodeDom" />
     <PackageReference Include="System.Collections.Immutable" />
     <PackageReference Include="Microsoft.Extensions.Configuration" />
     <PackageReference Include="Microsoft.Extensions.Logging" />
@@ -35,6 +36,22 @@
   <ItemGroup>
     <ProjectReference Include="..\Microsoft.Agents.AI.Workflows\Microsoft.Agents.AI.Workflows.csproj" />
     <ProjectReference Include="..\Microsoft.Agents.AI.AzureAI\Microsoft.Agents.AI.AzureAI.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Service Include="{508349b6-6b84-4df5-91f0-309beebad82d}" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="CodeGen\*Template.tt">
+      <Generator>TextTemplatingFilePreprocessor</Generator>
+      <LastGenOutput>%(Filename).cs</LastGenOutput>
+    </None>
+    <Compile Update="CodeGen\*Template.cs">
+      <DependentUpon>%(Filename).tt</DependentUpon>
+      <DesignTime>True</DesignTime>
+      <AutoGen>True</AutoGen>
+    </Compile>
   </ItemGroup>
 
   <ItemGroup>

@@ -46,23 +46,26 @@ skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
 
 def create_test_openai_assistants_client(
     mock_async_openai: MagicMock,
-    ai_model_id: str | None = None,
+    model_id: str | None = None,
     assistant_id: str | None = None,
     assistant_name: str | None = None,
     thread_id: str | None = None,
     should_delete_assistant: bool = False,
 ) -> OpenAIAssistantsClient:
-    """Helper function to create OpenAIAssistantsClient instances for testing, bypassing Pydantic validation."""
-    return OpenAIAssistantsClient.model_construct(
-        ai_model_id=ai_model_id or "gpt-4",
+    """Helper function to create OpenAIAssistantsClient instances for testing."""
+    client = OpenAIAssistantsClient(
+        model_id=model_id or "gpt-4",
         assistant_id=assistant_id,
         assistant_name=assistant_name,
         thread_id=thread_id,
         api_key="test-api-key",
         org_id="test-org-id",
-        client=mock_async_openai,
-        _should_delete_assistant=should_delete_assistant,
+        async_client=mock_async_openai,
     )
+    # Set the _should_delete_assistant flag directly if needed
+    if should_delete_assistant:
+        object.__setattr__(client, "_should_delete_assistant", True)
+    return client
 
 
 async def create_vector_store(client: OpenAIAssistantsClient) -> tuple[str, HostedVectorStoreContent]:
@@ -117,11 +120,11 @@ def mock_async_openai() -> MagicMock:
 def test_openai_assistants_client_init_with_client(mock_async_openai: MagicMock) -> None:
     """Test OpenAIAssistantsClient initialization with existing client."""
     chat_client = create_test_openai_assistants_client(
-        mock_async_openai, ai_model_id="gpt-4", assistant_id="existing-assistant-id", thread_id="test-thread-id"
+        mock_async_openai, model_id="gpt-4", assistant_id="existing-assistant-id", thread_id="test-thread-id"
     )
 
     assert chat_client.client is mock_async_openai
-    assert chat_client.ai_model_id == "gpt-4"
+    assert chat_client.model_id == "gpt-4"
     assert chat_client.assistant_id == "existing-assistant-id"
     assert chat_client.thread_id == "test-thread-id"
     assert not chat_client._should_delete_assistant  # type: ignore
@@ -133,19 +136,16 @@ def test_openai_assistants_client_init_auto_create_client(
     mock_async_openai: MagicMock,
 ) -> None:
     """Test OpenAIAssistantsClient initialization with auto-created client."""
-    chat_client = OpenAIAssistantsClient.model_construct(
-        ai_model_id=openai_unit_test_env["OPENAI_CHAT_MODEL_ID"],
-        assistant_id=None,
+    chat_client = OpenAIAssistantsClient(
+        model_id=openai_unit_test_env["OPENAI_CHAT_MODEL_ID"],
         assistant_name="TestAssistant",
-        thread_id=None,
         api_key=openai_unit_test_env["OPENAI_API_KEY"],
         org_id=openai_unit_test_env["OPENAI_ORG_ID"],
-        client=mock_async_openai,
-        _should_delete_assistant=False,
+        async_client=mock_async_openai,
     )
 
     assert chat_client.client is mock_async_openai
-    assert chat_client.ai_model_id == openai_unit_test_env["OPENAI_CHAT_MODEL_ID"]
+    assert chat_client.model_id == openai_unit_test_env["OPENAI_CHAT_MODEL_ID"]
     assert chat_client.assistant_id is None
     assert chat_client.assistant_name == "TestAssistant"
     assert not chat_client._should_delete_assistant  # type: ignore
@@ -155,7 +155,7 @@ def test_openai_assistants_client_init_validation_fail() -> None:
     """Test OpenAIAssistantsClient initialization with validation failure."""
     with pytest.raises(ServiceInitializationError):
         # Force failure by providing invalid model ID type - this should cause validation to fail
-        OpenAIAssistantsClient(ai_model_id=123, api_key="valid-key")  # type: ignore
+        OpenAIAssistantsClient(model_id=123, api_key="valid-key")  # type: ignore
 
 
 @pytest.mark.parametrize("exclude_list", [["OPENAI_CHAT_MODEL_ID"]], indirect=True)
@@ -171,7 +171,7 @@ def test_openai_assistants_client_init_missing_model_id(openai_unit_test_env: di
 def test_openai_assistants_client_init_missing_api_key(openai_unit_test_env: dict[str, str]) -> None:
     """Test OpenAIAssistantsClient initialization with missing API key."""
     with pytest.raises(ServiceInitializationError):
-        OpenAIAssistantsClient(ai_model_id="gpt-4", env_file_path="nonexistent.env")
+        OpenAIAssistantsClient(model_id="gpt-4", env_file_path="nonexistent.env")
 
 
 def test_openai_assistants_client_init_with_default_headers(openai_unit_test_env: dict[str, str]) -> None:
@@ -179,12 +179,12 @@ def test_openai_assistants_client_init_with_default_headers(openai_unit_test_env
     default_headers = {"X-Unit-Test": "test-guid"}
 
     chat_client = OpenAIAssistantsClient(
-        ai_model_id="gpt-4",
+        model_id="gpt-4",
         api_key=openai_unit_test_env["OPENAI_API_KEY"],
         default_headers=default_headers,
     )
 
-    assert chat_client.ai_model_id == "gpt-4"
+    assert chat_client.model_id == "gpt-4"
     assert isinstance(chat_client, ChatClientProtocol)
 
     # Assert that the default header we added is present in the client's default headers
@@ -211,7 +211,7 @@ async def test_openai_assistants_client_get_assistant_id_or_create_create_new(
 ) -> None:
     """Test _get_assistant_id_or_create when creating a new assistant."""
     chat_client = create_test_openai_assistants_client(
-        mock_async_openai, ai_model_id="gpt-4", assistant_name="TestAssistant"
+        mock_async_openai, model_id="gpt-4", assistant_name="TestAssistant"
     )
 
     assistant_id = await chat_client._get_assistant_id_or_create()  # type: ignore
@@ -269,7 +269,7 @@ def test_openai_assistants_client_serialize(openai_unit_test_env: dict[str, str]
 
     # Test basic initialization and to_dict
     chat_client = OpenAIAssistantsClient(
-        ai_model_id="gpt-4",
+        model_id="gpt-4",
         assistant_id="test-assistant-id",
         assistant_name="TestAssistant",
         thread_id="test-thread-id",
@@ -280,11 +280,10 @@ def test_openai_assistants_client_serialize(openai_unit_test_env: dict[str, str]
 
     dumped_settings = chat_client.to_dict()
 
-    assert dumped_settings["ai_model_id"] == "gpt-4"
+    assert dumped_settings["model_id"] == "gpt-4"
     assert dumped_settings["assistant_id"] == "test-assistant-id"
     assert dumped_settings["assistant_name"] == "TestAssistant"
     assert dumped_settings["thread_id"] == "test-thread-id"
-    assert dumped_settings["api_key"] == openai_unit_test_env["OPENAI_API_KEY"]
     assert dumped_settings["org_id"] == openai_unit_test_env["OPENAI_ORG_ID"]
 
     # Assert that the default header we added is present in the dumped_settings default headers
@@ -915,6 +914,7 @@ def get_weather(
     return f"The weather in {location} is sunny with a high of 25°C."
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_assistants_client_get_response() -> None:
     """Test OpenAI Assistants Client response."""
@@ -939,6 +939,7 @@ async def test_openai_assistants_client_get_response() -> None:
         assert any(word in response.text.lower() for word in ["sunny", "25", "weather", "seattle"])
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_assistants_client_get_response_tools() -> None:
     """Test OpenAI Assistants Client response with tools."""
@@ -960,6 +961,7 @@ async def test_openai_assistants_client_get_response_tools() -> None:
         assert any(word in response.text.lower() for word in ["sunny", "25", "weather"])
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_assistants_client_streaming() -> None:
     """Test OpenAI Assistants Client streaming response."""
@@ -990,6 +992,7 @@ async def test_openai_assistants_client_streaming() -> None:
         assert any(word in full_message.lower() for word in ["sunny", "25", "weather", "seattle"])
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_assistants_client_streaming_tools() -> None:
     """Test OpenAI Assistants Client streaming response with tools."""
@@ -1016,6 +1019,7 @@ async def test_openai_assistants_client_streaming_tools() -> None:
         assert any(word in full_message.lower() for word in ["sunny", "25", "weather"])
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_assistants_client_with_existing_assistant() -> None:
     """Test OpenAI Assistants Client with existing assistant ID."""
@@ -1028,7 +1032,7 @@ async def test_openai_assistants_client_with_existing_assistant() -> None:
 
         # Now test using the existing assistant
         async with OpenAIAssistantsClient(
-            ai_model_id="gpt-4o-mini", assistant_id=assistant_id
+            model_id="gpt-4o-mini", assistant_id=assistant_id
         ) as openai_assistants_client:
             assert isinstance(openai_assistants_client, ChatClientProtocol)
             assert openai_assistants_client.assistant_id == assistant_id
@@ -1043,6 +1047,7 @@ async def test_openai_assistants_client_with_existing_assistant() -> None:
             assert len(response.text) > 0
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 @pytest.mark.skip(reason="OpenAI file search functionality is currently broken - tracked in GitHub issue")
 async def test_openai_assistants_client_file_search() -> None:
@@ -1066,6 +1071,7 @@ async def test_openai_assistants_client_file_search() -> None:
         assert any(word in response.text.lower() for word in ["sunny", "25", "weather"])
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 @pytest.mark.skip(reason="OpenAI file search functionality is currently broken - tracked in GitHub issue")
 async def test_openai_assistants_client_file_search_streaming() -> None:
@@ -1096,6 +1102,7 @@ async def test_openai_assistants_client_file_search_streaming() -> None:
         assert any(word in full_message.lower() for word in ["sunny", "25", "weather"])
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_assistants_agent_basic_run():
     """Test ChatAgent basic run functionality with OpenAIAssistantsClient."""
@@ -1112,6 +1119,7 @@ async def test_openai_assistants_agent_basic_run():
         assert "Hello World" in response.text
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_assistants_agent_basic_run_streaming():
     """Test ChatAgent basic streaming functionality with OpenAIAssistantsClient."""
@@ -1131,6 +1139,7 @@ async def test_openai_assistants_agent_basic_run_streaming():
         assert "streaming response test" in full_message.lower()
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_assistants_agent_thread_persistence():
     """Test ChatAgent thread persistence across runs with OpenAIAssistantsClient."""
@@ -1159,6 +1168,7 @@ async def test_openai_assistants_agent_thread_persistence():
         assert thread.service_thread_id is not None
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_assistants_agent_existing_thread_id():
     """Test ChatAgent with existing thread ID to continue conversations across agent instances."""
@@ -1203,6 +1213,7 @@ async def test_openai_assistants_agent_existing_thread_id():
         assert "paris" in response2.text.lower()
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_assistants_agent_code_interpreter():
     """Test ChatAgent with code interpreter through OpenAIAssistantsClient."""
@@ -1222,6 +1233,7 @@ async def test_openai_assistants_agent_code_interpreter():
         assert "120" in response.text or "factorial" in response.text.lower()
 
 
+@pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_assistants_client_agent_level_tool_persistence():
     """Test that agent-level tools persist across multiple runs with OpenAI Assistants Client."""
