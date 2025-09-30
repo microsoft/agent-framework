@@ -28,6 +28,8 @@ internal static class Compiler
 #if NET
         yield return Assembly.Load("System.Runtime");
 #else
+        yield return Assembly.LoadFrom(AppDomain.CurrentDomain.GetAssemblies().Single(a => a.GetName().Name == "netstandard").Location);
+        yield return typeof(IAsyncEnumerable<>).Assembly;
         yield return typeof(ValueTask).Assembly;
 #endif
         yield return typeof(AsyncEnumerable).Assembly;
