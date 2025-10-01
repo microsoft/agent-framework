@@ -136,7 +136,7 @@ public abstract class AIContextProvider
         /// <exception cref="ArgumentNullException"><paramref name="requestMessages"/> is <see langword="null"/>.</exception>
         public InvokingContext(IEnumerable<ChatMessage> requestMessages)
         {
-            RequestMessages = requestMessages ?? throw new ArgumentNullException(nameof(requestMessages));
+            this.RequestMessages = requestMessages ?? throw new ArgumentNullException(nameof(requestMessages));
         }
 
         /// <summary>
@@ -166,7 +166,7 @@ public abstract class AIContextProvider
         /// <exception cref="ArgumentNullException"><paramref name="requestMessages"/> is <see langword="null"/>.</exception>
         public InvokedContext(IEnumerable<ChatMessage> requestMessages)
         {
-            RequestMessages = requestMessages ?? throw new ArgumentNullException(nameof(requestMessages));
+            this.RequestMessages = requestMessages ?? throw new ArgumentNullException(nameof(requestMessages));
         }
 
         /// <summary>

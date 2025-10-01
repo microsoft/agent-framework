@@ -5,7 +5,6 @@
     <TargetFramework>net9.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <NoWarn>$(NoWarn);CA1812;RCS1102;CA1707;VSTHRD200</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
