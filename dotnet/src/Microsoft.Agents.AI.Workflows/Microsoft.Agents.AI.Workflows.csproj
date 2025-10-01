@@ -16,10 +16,10 @@
 
   <PropertyGroup>
     <!-- NuGet Package Settings -->
-    <Title>Microsoft Agent Workflow Framework</Title>
-    <Description>Contains the Microsoft Agent Workflow Framework.</Description>
+    <Title>Microsoft Agent Framework Workflows</Title>
+    <Description>Provides Microsoft Agent Framework support for workflows.</Description>
   </PropertyGroup>
-
+  
   <ItemGroup>
     <ProjectReference Include="..\Microsoft.Agents.AI.Abstractions\Microsoft.Agents.AI.Abstractions.csproj" />
     <ProjectReference Include="..\Microsoft.Agents.AI\Microsoft.Agents.AI.csproj" />
@@ -33,12 +33,6 @@
     <PackageReference Include="OpenTelemetry.Api" />
   </ItemGroup>
 
-  <PropertyGroup>
-    <!-- NuGet Package Settings -->
-    <Title>Microsoft Agent Framework Workflows</Title>
-    <Description>Provides Microsoft Agent Framework support for workflows.</Description>
-  </PropertyGroup>
-  
   <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
     <PackageReference Include="System.Text.Json" />
   </ItemGroup>

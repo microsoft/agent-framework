@@ -2,8 +2,8 @@
   <PropertyGroup>
     <!-- Central version prefix - applies to all nuget packages. -->
     <VersionPrefix>1.0.0</VersionPrefix>
-    <PackageVersion Condition="'$(VersionSuffix)' != ''">$(VersionPrefix)-$(VersionSuffix).250930</PackageVersion>
-    <PackageVersion Condition="'$(VersionSuffix)' == ''">$(VersionPrefix)-preview.250930</PackageVersion>
+    <PackageVersion Condition="'$(VersionSuffix)' != ''">$(VersionPrefix)-$(VersionSuffix).251001.1</PackageVersion>
+    <PackageVersion Condition="'$(VersionSuffix)' == ''">$(VersionPrefix)-preview.251001.1</PackageVersion>
 
     <Configurations>Debug;Release;Publish</Configurations>
     <IsPackable>true</IsPackable>
@@ -27,8 +27,8 @@
     <!-- Default description and tags. Packages can override. -->
     <Authors>Microsoft</Authors>
     <Company>Microsoft</Company>
-    <Product>Agent Framework</Product>
-    <Description>Empowers app owners to integrate Agents quickly and easily into their apps.</Description>
+    <Product>Microsoft Agent Framework</Product>
+    <Description>Microsoft Agent Framework is a comprehensive .NET library for building, orchestrating, and deploying AI agents and multi-agent workflows. The framework provides everything from simple chat agents to complex multi-agent systems with graph-based orchestration capabilities.</Description>
     <PackageTags>AI, Artificial Intelligence, Agent, SDK, Framework</PackageTags>
     <PackageId>$(AssemblyName)</PackageId>
 
