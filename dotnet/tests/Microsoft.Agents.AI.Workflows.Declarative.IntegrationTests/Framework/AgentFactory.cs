@@ -46,7 +46,7 @@ internal static class AgentFactory
         }
 
         Console.WriteLine($"CXN: {config.BingConnectionId}");
-        Console.WriteLine($"CXN: {config.Endpoint}");
+        Console.WriteLine($"CXN: {new Uri(config.Endpoint).Host}");
 
         PersistentAgentsClient clientAgents = new(config.Endpoint, new AzureCliCredential());
         AIProjectClient clientProjects = new(new Uri(config.Endpoint), new AzureCliCredential());

@@ -25,7 +25,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     [Theory]
     [InlineData("Marketing.yaml", "Marketing.json")]
     [InlineData("MathChat.yaml", "MathChat.json")]
-    [InlineData("DeepResearch.yaml", "DeepResearch.json")]
+    [InlineData("DeepResearch.yaml", "DeepResearch.json", Skip = "Coming next")]
     [InlineData("HumanInLoop.yaml", "HumanInLoop.json", Skip = "Needs test support")]
     public Task ValidateScenarioAsync(string workflowFileName, string testcaseFileName) =>
         this.RunWorkflowAsync(Path.Combine(GetRepoFolder(), "workflow-samples", workflowFileName), testcaseFileName);

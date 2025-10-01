@@ -23,8 +23,8 @@ public sealed class DeclarativeCodeGenTest(ITestOutputHelper output) : WorkflowT
         this.RunWorkflowAsync(Path.Combine(Environment.CurrentDirectory, "Workflows", workflowFileName), testcaseFileName);
 
     [Theory]
-    [InlineData("Marketing.yaml", "Marketing.json", Skip = "Needs configuration")]
-    [InlineData("MathChat.yaml", "MathChat.json", Skip = "Needs configuration")]
+    [InlineData("Marketing.yaml", "Marketing.json")]
+    [InlineData("MathChat.yaml", "MathChat.json")]
     [InlineData("DeepResearch.yaml", "DeepResearch.json", Skip = "Needs configuration")]
     [InlineData("HumanInLoop.yaml", "HumanInLoop.json", Skip = "Needs test support")]
     public Task ValidateScenarioAsync(string workflowFileName, string testcaseFileName) =>
