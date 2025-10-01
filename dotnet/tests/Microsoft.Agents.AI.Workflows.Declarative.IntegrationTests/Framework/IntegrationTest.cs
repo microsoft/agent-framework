@@ -49,14 +49,15 @@ public abstract class IntegrationTest : IDisposable
 
     protected static IConfigurationRoot InitializeConfig()
     {
-        IConfigurationRoot root =
+        return
+        //IConfigurationRoot root =
             new ConfigurationBuilder()
                 .AddJsonFile("appsettings.Development.json", true)
                 .AddEnvironmentVariables()
                 .AddUserSecrets(Assembly.GetExecutingAssembly())
                 .Build();
-        DisplayConfig(root);
-        return root;
+        //DisplayConfig(root); // %%% REMOVE
+        //return root;
     }
 
     private static void DisplayConfig(IConfiguration configuration, string? root = null) // %%% REMOVE

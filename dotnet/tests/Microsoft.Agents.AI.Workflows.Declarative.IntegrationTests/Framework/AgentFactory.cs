@@ -56,6 +56,17 @@ internal static class AgentFactory
         AgentCreationOptions creationOptions = new() { Kernel = kernelBuilder.Build() };
         AzureAIAgentFactory factory = new();
 
+        Console.WriteLine($"REPO: {WorkflowTest.GetRepoFolder()}");
+        foreach (string dir in Directory.GetDirectories(WorkflowTest.GetRepoFolder()))
+        {
+            Console.WriteLine($"DIR: {dir} ({Path.GetFullPath(dir)})");
+        }
+        Console.WriteLine($"CURRENT: {Directory.GetCurrentDirectory()}");
+        foreach (string dir in Directory.GetDirectories(Directory.GetCurrentDirectory()))
+        {
+            Console.WriteLine($"DIR: {dir} ({Path.GetFullPath(dir)})");
+        }
+
         return s_agentMap = (await Task.WhenAll(_agentDefinitions.Select(kvp => CreateAgentAsync(kvp.Key, kvp.Value, cancellationToken)))).ToFrozenDictionary(t => t.Name, t => t.Id);
 
         async Task<(string Name, string? Id)> CreateAgentAsync(string id, string file, CancellationToken cancellationToken)
