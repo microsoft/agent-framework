@@ -76,4 +76,4 @@ Once completed, please proceed to other samples listed below.
 
 | Sample | Concepts |
 |--------|----------|
-| [Basic Human-in-the-Loop](./HumanInTheLoop/HumanIntheLoopBasic) | Introduces human-in-the-loop interaction using input ports and external requests |
+| [Basic Human-in-the-Loop](./HumanInTheLoop/HumanInTheLoopBasic) | Introduces human-in-the-loop interaction using input ports and external requests |
