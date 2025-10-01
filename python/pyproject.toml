@@ -4,7 +4,7 @@ description = "Microsoft Agent Framework for building AI Agents with Python. Thi
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b251001.post1"
+version = "1.0.0b251001"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -211,6 +211,11 @@ format.ref = "fmt"
 lint = "python run_tasks_in_packages_if_exists.py lint"
 pyright = "python run_tasks_in_packages_if_exists.py pyright"
 mypy = "python run_tasks_in_packages_if_exists.py mypy"
+# cleaning
+clean-dist-packages = "python run_tasks_in_packages_if_exists.py clean-dist"
+clean-dist-meta = "rm -rf dist"
+clean-dist = ["clean-dist-packages", "clean-dist-meta"]
+# build and publish
 build-packages = "python run_tasks_in_packages_if_exists.py build"
 build-meta = "python -m flit build"
 build = ["build-packages", "build-meta"]
