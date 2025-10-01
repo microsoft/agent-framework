@@ -4,9 +4,9 @@ description = "Mem0 integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b251001"
+version = "1.0.0b251001.post1"
 license-files = ["LICENSE"]
-urls.homepage = "https://learn.microsoft.com/en-us/semantic-kernel/overview/"
+urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
 urls.release_notes = "https://github.com/microsoft/agent-framework/releases?q=tag%3Apython-1&expanded=true"
 urls.issues = "https://github.com/microsoft/agent-framework/issues"
