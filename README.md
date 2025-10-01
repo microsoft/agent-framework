@@ -52,7 +52,7 @@ Welcome to Microsoft's comprehensive multi-language framework for building, orch
 - **Python and C#/.NET Support**: Full framework support for both Python and C#/.NET implementations with consistent APIs
   - [Python packages](./python/packages/) | [.NET source](./dotnet/src/)
 - **Observability**: Built-in OpenTelemetry integration for distributed tracing, monitoring, and debugging
-  - [Python observability](./python/samples/getting_started/workflows/observability/) | [.NET telemetry](./dotnet/samples/GettingStarted/AgentOpenTelemetry/)
+  - [Python observability](./python/samples/getting_started/observability/) | [.NET telemetry](./dotnet/samples/GettingStarted/AgentOpenTelemetry/)
 - **Multiple Agent Provider Support**: Support for various LLM providers with more being added continuously
   - [Python examples](./python/samples/getting_started/agents/) | [.NET examples](./dotnet/samples/GettingStarted/AgentProviders/)
 - **Middleware**: Flexible middleware system for request/response processing, exception handling, and custom pipelines

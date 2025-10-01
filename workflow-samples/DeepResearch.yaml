@@ -314,7 +314,7 @@ trigger:
               conditions:
 
                 - id: conditionItem_fpaNL9
-                  condition: =.TypedProgressLedger.is_in_loop.answer
+                  condition: =Local.TypedProgressLedger.is_in_loop.answer
                   displayName: Is Loop
                   actions:
                     - kind: SendActivity
