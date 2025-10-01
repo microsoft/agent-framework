@@ -48,9 +48,9 @@ public static class TestWorkflowProvider
                 context,
                 "FOUNDRY_AGENT_RESEARCHWEB",
                 "FOUNDRY_AGENT_RESEARCHANALYST",
+                "FOUNDRY_AGENT_RESEARCHCODER",
                 "FOUNDRY_AGENT_RESEARCHMANAGER",
-                "FOUNDRY_AGENT_RESEARCHWEATHER",
-                "FOUNDRY_AGENT_RESEARCHCODER").ConfigureAwait(false);
+                "FOUNDRY_AGENT_RESEARCHWEATHER").ConfigureAwait(false);
 
             // Initialize variables
             await context.QueueStateUpdateAsync("AgentResponse", UnassignedValue.Instance, "Local").ConfigureAwait(false);
@@ -476,27 +476,27 @@ public static class TestWorkflowProvider
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
             VariableType targetType =
-                VariableType.Record(
-                    ("instruction_or_question",
-                        VariableType.Record(
-                            ("reason", typeof(string)),
-                            ("answer", typeof(string)))),
-                    ("next_speaker",
-                        VariableType.Record(
-                            ("reason", typeof(string)),
-                            ("answer", typeof(string)))),
-                    ("is_request_satisfied",
-                        VariableType.Record(
-                        ("reason", typeof(string)),
-                        ("answer", typeof(bool)))),
-                    ("is_progress_being_made",
-                        VariableType.Record(
-                        ("reason", typeof(string)),
-                        ("answer", typeof(bool)))),
-                    ("is_in_loop",
-                        VariableType.Record(
-                            ("reason", typeof(string)),
-                            ("answer", typeof(bool)))));
+    VariableType.Record(
+    ("is_progress_being_made",
+    VariableType.Record(
+    ("reason", typeof(string)),
+        ("answer", typeof(bool)))),
+        ("is_request_satisfied",
+    VariableType.Record(
+    ("reason", typeof(string)),
+        ("answer", typeof(bool)))),
+        ("is_in_loop",
+    VariableType.Record(
+    ("reason", typeof(string)),
+        ("answer", typeof(bool)))),
+        ("next_speaker",
+    VariableType.Record(
+    ("reason", typeof(string)),
+        ("answer", typeof(string)))),
+        ("instruction_or_question",
+    VariableType.Record(
+    ("reason", typeof(string)),
+        ("answer", typeof(string)))));
             object? parsedValue = await context.ConvertValueAsync(targetType, "Last(Local.ProgressLedgerUpdate).Text", cancellationToken).ConfigureAwait(false);
             await context.QueueStateUpdateAsync(key: "TypedProgressLedger", value: parsedValue, scopeName: "Local").ConfigureAwait(false);
 

@@ -90,8 +90,6 @@ There are two methods to manage keys, secrets, and endpoints:
 2. Store them in a separate `.env` file, like `dev.env`, you can then pass that name into the constructor for most services, to the `env_file_path` parameter, see below.
     > Make sure to add `*.env` to your `.gitignore` file.
 
-There are a lot of settings, for a more extensive list of settings, see [ALL_SETTINGS.md](./samples/concepts/setup/ALL_SETTINGS.md).
-
 ### Example for file-based setup with OpenAI Chat Completions
 To configure a `.env` file with just the keys needed for OpenAI Chat Completions, you can create a `openai.env` (this name is just as an example, a single `.env` with all required keys is more common) file in the root of the `python` folder with the following content:
 

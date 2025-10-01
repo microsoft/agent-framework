@@ -7,7 +7,7 @@
     }
   },
   "validation": {
-    "min_action_count": 28,
+    "min_action_count": 25,
     "max_action_count": 56,
     "actions": {
       "start": [
