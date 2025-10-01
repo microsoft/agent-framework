@@ -1,0 +1,20 @@
+dirs: 
+  - .
+ignorePatterns:
+  - pattern: "/github/"
+  - pattern: "./actions"
+  - pattern: "./blob"
+  - pattern: "./issues"
+  - pattern: "./discussions"
+  - pattern: "./pulls"
+  - pattern: "https:\/\/platform.openai.com"
+excludedDirs:
+  # Folders which include links to localhost, since it's not ignored with regular expressions
+baseUrl: https://github.com/microsoft/agent-framework/
+aliveStatusCodes: 
+  - 200
+  - 206
+  - 429
+  - 500
+  - 503
+useGitIgnore: true
