@@ -22,7 +22,7 @@ namespace Demo.DeclarativeWorkflow;
 /// </summary>
 /// <remarks>
 /// <b>Configuration</b>
-/// Define FOUNDRY_PROJECT_ENDPOINT as a user-secret or environment variable that
+/// Define AZURE_FOUNDRY_PROJECT_ENDPOINT as a user-secret or environment variable that
 /// points to your Foundry project endpoint.
 /// <b>Usage</b>
 /// Provide the path to the workflow definition file as the first argument.

@@ -24,4 +24,4 @@ The sample workflows rely on agents defined in your Azure Foundry Project.
 To create agents, run the [`Create.ps1`](./setup) script.
 This will create the agents used in the sample workflows in your Azure Foundry Project and format a script you can copy and use to configure your environment.
 
-> Note: `Create.ps1` relies upon the `FOUNDRY_PROJECT_ENDPOINT` setting.  See [README.md](../dotnet/demos/DeclarativeWorkflow/README.md) from the demo for configuration details.
+> Note: `Create.ps1` relies upon the `AZURE_FOUNDRY_PROJECT_ENDPOINT` setting.  See [README.md](../dotnet/demos/DeclarativeWorkflow/README.md) from the demo for configuration details.
