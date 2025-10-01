@@ -1,4 +1,4 @@
-﻿<#@ template language="C#" inherits="ActionTemplate" visibility="internal" #>
+﻿<#@ template language="C#" inherits="ActionTemplate" visibility="internal" linePragmas="false" #>
 <#@ output extension=".cs" #>
 <#@ assembly name="System.Core" #>
 <#@ include file="Snippets/Index.tt" once="true" #>f
