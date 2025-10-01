@@ -8,7 +8,7 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
-from typing import Any, Union, cast
+from typing import Any, Union
 
 from .models import (
     AgentFrameworkRequest,
@@ -287,11 +287,9 @@ class MessageMapper:
         if isinstance(value, (str, int, float, bool)):
             return value
         if isinstance(value, (list, tuple, set)):
-            seq = cast(Union[list[Any], tuple[Any, ...], set[Any]], value)
-            return [self._serialize_payload(item) for item in seq]
+            return [self._serialize_payload(item) for item in value]
         if isinstance(value, dict):
-            dict_val = cast(dict[Any, Any], value)
-            return {str(k): self._serialize_payload(v) for k, v in dict_val.items()}
+            return {str(k): self._serialize_payload(v) for k, v in value.items()}
         if is_dataclass(value) and not isinstance(value, type):
             try:
                 return self._serialize_payload(asdict(value))
