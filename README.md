@@ -1,7 +1,11 @@
 ![Microsoft Agent Framework](docs/assets/readme-banner.png)
 
 # Welcome to Microsoft Agent Framework!
-[![Microsoft Azure AI Foundry Discord](https://dcbadge.limes.pink/api/server/b5zjErwbQM)](https://discord.gg/b5zjErwbQM)
+
+[![Microsoft Azure AI Foundry Discord](https://dcbadge.limes.pink/api/server/b5zjErwbQM?style=flat)](https://discord.gg/b5zjErwbQM)
+[![MS Learn Documentation](https://img.shields.io/badge/MS%20Learn-Documentation-blue)](https://learn.microsoft.com/en-us/agent-framework/)
+[![PyPI](https://img.shields.io/pypi/v/agent-framework)](https://pypi.org/project/agent-framework/)
+[![NuGet](https://img.shields.io/nuget/v/Microsoft.Agents.AI)](https://www.nuget.org/packages/Microsoft.Agents.AI/)
 
 Welcome to Microsoft's comprehensive multi-language framework for building, orchestrating, and deploying AI agents with support for both .NET and Python implementations. This framework provides everything from simple chat agents to complex multi-agent workflows with graph-based orchestration.
 
@@ -69,6 +73,8 @@ Welcome to Microsoft's comprehensive multi-language framework for building, orch
 Create a simple Azure Responses Agent that writes a haiku about the Microsoft Agent Framework
 
 ```python
+# pip install agent-framework
+# Use `az login` to authenticate with Azure CLI
 import asyncio
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
@@ -82,12 +88,14 @@ async def main():
 
   print(await agent.run("Write a haiku about Microsoft Agent Framework."))
 
-asyncio.run(main()) 
+asyncio.run(main())
 ```
 
 ### Basic Agent - .NET
 
 ```c#
+// dotnet add package Microsoft.Agents.AI
+// Use `az login` to authenticate with Azure CLI
 using System;
 using Azure.AI.OpenAI;
 using Azure.Identity;
