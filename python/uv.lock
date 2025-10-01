@@ -133,7 +133,7 @@ dev = [
 docs = [
     { name = "debugpy", specifier = ">=1.8.16" },
     { name = "pip" },
-    { name = "py2docfx", specifier = ">=0.1.20" },
+    { name = "py2docfx", specifier = ">=0.1.22.dev2259826" },
 ]
 
 [[package]]
@@ -142,13 +142,13 @@ version = "1.0.0b251001"
 source = { editable = "packages/a2a" }
 dependencies = [
     { name = "a2a-sdk", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "agent-framework", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "a2a-sdk", specifier = ">=0.3.5" },
-    { name = "agent-framework", virtual = "." },
+    { name = "agent-framework-core", editable = "packages/core" },
 ]
 
 [[package]]
@@ -1405,7 +1405,7 @@ name = "exceptiongroup"
 version = "1.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "(python_full_version < '3.13' and sys_platform == 'darwin') or (python_full_version < '3.13' and sys_platform == 'linux') or (python_full_version < '3.13' and sys_platform == 'win32')" },
+    { name = "typing-extensions", marker = "(python_full_version < '3.11' and sys_platform == 'darwin') or (python_full_version < '3.11' and sys_platform == 'linux') or (python_full_version < '3.11' and sys_platform == 'win32')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/0b/9f/a65090624ecf468cdca03533906e7c69ed7588582240cfe7cc9e770b50eb/exceptiongroup-1.3.0.tar.gz", hash = "sha256:b241f5885f560bc56a59ee63ca4c6a8bfa46ae4ad651af316d4e81817bb9fd88", size = 29749, upload-time = "2025-05-10T17:42:51.123Z" }
 wheels = [
@@ -2354,7 +2354,7 @@ wheels = [
 
 [[package]]
 name = "langfuse"
-version = "3.5.2"
+version = "3.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "backoff", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -2367,9 +2367,9 @@ dependencies = [
     { name = "requests", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "wrapt", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7e/12/8813d38f49d13c3d9d9c25a6d9545e028ca2ed96071fcbc26a5cdf498769/langfuse-3.5.2.tar.gz", hash = "sha256:bfd94f6cd768129d004da812bb85a34d81c28c23e4d4c1fb3a29b086c94d4269", size = 188047, upload-time = "2025-09-28T14:14:43.262Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/77/36/c445ffa3a1ac856e9c54b2d9ee7969c5bfbea549c5389339f23b67d45653/langfuse-3.6.0.tar.gz", hash = "sha256:7b11f8510949f7b00afa6846e503ded80ddb5c6e2910e6fbcd773716bdcbec23", size = 189466, upload-time = "2025-10-01T12:01:18.475Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/14/c9/44189f008cac5f1bb252fb1a4f89dd3cf466f808d7f44eb56c8ed3c0319a/langfuse-3.5.2-py3-none-any.whl", hash = "sha256:51527aed5a3237410e587b04e07268382063435a4af2d53e7d9096a7b6535c94", size = 349012, upload-time = "2025-09-28T14:14:41.629Z" },
+    { url = "https://files.pythonhosted.org/packages/a9/10/fd8daf0a1847fe25c6804936ded4ab722cfbb98b5ce215de67ad8f515e9e/langfuse-3.6.0-py3-none-any.whl", hash = "sha256:672ac0db51780d10d98b32bd6c922fad5d5f6eea1344725537bbbfad10908b92", size = 350744, upload-time = "2025-10-01T12:01:16.402Z" },
 ]
 
 [[package]]
@@ -3954,7 +3954,7 @@ wheels = [
 
 [[package]]
 name = "py2docfx"
-version = "0.1.21"
+version = "0.1.22.dev2259826"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pyyaml", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -3962,7 +3962,7 @@ dependencies = [
     { name = "wheel", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/bc/bc/056b4751229c92b58296f8eccd262a448f799b3044510f2357742eeeae98/py2docfx-0.1.21-py3-none-any.whl", hash = "sha256:ce782d503593c79fc49324d3b102fe38b1cf5de9e13dfe582abe6d1387a67999", size = 11410660, upload-time = "2025-09-23T03:44:18.458Z" },
+    { url = "https://files.pythonhosted.org/packages/2d/9e/9900a0d56a53ddc713b6bd2cf2d7cd2f9f2db49927208d4a7cc4f9ad4588/py2docfx-0.1.22.dev2259826-py3-none-any.whl", hash = "sha256:bb157aba8201366b3dfafed0f6e9d3352a8157438421453c1d221f46539d1ef4", size = 11412080, upload-time = "2025-09-29T10:21:12.056Z" },
 ]
 
 [[package]]

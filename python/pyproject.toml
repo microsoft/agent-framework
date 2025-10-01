@@ -55,7 +55,7 @@ dev = [
 docs = [
     # Documentation
     "debugpy>=1.8.16",
-    "py2docfx>=0.1.20",
+    "py2docfx>=0.1.22.dev2259826",
     "pip",
 ]
 
