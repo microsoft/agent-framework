@@ -14,14 +14,8 @@ from pydantic import Field
 """
 Azure OpenAI Assistants with Existing Assistant Example
 
-This sample demonstrates how to work with pre-existing Azure OpenAI Assistants
-rather than creating new ones. The example includes:
-
-- Using existing assistant IDs to work with pre-configured assistants
-- Manual assistant lifecycle management and cleanup
-- Working with assistants that have pre-defined tools and instructions
-- Proper cleanup of manually created assistants to avoid resource leaks
-- Integration with existing Azure OpenAI Assistant configurations
+This sample demonstrates working with pre-existing Azure OpenAI Assistants
+using existing assistant IDs rather than creating new ones.
 """
 
 

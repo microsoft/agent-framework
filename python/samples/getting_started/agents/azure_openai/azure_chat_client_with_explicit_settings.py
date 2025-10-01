@@ -12,13 +12,8 @@ from pydantic import Field
 """
 Azure OpenAI Chat Client with Explicit Settings Example
 
-This sample demonstrates how to create Azure OpenAI Chat Client with explicit configuration
-settings rather than relying on environment variable defaults. The example includes:
-
-- Explicit configuration of deployment name, endpoint, and credentials
-- Environment variable usage for configuration management
-- Direct specification of Azure OpenAI resource parameters
-- Function tool integration with explicitly configured clients
+This sample demonstrates creating Azure OpenAI Chat Client with explicit configuration
+settings rather than relying on environment variable defaults.
 """
 
 

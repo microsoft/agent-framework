@@ -11,19 +11,8 @@ from pydantic import Field
 """
 OpenAI Responses Client with Thread Management Example
 
-This sample demonstrates thread management capabilities with OpenAI Responses Client.
-The example includes:
-
-- Creating and managing conversation threads with responses client
-- Multi-turn conversations with simplified response handling
-- Thread-based context preservation for response generation
-- Function calling within threaded response workflows
-- Streamlined conversation management without agent orchestration
-- Direct thread integration with response generation
-
-Thread management with responses client offers a lightweight approach to
-conversational AI with persistent context, ideal for applications requiring
-direct response generation with conversation history.
+This sample demonstrates thread management with OpenAI Responses Client, showing
+persistent conversation context and simplified response handling.
 """
 
 

@@ -9,15 +9,8 @@ from microsoft_agents.copilotstudio.client import AgentType, ConnectionSettings,
 """
 Copilot Studio Agent with Explicit Settings Example
 
-This sample demonstrates advanced configuration of Microsoft Copilot Studio agents
-with explicit settings and manual token management. The example includes:
-
-- Explicit configuration using ConnectionSettings for production environments
-- Manual token acquisition with acquire_token function for fine-grained control
-- Custom CopilotClient setup with specific Power Platform cloud configurations
-- Environment variable management for secure configuration
-- Production-ready patterns for enterprise deployment scenarios
-- Multiple authentication and configuration approaches
+This sample demonstrates explicit configuration of CopilotStudioAgent with manual
+token management and custom ConnectionSettings for production environments.
 """
 
 # Environment variables needed:

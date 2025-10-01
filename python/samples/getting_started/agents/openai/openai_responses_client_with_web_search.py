@@ -8,18 +8,8 @@ from agent_framework.openai import OpenAIResponsesClient
 """
 OpenAI Responses Client with Web Search Example
 
-This sample demonstrates how to use web search capabilities with OpenAI Responses Client
-for direct real-time information retrieval. The example includes:
-
-- Integration with HostedWebSearchTool for internet search
-- Direct response generation with web search results
-- Real-time information gathering without agent orchestration
-- Simplified interface for web-enhanced responses
-- Current information retrieval and fact-checking
-
-Web search with responses client provides a streamlined approach to
-incorporating live web data into AI responses, ideal for applications
-requiring current information without complex agent workflows.
+This sample demonstrates using HostedWebSearchTool with OpenAI Responses Client
+for direct real-time information retrieval and current data access.
 """
 
 

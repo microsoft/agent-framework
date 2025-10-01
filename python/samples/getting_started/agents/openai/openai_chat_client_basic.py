@@ -9,14 +9,8 @@ from agent_framework.openai import OpenAIChatClient
 """
 OpenAI Chat Client Basic Example
 
-This sample demonstrates the fundamental usage of OpenAI Chat Client with the Agent Framework.
-The example includes:
-
-- Creating agents using OpenAIChatClient for direct chat-based interactions
-- Function tool integration (weather function) for enhanced agent capabilities
-- Non-streaming response example to get complete results at once
-- Streaming response example to receive results as they are generated
-- Stateless conversation management suitable for simple request-response patterns
+This sample demonstrates basic usage of OpenAIChatClient for direct chat-based
+interactions, showing both streaming and non-streaming responses.
 """
 
 

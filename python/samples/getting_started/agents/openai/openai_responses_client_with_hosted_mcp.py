@@ -9,18 +9,8 @@ from agent_framework.openai import OpenAIResponsesClient
 """
 OpenAI Responses Client with Hosted MCP Example
 
-This sample demonstrates how to integrate hosted Model Context Protocol (MCP) tools
-with OpenAI Responses Client for cloud-based extended functionality. The example includes:
-
-- Hosted MCP server integration with cloud-based tools
-- Advanced tool discovery and configuration
-- Dynamic protocol negotiation and capability exchange
-- Resource management and tool lifecycle control
-- Enterprise-grade MCP integration patterns
-
-Hosted MCP integration provides scalable access to cloud-based tools
-and services, ideal for enterprise applications requiring robust,
-managed external capabilities through standardized MCP protocols.
+This sample demonstrates integrating hosted Model Context Protocol (MCP) tools with
+OpenAI Responses Client, including user approval workflows for function call security.
 """
 
 if TYPE_CHECKING:

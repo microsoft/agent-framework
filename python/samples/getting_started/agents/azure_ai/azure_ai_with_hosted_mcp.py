@@ -11,19 +11,7 @@ from azure.identity.aio import AzureCliCredential
 Azure AI Agent with Hosted MCP Example
 
 This sample demonstrates integration of Azure AI Agents with hosted Model Context Protocol (MCP)
-servers for enhanced functionality and tool capabilities. The example includes:
-
-- Integration with hosted MCP servers for extended tool functionality
-- User approval workflows for function call security and oversight
-- Thread-based conversation management for context preservation
-- Interactive approval system for sensitive operations
-- Demonstration of MCP tool capabilities with real-world scenarios
-- Async context management for proper resource cleanup
-
-MCP (Model Context Protocol) enables agents to connect to external services and tools,
-greatly expanding their capabilities beyond built-in functions. This approach is ideal
-for enterprise applications requiring integration with external APIs, databases,
-and specialized tools while maintaining security through approval workflows.
+servers, including user approval workflows for function call security.
 """
 
 

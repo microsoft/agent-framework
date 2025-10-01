@@ -11,15 +11,8 @@ from pydantic import Field
 """
 Azure OpenAI Assistants Basic Example
 
-This sample demonstrates the fundamental usage of Azure OpenAI Assistants with the Agent Framework.
-The example includes:
-
-- Creating agents using AzureOpenAIAssistantsClient with automatic assistant lifecycle management
-- Function tool integration (weather function) for enhanced agent capabilities
-- Non-streaming response example to get complete results at once
-- Streaming response example to receive results as they are generated
-- Automatic assistant creation and cleanup using context managers
-
+This sample demonstrates basic usage of AzureOpenAIAssistantsClient with automatic
+assistant lifecycle management, showing both streaming and non-streaming responses.
 """
 
 

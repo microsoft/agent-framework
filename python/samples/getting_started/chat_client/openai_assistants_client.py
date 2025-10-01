@@ -10,18 +10,9 @@ from pydantic import Field
 """
 OpenAI Assistants Client Direct Usage Example
 
-This sample demonstrates direct usage of OpenAIAssistantsClient for chat
-interactions with OpenAI assistants without agent orchestration. The example includes:
+Demonstrates direct OpenAIAssistantsClient usage for chat interactions with OpenAI assistants.
+Shows function calling capabilities and automatic assistant creation.
 
-- Direct assistants client instantiation with OpenAI API
-- Function calling capabilities with custom business logic
-- Automatic assistant creation and management
-- Type-safe function definitions with Pydantic
-- Simple OpenAI API key authentication
-
-Direct assistants client usage provides access to OpenAI's advanced
-assistant capabilities with minimal setup, ideal for applications requiring
-persistent assistants with function calling without complex agent workflows.
 """
 
 

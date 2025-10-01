@@ -14,15 +14,8 @@ from pydantic import Field
 """
 Azure AI Agent with Existing Agent Example
 
-This sample demonstrates how to work with pre-existing Azure AI Agents rather than
-creating new ones for each interaction. The example includes:
-
-- Working with pre-existing agents by providing agent IDs
-- Proper agent lifecycle management and cleanup procedures
-- Integration with Azure AI Projects for agent discovery and management
-- Function tool integration with existing agent configurations
-- Demonstrating agent reuse patterns for production scenarios
-- Direct integration with Azure AI Projects client for advanced agent management
+This sample demonstrates working with pre-existing Azure AI Agents by providing
+agent IDs, showing agent reuse patterns for production scenarios.
 """
 
 

@@ -16,21 +16,8 @@ from azure.identity.aio import AzureCliCredential
 """
 Azure AI Agent with Multiple Tools Example
 
-This sample demonstrates how to integrate multiple tools with Azure AI Agents
-for enhanced functionality and capabilities. The example includes:
-
-- Integration with multiple tool types (MCP and Web Search)
-- HostedMCPTool for accessing external services and APIs
-- HostedWebSearchTool for real-time web search capabilities
-- User approval workflows for function call security and oversight
-- Thread-based conversation management for context preservation
-- Demonstration of complex multi-tool interactions
-- Async context management for proper resource cleanup
-
-This approach showcases how to build powerful agents that can access multiple
-external services, perform web searches, and integrate with various APIs while
-maintaining security through approval workflows, making it ideal for comprehensive
-AI assistants requiring diverse capabilities.
+This sample demonstrates integrating multiple tools (MCP and Web Search) with Azure AI Agents,
+including user approval workflows for function call security.
 """
 
 

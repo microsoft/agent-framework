@@ -13,18 +13,8 @@ from pydantic import Field
 """
 Azure OpenAI Chat Client with Function Tools Example
 
-This sample demonstrates multiple function tool integration with Azure OpenAI Chat Client.
-The example includes:
-
-- Agent-level tools defined during agent creation for persistent capabilities
-- Query-level tools provided dynamically with specific requests
-- Multiple function tools (weather and time) for diverse functionality
-- Demonstration of tool calling with various parameter types and use cases
-- Flexible tool management allowing different tools for different conversations
-
-This approach showcases how to build sophisticated agents with multiple capabilities,
-allowing for both consistent agent behavior and dynamic tool provisioning based
-on specific conversation requirements.
+This sample demonstrates function tool integration with Azure OpenAI Chat Client,
+showing both agent-level and query-level tool configuration patterns.
 """
 
 

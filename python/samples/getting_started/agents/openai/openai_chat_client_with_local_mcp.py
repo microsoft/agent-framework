@@ -8,18 +8,8 @@ from agent_framework.openai import OpenAIChatClient
 """
 OpenAI Chat Client with Local MCP Example
 
-This sample demonstrates how to integrate Model Context Protocol (MCP) tools
-with OpenAI Chat Client for extended functionality. The example includes:
-
-- Local MCP server integration with streamable HTTP tools
-- Dynamic tool registration and management
-- MCP protocol communication for external capabilities
-- Agent-level and run-level tool configuration
-- Integration with external services and APIs via MCP
-
-MCP integration enables agents to access external tools and services,
-making it ideal for extending agent capabilities with custom protocols,
-APIs, and specialized functionality through standardized interfaces.
+This sample demonstrates integrating Model Context Protocol (MCP) tools with
+OpenAI Chat Client for extended functionality and external service access.
 """
 
 

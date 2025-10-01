@@ -13,16 +13,8 @@ from pydantic import Field
 """
 Azure AI Agent with Explicit Settings Example
 
-This sample demonstrates how to create Azure AI Agents with explicit configuration
-settings rather than relying on environment variable defaults. The example includes:
-
-- Explicit configuration of project endpoint, model deployment, and credentials
-- Environment variable usage for configuration management
-- Direct specification of Azure AI project parameters
-- Function tool integration with explicitly configured clients
-- Async credential and client lifecycle management
-
-This approach provides full control over Azure AI connection parameters.
+This sample demonstrates creating Azure AI Agents with explicit configuration
+settings rather than relying on environment variable defaults.
 """
 
 

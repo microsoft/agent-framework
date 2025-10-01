@@ -10,14 +10,7 @@ from agent_framework.openai import OpenAIResponsesClient
 OpenAI Responses Client Image Generation Example
 
 This sample demonstrates how to generate images using OpenAI's DALL-E models
-through the Responses Client. The example includes:
-
-- Text-to-image conversion with detailed prompts
-- Base64 image data handling and processing
-- Image quality and size configuration
-- Generated image display and manipulation
-
-Image generation capabilities enable AI to create visual content from text,
+through the Responses Client. Image generation capabilities enable AI to create visual content from text,
 making it ideal for creative applications, content creation, design prototyping,
 and automated visual asset generation.
 """

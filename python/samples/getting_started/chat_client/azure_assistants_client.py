@@ -9,16 +9,10 @@ from azure.identity import AzureCliCredential
 from pydantic import Field
 
 """
-Azure OpenAI Assistants Client Direct Usage Example
+Azure Assistants Client Direct Usage Example
 
-This sample demonstrates direct usage of AzureOpenAIAssistantsClient for chat
-interactions with Azure OpenAI assistants without agent orchestration. The example includes:
-
-- Direct assistants client instantiation with Azure OpenAI endpoints
-- Function calling capabilities with custom business logic
-- Azure CLI credential authentication
-- Automatic assistant creation and management
-- Type-safe function definitions with Pydantic
+Demonstrates direct AzureAssistantsClient usage for chat interactions with Azure OpenAI assistants.
+Shows function calling capabilities and automatic assistant creation.
 """
 
 

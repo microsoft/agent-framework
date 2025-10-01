@@ -8,17 +8,8 @@ from agent_framework.openai import OpenAIResponsesClient
 """
 OpenAI Responses Client Reasoning Example
 
-This sample demonstrates advanced reasoning capabilities using OpenAI's o1 models
-with the Responses Client. The example includes:
-
-- Step-by-step reasoning process visualization
-- Complex problem-solving with chain-of-thought
-- Reasoning content extraction and analysis
-- Integration with code interpreter for computational reasoning
-
-Reasoning capabilities enable AI to perform complex analytical tasks,
-making it ideal for mathematical problem-solving, logical analysis,
-scientific reasoning, and multi-step problem decomposition.
+This sample demonstrates advanced reasoning capabilities using OpenAI's o1 models,
+showing step-by-step reasoning process visualization and complex problem-solving.
 """
 
 

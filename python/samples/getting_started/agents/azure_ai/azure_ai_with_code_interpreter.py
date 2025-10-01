@@ -12,19 +12,8 @@ from azure.identity.aio import AzureCliCredential
 """
 Azure AI Agent with Code Interpreter Example
 
-This sample demonstrates how to use the HostedCodeInterpreterTool with Azure AI Agents
-for code generation and execution. The example includes:
-
-- Creating agents with HostedCodeInterpreterTool for Python code execution
-- Mathematical problem solving using code generation and execution
-- Accessing and displaying the generated code from response data
-- Working with structured response data to extract code interpreter outputs
-- Helper functions for processing code interpreter inputs and outputs
-- Integration of Azure AI Agents with computational capabilities
-
-The HostedCodeInterpreterTool enables agents to write, execute, and iterate on Python code,
-making it ideal for mathematical calculations, data analysis, and computational problem-solving tasks
-with the reliability and scalability of Azure AI's managed infrastructure.
+This sample demonstrates using HostedCodeInterpreterTool with Azure AI Agents
+for Python code execution and mathematical problem solving.
 """
 
 

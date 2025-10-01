@@ -10,20 +10,10 @@ from azure.identity import AzureCliCredential
 from pydantic import BaseModel, Field
 
 """
-Azure OpenAI Responses Client Direct Usage Example
+Azure Responses Client Direct Usage Example
 
-This sample demonstrates direct usage of AzureOpenAIResponsesClient for structured
-response generation with Azure OpenAI models without agent orchestration. The example includes:
-
-- Direct responses client instantiation with Azure OpenAI endpoints
-- Function calling capabilities with custom business logic
-- Azure CLI credential authentication
-- Type-safe function definitions and response models with Pydantic
-- Structured response generation and parsing
-
-Direct responses client usage provides streamlined access to Azure OpenAI
-models for applications requiring direct response generation with function
-calling without the complexity of agent workflows or advanced orchestration.
+Demonstrates direct AzureResponsesClient usage for structured response generation with Azure OpenAI models.
+Shows function calling capabilities with custom business logic.
 """
 
 

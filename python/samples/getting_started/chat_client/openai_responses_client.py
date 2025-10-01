@@ -10,18 +10,9 @@ from pydantic import Field
 """
 OpenAI Responses Client Direct Usage Example
 
-This sample demonstrates direct usage of OpenAIResponsesClient for structured
-response generation with OpenAI models without agent orchestration. The example includes:
+Demonstrates direct OpenAIResponsesClient usage for structured response generation with OpenAI models.
+Shows function calling capabilities with custom business logic.
 
-- Direct responses client instantiation with OpenAI API
-- Function calling capabilities with custom business logic
-- Type-safe function definitions with Pydantic
-- Simple OpenAI API key authentication
-- Streamlined response generation and processing
-
-Direct responses client usage provides streamlined access to OpenAI
-models for applications requiring direct response generation with function
-calling without the complexity of agent workflows or advanced orchestration.
 """
 
 

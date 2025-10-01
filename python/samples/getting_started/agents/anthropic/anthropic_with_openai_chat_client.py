@@ -10,16 +10,8 @@ from agent_framework.openai import OpenAIChatClient
 """
 Anthropic with OpenAI Chat Client Example
 
-This sample demonstrates how to use Anthropic models through the OpenAI Chat Client by
-configuring the base URL to point to Anthropic's API. The example includes:
-
-- Setting up OpenAI Chat Client with Anthropic API configuration
-- Creating an agent with tool calling capabilities (weather function)
-- Non-streaming response example to get complete results at once
-- Streaming response example to receive results as they are generated
-
-This approach allows you to leverage Anthropic's Claude models while using the familiar
-OpenAI client interface, making it easy to switch between different model providers.
+This sample demonstrates using Anthropic models through OpenAI Chat Client by
+configuring the base URL to point to Anthropic's API for cross-provider compatibility.
 """
 
 

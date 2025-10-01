@@ -9,18 +9,8 @@ from azure.identity import AzureCliCredential
 """
 Azure OpenAI Responses Client with Image Analysis Example
 
-This sample demonstrates how to use Azure OpenAI Responses for image analysis and vision tasks.
-The example includes:
-
-- Creating vision-capable agents using AzureOpenAIResponsesClient
-- Multi-modal messages combining text and image content
-- Image analysis using remote URLs (Wikipedia image example)
-- Processing UriContent for image input with proper media type specification
-- Vision capabilities for understanding and describing image content
-
-This approach enables agents to analyze images, describe visual content, and answer
-questions about images, making it ideal for applications requiring visual understanding
-and multi-modal AI interactions.
+This sample demonstrates using Azure OpenAI Responses for image analysis and vision tasks,
+showing multi-modal messages combining text and image content.
 """
 
 

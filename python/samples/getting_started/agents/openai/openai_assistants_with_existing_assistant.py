@@ -13,18 +13,8 @@ from pydantic import Field
 """
 OpenAI Assistants with Existing Assistant Example
 
-This sample demonstrates how to use an existing OpenAI Assistant with the agent framework.
-The example includes:
-
-- Creating a new assistant programmatically with custom tools
-- Connecting to existing assistants by ID for reuse
-- Function calling with custom business logic
-- Assistant lifecycle management and cleanup
-- Integration with pre-configured OpenAI assistants
-
-This approach is ideal for scenarios where you have pre-built assistants
-with specific configurations, tools, and training that you want to reuse
-across multiple agent framework applications.
+This sample demonstrates working with pre-existing OpenAI Assistants
+using existing assistant IDs rather than creating new ones.
 """
 
 

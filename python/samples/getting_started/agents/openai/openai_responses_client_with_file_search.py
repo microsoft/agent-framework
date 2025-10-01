@@ -8,14 +8,8 @@ from agent_framework.openai import OpenAIResponsesClient
 """
 OpenAI Responses Client with File Search Example
 
-This sample demonstrates how to use file search capabilities with OpenAI Responses Client
-for direct document-based question answering. The example includes:
-
-- Uploading files to OpenAI for search indexing
-- Using the responses client with file search tool
-- Direct document queries without agent orchestration
-- Automatic file processing and vector search capabilities
-- Simplified interface for file-based information retrieval
+This sample demonstrates using HostedFileSearchTool with OpenAI Responses Client
+for direct document-based question answering and information retrieval.
 """
 
 # Helper functions

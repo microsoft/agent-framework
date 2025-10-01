@@ -11,19 +11,8 @@ from pydantic import Field
 """
 OpenAI Chat Client with Thread Management Example
 
-This sample demonstrates thread management capabilities with OpenAI Chat Client.
-The example includes:
-
-- Creating and managing conversation threads with chat clients
-- Multi-turn conversations with message history
-- Thread-based context preservation across interactions
-- Function calling within threaded conversations
-- Chat message store integration for persistence
-- Advanced conversation flow management
-
-Thread management with chat clients provides fine-grained control over
-conversation context and message history, ideal for building sophisticated
-chatbot applications with persistent conversation state.
+This sample demonstrates thread management with OpenAI Chat Client, showing
+conversation threads and message history preservation across interactions.
 """
 
 

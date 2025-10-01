@@ -7,13 +7,8 @@ from agent_framework.openai import OpenAIChatClient
 """
 Chat Response Cancellation Example
 
-This sample demonstrates how to properly cancel streaming chat responses
-during execution. The example includes:
-
-- Streaming response initiation with timeout handling
-- Proper asyncio task cancellation techniques
-- Resource cleanup and error handling
-- Graceful interruption of ongoing AI responses
+Demonstrates proper cancellation of streaming chat responses during execution.
+Shows asyncio task cancellation and resource cleanup techniques.
 """
 
 

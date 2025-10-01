@@ -20,20 +20,8 @@ from agent_framework import (
 """
 Custom Chat Client Implementation Example
 
-This sample demonstrates how to implement a custom chat client by extending the BaseChatClient class.
-Custom chat clients allow you to integrate any backend service or create new LLM providers
-for the Microsoft Agent Framework.
-
-This approach is useful when you need to:
-- Integrate with new or proprietary LLM services
-- Create mock implementations for testing
-- Add custom authentication or routing logic
-- Implement specialized preprocessing or postprocessing of requests and responses
-- Create new LLM providers that work seamlessly with the framework's ChatAgent
-
-The EchoingChatClient example shows the minimal requirements for implementing a custom chat client,
-including both streaming and non-streaming response handling, and demonstrates how to use the
-custom client with ChatAgent through the create_agent() method.
+This sample demonstrates implementing a custom chat client by extending BaseChatClient class,
+showing integration with ChatAgent and both streaming and non-streaming responses.
 """
 
 

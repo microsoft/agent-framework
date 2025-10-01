@@ -11,15 +11,8 @@ from pydantic import Field
 """
 Azure AI Agent Basic Example
 
-This sample demonstrates the fundamental usage of Azure AI Agents with the Agent Framework.
-The example includes:
-
-- Creating agents using AzureAIAgentClient with automatic agent lifecycle management
-- Function tool integration (weather function) for enhanced agent capabilities
-- Non-streaming response example to get complete results at once
-- Streaming response example to receive results as they are generated
-- Automatic agent creation and cleanup using context managers
-- Async credential handling with proper resource management
+This sample demonstrates basic usage of AzureAIAgentClient to create agents with automatic
+lifecycle management. Shows both streaming and non-streaming responses with function tools.
 """
 
 

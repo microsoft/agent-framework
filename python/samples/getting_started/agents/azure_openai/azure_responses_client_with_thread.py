@@ -12,18 +12,8 @@ from pydantic import Field
 """
 Azure OpenAI Responses Client with Thread Management Example
 
-This sample demonstrates thread management with Azure OpenAI Responses Client
-for maintaining conversation context. The example includes:
-
-- Automatic thread creation for stateless conversations
-- Explicit thread management for persistent conversation context
-- Comparison between stateless and stateful conversation patterns
-- Thread reuse across multiple agent interactions
-- Context preservation and memory management in multi-turn conversations
-
-This approach enables building conversational agents that can maintain context
-across multiple interactions, making them ideal for customer service, tutoring,
-and other applications requiring conversation continuity.
+This sample demonstrates thread management with Azure OpenAI Responses Client, comparing
+automatic thread creation with explicit thread management for persistent context.
 """
 
 

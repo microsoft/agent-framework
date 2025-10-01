@@ -17,18 +17,8 @@ from agent_framework import (
 """
 Custom Agent Implementation Example
 
-This sample demonstrates how to implement a custom agent by extending the BaseAgent class.
-Custom agents provide complete control over the agent's behavior and capabilities, allowing
-developers to create specialized agents that don't rely on chat clients.
-
-This approach is useful when you need to:
-- Implement agents with custom logic that doesn't involve LLM interactions
-- Create agents that integrate with specialized APIs or services
-- Build agents with deterministic behaviors
-- Implement new agent types for the Microsoft Agent Framework
-
-The EchoAgent example shows the minimal requirements for implementing a custom agent,
-including both streaming and non-streaming response handling.
+This sample demonstrates implementing a custom agent by extending BaseAgent class,
+showing the minimal requirements for both streaming and non-streaming responses.
 """
 
 

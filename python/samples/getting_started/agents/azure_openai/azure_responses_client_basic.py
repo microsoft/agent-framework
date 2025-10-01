@@ -11,13 +11,8 @@ from pydantic import Field
 """
 Azure OpenAI Responses Client Basic Example
 
-This sample demonstrates the fundamental usage of Azure OpenAI Responses Client with the Agent Framework.
-The example includes:
-
-- Creating agents using AzureOpenAIResponsesClient for structured response generation
-- Function tool integration (weather function) for enhanced agent capabilities
-- Non-streaming response example to get complete results at once
-- Streaming response example to receive results as they are generated
+This sample demonstrates basic usage of AzureOpenAIResponsesClient for structured
+response generation, showing both streaming and non-streaming responses.
 """
 
 
