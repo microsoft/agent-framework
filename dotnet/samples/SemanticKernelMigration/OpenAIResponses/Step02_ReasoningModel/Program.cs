@@ -11,7 +11,7 @@ using OpenAI;
 #pragma warning disable OPENAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
 var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
-var modelId = System.Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "o4-mini";
+var model = System.Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "o4-mini";
 var userInput =
     """
     Instructions:
@@ -47,7 +47,7 @@ async Task SKAgentAsync()
 {
     Console.WriteLine("\n=== SK Agent ===\n");
 
-    var responseClient = new OpenAIClient(apiKey).GetOpenAIResponseClient(modelId);
+    var responseClient = new OpenAIClient(apiKey).GetOpenAIResponseClient(model);
     OpenAIResponseAgent agent = new(responseClient)
     {
         Name = "Thinker",
@@ -115,7 +115,7 @@ async Task AFAgentAsync()
 {
     Console.WriteLine("\n=== AF Agent ===\n");
 
-    var agent = new OpenAIClient(apiKey).GetOpenAIResponseClient(modelId)
+    var agent = new OpenAIClient(apiKey).GetOpenAIResponseClient(model)
         .CreateAIAgent(name: "Thinker", instructions: "You are at thinking hard before answering.");
 
     var thread = agent.GetNewThread();

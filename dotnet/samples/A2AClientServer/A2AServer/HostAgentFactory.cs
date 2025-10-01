@@ -12,7 +12,7 @@ namespace A2AServer;
 
 internal static class HostAgentFactory
 {
-    internal static async Task<A2AHostAgent> CreateFoundryHostAgentAsync(string agentType, string modelId, string endpoint, string assistantId, IList<AITool>? tools = null)
+    internal static async Task<A2AHostAgent> CreateFoundryHostAgentAsync(string agentType, string model, string endpoint, string assistantId, IList<AITool>? tools = null)
     {
         var persistentAgentsClient = new PersistentAgentsClient(endpoint, new AzureCliCredential());
         PersistentAgent persistentAgent = await persistentAgentsClient.Administration.GetAgentAsync(assistantId);
@@ -31,10 +31,10 @@ internal static class HostAgentFactory
         return new A2AHostAgent(agent, agentCard);
     }
 
-    internal static async Task<A2AHostAgent> CreateChatCompletionHostAgentAsync(string agentType, string modelId, string apiKey, string name, string instructions, IList<AITool>? tools = null)
+    internal static async Task<A2AHostAgent> CreateChatCompletionHostAgentAsync(string agentType, string model, string apiKey, string name, string instructions, IList<AITool>? tools = null)
     {
         AIAgent agent = new OpenAIClient(apiKey)
-             .GetChatClient(modelId)
+             .GetChatClient(model)
              .CreateAIAgent(instructions, name, tools: tools);
 
         AgentCard agentCard = agentType.ToUpperInvariant() switch
