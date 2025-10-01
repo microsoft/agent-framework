@@ -19,15 +19,16 @@ namespace Microsoft.Agents.AI;
 public static class AgentRunResponseExtensions
 {
     /// <summary>
-    /// Creates a <see cref="ChatResponse"/> from an <see cref="AgentRunResponse"/>.
+    /// Creates a <see cref="ChatResponse"/> from an <see cref="AgentRunResponse"/> instance.
     /// </summary>
-    /// <param name="response">The <see cref="AgentRunResponse"/>.</param>
-    /// <returns>A <see cref="ChatResponse"/> built from <paramref name="response"/>.</returns>
+    /// <param name="response">The <see cref="AgentRunResponse"/> to convert.</param>
+    /// <returns>A <see cref="ChatResponse"/> built from the specified <paramref name="response"/>.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="response"/> is <see langword="null"/>.</exception>
     /// <remarks>
-    /// If the <paramref name="response"/>'s <see cref="AgentRunResponse.RawRepresentation"/> is a
-    /// <see cref="ChatResponse"/> instance, that instance is returned directly. Otherwise, a new
-    /// <see cref="ChatResponse"/> is created and populated with the data from the <paramref name="response"/>.
-    /// The instance is a shallow copy; any reference-type members (e.g. <see cref="AgentRunResponse.Messages"/>)
+    /// If the <paramref name="response"/>'s <see cref="AgentRunResponse.RawRepresentation"/> is already a
+    /// <see cref="ChatResponse"/> instance, that instance is returned directly.
+    /// Otherwise, a new <see cref="ChatResponse"/> is created and populated with the data from the <paramref name="response"/>.
+    /// The resulting instance is a shallow copy; any reference-type members (e.g. <see cref="AgentRunResponse.Messages"/>)
     /// will be shared between the two instances.
     /// </remarks>
     public static ChatResponse AsChatResponse(this AgentRunResponse response)
@@ -48,15 +49,16 @@ public static class AgentRunResponseExtensions
     }
 
     /// <summary>
-    /// Creates a <see cref="ChatResponseUpdate"/> from an <see cref="AgentRunResponseUpdate"/>.
+    /// Creates a <see cref="ChatResponseUpdate"/> from an <see cref="AgentRunResponseUpdate"/> instance.
     /// </summary>
-    /// <param name="responseUpdate">The <see cref="AgentRunResponseUpdate"/>.</param>
-    /// <returns>A <see cref="ChatResponseUpdate"/> built from <paramref name="responseUpdate"/>.</returns>
+    /// <param name="responseUpdate">The <see cref="AgentRunResponseUpdate"/> to convert.</param>
+    /// <returns>A <see cref="ChatResponseUpdate"/> built from the specified <paramref name="responseUpdate"/>.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="responseUpdate"/> is <see langword="null"/>.</exception>
     /// <remarks>
-    /// If the <paramref name="responseUpdate"/>'s <see cref="AgentRunResponseUpdate.RawRepresentation"/> is a
-    /// <see cref="ChatResponseUpdate"/> instance, that instance is returned directly. Otherwise, a new
-    /// <see cref="ChatResponseUpdate"/> is created and populated with the data from the <paramref name="responseUpdate"/>.
-    /// The instance is a shallow copy; any reference-type members (e.g. <see cref="AgentRunResponseUpdate.Contents"/>)
+    /// If the <paramref name="responseUpdate"/>'s <see cref="AgentRunResponseUpdate.RawRepresentation"/> is already a
+    /// <see cref="ChatResponseUpdate"/> instance, that instance is returned directly.
+    /// Otherwise, a new <see cref="ChatResponseUpdate"/> is created and populated with the data from the <paramref name="responseUpdate"/>.
+    /// The resulting instance is a shallow copy; any reference-type members (e.g. <see cref="AgentRunResponseUpdate.Contents"/>)
     /// will be shared between the two instances.
     /// </remarks>
     public static ChatResponseUpdate AsChatResponseUpdate(this AgentRunResponseUpdate responseUpdate)
@@ -82,8 +84,9 @@ public static class AgentRunResponseExtensions
     /// Creates an asynchronous enumerable of <see cref="ChatResponseUpdate"/> instances from an asynchronous
     /// enumerable of <see cref="AgentRunResponseUpdate"/> instances.
     /// </summary>
-    /// <param name="responseUpdates">The sequence <see cref="AgentRunResponseUpdate"/>.</param>
-    /// <returns>A sequence of <see cref="ChatResponseUpdate"/> instances built from <paramref name="responseUpdates"/>.</returns>
+    /// <param name="responseUpdates">The sequence of <see cref="AgentRunResponseUpdate"/> instances to convert.</param>
+    /// <returns>An asynchronous enumerable of <see cref="ChatResponseUpdate"/> instances built from <paramref name="responseUpdates"/>.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="responseUpdates"/> is <see langword="null"/>.</exception>
     /// <remarks>
     /// Each <see cref="AgentRunResponseUpdate"/> is converted to a <see cref="ChatResponseUpdate"/> using
     /// <see cref="AsChatResponseUpdate"/>.
@@ -99,9 +102,11 @@ public static class AgentRunResponseExtensions
         }
     }
 
-    /// <summary>Combines <see cref="AgentRunResponseUpdate"/> instances into a single <see cref="AgentRunResponse"/>.</summary>
-    /// <param name="updates">The updates to be combined.</param>
-    /// <returns>The combined <see cref="AgentRunResponse"/>.</returns>
+    /// <summary>
+    /// Combines a sequence of <see cref="AgentRunResponseUpdate"/> instances into a single <see cref="AgentRunResponse"/>.
+    /// </summary>
+    /// <param name="updates">The sequence of updates to be combined into a single response.</param>
+    /// <returns>A single <see cref="AgentRunResponse"/> that represents the combined state of all the updates.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="updates"/> is <see langword="null"/>.</exception>
     /// <remarks>
     /// As part of combining <paramref name="updates"/> into a single <see cref="AgentRunResponse"/>, the method will attempt to reconstruct
@@ -126,16 +131,24 @@ public static class AgentRunResponseExtensions
         return response;
     }
 
-    /// <summary>Combines <see cref="AgentRunResponseUpdate"/> instances into a single <see cref="AgentRunResponse"/>.</summary>
-    /// <param name="updates">The updates to be combined.</param>
+    /// <summary>
+    /// Asynchronously combines a sequence of <see cref="AgentRunResponseUpdate"/> instances into a single <see cref="AgentRunResponse"/>.
+    /// </summary>
+    /// <param name="updates">The asynchronous sequence of updates to be combined into a single response.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>The combined <see cref="AgentRunResponse"/>.</returns>
+    /// <returns>A task that represents the asynchronous operation. The task result contains a single <see cref="AgentRunResponse"/> that represents the combined state of all the updates.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="updates"/> is <see langword="null"/>.</exception>
     /// <remarks>
+    /// <para>
+    /// This is the asynchronous version of <see cref="ToAgentRunResponse(IEnumerable{AgentRunResponseUpdate})"/>.
+    /// It performs the same combining logic but operates on an asynchronous enumerable of updates.
+    /// </para>
+    /// <para>
     /// As part of combining <paramref name="updates"/> into a single <see cref="AgentRunResponse"/>, the method will attempt to reconstruct
     /// <see cref="ChatMessage"/> instances. This includes using <see cref="AgentRunResponseUpdate.MessageId"/> to determine
     /// message boundaries, as well as coalescing contiguous <see cref="AIContent"/> items where applicable, e.g. multiple
     /// <see cref="TextContent"/> instances in a row may be combined into a single <see cref="TextContent"/>.
+    /// </para>
     /// </remarks>
     public static Task<AgentRunResponse> ToAgentRunResponseAsync(
         this IAsyncEnumerable<AgentRunResponseUpdate> updates,

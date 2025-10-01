@@ -22,7 +22,9 @@ using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI;
 
-/// <summary>Represents the response to an Agent run request.</summary>
+/// <summary>
+/// Represents the response to an <see cref="AIAgent"/> run request, containing messages and metadata about the interaction.
+/// </summary>
 /// <remarks>
 /// <see cref="AgentRunResponse"/> provides one or more response messages and metadata about the response.
 /// A typical response will contain a single message, however a response may contain multiple messages
@@ -41,7 +43,7 @@ public class AgentRunResponse
     }
 
     /// <summary>Initializes a new instance of the <see cref="AgentRunResponse"/> class.</summary>
-    /// <param name="message">The response message.</param>
+    /// <param name="message">The response message to include in this response.</param>
     /// <exception cref="ArgumentNullException"><paramref name="message"/> is <see langword="null"/>.</exception>
     public AgentRunResponse(ChatMessage message)
     {
@@ -50,9 +52,16 @@ public class AgentRunResponse
         this.Messages.Add(message);
     }
 
-    /// <summary>Initializes a new instance of the <see cref="AgentRunResponse"/> class.</summary>
-    /// <param name="response">The <see cref="ChatResponse"/> from which to seed this <see cref="AgentRunResponse"/>.</param>
+    /// <summary>
+    /// Initializes a new instance of the <see cref="AgentRunResponse"/> class from an existing <see cref="ChatResponse"/>.
+    /// </summary>
+    /// <param name="response">The <see cref="ChatResponse"/> from which to populate this <see cref="AgentRunResponse"/>.</param>
     /// <exception cref="ArgumentNullException"><paramref name="response"/> is <see langword="null"/>.</exception>
+    /// <remarks>
+    /// This constructor creates an agent response that wraps an existing <see cref="ChatResponse"/>, preserving all
+    /// metadata and storing the original response in <see cref="RawRepresentation"/> for access to
+    /// the underlying implementation details.
+    /// </remarks>
     public AgentRunResponse(ChatResponse response)
     {
         _ = Throw.IfNull(response);
@@ -65,14 +74,33 @@ public class AgentRunResponse
         this.Usage = response.Usage;
     }
 
-    /// <summary>Initializes a new instance of the <see cref="AgentRunResponse"/> class.</summary>
-    /// <param name="messages">The response messages.</param>
+    /// <summary>
+    /// Initializes a new instance of the <see cref="AgentRunResponse"/> class with the specified collection of messages.
+    /// </summary>
+    /// <param name="messages">The collection of response messages, or <see langword="null"/> to create an empty response.</param>
     public AgentRunResponse(IList<ChatMessage>? messages)
     {
         this._messages = messages;
     }
 
-    /// <summary>Gets or sets the agent response messages.</summary>
+    /// <summary>
+    /// Gets or sets the collection of messages to be represented by this response.
+    /// </summary>
+    /// <value>
+    /// A collection of <see cref="ChatMessage"/> instances representing the agent's response.
+    /// If the backing collection is <see langword="null"/>, accessing this property will create an empty list.
+    /// </value>
+    /// <remarks>
+    /// <para>
+    /// This property provides access to all messages generated during the agent's execution. While most
+    /// responses contain a single assistant message, complex agent behaviors may produce multiple messages
+    /// showing intermediate steps, function calls, or different types of content.
+    /// </para>
+    /// <para>
+    /// The collection is mutable and can be modified after creation. Setting this property to <see langword="null"/>
+    /// will cause subsequent access to return an empty list.
+    /// </para>
+    /// </remarks>
     [AllowNull]
     public IList<ChatMessage> Messages
     {
@@ -80,35 +108,75 @@ public class AgentRunResponse
         set => this._messages = value;
     }
 
-    /// <summary>Gets the text of the response.</summary>
+    /// <summary>
+    /// Gets the concatenated text content of all messages in this response.
+    /// </summary>
+    /// <value>
+    /// A string containing the combined text from all <see cref="TextContent"/> instances
+    /// across all messages in <see cref="Messages"/>, or an empty string if no text content is present.
+    /// </value>
     /// <remarks>
-    /// This property concatenates the <see cref="ChatMessage.Text"/> of all <see cref="ChatMessage"/>
-    /// instances in <see cref="Messages"/>.
+    /// This property provides a convenient way to access the textual response without needing to
+    /// iterate through individual messages and content items. Non-text content is ignored.
     /// </remarks>
     [JsonIgnore]
     public string Text => this._messages?.ConcatText() ?? string.Empty;
 
-    /// <summary>Gets the user input requests associated with the response.</summary>
+    /// <summary>
+    /// Gets all user input requests present in the response messages.
+    /// </summary>
+    /// <value>
+    /// An enumerable collection of <see cref="UserInputRequestContent"/> instances found
+    /// across all messages in the response.
+    /// </value>
     /// <remarks>
-    /// This property concatenates all <see cref="UserInputRequestContent"/> instances in the response.
+    /// User input requests indicate that the agent is asking for additional information
+    /// from the user before it can continue processing. This property aggregates all such
+    /// requests across all messages in the response.
     /// </remarks>
     [JsonIgnore]
     public IEnumerable<UserInputRequestContent> UserInputRequests => this._messages?.SelectMany(x => x.Contents).OfType<UserInputRequestContent>() ?? [];
 
-    /// <summary>Gets or sets the ID of the agent that produced the response.</summary>
+    /// <summary>
+    /// Gets or sets the identifier of the agent that generated this response.
+    /// </summary>
+    /// <value>
+    /// A unique string identifier for the agent, or <see langword="null"/> if not specified.
+    /// </value>
+    /// <remarks>
+    /// This identifier helps track which agent generated the response in multi-agent scenarios
+    /// or for debugging and telemetry purposes.
+    /// </remarks>
     public string? AgentId { get; set; }
 
-    /// <summary>Gets or sets the ID of the agent response.</summary>
+    /// <summary>
+    /// Gets or sets the unique identifier for this specific response.
+    /// </summary>
+    /// <value>
+    /// A unique string identifier for this response instance, or <see langword="null"/> if not assigned.
+    /// </value>
     public string? ResponseId { get; set; }
 
-    /// <summary>Gets or sets a timestamp for the run response.</summary>
+    /// <summary>
+    /// Gets or sets the timestamp indicating when this response was created.
+    /// </summary>
+    /// <value>
+    /// A <see cref="DateTimeOffset"/> representing when the response was generated,
+    /// or <see langword="null"/> if not specified.
+    /// </value>
+    /// <remarks>
+    /// The creation timestamp is useful for auditing, logging, and understanding
+    /// the chronology of agentic interactions.
+    /// </remarks>
     public DateTimeOffset? CreatedAt { get; set; }
 
-    /// <summary>Gets or sets usage details for the run response.</summary>
-    /// <remarks>
-    /// Where the agent run response is produced via many model invocations, this
-    /// usage is an aggregation of the usage for all these model invocations.
-    /// </remarks>
+    /// <summary>
+    /// Gets or sets the resource usage information for generating this response.
+    /// </summary>
+    /// <value>
+    /// A <see cref="UsageDetails"/> instance containing token counts and other usage metrics,
+    /// or <see langword="null"/> if usage information is not available.
+    /// </value>
     public UsageDetails? Usage { get; set; }
 
     /// <summary>Gets or sets the raw representation of the run response from an underlying implementation.</summary>
@@ -120,14 +188,43 @@ public class AgentRunResponse
     [JsonIgnore]
     public object? RawRepresentation { get; set; }
 
-    /// <summary>Gets or sets any additional properties associated with the run response.</summary>
+    /// <summary>
+    /// Gets or sets additional properties associated with this response.
+    /// </summary>
+    /// <value>
+    /// An <see cref="AdditionalPropertiesDictionary"/> containing custom properties,
+    /// or <see langword="null"/> if no additional properties are present.
+    /// </value>
+    /// <remarks>
+    /// Additional properties provide a way to include custom metadata or provider-specific
+    /// information that doesn't fit into the standard response schema. This is useful for
+    /// preserving implementation-specific details or extending the response with custom data.
+    /// </remarks>
     public AdditionalPropertiesDictionary? AdditionalProperties { get; set; }
 
     /// <inheritdoc />
     public override string ToString() => this.Text;
 
-    /// <summary>Creates an array of <see cref="AgentRunResponseUpdate" /> instances that represent this <see cref="AgentRunResponse" />.</summary>
-    /// <returns>An array of <see cref="AgentRunResponseUpdate" /> instances that may be used to represent this <see cref="AgentRunResponse" />.</returns>
+    /// <summary>
+    /// Converts this <see cref="AgentRunResponse"/> into a collection of <see cref="AgentRunResponseUpdate"/> instances
+    /// suitable for streaming scenarios.
+    /// </summary>
+    /// <returns>
+    /// An array of <see cref="AgentRunResponseUpdate"/> instances that collectively represent
+    /// the same information as this response.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// This method is useful for converting complete responses back into streaming format,
+    /// which may be needed for scenarios that require uniform handling of both streaming
+    /// and non-streaming agent responses.
+    /// </para>
+    /// <para>
+    /// Each message in <see cref="Messages"/> becomes a separate update, and usage information
+    /// is included as an additional update if present. The order of updates preserves the
+    /// original message sequence.
+    /// </para>
+    /// </remarks>
     public AgentRunResponseUpdate[] ToAgentRunResponseUpdates()
     {
         AgentRunResponseUpdate? extra = null;

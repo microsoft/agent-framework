@@ -17,7 +17,7 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Agents.AI;
 
 /// <summary>
-/// Represents an agent that can be invoked using a chat client.
+/// Provides an <see cref="AIAgent"/> that delegates to an <see cref="IChatClient"/> implementation.
 /// </summary>
 public sealed class ChatClientAgent : AIAgent
 {
@@ -29,13 +29,33 @@ public sealed class ChatClientAgent : AIAgent
     /// <summary>
     /// Initializes a new instance of the <see cref="ChatClientAgent"/> class.
     /// </summary>
-    /// <param name="chatClient">The chat client to use for invoking the agent.</param>
-    /// <param name="instructions">Optional instructions for the agent.</param>
-    /// <param name="name">Optional name for the agent.</param>
-    /// <param name="description">Optional description for the agent.</param>
-    /// <param name="tools">Optional list of tools that the agent can use during invocation.</param>
-    /// <param name="loggerFactory">Optional logger factory to use for logging.</param>
-    /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
+    /// <param name="chatClient">The chat client to use when running the agent.</param>
+    /// <param name="instructions">
+    /// Optional system instructions that guide the agent's behavior. These instructions are provided to the <see cref="IChatClient"/>
+    /// with each invocation to establish the agent's role and behavior.
+    /// </param>
+    /// <param name="name">
+    /// Optional name for the agent. This name is used for identification and logging purposes.
+    /// </param>
+    /// <param name="description">
+    /// Optional human-readable description of the agent's purpose and capabilities.
+    /// This description can be useful for documentation and agent discovery scenarios.
+    /// </param>
+    /// <param name="tools">
+    /// Optional collection of tools that the agent can invoke during conversations.
+    /// These tools augment any tools that may be provided to the agent via <see cref="ChatOptions.Tools"/> when
+    /// the agent is run.
+    /// </param>
+    /// <param name="loggerFactory">
+    /// Optional logger factory for creating loggers used by the agent and its components.
+    /// </param>
+    /// <param name="services">
+    /// Optional service provider for resolving dependencies required by AI functions and other agent components.
+    /// This is particularly important when using custom tools that require dependency injection.
+    /// This is only relevant when the <see cref="IChatClient"/> doesn't already contain a <see cref="FunctionInvokingChatClient"/>
+    /// and the <see cref="ChatClientAgent"/> needs to insert one.
+    /// </param>
+    /// <exception cref="ArgumentNullException"><paramref name="chatClient"/> is <see langword="null"/>.</exception>
     public ChatClientAgent(IChatClient chatClient, string? instructions = null, string? name = null, string? description = null, IList<AITool>? tools = null, ILoggerFactory? loggerFactory = null, IServiceProvider? services = null)
         : this(
               chatClient,
@@ -57,10 +77,21 @@ public sealed class ChatClientAgent : AIAgent
     /// <summary>
     /// Initializes a new instance of the <see cref="ChatClientAgent"/> class.
     /// </summary>
-    /// <param name="chatClient">The chat client to use for invoking the agent.</param>
-    /// <param name="options">Full set of options to configure the agent.</param>
-    /// <param name="loggerFactory">Optional logger factory to use for logging.</param>
-    /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
+    /// <param name="chatClient">The chat client to use when running the agent.</param>
+    /// <param name="options">
+    /// Configuration options that control all aspects of the agent's behavior, including chat settings,
+    /// message store factories, context provider factories, and other advanced configurations.
+    /// </param>
+    /// <param name="loggerFactory">
+    /// Optional logger factory for creating loggers used by the agent and its components.
+    /// </param>
+    /// <param name="services">
+    /// Optional service provider for resolving dependencies required by AI functions and other agent components.
+    /// This is particularly important when using custom tools that require dependency injection.
+    /// This is only relevant when the <see cref="IChatClient"/> doesn't already contain a <see cref="FunctionInvokingChatClient"/>
+    /// and the <see cref="ChatClientAgent"/> needs to insert one.
+    /// </param>
+    /// <exception cref="ArgumentNullException"><paramref name="chatClient"/> is <see langword="null"/>.</exception>
     public ChatClientAgent(IChatClient chatClient, ChatClientAgentOptions? options, ILoggerFactory? loggerFactory = null, IServiceProvider? services = null)
     {
         _ = Throw.IfNull(chatClient);
@@ -82,6 +113,13 @@ public sealed class ChatClientAgent : AIAgent
     /// <summary>
     /// Gets the underlying chat client used by the agent to invoke chat completions.
     /// </summary>
+    /// <value>
+    /// The <see cref="IChatClient"/> instance that backs this agent.
+    /// </value>
+    /// <remarks>
+    /// This may return the original client provided when the <see cref="ChatClientAgent"/> was constructed, or it may
+    /// return a pipeline of decorating <see cref="IChatClient"/> instances applied around that inner client.
+    /// </remarks>
     public IChatClient ChatClient { get; }
 
     /// <inheritdoc/>
@@ -94,8 +132,17 @@ public sealed class ChatClientAgent : AIAgent
     public override string? Description => this._agentOptions?.Description;
 
     /// <summary>
-    /// Gets the instructions for the agent (optional).
+    /// Gets the system instructions that guide the agent's behavior during conversations.
     /// </summary>
+    /// <value>
+    /// A string containing the system instructions that are provided to the underlying chat client
+    /// to establish the agent's role, personality, and behavioral guidelines. May be <see langword="null"/>
+    /// if no specific instructions were configured.
+    /// </value>
+    /// <remarks>
+    /// These instructions are typically provided to the AI model as system messages to establish
+    /// the context and expected behavior for the agent's responses.
+    /// </remarks>
     public string? Instructions => this._agentOptions?.Instructions;
 
     /// <summary>
@@ -282,13 +329,21 @@ public sealed class ChatClientAgent : AIAgent
         };
 
     /// <summary>
-    /// Get a new <see cref="AgentThread"/> instance using an existing conversation id, to continue that conversation.
+    /// Creates a new agent thread instance using an existing conversation identifier to continue that conversation.
     /// </summary>
-    /// <param name="conversationId">The conversation id to continue.</param>
-    /// <returns>A new <see cref="AgentThread"/> instance.</returns>
+    /// <param name="conversationId">The identifier of an existing conversation to continue.</param>
+    /// <returns>
+    /// A new <see cref="AgentThread"/> instance configured to work with the specified conversation.
+    /// </returns>
     /// <remarks>
-    /// Note that any <see cref="AgentThread"/> created with this method will only work with <see cref="ChatClientAgent"/> instances that support storing
-    /// chat history in the underlying service provided by the <see cref="IChatClient"/>.
+    /// <para>
+    /// This method creates threads that rely on server-side conversation storage, where the chat history
+    /// is maintained by the underlying AI service rather than in local message stores.
+    /// </para>
+    /// <para>
+    /// Agent threads created with this method will only work with <see cref="ChatClientAgent"/>
+    /// instances that support server-side conversation storage through their underlying <see cref="IChatClient"/>.
+    /// </para>
     /// </remarks>
     public AgentThread GetNewThread(string conversationId)
         => new ChatClientAgentThread()

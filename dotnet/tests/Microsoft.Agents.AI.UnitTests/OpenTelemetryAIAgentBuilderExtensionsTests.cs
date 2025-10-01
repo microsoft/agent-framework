@@ -7,7 +7,7 @@ using Moq;
 namespace Microsoft.Agents.AI.UnitTests;
 
 /// <summary>
-/// Unit tests for the <see cref="OpenTelemetryAIAgentBuilderExtensions"/> class.
+/// Unit tests for the <see cref="AIAgentBuilderExtensions"/> class.
 /// </summary>
 public class OpenTelemetryAIAgentBuilderExtensionsTests
 {
@@ -18,8 +18,7 @@ public class OpenTelemetryAIAgentBuilderExtensionsTests
     public void UseOpenTelemetry_WithNullBuilder_ThrowsArgumentNullException()
     {
         // Act & Assert
-        Assert.Throws<ArgumentNullException>("builder", () =>
-            OpenTelemetryAIAgentBuilderExtensions.UseOpenTelemetry(null!));
+        Assert.Throws<ArgumentNullException>("builder", () => ((AIAgentBuilder)null!).UseOpenTelemetry());
     }
 
     /// <summary>
