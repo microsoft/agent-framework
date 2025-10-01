@@ -6,8 +6,9 @@ import json
 import logging
 import uuid
 from collections.abc import Sequence
+from dataclasses import asdict, is_dataclass
 from datetime import datetime
-from typing import Any, Union
+from typing import Any, Union, cast
 
 from .models import (
     AgentFrameworkRequest,
@@ -257,12 +258,13 @@ class MessageMapper:
             List of OpenAI response stream events
         """
         try:
+            serialized_payload = self._serialize_payload(getattr(event, "data", None))
             # Create structured workflow event
             workflow_event = ResponseWorkflowEventComplete(
                 type="response.workflow_event.complete",
                 data={
                     "event_type": event.__class__.__name__,
-                    "data": getattr(event, "data", None),
+                    "data": serialized_payload,
                     "executor_id": getattr(event, "executor_id", None),
                     "timestamp": datetime.now().isoformat(),
                 },
@@ -277,6 +279,61 @@ class MessageMapper:
         except Exception as e:
             logger.warning(f"Error converting workflow event: {e}")
             return [await self._create_error_event(str(e), context)]
+
+    def _serialize_payload(self, value: Any) -> Any:
+        """Best-effort JSON serialization for workflow payloads."""
+        if value is None:
+            return None
+        if isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, (list, tuple, set)):
+            seq = cast(Union[list[Any], tuple[Any, ...], set[Any]], value)
+            return [self._serialize_payload(item) for item in seq]
+        if isinstance(value, dict):
+            dict_val = cast(dict[Any, Any], value)
+            return {str(k): self._serialize_payload(v) for k, v in dict_val.items()}
+        if is_dataclass(value) and not isinstance(value, type):
+            try:
+                return self._serialize_payload(asdict(value))
+            except Exception as exc:
+                logger.debug("Failed to serialize dataclass payload: %s", exc)
+        model_dump_method = getattr(value, "model_dump", None)
+        if model_dump_method is not None and callable(model_dump_method):
+            try:
+                dumped = model_dump_method()
+                return self._serialize_payload(dumped)
+            except Exception as exc:
+                logger.debug("Failed to serialize payload via model_dump: %s", exc)
+        dict_method = getattr(value, "dict", None)
+        if dict_method is not None and callable(dict_method):
+            try:
+                dict_result = dict_method()
+                return self._serialize_payload(dict_result)
+            except Exception as exc:
+                logger.debug("Failed to serialize payload via dict(): %s", exc)
+        to_dict_method = getattr(value, "to_dict", None)
+        if to_dict_method is not None and callable(to_dict_method):
+            try:
+                to_dict_result = to_dict_method()
+                return self._serialize_payload(to_dict_result)
+            except Exception as exc:
+                logger.debug("Failed to serialize payload via to_dict(): %s", exc)
+        model_dump_json_method = getattr(value, "model_dump_json", None)
+        if model_dump_json_method is not None and callable(model_dump_json_method):
+            try:
+                json_str = model_dump_json_method()
+                if isinstance(json_str, (str, bytes, bytearray)):
+                    return json.loads(json_str)
+            except Exception as exc:
+                logger.debug("Failed to serialize payload via model_dump_json: %s", exc)
+        if hasattr(value, "__dict__"):
+            try:
+                return self._serialize_payload({
+                    key: self._serialize_payload(val) for key, val in value.__dict__.items() if not key.startswith("_")
+                })
+            except Exception as exc:
+                logger.debug("Failed to serialize payload via __dict__: %s", exc)
+        return str(value)
 
     # Content type mappers - implementing our comprehensive mapping plan
 

@@ -2555,6 +2555,8 @@ class ChatOptions(SerializationMixin):
         other_tools = other.tools
         # tool_choice has a specialized serialize method. Save it here so we can fix it later.
         tool_choice = other.tool_choice or self.tool_choice
+        # response_format is a class type that can't be serialized. Save it here so we can restore it later.
+        response_format = self.response_format
         # Start with a shallow copy of self that preserves tool objects
         combined = ChatOptions.from_dict(self.to_dict())
         combined.tool_choice = self.tool_choice
@@ -2562,6 +2564,7 @@ class ChatOptions(SerializationMixin):
         combined.logit_bias = dict(self.logit_bias) if self.logit_bias else None
         combined.metadata = dict(self.metadata) if self.metadata else None
         combined.additional_properties = dict(self.additional_properties)
+        combined.response_format = response_format
 
         # Apply scalar and mapping updates from the other options
         updated_data = other.to_dict(exclude_none=True, exclude={"tools"})
@@ -2573,6 +2576,9 @@ class ChatOptions(SerializationMixin):
             setattr(combined, key, value)
 
         combined.tool_choice = tool_choice
+        # Preserve response_format from other if it exists, otherwise keep self's
+        if other.response_format is not None:
+            combined.response_format = other.response_format
         combined.instructions = "\n".join([combined.instructions or "", other.instructions or ""])
         combined.logit_bias = {**(combined.logit_bias or {}), **logit_bias}
         combined.metadata = {**(combined.metadata or {}), **metadata}
