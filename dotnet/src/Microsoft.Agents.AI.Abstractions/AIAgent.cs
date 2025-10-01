@@ -35,7 +35,7 @@ public abstract class AIAgent
     /// agent instances in multi-agent scenarios. They should remain stable for the lifetime
     /// of the agent instance.
     /// </remarks>
-    public virtual string Id => _id;
+    public virtual string Id => this._id;
 
     /// <summary>
     /// Gets the human-readable name of the agent.
