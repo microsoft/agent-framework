@@ -139,10 +139,9 @@ Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Fram
 - [Agent Provider Samples](./dotnet/samples/GettingStarted/AgentProviders): samples showing different agent providers
 - [Workflow Samples](./dotnet/samples/GettingStarted/Workflows): advanced multi-agent patterns and workflow orchestration
 
-## Agent Framework Documentation
+## Contributor Resources
 
-- [Documentation](https://learn.microsoft.com/agent-framework/)
-- [Agent Framework Repository](https://github.com/microsoft/agent-framework)
+- [Contributing Guide](./CONTRIBUTING.md)
+- [Python Development Guide](./python/DEV_SETUP.md)
 - [Design Documents](./docs/design)
 - [Architectural Decision Records](./docs/decisions)
-- [MSFT Learn Docs](https://learn.microsoft.com/agent-framework/overview/agent-framework-overview)
