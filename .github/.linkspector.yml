@@ -8,7 +8,7 @@ ignorePatterns:
   - pattern: "./discussions"
   - pattern: "./pulls"
   - pattern: "https:\/\/platform.openai.com"
-excludedDirs:
+# excludedDirs:
   # Folders which include links to localhost, since it's not ignored with regular expressions
 baseUrl: https://github.com/microsoft/agent-framework/
 aliveStatusCodes: 
