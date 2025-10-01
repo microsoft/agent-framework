@@ -33,7 +33,7 @@ Advanced comparisons are split between `samantic-kernel-migration/orchestrations
 cd samantic-kernel-migration
 uv venv --python 3.10 .venv-migration
 source .venv-migration/bin/activate
-uv pip install semantic-kernel microsoft-agent-framework
+uv pip install semantic-kernel agent-framework
 uv run python orchestrations/sequential.py
 uv run python processes/fan_out_fan_in_process.py
 ```
