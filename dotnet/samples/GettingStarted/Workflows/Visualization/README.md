@@ -37,7 +37,3 @@ string mermaid = workflow.ToMermaidString();
 // Generate DOT format
 string dotString = workflow.ToDotString();
 ```
-
-## Related Samples
-
-- [Map-Reduce Workflow Sample](../../../Workflows/Visualization/README.md): The workflow implementation being visualized

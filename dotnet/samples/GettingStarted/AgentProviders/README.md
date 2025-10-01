@@ -4,7 +4,7 @@ These samples show how to create an AIAgent instance using various providers.
 This is not an exhaustive list, but shows a variety of the more popular options.
 
 For other samples that demonstrate how to use AIAgent instances,
-see the [Getting Started Steps](../GettingStartedSteps/README.md) samples.
+see the [Getting Started With Agents](../Agents/README.md) samples.
 
 ## Prerequisites
 

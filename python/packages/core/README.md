@@ -220,7 +220,7 @@ if __name__ == "__main__":
 - [Getting Started with Agents](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/agents): Basic agent creation and tool usage
 - [Chat Client Examples](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/chat_client): Direct chat client usage patterns
 - [Azure AI Integration](https://github.com/microsoft/agent-framework/tree/main/python/packages/azure-ai): Azure AI integration
-- [.NET Orchestration Samples](https://github.com/microsoft/agent-framework/tree/main/dotnet/samples/GettingStarted/Orchestration): Advanced multi-agent patterns (.NET)
+- [.NET Workflows Samples](https://github.com/microsoft/agent-framework/tree/main/dotnet/samples/GettingStarted/Workflows): Advanced multi-agent patterns (.NET)
 
 ## Agent Framework Documentation
 

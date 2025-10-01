@@ -11,4 +11,4 @@ These agent definitions are based on _Semantic Kernel_'s _Declarative Agent_ fea
 To create agents, run the [`Create.ps1`](./Create.ps1) script.
 This will create the agents for the sample workflows in your Azure Foundry Project and format a script you can copy and use to configure your environment.
 
-> Note: `Create.ps1` relies upon the `FOUNDRY_PROJECT_ENDPOINT` setting.  See [README.md](../../dotnet/demos/DeclarativeWorkflow/README.md) from the demo for configuration details.
+> Note: `Create.ps1` relies upon the `FOUNDRY_PROJECT_ENDPOINT` setting.  See [README.md](../../dotnet/samples/GettingStarted/Workflows/Declarative/README.md) from the demo for configuration details.
