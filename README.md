@@ -74,10 +74,10 @@ from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 
 async def main():
-    # Initialize a chat agent with basic instructions
-    agent = AzureOpenAIResponsesClient(credential=AzureCliCredential()).create_agent(
-      name="HaikuBot",
-      instructions="You are an upbeat assistant that writes beautifully.",
+  # Initialize a chat agent with basic instructions
+  agent = AzureOpenAIResponsesClient(credential=AzureCliCredential()).create_agent(
+    name="HaikuBot",
+    instructions="You are an upbeat assistant that writes beautifully.",
   )
 
   print(await agent.run("Write a haiku about Microsoft Agent Framework."))
