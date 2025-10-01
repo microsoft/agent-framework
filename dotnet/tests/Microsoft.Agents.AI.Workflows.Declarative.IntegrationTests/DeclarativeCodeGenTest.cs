@@ -15,16 +15,16 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests;
 public sealed class DeclarativeCodeGenTest(ITestOutputHelper output) : WorkflowTest(output)
 {
     [Theory]
-    [InlineData("SendActivity.yaml", "SendActivity.json")]
-    [InlineData("InvokeAgent.yaml", "InvokeAgent.json")]
-    [InlineData("ConversationMessages.yaml", "ConversationMessages.json")]
+    [InlineData("SendActivity.yaml", "SendActivity.json", Skip = "Needs configuration")]
+    [InlineData("InvokeAgent.yaml", "InvokeAgent.json", Skip = "Needs configuration")]
+    [InlineData("ConversationMessages.yaml", "ConversationMessages.json", Skip = "Needs configuration")]
     public Task ValidateCaseAsync(string workflowFileName, string testcaseFileName) =>
         this.RunWorkflowAsync(Path.Combine("Workflows", workflowFileName), testcaseFileName);
 
     [Theory]
-    [InlineData("Marketing.yaml", "Marketing.json")]
-    [InlineData("MathChat.yaml", "MathChat.json")]
-    [InlineData("DeepResearch.yaml", "DeepResearch.json")]
+    [InlineData("Marketing.yaml", "Marketing.json", Skip = "Needs configuration")]
+    [InlineData("MathChat.yaml", "MathChat.json", Skip = "Needs configuration")]
+    [InlineData("DeepResearch.yaml", "DeepResearch.json", Skip = "Needs configuration")]
     [InlineData("HumanInLoop.yaml", "HumanInLoop.json", Skip = "TODO")]
     public Task ValidateScenarioAsync(string workflowFileName, string testcaseFileName) =>
         this.RunWorkflowAsync(Path.Combine(GetRepoFolder(), "workflow-samples", workflowFileName), testcaseFileName);
