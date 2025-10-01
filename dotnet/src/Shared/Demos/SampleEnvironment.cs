@@ -7,6 +7,7 @@ using System.Collections;
 using SystemEnvironment = System.Environment;
 
 namespace SampleHelpers;
+
 internal static class SampleEnvironment
 {
     public static string? GetEnvironmentVariable(string key)
