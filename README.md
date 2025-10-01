@@ -5,6 +5,18 @@
 
 Welcome to Microsoft's comprehensive multi-language framework for building, orchestrating, and deploying AI agents with support for both .NET and Python implementations. This framework provides everything from simple chat agents to complex multi-agent workflows with graph-based orchestration.
 
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=AAgdMhftj8w" title="Watch the full Agent Framework introduction (30 min)">
+    <img src="https://img.youtube.com/vi/AAgdMhftj8w/hqdefault.jpg"
+         alt="Watch the full Agent Framework introduction (30 min)" width="480">
+  </a>
+</p>
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=AAgdMhftj8w">
+    Watch the full Agent Framework introduction (30 min)
+  </a>
+</p>
+
 ## 📋 Getting Started
 
 **Quick Installation:**
@@ -25,6 +37,18 @@ Welcome to Microsoft's comprehensive multi-language framework for building, orch
   - [Labs directory](./python/packages/lab/)
 - **DevUI**: Interactive developer UI for agent development, testing, and debugging workflows
   - [DevUI package](./python/packages/devui/)
+
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=mOAaGY4WPvc">
+    <img src="https://img.youtube.com/vi/mOAaGY4WPvc/hqdefault.jpg" alt="See the DevUI in action" width="480">
+  </a>
+</p>
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=mOAaGY4WPvc">
+    See the DevUI in action (1 min)
+  </a>
+</p>
+
 - **Python and C#/.NET Support**: Full framework support for both Python and C#/.NET implementations with consistent APIs
   - [Python packages](./python/packages/) | [.NET source](./dotnet/src/)
 - **Observability**: Built-in OpenTelemetry integration for distributed tracing, monitoring, and debugging
@@ -37,6 +61,66 @@ Welcome to Microsoft's comprehensive multi-language framework for building, orch
 ### 💬 **We want your feedback!**
 
 - For bugs, please file a [GitHub issue](https://github.com/microsoft/agent-framework/issues).
+
+## Quickstart
+
+### Basic Agent - Python
+
+Create a simple Azure Responses Agent that writes a haiku about the Microsoft Agent Framework
+
+```python
+import asyncio
+from agent_framework.azure import AzureOpenAIResponsesClient
+
+async def main():
+    # Initialize a chat agent with basic instructions
+    agent = AzureOpenAIResponsesClient(credential=AzureCliCredential()).create_agent(
+      instructions="You are an upbeat assistant that writes beautifully.",
+  )
+
+# Get a response to a user message
+result = await agent.run("Write a haiku about Microsoft Agent Framework.")
+print(result)
+
+asyncio.run(main()) 
+```
+
+### Basic Agent - .NET
+
+```c#
+using System;
+using System.Threading.Tasks;
+using Azure.AI.OpenAI;
+using Azure.Identity;
+using Microsoft.Agents.AI;
+
+class Program
+{
+    static async Task Main()
+    {
+        var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
+            ?? throw new InvalidOperationException("Set AZURE_OPENAI_ENDPOINT.");
+        var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o";
+        var userInput = "Write a haiku about Microsoft Agent Framework.";
+
+        var agent = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
+            .GetOpenAIResponseClient(deploymentName)
+            .CreateAIAgent(name: "HaikuBot", instructions: "You are an upbeat assistant that writes beautifully.");
+
+        var thread = agent.GetNewThread();
+        var agentOptions = new ChatClientAgentRunOptions(new() { MaxOutputTokens = 8000 });
+
+        var result = await agent.RunAsync(userInput, thread, agentOptions);
+        Console.WriteLine(result);
+
+        Console.WriteLine("---");
+        await foreach (var update in agent.RunStreamingAsync(userInput, thread, agentOptions))
+        {
+            Console.Write(update);
+        }
+    }
+}
+```
 
 ## More Examples & Samples
 
