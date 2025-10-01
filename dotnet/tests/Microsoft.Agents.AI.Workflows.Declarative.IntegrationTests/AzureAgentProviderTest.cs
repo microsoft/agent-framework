@@ -87,7 +87,6 @@ public sealed class AzureAgentProviderTest(ITestOutputHelper output) : Integrati
             {
                 this._configuration ??= InitializeConfig().GetSection("AzureAI").Get<AzureAIConfiguration>();
                 Assert.NotNull(this._configuration);
-                this.Output.WriteLine($"CONFIG - DeploymentName: {this._configuration.DeploymentName}"); // %%% REMOVE
             }
 
             return this._configuration;
