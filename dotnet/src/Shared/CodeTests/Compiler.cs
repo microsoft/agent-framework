@@ -32,7 +32,6 @@ internal static class Compiler
         yield return typeof(IAsyncEnumerable<>).Assembly;
         yield return typeof(ValueTask).Assembly;
 #endif
-        yield return typeof(AsyncEnumerable).Assembly;
         yield return typeof(ChatMessage).Assembly;
         yield return typeof(AIAgent).Assembly;
         yield return typeof(Workflow).Assembly;
