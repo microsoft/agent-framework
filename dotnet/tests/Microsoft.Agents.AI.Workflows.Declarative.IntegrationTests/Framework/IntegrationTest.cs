@@ -49,15 +49,14 @@ public abstract class IntegrationTest : IDisposable
 
     protected static IConfigurationRoot InitializeConfig()
     {
-        return
-        //IConfigurationRoot root =
+        IConfigurationRoot root =
             new ConfigurationBuilder()
                 .AddJsonFile("appsettings.Development.json", true)
                 .AddEnvironmentVariables()
                 .AddUserSecrets(Assembly.GetExecutingAssembly())
                 .Build();
-        //DisplayConfig(root); // %%% REMOVE
-        //return root;
+        DisplayConfig(root.GetSection("AzureAI")); // %%% REMOVE
+        return root;
     }
 
     private static void DisplayConfig(IConfiguration configuration, string? root = null) // %%% REMOVE

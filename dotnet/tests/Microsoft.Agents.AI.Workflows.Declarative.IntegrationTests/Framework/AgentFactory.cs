@@ -62,7 +62,7 @@ internal static class AgentFactory
             Console.WriteLine($"DIR: {dir} ({Path.GetFullPath(dir)})");
         }
         Console.WriteLine($"CURRENT: {Directory.GetCurrentDirectory()}");
-        foreach (string dir in Directory.GetDirectories(Directory.GetCurrentDirectory()))
+        foreach (string dir in Directory.GetDirectories(Path.Combine(Directory.GetCurrentDirectory(), "Agents")))
         {
             Console.WriteLine($"DIR: {dir} ({Path.GetFullPath(dir)})");
         }

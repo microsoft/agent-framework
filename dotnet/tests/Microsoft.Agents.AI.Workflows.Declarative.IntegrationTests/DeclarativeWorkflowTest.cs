@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -19,7 +20,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     [InlineData("InvokeAgent.yaml", "InvokeAgent.json")]
     [InlineData("ConversationMessages.yaml", "ConversationMessages.json")]
     public Task ValidateCaseAsync(string workflowFileName, string testcaseFileName) =>
-        this.RunWorkflowAsync(Path.Combine("Workflows", workflowFileName), testcaseFileName);
+        this.RunWorkflowAsync(Path.Combine(Environment.CurrentDirectory, "Workflows", workflowFileName), testcaseFileName);
 
     [Theory]
     [InlineData("Marketing.yaml", "Marketing.json")]
