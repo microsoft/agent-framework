@@ -8,7 +8,7 @@ The demo consists of three main components:
 
 1. **Aspire Dashboard** - Provides a web-based interface to visualize OpenTelemetry data
 2. **Console Application** - An interactive console application that demonstrates agent interactions with proper OpenTelemetry instrumentation
-3. **[Optional] Application Insights** - When the agent is deployed to production environment, Application Insights can be used to monitor the agent performance.
+3. **[Optional] Application Insights** - When the agent is deployed to a production environment, Application Insights can be used to monitor the agent performance.
 
 ## Architecture
 
