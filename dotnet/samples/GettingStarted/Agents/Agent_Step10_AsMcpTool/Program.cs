@@ -2,7 +2,6 @@
 
 // This sample shows how to expose an AI agent as an MCP tool.
 
-using System;
 using Azure.AI.Agents.Persistent;
 using Azure.Identity;
 using Microsoft.Agents.AI;

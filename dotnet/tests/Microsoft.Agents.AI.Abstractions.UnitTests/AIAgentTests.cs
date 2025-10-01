@@ -1,7 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-#pragma warning disable S3717 // Track use of "NotImplementedException"
-
 using System;
 using System.Collections.Generic;
 using System.Linq;

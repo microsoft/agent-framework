@@ -2,13 +2,9 @@
 
 // This sample shows how to create and use a simple AI agent with tools from an MCP Server that requires authentication.
 
-using System;
 using System.Diagnostics;
 using System.Net;
-using System.Net.Http;
 using System.Text;
-using System.Threading;
-using System.Threading.Tasks;
 using System.Web;
 using Azure.AI.OpenAI;
 using Azure.Identity;

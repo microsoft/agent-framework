@@ -198,6 +198,7 @@ dotnet_diagnostic.CA1508.severity = none # Avoid dead conditional code. Too many
 dotnet_diagnostic.CA1510.severity = none # ArgumentNullException.Throw
 dotnet_diagnostic.CA1512.severity = none # ArgumentOutOfRangeException.Throw
 dotnet_diagnostic.CA1515.severity = none # Making public types from exes internal
+dotnet_diagnostic.CA1707.severity = none # Identifiers should not contain underscores
 dotnet_diagnostic.CA1846.severity = none # Prefer 'AsSpan' over 'Substring'
 dotnet_diagnostic.CA1848.severity = none # For improved performance, use the LoggerMessage delegates
 dotnet_diagnostic.CA1849.severity = none # Use async equivalent; analyzer is currently noisy

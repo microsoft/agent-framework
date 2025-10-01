@@ -7,7 +7,6 @@
     <IsAotCompatible>false</IsAotCompatible>
     <ProjectsTargetFrameworks>net472;net9.0</ProjectsTargetFrameworks>
     <UserSecretsId>5ee045b0-aea3-4f08-8d31-32d1a6f8fed0</UserSecretsId>
-    <NoWarn>$(NoWarn);CA1707;MEAI001</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

@@ -5,7 +5,6 @@
     <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugTargetFrameworks)</TargetFrameworks>
     <VersionSuffix>preview</VersionSuffix>
     <ImplicitUsings>enable</ImplicitUsings>
-    <NoWarn>$(NoWarn);IDE0009;</NoWarn>
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />

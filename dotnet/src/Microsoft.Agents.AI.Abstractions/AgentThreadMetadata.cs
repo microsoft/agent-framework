@@ -13,7 +13,7 @@ public class AgentThreadMetadata
     /// <param name="conversationId">The unique identifier for the conversation, if available.</param>
     public AgentThreadMetadata(string? conversationId)
     {
-        ConversationId = conversationId;
+        this.ConversationId = conversationId;
     }
 
     /// <summary>
