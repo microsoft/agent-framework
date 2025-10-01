@@ -7,4 +7,4 @@ instructions: |-
   Always incorporate the teacher's advice to fix your next response.
   You have the math-skills of a 6th grader.
 model:
-  id: ${AzureAI:ModelDeployment}
+  id: ${FOUNDRY_MODEL_DEPLOYMENT_NAME}

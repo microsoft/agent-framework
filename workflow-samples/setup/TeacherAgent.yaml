@@ -7,4 +7,4 @@ instructions: |-
   If the student has demonstrated comprehension and responded to all of your feedback,
   give the student your congraluations by using the word "congratulations".
 model:
-  id: ${AzureAI:ModelDeployment}
+  id: ${FOUNDRY_MODEL_DEPLOYMENT_NAME}
