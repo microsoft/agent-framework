@@ -18,7 +18,7 @@ public sealed class AzureAgentProviderTest(ITestOutputHelper output) : Integrati
 {
     private AzureAIConfiguration? _configuration;
 
-    [Fact]
+    [Fact(Skip = "Needs configuration")]
     public async Task ConversationTestAsync()
     {
         // Arrange
@@ -48,7 +48,7 @@ public sealed class AzureAgentProviderTest(ITestOutputHelper output) : Integrati
         Assert.Equal(messages[3].Text, message.Text);
     }
 
-    [Fact]
+    [Fact(Skip = "Needs configuration")]
     public async Task GetAgentTestAsync()
     {
         // Arrange
