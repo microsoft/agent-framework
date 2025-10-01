@@ -2,6 +2,8 @@
 
 """Side-by-side sample comparing Semantic Kernel Process Framework and Agent Framework workflows."""
 
+from __future__ import annotations
+
 import asyncio
 import logging
 from dataclasses import dataclass
@@ -33,11 +35,11 @@ if TYPE_CHECKING:
 
 async def _start_local_kernel_process(
     *,
-    process: "KernelProcess",
+    process: KernelProcess,
     kernel: Kernel,
     initial_event: KernelProcessEvent | str | Enum,
     **kwargs: object,
-) -> "LocalKernelProcessContext":
+) -> LocalKernelProcessContext:
     from semantic_kernel.processes.local_runtime.local_kernel_process import start as start_local_kernel_process
 
     return await start_local_kernel_process(
@@ -64,7 +66,6 @@ class CommonEvents(Enum):
     START_B_REQUESTED = "StartBRequested"
     EXIT_REQUESTED = "ExitRequested"
     START_PROCESS = "StartProcess"
-
 
 ######################################################################
 # region Semantic Kernel Process Framework path
@@ -153,7 +154,6 @@ async def run_semantic_kernel_process_example() -> None:
             raise RuntimeError("CStep state unavailable")
         assert c_step_state.state.current_cycle == 3  # nosec
         print(f"Final State Check: CStepState current cycle: {c_step_state.state.current_cycle}")
-
 
 ######################################################################
 # region Agent Framework workflow path
