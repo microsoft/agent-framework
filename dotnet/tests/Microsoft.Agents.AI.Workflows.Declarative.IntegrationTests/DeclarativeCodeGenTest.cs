@@ -31,13 +31,13 @@ public sealed class DeclarativeCodeGenTest(ITestOutputHelper output) : WorkflowT
 
     protected override async Task RunAndVerifyAsync<TInput>(Testcase testcase, string workflowPath, DeclarativeWorkflowOptions workflowOptions)
     {
-        const string workflowNamespace = "Test.WorkflowProviders";
-        const string workflowPrefix = "Test";
+        const string WorkflowNamespace = "Test.WorkflowProviders";
+        const string WorkflowPrefix = "Test";
 
-        string workflowProviderCode = DeclarativeWorkflowBuilder.Eject(workflowPath, DeclarativeWorkflowLanguage.CSharp, workflowNamespace, workflowPrefix);
+        string workflowProviderCode = DeclarativeWorkflowBuilder.Eject(workflowPath, DeclarativeWorkflowLanguage.CSharp, WorkflowNamespace, WorkflowPrefix);
         try
         {
-            WorkflowEvents workflowEvents = await WorkflowHarness.RunCodeAsync(workflowProviderCode, $"{workflowPrefix}WorkflowProvider", workflowNamespace, workflowOptions, (TInput)GetInput<TInput>(testcase));
+            WorkflowEvents workflowEvents = await WorkflowHarness.RunCodeAsync(workflowProviderCode, $"{WorkflowPrefix}WorkflowProvider", WorkflowNamespace, workflowOptions, (TInput)GetInput<TInput>(testcase));
             foreach (ExecutorEvent invokeEvent in workflowEvents.ExecutorInvokeEvents)
             {
                 this.Output.WriteLine($"EXEC: {invokeEvent.ExecutorId}");
