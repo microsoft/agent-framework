@@ -8,8 +8,8 @@ instructions: |-
   Avoid repeating yourself.
 model:
   id: ${AzureAI:ModelDeployment
-# tools:
-#   - type: bing_grounding
-#     options:
-#       tool_connections:
-#         - ${AzureAI:BingConnectionId}
+tools:
+  - type: bing_grounding
+    options:
+      tool_connections:
+        - ${AzureAI:BingConnectionId}
