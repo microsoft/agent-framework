@@ -7,9 +7,9 @@ instructions: |-
   Never generate a file.
   Avoid repeating yourself.
 model:
-  id: ${AzureAI:ModelDeployment}
-tools:
-  - type: bing_grounding
-    options:
-      tool_connections:
-        - ${AzureAI:BingConnectionId}
+  id: ${AzureAI:ModelDeployment
+# tools:
+#   - type: bing_grounding
+#     options:
+#       tool_connections:
+#         - ${AzureAI:BingConnectionId}
