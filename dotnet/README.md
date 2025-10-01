@@ -1,64 +1,49 @@
 # Get Started with Microsoft Agent Framework for C# Developers
 
-## Run the Minimal Console demo
+## Samples
 
-The Minimal Console demo is a simple console application which shows how to create and run an agent.
+- [Getting Started with Agents](./samples/GettingStarted/Agents): basic agent creation and tool usage
+- [Agent Provider Samples](./samples/GettingStarted/AgentProviders): samples showing different agent providers
+- [Workflow Samples](./samples/GettingStarted/Workflows): advanced multi-agent patterns and workflow orchestration
 
-Supported Platforms:
-- .Net: net9.0, net8.0, netstandard2.0, net472 
-- OS: Windows, macOS, Linux
+## Quickstart
 
-If you want to use the latest published packages following the instructions [here](../docs/FAQS.md).
+### Basic Agent - .NET
 
-### 1. Configure required environment variables
+```c#
+using System;
+using Azure.AI.OpenAI;
+using Azure.Identity;
+using Microsoft.Agents.AI;
 
-This samples uses Azure OpenAI by default so you need to set the following environment variable
+var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")!;
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME")!;
 
-``` powershell
-$env:AZURE_OPENAI_ENDPOINT = "https://<your deployment>.openai.azure.com/"
+var agent = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
+    .GetOpenAIResponseClient(deploymentName)
+    .CreateAIAgent(name: "HaikuBot", instructions: "You are an upbeat assistant that writes beautifully.");
+
+Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Framework."));
 ```
 
-If you want to use OpenAI
+## More Examples & Samples
 
-1. Edit [Program.cs](./demos/MinimalConsole/Program.cs) and change the following lines:
-    ```csharp
-    AIAgent agent = new AzureOpenAIClient(
-      new Uri(Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")!),
-      new AzureCliCredential())
-       .GetChatClient("gpt-4o-mini")
-       .CreateAIAgent(
-         instructions: "You are a helpful assistant, you can help the user with weather information.",
-         tools: [AIFunctionFactory.Create(GetWeather)]);
-    ```
-    To this:
-    ```csharp
-    AIAgent agent = new OpenAIClient(Environment.GetEnvironmentVariable("OPENAI_API_KEY")!)
-      .GetChatClient("gpt-4o-mini")
-      .CreateAIAgent(
-        instructions: "You are a helpful assistant, you can help the user with weather information.",
-        tools: [AIFunctionFactory.Create(GetWeather)]);
-    ```
-2. Create an environment variable with your OpenAI key 
-    ``` powershell
-    $env:OPENAI_API_KEY = "sk-..."
-    ```
+### Python
 
-### 2. Build the project
+- [Getting Started with Agents](./python/samples/getting_started/agents): basic agent creation and tool usage
+- [Chat Client Examples](./python/samples/getting_started/chat_client): direct chat client usage patterns
+- [Getting Started with Workflows](./python/samples/getting_started/workflows): basic workflow creation and integration with agents
 
-```powershell
-cd demos\MinimalConsole
-dotnet build
-```
+### .NET
 
-### 3. Run the demonstration
+- [Getting Started with Agents](./dotnet/samples/GettingStarted/Agents): basic agent creation and tool usage
+- [Agent Provider Samples](./dotnet/samples/GettingStarted/AgentProviders): samples showing different agent providers
+- [Workflow Samples](./dotnet/samples/GettingStarted/Workflows): advanced multi-agent patterns and workflow orchestration
 
-``` powershell
-dotnet run --framework net9.0 --no-build
-```
+## Agent Framework Documentation
 
-Sample output:
-
-```
-The weather in Amsterdam is currently cloudy, with a high temperature of 15°C.
-```
-
+- [Documentation](https://learn.microsoft.com/agent-framework/)
+- [Agent Framework Repository](https://github.com/microsoft/agent-framework)
+- [Design Documents](./docs/design)
+- [Architectural Decision Records](./docs/decisions)
+- [MSFT Learn Docs](https://learn.microsoft.com/agent-framework/overview/agent-framework-overview)

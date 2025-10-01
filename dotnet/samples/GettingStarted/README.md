@@ -11,5 +11,5 @@ of the agent framework.
 |[Agent Providers](./AgentProviders/README.md)|Getting started with creating agents using various providers|
 |[Agent Open Telemetry](./AgentOpenTelemetry/README.md)|Getting started with OpenTelemetry for agents|
 |[Agent With OpenAI exchange types](./AgentWithOpenAI/README.md)|Using OpenAI exchange types with agents|
-|[Workflow](./Workflow/README.md)|Getting started with Workflow|
+|[Workflow](./Workflows/README.md)|Getting started with Workflow|
 |[Model Context Protocol](./ModelContextProtocol/README.md)|Getting started with Model Context Protocol|

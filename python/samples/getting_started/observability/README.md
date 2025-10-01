@@ -106,7 +106,7 @@ This folder contains different samples demonstrating how to use telemetry in var
 | Sample | Description |
 |--------|-------------|
 | [setup_observability_with_parameters.py](./setup_observability_with_parameters.py) | A simple example showing how to setup telemetry by passing in parameters to the `setup_observability()` function. |
-| [setup_observability_with_env_vars.py](./setup_observability_with_env_vars.py) | A simple example showing how to setup telemetry with the `setup_observability()` function using environment variables. |
+| [setup_observability_with_env_var.py](./setup_observability_with_env_var.py) | A simple example showing how to setup telemetry with the `setup_observability()` function using environment variables. |
 | [agent_observability.py](./agent_observability.py) | A simple example showing how to setup telemetry for an agentic application. |
 | [azure_ai_agent_observability.py](./azure_ai_agent_observability.py) | A simple example showing how to setup telemetry for an agentic application with an Azure AI project. |
 | [azure_ai_chat_client_with_observability.py](./azure_ai_chat_client_with_observability.py) | A simple example showing how to setup telemetry for a chat client with an Azure AI project. |

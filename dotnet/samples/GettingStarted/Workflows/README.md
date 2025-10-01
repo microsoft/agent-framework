@@ -28,7 +28,7 @@ Once completed, please proceed to other samples listed below.
 |--------|----------|
 | [Foundry Agents in Workflows](./Agents/FoundryAgent) | Demonstrates using Azure Foundry Agents within a workflow |
 | [Custom Agent Executors](./Agents/CustomAgentExecutors) | Shows how to create a custom agent executor for more complex scenarios |
-| [Workflow as an Agent](./Agents/WorkflowAsAgent) | Illustrates how to encapsulate a workflow as an agent |
+| [Workflow as an Agent](./Workflows/Agents/WorkflowAsAnAgent) | Illustrates how to encapsulate a workflow as an agent |
 
 ### Concurrent Execution
 
@@ -62,7 +62,7 @@ Once completed, please proceed to other samples listed below.
 
 | Sample | Concepts |
 |--------|----------|
-| [DeclarativeWorkflow](./DeclarativeWorkflow) | Demonstrates execution of declartive workflows. |
+| [Declarative](./Declarative) | Demonstrates execution of declartive workflows. |
 
 ### Checkpointing
 
