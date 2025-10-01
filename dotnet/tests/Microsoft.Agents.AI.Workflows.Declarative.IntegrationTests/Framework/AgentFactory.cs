@@ -65,7 +65,7 @@ internal static class AgentFactory
                 string filePath = Path.Combine(Environment.CurrentDirectory, "Agents", file);
                 if (!File.Exists(filePath))
                 {
-                    filePath = Path.Combine(WorkflowTest.GetRepoFolder(), "workflow-samples/setup", file);
+                    filePath = Path.Combine(WorkflowTest.GetRepoFolder(), "workflow-samples", "setup", file);
                 }
                 Assert.True(File.Exists(filePath), $"Agent definition file not found: {filePath}");
 
