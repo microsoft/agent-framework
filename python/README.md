@@ -19,6 +19,11 @@ This installs the core and every integration package, making sure that all featu
 If you only need specific integrations, you can install at a more granular level. This keeps dependencies lighter and focuses on what you actually plan to use. Some examples:
 
 ```bash
+# Core only
+# includes Azure OpenAI and OpenAI support by default
+# also includes workflows and orchestrations
+pip install agent-framework-core
+
 # Core + Azure AI integration
 pip install agent-framework-azure-ai
 
@@ -26,7 +31,7 @@ pip install agent-framework-azure-ai
 pip install agent-framework-copilotstudio
 
 # Core + both Microsoft Copilot Studio and Azure AI integration
-pip install agent-framework-copilotstudio agent-framework-azure-ai
+pip install agent-framework-microsoft agent-framework-azure-ai
 ```
 
 This selective approach is useful when you know which integrations you need, and it is the recommended way to set up lightweight environments.
