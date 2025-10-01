@@ -108,12 +108,15 @@ asyncio.run(main())
 ### Basic Agent - .NET
 
 ```c#
-// dotnet add package Microsoft.Agents.AI
+// dotnet add package Microsoft.Agents.AI.OpenAI --prerelease
+// dotnet add package Azure.AI.OpenAI
+// dotnet add package Azure.Identity
 // Use `az login` to authenticate with Azure CLI
 using System;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using OpenAI;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")!;
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME")!;
