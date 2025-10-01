@@ -42,7 +42,7 @@ docs = [
 ]
 
 [tool.uv]
-package = false
+package = true
 prerelease = "if-necessary-or-explicit"
 environments = [
     "sys_platform == 'darwin'",
@@ -252,10 +252,7 @@ sequence = [
     { ref = "docs-debug" }
 ]
 
-[tool.setuptools.packages.find]
-where = ["packages"]
-include = ["agent_framework**"]
-namespaces = true
+
 
 [build-system]
 requires = ["flit-core >= 3.11,<4.0"]
