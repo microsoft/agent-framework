@@ -28,9 +28,9 @@ Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Fram
 
 ## Examples & Samples
 
-- [Getting Started with Agents](./dotnet/samples/GettingStarted/Agents): basic agent creation and tool usage
-- [Agent Provider Samples](./dotnet/samples/GettingStarted/AgentProviders): samples showing different agent providers
-- [Workflow Samples](./dotnet/samples/GettingStarted/Workflows): advanced multi-agent patterns and workflow orchestration
+- [Getting Started with Agents](./samples/GettingStarted/Agents): basic agent creation and tool usage
+- [Agent Provider Samples](./samples/GettingStarted/AgentProviders): samples showing different agent providers
+- [Workflow Samples](./samples/GettingStarted/Workflows): advanced multi-agent patterns and workflow orchestration
 
 ## Agent Framework Documentation
 
