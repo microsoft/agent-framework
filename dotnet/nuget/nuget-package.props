@@ -35,7 +35,7 @@
     <!-- Required license, copyright, and repo information. Packages can override. -->
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <Copyright>© Microsoft Corporation. All rights reserved.</Copyright>
-    <PackageProjectUrl>https://aka.ms/tbd</PackageProjectUrl>
+    <PackageProjectUrl>https://learn.microsoft.com/agent-framework/</PackageProjectUrl>
     <RepositoryUrl>https://github.com/microsoft/agent-framework</RepositoryUrl>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
 
