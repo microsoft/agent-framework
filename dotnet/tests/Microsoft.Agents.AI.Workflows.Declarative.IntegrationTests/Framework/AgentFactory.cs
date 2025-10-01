@@ -45,6 +45,9 @@ internal static class AgentFactory
             return s_agentMap;
         }
 
+        Console.WriteLine($"CXN: {config.BingConnectionId}");
+        Console.WriteLine($"CXN: {config.Endpoint}");
+
         PersistentAgentsClient clientAgents = new(config.Endpoint, new AzureCliCredential());
         AIProjectClient clientProjects = new(new Uri(config.Endpoint), new AzureCliCredential());
         IKernelBuilder kernelBuilder = Kernel.CreateBuilder();
