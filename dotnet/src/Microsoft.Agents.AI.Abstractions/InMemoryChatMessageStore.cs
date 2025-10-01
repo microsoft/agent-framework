@@ -47,7 +47,7 @@ public sealed class InMemoryChatMessageStore : ChatMessageStore, IList<ChatMessa
     /// </summary>
     /// <param name="serializedStoreState">A <see cref="JsonElement"/> representing the serialized state of the message store.</param>
     /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
-    /// <exception cref="System.ArgumentException">The <paramref name="serializedStoreState"/> is not a valid JSON object or cannot be deserialized.</exception>
+    /// <exception cref="ArgumentException">The <paramref name="serializedStoreState"/> is not a valid JSON object or cannot be deserialized.</exception>
     /// <remarks>
     /// This constructor enables restoration of message stores from previously saved state, allowing
     /// conversation history to be preserved across application restarts or migrated between instances.
