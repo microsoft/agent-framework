@@ -8,6 +8,13 @@ from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 
+"""
+Azure AI Chat Client Direct Usage Example
+
+Demonstrates direct AzureAIChatClient usage for chat interactions with Azure AI models.
+Shows function calling capabilities with custom business logic.
+"""
+
 
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],

@@ -13,20 +13,22 @@ Each evaluation runs a multi-turn conversation where the user simulator presents
 
 ## Supported Domains
 
-| Domain | Status | Description |
-|--------|--------|-------------|
-| **airline** | ✅ Supported | Customer service for airline booking, changes, and support |
-| **retail** | 🚧 In Development | E-commerce customer support scenarios |
-| **telecom** | 🚧 In Development | Telecommunications service support |
+| Domain      | Status            | Description                                                |
+| ----------- | ----------------- | ---------------------------------------------------------- |
+| **airline** | ✅ Supported      | Customer service for airline booking, changes, and support |
+| **retail**  | 🚧 In Development | E-commerce customer support scenarios                      |
+| **telecom** | 🚧 In Development | Telecommunications service support                         |
 
-*Note: Currently only the airline domain is fully supported.*
+_Note: Currently only the airline domain is fully supported._
 
 ## Installation
 
-Install the agent-framework-lab package with TAU2 dependencies:
+Install from source with TAU2 dependencies:
 
 ```bash
-pip install "agent-framework-lab[tau2]"
+git clone https://github.com/microsoft/agent-framework.git
+cd agent-framework/python/packages/lab
+pip install -e ".[tau2]"
 ```
 
 Download data from [Tau2-Bench](https://github.com/sierra-research/tau2-bench):
@@ -61,12 +63,12 @@ async def run_single_task():
     assistant_client = OpenAIChatClient(
         base_url="https://api.openai.com/v1",
         api_key="your-api-key",
-        ai_model_id="gpt-4o"
+        model_id="gpt-4o"
     )
     user_client = OpenAIChatClient(
         base_url="https://api.openai.com/v1",
         api_key="your-api-key",
-        ai_model_id="gpt-4o-mini"
+        model_id="gpt-4o-mini"
     )
 
     # Get a task and run it
@@ -104,15 +106,15 @@ python samples/run_benchmark.py --max-steps 20
 
 The following results are reproduced from our implementation of τ²-bench with `samples/run_benchmark.py`. It shows the average success rate over the dataset of 50 tasks.
 
-| Agent Model | User Model | Success Rate |
-|-------------|------------|----------|
-| gpt-5 | gpt-4.1 | 62.0% |
-| gpt-5-mini | gpt-4.1 | 52.0% |
-| gpt-4.1 | gpt-4.1 | 60.0% |
-| gpt-4.1-mini | gpt-4.1 | 50.0% |
-| gpt-4.1 | gpt-4o-mini | 42.0% |
-| gpt-4o | gpt-4.1 | 42.0% |
-| gpt-4o-mini | gpt-4.1 | 26.0% |
+| Agent Model  | User Model  | Success Rate |
+| ------------ | ----------- | ------------ |
+| gpt-5        | gpt-4.1     | 62.0%        |
+| gpt-5-mini   | gpt-4.1     | 52.0%        |
+| gpt-4.1      | gpt-4.1     | 60.0%        |
+| gpt-4.1-mini | gpt-4.1     | 50.0%        |
+| gpt-4.1      | gpt-4o-mini | 42.0%        |
+| gpt-4o       | gpt-4.1     | 42.0%        |
+| gpt-4o-mini  | gpt-4.1     | 26.0%        |
 
 ## Advanced Usage
 

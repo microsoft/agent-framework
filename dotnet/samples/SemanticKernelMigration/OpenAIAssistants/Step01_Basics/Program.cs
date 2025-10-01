@@ -9,7 +9,7 @@ using OpenAI;
 using OpenAI.Assistants;
 
 var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
-var modelId = System.Environment.GetEnvironmentVariable("OPENAI_MODELID") ?? "gpt-4o";
+var model = System.Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o";
 var userInput = "Tell me a joke about a pirate.";
 
 Console.WriteLine($"User Input: {userInput}");
@@ -24,7 +24,7 @@ async Task SKAgentAsync()
     var assistantsClient = new AssistantClient(apiKey);
 
     // Define the assistant
-    Assistant assistant = await assistantsClient.CreateAssistantAsync(modelId, name: "Joker", instructions: "You are good at telling jokes.");
+    Assistant assistant = await assistantsClient.CreateAssistantAsync(model, name: "Joker", instructions: "You are good at telling jokes.");
 
     // Create the agent
     OpenAIAssistantAgent agent = new(assistant, assistantsClient);
@@ -56,7 +56,7 @@ async Task AFAgentAsync()
 
     var assistantClient = new AssistantClient(apiKey);
 
-    var agent = await assistantClient.CreateAIAgentAsync(modelId, name: "Joker", instructions: "You are good at telling jokes.");
+    var agent = await assistantClient.CreateAIAgentAsync(model, name: "Joker", instructions: "You are good at telling jokes.");
 
     var thread = agent.GetNewThread();
     var agentOptions = new ChatClientAgentRunOptions(new() { MaxOutputTokens = 1000 });

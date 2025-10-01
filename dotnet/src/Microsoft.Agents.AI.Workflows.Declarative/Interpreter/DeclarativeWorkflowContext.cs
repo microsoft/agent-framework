@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
+using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.PowerFx.Types;
@@ -28,6 +29,7 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
 
     private IWorkflowContext Source { get; }
     public WorkflowFormulaState State { get; }
+    public IReadOnlyDictionary<string, string>? TraceContext => this.Source.TraceContext;
 
     /// <inheritdoc/>
     public ValueTask AddEventAsync(WorkflowEvent workflowEvent) => this.Source.AddEventAsync(workflowEvent);

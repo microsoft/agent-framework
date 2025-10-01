@@ -9,6 +9,13 @@ from agent_framework import ChatAgent
 from agent_framework.openai import OpenAIAssistantsClient
 from pydantic import Field
 
+"""
+OpenAI Assistants with Function Tools Example
+
+This sample demonstrates function tool integration with OpenAI Assistants,
+showing both agent-level and query-level tool configuration patterns.
+"""
+
 
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],

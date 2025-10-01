@@ -11,24 +11,46 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Agents.AI;
 
 /// <summary>
-/// Provides an optional base class for an <see cref="AIAgent"/> that passes through calls to another instance.
+/// Provides an abstract base class for AI agents that delegate operations to an inner agent
+/// instance while allowing for extensibility and customization.
 /// </summary>
 /// <remarks>
-/// This is recommended as a base type when building agents that can be chained around an underlying <see cref="AIAgent"/>.
-/// The default implementation simply passes each call to the inner agent instance.
+/// <para>
+/// <see cref="DelegatingAIAgent"/> implements the decorator pattern for <see cref="AIAgent"/>s, enabling the creation of agent pipelines
+/// where each layer can add functionality while delegating core operations to an underlying agent. This pattern is
+/// fundamental to building composable agent architectures.
+/// </para>
+/// <para>
+/// The default implementation provides transparent pass-through behavior, forwarding all operations to the inner agent.
+/// Derived classes can override specific methods to add custom behavior while maintaining compatibility with the agent interface.
+/// </para>
 /// </remarks>
 public class DelegatingAIAgent : AIAgent
 {
     /// <summary>
-    /// Initializes a new instance of the <see cref="DelegatingAIAgent"/> class.
+    /// Initializes a new instance of the <see cref="DelegatingAIAgent"/> class with the specified inner agent.
     /// </summary>
-    /// <param name="innerAgent">The wrapped agent instance.</param>
+    /// <param name="innerAgent">The underlying agent instance that will handle the core operations.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="innerAgent"/> is <see langword="null"/>.</exception>
+    /// <remarks>
+    /// The inner agent serves as the foundation of the delegation chain. All operations not overridden by
+    /// derived classes will be forwarded to this agent.
+    /// </remarks>
     protected DelegatingAIAgent(AIAgent innerAgent)
     {
         this.InnerAgent = Throw.IfNull(innerAgent);
     }
 
-    /// <summary>Gets the inner <see cref="AIAgent" />.</summary>
+    /// <summary>
+    /// Gets the inner agent instance that receives delegated operations.
+    /// </summary>
+    /// <value>
+    /// The underlying <see cref="AIAgent"/> instance that handles core agent operations.
+    /// </value>
+    /// <remarks>
+    /// Derived classes can use this property to access the inner agent for custom delegation scenarios
+    /// or to forward operations with additional processing.
+    /// </remarks>
     protected AIAgent InnerAgent { get; }
 
     /// <inheritdoc />

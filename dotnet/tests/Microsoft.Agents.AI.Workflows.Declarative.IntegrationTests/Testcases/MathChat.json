@@ -8,7 +8,7 @@
   },
   "validation": {
     "min_action_count": 6,
-    "max_action_count": 25,
+    "max_action_count": 56,
     "actions": {
       "start": [
         "set_project"
@@ -22,7 +22,8 @@
       ],
       "final": [
         "sendActivity_done",
-        "sendActivity_tired"
+        "sendActivity_tired",
+        "check_completion_Post"
       ]
     }
   }

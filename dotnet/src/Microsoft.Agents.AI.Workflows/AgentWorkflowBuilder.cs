@@ -583,7 +583,7 @@ public static partial class AgentWorkflowBuilder
             public ValueTask ResetAsync() => default;
         }
 
-        private record class HandoffState(
+        private sealed record class HandoffState(
             TurnToken TurnToken,
             string? InvokedHandoff,
             List<ChatMessage> Messages);

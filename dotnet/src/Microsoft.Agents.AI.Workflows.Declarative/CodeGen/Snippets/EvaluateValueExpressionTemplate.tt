@@ -1,0 +1,28 @@
+﻿<#+
+void EvaluateValueExpression(ValueExpression expression, string targetVariable) =>
+    EvaluateValueExpression<object>(expression, targetVariable);
+
+void EvaluateValueExpression<TValue>(ValueExpression expression, string targetVariable)
+{
+    if (expression is null)
+    {#>
+        <#= GetTypeAlias<TValue>() #>? <#= targetVariable #> = null;<#+ 
+    }
+    else if (expression.IsLiteral)
+    {#>
+        <#= GetTypeAlias<TValue>() #>? <#= targetVariable #> = <#= FormatDataValue(expression.LiteralValue) #>;<#+ 
+    }
+    else if (expression.IsVariableReference && expression.VariableReference.SegmentCount == 2)
+    {#>
+        <#= GetTypeAlias<TValue>() #>? <#= targetVariable #> = await context.ReadStateAsync<<#= GetTypeAlias<TValue>() #>>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.NamespaceAlias #>").ConfigureAwait(false);<#+
+    }
+    else if (expression.IsVariableReference)
+    {#>
+        <#= GetTypeAlias<TValue>() #>? <#= targetVariable #> = await context.EvaluateValueAsync<<#= GetTypeAlias<TValue>() #>>(<#= FormatStringValue(expression.VariableReference.ToString()) #>).ConfigureAwait(false);<#+ 
+    }
+    else
+    {#>
+        <#= GetTypeAlias<TValue>() #>? <#= targetVariable #> = await context.EvaluateValueAsync<<#= GetTypeAlias<TValue>() #>>(<#= FormatStringValue(expression.ExpressionText) #>).ConfigureAwait(false);<#+ 
+    }
+}
+#>

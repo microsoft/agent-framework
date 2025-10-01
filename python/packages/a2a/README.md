@@ -1,9 +1,9 @@
 # Get Started with Microsoft Agent Framework A2A
 
-Please install this package as the extra for `agent-framework`:
+Please install this package via pip:
 
 ```bash
-pip install agent-framework[a2a]
+pip install agent-framework-a2a
 ```
 
 ## A2A Agent Integration

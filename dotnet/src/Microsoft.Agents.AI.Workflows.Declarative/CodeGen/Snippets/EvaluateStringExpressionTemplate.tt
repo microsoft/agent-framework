@@ -1,0 +1,36 @@
+﻿<#+
+void EvaluateStringExpression(StringExpression expression, string targetVariable, bool isNullable = false)
+{
+    string typeName = isNullable ? "string?" : "string";
+    if (expression is null)
+    {#>
+        <#= typeName #> <#= targetVariable #> = <#= isNullable ? "null" : "string.Empty" #>;<#+ 
+    }
+    else if (expression.IsLiteral)
+    {
+        if (expression.LiteralValue.Contains("\n"))
+        {#>
+        <#= typeName #> <#= targetVariable #> = 
+            """
+            <#= expression.LiteralValue #>
+            """;<#+ 
+        }
+        else
+        {#>
+        <#= typeName #> <#= targetVariable #> = <#= FormatStringValue(expression.LiteralValue) #>;<#+ 
+        }
+    }
+    else if (expression.IsVariableReference && expression.VariableReference.SegmentCount == 2)
+    {#>
+        <#= typeName #> <#= targetVariable #> = await context.ReadStateAsync<string>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.NamespaceAlias #>").ConfigureAwait(false);<#+
+    }
+    else if (expression.IsVariableReference)
+    {#>
+        <#= typeName #> <#= targetVariable #> = await context.EvaluateValueAsync<string>(<#= FormatStringValue(expression.VariableReference.ToString()) #>).ConfigureAwait(false);<#+ 
+    }
+    else
+    {#>
+        <#= typeName #> <#= targetVariable #> = await context.EvaluateValueAsync<string>(<#= FormatStringValue(expression.ExpressionText) #>).ConfigureAwait(false);<#+ 
+    }
+}
+#>

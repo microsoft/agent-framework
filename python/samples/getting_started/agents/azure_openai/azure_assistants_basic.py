@@ -8,6 +8,13 @@ from agent_framework.azure import AzureOpenAIAssistantsClient
 from azure.identity import AzureCliCredential
 from pydantic import Field
 
+"""
+Azure OpenAI Assistants Basic Example
+
+This sample demonstrates basic usage of AzureOpenAIAssistantsClient with automatic
+assistant lifecycle management, showing both streaming and non-streaming responses.
+"""
+
 
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],

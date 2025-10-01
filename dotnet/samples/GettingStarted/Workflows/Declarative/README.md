@@ -16,7 +16,7 @@ You can also use environment variables if you prefer.
 To set your secrets as an environment variable (PowerShell):
 
 ```pwsh
-$env:FOUNDRY_PROJECT_ENDPOINT="https://..."
+$env:AZURE_FOUNDRY_PROJECT_ENDPOINT="https://..."
 ```
 
 To set your secrets with .NET Secret Manager:
@@ -42,7 +42,7 @@ To set your secrets with .NET Secret Manager:
 4. Define setting that identifies your Azure Foundry Project (endpoint):
 
     ```
-    dotnet user-secrets set "FOUNDRY_PROJECT_ENDPOINT" "https://..."
+    dotnet user-secrets set "AZURE_FOUNDRY_PROJECT_ENDPOINT" "https://..."
     ```
 
 #### Authorization
@@ -61,7 +61,7 @@ The sample workflows rely on agents defined in your Azure Foundry Project.
 To create agents, run the [`Create.ps1`](../../../../../workflows/) script.
 This will create the agents used in the sample workflows in your Azure Foundry Project and format a script you can copy and use to configure your environment.
 
-> Note: `Create.ps1` relies upon the `FOUNDRY_PROJECT_ENDPOINT` setting.
+> Note: `Create.ps1` relies upon the `AZURE_FOUNDRY_PROJECT_ENDPOINT` setting.
 
 ## Execution
 

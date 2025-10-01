@@ -86,7 +86,7 @@ internal static class RouteBuilderExtensions
         Throw.IfNull(builder);
 
         Type executorType = typeof(TExecutor);
-        Debug.Assert(executorType.IsAssignableFrom(executor.GetType()),
+        Debug.Assert(executorType.IsInstanceOfType(executor),
             "executorType must be the same type or a base type of the executor instance.");
 
         foreach (MessageHandlerInfo handlerInfo in executorType.GetHandlerInfos())

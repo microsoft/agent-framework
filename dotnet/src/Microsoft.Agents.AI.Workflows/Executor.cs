@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Execution;
+using Microsoft.Agents.AI.Workflows.Observability;
 using Microsoft.Agents.AI.Workflows.Reflection;
 
 namespace Microsoft.Agents.AI.Workflows;
@@ -24,6 +25,9 @@ public abstract class Executor : IIdentified
     public string Id { get; }
 
     private readonly ExecutorOptions _options;
+
+    private static readonly string s_namespace = typeof(Executor).Namespace!;
+    private static readonly ActivitySource s_activitySource = new(s_namespace);
 
     /// <summary>
     /// Initialize the executor with a unique identifier
@@ -88,6 +92,12 @@ public abstract class Executor : IIdentified
     /// <exception cref="TargetInvocationException">An exception is generated while handling the message.</exception>
     public async ValueTask<object?> ExecuteAsync(object message, TypeId messageType, IWorkflowContext context)
     {
+        using var activity = s_activitySource.StartActivity(ActivityNames.ExecutorProcess, ActivityKind.Internal);
+        activity?.SetTag(Tags.ExecutorId, this.Id)
+            .SetTag(Tags.ExecutorType, this.GetType().FullName)
+            .SetTag(Tags.MessageType, messageType.TypeName)
+            .CreateSourceLinks(context.TraceContext);
+
         await context.AddEventAsync(new ExecutorInvokedEvent(this.Id, message)).ConfigureAwait(false);
 
         CallResult? result = await this.Router.RouteMessageAsync(message, context, requireRoute: true)

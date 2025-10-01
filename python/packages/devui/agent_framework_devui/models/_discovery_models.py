@@ -2,9 +2,20 @@
 
 """Discovery API models for entity information."""
 
+from __future__ import annotations
+
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+
+class EnvVarRequirement(BaseModel):
+    """Environment variable requirement for an entity."""
+
+    name: str
+    description: str
+    required: bool = True
+    example: str | None = None
 
 
 class EntityInfo(BaseModel):
@@ -18,6 +29,13 @@ class EntityInfo(BaseModel):
     framework: str
     tools: list[str | dict[str, Any]] | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    # Source information
+    source: str = "directory"  # "directory", "in_memory", "remote_gallery"
+    original_url: str | None = None
+
+    # Environment variable requirements
+    required_env_vars: list[EnvVarRequirement] | None = None
 
     # Workflow-specific fields (populated only for detailed info requests)
     executors: list[str] | None = None

@@ -22,7 +22,7 @@ This folder contains an example demonstrating how to use the Redis context provi
 ### Install the package
 
 ```bash
-pip install "agent-framework[redis]"
+pip install "agent-framework-redis"
 ```
 
 ## Running Redis

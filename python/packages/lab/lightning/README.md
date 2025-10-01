@@ -8,20 +8,22 @@ This package enables you to train and fine-tune agents using advanced RL algorit
 
 ## Installation
 
-Install the agent-framework-lab package with Lightning dependencies:
+Install from source with Lightning dependencies:
 
 ```bash
-pip install "agent-framework-lab[lightning]"
+git clone https://github.com/microsoft/agent-framework.git
+cd agent-framework/python/packages/lab
+pip install -e ".[lightning]"
 ```
 
 ### Optional Dependencies
 
 ```bash
 # For math-related training
-pip install agent-framework-lab[lightning,math]
+pip install -e ".[lightning,math]"
 
 # For tau2 benchmarking
-pip install agent-framework-lab[lightning,tau2]
+pip install -e ".[lightning,tau2]"
 ```
 
 To prepare for RL training, you'll also need to install dependencies like PyTorch, Ray, and vLLM. See the [Agent-lightning setup instructions](https://github.com/microsoft/agent-lightning) for more details.
@@ -51,7 +53,7 @@ async def math_agent(task: TaskType, llm: LLM) -> float:
         MCPStdioTool(name="calculator", command="uvx", args=["mcp-server-calculator"]) as mcp_server,
         ChatAgent(
             chat_client=OpenAIChatClient(
-                ai_model_id=llm.model,
+                model_id=llm.model,
                 api_key="your-api-key",
                 base_url=llm.endpoint,
             ),

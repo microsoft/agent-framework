@@ -17,7 +17,7 @@ interface FileUploadProps {
 
 export function FileUpload({
   onFilesSelected,
-  accept = "image/*,.pdf",
+  accept = "image/*,.pdf,audio/*,.wav,.mp3,.m4a,.ogg",
   multiple = true,
   maxSize = 50 * 1024 * 1024, // 50MB default for local dev tool
   disabled = false,
@@ -105,7 +105,7 @@ export function FileUpload({
         onDrop={handleDrop}
         onDragOver={handleDragOver}
         className="shrink-0 transition-colors hover:bg-muted"
-        title="Upload files (images, PDFs)"
+        title="Upload files (images, PDFs, audio)"
       >
         <Upload className="h-4 w-4" />
       </Button>

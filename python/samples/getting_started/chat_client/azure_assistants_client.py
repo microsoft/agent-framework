@@ -8,6 +8,13 @@ from agent_framework.azure import AzureOpenAIAssistantsClient
 from azure.identity import AzureCliCredential
 from pydantic import Field
 
+"""
+Azure Assistants Client Direct Usage Example
+
+Demonstrates direct AzureAssistantsClient usage for chat interactions with Azure OpenAI assistants.
+Shows function calling capabilities and automatic assistant creation.
+"""
+
 
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],

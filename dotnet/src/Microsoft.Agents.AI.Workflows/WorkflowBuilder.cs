@@ -2,9 +2,12 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.Observability;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows;
@@ -33,6 +36,9 @@ public class WorkflowBuilder
     private readonly HashSet<string> _outputExecutors = [];
 
     private readonly string _startExecutorId;
+
+    private static readonly string s_namespace = typeof(WorkflowBuilder).Namespace!;
+    private static readonly ActivitySource s_activitySource = new(s_namespace);
 
     /// <summary>
     /// Initializes a new instance of the WorkflowBuilder class with the specified starting executor.
@@ -331,6 +337,57 @@ public class WorkflowBuilder
         // TODO: This is likely a pipe-dream, but can we do any type-checking on the edges? (Not without instantiating the executors...)
     }
 
+    private Workflow BuildInternal(Activity? activity = null)
+    {
+        activity?.AddEvent(new ActivityEvent(EventNames.BuildStarted));
+
+        try
+        {
+            this.Validate();
+        }
+        catch (Exception ex) when (activity is not null)
+        {
+            activity.AddEvent(new ActivityEvent(EventNames.BuildError, tags: new() {
+                { Tags.BuildErrorMessage, ex.Message },
+                { Tags.BuildErrorType, ex.GetType().FullName }
+            }));
+            activity.CaptureException(ex);
+            throw;
+        }
+
+        activity?.AddEvent(new ActivityEvent(EventNames.BuildValidationCompleted));
+
+        var workflow = new Workflow(this._startExecutorId)
+        {
+            Registrations = this._executors,
+            Edges = this._edges,
+            Ports = this._inputPorts,
+            OutputExecutors = this._outputExecutors
+        };
+
+        // Using the start executor ID as a proxy for the workflow ID
+        activity?.SetTag(Tags.WorkflowId, workflow.StartExecutorId);
+        if (activity is not null)
+        {
+            var workflowJsonDefinitionData = new WorkflowJsonDefinitionData
+            {
+                StartExecutorId = this._startExecutorId,
+                Edges = this._edges.Values.SelectMany(e => e),
+                Ports = this._inputPorts.Values,
+                OutputExecutors = this._outputExecutors
+            };
+            activity.SetTag(
+                Tags.WorkflowDefinition,
+                JsonSerializer.Serialize(
+                    workflowJsonDefinitionData,
+                    WorkflowJsonDefinitionJsonContext.Default.WorkflowJsonDefinitionData
+                )
+            );
+        }
+
+        return workflow;
+    }
+
     /// <summary>
     /// Builds and returns a workflow instance.
     /// </summary>
@@ -338,15 +395,13 @@ public class WorkflowBuilder
     /// or if the start executor is not bound.</exception>
     public Workflow Build()
     {
-        this.Validate();
+        using Activity? activity = s_activitySource.StartActivity(ActivityNames.WorkflowBuild);
 
-        return new Workflow(this._startExecutorId)
-        {
-            Registrations = this._executors,
-            Edges = this._edges,
-            Ports = this._inputPorts,
-            OutputExecutors = this._outputExecutors
-        };
+        var workflow = this.BuildInternal(activity);
+
+        activity?.AddEvent(new ActivityEvent(EventNames.BuildCompleted));
+
+        return workflow;
     }
 
     /// <summary>
@@ -356,15 +411,25 @@ public class WorkflowBuilder
     /// <exception cref="InvalidOperationException">Thrown if the built workflow cannot process messages of the specified input type,</exception>
     public async ValueTask<Workflow<TInput>> BuildAsync<TInput>() where TInput : notnull
     {
-        Workflow<TInput>? maybeWorkflow = await this.Build()
+        using Activity? activity = s_activitySource.StartActivity(ActivityNames.WorkflowBuild);
+
+        Workflow<TInput>? maybeWorkflow = await this.BuildInternal(activity)
                                                     .TryPromoteAsync<TInput>()
                                                     .ConfigureAwait(false);
 
         if (maybeWorkflow is null)
         {
-            throw new InvalidOperationException(
+            var exception = new InvalidOperationException(
                 $"The built workflow cannot process input of type '{typeof(TInput).FullName}'.");
+            activity?.AddEvent(new ActivityEvent(EventNames.BuildError, tags: new() {
+                { Tags.BuildErrorMessage, exception.Message },
+                { Tags.BuildErrorType, exception.GetType().FullName }
+            }));
+            activity?.CaptureException(exception);
+            throw exception;
         }
+
+        activity?.AddEvent(new ActivityEvent(EventNames.BuildCompleted));
 
         return maybeWorkflow;
     }

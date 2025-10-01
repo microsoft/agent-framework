@@ -35,7 +35,7 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
 
     protected override bool IsDiscreteAction => false;
 
-    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         this._index = 0;
 

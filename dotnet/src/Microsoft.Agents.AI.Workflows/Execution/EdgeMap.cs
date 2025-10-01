@@ -11,7 +11,7 @@ namespace Microsoft.Agents.AI.Workflows.Execution;
 internal sealed class EdgeMap
 {
     private readonly Dictionary<EdgeId, EdgeRunner> _edgeRunners = [];
-    private readonly Dictionary<EdgeId, IStatefulEdgeRunner> _statefulRunners = new();
+    private readonly Dictionary<EdgeId, IStatefulEdgeRunner> _statefulRunners = [];
     private readonly Dictionary<string, InputEdgeRunner> _portEdgeRunners;
 
     private readonly InputEdgeRunner _inputRunner;

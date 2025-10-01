@@ -4,14 +4,14 @@
 import importlib
 from typing import Any
 
-_IMPORTS: dict[str, tuple[str, list[str]]] = {
-    "AzureAIAgentClient": ("agent_framework_azure_ai", ["azure_ai", "azure"]),
-    "AzureOpenAIAssistantsClient": ("agent_framework.azure._assistants_client", []),
-    "AzureOpenAIChatClient": ("agent_framework.azure._chat_client", []),
-    "AzureAISettings": ("agent_framework_azure_ai", ["azure_ai", "azure"]),
-    "AzureOpenAISettings": ("agent_framework.azure._shared", []),
-    "AzureOpenAIResponsesClient": ("agent_framework.azure._responses_client", []),
-    "get_entra_auth_token": ("agent_framework.azure._entra_id_authentication", []),
+_IMPORTS: dict[str, tuple[str, str]] = {
+    "AzureAIAgentClient": ("agent_framework_azure_ai", "azure-ai"),
+    "AzureOpenAIAssistantsClient": ("agent_framework.azure._assistants_client", "core"),
+    "AzureOpenAIChatClient": ("agent_framework.azure._chat_client", "core"),
+    "AzureAISettings": ("agent_framework_azure_ai", "azure-ai"),
+    "AzureOpenAISettings": ("agent_framework.azure._shared", "core"),
+    "AzureOpenAIResponsesClient": ("agent_framework.azure._responses_client", "core"),
+    "get_entra_auth_token": ("agent_framework.azure._entra_id_authentication", "core"),
 }
 
 
@@ -22,8 +22,7 @@ def __getattr__(name: str) -> Any:
             return getattr(importlib.import_module(package_name), name)
         except ModuleNotFoundError as exc:
             raise ModuleNotFoundError(
-                f"The {' or '.join(package_extra)} extra is not installed, "
-                f"please use `pip install agent-framework[{package_extra[0]}]`, "
+                f"please use `pip install agent-framework-{package_extra}`, "
                 "or update your requirements.txt or pyproject.toml file."
             ) from exc
     raise AttributeError(f"Module `azure` has no attribute {name}.")

@@ -44,10 +44,12 @@ This structure maintains a single PyPI package `agent-framework-lab` while suppo
 
 ## Installation
 
-Install the base lab package:
+Install from source:
 
 ```bash
-pip install agent-framework-lab
+git clone https://github.com/microsoft/agent-framework.git
+cd agent-framework/python/packages/lab
+pip install -e .
 ```
 
 For details on installing individual modules, see their respective README files listed above.

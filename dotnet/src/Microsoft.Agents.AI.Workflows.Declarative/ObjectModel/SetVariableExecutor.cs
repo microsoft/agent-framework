@@ -15,7 +15,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 internal sealed class SetVariableExecutor(SetVariable model, WorkflowFormulaState state)
     : DeclarativeActionExecutor<SetVariable>(model, state)
 {
-    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         PropertyPath variablePath = Throw.IfNull(this.Model.Variable?.Path, $"{nameof(this.Model)}.{nameof(model.Variable)}");
 

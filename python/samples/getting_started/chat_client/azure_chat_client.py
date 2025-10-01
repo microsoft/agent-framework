@@ -8,6 +8,13 @@ from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 from pydantic import Field
 
+"""
+Azure Chat Client Direct Usage Example
+
+Demonstrates direct AzureChatClient usage for chat interactions with Azure OpenAI models.
+Shows function calling capabilities with custom business logic.
+"""
+
 
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],

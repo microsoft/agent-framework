@@ -2,7 +2,9 @@
 
 namespace Microsoft.Agents.AI;
 
-/// <summary>Provides metadata about an <see cref="AgentThread"/>.</summary>
+/// <summary>
+/// Provides metadata information about an <see cref="AgentThread"/> instance.
+/// </summary>
 public class AgentThreadMetadata
 {
     /// <summary>

@@ -6,6 +6,13 @@ import os
 from agent_framework.microsoft import CopilotStudioAgent, acquire_token
 from microsoft_agents.copilotstudio.client import AgentType, ConnectionSettings, CopilotClient, PowerPlatformCloud
 
+"""
+Copilot Studio Agent with Explicit Settings Example
+
+This sample demonstrates explicit configuration of CopilotStudioAgent with manual
+token management and custom ConnectionSettings for production environments.
+"""
+
 # Environment variables needed:
 # COPILOTSTUDIOAGENT__ENVIRONMENTID - Environment ID where your copilot is deployed
 # COPILOTSTUDIOAGENT__SCHEMANAME - Agent identifier/schema name of your copilot

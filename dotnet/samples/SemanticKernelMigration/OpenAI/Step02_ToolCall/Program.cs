@@ -7,7 +7,7 @@ using Microsoft.SemanticKernel.Agents;
 using OpenAI;
 
 var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
-var modelId = System.Environment.GetEnvironmentVariable("OPENAI_MODELID") ?? "gpt-4o";
+var model = System.Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o";
 var userInput = "What is the weather like in Amsterdam?";
 
 Console.WriteLine($"User Input: {userInput}");
@@ -22,7 +22,7 @@ await AFAgentAsync();
 
 async Task SKAgentAsync()
 {
-    var builder = Kernel.CreateBuilder().AddOpenAIChatClient(modelId, apiKey);
+    var builder = Kernel.CreateBuilder().AddOpenAIChatClient(model, apiKey);
 
     ChatCompletionAgent agent = new()
     {
@@ -42,7 +42,7 @@ async Task SKAgentAsync()
 
 async Task AFAgentAsync()
 {
-    var agent = new OpenAIClient(apiKey).GetChatClient(modelId).CreateAIAgent(
+    var agent = new OpenAIClient(apiKey).GetChatClient(model).CreateAIAgent(
         instructions: "You are a helpful assistant",
         tools: [AIFunctionFactory.Create(GetWeather)]);
 

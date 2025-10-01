@@ -8,6 +8,13 @@ from agent_framework import AgentThread, ChatAgent, ChatMessageStore
 from agent_framework.openai import OpenAIChatClient
 from pydantic import Field
 
+"""
+OpenAI Chat Client with Thread Management Example
+
+This sample demonstrates thread management with OpenAI Chat Client, showing
+conversation threads and message history preservation across interactions.
+"""
+
 
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],

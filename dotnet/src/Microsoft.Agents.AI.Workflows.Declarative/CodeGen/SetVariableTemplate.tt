@@ -1,0 +1,17 @@
+﻿<#@ template language="C#" inherits="ActionTemplate" visibility="internal" linePragmas="false" #>
+<#@ output extension=".cs" #>
+<#@ assembly name="System.Core" #>
+<#@ include file="Snippets/Index.tt" once="true" #>
+/// <summary>
+/// Assigns an evaluated expression, other variable, or literal value to the  "<#= this.Model.Variable #>" variable.
+/// </summary>
+internal sealed class <#= this.Name #>Executor(FormulaSession session) : ActionExecutor(id: "<#= this.Id #>", session)
+{
+    // <inheritdoc />
+    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    {<# 
+        EvaluateValueExpression(this.Model.Value, "evaluatedValue");
+        AssignVariable(this.Variable, "evaluatedValue"); #>
+        return default;
+    }
+}

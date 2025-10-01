@@ -1,0 +1,15 @@
+﻿<#@ template language="C#" inherits="ActionTemplate" visibility="internal" linePragmas="false" #>
+<#@ output extension=".cs" #>
+<#@ assembly name="System.Core" #>
+<#@ include file="Snippets/Index.tt" once="true" #>
+/// <summary>
+/// Request input.
+/// </summary>
+internal sealed class <#= this.Name #>Executor(FormulaSession session) : ActionExecutor(id: "<#= this.Id #>", session)
+{
+    // <inheritdoc />
+    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    {
+        return default;
+    }
+}

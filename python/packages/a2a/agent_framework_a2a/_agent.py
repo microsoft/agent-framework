@@ -5,7 +5,7 @@ import json
 import re
 import uuid
 from collections.abc import AsyncIterable, Sequence
-from typing import Any
+from typing import Any, cast
 
 import httpx
 from a2a.client import Client, ClientConfig, ClientFactory, minimal_agent_card
@@ -307,7 +307,7 @@ class A2AAgent(BaseAgent):
             role=A2ARole("user"),
             parts=parts,
             message_id=message.message_id or uuid.uuid4().hex,
-            metadata=message.additional_properties,
+            metadata=cast(dict[str, Any], message.additional_properties),
         )
 
     def _a2a_parts_to_contents(self, parts: Sequence[A2APart]) -> list[Contents]:

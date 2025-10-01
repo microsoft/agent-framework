@@ -18,6 +18,9 @@
     },
     "python.analysis.autoFormatStrings": true,
     "python.analysis.importFormat": "relative",
+    "python.analysis.exclude": [
+        "samples/semantic-kernel-migration"
+    ],
     "python.analysis.packageIndexDepths": [
         {
             "name": "agent_framework",

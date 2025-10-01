@@ -30,26 +30,33 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
     // Decorate options to add the middleware function
     private AgentRunOptions? AgentRunOptionsWithFunctionMiddleware(AgentRunOptions? options)
     {
-        if (options is ChatClientAgentRunOptions aco)
+        if (options is null || options.GetType() == typeof(AgentRunOptions))
         {
-            var originalFactory = aco.ChatClientFactory;
-            aco.ChatClientFactory = chatClient =>
-            {
-                var builder = chatClient.AsBuilder();
-
-                if (originalFactory is not null)
-                {
-                    builder.Use(originalFactory);
-                }
-
-                return builder.ConfigureOptions(co
-                    => co.Tools = co.Tools?.Select(tool => tool is AIFunction aiFunction
-                            ? new MiddlewareEnabledFunction(this.InnerAgent, aiFunction, this._delegateFunc)
-                            : tool)
-                        .ToList())
-                    .Build();
-            };
+            options = new ChatClientAgentRunOptions();
         }
+
+        if (options is not ChatClientAgentRunOptions aco)
+        {
+            throw new NotSupportedException($"Function Invocation Middleware is only supported without options or with {nameof(ChatClientAgentRunOptions)}.");
+        }
+
+        var originalFactory = aco.ChatClientFactory;
+        aco.ChatClientFactory = chatClient =>
+        {
+            var builder = chatClient.AsBuilder();
+
+            if (originalFactory is not null)
+            {
+                builder.Use(originalFactory);
+            }
+
+            return builder.ConfigureOptions(co
+                => co.Tools = co.Tools?.Select(tool => tool is AIFunction aiFunction
+                        ? new MiddlewareEnabledFunction(this.InnerAgent, aiFunction, this._delegateFunc)
+                        : tool)
+                    .ToList())
+                .Build();
+        };
 
         return options;
     }

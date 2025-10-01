@@ -11,6 +11,13 @@ from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 
+"""
+Azure AI Agent with Existing Thread Example
+
+This sample demonstrates working with pre-existing conversation threads
+by providing thread IDs for thread reuse patterns.
+"""
+
 
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],

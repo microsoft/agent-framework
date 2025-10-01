@@ -10,6 +10,7 @@
 /build
 
 .env.*
+claude.md
 
 # misc
 .DS_Store

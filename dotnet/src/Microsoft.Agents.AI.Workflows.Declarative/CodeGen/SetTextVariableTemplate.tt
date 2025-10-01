@@ -1,0 +1,16 @@
+﻿<#@ template language="C#" inherits="ActionTemplate" visibility="internal" linePragmas="false" #>
+<#@ output extension=".cs" #>
+<#@ assembly name="System.Core" #>
+<#@ include file="Snippets/Index.tt" once="true" #>
+/// <summary>
+/// Assigns an evaluated message template to the "<#= this.Model.Variable #>" variable.
+/// </summary>
+internal sealed class <#= this.Name #>Executor(FormulaSession session) : ActionExecutor(id: "<#= this.Id #>", session)
+{
+    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    {<#
+        EvaluateMessageTemplate(this.Model.Value, "textValue");
+        AssignVariable(this.Variable, "textValue"); #>
+        return default;
+    }
+}

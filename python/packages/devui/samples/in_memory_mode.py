@@ -46,7 +46,7 @@ def main():
             "You are a helpful weather and time assistant. Use the available tools to "
             "provide accurate weather information and current time for any location."
         ),
-        chat_client=OpenAIChatClient(ai_model_id="gpt-4o-mini"),
+        chat_client=OpenAIChatClient(model_id="gpt-4o-mini"),
         tools=[get_weather, get_time],
     )
 
@@ -54,7 +54,7 @@ def main():
         name="general-assistant",
         description="A simple conversational agent",
         instructions="You are a helpful assistant.",
-        chat_client=OpenAIChatClient(ai_model_id="gpt-4o-mini"),
+        chat_client=OpenAIChatClient(model_id="gpt-4o-mini"),
     )
 
     # Collect entities for serving

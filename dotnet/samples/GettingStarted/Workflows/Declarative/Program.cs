@@ -22,7 +22,7 @@ namespace Demo.DeclarativeWorkflow;
 /// </summary>
 /// <remarks>
 /// <b>Configuration</b>
-/// Define FOUNDRY_PROJECT_ENDPOINT as a user-secret or environment variable that
+/// Define AZURE_FOUNDRY_PROJECT_ENDPOINT as a user-secret or environment variable that
 /// points to your Foundry project endpoint.
 /// <b>Usage</b>
 /// Provide the path to the workflow definition file as the first argument.
@@ -62,7 +62,7 @@ internal sealed class Program
         // Run the workflow, just like any other workflow
         string input = this.GetWorkflowInput();
 
-        CheckpointManager checkpointManager = CheckpointManager.Default;
+        CheckpointManager checkpointManager = CheckpointManager.CreateInMemory();
         Checkpointed<StreamingRun> run = await InProcessExecution.StreamAsync(workflow, input, checkpointManager);
 
         bool isComplete = false;
@@ -88,7 +88,7 @@ internal sealed class Program
                 // Restore the latest checkpoint.
                 Debug.WriteLine($"RESTORE #{this.LastCheckpoint.CheckpointId}");
                 Notify("\nWORKFLOW: Restore");
-                run = await InProcessExecution.ResumeStreamAsync(workflow, this.LastCheckpoint, checkpointManager);
+                run = await InProcessExecution.ResumeStreamAsync(workflow, this.LastCheckpoint, checkpointManager, run.Run.RunId);
             }
             else
             {
@@ -178,6 +178,7 @@ internal sealed class Program
                     }
                     else
                     {
+                        await run.Run.EndRunAsync().ConfigureAwait(false);
                         return requestInfo.Request;
                     }
                     break;

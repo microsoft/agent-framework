@@ -4,6 +4,13 @@ import asyncio
 
 from agent_framework.microsoft import CopilotStudioAgent
 
+"""
+Copilot Studio Agent Basic Example
+
+This sample demonstrates basic usage of CopilotStudioAgent with automatic configuration
+from environment variables, showing both streaming and non-streaming responses.
+"""
+
 # Environment variables needed:
 # COPILOTSTUDIOAGENT__ENVIRONMENTID - Environment ID where your copilot is deployed
 # COPILOTSTUDIOAGENT__SCHEMANAME - Agent identifier/schema name of your copilot

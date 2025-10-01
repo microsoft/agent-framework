@@ -973,6 +973,10 @@ function TracesTab({ events }: { events: ExtendedResponseStreamEvent[] }) {
                   <span className="font-mono bg-accent/10 px-1 rounded">
                     ENABLE_OTEL=true
                   </span>{" "}
+                  or restart devui with the tracing flag{" "}
+                  <div className="font-mono bg-accent/10 px-1 rounded">
+                    devui --enable-tracing
+                  </div>
                   to enable tracing.
                 </div>
               )}

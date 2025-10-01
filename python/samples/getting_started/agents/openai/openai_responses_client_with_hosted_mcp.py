@@ -6,6 +6,13 @@ from typing import TYPE_CHECKING, Any
 from agent_framework import ChatAgent, HostedMCPTool
 from agent_framework.openai import OpenAIResponsesClient
 
+"""
+OpenAI Responses Client with Hosted MCP Example
+
+This sample demonstrates integrating hosted Model Context Protocol (MCP) tools with
+OpenAI Responses Client, including user approval workflows for function call security.
+"""
+
 if TYPE_CHECKING:
     from agent_framework import AgentProtocol, AgentThread
 

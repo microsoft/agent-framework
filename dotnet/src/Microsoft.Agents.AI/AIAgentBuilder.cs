@@ -10,7 +10,9 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
 
-/// <summary>A builder for creating pipelines of <see cref="AIAgent"/>.</summary>
+/// <summary>
+/// Provides a builder for creating pipelines of <see cref="AIAgent"/>s.
+/// </summary>
 public sealed class AIAgentBuilder
 {
     private readonly Func<IServiceProvider, AIAgent> _innerAgentFactory;
@@ -29,12 +31,21 @@ public sealed class AIAgentBuilder
 
     /// <summary>Initializes a new instance of the <see cref="AIAgentBuilder"/> class.</summary>
     /// <param name="innerAgentFactory">A callback that produces the inner <see cref="AIAgent"/> that represents the underlying backend.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="innerAgentFactory"/> is <see langword="null"/>.</exception>
     public AIAgentBuilder(Func<IServiceProvider, AIAgent> innerAgentFactory)
     {
         this._innerAgentFactory = Throw.IfNull(innerAgentFactory);
     }
 
-    /// <inheritdoc/>
+    /// <summary>Builds an <see cref="AIAgent"/> that represents the entire pipeline.</summary>
+    /// <param name="services">
+    /// The <see cref="IServiceProvider"/> that should provide services to the <see cref="AIAgent"/> instances.
+    /// If <see langword="null"/>, an empty <see cref="IServiceProvider"/> will be used.
+    /// </param>
+    /// <returns>An instance of <see cref="AIAgent"/> that represents the entire pipeline.</returns>
+    /// <remarks>
+    /// Calls to the resulting instance will pass through each of the pipeline stages in turn.
+    /// </remarks>
     public AIAgent Build(IServiceProvider? services = null)
     {
         services ??= EmptyServiceProvider.Instance;
@@ -58,7 +69,10 @@ public sealed class AIAgentBuilder
         return agent;
     }
 
-    /// <inheritdoc/>
+    /// <summary>Adds a factory for an intermediate agent to the agent pipeline.</summary>
+    /// <param name="agentFactory">The agent factory function.</param>
+    /// <returns>The updated <see cref="AIAgentBuilder"/> instance.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="agentFactory"/> is <see langword="null"/>.</exception>
     public AIAgentBuilder Use(Func<AIAgent, AIAgent> agentFactory)
     {
         _ = Throw.IfNull(agentFactory);
@@ -66,7 +80,10 @@ public sealed class AIAgentBuilder
         return this.Use((innerAgent, _) => agentFactory(innerAgent));
     }
 
-    /// <inheritdoc/>
+    /// <summary>Adds a factory for an intermediate agent to the agent pipeline.</summary>
+    /// <param name="agentFactory">The agent factory function.</param>
+    /// <returns>The updated <see cref="AIAgentBuilder"/> instance.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="agentFactory"/> is <see langword="null"/>.</exception>
     public AIAgentBuilder Use(Func<AIAgent, IServiceProvider, AIAgent> agentFactory)
     {
         _ = Throw.IfNull(agentFactory);

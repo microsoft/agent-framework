@@ -84,7 +84,7 @@ You must create the agents in an Azure AI Foundry project and then provide the p
     ```
 
 ```powershell
-$env:FOUNDRY_PROJECT_ENDPOINT="https://ai-foundry-your-project.services.ai.azure.com/api/projects/ai-proj-ga-your-project" # Replace with your Foundry Project endpoint
+$env:AZURE_FOUNDRY_PROJECT_ENDPOINT="https://ai-foundry-your-project.services.ai.azure.com/api/projects/ai-proj-ga-your-project" # Replace with your Foundry Project endpoint
 ```
 
 Use the following commands to run each A2A server

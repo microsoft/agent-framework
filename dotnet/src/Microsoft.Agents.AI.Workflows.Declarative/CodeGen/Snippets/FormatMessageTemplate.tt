@@ -1,0 +1,25 @@
+﻿<#+
+void EvaluateMessageTemplate(TemplateLine templateLine, string variableName)
+{
+    if (templateLine is not null)
+    {#>
+        string <#= variableName #> =
+            await context.FormatTemplateAsync(
+                """<#+
+                FormatMessageTemplate(templateLine); #>
+                """);<#+
+    }
+    else
+    {#>
+        string? <#= variableName #> = null;<#+
+    }
+}
+
+void FormatMessageTemplate(TemplateLine line)
+{
+    foreach (string text in line.ToTemplateString().ByLine())
+    { #>
+                <#= text #><#+
+    }
+}
+#>

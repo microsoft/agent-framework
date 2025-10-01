@@ -10,6 +10,13 @@ from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 
+"""
+Azure AI Agent with Explicit Settings Example
+
+This sample demonstrates creating Azure AI Agents with explicit configuration
+settings rather than relying on environment variable defaults.
+"""
+
 
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],

@@ -5,9 +5,16 @@ import asyncio
 from agent_framework import HostedWebSearchTool
 from agent_framework.openai import OpenAIChatClient
 
+"""
+OpenAI Chat Client with Web Search Example
+
+This sample demonstrates using HostedWebSearchTool with OpenAI Chat Client
+for real-time information retrieval and current data access.
+"""
+
 
 async def main() -> None:
-    client = OpenAIChatClient(ai_model_id="gpt-4o-search-preview")
+    client = OpenAIChatClient(model_id="gpt-4o-search-preview")
 
     message = "What is the current weather? Do not ask for my current location."
     # Test that the client will use the web search tool with location

@@ -5,6 +5,13 @@ import asyncio
 from agent_framework import ChatAgent, MCPStreamableHTTPTool
 from agent_framework.openai import OpenAIChatClient
 
+"""
+OpenAI Chat Client with Local MCP Example
+
+This sample demonstrates integrating Model Context Protocol (MCP) tools with
+OpenAI Chat Client for extended functionality and external service access.
+"""
+
 
 async def mcp_tools_on_run_level() -> None:
     """Example showing MCP tools defined when running the agent."""

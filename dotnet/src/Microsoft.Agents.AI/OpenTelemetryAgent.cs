@@ -10,9 +10,11 @@ using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI;
 
-/// <summary>Represents a delegating <see cref="AIAgent"/> that implements the OpenTelemetry Semantic Conventions for Generative AI systems.</summary>
+/// <summary>
+/// Provides a delegating <see cref="AIAgent"/> implementation that implements the OpenTelemetry Semantic Conventions for Generative AI systems.
+/// </summary>
 /// <remarks>
-/// This class provides an implementation of the Semantic Conventions for Generative AI systems, defined at <see href="https://opentelemetry.io/docs/specs/semconv/gen-ai/" />.
+/// This class provides an implementation of the Semantic Conventions for Generative AI systems v1.37, defined at <see href="https://opentelemetry.io/docs/specs/semconv/gen-ai/" />.
 /// The specification is still experimental and subject to change; as such, the telemetry output by this client is also subject to change.
 /// </remarks>
 public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
@@ -32,9 +34,16 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     private readonly string? _providerName;
 
     /// <summary>Initializes a new instance of the <see cref="OpenTelemetryAgent"/> class.</summary>
-    /// <param name="innerAgent">The underlying <see cref="AIAgent"/>.</param>
-    /// <param name="sourceName">An optional source name that will be used on the telemetry data.</param>
+    /// <param name="innerAgent">The underlying <see cref="AIAgent"/> to be augmented with telemetry capabilities.</param>
+    /// <param name="sourceName">
+    /// An optional source name that will be used to identify telemetry data from this agent.
+    /// If not provided, a default source name will be used for telemetry identification.
+    /// </param>
     /// <exception cref="ArgumentNullException"><paramref name="innerAgent"/> is <see langword="null"/>.</exception>
+    /// <remarks>
+    /// The constructor automatically extracts provider metadata from the inner agent and configures
+    /// telemetry collection according to OpenTelemetry semantic conventions for AI systems.
+    /// </remarks>
     public OpenTelemetryAgent(AIAgent innerAgent, string? sourceName = null) : base(innerAgent)
     {
         this._providerName = innerAgent.GetService<AIAgentMetadata>()?.ProviderName;
@@ -76,7 +85,7 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
 
         var response = await this._otelClient.GetResponseAsync(messages, co, cancellationToken).ConfigureAwait(false);
 
-        return (AgentRunResponse)response.RawRepresentation!;
+        return response.RawRepresentation as AgentRunResponse ?? new AgentRunResponse(response);
     }
 
     /// <inheritdoc/>
@@ -87,7 +96,7 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
 
         await foreach (var update in this._otelClient.GetStreamingResponseAsync(messages, co, cancellationToken).ConfigureAwait(false))
         {
-            yield return (AgentRunResponseUpdate)update.RawRepresentation!;
+            yield return update.RawRepresentation as AgentRunResponseUpdate ?? new AgentRunResponseUpdate(update);
         }
     }
 
@@ -171,7 +180,7 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     private sealed class ForwardingChatClient(OpenTelemetryAgent parentAgent) : IChatClient
     {
         public async Task<ChatResponse> GetResponseAsync(
-            IEnumerable<ChatMessage> messages, ChatOptions? options, CancellationToken cancellationToken)
+            IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
         {
             ForwardedOptions? fo = options as ForwardedOptions;
 
@@ -182,19 +191,11 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
             var response = await parentAgent.InnerAgent.RunAsync(messages, fo?.Thread, fo?.Options, cancellationToken).ConfigureAwait(false);
 
             // Wrap the response in a ChatResponse so we can pass it back through OpenTelemetryChatClient.
-            return new ChatResponse
-            {
-                AdditionalProperties = response.AdditionalProperties,
-                CreatedAt = response.CreatedAt,
-                Messages = response.Messages,
-                RawRepresentation = response,
-                ResponseId = response.ResponseId,
-                Usage = response.Usage,
-            };
+            return response.AsChatResponse();
         }
 
         public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
-            IEnumerable<ChatMessage> messages, ChatOptions? options, [EnumeratorCancellation] CancellationToken cancellationToken)
+            IEnumerable<ChatMessage> messages, ChatOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             ForwardedOptions? fo = options as ForwardedOptions;
 
@@ -205,17 +206,7 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
             await foreach (var update in parentAgent.InnerAgent.RunStreamingAsync(messages, fo?.Thread, fo?.Options, cancellationToken).ConfigureAwait(false))
             {
                 // Wrap the response updates in ChatResponseUpdates so we can pass them back through OpenTelemetryChatClient.
-                yield return new ChatResponseUpdate
-                {
-                    AdditionalProperties = update.AdditionalProperties,
-                    AuthorName = update.AuthorName,
-                    Contents = update.Contents,
-                    CreatedAt = update.CreatedAt,
-                    MessageId = update.MessageId,
-                    RawRepresentation = update,
-                    ResponseId = update.ResponseId,
-                    Role = update.Role,
-                };
+                yield return update.AsChatResponseUpdate();
             }
         }
 

@@ -13,7 +13,7 @@ using OpenAI.Assistants;
 #pragma warning disable CS8321 // Local function is declared but never used
 
 var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
-var modelId = System.Environment.GetEnvironmentVariable("OPENAI_MODELID") ?? "gpt-4o";
+var model = System.Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o";
 var userInput = "Create a python code file using the code interpreter tool with a code ready to determine the values in the Fibonacci sequence that are less then the value of 101";
 
 var assistantsClient = new AssistantClient(apiKey);
@@ -28,7 +28,7 @@ async Task SKAgentAsync()
     Console.WriteLine("\n=== SK Agent ===\n");
 
     // Define the assistant
-    Assistant assistant = await assistantsClient.CreateAssistantAsync(modelId, enableCodeInterpreter: true);
+    Assistant assistant = await assistantsClient.CreateAssistantAsync(model, enableCodeInterpreter: true);
 
     // Create the agent
     OpenAIAssistantAgent agent = new(assistant, assistantsClient);
@@ -74,7 +74,7 @@ async Task AFAgentAsync()
 {
     Console.WriteLine("\n=== AF Agent ===\n");
 
-    var agent = await assistantsClient.CreateAIAgentAsync(modelId, tools: [new HostedCodeInterpreterTool()]);
+    var agent = await assistantsClient.CreateAIAgentAsync(model, tools: [new HostedCodeInterpreterTool()]);
 
     var thread = agent.GetNewThread();
 

@@ -6,6 +6,13 @@ from typing import Annotated
 
 from agent_framework.openai import OpenAIChatClient
 
+"""
+OpenAI Chat Client Basic Example
+
+This sample demonstrates basic usage of OpenAIChatClient for direct chat-based
+interactions, showing both streaming and non-streaming responses.
+"""
+
 
 def get_weather(
     location: Annotated[str, "The location to get the weather for."],

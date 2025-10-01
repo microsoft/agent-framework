@@ -1,0 +1,29 @@
+﻿<#@ template language="C#" inherits="ActionTemplate" visibility="internal" linePragmas="false" #>
+<#@ output extension=".cs" #>
+<#@ assembly name="System.Core" #>
+<#@ include file="Snippets/Index.tt" once="true" #>
+/// <summary>
+/// Parses a string or untyped value to the provided data type. When the input is a string, it will be treated as JSON.
+/// </summary>
+internal sealed class <#= this.Name #>Executor(FormulaSession session) : ActionExecutor(id: "<#= this.Id #>", session)
+{
+    // <inheritdoc />
+    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    { 
+        VariableType targetType = <#= this.GetVariableType() #>;<#
+if (this.Model.Value.IsVariableReference && this.Model.Value.VariableReference.SegmentCount == 2)
+{#>
+        object? parsedValue = await context.ConvertValueAsync(targetType, key: "<#= this.Model.Value.VariableReference.VariableName #>", scopeName: "<#= this.Model.Value.VariableReference.NamespaceAlias #>", cancellationToken).ConfigureAwait(false);<#
+}
+else if (this.Model.Value.IsVariableReference)
+{#>
+        object? parsedValue = await context.ConvertValueAsync(targetType, <#= FormatStringValue(this.Model.Value.VariableReference.ToString()) #>, cancellationToken).ConfigureAwait(false);<#
+}
+else
+{#>
+        object? parsedValue = await context.ConvertValueAsync(targetType, <#= FormatStringValue(this.Model.Value.ExpressionText) #>, cancellationToken).ConfigureAwait(false);<#
+}
+        AssignVariable(this.Variable, "parsedValue"); #>
+        return default;
+    }
+}

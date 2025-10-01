@@ -13,6 +13,13 @@ from agent_framework import (
 from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
 
+"""
+Azure AI Agent with Multiple Tools Example
+
+This sample demonstrates integrating multiple tools (MCP and Web Search) with Azure AI Agents,
+including user approval workflows for function call security.
+"""
+
 
 def get_time() -> str:
     """Get the current UTC time."""
@@ -50,7 +57,7 @@ async def main() -> None:
         AzureAIAgentClient(async_credential=credential) as chat_client,
     ):
         # enable azure-ai observability
-        await chat_client.setup_observability()
+        await chat_client.setup_azure_ai_observability()
         agent = chat_client.create_agent(
             name="DocsAgent",
             instructions="You are a helpful assistant that can help with microsoft documentation questions.",

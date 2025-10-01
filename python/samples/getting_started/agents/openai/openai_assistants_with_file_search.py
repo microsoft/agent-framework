@@ -5,6 +5,13 @@ import asyncio
 from agent_framework import ChatAgent, HostedFileSearchTool, HostedVectorStoreContent
 from agent_framework.openai import OpenAIAssistantsClient
 
+"""
+OpenAI Assistants with File Search Example
+
+This sample demonstrates using HostedFileSearchTool with OpenAI Assistants
+for document-based question answering and information retrieval.
+"""
+
 # Helper functions
 
 

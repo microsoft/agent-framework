@@ -7,11 +7,13 @@ using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI;
 
-/// <summary>Provides a collection of utility methods for working with JSON data in the context of agents.</summary>
+/// <summary>
+/// Provides utility methods and configurations for JSON serialization operations within the Microsoft Agent Framework.
+/// </summary>
 public static partial class AgentAbstractionsJsonUtilities
 {
     /// <summary>
-    /// Gets the <see cref="JsonSerializerOptions"/> singleton used as the default in JSON serialization operations.
+    /// Gets the default <see cref="JsonSerializerOptions"/> instance used for JSON serialization operations of agent abstraction types.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -30,7 +32,7 @@ public static partial class AgentAbstractionsJsonUtilities
     public static JsonSerializerOptions DefaultOptions { get; } = CreateDefaultOptions();
 
     /// <summary>
-    /// Creates default options to use for agents-related serialization.
+    /// Creates and configures the default JSON serialization options for agent abstraction types.
     /// </summary>
     /// <returns>The configured options.</returns>
     [UnconditionalSuppressMessage("ReflectionAnalysis", "IL3050:RequiresDynamicCode", Justification = "Converter is guarded by IsReflectionEnabledByDefault check.")]
