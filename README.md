@@ -90,37 +90,23 @@ asyncio.run(main())
 
 ```c#
 using System;
-using System.Threading.Tasks;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 
-class Program
-{
-    static async Task Main()
-    {
-        var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
-            ?? throw new InvalidOperationException("Set AZURE_OPENAI_ENDPOINT.");
-        var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o";
-        var userInput = "Write a haiku about Microsoft Agent Framework.";
+var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
+    ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o";
+var userInput = "Write a haiku about Microsoft Agent Framework.";
 
-        var agent = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
-            .GetOpenAIResponseClient(deploymentName)
-            .CreateAIAgent(name: "HaikuBot", instructions: "You are an upbeat assistant that writes beautifully.");
+var agent = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
+    .GetOpenAIResponseClient(deploymentName)
+    .CreateAIAgent(name: "HaikuBot", instructions: "You are an upbeat assistant that writes beautifully.");
 
-        var thread = agent.GetNewThread();
-        var agentOptions = new ChatClientAgentRunOptions(new() { MaxOutputTokens = 8000 });
+var thread = agent.GetNewThread();
+var agentOptions = new ChatClientAgentRunOptions(new() { MaxOutputTokens = 8000 });
 
-        var result = await agent.RunAsync(userInput, thread, agentOptions);
-        Console.WriteLine(result);
-
-        Console.WriteLine("---");
-        await foreach (var update in agent.RunStreamingAsync(userInput, thread, agentOptions))
-        {
-            Console.Write(update);
-        }
-    }
-}
+Console.WriteLine(await agent.RunAsync(userInput, thread, agentOptions));
 ```
 
 ## More Examples & Samples
