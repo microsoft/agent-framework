@@ -1,8 +1,27 @@
 [project]
 name = "agent-framework"
 description = "Microsoft Agent Framework for building AI Agents with Python. This package contains all the core and optional packages."
-version = "1.0.0b251001"
+authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
+readme = "README.md"
 requires-python = ">=3.10"
+version = "1.0.0b251001.post1"
+license-files = ["LICENSE"]
+urls.homepage = "https://learn.microsoft.com/en-us/semantic-kernel/overview/"
+urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
+urls.release_notes = "https://github.com/microsoft/agent-framework/releases?q=tag%3Apython-1&expanded=true"
+urls.issues = "https://github.com/microsoft/agent-framework/issues"
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+  "Development Status :: 5 - Production/Stable",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Framework :: Pydantic :: 2",
+  "Typing :: Typed",
+]
 dependencies = [
     "agent-framework-core",
     "agent-framework-a2a",
@@ -11,12 +30,12 @@ dependencies = [
     "agent-framework-mem0",
     "agent-framework-redis",
     "agent-framework-devui",
-    "agent-framework-lab",
 ]
 
 [dependency-groups]
 dev = [
     "uv>=0.8.2,<0.9.0",
+    "flit>=3.12.0",
     "pre-commit >= 3.7",
     "ruff>=0.11.8",
     "pytest>=8.4.1",
@@ -192,7 +211,12 @@ format.ref = "fmt"
 lint = "python run_tasks_in_packages_if_exists.py lint"
 pyright = "python run_tasks_in_packages_if_exists.py pyright"
 mypy = "python run_tasks_in_packages_if_exists.py mypy"
-build = "python run_tasks_in_packages_if_exists.py build"
+build-packages = "python run_tasks_in_packages_if_exists.py build"
+build-meta = "python -m flit build"
+build = ["build-packages", "build-meta"]
+publish-packages = "python run_tasks_in_packages_if_exists.py publish"
+publish-meta = "uv publish"
+publish = ["publish-packages", "publish-meta"]
 # combined checks
 check = ["fmt", "lint", "pyright", "mypy", "test", "markdown-code-lint", "samples-code-check"]
 pre-commit-check = ["fmt", "lint", "pyright", "markdown-code-lint", "samples-code-check"]
@@ -238,6 +262,14 @@ sequence = [
     { ref = "docs-clean" },
     { ref = "docs-build" }
 ]
+[tool.poe.tasks.docs-full-setup-install]
+sequence = [
+    { ref = "setup --python 3.11" },
+    { ref = "docs-install" },
+    { ref = 'build' },
+    { ref = "docs-clean" },
+    { ref = "docs-build" }
+]
 [tool.poe.tasks.docs-full-install]
 sequence = [
     { ref = "docs-install" },
@@ -260,6 +292,12 @@ sequence = [
 where = ["packages"]
 include = ["agent_framework**"]
 namespaces = true
+
+[[tool.uv.index]]
+name = "testpypi"
+url = "https://test.pypi.org/simple/"
+publish-url = "https://test.pypi.org/legacy/"
+explicit = true
 
 [tool.flit.module]
 name = "agent_framework_meta"

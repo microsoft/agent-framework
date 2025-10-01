@@ -153,6 +153,8 @@ test = "pytest --cov-report=term-missing:skip-covered --junitxml=test-results.xm
 test-gaia = "pytest gaia/tests --cov=agent_framework_lab_gaia --cov-report=term-missing:skip-covered"
 test-lightning = "pytest lightning/tests --cov=agent_framework_lab_lightning --cov-report=term-missing:skip-covered"
 test-tau2 = "pytest tau2/tests --cov=agent_framework_lab_tau2 --cov-report=term-missing:skip-covered"
+build = "echo 'Skipping build'"
+publish = "echo 'Skipping publish'"
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
