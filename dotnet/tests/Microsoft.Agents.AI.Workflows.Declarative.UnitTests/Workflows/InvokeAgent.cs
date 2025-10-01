@@ -63,7 +63,7 @@ public static class WorkflowProvider
     
             if (string.IsNullOrWhiteSpace(agentName))
             {
-                throw new InvalidOperationException($"Agent name must be defined: {this.Id}");
+                throw new DeclarativeActionException($"Agent name must be defined: {this.Id}");
             }
     
             string? conversationId = await context.ReadStateAsync<string>(key: "ConversationId", scopeName: "System").ConfigureAwait(false);
