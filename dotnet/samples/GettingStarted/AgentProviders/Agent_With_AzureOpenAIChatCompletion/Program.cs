@@ -2,7 +2,6 @@
 
 // This sample shows how to create and use a simple AI agent with Azure OpenAI Chat Completion as the backend.
 
-using System;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;

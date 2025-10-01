@@ -9,8 +9,6 @@
 // as AI functions. The AsAITools method of the plugin class shows how to specify
 // which methods should be exposed to the AI agent.
 
-using System;
-using System.Collections.Generic;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;

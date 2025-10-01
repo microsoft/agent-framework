@@ -12,8 +12,6 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Shared.Diagnostics;
 
-#pragma warning disable S3358 // Ternary operators should not be nested
-
 namespace Microsoft.Agents.AI;
 
 /// <summary>

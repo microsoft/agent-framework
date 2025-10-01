@@ -4,7 +4,7 @@
     <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
     <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugTargetFrameworks)</TargetFrameworks>
     <VersionSuffix>preview</VersionSuffix>
-    <NoWarn>$(NoWarn);IDE0009;OPENAI001;</NoWarn>
+    <NoWarn>$(NoWarn);OPENAI001;</NoWarn>
     <ImplicitUsings>enable</ImplicitUsings>
     <InjectSharedThrow>true</InjectSharedThrow>
   </PropertyGroup>
