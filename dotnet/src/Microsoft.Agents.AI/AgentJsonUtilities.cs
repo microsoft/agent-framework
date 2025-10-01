@@ -7,7 +7,7 @@ using System.Text.Json.Serialization;
 namespace Microsoft.Agents.AI;
 
 /// <summary>Provides a collection of utility methods for working with JSON data in the context of agents.</summary>
-public static partial class AgentJsonUtilities
+internal static partial class AgentJsonUtilities
 {
     /// <summary>
     /// Gets the <see cref="JsonSerializerOptions"/> singleton used as the default in JSON serialization operations.
