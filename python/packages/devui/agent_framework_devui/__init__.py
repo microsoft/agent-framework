@@ -9,7 +9,7 @@ from typing import Any
 
 from ._server import DevServer
 from .models import AgentFrameworkRequest, OpenAIError, OpenAIResponse, ResponseStreamEvent
-from .models._discovery_models import DiscoveryResponse, EntityInfo
+from .models._discovery_models import DiscoveryResponse, EntityInfo, EnvVarRequirement
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +27,7 @@ def serve(
     auto_open: bool = False,
     cors_origins: list[str] | None = None,
     ui_enabled: bool = True,
+    tracing_enabled: bool = False,
 ) -> None:
     """Launch Agent Framework DevUI with simple API.
 
@@ -38,6 +39,7 @@ def serve(
         auto_open: Whether to automatically open browser
         cors_origins: List of allowed CORS origins
         ui_enabled: Whether to enable the UI
+        tracing_enabled: Whether to enable OpenTelemetry tracing
     """
     import re
 
@@ -50,6 +52,23 @@ def serve(
     # Validate port parameter
     if not isinstance(port, int) or not (1 <= port <= 65535):
         raise ValueError(f"Invalid port: {port}. Must be integer between 1 and 65535")
+
+    # Configure tracing environment variables if enabled
+    if tracing_enabled:
+        import os
+
+        # Only set if not already configured by user
+        if not os.environ.get("ENABLE_OTEL"):
+            os.environ["ENABLE_OTEL"] = "true"
+            logger.info("Set ENABLE_OTEL=true for tracing")
+
+        if not os.environ.get("ENABLE_SENSITIVE_DATA"):
+            os.environ["ENABLE_SENSITIVE_DATA"] = "true"
+            logger.info("Set ENABLE_SENSITIVE_DATA=true for tracing")
+
+        if not os.environ.get("OTLP_ENDPOINT"):
+            os.environ["OTLP_ENDPOINT"] = "http://localhost:4317"
+            logger.info("Set OTLP_ENDPOINT=http://localhost:4317 for tracing")
 
     # Create server with direct parameters
     server = DevServer(
@@ -123,6 +142,7 @@ __all__ = [
     "DevServer",
     "DiscoveryResponse",
     "EntityInfo",
+    "EnvVarRequirement",
     "OpenAIError",
     "OpenAIResponse",
     "ResponseStreamEvent",

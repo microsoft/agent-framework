@@ -29,6 +29,7 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
 
     private IWorkflowContext Source { get; }
     public WorkflowFormulaState State { get; }
+    public IReadOnlyDictionary<string, string>? TraceContext => this.Source.TraceContext;
 
     /// <inheritdoc/>
     public ValueTask AddEventAsync(WorkflowEvent workflowEvent) => this.Source.AddEventAsync(workflowEvent);

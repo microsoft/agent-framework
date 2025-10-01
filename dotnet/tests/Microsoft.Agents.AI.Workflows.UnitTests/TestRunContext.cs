@@ -9,7 +9,10 @@ namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
 public class TestRunContext : IRunnerContext
 {
-    private sealed class BoundContext(string executorId, TestRunContext runnerContext) : IWorkflowContext
+    private sealed class BoundContext(
+        string executorId,
+        TestRunContext runnerContext,
+        IReadOnlyDictionary<string, string>? traceContext) : IWorkflowContext
     {
         public ValueTask AddEventAsync(WorkflowEvent workflowEvent)
             => runnerContext.AddEventAsync(workflowEvent);
@@ -34,6 +37,8 @@ public class TestRunContext : IRunnerContext
 
         public ValueTask SendMessageAsync(object message, string? targetId = null)
             => runnerContext.SendMessageAsync(executorId, message, targetId);
+
+        public IReadOnlyDictionary<string, string>? TraceContext => traceContext;
     }
 
     public List<WorkflowEvent> Events { get; } = [];
@@ -44,7 +49,8 @@ public class TestRunContext : IRunnerContext
         return default;
     }
 
-    public IWorkflowContext Bind(string executorId) => new BoundContext(executorId, this);
+    public IWorkflowContext Bind(string executorId, Dictionary<string, string>? traceContext = null)
+        => new BoundContext(executorId, this, traceContext);
 
     public List<ExternalRequest> ExternalRequests { get; } = [];
     public ValueTask PostAsync(ExternalRequest request)

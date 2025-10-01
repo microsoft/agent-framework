@@ -21,12 +21,13 @@ export function AboutModal({ open, onOpenChange }: AboutModalProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
-        <DialogHeader>
+        <DialogHeader className="p-6 pb-4">
           <DialogTitle>About DevUI</DialogTitle>
-          <DialogClose onClose={() => onOpenChange(false)} />
         </DialogHeader>
 
-        <div className="p-4 space-y-4">
+        <DialogClose onClose={() => onOpenChange(false)} />
+
+        <div className="px-6 pb-6 space-y-4">
           <p className="text-sm text-muted-foreground">
             DevUI is a sample app for getting started with Agent Framework.
           </p>

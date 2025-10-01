@@ -15,10 +15,17 @@ interface DialogContentProps {
 
 interface DialogHeaderProps {
   children: React.ReactNode;
+  className?: string;
 }
 
 interface DialogTitleProps {
   children: React.ReactNode;
+  className?: string;
+}
+
+interface DialogDescriptionProps {
+  children: React.ReactNode;
+  className?: string;
 }
 
 interface DialogFooterProps {
@@ -46,30 +53,43 @@ export function DialogContent({
   children,
   className = "",
 }: DialogContentProps) {
+  // Default width classes if none provided
+  const hasWidthClass = className.includes('w-[') || className.includes('w-full') || className.includes('max-w-');
+  const defaultWidthClasses = hasWidthClass ? '' : 'max-w-lg w-full';
+
   return (
     <div
-      className={`relative bg-background border rounded-lg shadow-lg max-w-lg w-full max-h-[90vh] overflow-hidden ${className}`}
+      className={`relative bg-background border rounded-lg shadow-lg max-h-[90vh] overflow-hidden ${defaultWidthClasses} ${className}`}
     >
       {children}
     </div>
   );
 }
 
-export function DialogHeader({ children }: DialogHeaderProps) {
+export function DialogHeader({ children, className = "" }: DialogHeaderProps) {
   return (
-    <div className="flex items-center justify-between p-4 border-b">
+    <div className={`space-y-2 ${className}`}>
       {children}
     </div>
   );
 }
 
-export function DialogTitle({ children }: DialogTitleProps) {
-  return <h2 className="text-lg font-semibold">{children}</h2>;
+export function DialogTitle({ children, className = "" }: DialogTitleProps) {
+  return <h2 className={`text-lg font-semibold ${className}`}>{children}</h2>;
+}
+
+export function DialogDescription({ children, className = "" }: DialogDescriptionProps) {
+  return <p className={`text-sm text-muted-foreground ${className}`}>{children}</p>;
 }
 
 export function DialogClose({ onClose }: { onClose: () => void }) {
   return (
-    <Button variant="ghost" size="sm" onClick={onClose} className="h-6 w-6 p-0">
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={onClose}
+      className="absolute top-4 right-4 h-8 w-8 p-0 rounded-sm opacity-70 hover:opacity-100"
+    >
       <X className="h-4 w-4" />
     </Button>
   );

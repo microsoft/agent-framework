@@ -71,18 +71,17 @@ class AgentFrameworkExecutor:
 
     def _setup_agent_framework_tracing(self) -> None:
         """Set up Agent Framework's built-in tracing."""
-        # Configure Agent Framework tracing only if OTLP endpoint is configured
-        otlp_endpoint = os.environ.get("OTLP_ENDPOINT")
-        if otlp_endpoint:
+        # Configure Agent Framework tracing only if ENABLE_OTEL is set
+        if os.environ.get("ENABLE_OTEL"):
             try:
                 from agent_framework.observability import setup_observability
 
-                setup_observability(enable_sensitive_data=True, otlp_endpoint=otlp_endpoint)
-                logger.info(f"Enabled Agent Framework observability with endpoint: {otlp_endpoint}")
+                setup_observability(enable_sensitive_data=True)
+                logger.info("Enabled Agent Framework observability")
             except Exception as e:
                 logger.warning(f"Failed to enable Agent Framework observability: {e}")
         else:
-            logger.debug("No OTLP endpoint configured, skipping observability setup")
+            logger.debug("ENABLE_OTEL not set, skipping observability setup")
 
     # Thread Management Methods
     def create_thread(self, agent_id: str) -> str:
@@ -118,7 +117,6 @@ class AgentFrameworkExecutor:
         if thread_id not in self.thread_storage:
             return False
 
-        # Remove from agent mapping
         for _agent_id, thread_ids in self.agent_threads.items():
             if thread_id in thread_ids:
                 thread_ids.remove(thread_id)
@@ -128,7 +126,7 @@ class AgentFrameworkExecutor:
         return True
 
     async def get_thread_messages(self, thread_id: str) -> list[dict[str, Any]]:
-        """Get messages from a thread's message store, filtering for UI display."""
+        """Get messages from a thread's message store, preserving all content types for UI display."""
         thread = self.get_thread(thread_id)
         if not thread or not thread.message_store:
             return []
@@ -142,21 +140,21 @@ class AgentFrameworkExecutor:
                 # Extract role value (handle enum)
                 role = af_msg.role.value if hasattr(af_msg.role, "value") else str(af_msg.role)
 
-                # Skip tool/function messages - only show user and assistant text
+                # Skip tool/function messages - only show user and assistant messages
                 if role not in ["user", "assistant"]:
                     continue
 
-                # Extract user-facing text content only
-                text_content = self._extract_display_text(af_msg.contents)
+                # Extract all user-facing content (text, images, files, etc.)
+                display_contents = self._extract_display_contents(af_msg.contents)
 
-                # Skip messages with no displayable text
-                if not text_content:
+                # Skip messages with no displayable content
+                if not display_contents:
                     continue
 
                 ui_message = {
                     "id": af_msg.message_id or f"restored-{i}",
                     "role": role,
-                    "contents": [{"type": "text", "text": text_content}],
+                    "contents": display_contents,
                     "timestamp": __import__("datetime").datetime.now().isoformat(),
                     "author_name": af_msg.author_name,
                     "message_id": af_msg.message_id,
@@ -174,14 +172,18 @@ class AgentFrameworkExecutor:
             logger.error(traceback.format_exc())
             return []
 
-    def _extract_display_text(self, contents: list[Any]) -> str:
-        """Extract user-facing text from message contents, filtering out internal mechanics."""
-        text_parts = []
+    def _extract_display_contents(self, contents: list[Any]) -> list[dict[str, Any]]:
+        """Extract all user-facing content (text, images, files, etc.) from message contents.
+
+        Filters out internal mechanics like function calls/results while preserving
+        all content types that should be displayed in the UI.
+        """
+        display_contents = []
 
         for content in contents:
             content_type = getattr(content, "type", None)
 
-            # Only include text content for display
+            # Text content
             if content_type == "text":
                 text = getattr(content, "text", "")
 
@@ -194,15 +196,31 @@ class AgentFrameworkExecutor:
                         if parsed.get("contents"):
                             for sub_content in parsed["contents"]:
                                 if sub_content.get("type") == "text":
-                                    text_parts.append(sub_content.get("text", ""))
+                                    display_contents.append({"type": "text", "text": sub_content.get("text", "")})
                     except Exception:
-                        text_parts.append(text)  # Fallback to raw text
+                        display_contents.append({"type": "text", "text": text})
                 else:
-                    text_parts.append(text)
+                    display_contents.append({"type": "text", "text": text})
+
+            # Data content (images, files, PDFs, etc.)
+            elif content_type == "data":
+                display_contents.append({
+                    "type": "data",
+                    "uri": getattr(content, "uri", ""),
+                    "media_type": getattr(content, "media_type", None),
+                })
+
+            # URI content (external links to images/files)
+            elif content_type == "uri":
+                display_contents.append({
+                    "type": "uri",
+                    "uri": getattr(content, "uri", ""),
+                    "media_type": getattr(content, "media_type", None),
+                })
 
             # Skip function_call, function_result, and other internal content types
 
-        return " ".join(text_parts).strip()
+        return display_contents
 
     async def serialize_thread(self, thread_id: str) -> dict[str, Any] | None:
         """Serialize thread state for persistence."""
@@ -380,7 +398,6 @@ class AgentFrameworkExecutor:
                 else:
                     logger.warning(f"Thread {thread_id} not found, proceeding without thread")
 
-            # Debug logging - handle both string and ChatMessage
             if isinstance(user_message, str):
                 logger.debug(f"Executing agent with text input: {user_message[:100]}...")
             else:
@@ -389,19 +406,15 @@ class AgentFrameworkExecutor:
             # Use Agent Framework's native streaming with optional thread
             if thread:
                 async for update in agent.run_stream(user_message, thread=thread):
-                    # Yield any pending trace events first
                     for trace_event in trace_collector.get_pending_events():
                         yield trace_event
 
-                    # Then yield the execution update
                     yield update
             else:
                 async for update in agent.run_stream(user_message):
-                    # Yield any pending trace events first
                     for trace_event in trace_collector.get_pending_events():
                         yield trace_event
 
-                    # Then yield the execution update
                     yield update
 
         except Exception as e:
@@ -546,6 +559,17 @@ class AgentFrameworkExecutor:
                                             media_type = "application/pdf"
                                         elif filename.lower().endswith((".png", ".jpg", ".jpeg", ".gif")):
                                             media_type = f"image/{filename.split('.')[-1].lower()}"
+                                        elif filename.lower().endswith((
+                                            ".wav",
+                                            ".mp3",
+                                            ".m4a",
+                                            ".ogg",
+                                            ".flac",
+                                            ".aac",
+                                        )):
+                                            ext = filename.split(".")[-1].lower()
+                                            # Normalize extensions to match audio MIME types
+                                            media_type = "audio/mp4" if ext == "m4a" else f"audio/{ext}"
 
                                     # Use file_data or file_url
                                     if file_data:
@@ -562,8 +586,17 @@ class AgentFrameworkExecutor:
         if not contents:
             contents.append(TextContent(text=""))
 
-        # Create ChatMessage with user role
-        return ChatMessage(role=Role.USER, contents=contents)
+        chat_message = ChatMessage(role=Role.USER, contents=contents)
+
+        logger.info(f"Created ChatMessage with {len(contents)} contents:")
+        for idx, content in enumerate(contents):
+            content_type = content.__class__.__name__
+            if hasattr(content, "media_type"):
+                logger.info(f"  [{idx}] {content_type} - media_type: {content.media_type}")
+            else:
+                logger.info(f"  [{idx}] {content_type}")
+
+        return chat_message
 
     def _extract_user_message_fallback(self, input_data: Any) -> str:
         """Fallback method to extract user message as string.

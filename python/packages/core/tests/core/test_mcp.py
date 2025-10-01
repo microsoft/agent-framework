@@ -252,6 +252,71 @@ def test_get_input_model_from_mcp_tool():
         model(param2=42)
 
 
+def test_get_input_model_from_mcp_tool_with_nested_object():
+    """Test creation of input model from MCP tool with nested object property."""
+    tool = types.Tool(
+        name="get_customer_detail",
+        description="Get customer details",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "params": {
+                    "type": "object",
+                    "properties": {"customer_id": {"type": "integer"}},
+                    "required": ["customer_id"],
+                }
+            },
+            "required": ["params"],
+        },
+    )
+    model = _get_input_model_from_mcp_tool(tool)
+
+    # Create an instance to verify the model works with nested objects
+    instance = model(params={"customer_id": 251})
+    assert instance.params == {"customer_id": 251}
+    assert isinstance(instance.params, dict)
+
+    # Verify model_dump produces the correct nested structure
+    dumped = instance.model_dump()
+    assert dumped == {"params": {"customer_id": 251}}
+
+
+def test_get_input_model_from_mcp_tool_with_ref_schema():
+    """Test creation of input model from MCP tool with $ref schema.
+
+    This simulates a FastMCP tool that uses Pydantic models with $ref in the schema.
+    The schema should be resolved and nested objects should be preserved.
+    """
+    # This is similar to what FastMCP generates when you have:
+    # async def get_customer_detail(params: CustomerIdParam) -> CustomerDetail
+    tool = types.Tool(
+        name="get_customer_detail",
+        description="Get customer details",
+        inputSchema={
+            "type": "object",
+            "properties": {"params": {"$ref": "#/$defs/CustomerIdParam"}},
+            "required": ["params"],
+            "$defs": {
+                "CustomerIdParam": {
+                    "type": "object",
+                    "properties": {"customer_id": {"type": "integer"}},
+                    "required": ["customer_id"],
+                }
+            },
+        },
+    )
+    model = _get_input_model_from_mcp_tool(tool)
+
+    # Create an instance to verify the model works with $ref schemas
+    instance = model(params={"customer_id": 251})
+    assert instance.params == {"customer_id": 251}
+    assert isinstance(instance.params, dict)
+
+    # Verify model_dump produces the correct nested structure
+    dumped = instance.model_dump()
+    assert dumped == {"params": {"customer_id": 251}}
+
+
 def test_get_input_model_from_mcp_prompt():
     """Test creation of input model from MCP prompt."""
     prompt = types.Prompt(
@@ -404,6 +469,59 @@ async def test_local_mcp_server_function_execution():
         assert len(result) == 1
         assert isinstance(result[0], TextContent)
         assert result[0].text == "Tool executed successfully"
+
+
+async def test_local_mcp_server_function_execution_with_nested_object():
+    """Test function execution through MCP server with nested object arguments."""
+
+    class TestServer(MCPTool):
+        async def connect(self):
+            self.session = Mock(spec=ClientSession)
+            self.session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(
+                    tools=[
+                        types.Tool(
+                            name="get_customer_detail",
+                            description="Get customer details",
+                            inputSchema={
+                                "type": "object",
+                                "properties": {
+                                    "params": {
+                                        "type": "object",
+                                        "properties": {"customer_id": {"type": "integer"}},
+                                        "required": ["customer_id"],
+                                    }
+                                },
+                                "required": ["params"],
+                            },
+                        )
+                    ]
+                )
+            )
+            self.session.call_tool = AsyncMock(
+                return_value=types.CallToolResult(
+                    content=[types.TextContent(type="text", text='{"name": "John Doe", "id": 251}')]
+                )
+            )
+
+        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+            return None
+
+    server = TestServer(name="test_server")
+    async with server:
+        await server.load_tools()
+        func = server.functions[0]
+
+        # Call with nested object
+        result = await func.invoke(params={"customer_id": 251})
+
+        assert len(result) == 1
+        assert isinstance(result[0], TextContent)
+
+        # Verify the session.call_tool was called with the correct nested structure
+        server.session.call_tool.assert_called_once()
+        call_args = server.session.call_tool.call_args
+        assert call_args.kwargs["arguments"] == {"params": {"customer_id": 251}}
 
 
 async def test_local_mcp_server_function_execution_error():

@@ -181,27 +181,48 @@ def _get_input_model_from_mcp_tool(tool: types.Tool) -> type[BaseModel]:
     """Creates a Pydantic model from a tools parameters."""
     properties = tool.inputSchema.get("properties", None)
     required = tool.inputSchema.get("required", [])
+    definitions = tool.inputSchema.get("$defs", {})
+
     # Check if 'properties' is missing or not a dictionary
     if not properties:
         return create_model(f"{tool.name}_input")
+
+    def resolve_type(prop_details: dict[str, Any]) -> type:
+        """Resolve JSON Schema type to Python type, handling $ref."""
+        # Handle $ref by resolving the reference
+        if "$ref" in prop_details:
+            ref = prop_details["$ref"]
+            # Extract the reference path (e.g., "#/$defs/CustomerIdParam" -> "CustomerIdParam")
+            if ref.startswith("#/$defs/"):
+                def_name = ref.split("/")[-1]
+                if def_name in definitions:
+                    # Resolve the reference and use its type
+                    resolved = definitions[def_name]
+                    return resolve_type(resolved)
+            # If we can't resolve the ref, default to dict for safety
+            return dict
+
+        # Map JSON Schema types to Python types
+        json_type = prop_details.get("type", "string")
+        match json_type:
+            case "integer":
+                return int
+            case "number":
+                return float
+            case "boolean":
+                return bool
+            case "array":
+                return list
+            case "object":
+                return dict
+            case _:
+                return str  # default
 
     field_definitions: dict[str, Any] = {}
     for prop_name, prop_details in properties.items():
         prop_details = json.loads(prop_details) if isinstance(prop_details, str) else prop_details
 
-        # Map JSON Schema types to Python types
-        json_type = prop_details.get("type", "string")
-        python_type: type = str  # default
-        if json_type == "integer":
-            python_type = int
-        elif json_type == "number":
-            python_type = float
-        elif json_type == "boolean":
-            python_type = bool
-        elif json_type == "array":
-            python_type = list
-        elif json_type == "object":
-            python_type = dict
+        python_type = resolve_type(prop_details)
 
         # Create field definition for create_model
         if prop_name in required:

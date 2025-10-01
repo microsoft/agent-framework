@@ -23,6 +23,7 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingRunner
     public InProcessRunner(Workflow workflow, ICheckpointManager? checkpointManager, string? runId = null, params Type[] knownValidInputTypes)
     {
         this.RunId = runId ?? Guid.NewGuid().ToString("N");
+        this.StartExecutorId = workflow.StartExecutorId;
 
         this.Workflow = Throw.IfNull(workflow);
         this.RunContext = new InProcessRunnerContext(workflow, this.RunId, this.StepTracer);
@@ -37,6 +38,9 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingRunner
 
     /// <inheritdoc cref="ISuperStepRunner.RunId"/>
     public string RunId { get; }
+
+    /// <inheritdoc cref="ISuperStepRunner.StartExecutorId"/>
+    public string StartExecutorId { get; }
 
     private readonly HashSet<Type> _knownValidInputTypes;
     public async ValueTask<bool> IsValidInputTypeAsync(Type messageType)
@@ -209,8 +213,11 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingRunner
         this.StepTracer.TraceActivated(receiverId);
         foreach (MessageEnvelope envelope in envelopes)
         {
-            await executor.ExecuteAsync(envelope.Message, envelope.MessageType, this.RunContext.Bind(receiverId))
-                          .ConfigureAwait(false);
+            await executor.ExecuteAsync(
+                envelope.Message,
+                envelope.MessageType,
+                this.RunContext.Bind(receiverId, envelope.TraceContext)
+            ).ConfigureAwait(false);
         }
     }
 
