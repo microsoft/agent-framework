@@ -25,6 +25,7 @@
     <PackageReference Include="Microsoft.SemanticKernel.Agents.Abstractions" />
     <PackageReference Include="Microsoft.SemanticKernel.Agents.AzureAI" />
     <PackageReference Include="Microsoft.SemanticKernel.Agents.Yaml" />
+    <PackageReference Include="System.Linq.Async" />
   </ItemGroup>
 
   <ItemGroup>

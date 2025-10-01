@@ -1,7 +1,11 @@
 ![Microsoft Agent Framework](docs/assets/readme-banner.png)
 
 # Welcome to Microsoft Agent Framework!
-[![Microsoft Azure AI Foundry Discord](https://dcbadge.limes.pink/api/server/b5zjErwbQM)](https://discord.gg/b5zjErwbQM)
+
+[![Microsoft Azure AI Foundry Discord](https://dcbadge.limes.pink/api/server/b5zjErwbQM?style=flat)](https://discord.gg/b5zjErwbQM)
+[![MS Learn Documentation](https://img.shields.io/badge/MS%20Learn-Documentation-blue)](https://learn.microsoft.com/en-us/agent-framework/)
+[![PyPI](https://img.shields.io/pypi/v/agent-framework)](https://pypi.org/project/agent-framework/)
+[![NuGet](https://img.shields.io/nuget/v/Microsoft.Agents.AI)](https://www.nuget.org/profiles/MicrosoftAgentFramework/)
 
 Welcome to Microsoft's comprehensive multi-language framework for building, orchestrating, and deploying AI agents with support for both .NET and Python implementations. This framework provides everything from simple chat agents to complex multi-agent workflows with graph-based orchestration.
 
@@ -19,15 +23,29 @@ Welcome to Microsoft's comprehensive multi-language framework for building, orch
 
 ## 📋 Getting Started
 
-**Quick Installation:**
+### 📦 Installation
 
-- **Python**: `pip install agent-framework`
-- **.NET**: `dotnet add package Microsoft.Agents.AI`
+Python
 
-**Getting started documentation:**
+```bash
+# This will install all sub-packages, see `python/packages` for individual packages
+pip install agent-framework
+```
 
-- **[Quick Start Guide](https://learn.microsoft.com/agent-framework/tutorials/quick-start)** - Simple getting started instructions
+.NET
+
+```bash
+dotnet add package Microsoft.Agents.AI
+```
+
+### 📚 Documentation
+
+- **[Overview](https://learn.microsoft.com/agent-framework/overview/agent-framework-overview)** - High level overview of the framework
+- **[Quick Start](https://learn.microsoft.com/agent-framework/tutorials/quick-start)** - Get started with a simple agent
 - **[Tutorials](https://learn.microsoft.com/agent-framework/tutorials/overview)** - Step by step tutorials
+- **[User Guide](https://learn.microsoft.com/en-us/agent-framework/user-guide/overview)** - In-depth user guide for building agents and workflows
+- **[Migration from Semantic Kernel](https://learn.microsoft.com/en-us/agent-framework/migration-guide/from-semantic-kernel)** - Guide to migrate from Semantic Kernel
+- **[Migration from AutoGen](https://learn.microsoft.com/en-us/agent-framework/migration-guide/from-autogen)** - Guide to migrate from AutoGen
 
 ### ✨ **Highlights**
 
@@ -69,6 +87,8 @@ Welcome to Microsoft's comprehensive multi-language framework for building, orch
 Create a simple Azure Responses Agent that writes a haiku about the Microsoft Agent Framework
 
 ```python
+# pip install agent-framework
+# Use `az login` to authenticate with Azure CLI
 import asyncio
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
@@ -82,16 +102,21 @@ async def main():
 
   print(await agent.run("Write a haiku about Microsoft Agent Framework."))
 
-asyncio.run(main()) 
+asyncio.run(main())
 ```
 
 ### Basic Agent - .NET
 
 ```c#
+// dotnet add package Microsoft.Agents.AI.OpenAI --prerelease
+// dotnet add package Azure.AI.OpenAI
+// dotnet add package Azure.Identity
+// Use `az login` to authenticate with Azure CLI
 using System;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using OpenAI;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")!;
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME")!;
@@ -117,10 +142,9 @@ Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Fram
 - [Agent Provider Samples](./dotnet/samples/GettingStarted/AgentProviders): samples showing different agent providers
 - [Workflow Samples](./dotnet/samples/GettingStarted/Workflows): advanced multi-agent patterns and workflow orchestration
 
-## Agent Framework Documentation
+## Contributor Resources
 
-- [Documentation](https://learn.microsoft.com/agent-framework/)
-- [Agent Framework Repository](https://github.com/microsoft/agent-framework)
+- [Contributing Guide](./CONTRIBUTING.md)
+- [Python Development Guide](./python/DEV_SETUP.md)
 - [Design Documents](./docs/design)
 - [Architectural Decision Records](./docs/decisions)
-- [MSFT Learn Docs](https://learn.microsoft.com/agent-framework/overview/agent-framework-overview)

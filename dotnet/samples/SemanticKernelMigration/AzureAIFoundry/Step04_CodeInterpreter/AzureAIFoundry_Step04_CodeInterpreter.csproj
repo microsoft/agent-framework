@@ -9,7 +9,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="System.Linq.Async" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
     <PackageReference Include="Microsoft.SemanticKernel" VersionOverride="1.*" />
     <PackageReference Include="Microsoft.SemanticKernel.Agents.AzureAI" VersionOverride="1.*-*" />
