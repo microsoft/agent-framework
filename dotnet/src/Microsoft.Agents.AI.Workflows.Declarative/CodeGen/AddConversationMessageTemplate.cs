@@ -56,8 +56,8 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.CodeGen
  
         EvaluateStringExpression(this.Model.ConversationId, "conversationId", isNullable: true); 
             this.Write("\n        if (string.IsNullOrWhiteSpace(conversationId))\n        {\n            thr" +
-                    "ow new ArgumentNullException(conversationId, nameof(conversationId));\n        }\n" +
-                    "        ChatMessage newMessage = new(ChatRole.");
+                    "ow new DeclarativeActionException($\"Conversation identifier must be defined: {th" +
+                    "is.Id}\");\n        }\n        ChatMessage newMessage = new(ChatRole.");
             this.Write(this.ToStringHelper.ToStringWithCulture(FormatEnum(this.Model.Role, RoleMap)));
             this.Write(", [.. this.GetContentAsync(context).ToEnumerable()]) { AdditionalProperties = thi" +
                     "s.GetMetadata() };\n        await agentProvider.CreateMessageAsync(conversationId" +

@@ -14,7 +14,7 @@ internal sealed class <#= this.Name #>Executor(FormulaSession session, WorkflowA
         EvaluateStringExpression(this.Model.ConversationId, "conversationId", isNullable: true); #>
         if (string.IsNullOrWhiteSpace(conversationId))
         {
-            throw new ArgumentNullException(conversationId, nameof(conversationId));
+            throw new DeclarativeActionException($"Conversation identifier must be defined: {this.Id}");
         }
         ChatMessage newMessage = new(ChatRole.<#= FormatEnum(this.Model.Role, RoleMap) #>, [.. this.GetContentAsync(context).ToEnumerable()]) { AdditionalProperties = this.GetMetadata() };
         await agentProvider.CreateMessageAsync(conversationId, newMessage, cancellationToken).ConfigureAwait(false);<#

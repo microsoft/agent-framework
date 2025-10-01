@@ -56,7 +56,8 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.CodeGen
 
         EvaluateStringExpression(this.Model.ConversationId, "conversationId", isNullable: true); 
             this.Write("\n        if (string.IsNullOrWhiteSpace(conversationId))\n        {\n            thr" +
-                    "ow new ArgumentNullException(conversationId, nameof(conversationId));\n        }");
+                    "ow new DeclarativeActionException($\"Conversation identifier must be defined: {th" +
+                    "is.Id}\");\n        }");
 
         EvaluateValueExpression<ChatMessage[]>(this.Model.Messages, "messages");
         

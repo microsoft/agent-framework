@@ -13,7 +13,7 @@ internal sealed class <#= this.Name #>Executor(FormulaSession session, WorkflowA
         EvaluateStringExpression(this.Model.ConversationId, "conversationId", isNullable: true); #>
         if (string.IsNullOrWhiteSpace(conversationId))
         {
-            throw new ArgumentNullException(conversationId, nameof(conversationId));
+            throw new DeclarativeActionException($"Conversation identifier must be defined: {this.Id}");
         }<#
         EvaluateValueExpression<ChatMessage[]>(this.Model.Messages, "messages");
         #>
