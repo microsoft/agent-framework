@@ -257,6 +257,9 @@ where = ["packages"]
 include = ["agent_framework**"]
 namespaces = true
 
+[tool.flit.module]
+name = "agent_framework_meta"
+
 [build-system]
 requires = ["flit-core >= 3.11,<4.0"]
 build-backend = "flit_core.buildapi"
