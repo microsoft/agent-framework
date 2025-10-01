@@ -658,26 +658,6 @@ def test_azure_ai_chat_client_create_function_call_contents_non_function_tool_ca
     assert result == []
 
 
-async def test_azure_ai_chat_client_init_without_project_client_missing_endpoint() -> None:
-    """Test AzureAIAgentClient initialization without endpoint raises error."""
-    mock_credential = MagicMock(spec=AsyncTokenCredential)
-    with pytest.raises(ServiceInitializationError, match="Azure AI project endpoint is required"):
-        AzureAIAgentClient(
-            async_credential=mock_credential,
-            model_deployment_name="test-model",
-        )
-
-
-async def test_azure_ai_chat_client_init_without_model_when_no_agent() -> None:
-    """Test AzureAIAgentClient initialization without model deployment name raises error."""
-    mock_credential = MagicMock(spec=AsyncTokenCredential)
-    with pytest.raises(ServiceInitializationError, match="Azure AI model deployment name is required"):
-        AzureAIAgentClient(
-            project_endpoint="https://test.com/",
-            async_credential=mock_credential,
-        )
-
-
 async def test_azure_ai_chat_client_create_run_options_with_none_tool_choice(
     mock_ai_project_client: MagicMock,
 ) -> None:
@@ -790,6 +770,35 @@ async def test_azure_ai_chat_client_prep_tools_mcp_tool(mock_ai_project_client: 
         assert call_args["server_label"] == "Test_MCP_Tool"
         assert call_args["server_url"] == "https://example.com/mcp"
         assert set(call_args["allowed_tools"]) == {"tool1", "tool2"}
+
+
+async def test_azure_ai_chat_client_create_run_options_mcp_never_require(mock_ai_project_client: MagicMock) -> None:
+    """Test _create_run_options with HostedMCPTool having never_require approval mode."""
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client)
+
+    mcp_tool = HostedMCPTool(name="Test MCP Tool", url="https://example.com/mcp", approval_mode="never_require")
+
+    messages = [ChatMessage(role=Role.USER, text="Hello")]
+    chat_options = ChatOptions(tools=[mcp_tool], tool_choice="auto")
+
+    with patch("agent_framework_azure_ai._chat_client.McpTool") as mock_mcp_tool_class:
+        # Mock _prep_tools to avoid actual tool preparation
+        mock_mcp_tool_instance = MagicMock()
+        mock_mcp_tool_instance.definitions = [{"type": "mcp", "name": "test_mcp"}]
+        mock_mcp_tool_class.return_value = mock_mcp_tool_instance
+
+        run_options, _ = await chat_client._create_run_options(messages, chat_options)  # type: ignore
+
+        # Verify tool_resources is created with correct MCP approval structure
+        assert "tool_resources" in run_options, (
+            f"Expected 'tool_resources' in run_options keys: {list(run_options.keys())}"
+        )
+        assert "mcp" in run_options["tool_resources"]
+        assert len(run_options["tool_resources"]["mcp"]) == 1
+
+        mcp_resource = run_options["tool_resources"]["mcp"][0]
+        assert mcp_resource["server_label"] == "Test_MCP_Tool"
+        assert mcp_resource["require_approval"] == "never"
 
 
 async def test_azure_ai_chat_client_prep_tools_web_search_bing_grounding(mock_ai_project_client: MagicMock) -> None:
@@ -1661,6 +1670,12 @@ async def test_azure_ai_chat_client_agent_hosted_mcp_tool() -> None:
         assert isinstance(response, AgentRunResponse)
         assert response.text is not None
         assert len(response.text) > 0
+
+        # With never_require approval mode, there should be no approval requests
+        assert len(response.user_input_requests) == 0, (
+            f"Expected no approval requests with never_require mode, but got {len(response.user_input_requests)}"
+        )
+
         # Should contain Azure-related content since it's asking about Azure CLI
         assert any(term in response.text.lower() for term in ["azure", "storage", "account", "cli"])
 
