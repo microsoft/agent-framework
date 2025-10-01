@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from typing import cast
 
 from agent_framework import ChatMessage, Role, SequentialBuilder, WorkflowOutputEvent
-from agent_framework.azure import AzureChatClient
+from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 from semantic_kernel.agents import Agent, ChatCompletionAgent, SequentialOrchestration
 from semantic_kernel.agents.runtime import InProcessRuntime
@@ -61,7 +61,7 @@ async def sk_agent_response_callback(
 
 
 async def run_agent_framework_example(prompt: str) -> list[ChatMessage]:
-    chat_client = AzureChatClient(credential=AzureCliCredential())
+    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     writer = chat_client.create_agent(
         instructions=("You are a concise copywriter. Provide a single, punchy marketing sentence based on the prompt."),

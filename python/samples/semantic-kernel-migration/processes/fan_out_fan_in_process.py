@@ -2,8 +2,6 @@
 
 """Side-by-side sample comparing Semantic Kernel Process Framework and Agent Framework workflows."""
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from dataclasses import dataclass
@@ -35,11 +33,11 @@ if TYPE_CHECKING:
 
 async def _start_local_kernel_process(
     *,
-    process: KernelProcess,
+    process: "KernelProcess",
     kernel: Kernel,
     initial_event: KernelProcessEvent | str | Enum,
     **kwargs: object,
-) -> LocalKernelProcessContext:
+) -> "LocalKernelProcessContext":
     from semantic_kernel.processes.local_runtime.local_kernel_process import start as start_local_kernel_process
 
     return await start_local_kernel_process(
@@ -138,7 +136,7 @@ async def run_semantic_kernel_process_example() -> None:
     step_c.on_event(event_id=CommonEvents.C_STEP_DONE.value).send_event_to(target=kickoff_step)
     step_c.on_event(event_id=CommonEvents.EXIT_REQUESTED.value).stop_process()
 
-    kernel_process: KernelProcess = process.build()
+    kernel_process: "KernelProcess" = process.build()
 
     async with await _start_local_kernel_process(
         process=kernel_process,
