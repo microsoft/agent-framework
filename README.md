@@ -71,6 +71,7 @@ Create a simple Azure Responses Agent that writes a haiku about the Microsoft Ag
 ```python
 import asyncio
 from agent_framework.azure import AzureOpenAIResponsesClient
+from azure.identity import AzureCliCredential
 
 async def main():
     # Initialize a chat agent with basic instructions
