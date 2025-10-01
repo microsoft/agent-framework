@@ -8,6 +8,8 @@
     <VersionSuffix>preview</VersionSuffix>
   </PropertyGroup>
 
+  <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
+
   <ItemGroup>
     <PackageReference Include="A2A.AspNetCore" />
 
