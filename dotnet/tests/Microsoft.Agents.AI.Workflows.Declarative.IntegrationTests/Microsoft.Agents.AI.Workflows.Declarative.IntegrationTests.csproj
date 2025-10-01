@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
@@ -29,7 +29,7 @@
 
   <ItemGroup>
     <None Update="Agents\*.yaml">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
     </None>
     <None Include="$(MSBuildThisFileDirectory)\..\..\..\workflow-samples\Setup\*.yaml" LinkBase="Agents">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
