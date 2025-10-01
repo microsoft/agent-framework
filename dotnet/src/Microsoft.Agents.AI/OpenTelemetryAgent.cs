@@ -85,7 +85,7 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
 
         var response = await this._otelClient.GetResponseAsync(messages, co, cancellationToken).ConfigureAwait(false);
 
-        return (AgentRunResponse)response.RawRepresentation!;
+        return response.RawRepresentation as AgentRunResponse ?? new AgentRunResponse(response);
     }
 
     /// <inheritdoc/>
@@ -96,7 +96,7 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
 
         await foreach (var update in this._otelClient.GetStreamingResponseAsync(messages, co, cancellationToken).ConfigureAwait(false))
         {
-            yield return (AgentRunResponseUpdate)update.RawRepresentation!;
+            yield return update.RawRepresentation as AgentRunResponseUpdate ?? new AgentRunResponseUpdate(update);
         }
     }
 
