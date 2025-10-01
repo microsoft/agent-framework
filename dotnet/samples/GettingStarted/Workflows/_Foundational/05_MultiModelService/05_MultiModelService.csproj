@@ -5,8 +5,7 @@
     <TargetFramework>net9.0</TargetFramework>
 
     <Nullable>enable</Nullable>
-    <ImplicitUsings>disable</ImplicitUsings>
-    <NoWarn>$(NoWarn);OPENAI001</NoWarn>
+    <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 
   <ItemGroup>

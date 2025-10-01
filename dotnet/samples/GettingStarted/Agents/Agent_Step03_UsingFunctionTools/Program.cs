@@ -3,7 +3,6 @@
 // This sample demonstrates how to use a ChatClientAgent with function tools.
 // It shows both non-streaming and streaming agent interactions using menu-related tools.
 
-using System;
 using System.ComponentModel;
 using Azure.AI.OpenAI;
 using Azure.Identity;

@@ -9,9 +9,6 @@ using Microsoft.SemanticKernel.Agents.OpenAI;
 using OpenAI;
 using OpenAI.Assistants;
 
-#pragma warning disable OPENAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
-#pragma warning disable CS8321 // Local function is declared but never used
-
 var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
 var model = System.Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o";
 var userInput = "Create a python code file using the code interpreter tool with a code ready to determine the values in the Fibonacci sequence that are less then the value of 101";
@@ -49,7 +46,6 @@ async Task SKAgentAsync()
         foreach (var item in content.Message.Items)
         {
             // Process each item in the message
-#pragma warning disable SKEXP0110 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
             if (item is AnnotationContent annotation)
             {
                 if (annotation.Kind != AnnotationKind.UrlCitation)
@@ -61,7 +57,6 @@ async Task SKAgentAsync()
             {
                 Console.WriteLine($"  [{item.GetType().Name}] File #{fileReference.FileId}");
             }
-#pragma warning restore SKEXP0110
         }
     }
 

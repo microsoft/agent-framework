@@ -4,7 +4,7 @@
     <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
     <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugTargetFrameworks)</TargetFrameworks>
     <RootNamespace>Microsoft.Agents.AI</RootNamespace>
-    <NoWarn>$(NoWarn);CA1716;IDE0009;MEAI001</NoWarn>
+    <NoWarn>$(NoWarn);MEAI001</NoWarn>
     <VersionSuffix>preview</VersionSuffix>
   </PropertyGroup>
 

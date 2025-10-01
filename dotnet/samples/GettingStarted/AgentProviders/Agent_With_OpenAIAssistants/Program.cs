@@ -5,9 +5,6 @@
 // WARNING: The Assistants API is deprecated and will be shut down.
 // For more information see the OpenAI documentation: https://platform.openai.com/docs/assistants/migration
 
-#pragma warning disable OPENAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
-
-using System;
 using Microsoft.Agents.AI;
 using OpenAI;
 

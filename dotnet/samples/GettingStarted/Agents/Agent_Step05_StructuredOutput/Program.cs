@@ -2,7 +2,6 @@
 
 // This sample shows how to create and use a simple AI agent with Azure OpenAI as the backend, to produce structured output using JSON schema from a class.
 
-using System;
 using System.ComponentModel;
 using System.Text.Json;
 using System.Text.Json.Serialization;
