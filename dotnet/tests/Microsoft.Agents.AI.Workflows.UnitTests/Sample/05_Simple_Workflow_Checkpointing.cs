@@ -112,6 +112,7 @@ internal static class Step5EntryPoint
                         {
                             Console.WriteLine($"*** Max step {maxStep} reached, cancelling.");
                             cancellationSource.Cancel();
+                            return null;
                         }
                         else
                         {
@@ -126,6 +127,7 @@ internal static class Step5EntryPoint
                             requests.Clear();
                             Console.WriteLine("*** Completed processing requests.");
                         }
+
                         break;
 
                     case ExecutorCompletedEvent executorCompleteEvt:

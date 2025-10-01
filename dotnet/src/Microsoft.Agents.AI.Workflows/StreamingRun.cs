@@ -106,9 +106,14 @@ public sealed class StreamingRun
 
             if (blockOnPendingRequest && runStatus == RunStatus.PendingRequests)
             {
-                // Although we are only doing this while there are pending requests, any input allows us to continue
-                // running, so we should not wait until the input is specifically an ExternalResponse.
-                await this.WaitOnInputAsync(cancellationToken).ConfigureAwait(false);
+                // In LegacyStreaming mode, we need to explicitly wait for coordination
+                // In Normal mode, the run loop automatically waits via channel signaling
+
+                //await this.WaitOnInputAsync(cancellation).ConfigureAwait(false);
+
+                // In Normal mode, just break - consumer will call SendResponseAsync which signals run loop
+                // Unless cancellation was requested, in which case preserve that by breaking via cancellation check above
+                yield break;
             }
         } while (runStatus == RunStatus.Running);
     }
