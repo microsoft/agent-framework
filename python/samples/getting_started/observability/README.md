@@ -88,6 +88,17 @@ setup_observability(exporters=[exporter])
 
 > Using this method implicitly enables telemetry, so you do not need to set the `ENABLE_OTEL` environment variable. You can still set `ENABLE_SENSITIVE_DATA` to control whether sensitive data is included in the telemetry, or call the `setup_observability()` function with the `enable_sensitive_data` parameter set to `True`.
 
+#### Logging
+You can control at what level logging happens and thus what logs get exported, you can do this, by adding this:
+
+```python
+import logging
+
+logger = logging.getLogger()
+logger.setLevel(logging.NOTSET)
+```
+This gets the root logger and sets the level of that, automatically other loggers inherit from that one, and you will get detailed logs in your telemetry.
+
 ## Samples
 
 This folder contains different samples demonstrating how to use telemetry in various scenarios.
@@ -152,7 +163,7 @@ exporter = OTLPSpanExporter(endpoint="your-otlp-endpoint", compression=Compressi
 setup_observability(exporters=[exporter])
 ```
 
-## Logs
+### Logs
 
 When you are in Azure Monitor and want to have a overall view of the span, use this query in the logs section:
 
@@ -175,6 +186,17 @@ dependencies
 | project-keep timestamp, target, operation_Id, tool_call_duration, duration, gen_ai*
 | order by timestamp asc
 ```
+
+### Grafana dashboards with Application Insights data
+Besides the Application Insights native UI, you can also use Grafana to visualize the telemetry data in Application Insights. There are two tailored dashboards for you to get started quickly:
+
+#### Agent Overview dashboard
+Grafana Dashboard Gallery link: <https://aka.ms/amg/dash/af-agent>
+![Agent Overview dashboard](https://github.com/Azure/azure-managed-grafana/raw/main/samples/assets/grafana-af-agent.gif)
+
+#### Workflow Overview dashboard
+Grafana Dashboard Gallery link: <https://aka.ms/amg/dash/af-workflow>
+![Workflow Overview dashboard](https://github.com/Azure/azure-managed-grafana/raw/main/samples/assets/grafana-af-workflow.gif)
 
 ## Aspire Dashboard
 

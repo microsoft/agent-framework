@@ -35,7 +35,8 @@ public sealed class ChatClientAgent : AIAgent
     /// <param name="description">Optional description for the agent.</param>
     /// <param name="tools">Optional list of tools that the agent can use during invocation.</param>
     /// <param name="loggerFactory">Optional logger factory to use for logging.</param>
-    public ChatClientAgent(IChatClient chatClient, string? instructions = null, string? name = null, string? description = null, IList<AITool>? tools = null, ILoggerFactory? loggerFactory = null)
+    /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
+    public ChatClientAgent(IChatClient chatClient, string? instructions = null, string? name = null, string? description = null, IList<AITool>? tools = null, ILoggerFactory? loggerFactory = null, IServiceProvider? services = null)
         : this(
               chatClient,
               new ChatClientAgentOptions
@@ -48,7 +49,8 @@ public sealed class ChatClientAgent : AIAgent
                       Tools = tools,
                   }
               },
-              loggerFactory)
+              loggerFactory,
+              services)
     {
     }
 
@@ -58,7 +60,8 @@ public sealed class ChatClientAgent : AIAgent
     /// <param name="chatClient">The chat client to use for invoking the agent.</param>
     /// <param name="options">Full set of options to configure the agent.</param>
     /// <param name="loggerFactory">Optional logger factory to use for logging.</param>
-    public ChatClientAgent(IChatClient chatClient, ChatClientAgentOptions? options, ILoggerFactory? loggerFactory = null)
+    /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
+    public ChatClientAgent(IChatClient chatClient, ChatClientAgentOptions? options, ILoggerFactory? loggerFactory = null, IServiceProvider? services = null)
     {
         _ = Throw.IfNull(chatClient);
 
@@ -71,7 +74,7 @@ public sealed class ChatClientAgent : AIAgent
         this._chatClientType = chatClient.GetType();
 
         // If the user has not opted out of using our default decorators, we wrap the chat client.
-        this.ChatClient = options?.UseProvidedChatClientAsIs is true ? chatClient : chatClient.AsAgentInvokedChatClient(options);
+        this.ChatClient = options?.UseProvidedChatClientAsIs is true ? chatClient : chatClient.WithDefaultAgentMiddleware(options, services);
 
         this._logger = (loggerFactory ?? chatClient.GetService<ILoggerFactory>() ?? NullLoggerFactory.Instance).CreateLogger<ChatClientAgent>();
     }
@@ -112,6 +115,10 @@ public sealed class ChatClientAgent : AIAgent
         (ChatClientAgentThread safeThread, ChatOptions? chatOptions, List<ChatMessage> threadMessages) =
             await this.PrepareThreadAndMessagesAsync(thread, inputMessages, options, cancellationToken).ConfigureAwait(false);
 
+        var chatClient = this.ChatClient;
+
+        chatClient = ApplyRunOptionsTransformations(options, chatClient);
+
         var agentName = this.GetLoggingAgentName();
 
         this._logger.LogAgentChatClientInvokingAgent(nameof(RunAsync), this.Id, agentName, this._chatClientType);
@@ -120,7 +127,7 @@ public sealed class ChatClientAgent : AIAgent
         ChatResponse chatResponse;
         try
         {
-            chatResponse = await this.ChatClient.GetResponseAsync(threadMessages, chatOptions, cancellationToken).ConfigureAwait(false);
+            chatResponse = await chatClient.GetResponseAsync(threadMessages, chatOptions, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -138,8 +145,6 @@ public sealed class ChatClientAgent : AIAgent
         foreach (ChatMessage chatResponseMessage in chatResponse.Messages)
         {
             chatResponseMessage.AuthorName ??= agentName;
-            chatResponseMessage.MessageId ??= Guid.NewGuid().ToString("N");
-            chatResponseMessage.CreatedAt ??= DateTimeOffset.UtcNow;
         }
 
         // Only notify the thread of new messages if the chatResponse was successful to avoid inconsistent message state in the thread.
@@ -149,6 +154,30 @@ public sealed class ChatClientAgent : AIAgent
         await NotifyAIContextProviderOfSuccessAsync(safeThread, inputMessages, chatResponse.Messages, cancellationToken).ConfigureAwait(false);
 
         return new(chatResponse) { AgentId = this.Id };
+    }
+
+    /// <summary>
+    /// Configures the specified <see cref="IChatClient"/> instance based on the provided run options and chat options.
+    /// </summary>
+    /// <remarks>This method applies transformations and customizations to the chat client and chat options
+    /// based on the provided <paramref name="options"/>. If no applicable options are provided, the original <paramref
+    /// name="chatClient"/> is returned unchanged.</remarks>
+    /// <param name="options">The run options to apply. If <paramref name="options"/> is of type <see cref="ChatClientAgentRunOptions"/>,
+    /// additional configuration such as tool transformations and custom chat client creation may be applied.</param>
+    /// <param name="chatClient">The <see cref="IChatClient"/> instance to configure. If a custom chat client factory is provided in <see
+    /// cref="ChatClientAgentRunOptions.ChatClientFactory"/>, a new <see cref="IChatClient"/> instance may be created.</param>
+    /// <returns>The configured <see cref="IChatClient"/> instance. If a custom chat client factory is used, the returned
+    /// instance may differ from the input <paramref name="chatClient"/>.</returns>
+    private static IChatClient ApplyRunOptionsTransformations(AgentRunOptions? options, IChatClient chatClient)
+    {
+        if (options is ChatClientAgentRunOptions agentChatOptions && agentChatOptions.ChatClientFactory is not null)
+        {
+            // If we have a custom chat client factory, we should use it to create a new chat client with the transformed tools.
+            chatClient = agentChatOptions.ChatClientFactory(chatClient);
+            _ = Throw.IfNull(chatClient);
+        }
+
+        return chatClient;
     }
 
     /// <inheritdoc/>
@@ -164,6 +193,11 @@ public sealed class ChatClientAgent : AIAgent
             await this.PrepareThreadAndMessagesAsync(thread, inputMessages, options, cancellationToken).ConfigureAwait(false);
 
         int messageCount = threadMessages.Count;
+
+        var chatClient = this.ChatClient;
+
+        chatClient = ApplyRunOptionsTransformations(options, chatClient);
+
         var loggingAgentName = this.GetLoggingAgentName();
 
         this._logger.LogAgentChatClientInvokingAgent(nameof(RunStreamingAsync), this.Id, loggingAgentName, this._chatClientType);
@@ -175,7 +209,7 @@ public sealed class ChatClientAgent : AIAgent
         try
         {
             // Using the enumerator to ensure we consider the case where no updates are returned for notification.
-            responseUpdatesEnumerator = this.ChatClient.GetStreamingResponseAsync(threadMessages, chatOptions, cancellationToken).GetAsyncEnumerator(cancellationToken);
+            responseUpdatesEnumerator = chatClient.GetStreamingResponseAsync(threadMessages, chatOptions, cancellationToken).GetAsyncEnumerator(cancellationToken);
         }
         catch (Exception ex)
         {
@@ -197,15 +231,12 @@ public sealed class ChatClientAgent : AIAgent
             throw;
         }
 
-        string? messageId = null;
         while (hasUpdates)
         {
             var update = responseUpdatesEnumerator.Current;
             if (update is not null)
             {
                 update.AuthorName ??= this.Name;
-                update.CreatedAt ??= DateTimeOffset.UtcNow;
-                update.MessageId ??= (messageId ??= Guid.NewGuid().ToString("N"));
 
                 responseUpdates.Add(update);
                 yield return new(update) { AgentId = this.Id };
@@ -237,8 +268,8 @@ public sealed class ChatClientAgent : AIAgent
 
     /// <inheritdoc/>
     public override object? GetService(Type serviceType, object? serviceKey = null) =>
-        base.GetService(serviceType, serviceKey)
-        ?? (serviceType == typeof(AIAgentMetadata) ? this._agentMetadata
+        base.GetService(serviceType, serviceKey) ??
+        (serviceType == typeof(AIAgentMetadata) ? this._agentMetadata
         : serviceType == typeof(IChatClient) ? this.ChatClient
         : this.ChatClient.GetService(serviceType, serviceKey));
 
@@ -431,7 +462,7 @@ public sealed class ChatClientAgent : AIAgent
     /// <param name="thread">The conversation thread to use or create.</param>
     /// <param name="inputMessages">The input messages to use.</param>
     /// <param name="runOptions">Optional parameters for agent invocation.</param>
-    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A tuple containing the thread, chat options, and thread messages.</returns>
     private async Task<(ChatClientAgentThread AgentThread, ChatOptions? ChatOptions, List<ChatMessage> ThreadMessages)> PrepareThreadAndMessagesAsync(
         AgentThread? thread,

@@ -3,7 +3,7 @@
   <PropertyGroup>
     <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
     <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugTargetFrameworks)</TargetFrameworks>
-    <VersionSuffix>alpha</VersionSuffix>
+    <VersionSuffix>preview</VersionSuffix>
   </PropertyGroup>
 
   <PropertyGroup>
@@ -23,8 +23,8 @@
 
   <PropertyGroup>
     <!-- NuGet Package Settings -->
-    <Title>Microsoft Agent Framework: Copilot Studio Agent</Title>
-    <Description>Contains the Microsoft Agent Framework Copilot Studio Agent.</Description>
+    <Title>Microsoft Agent Framework Copilot Studio</Title>
+    <Description>Provides Microsoft Agent Framework support for Copilot Studio.</Description>
   </PropertyGroup>
 
 </Project>

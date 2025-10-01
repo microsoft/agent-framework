@@ -170,7 +170,7 @@ dotnet_diagnostic.RCS1173.severity = warning # Use coalesce expression instead o
 dotnet_diagnostic.RCS1186.severity = warning # Use Regex instance instead of static method.
 dotnet_diagnostic.RCS1188.severity = warning # Remove redundant auto-property initialization.
 dotnet_diagnostic.RCS1197.severity = suggestion # Optimize StringBuilder.AppendLine call.
-dotnet_diagnostic.RCS1201.severity = warning # Use method chaining.
+dotnet_diagnostic.RCS1201.severity = suggestion # Use method chaining.
 
 dotnet_diagnostic.IDE0001.severity = warning # Simplify name
 dotnet_diagnostic.IDE0002.severity = warning # Simplify member access
@@ -207,6 +207,7 @@ dotnet_diagnostic.CS1998.severity = none # async method lacks 'await' operators 
 dotnet_diagnostic.CA2000.severity = none # Call System.IDisposable.Dispose on object before all references to it are out of scope
 dotnet_diagnostic.CA2225.severity = none # Operator overloads have named alternates
 dotnet_diagnostic.CA2227.severity = none # Change to be read-only by removing the property setter
+dotnet_diagnostic.CA2249.severity = suggestion # Consider using 'Contains' method instead of 'IndexOf' method
 dotnet_diagnostic.CA2253.severity = none # Named placeholders in the logging message template should not be comprised of only numeric characters
 dotnet_diagnostic.CA2253.severity = none # Named placeholders in the logging message template should not be comprised of only numeric characters
 dotnet_diagnostic.CA2263.severity = suggestion # Use generic overload

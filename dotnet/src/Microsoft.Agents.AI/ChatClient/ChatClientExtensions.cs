@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Diagnostics;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
@@ -10,15 +11,9 @@ namespace Microsoft.Extensions.AI;
 
 internal static class ChatClientExtensions
 {
-    internal static IChatClient AsAgentInvokedChatClient(this IChatClient chatClient, ChatClientAgentOptions? options)
+    internal static IChatClient WithDefaultAgentMiddleware(this IChatClient chatClient, ChatClientAgentOptions? options, IServiceProvider? services = null)
     {
         var chatBuilder = chatClient.AsBuilder();
-
-        // AgentInvokingChatClient should be the outermost decorator
-        if (chatClient is not AgentInvokedChatClient agentInvokingChatClient)
-        {
-            chatBuilder.UseAgentInvocation();
-        }
 
         if (chatClient.GetService<FunctionInvokingChatClient>() is null)
         {
@@ -30,7 +25,7 @@ internal static class ChatClientExtensions
             });
         }
 
-        var agentChatClient = chatBuilder.Build();
+        var agentChatClient = chatBuilder.Build(services);
 
         if (options?.ChatOptions?.Tools is { Count: > 0 })
         {

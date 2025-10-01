@@ -67,11 +67,10 @@ public abstract class InMemoryAgentThread : AgentThread
     /// Serializes the current object's state to a <see cref="JsonElement"/> using the specified serialization options.
     /// </summary>
     /// <param name="jsonSerializerOptions">The JSON serialization options to use.</param>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="JsonElement"/> representation of the object's state.</returns>
-    public override async Task<JsonElement> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
     {
-        var storeState = await this.MessageStore.SerializeStateAsync(jsonSerializerOptions, cancellationToken).ConfigureAwait(false);
+        var storeState = this.MessageStore.Serialize(jsonSerializerOptions);
 
         var state = new InMemoryAgentThreadState
         {

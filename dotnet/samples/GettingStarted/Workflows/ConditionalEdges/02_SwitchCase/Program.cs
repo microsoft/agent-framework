@@ -7,8 +7,8 @@ using System.Threading.Tasks;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.Workflows;
-using Microsoft.Agents.Workflows.Reflection;
+using Microsoft.Agents.AI.Workflows;
+using Microsoft.Agents.AI.Workflows.Reflection;
 using Microsoft.Extensions.AI;
 
 namespace WorkflowSwitchCaseSample;
@@ -107,7 +107,7 @@ public static class Program
         {
             ChatOptions = new()
             {
-                ResponseFormat = ChatResponseFormat.ForJsonSchema(AIJsonUtilities.CreateJsonSchema(typeof(DetectionResult)))
+                ResponseFormat = ChatResponseFormat.ForJsonSchema<DetectionResult>()
             }
         });
 
@@ -120,7 +120,7 @@ public static class Program
         {
             ChatOptions = new()
             {
-                ResponseFormat = ChatResponseFormat.ForJsonSchema(AIJsonUtilities.CreateJsonSchema(typeof(EmailResponse)))
+                ResponseFormat = ChatResponseFormat.ForJsonSchema<EmailResponse>()
             }
         });
 }

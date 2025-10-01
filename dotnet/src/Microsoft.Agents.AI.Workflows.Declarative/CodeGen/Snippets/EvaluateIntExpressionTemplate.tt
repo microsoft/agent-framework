@@ -1,0 +1,26 @@
+﻿<#+
+void EvaluateIntExpression(IntExpression expression, string targetVariable, bool isNullable = false)
+{
+    string typeName = isNullable ? "int?" : "int";
+    if (expression is null)
+    {#>
+        <#= typeName #> <#= targetVariable #> = <#= isNullable ? "null" : "0" #>;<#+ 
+    }
+    else if (expression.IsLiteral)
+    {#>
+        <#= typeName #> <#= targetVariable #> = <#= expression.LiteralValue #>;<#+ 
+    }
+    else if (expression.IsVariableReference && expression.VariableReference.SegmentCount == 2)
+    {#>
+        <#= typeName #> <#= targetVariable #> = await context.ReadStateAsync<int>(key: "<#= expression.VariableReference.VariableName #>", scopeName: "<#= expression.VariableReference.NamespaceAlias #>").ConfigureAwait(false);<#+
+    }
+    else if (expression.IsVariableReference)
+    {#>
+        <#= typeName #>? <#= targetVariable #> = await context.EvaluateValueAsync<<#= typeName #>>(<#= FormatStringValue(expression.VariableReference.ToString()) #>).ConfigureAwait(false);<#+ 
+    }
+    else
+    {#>
+        <#= typeName #> <#= targetVariable #> = await context.EvaluateValueAsync<<#= typeName #>>(<#= FormatStringValue(expression.ExpressionText) #>).ConfigureAwait(false);<#+ 
+    }
+}
+#>

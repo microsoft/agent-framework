@@ -1,0 +1,14 @@
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: my_workflow
+  actions:
+
+    - kind: InvokeAzureAgent
+      id: invoke_agent
+      conversationId: =System.ConversationId
+      agent:
+        name: =Env.MY_STUDENT
+      input:
+        messages: =[UserMessage(System.LastMessageText)]

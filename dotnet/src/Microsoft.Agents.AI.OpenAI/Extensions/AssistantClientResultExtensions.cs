@@ -17,15 +17,20 @@ public static class AssistantExtensions
     /// <param name="assistantClientResult">The client result containing the assistant.</param>
     /// <param name="assistantClient">The assistant client.</param>
     /// <param name="chatOptions">Optional chat options.</param>
+    /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the assistant.</returns>
-    public static ChatClientAgent AsAIAgent(this ClientResult<Assistant> assistantClientResult, AssistantClient assistantClient, ChatOptions? chatOptions = null)
+    public static ChatClientAgent AsAIAgent(
+        this ClientResult<Assistant> assistantClientResult,
+        AssistantClient assistantClient,
+        ChatOptions? chatOptions = null,
+        Func<IChatClient, IChatClient>? clientFactory = null)
     {
         if (assistantClientResult is null)
         {
             throw new ArgumentNullException(nameof(assistantClientResult));
         }
 
-        return AsAIAgent(assistantClientResult.Value, assistantClient, chatOptions);
+        return AsAIAgent(assistantClientResult.Value, assistantClient, chatOptions, clientFactory);
     }
 
     /// <summary>
@@ -34,8 +39,13 @@ public static class AssistantExtensions
     /// <param name="assistantMetadata">The assistant metadata.</param>
     /// <param name="assistantClient">The assistant client.</param>
     /// <param name="chatOptions">Optional chat options.</param>
+    /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the assistant.</returns>
-    public static ChatClientAgent AsAIAgent(this Assistant assistantMetadata, AssistantClient assistantClient, ChatOptions? chatOptions = null)
+    public static ChatClientAgent AsAIAgent(
+        this Assistant assistantMetadata,
+        AssistantClient assistantClient,
+        ChatOptions? chatOptions = null,
+        Func<IChatClient, IChatClient>? clientFactory = null)
     {
         if (assistantMetadata is null)
         {
@@ -47,6 +57,11 @@ public static class AssistantExtensions
         }
 
         var chatClient = assistantClient.AsIChatClient(assistantMetadata.Id);
+
+        if (clientFactory is not null)
+        {
+            chatClient = clientFactory(chatClient);
+        }
 
         return new ChatClientAgent(chatClient, options: new()
         {

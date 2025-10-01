@@ -9,9 +9,9 @@ using System.Reflection;
 using System.Threading.Tasks;
 using Azure.AI.Agents.Persistent;
 using Azure.Identity;
-using Microsoft.Agents.Workflows;
-using Microsoft.Agents.Workflows.Declarative;
-using Microsoft.Agents.Workflows.Declarative.Events;
+using Microsoft.Agents.AI.Workflows;
+using Microsoft.Agents.AI.Workflows.Declarative;
+using Microsoft.Agents.AI.Workflows.Declarative.Events;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 
@@ -62,7 +62,7 @@ internal sealed class Program
         // Run the workflow, just like any other workflow
         string input = this.GetWorkflowInput();
 
-        CheckpointManager checkpointManager = CheckpointManager.Default;
+        CheckpointManager checkpointManager = CheckpointManager.CreateInMemory();
         Checkpointed<StreamingRun> run = await InProcessExecution.StreamAsync(workflow, input, checkpointManager);
 
         bool isComplete = false;
@@ -88,7 +88,7 @@ internal sealed class Program
                 // Restore the latest checkpoint.
                 Debug.WriteLine($"RESTORE #{this.LastCheckpoint.CheckpointId}");
                 Notify("\nWORKFLOW: Restore");
-                run = await InProcessExecution.ResumeStreamAsync(workflow, this.LastCheckpoint, checkpointManager);
+                run = await InProcessExecution.ResumeStreamAsync(workflow, this.LastCheckpoint, checkpointManager, run.Run.RunId);
             }
             else
             {
@@ -178,6 +178,7 @@ internal sealed class Program
                     }
                     else
                     {
+                        await run.Run.EndRunAsync().ConfigureAwait(false);
                         return requestInfo.Request;
                     }
                     break;

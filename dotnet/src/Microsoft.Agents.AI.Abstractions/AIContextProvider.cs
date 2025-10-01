@@ -21,7 +21,7 @@ namespace Microsoft.Agents.AI;
 public abstract class AIContextProvider
 {
     /// <summary>
-    /// Called just before the Model/Agent/etc. is invoked
+    /// Called just before the Model/Agent/etc. is invoked.
     /// Implementers can load any additional context required at this time,
     /// and they should return any context that should be passed to the Model/Agent/etc.
     /// </summary>
@@ -31,28 +31,28 @@ public abstract class AIContextProvider
     public abstract ValueTask<AIContext> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Called just before the Model/Agent/etc. is invoked
-    /// Implementers can load any additional context required at this time,
-    /// and they should return any context that should be passed to the Model/Agent/etc.
+    /// Called just after the Model/Agent/etc. is invoked.
+    /// Implementers can use the request and response messages in the provided <paramref name="context"/> to update
+    /// any internal state or perform any necessary actions based on the outcome of the invocation.
+    /// E.g. extracting memories from the user messages to remember a user preference.
     /// </summary>
     /// <param name="context">Contains the event context.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A task that completes when the context has been rendered and returned.</returns>
+    /// <remarks>
+    /// This method is called regardless of whether the invocation succeeded or failed.
+    /// To check if the invocation was successful, you can inspect the <see cref="InvokedContext.InvokeException"/> property.
+    /// </remarks>
     public virtual ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default)
-    {
-        return default;
-    }
+        => default;
 
     /// <summary>
     /// Serializes the current object's state to a <see cref="JsonElement"/> using the specified serialization options.
     /// </summary>
     /// <param name="jsonSerializerOptions">The JSON serialization options to use.</param>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="JsonElement"/> representation of the object's state.</returns>
-    public virtual ValueTask<JsonElement?> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-    {
-        return default;
-    }
+    public virtual JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+        => default;
 
     /// <summary>Asks the <see cref="AIContextProvider"/> for an object of the specified type <paramref name="serviceType"/>.</summary>
     /// <param name="serviceType">The type of object being requested.</param>

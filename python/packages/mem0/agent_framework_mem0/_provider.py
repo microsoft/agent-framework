@@ -5,15 +5,19 @@ from collections.abc import MutableSequence, Sequence
 from contextlib import AbstractAsyncContextManager
 from typing import Any
 
-from agent_framework import ChatMessage, Context, ContextProvider, TextContent
+from agent_framework import ChatMessage, Context, ContextProvider
 from agent_framework.exceptions import ServiceInitializationError
 from mem0 import AsyncMemory, AsyncMemoryClient
-from pydantic import PrivateAttr
 
 if sys.version_info >= (3, 11):
     from typing import NotRequired, Self, TypedDict  # pragma: no cover
 else:
     from typing_extensions import NotRequired, Self, TypedDict  # pragma: no cover
+
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import override  # type: ignore[import] # pragma: no cover
 
 
 # Type aliases for Mem0 search response formats (v1.1 and v2; v1 is deprecated, but matches the type definition for v2)
@@ -26,19 +30,11 @@ MemorySearchResponse_v2 = list[dict[str, Any]]
 
 
 class Mem0Provider(ContextProvider):
-    mem0_client: AsyncMemory | AsyncMemoryClient
-    api_key: str | None = None
-    application_id: str | None = None
-    agent_id: str | None = None
-    thread_id: str | None = None
-    user_id: str | None = None
-    scope_to_per_operation_thread_id: bool = False
-    context_prompt: str = ContextProvider.DEFAULT_CONTEXT_PROMPT
-
-    _should_close_client: bool = PrivateAttr(default=False)  # Track whether we should close client connection
+    """Mem0 Context Provider."""
 
     def __init__(
         self,
+        mem0_client: AsyncMemory | AsyncMemoryClient | None = None,
         api_key: str | None = None,
         application_id: str | None = None,
         agent_id: str | None = None,
@@ -46,11 +42,11 @@ class Mem0Provider(ContextProvider):
         user_id: str | None = None,
         scope_to_per_operation_thread_id: bool = False,
         context_prompt: str = ContextProvider.DEFAULT_CONTEXT_PROMPT,
-        mem0_client: AsyncMemory | AsyncMemoryClient | None = None,
     ) -> None:
         """Initializes a new instance of the Mem0Provider class.
 
         Args:
+            mem0_client: A pre-created Mem0 MemoryClient or None to create a default client.
             api_key: The API key for authenticating with the Mem0 API. If not
                 provided, it will attempt to use the MEM0_API_KEY environment variable.
             application_id: The application ID for scoping memories or None.
@@ -59,24 +55,20 @@ class Mem0Provider(ContextProvider):
             user_id: The user ID for scoping memories or None.
             scope_to_per_operation_thread_id: Whether to scope memories to per-operation thread ID.
             context_prompt: The prompt to prepend to retrieved memories.
-            mem0_client: A pre-created Mem0 MemoryClient or None to create a default client.
         """
         should_close_client = False
         if mem0_client is None:
             mem0_client = AsyncMemoryClient(api_key=api_key)
             should_close_client = True
 
-        super().__init__(
-            api_key=api_key,  # type: ignore[reportCallIssue]
-            application_id=application_id,  # type: ignore[reportCallIssue]
-            agent_id=agent_id,  # type: ignore[reportCallIssue]
-            thread_id=thread_id,  # type: ignore[reportCallIssue]
-            user_id=user_id,  # type: ignore[reportCallIssue]
-            scope_to_per_operation_thread_id=scope_to_per_operation_thread_id,  # type: ignore[reportCallIssue]
-            context_prompt=context_prompt,  # type: ignore[reportCallIssue]
-            mem0_client=mem0_client,  # type: ignore[reportCallIssue]
-        )
-
+        self.api_key = api_key
+        self.application_id = application_id
+        self.agent_id = agent_id
+        self.thread_id = thread_id
+        self.user_id = user_id
+        self.scope_to_per_operation_thread_id = scope_to_per_operation_thread_id
+        self.context_prompt = context_prompt
+        self.mem0_client = mem0_client
         self._per_operation_thread_id: str | None = None
         self._should_close_client = should_close_client
 
@@ -100,18 +92,27 @@ class Mem0Provider(ContextProvider):
         self._validate_per_operation_thread_id(thread_id)
         self._per_operation_thread_id = self._per_operation_thread_id or thread_id
 
-    async def messages_adding(self, thread_id: str | None, new_messages: ChatMessage | Sequence[ChatMessage]) -> None:
-        """Called when a new message is being added to the thread.
-
-        Args:
-            thread_id: The ID of the thread or None.
-            new_messages: New messages to add.
-        """
+    @override
+    async def invoked(
+        self,
+        request_messages: ChatMessage | Sequence[ChatMessage],
+        response_messages: ChatMessage | Sequence[ChatMessage] | None = None,
+        invoke_exception: Exception | None = None,
+        **kwargs: Any,
+    ) -> None:
         self._validate_filters()
-        self._validate_per_operation_thread_id(thread_id)
-        self._per_operation_thread_id = self._per_operation_thread_id or thread_id
 
-        messages_list = [new_messages] if isinstance(new_messages, ChatMessage) else list(new_messages)
+        request_messages_list = (
+            [request_messages] if isinstance(request_messages, ChatMessage) else list(request_messages)
+        )
+        response_messages_list = (
+            [response_messages]
+            if isinstance(response_messages, ChatMessage)
+            else list(response_messages)
+            if response_messages
+            else []
+        )
+        messages_list = [*request_messages_list, *response_messages_list]
 
         messages: list[dict[str, str]] = [
             {"role": message.role.value, "content": message.text}
@@ -128,11 +129,13 @@ class Mem0Provider(ContextProvider):
                 metadata={"application_id": self.application_id},
             )
 
-    async def model_invoking(self, messages: ChatMessage | MutableSequence[ChatMessage]) -> Context:
+    @override
+    async def invoking(self, messages: ChatMessage | MutableSequence[ChatMessage], **kwargs: Any) -> Context:
         """Called before invoking the AI model to provide context.
 
         Args:
             messages: List of new messages in the thread.
+            kwargs: not used at present.
 
         Returns:
             Context: Context object containing instructions with memories.
@@ -159,9 +162,11 @@ class Mem0Provider(ContextProvider):
 
         line_separated_memories = "\n".join(memory.get("memory", "") for memory in memories)
 
-        content = TextContent(f"{self.context_prompt}\n{line_separated_memories}") if line_separated_memories else None
-
-        return Context(contents=[content] if content else None)
+        return Context(
+            messages=[ChatMessage(role="user", text=f"{self.context_prompt}\n{line_separated_memories}")]
+            if line_separated_memories
+            else None
+        )
 
     def _validate_filters(self) -> None:
         """Validates that at least one filter is provided.

@@ -97,7 +97,7 @@ public sealed class InMemoryChatMessageStore : ChatMessageStore, IList<ChatMessa
     }
 
     /// <inheritdoc />
-    public override async Task AddMessagesAsync(IEnumerable<ChatMessage> messages, CancellationToken cancellationToken)
+    public override async Task AddMessagesAsync(IEnumerable<ChatMessage> messages, CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNull(messages);
 
@@ -110,7 +110,7 @@ public sealed class InMemoryChatMessageStore : ChatMessageStore, IList<ChatMessa
     }
 
     /// <inheritdoc />
-    public override async Task<IEnumerable<ChatMessage>> GetMessagesAsync(CancellationToken cancellationToken)
+    public override async Task<IEnumerable<ChatMessage>> GetMessagesAsync(CancellationToken cancellationToken = default)
     {
         if (this.ReducerTriggerEvent is ChatReducerTriggerEvent.BeforeMessagesRetrieval && this.ChatReducer is not null)
         {
@@ -121,14 +121,14 @@ public sealed class InMemoryChatMessageStore : ChatMessageStore, IList<ChatMessa
     }
 
     /// <inheritdoc />
-    public override ValueTask<JsonElement?> SerializeStateAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
     {
         StoreState state = new()
         {
             Messages = this._messages,
         };
 
-        return new ValueTask<JsonElement?>(JsonSerializer.SerializeToElement(state, AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(StoreState))));
+        return JsonSerializer.SerializeToElement(state, AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(StoreState)));
     }
 
     /// <inheritdoc />

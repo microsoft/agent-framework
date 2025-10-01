@@ -1,9 +1,9 @@
 # Get Started with Microsoft Agent Framework Mem0
 
-Please install this package as the extra for `agent-framework`:
+Please install this package via pip:
 
 ```bash
-pip install agent-framework[mem0]
+pip install agent-framework-mem0
 ```
 
 ## Memory Context Provider

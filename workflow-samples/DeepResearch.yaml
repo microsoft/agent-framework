@@ -75,7 +75,7 @@ trigger:
       id: setVariable_10u2ZN
       displayName: Set Task
       variable: Local.SeedTask
-      value: =Local.InputTask
+      value: =UserMessage(Local.InputTask)
 
     - kind: SendActivity
       id: sendActivity_yFsbRy
@@ -94,7 +94,7 @@ trigger:
       output:
         messages: Local.TaskFacts
       input:
-        messages: =[UserMessage(Local.InputTask)]
+        messages: =UserMessage(Local.InputTask)
         additionalInstructions: |-
           In order to help begin addressing the user request, please answer the following pre-survey to the best of your ability. 
           Keep in mind that you are Ken Jennings-level with trivia, and Mensa-level with puzzles, so there should be a deep well to draw from.
@@ -128,7 +128,7 @@ trigger:
       output:
         messages: Local.Plan
       input:
-        messages: =[UserMessage(Local.InputTask)]
+        messages: =UserMessage(Local.InputTask)
         additionalInstructions: |-
           Your only job is to devise an efficient plan that identifies (by name) how a team member may contribute to addressing the user request.
 
@@ -160,13 +160,13 @@ trigger:
         # FACTS
         Consider this initial fact sheet:
 
-        " & Trim(Local.TaskFacts.Text) & "
+        " & Trim(Last(Local.TaskFacts).Text) & "
 
 
         # PLAN
         Here is the plan to follow as best as possible:
-  
-        " & Local.Plan.Text
+
+        " & Last(Local.Plan).Text
 
     - kind: SendActivity
       id: sendActivity_bwNZiM
@@ -181,7 +181,7 @@ trigger:
       output:
         messages: Local.ProgressLedgerUpdate
       input:
-        messages: =[UserMessage(Local.AgentResponseText)]
+        messages: =UserMessage(Local.AgentResponseText)
         additionalInstructions: |-
           Recall we are working on the following request:
 
@@ -228,7 +228,7 @@ trigger:
       id: parse_rNZtlV
       displayName: Parse ledger response
       variable: Local.TypedProgressLedger
-      value: =Local.ProgressLedgerUpdate.Text
+      value: =Last(Local.ProgressLedgerUpdate).Text
       valueType:
         kind: Record
         properties:
@@ -288,7 +288,7 @@ trigger:
               output:
                 messages: Local.FinalResponse
               input:
-                messages: =[UserMessage(Local.SeedTask)]
+                messages: =Local.SeedTask
                 additionalInstructions: |-
                   We have completed the task.
                   Based only on the conversation and without adding any new information, synthesize the result of the conversation as a complete response to the user task.
@@ -369,12 +369,10 @@ trigger:
                         messages: Local.TaskFacts
                       input:
                         messages: |-
-                          =[
-                            UserMessage(
+                          =UserMessage(
                             "As a reminder, we are working to solve the following task:
 
                             " & Local.InputTask)
-                          ]
                         additionalInstructions: |-
                           It's clear we aren't making as much progress as we would like, but we may have learned something new.
                           Please rewrite the following fact sheet, updating it to include anything new we have learned that may be helpful. 
@@ -486,14 +484,14 @@ trigger:
               output:
                 messages: Local.AgentResponse
               input:
-                messages: =[UserMessage(Local.SeedTask)]
+                messages: =Local.SeedTask
                 additionalInstructions: |-
                   {Local.TypedProgressLedger.instruction_or_question.answer}
 
             - kind: SetVariable
               id: setVariable_XzNrdM
               variable: Local.AgentResponseText
-              value: =Local.AgentResponse.Text
+              value: =Last(Local.AgentResponse).Text
 
             - kind: ResetVariable
               id: setVariable_8eIx2A

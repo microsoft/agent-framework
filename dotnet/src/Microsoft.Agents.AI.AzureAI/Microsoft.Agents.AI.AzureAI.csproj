@@ -3,7 +3,7 @@
   <PropertyGroup>
     <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
     <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugTargetFrameworks)</TargetFrameworks>
-    <VersionSuffix>alpha</VersionSuffix>
+    <VersionSuffix>preview</VersionSuffix>
     <ImplicitUsings>enable</ImplicitUsings>
     <NoWarn>$(NoWarn);IDE0009;</NoWarn>
   </PropertyGroup>
@@ -22,8 +22,8 @@
 
   <PropertyGroup>
     <!-- NuGet Package Settings -->
-    <Title>Microsoft.Agents.AI.AzureAI</Title>
-    <Description>Implementation of generative AI abstractions for Azure AI Persistent Agents.</Description>
+    <Title>Microsoft Agent Framework AzureAI</Title>
+    <Description>Provides Microsoft Agent Framework support for Azure AI.</Description>
   </PropertyGroup>
 
 </Project>
