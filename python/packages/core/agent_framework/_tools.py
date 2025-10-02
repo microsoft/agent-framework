@@ -1101,7 +1101,7 @@ async def _execute_function_calls(
     # Run all function calls concurrently
     return await asyncio.gather(*[
         _auto_invoke_function(
-            function_call_content=function_call,
+            function_call_content=function_call,  # type: ignore[arg-type]
             custom_args=custom_args,
             tool_map=tool_map,
             sequence_index=seq_idx,
