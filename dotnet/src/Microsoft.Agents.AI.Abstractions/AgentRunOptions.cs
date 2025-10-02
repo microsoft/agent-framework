@@ -8,6 +8,14 @@ namespace Microsoft.Agents.AI;
 /// <summary>
 /// Provides optional parameters and configuration settings for controlling agent run behavior.
 /// </summary>
+/// <remarks>
+/// <para>
+/// This class currently has no options, but may be extended in the future to include additional configuration settings.
+/// </para>
+/// <para>
+/// Implementations of <see cref="AIAgent"/> may provide subclasses of <see cref="AgentRunOptions"/> with additional options specific to that agent type.
+/// </para>
+/// </remarks>
 public class AgentRunOptions
 {
     /// <summary>

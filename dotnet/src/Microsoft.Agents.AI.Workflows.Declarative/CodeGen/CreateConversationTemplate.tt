@@ -10,8 +10,9 @@ internal sealed class <#= this.Name #>Executor(FormulaSession session, WorkflowA
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
         string conversationId = await agentProvider.CreateConversationAsync(cancellationToken).ConfigureAwait(false);<#
-        AssignVariable(this.ConversationId, "conversationId");
-        #>
+        AssignVariable(this.ConversationId, "conversationId");#>
+        await context.AddEventAsync(new ConversationUpdateEvent(conversationId)).ConfigureAwait(false);
+
         return default;
     }
 }
