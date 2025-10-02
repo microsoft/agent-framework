@@ -8,9 +8,6 @@
   "workspaceFolder": "/workspaces/agent-framework-1/dotnet/",
   "customizations": {
     "vscode": {
-      "settings": {
-        "dotnet.defaultSolution": "agent-framework-dotnet.slnx"
-      },
       "extensions": [
         "ms-dotnettools.csdevkit"
       ]
