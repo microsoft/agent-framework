@@ -14,16 +14,19 @@ namespace Microsoft.Agents.AI.A2A;
 /// <remarks>
 /// This implementation only handles:
 /// <list type="bullet">
-/// <item><code>TaskManager.OnMessageReceived</code></item>
-/// <item><code>TaskManager.OnAgentCardQuery</code></item>
+/// <item><description>TaskManager.OnMessageReceived</description></item>
+/// <item><description>TaskManager.OnAgentCardQuery</description></item>
 /// </list>
 /// Support for task management will be added later as part of the long-running task execution work.
 /// </remarks>
 public sealed class A2AHostAgent
 {
     /// <summary>
-    /// Initializes a new instance of the SemanticKernelTravelAgent
+    /// Initialize a new instance of the <see cref="A2AHostAgent"/> class.
     /// </summary>
+    /// <param name="agent">The <see cref="AIAgent"/> to host.</param>
+    /// <param name="agentCard">The <see cref="AgentCard"/> for the hosted agent.</param>
+    /// <param name="taskManager">The <see cref="ITaskManager"/> for handling agent tasks.
     public A2AHostAgent(AIAgent agent, AgentCard agentCard, TaskManager? taskManager = null)
     {
         Throw.IfNull(agent);
@@ -36,19 +39,19 @@ public sealed class A2AHostAgent
     }
 
     /// <summary>
-    /// The associated <see cref="AIAgent"/>
+    /// The associated <see cref="AIAgent"/>.
     /// </summary>
     public AIAgent? Agent { get; }
 
     /// <summary>
-    /// The associated <see cref="ITaskManager"/>
+    /// The associated <see cref="ITaskManager"/> for handling agent tasks.
     /// </summary>
     public TaskManager? TaskManager { get; private set; }
 
     /// <summary>
-    /// Attach the <see cref="A2AAgent"/> to the provided <see cref="ITaskManager"/>
+    /// Attach the <see cref="A2AAgent"/> to the provided <see cref="ITaskManager"/>.
     /// </summary>
-    /// <param name="taskManager"></param>
+    /// <param name="taskManager">The <see cref="ITaskManager"/> to attach to.</param>
     public void Attach(TaskManager taskManager)
     {
         Throw.IfNull(taskManager);
@@ -59,7 +62,7 @@ public sealed class A2AHostAgent
     }
 
     /// <summary>
-    /// Handle a received message
+    /// Handle a received message.
     /// </summary>
     /// <param name="messageSend">The <see cref="MessageSendParams"/> to handle</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
@@ -91,7 +94,7 @@ public sealed class A2AHostAgent
     /// <summary>
     /// Return the <see cref="AgentCard"/> associated with this hosted agent.
     /// </summary>
-    /// <param name="agentUrl">Current URL for the agent</param>
+    /// <param name="agentUrl">Current URL for the agent.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     public Task<AgentCard> GetAgentCardAsync(string agentUrl, CancellationToken cancellationToken = default)
     {
