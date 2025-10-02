@@ -75,32 +75,35 @@ class Executor(DictConvertible):
 
     ### Input Types
     The types of messages an executor can process, discovered from handler method signatures:
-    ```python
-    class MyExecutor(Executor):
-        @handler
-        async def handle_string(self, message: str, ctx: WorkflowContext) -> None:
-            # This executor can handle 'str' input types
-    ```
+
+    .. code-block:: python
+
+        class MyExecutor(Executor):
+            @handler
+            async def handle_string(self, message: str, ctx: WorkflowContext) -> None:
+                # This executor can handle 'str' input types
     Access via the `input_types` property.
 
     ### Output Types
     The types of messages an executor can send to other executors via `ctx.send_message()`:
-    ```python
-    class MyExecutor(Executor):
-        @handler
-        async def handle_data(self, message: str, ctx: WorkflowContext[int | bool]) -> None:
-            # This executor can send 'int' or 'bool' messages
-    ```
+
+    .. code-block:: python
+
+        class MyExecutor(Executor):
+            @handler
+            async def handle_data(self, message: str, ctx: WorkflowContext[int | bool]) -> None:
+                # This executor can send 'int' or 'bool' messages
     Access via the `output_types` property.
 
     ### Workflow Output Types
     The types of data an executor can emit as workflow-level outputs via `ctx.yield_output()`:
-    ```python
-    class MyExecutor(Executor):
-        @handler
-        async def process(self, message: str, ctx: WorkflowContext[int, str]) -> None:
-            # Can send 'int' messages AND yield 'str' workflow outputs
-    ```
+
+    .. code-block:: python
+
+        class MyExecutor(Executor):
+            @handler
+            async def process(self, message: str, ctx: WorkflowContext[int, str]) -> None:
+                # Can send 'int' messages AND yield 'str' workflow outputs
     Access via the `workflow_output_types` property.
 
     ## Handler Discovery
@@ -108,66 +111,73 @@ class Executor(DictConvertible):
 
     ### @handler Decorator
     Marks methods that process incoming messages:
-    ```python
-    class MyExecutor(Executor):
-        @handler
-        async def handle_text(self, message: str, ctx: WorkflowContext[str]) -> None:
-            await ctx.send_message(message.upper())
-    ```
+
+    .. code-block:: python
+
+        class MyExecutor(Executor):
+            @handler
+            async def handle_text(self, message: str, ctx: WorkflowContext[str]) -> None:
+                await ctx.send_message(message.upper())
 
     ### Sub-workflow Request Interception
     Use @handler methods to intercept sub-workflow requests:
-    ```python
-    class ParentExecutor(Executor):
-        @handler
-        async def handle_domain_request(
-            self,
-            request: DomainRequest,  # Subclass of RequestInfoMessage
-            ctx: WorkflowContext[RequestResponse[RequestInfoMessage, Any] | DomainRequest],
-        ) -> None:
-            if self.is_allowed(request.domain):
-                response = RequestResponse(data=True, original_request=request, request_id=request.request_id)
-                await ctx.send_message(response, target_id=request.source_executor_id)
-            else:
-                await ctx.send_message(request)  # Forward to external
-    ```
+
+    .. code-block:: python
+
+        class ParentExecutor(Executor):
+            @handler
+            async def handle_domain_request(
+                self,
+                request: DomainRequest,  # Subclass of RequestInfoMessage
+                ctx: WorkflowContext[RequestResponse[RequestInfoMessage, Any] | DomainRequest],
+            ) -> None:
+                if self.is_allowed(request.domain):
+                    response = RequestResponse(data=True, original_request=request, request_id=request.request_id)
+                    await ctx.send_message(response, target_id=request.source_executor_id)
+                else:
+                    await ctx.send_message(request)  # Forward to external
 
     ## Context Types
     Handler methods receive different WorkflowContext variants based on their type annotations:
 
     ### WorkflowContext (no type parameters)
     For handlers that only perform side effects without sending messages or yielding outputs:
-    ```python
-    class LoggingExecutor(Executor):
-        @handler
-        async def log_message(self, msg: str, ctx: WorkflowContext) -> None:
-            print(f"Received: {msg}")  # Only logging, no outputs
-    ```
+
+    .. code-block:: python
+
+        class LoggingExecutor(Executor):
+            @handler
+            async def log_message(self, msg: str, ctx: WorkflowContext) -> None:
+                print(f"Received: {msg}")  # Only logging, no outputs
 
     ### WorkflowContext[T_Out]
     Enables sending messages of type T_Out via `ctx.send_message()`:
-    ```python
-    class ProcessorExecutor(Executor):
-        @handler
-        async def handler(self, msg: str, ctx: WorkflowContext[int]) -> None:
-            await ctx.send_message(42)  # Can send int messages
-    ```
+
+    .. code-block:: python
+
+        class ProcessorExecutor(Executor):
+            @handler
+            async def handler(self, msg: str, ctx: WorkflowContext[int]) -> None:
+                await ctx.send_message(42)  # Can send int messages
 
     ### WorkflowContext[T_Out, T_W_Out]
     Enables both sending messages (T_Out) and yielding workflow outputs (T_W_Out):
-    ```python
-    class DualOutputExecutor(Executor):
-        @handler
-        async def handler(self, msg: str, ctx: WorkflowContext[int, str]) -> None:
-            await ctx.send_message(42)  # Send int message
-            await ctx.yield_output("done")  # Yield str workflow output
-    ```
+
+    .. code-block:: python
+
+        class DualOutputExecutor(Executor):
+            @handler
+            async def handler(self, msg: str, ctx: WorkflowContext[int, str]) -> None:
+                await ctx.send_message(42)  # Send int message
+                await ctx.yield_output("done")  # Yield str workflow output
 
     ## Function Executors
     Simple functions can be converted to executors using the `@executor` decorator:
-    ```python
-    @executor
-    async def process_text(text: str, ctx: WorkflowContext[str]) -> None:
+
+    .. code-block:: python
+
+        @executor
+        async def process_text(text: str, ctx: WorkflowContext[str]) -> None:
         await ctx.send_message(text.upper())
 
 

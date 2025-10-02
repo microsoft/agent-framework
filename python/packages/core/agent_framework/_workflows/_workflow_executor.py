@@ -63,27 +63,29 @@ class WorkflowExecutor(Executor):
 
     ### Output Forwarding
     All outputs from the sub-workflow are automatically forwarded to the parent:
-    ```python
-    # Sub-workflow yields outputs
-    await ctx.yield_output("sub-workflow result")
 
-    # WorkflowExecutor forwards to parent via ctx.send_message()
-    # Parent receives the output as a regular message
-    ```
+    .. code-block:: python
+
+        # Sub-workflow yields outputs
+        await ctx.yield_output("sub-workflow result")
+
+        # WorkflowExecutor forwards to parent via ctx.send_message()
+        # Parent receives the output as a regular message
 
     ### Request/Response Coordination
     When sub-workflows need external information:
-    ```python
-    # Sub-workflow makes request
-    request = MyDataRequest(query="user info")
-    # RequestInfoExecutor emits RequestInfoEvent
 
-    # WorkflowExecutor sets source_executor_id and forwards to parent
-    request.source_executor_id = "child_workflow_executor_id"
-    # Parent workflow can handle via @handler for RequestInfoMessage subclasses,
-    # or directly forward to external source via a RequestInfoExecutor in the parent
-    # workflow.
-    ```
+    .. code-block:: python
+
+        # Sub-workflow makes request
+        request = MyDataRequest(query="user info")
+        # RequestInfoExecutor emits RequestInfoEvent
+
+        # WorkflowExecutor sets source_executor_id and forwards to parent
+        request.source_executor_id = "child_workflow_executor_id"
+        # Parent workflow can handle via @handler for RequestInfoMessage subclasses,
+        # or directly forward to external source via a RequestInfoExecutor in the parent
+        # workflow.
 
     ### State Management
     WorkflowExecutor maintains execution state across request/response cycles:
@@ -97,17 +99,20 @@ class WorkflowExecutor(Executor):
 
     ### Input Types
     Matches the wrapped workflow's start executor input types:
-    ```python
-    # If sub-workflow accepts str, WorkflowExecutor accepts str
-    workflow_executor = WorkflowExecutor(my_workflow, id="wrapper")
-    assert workflow_executor.input_types == my_workflow.input_types
-    ```
+
+    .. code-block:: python
+
+        # If sub-workflow accepts str, WorkflowExecutor accepts str
+        workflow_executor = WorkflowExecutor(my_workflow, id="wrapper")
+        assert workflow_executor.input_types == my_workflow.input_types
 
     ### Output Types
     Combines sub-workflow outputs with request coordination types:
-    ```python
-    # Includes all sub-workflow output types
-    # Plus RequestInfoMessage if sub-workflow can make requests
+
+    .. code-block:: python
+
+        # Includes all sub-workflow output types
+        # Plus RequestInfoMessage if sub-workflow can make requests
     output_types = workflow.output_types + [RequestInfoMessage]  # if applicable
     ```
 
@@ -122,15 +127,16 @@ class WorkflowExecutor(Executor):
 
     ### Per-Execution State Isolation
     Each sub-workflow invocation creates an isolated ExecutionContext:
-    ```python
-    # Multiple concurrent invocations are supported
-    workflow_executor = WorkflowExecutor(my_workflow, id="concurrent_executor")
 
-    # Each invocation gets its own execution context
-    # Execution 1: processes input_1 independently
-    # Execution 2: processes input_2 independently
-    # No state interference between executions
-    ```
+    .. code-block:: python
+
+        # Multiple concurrent invocations are supported
+        workflow_executor = WorkflowExecutor(my_workflow, id="concurrent_executor")
+
+        # Each invocation gets its own execution context
+        # Execution 1: processes input_1 independently
+        # Execution 2: processes input_2 independently
+        # No state interference between executions
 
     ### Request/Response Coordination
     Responses are correctly routed to the originating execution:
@@ -151,23 +157,24 @@ class WorkflowExecutor(Executor):
     - The wrapped workflow and its executors are stateless
     - Executors use WorkflowContext state management instead of instance variables
     - Any shared state is managed through WorkflowContext.get_shared_state/set_shared_state
-    ```python
-    # Good: Stateless executor using context state
-    class StatelessExecutor(Executor):
-        @handler
-        async def process(self, data: str, ctx: WorkflowContext[str]) -> None:
-            # Use context state instead of instance variables
-            state = await ctx.get_state() or {}
-            state["processed"] = data
-            await ctx.set_state(state)
+
+    .. code-block:: python
+
+        # Good: Stateless executor using context state
+        class StatelessExecutor(Executor):
+            @handler
+            async def process(self, data: str, ctx: WorkflowContext[str]) -> None:
+                # Use context state instead of instance variables
+                state = await ctx.get_state() or {}
+                state["processed"] = data
+                await ctx.set_state(state)
 
 
-    # Avoid: Stateful executor with instance variables
-    class StatefulExecutor(Executor):
-        def __init__(self):
-            super().__init__(id="stateful")
-            self.data = []  # This will be shared across concurrent executions!
-    ```
+        # Avoid: Stateful executor with instance variables
+        class StatefulExecutor(Executor):
+            def __init__(self):
+                super().__init__(id="stateful")
+                self.data = []  # This will be shared across concurrent executions!
 
     ## Integration with Parent Workflows
     Parent workflows can intercept sub-workflow requests:
