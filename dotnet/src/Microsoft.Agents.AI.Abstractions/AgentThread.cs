@@ -18,7 +18,7 @@ namespace Microsoft.Agents.AI;
 /// An <see cref="AgentThread"/> contains the state of a specific conversation with an agent which may include:
 /// <list type="bullet">
 /// <item><description>Conversation history or a reference to externally stored conversation history.</description></item>
-/// <item><description>Memories or a reference to externally stored memories</description></item>
+/// <item><description>Memories or a reference to externally stored memories.</description></item>
 /// <item><description>Any other state that the agent needs to persist across runs for a conversation.</description></item>
 /// </list>
 /// </para>
@@ -26,7 +26,7 @@ namespace Microsoft.Agents.AI;
 /// An <see cref="AgentThread"/> may also have behaviors attached to it that may include:
 /// <list type="bullet">
 /// <item><description>Customized storage of state.</description></item>
-/// <item><description>Data extraction from and injection into a conversation</description></item>
+/// <item><description>Data extraction from and injection into a conversation.</description></item>
 /// <item><description>Chat history reduction, e.g. where messages needs to be summarized or truncated to reduce the size.</description></item>
 /// </list>
 /// An <see cref="AgentThread"/> is always constructed by an <see cref="AIAgent"/> so that the <see cref="AIAgent"/>
