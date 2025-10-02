@@ -310,8 +310,8 @@ def merge_chat_options(
             temperature=temperature if temperature is not None else base_chat_options.temperature,
             top_p=top_p if top_p is not None else base_chat_options.top_p,
             tool_choice=(
-                tool_choice if (tool_choice is not None and tool_choice != "auto") else base_chat_options.tool_choice
-            ),  # type: ignore[arg-type]
+                tool_choice if (tool_choice is not None and tool_choice != "auto") else base_chat_options.tool_choice  # type: ignore[arg-type]
+            ),
             tools=combined_tools or None,
             user=user if user is not None else base_chat_options.user,
             additional_properties=(
