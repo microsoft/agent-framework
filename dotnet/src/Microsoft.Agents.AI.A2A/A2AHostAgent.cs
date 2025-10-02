@@ -39,7 +39,7 @@ public sealed class A2AHostAgent
     }
 
     /// <summary>
-    /// The associated <see cref="AIAgent"/>.
+    /// Gets the associated <see cref="AIAgent"/>.
     /// </summary>
     public AIAgent? Agent { get; }
 
