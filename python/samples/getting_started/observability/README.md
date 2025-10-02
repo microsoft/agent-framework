@@ -110,6 +110,7 @@ This folder contains different samples demonstrating how to use telemetry in var
 | [agent_observability.py](./agent_observability.py) | A simple example showing how to setup telemetry for an agentic application. |
 | [azure_ai_agent_observability.py](./azure_ai_agent_observability.py) | A simple example showing how to setup telemetry for an agentic application with an Azure AI project. |
 | [azure_ai_chat_client_with_observability.py](./azure_ai_chat_client_with_observability.py) | A simple example showing how to setup telemetry for a chat client with an Azure AI project. |
+| [setup_observability_with_opik.py](./setup_observability_with_opik.py) | Streams Agent Framework telemetry to Opik using the OTLP HTTP exporter. |
 | [workflow_observability.py](./workflow_observability.py) | A simple example showing how to setup telemetry for a workflow. |
 | [advanced_manual_setup_console_output.py](./advanced_manual_setup_console_output.py) | A comprehensive example showing how to manually setup exporters and providers for traces, logs, and metrics that will get sent to the console. |
 | [advanced_zero_code.py](./advanced_zero_code.py) | A comprehensive example showing how to setup telemetry using the `opentelemetry-instrument` lib without modifying any code. |
@@ -165,40 +166,14 @@ setup_observability(exporters=[exporter])
 
 ### Sending telemetry to Opik
 
-[Opik](https://www.comet.com/opik/) is Comet's observability, evaluation, and optimization platform for LLM and agent workloads. Because Agent Framework already uses OpenTelemetry semantic conventions, you only need to point the OTLP exporter at the Opik collector.
+[Opik](https://www.comet.com/opik/) is Comet's observability, evaluation, and optimization platform for LLM and agent workloads. After installing `opik` and exporting the OTLP environment variables described at the top of `setup_observability_with_opik.py`, run:
 
-1. Install the Opik Python SDK:
+```bash
+pip install opik
+python setup_observability_with_opik.py
+```
 
-   ```bash
-   pip install opik
-   ```
-
-2. Set the OTLP endpoint and headers for your deployment type before starting the application:
-
-   ```bash
-   # Opik Cloud
-   export OTEL_EXPORTER_OTLP_ENDPOINT=https://www.comet.com/opik/api/v1/private/otel
-   export OTEL_EXPORTER_OTLP_HEADERS='Authorization=<your-api-key>,Comet-Workspace=<workspace>,projectName=<project>'
-
-   # Opik Enterprise
-   export OTEL_EXPORTER_OTLP_ENDPOINT=https://<your-comet-domain>/opik/api/v1/private/otel
-   export OTEL_EXPORTER_OTLP_HEADERS='Authorization=<your-api-key>,Comet-Workspace=<workspace>,projectName=<project>'
-
-   # Self-hosted Opik
-   export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:5173/api/v1/private/otel
-   export OTEL_EXPORTER_OTLP_HEADERS='projectName=<project>'
-   ```
-
-3. Call `setup_observability` with the OTLP HTTP exporter (the environment variables above provide the endpoint and headers):
-
-   ```python
-   from agent_framework.observability import setup_observability
-   from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-
-   setup_observability(exporters=[OTLPSpanExporter()])
-   ```
-
-When you run the samples, Opik will display the full agent → tool → model hierarchy, token usage, cost estimates, and any errors captured during execution. See the [Opik + Microsoft Agent Framework guide](https://www.comet.com/docs/opik/integrations/microsoft-agent-framework) for screenshots and advanced configuration tips.
+The script streams a single conversation to Opik so you can inspect the agent → tool → model spans, token usage, and cost breakdown. See the [Opik + Microsoft Agent Framework guide](https://www.comet.com/docs/opik/integrations/microsoft-agent-framework) for additional configuration tips.
 
 ### Logs
 
