@@ -243,7 +243,22 @@ def _normalize_mcp_name(name: str) -> str:
 
 
 class MCPTool:
-    """Main MCP class, to initialize use one of the subclasses."""
+    """Main MCP class for connecting to Model Context Protocol servers.
+
+    This is the base class for MCP tool implementations. It handles connection management,
+    tool and prompt loading, and communication with MCP servers.
+
+    Note:
+        MCPTool cannot be instantiated directly. Use one of the subclasses:
+        MCPStdioTool, MCPStreamableHTTPTool, or MCPWebsocketTool.
+
+    Examples:
+        See the subclass documentation for usage examples:
+
+        - :class:`MCPStdioTool` for stdio-based MCP servers
+        - :class:`MCPStreamableHTTPTool` for HTTP-based MCP servers
+        - :class:`MCPWebsocketTool` for WebSocket-based MCP servers
+    """
 
     def __init__(
         self,
@@ -256,7 +271,18 @@ class MCPTool:
         request_timeout: int | None = None,
         chat_client: "ChatClientProtocol | None" = None,
     ) -> None:
-        """Initialize the MCP Plugin Base."""
+        """Initialize the MCP Tool base.
+
+        Args:
+            name: The name of the MCP tool.
+            description: The description of the tool.
+            additional_properties: Additional properties for the tool.
+            load_tools: Whether to automatically load tools from the MCP server.
+            load_prompts: Whether to automatically load prompts from the MCP server.
+            session: Pre-existing session to use for the MCP connection.
+            request_timeout: The default timeout in seconds for all requests.
+            chat_client: The chat client to use for sampling callbacks.
+        """
         self.name = name
         self.description = description or ""
         self.additional_properties = additional_properties
@@ -273,7 +299,14 @@ class MCPTool:
         return f"MCPTool(name={self.name}, description={self.description})"
 
     async def connect(self) -> None:
-        """Connect to the MCP server."""
+        """Connect to the MCP server.
+
+        Establishes a connection to the MCP server, initializes the session,
+        and loads tools and prompts if configured to do so.
+
+        Raises:
+            ToolException: If connection or session initialization fails.
+        """
         if not self.session:
             try:
                 transport = await self._exit_stack.enter_async_context(self.get_mcp_client())
@@ -324,9 +357,19 @@ class MCPTool:
         """Callback function for sampling.
 
         This function is called when the MCP server needs to get a message completed.
+        It uses the configured chat client to generate responses.
 
-        This is a simple version of this function, it can be overridden to allow more complex sampling.
-        It get's added to the session at initialization time, so overriding it is the best way to do this.
+        Note:
+            This is a simple version of this function. It can be overridden to allow
+            more complex sampling. It gets added to the session at initialization time,
+            so overriding it is the best way to customize this behavior.
+
+        Args:
+            context: The request context from the MCP server.
+            params: The message creation request parameters.
+
+        Returns:
+            Either a CreateMessageResult with the generated message or ErrorData if generation fails.
         """
         if not self.chat_client:
             return types.ErrorData(
@@ -377,7 +420,11 @@ class MCPTool:
         This function is called when the MCP Server sends a log message.
         By default it will log the message to the logger with the level set in the params.
 
-        Please subclass the MCP*Plugin and override this function if you want to adapt the behavior.
+        Note:
+            Subclass MCPTool and override this function if you want to adapt the behavior.
+
+        Args:
+            params: The logging message notification parameters from the MCP server.
         """
         logger.log(LOG_LEVEL_MAPPING[params.level], params.data)
 
@@ -387,12 +434,17 @@ class MCPTool:
     ) -> None:
         """Handle messages from the MCP server.
 
-        By default this function will handle exceptions on the server, by logging those.
+        By default this function will handle exceptions on the server by logging them,
+        and it will trigger a reload of the tools and prompts when the list changed
+        notification is received.
 
-        And it will trigger a reload of the tools and prompts when the list changed notification is received.
+        Note:
+            If you want to extend this behavior, you can subclass MCPTool and override
+            this function. If you want to keep the default behavior, make sure to call
+            ``super().message_handler(message)``.
 
-        If you want to extend this behavior you can subclass the MCPPlugin and override this function,
-        if you want to keep the default behavior, make sure to call `super().message_handler(message)`.
+        Args:
+            message: The message from the MCP server (request responder, notification, or exception).
         """
         if isinstance(message, Exception):
             logger.error("Error from MCP server: %s", message, exc_info=message)
@@ -407,7 +459,14 @@ class MCPTool:
                     logger.debug("Unhandled notification: %s", message.root.method)
 
     async def load_prompts(self) -> None:
-        """Load prompts from the MCP server."""
+        """Load prompts from the MCP server.
+
+        Retrieves available prompts from the connected MCP server and converts
+        them into AIFunction instances.
+
+        Raises:
+            ToolExecutionException: If the MCP server is not connected.
+        """
         if not self.session:
             raise ToolExecutionException("MCP server not connected, please call connect() before using this method.")
         try:
@@ -430,7 +489,14 @@ class MCPTool:
             self.functions.append(func)
 
     async def load_tools(self) -> None:
-        """Load tools from the MCP server."""
+        """Load tools from the MCP server.
+
+        Retrieves available tools from the connected MCP server and converts
+        them into AIFunction instances.
+
+        Raises:
+            ToolExecutionException: If the MCP server is not connected.
+        """
         if not self.session:
             raise ToolExecutionException("MCP server not connected, please call connect() before using this method.")
         try:
@@ -454,18 +520,37 @@ class MCPTool:
             self.functions.append(func)
 
     async def close(self) -> None:
-        """Disconnect from the MCP server."""
+        """Disconnect from the MCP server.
+
+        Closes the connection and cleans up resources.
+        """
         await self._exit_stack.aclose()
         self.session = None
         self.is_connected = False
 
     @abstractmethod
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
-        """Get an MCP client."""
+        """Get an MCP client.
+
+        Returns:
+            An async context manager for the MCP client transport.
+        """
         pass
 
     async def call_tool(self, tool_name: str, **kwargs: Any) -> list[Contents]:
-        """Call a tool with the given arguments."""
+        """Call a tool with the given arguments.
+
+        Args:
+            tool_name: The name of the tool to call.
+            kwargs: Arguments to pass to the tool.
+
+        Returns:
+            A list of content items returned by the tool.
+
+        Raises:
+            ToolExecutionException: If the MCP server is not connected, tools are not loaded,
+                or the tool call fails.
+        """
         if not self.session:
             raise ToolExecutionException("MCP server not connected, please call connect() before using this method.")
         if not self.load_tools_flag:
@@ -480,7 +565,19 @@ class MCPTool:
             raise ToolExecutionException(f"Failed to call tool '{tool_name}'.", inner_exception=ex) from ex
 
     async def get_prompt(self, prompt_name: str, **kwargs: Any) -> list[ChatMessage]:
-        """Call a prompt with the given arguments."""
+        """Call a prompt with the given arguments.
+
+        Args:
+            prompt_name: The name of the prompt to retrieve.
+            kwargs: Arguments to pass to the prompt.
+
+        Returns:
+            A list of chat messages returned by the prompt.
+
+        Raises:
+            ToolExecutionException: If the MCP server is not connected, prompts are not loaded,
+                or the prompt call fails.
+        """
         if not self.session:
             raise ToolExecutionException("MCP server not connected, please call connect() before using this method.")
         if not self.load_prompts_flag:
@@ -496,7 +593,17 @@ class MCPTool:
             raise ToolExecutionException(f"Failed to call prompt '{prompt_name}'.", inner_exception=ex) from ex
 
     async def __aenter__(self) -> Self:
-        """Enter the context manager."""
+        """Enter the async context manager.
+
+        Connects to the MCP server automatically.
+
+        Returns:
+            The MCPTool instance.
+
+        Raises:
+            ToolException: If connection fails.
+            ToolExecutionException: If context manager setup fails.
+        """
         try:
             await self.connect()
             return self
@@ -509,7 +616,15 @@ class MCPTool:
     async def __aexit__(
         self, exc_type: type[BaseException] | None, exc_value: BaseException | None, traceback: Any
     ) -> None:
-        """Exit the context manager."""
+        """Exit the async context manager.
+
+        Closes the connection and cleans up resources.
+
+        Args:
+            exc_type: The exception type if an exception was raised, None otherwise.
+            exc_value: The exception value if an exception was raised, None otherwise.
+            traceback: The exception traceback if an exception was raised, None otherwise.
+        """
         await self.close()
 
 
@@ -517,7 +632,29 @@ class MCPTool:
 
 
 class MCPStdioTool(MCPTool):
-    """MCP stdio server configuration."""
+    """MCP tool for connecting to stdio-based MCP servers.
+
+    This class connects to MCP servers that communicate via standard input/output,
+    typically used for local processes.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import MCPStdioTool, ChatAgent
+
+            # Create an MCP stdio tool
+            mcp_tool = MCPStdioTool(
+                name="filesystem",
+                command="npx",
+                args=["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+                description="File system operations",
+            )
+
+            # Use with a chat agent
+            async with mcp_tool:
+                agent = ChatAgent(chat_client=client, name="assistant", tools=mcp_tool)
+                response = await agent.run("List files in the directory")
+    """
 
     def __init__(
         self,
@@ -536,28 +673,27 @@ class MCPStdioTool(MCPTool):
         chat_client: "ChatClientProtocol | None" = None,
         **kwargs: Any,
     ) -> None:
-        """Initialize the MCP stdio plugin.
+        """Initialize the MCP stdio tool.
 
-        The arguments are used to create a StdioServerParameters object.
-        Which is then used to create a stdio client.
-        see mcp.client.stdio.stdio_client and mcp.client.stdio.stdio_server_parameters
-        for more details.
+        Note:
+            The arguments are used to create a StdioServerParameters object,
+            which is then used to create a stdio client. See ``mcp.client.stdio.stdio_client``
+            and ``mcp.client.stdio.stdio_server_parameters`` for more details.
 
         Args:
-            name: The name of the plugin.
+            name: The name of the tool.
             command: The command to run the MCP server.
             load_tools: Whether to load tools from the MCP server.
             load_prompts: Whether to load prompts from the MCP server.
-            request_timeout: The default timeout used for all requests.
+            request_timeout: The default timeout in seconds for all requests.
             session: The session to use for the MCP connection.
-            description: The description of the plugin.
+            description: The description of the tool.
             additional_properties: Additional properties.
             args: The arguments to pass to the command.
             env: The environment variables to set for the command.
             encoding: The encoding to use for the command output.
             chat_client: The chat client to use for sampling.
             kwargs: Any extra arguments to pass to the stdio client.
-
         """
         super().__init__(
             name=name,
@@ -576,7 +712,11 @@ class MCPStdioTool(MCPTool):
         self._client_kwargs = kwargs
 
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
-        """Get an MCP stdio client."""
+        """Get an MCP stdio client.
+
+        Returns:
+            An async context manager for the stdio client transport.
+        """
         args: dict[str, Any] = {
             "command": self.command,
             "args": self.args,
@@ -590,7 +730,28 @@ class MCPStdioTool(MCPTool):
 
 
 class MCPStreamableHTTPTool(MCPTool):
-    """MCP streamable http server configuration."""
+    """MCP tool for connecting to HTTP-based MCP servers.
+
+    This class connects to MCP servers that communicate via streamable HTTP/SSE.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import MCPStreamableHTTPTool, ChatAgent
+
+            # Create an MCP HTTP tool
+            mcp_tool = MCPStreamableHTTPTool(
+                name="web-api",
+                url="https://api.example.com/mcp",
+                headers={"Authorization": "Bearer token"},
+                description="Web API operations",
+            )
+
+            # Use with a chat agent
+            async with mcp_tool:
+                agent = ChatAgent(chat_client=client, name="assistant", tools=mcp_tool)
+                response = await agent.run("Fetch data from the API")
+    """
 
     def __init__(
         self,
@@ -610,29 +771,29 @@ class MCPStreamableHTTPTool(MCPTool):
         chat_client: "ChatClientProtocol | None" = None,
         **kwargs: Any,
     ) -> None:
-        """Initialize the MCP streamable http plugin.
+        """Initialize the MCP streamable HTTP tool.
 
-        The arguments are used to create a streamable http client.
-        see mcp.client.streamable_http.streamablehttp_client for more details.
-
-        Any extra arguments passed to the constructor will be passed to the
-        streamable http client constructor.
+        Note:
+            The arguments are used to create a streamable HTTP client.
+            See ``mcp.client.streamable_http.streamablehttp_client`` for more details.
+            Any extra arguments passed to the constructor will be passed to the
+            streamable HTTP client constructor.
 
         Args:
-            name: The name of the plugin.
+            name: The name of the tool.
             url: The URL of the MCP server.
             load_tools: Whether to load tools from the MCP server.
             load_prompts: Whether to load prompts from the MCP server.
-            request_timeout: The default timeout used for all requests.
+            request_timeout: The default timeout in seconds for all requests.
             session: The session to use for the MCP connection.
-            description: The description of the plugin.
+            description: The description of the tool.
             additional_properties: Additional properties.
             headers: The headers to send with the request.
             timeout: The timeout for the request.
             sse_read_timeout: The timeout for reading from the SSE stream.
             terminate_on_close: Close the transport when the MCP client is terminated.
             chat_client: The chat client to use for sampling.
-            kwargs: Any extra arguments to pass to the sse client.
+            kwargs: Any extra arguments to pass to the SSE client.
         """
         super().__init__(
             name=name,
@@ -652,7 +813,11 @@ class MCPStreamableHTTPTool(MCPTool):
         self._client_kwargs = kwargs
 
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
-        """Get an MCP streamable http client."""
+        """Get an MCP streamable HTTP client.
+
+        Returns:
+            An async context manager for the streamable HTTP client transport.
+        """
         args: dict[str, Any] = {
             "url": self.url,
         }
@@ -670,7 +835,25 @@ class MCPStreamableHTTPTool(MCPTool):
 
 
 class MCPWebsocketTool(MCPTool):
-    """MCP websocket server configuration."""
+    """MCP tool for connecting to WebSocket-based MCP servers.
+
+    This class connects to MCP servers that communicate via WebSocket.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import MCPWebsocketTool, ChatAgent
+
+            # Create an MCP WebSocket tool
+            mcp_tool = MCPWebsocketTool(
+                name="realtime-service", url="wss://service.example.com/mcp", description="Real-time service operations"
+            )
+
+            # Use with a chat agent
+            async with mcp_tool:
+                agent = ChatAgent(chat_client=client, name="assistant", tools=mcp_tool)
+                response = await agent.run("Connect to the real-time service")
+    """
 
     def __init__(
         self,
@@ -686,26 +869,25 @@ class MCPWebsocketTool(MCPTool):
         chat_client: "ChatClientProtocol | None" = None,
         **kwargs: Any,
     ) -> None:
-        """Initialize the MCP websocket plugin.
+        """Initialize the MCP WebSocket tool.
 
-                The arguments are used to create a websocket client.
-        see mcp.client.websocket.websocket_client for more details.
-
-        Any extra arguments passed to the constructor will be passed to the
-        websocket client constructor.
+        Note:
+            The arguments are used to create a WebSocket client.
+            See ``mcp.client.websocket.websocket_client`` for more details.
+            Any extra arguments passed to the constructor will be passed to the
+            WebSocket client constructor.
 
         Args:
-            name: The name of the plugin.
+            name: The name of the tool.
             url: The URL of the MCP server.
             load_tools: Whether to load tools from the MCP server.
             load_prompts: Whether to load prompts from the MCP server.
-            request_timeout: The default timeout used for all requests.
+            request_timeout: The default timeout in seconds for all requests.
             session: The session to use for the MCP connection.
-            description: The description of the plugin.
+            description: The description of the tool.
             additional_properties: Additional properties.
             chat_client: The chat client to use for sampling.
-            kwargs: Any extra arguments to pass to the websocket client.
-
+            kwargs: Any extra arguments to pass to the WebSocket client.
         """
         super().__init__(
             name=name,
@@ -721,7 +903,11 @@ class MCPWebsocketTool(MCPTool):
         self._client_kwargs = kwargs
 
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
-        """Get an MCP websocket client."""
+        """Get an MCP WebSocket client.
+
+        Returns:
+            An async context manager for the WebSocket client transport.
+        """
         args: dict[str, Any] = {
             "url": self.url,
         }

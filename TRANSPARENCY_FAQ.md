@@ -1,4 +1,6 @@
-# **What is Microsoft Agent Framework?**
+# Responsible AI Transparency FAQs
+
+**What is Microsoft Agent Framework?**
 
 Microsoft Agent Framework is a comprehensive multi-language (C#/.NET and Python) framework for building, orchestrating, and deploying AI agents and multi-agent workflows. The system takes user instructions and conversation inputs and produces intelligent responses through AI agents that can integrate with various LLM providers (OpenAI, Azure OpenAI, Azure AI Foundry). It provides both simple chat agents and complex multi-agent workflows with graph-based orchestration.
 

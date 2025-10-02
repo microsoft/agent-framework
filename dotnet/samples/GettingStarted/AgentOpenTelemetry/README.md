@@ -4,10 +4,11 @@ This demo showcases the integration of OpenTelemetry with the Microsoft Agent Fr
 
 ## Overview
 
-The demo consists of two main components:
+The demo consists of three main components:
 
 1. **Aspire Dashboard** - Provides a web-based interface to visualize OpenTelemetry data
 2. **Console Application** - An interactive console application that demonstrates agent interactions with proper OpenTelemetry instrumentation
+3. **[Optional] Application Insights** - When the agent is deployed to a production environment, Application Insights can be used to monitor the agent performance.
 
 ## Architecture
 
@@ -25,6 +26,7 @@ graph TD
 - Azure OpenAI service endpoint and deployment configured
 - Azure CLI installed and authenticated (for Azure credential authentication)
 - Docker installed (for running Aspire Dashboard)
+- [Optional] Application Insights and Grafana
 
 ## Configuration
 
@@ -36,6 +38,12 @@ $env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini"  # Optional, defaults to gpt-4o-
 ```
 
 **Note**: This demo uses Azure CLI credentials for authentication. Make sure you're logged in with `az login` and have access to the Azure OpenAI resource.
+
+### [Optional] Application Insights Setup
+Set the following environment variables:
+```powershell
+$env:APPLICATIONINSIGHTS_CONNECTION_STRING="InstrumentationKey=XXXX;IngestionEndpoint=https://XXXX.applicationinsights.azure.com/;LiveEndpoint=https://XXXXX.livediagnostics.monitor.azure.com/;ApplicationId=XXXXX"
+```
 
 ## Running the Demo
 
@@ -108,7 +116,7 @@ You:
    - Metrics in the **Metrics** tab showing token usage and duration
    - Logs in the **Structured Logs** tab with detailed information
 
-## Viewing Telemetry Data
+## Viewing Telemetry Data in Aspire Dashboard
 
 ### Traces
 1. In the Aspire Dashboard, navigate to the **Traces** tab
@@ -129,6 +137,17 @@ You:
 1. Navigate to the **Structured Logs** tab
 2. Filter by the console application to see detailed logs
 3. Logs include information about user inputs, agent responses, and any errors
+
+## [Optional] View Application Insights data in Grafana
+Besides the Aspire Dashboard and the Application Insights native UI, you can also use Grafana to visualize the telemetry data in Application Insights. There are two tailored dashboards for you to get started quickly:
+
+### Agent Overview dashboard
+Grafana Dashboard Gallery link: <https://aka.ms/amg/dash/af-agent>
+![Agent Overview dashboard](https://github.com/Azure/azure-managed-grafana/raw/main/samples/assets/grafana-af-agent.gif)
+
+### Workflow Overview dashboard
+Grafana Dashboard Gallery link: <https://aka.ms/amg/dash/af-workflow>
+![Workflow Overview dashboard](https://github.com/Azure/azure-managed-grafana/raw/main/samples/assets/grafana-af-workflow.gif)
 
 ## Key Features Demonstrated
 

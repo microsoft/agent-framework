@@ -18,17 +18,20 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     [Theory]
     [InlineData("SendActivity.yaml", "SendActivity.json")]
     [InlineData("InvokeAgent.yaml", "InvokeAgent.json")]
+    [InlineData("InvokeAgent.yaml", "InvokeAgent.json", true)]
     [InlineData("ConversationMessages.yaml", "ConversationMessages.json")]
-    public Task ValidateCaseAsync(string workflowFileName, string testcaseFileName) =>
-        this.RunWorkflowAsync(Path.Combine(Environment.CurrentDirectory, "Workflows", workflowFileName), testcaseFileName);
+    [InlineData("ConversationMessages.yaml", "ConversationMessages.json", true)]
+    public Task ValidateCaseAsync(string workflowFileName, string testcaseFileName, bool externalConveration = false) =>
+        this.RunWorkflowAsync(Path.Combine(Environment.CurrentDirectory, "Workflows", workflowFileName), testcaseFileName, externalConveration);
 
     [Theory]
     [InlineData("Marketing.yaml", "Marketing.json")]
-    [InlineData("MathChat.yaml", "MathChat.json")]
+    [InlineData("Marketing.yaml", "Marketing.json", true)]
+    [InlineData("MathChat.yaml", "MathChat.json", true)]
     [InlineData("DeepResearch.yaml", "DeepResearch.json", Skip = "Long running")]
     [InlineData("HumanInLoop.yaml", "HumanInLoop.json", Skip = "Needs test support")]
-    public Task ValidateScenarioAsync(string workflowFileName, string testcaseFileName) =>
-        this.RunWorkflowAsync(Path.Combine(GetRepoFolder(), "workflow-samples", workflowFileName), testcaseFileName);
+    public Task ValidateScenarioAsync(string workflowFileName, string testcaseFileName, bool externalConveration = false) =>
+        this.RunWorkflowAsync(Path.Combine(GetRepoFolder(), "workflow-samples", workflowFileName), testcaseFileName, externalConveration);
 
     protected override async Task RunAndVerifyAsync<TInput>(Testcase testcase, string workflowPath, DeclarativeWorkflowOptions workflowOptions)
     {
@@ -42,6 +45,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
 
         Assert.NotEmpty(workflowEvents.ExecutorInvokeEvents);
         Assert.NotEmpty(workflowEvents.ExecutorCompleteEvents);
+        AssertWorkflow.Conversation(workflowOptions.ConversationId, testcase.Validation.ConversationCount, workflowEvents.ConversationEvents);
         AssertWorkflow.EventCounts(workflowEvents.ActionInvokeEvents.Count, testcase);
         AssertWorkflow.EventCounts(workflowEvents.ActionCompleteEvents.Count, testcase);
         AssertWorkflow.EventSequence(workflowEvents.ActionInvokeEvents.Select(e => e.ActionId), testcase);

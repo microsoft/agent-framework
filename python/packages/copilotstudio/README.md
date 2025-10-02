@@ -3,7 +3,7 @@
 Please install this package via pip:
 
 ```bash
-pip install agent-framework-copilotstudio
+pip install agent-framework-copilotstudio --pre
 ```
 
 ## Copilot Studio Agent

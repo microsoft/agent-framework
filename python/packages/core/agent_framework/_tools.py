@@ -89,7 +89,18 @@ _NOOP_HISTOGRAM = _NoOpHistogram()
 def _parse_inputs(
     inputs: "Contents | dict[str, Any] | str | list[Contents | dict[str, Any] | str] | None",
 ) -> list["Contents"]:
-    """Parse the inputs for a tool, ensuring they are of type Contents."""
+    """Parse the inputs for a tool, ensuring they are of type Contents.
+
+    Args:
+        inputs: The inputs to parse. Can be a single item or list of Contents, dicts, or strings.
+
+    Returns:
+        A list of Contents objects.
+
+    Raises:
+        ValueError: If an unsupported input type is encountered.
+        TypeError: If the input type is not supported.
+    """
     if inputs is None:
         return []
 
@@ -133,10 +144,32 @@ def _parse_inputs(
 class ToolProtocol(Protocol):
     """Represents a generic tool that can be specified to an AI service.
 
-    Parameters:
+    This protocol defines the interface that all tools must implement to be compatible
+    with the agent framework.
+
+    Attributes:
         name: The name of the tool.
-        description: A description of the tool.
+        description: A description of the tool, suitable for use in describing the purpose to a model.
         additional_properties: Additional properties associated with the tool.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import ToolProtocol
+
+
+            class CustomTool:
+                def __init__(self, name: str, description: str) -> None:
+                    self.name = name
+                    self.description = description
+                    self.additional_properties = None
+
+                def __str__(self) -> str:
+                    return f"CustomTool(name={self.name})"
+
+
+            # Tool now implements ToolProtocol
+            tool: ToolProtocol = CustomTool("my_tool", "Does something useful")
     """
 
     name: str
@@ -154,10 +187,27 @@ class ToolProtocol(Protocol):
 class BaseTool(SerializationMixin):
     """Base class for AI tools, providing common attributes and methods.
 
+    This class provides the foundation for creating custom tools with serialization support.
+
     Args:
         name: The name of the tool.
         description: A description of the tool.
         additional_properties: Additional properties associated with the tool.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import BaseTool
+
+
+            class MyCustomTool(BaseTool):
+                def __init__(self, name: str, custom_param: str) -> None:
+                    super().__init__(name=name, description="My custom tool")
+                    self.custom_param = custom_param
+
+
+            tool = MyCustomTool(name="custom", custom_param="value")
+            print(tool)  # MyCustomTool(name=custom, description=My custom tool)
     """
 
     DEFAULT_EXCLUDE: ClassVar[set[str]] = {"additional_properties"}
@@ -196,6 +246,17 @@ class HostedCodeInterpreterTool(BaseTool):
 
     This tool does not implement code interpretation itself. It serves as a marker to inform a service
     that it is allowed to execute generated code if the service is capable of doing so.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import HostedCodeInterpreterTool
+
+            # Create a code interpreter tool
+            code_tool = HostedCodeInterpreterTool()
+
+            # With file inputs
+            code_tool_with_files = HostedCodeInterpreterTool(inputs=[{"file_id": "file-123"}, {"file_id": "file-456"}])
     """
 
     def __init__(
@@ -235,7 +296,22 @@ class HostedCodeInterpreterTool(BaseTool):
 
 
 class HostedWebSearchTool(BaseTool):
-    """Represents a web search tool that can be specified to an AI service to enable it to perform web searches."""
+    """Represents a web search tool that can be specified to an AI service to enable it to perform web searches.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import HostedWebSearchTool
+
+            # Create a basic web search tool
+            search_tool = HostedWebSearchTool()
+
+            # With location context
+            search_tool_with_location = HostedWebSearchTool(
+                description="Search the web for information",
+                additional_properties={"user_location": {"city": "Seattle", "country": "US"}},
+            )
+    """
 
     def __init__(
         self,
@@ -265,13 +341,14 @@ class HostedWebSearchTool(BaseTool):
 
 
 class HostedMCPSpecificApproval(TypedDict, total=False):
-    """Represents the `specific` mode for a hosted tool.
+    """Represents the specific mode for a hosted tool.
 
     When using this mode, the user must specify which tools always or never require approval.
     This is represented as a dictionary with two optional keys:
-    - `always_require_approval`: A sequence of tool names that always require approval.
-    - `never_require_approval`: A sequence of tool names that never require approval.
 
+    Attributes:
+        always_require_approval: A sequence of tool names that always require approval.
+        never_require_approval: A sequence of tool names that never require approval.
     """
 
     always_require_approval: Collection[str] | None
@@ -279,7 +356,39 @@ class HostedMCPSpecificApproval(TypedDict, total=False):
 
 
 class HostedMCPTool(BaseTool):
-    """Represents a MCP tool that is managed and executed by the service."""
+    """Represents a MCP tool that is managed and executed by the service.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import HostedMCPTool
+
+            # Create a basic MCP tool
+            mcp_tool = HostedMCPTool(
+                name="my_mcp_tool",
+                url="https://example.com/mcp",
+            )
+
+            # With approval mode and allowed tools
+            mcp_tool_with_approval = HostedMCPTool(
+                name="my_mcp_tool",
+                description="My MCP tool",
+                url="https://example.com/mcp",
+                approval_mode="always_require",
+                allowed_tools=["tool1", "tool2"],
+                headers={"Authorization": "Bearer token"},
+            )
+
+            # With specific approval mode
+            mcp_tool_specific = HostedMCPTool(
+                name="my_mcp_tool",
+                url="https://example.com/mcp",
+                approval_mode={
+                    "always_require_approval": ["dangerous_tool"],
+                    "never_require_approval": ["safe_tool"],
+                },
+            )
+    """
 
     def __init__(
         self,
@@ -346,7 +455,23 @@ class HostedMCPTool(BaseTool):
 
 
 class HostedFileSearchTool(BaseTool):
-    """Represents a file search tool that can be specified to an AI service to enable it to perform file searches."""
+    """Represents a file search tool that can be specified to an AI service to enable it to perform file searches.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import HostedFileSearchTool
+
+            # Create a basic file search tool
+            file_search = HostedFileSearchTool()
+
+            # With vector store inputs and max results
+            file_search_with_inputs = HostedFileSearchTool(
+                inputs=[{"vector_store_id": "vs_123"}],
+                max_results=10,
+                description="Search files in vector store",
+            )
+    """
 
     def __init__(
         self,
@@ -387,7 +512,12 @@ class HostedFileSearchTool(BaseTool):
 
 
 def _default_histogram() -> Histogram:
-    """Get the default histogram for function invocation duration."""
+    """Get the default histogram for function invocation duration.
+
+    Returns:
+        A Histogram instance for recording function invocation duration,
+        or a no-op histogram if observability is disabled.
+    """
     from .observability import OBSERVABILITY_SETTINGS  # local import to avoid circulars
 
     if not OBSERVABILITY_SETTINGS.ENABLED:  # type: ignore[name-defined]
@@ -411,12 +541,49 @@ def _default_histogram() -> Histogram:
 class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
     """A AITool that is callable as code.
 
+    This class wraps a Python function to make it callable by AI models with automatic
+    parameter validation and JSON schema generation.
+
     Args:
         name: The name of the function.
         description: A description of the function.
         additional_properties: Additional properties to set on the function.
-        func: The function to wrap. If None, returns a decorator.
+        func: The function to wrap.
         input_model: The Pydantic model that defines the input parameters for the function.
+
+    Examples:
+        .. code-block:: python
+
+            from typing import Annotated
+            from pydantic import BaseModel
+            from agent_framework import AIFunction, ai_function
+
+
+            # Using the decorator with string annotations
+            @ai_function
+            def get_weather(
+                location: Annotated[str, "The city name"],
+                unit: Annotated[str, "Temperature unit"] = "celsius",
+            ) -> str:
+                '''Get the weather for a location.'''
+                return f"Weather in {location}: 22°{unit[0].upper()}"
+
+
+            # Using direct instantiation with Field
+            class WeatherArgs(BaseModel):
+                location: Annotated[str, Field(description="The city name")]
+                unit: Annotated[str, Field(description="Temperature unit")] = "celsius"
+
+
+            weather_func = AIFunction(
+                name="get_weather",
+                description="Get the weather for a location",
+                func=lambda location, unit="celsius": f"Weather in {location}: 22°{unit[0].upper()}",
+                input_model=WeatherArgs,
+            )
+
+            # Invoke the function
+            result = await weather_func.invoke(arguments=WeatherArgs(location="Seattle"))
     """
 
     INJECTABLE: ClassVar[set[str]] = {"func"}
@@ -466,7 +633,13 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
 
         Args:
             arguments: A Pydantic model instance containing the arguments for the function.
-            kwargs: keyword arguments to pass to the function, will not be used if `arguments` is provided.
+            kwargs: Keyword arguments to pass to the function, will not be used if ``arguments`` is provided.
+
+        Returns:
+            The result of the function execution.
+
+        Raises:
+            TypeError: If arguments is not an instance of the expected input model.
         """
         global OBSERVABILITY_SETTINGS
         from .observability import OBSERVABILITY_SETTINGS
@@ -530,11 +703,19 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
                 logger.info("Function duration: %fs", duration)
 
     def parameters(self) -> dict[str, Any]:
-        """Create the json schema of the parameters."""
+        """Create the JSON schema of the parameters.
+
+        Returns:
+            A dictionary containing the JSON schema for the function's parameters.
+        """
         return self.input_model.model_json_schema()
 
     def to_json_schema_spec(self) -> dict[str, Any]:
-        """Convert a AIFunction to the JSON Schema function specification format."""
+        """Convert a AIFunction to the JSON Schema function specification format.
+
+        Returns:
+            A dictionary containing the function specification in JSON Schema format.
+        """
         return {
             "type": "function",
             "function": {
@@ -554,7 +735,14 @@ def _tools_to_dict(
         | None
     ),
 ) -> list[str | dict[str, Any]] | None:
-    """Parse the tools to a dict."""
+    """Parse the tools to a dict.
+
+    Args:
+        tools: The tools to parse. Can be a single tool or a sequence of tools.
+
+    Returns:
+        A list of tool specifications as dictionaries, or None if no tools provided.
+    """
     if not tools:
         return None
     if not isinstance(tools, list):
@@ -592,8 +780,14 @@ def _tools_to_dict(
 def _parse_annotation(annotation: Any) -> Any:
     """Parse a type annotation and return the corresponding type.
 
-    If the second annotation (after the type) is a string, then we convert that to a pydantic Field description.
+    If the second annotation (after the type) is a string, then we convert that to a Pydantic Field description.
     The rest are returned as-is, allowing for multiple annotations.
+
+    Args:
+        annotation: The type annotation to parse.
+
+    Returns:
+        The parsed annotation, potentially wrapped in Annotated with a Field.
     """
     origin = get_origin(annotation)
     if origin is not None:
@@ -617,26 +811,13 @@ def ai_function(
 ) -> AIFunction[Any, ReturnT]:
     """Decorate a function to turn it into a AIFunction that can be passed to models and executed automatically.
 
-    This function will create a Pydantic model from the function's signature,
-    which will be used to validate the arguments passed to the function.
-    And will be used to generate the JSON schema for the function's parameters.
-    In order to add descriptions to parameters, in your function signature,
-    use the `Annotated` type from `typing` and the `Field` class from `pydantic`:
+    This decorator creates a Pydantic model from the function's signature,
+    which will be used to validate the arguments passed to the function
+    and to generate the JSON schema for the function's parameters.
 
-    Example:
-
-        .. code-block:: python
-
-            from typing import Annotated
-            from pydantic import Field
-
-
-            def ai_function_example(
-                arg1: Annotated[str, Field(description="The first argument")],
-                arg2: Annotated[int, Field(description="The second argument")],
-            ) -> str:
-                # An example function that takes two arguments and returns a string.
-                return f"arg1: {arg1}, arg2: {arg2}"
+    To add descriptions to parameters, use the ``Annotated`` type from ``typing``
+    with a string description as the second argument. You can also use Pydantic's
+    ``Field`` class for more advanced configuration.
 
     Args:
         func: The function to wrap. If None, returns a decorator.
@@ -644,6 +825,38 @@ def ai_function(
         description: A description of the tool. Defaults to the function's docstring.
         additional_properties: Additional properties to set on the tool.
 
+    Returns:
+        An AIFunction instance that wraps the decorated function.
+
+    Examples:
+        .. code-block:: python
+
+            from typing import Annotated
+            from agent_framework import ai_function
+
+
+            # Using string annotations (recommended)
+            @ai_function
+            def get_weather(
+                location: Annotated[str, "The city name"],
+                unit: Annotated[str, "Temperature unit"] = "celsius",
+            ) -> str:
+                '''Get the weather for a location.'''
+                return f"Weather in {location}: 22°{unit[0].upper()}"
+
+
+            # With custom name and description
+            @ai_function(name="custom_weather", description="Custom weather function")
+            def another_weather_func(location: str) -> str:
+                return f"Weather in {location}"
+
+
+            # Async functions are also supported
+            @ai_function
+            async def async_get_weather(location: str) -> str:
+                '''Get weather asynchronously.'''
+                # Simulate async operation
+                return f"Weather in {location}"
     """
 
     def decorator(func: Callable[..., ReturnT | Awaitable[ReturnT]]) -> AIFunction[Any, ReturnT]:
@@ -689,7 +902,22 @@ async def _auto_invoke_function(
     request_index: int | None = None,
     middleware_pipeline: Any = None,  # Optional MiddlewarePipeline
 ) -> "Contents":
-    """Invoke a function call requested by the agent, applying filters that are defined in the agent."""
+    """Invoke a function call requested by the agent, applying middleware that is defined.
+
+    Args:
+        function_call_content: The function call content from the model.
+        custom_args: Additional custom arguments to merge with parsed arguments.
+        tool_map: A mapping of tool names to AIFunction instances.
+        sequence_index: The index of the function call in the sequence.
+        request_index: The index of the request iteration.
+        middleware_pipeline: Optional middleware pipeline to apply during execution.
+
+    Returns:
+        A FunctionResultContent containing the result or exception.
+
+    Raises:
+        KeyError: If the requested function is not found in the tool map.
+    """
     from ._types import FunctionResultContent
 
     tool: AIFunction[BaseModel, Any] | None = tool_map.get(function_call_content.name)
@@ -775,6 +1003,18 @@ async def execute_function_calls(
     | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]",
     middleware_pipeline: Any = None,  # Optional MiddlewarePipeline to avoid circular imports
 ) -> list["Contents"]:
+    """Execute multiple function calls concurrently.
+
+    Args:
+        custom_args: Custom arguments to pass to each function.
+        attempt_idx: The index of the current attempt iteration.
+        function_calls: A sequence of FunctionCallContent to execute.
+        tools: The tools available for execution.
+        middleware_pipeline: Optional middleware pipeline to apply during execution.
+
+    Returns:
+        A list of Contents containing the results of each function call.
+    """
     tool_map = _get_tool_map(tools)
     # Run all function calls concurrently
     return await asyncio.gather(*[
@@ -790,8 +1030,13 @@ async def execute_function_calls(
     ])
 
 
-def update_conversation_id(kwargs: dict[str, Any], conversation_id: str | None) -> None:
-    """Update kwargs with conversation id."""
+def _update_conversation_id(kwargs: dict[str, Any], conversation_id: str | None) -> None:
+    """Update kwargs with conversation id.
+
+    Args:
+        kwargs: The keyword arguments dictionary to update.
+        conversation_id: The conversation ID to set, or None to skip.
+    """
     if conversation_id is None:
         return
     if "chat_options" in kwargs:
@@ -802,15 +1047,14 @@ def update_conversation_id(kwargs: dict[str, Any], conversation_id: str | None) 
 
 def _handle_function_calls_response(
     func: Callable[..., Awaitable["ChatResponse"]],
-    *,
-    max_iterations: int = 10,
 ) -> Callable[..., Awaitable["ChatResponse"]]:
     """Decorate the get_response method to enable function calls.
 
     Args:
         func: The get_response method to decorate.
-        max_iterations: The maximum number of function call iterations to perform.
 
+    Returns:
+        A decorated function that handles function calls automatically.
     """
 
     def decorator(
@@ -835,10 +1079,17 @@ def _handle_function_calls_response(
             # because the underlying function may not preserve it in kwargs
             stored_middleware_pipeline = kwargs.get("_function_middleware_pipeline")
 
+            # Get max_iterations from instance additional_properties or class attribute
+            instance_max_iterations: int = DEFAULT_MAX_ITERATIONS
+            if hasattr(self, "additional_properties") and self.additional_properties:
+                instance_max_iterations = self.additional_properties.get("max_iterations", DEFAULT_MAX_ITERATIONS)
+            elif hasattr(self.__class__, "MAX_ITERATIONS"):
+                instance_max_iterations = getattr(self.__class__, "MAX_ITERATIONS", DEFAULT_MAX_ITERATIONS)
+
             prepped_messages = prepare_messages(messages)
             response: "ChatResponse | None" = None
             fcc_messages: "list[ChatMessage]" = []
-            for attempt_idx in range(max_iterations):
+            for attempt_idx in range(instance_max_iterations):
                 response = await func(self, messages=prepped_messages, **kwargs)
                 # if there are function calls, we will handle them first
                 function_results = {
@@ -851,7 +1102,7 @@ def _handle_function_calls_response(
                 ]
 
                 if response.conversation_id is not None:
-                    update_conversation_id(kwargs, response.conversation_id)
+                    _update_conversation_id(kwargs, response.conversation_id)
                     prepped_messages = []
 
                 tools = kwargs.get("tools")
@@ -909,15 +1160,14 @@ def _handle_function_calls_response(
 
 def _handle_function_calls_streaming_response(
     func: Callable[..., AsyncIterable["ChatResponseUpdate"]],
-    *,
-    max_iterations: int = 10,
 ) -> Callable[..., AsyncIterable["ChatResponseUpdate"]]:
     """Decorate the get_streaming_response method to handle function calls.
 
     Args:
         func: The get_streaming_response method to decorate.
-        max_iterations: The maximum number of function call iterations to perform.
 
+    Returns:
+        A decorated function that handles function calls in streaming mode.
     """
 
     def decorator(
@@ -943,8 +1193,15 @@ def _handle_function_calls_streaming_response(
             # because the underlying function may not preserve it in kwargs
             stored_middleware_pipeline = kwargs.get("_function_middleware_pipeline")
 
+            # Get max_iterations from instance additional_properties or class attribute
+            instance_max_iterations: int = DEFAULT_MAX_ITERATIONS
+            if hasattr(self, "additional_properties") and self.additional_properties:
+                instance_max_iterations = self.additional_properties.get("max_iterations", DEFAULT_MAX_ITERATIONS)
+            elif hasattr(self.__class__, "MAX_ITERATIONS"):
+                instance_max_iterations = getattr(self.__class__, "MAX_ITERATIONS", DEFAULT_MAX_ITERATIONS)
+
             prepped_messages = prepare_messages(messages)
-            for attempt_idx in range(max_iterations):
+            for attempt_idx in range(instance_max_iterations):
                 all_updates: list["ChatResponseUpdate"] = []
                 async for update in func(self, messages=prepped_messages, **kwargs):
                     all_updates.append(update)
@@ -971,7 +1228,7 @@ def _handle_function_calls_streaming_response(
                 # When conversation id is present, it means that messages are hosted on the server.
                 # In this case, we need to update kwargs with conversation id and also clear messages
                 if response.conversation_id is not None:
-                    update_conversation_id(kwargs, response.conversation_id)
+                    _update_conversation_id(kwargs, response.conversation_id)
                     prepped_messages = []
 
                 tools: Sequence[ToolProtocol | MutableMapping[str, Any]] | None = kwargs.get("tools")
@@ -1008,16 +1265,51 @@ def _handle_function_calls_streaming_response(
 def use_function_invocation(
     chat_client: type[TChatClient],
 ) -> type[TChatClient]:
-    """Class decorator that enables tool calling for a chat client."""
+    """Class decorator that enables tool calling for a chat client.
+
+    This decorator wraps the ``get_response`` and ``get_streaming_response`` methods
+    to automatically handle function calls from the model, execute them, and return
+    the results back to the model for further processing.
+
+    Args:
+        chat_client: The chat client class to decorate.
+
+    Returns:
+        The decorated chat client class with function invocation enabled.
+
+    Raises:
+        ChatClientInitializationError: If the chat client does not have the required methods.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import use_function_invocation, BaseChatClient
+
+
+            @use_function_invocation
+            class MyCustomClient(BaseChatClient):
+                async def get_response(self, messages, **kwargs):
+                    # Implementation here
+                    pass
+
+                async def get_streaming_response(self, messages, **kwargs):
+                    # Implementation here
+                    pass
+
+
+            # The client now automatically handles function calls
+            client = MyCustomClient()
+    """
     if getattr(chat_client, FUNCTION_INVOKING_CHAT_CLIENT_MARKER, False):
         return chat_client
 
-    max_iterations = DEFAULT_MAX_ITERATIONS
+    # Set MAX_ITERATIONS as a class variable if not already set
+    if not hasattr(chat_client, "MAX_ITERATIONS"):
+        chat_client.MAX_ITERATIONS = DEFAULT_MAX_ITERATIONS  # type: ignore
 
     try:
         chat_client.get_response = _handle_function_calls_response(  # type: ignore
             func=chat_client.get_response,  # type: ignore
-            max_iterations=max_iterations,
         )
     except AttributeError as ex:
         raise ChatClientInitializationError(
@@ -1026,7 +1318,6 @@ def use_function_invocation(
     try:
         chat_client.get_streaming_response = _handle_function_calls_streaming_response(  # type: ignore
             func=chat_client.get_streaming_response,
-            max_iterations=max_iterations,
         )
     except AttributeError as ex:
         raise ChatClientInitializationError(

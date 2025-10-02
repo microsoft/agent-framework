@@ -11,7 +11,7 @@ A lightweight, standalone sample app interface for running entities (agents/work
 
 ```bash
 # Install
-pip install agent-framework-devui
+pip install agent-framework-devui --pre
 ```
 
 You can also launch it programmatically

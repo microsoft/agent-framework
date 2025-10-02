@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using Azure.AI.OpenAI;
 using Azure.Identity;
+using Azure.Monitor.OpenTelemetry.Exporter;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
@@ -23,6 +24,8 @@ const string ServiceName = "AgentOpenTelemetry";
 // Configure OpenTelemetry for Aspire dashboard
 var otlpEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT") ?? "http://localhost:4318";
 
+var applicationInsightsConnectionString = Environment.GetEnvironmentVariable("APPLICATIONINSIGHTS_CONNECTION_STRING");
+
 // Create a resource to identify this service
 var resource = ResourceBuilder.CreateDefault()
     .AddService(ServiceName, serviceVersion: "1.0.0")
@@ -34,13 +37,19 @@ var resource = ResourceBuilder.CreateDefault()
     .Build();
 
 // Setup tracing with resource
-using var tracerProvider = Sdk.CreateTracerProviderBuilder()
+var tracerProviderBuilder = Sdk.CreateTracerProviderBuilder()
     .SetResourceBuilder(ResourceBuilder.CreateDefault().AddService(ServiceName, serviceVersion: "1.0.0"))
     .AddSource(SourceName) // Our custom activity source
     .AddSource("*Microsoft.Agents.AI") // Agent Framework telemetry
     .AddHttpClientInstrumentation() // Capture HTTP calls to OpenAI
-    .AddOtlpExporter(options => options.Endpoint = new Uri(otlpEndpoint))
-    .Build();
+    .AddOtlpExporter(options => options.Endpoint = new Uri(otlpEndpoint));
+
+if (!string.IsNullOrWhiteSpace(applicationInsightsConnectionString))
+{
+    tracerProviderBuilder.AddAzureMonitorTraceExporter(options => options.ConnectionString = applicationInsightsConnectionString);
+}
+
+using var tracerProvider = tracerProviderBuilder.Build();
 
 // Setup metrics with resource and instrument name filtering
 using var meterProvider = Sdk.CreateMeterProviderBuilder()
@@ -60,6 +69,10 @@ serviceCollection.AddLogging(loggingBuilder => loggingBuilder
     {
         options.SetResourceBuilder(ResourceBuilder.CreateDefault().AddService(ServiceName, serviceVersion: "1.0.0"));
         options.AddOtlpExporter(otlpOptions => otlpOptions.Endpoint = new Uri(otlpEndpoint));
+        if (!string.IsNullOrWhiteSpace(applicationInsightsConnectionString))
+        {
+            options.AddAzureMonitorLogExporter(options => options.ConnectionString = applicationInsightsConnectionString);
+        }
         options.IncludeScopes = true;
         options.IncludeFormattedMessage = true;
     }));
@@ -85,7 +98,7 @@ Console.WriteLine("""
     """);
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT environment variable is not set.");
-var deploymentName = System.Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 // Log application startup
 appLogger.LogInformation("OpenTelemetry Aspire Demo application started");

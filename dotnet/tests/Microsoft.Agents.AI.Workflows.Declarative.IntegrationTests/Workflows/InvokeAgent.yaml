@@ -12,4 +12,5 @@ trigger:
       input:
         messages: =[UserMessage(System.LastMessageText)]
       output:
+        autoSend: false
         messages: Local.Answer

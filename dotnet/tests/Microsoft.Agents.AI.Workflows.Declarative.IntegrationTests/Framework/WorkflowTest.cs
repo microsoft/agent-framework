@@ -21,9 +21,15 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Framework;
 /// </summary>
 public abstract class WorkflowTest(ITestOutputHelper output) : IntegrationTest(output)
 {
-    protected abstract Task RunAndVerifyAsync<TInput>(Testcase testcase, string workflowPath, DeclarativeWorkflowOptions workflowOptions) where TInput : notnull;
+    protected abstract Task RunAndVerifyAsync<TInput>(
+        Testcase testcase,
+        string workflowPath,
+        DeclarativeWorkflowOptions workflowOptions) where TInput : notnull;
 
-    protected Task RunWorkflowAsync(string workflowPath, string testcaseFileName)
+    protected Task RunWorkflowAsync(
+        string workflowPath,
+        string testcaseFileName,
+        bool externalConversation = false)
     {
         this.Output.WriteLine($"WORKFLOW: {workflowPath}");
         this.Output.WriteLine($"TESTCASE: {testcaseFileName}");
@@ -45,7 +51,8 @@ public abstract class WorkflowTest(ITestOutputHelper output) : IntegrationTest(o
     protected async Task TestWorkflowAsync<TInput>(
         Testcase testcase,
         string workflowPath,
-        IConfiguration configuration) where TInput : notnull
+        IConfiguration configuration,
+        bool externalConversation = false) where TInput : notnull
     {
         this.Output.WriteLine($"INPUT: {testcase.Setup.Input.Value}");
 
@@ -59,12 +66,22 @@ public abstract class WorkflowTest(ITestOutputHelper output) : IntegrationTest(o
                 .AddInMemoryCollection(agentMap)
                 .Build();
 
+        AzureAgentProvider agentProvider = new(foundryConfig.Endpoint, new AzureCliCredential());
+
+        string? conversationId = null;
+        if (externalConversation)
+        {
+            conversationId = await agentProvider.CreateConversationAsync().ConfigureAwait(false);
+        }
+
         DeclarativeWorkflowOptions workflowOptions =
-            new(new AzureAgentProvider(foundryConfig.Endpoint, new AzureCliCredential()))
+            new(agentProvider)
             {
                 Configuration = workflowConfig,
+                ConversationId = conversationId,
                 LoggerFactory = this.Output
             };
+
         await this.RunAndVerifyAsync<TInput>(testcase, workflowPath, workflowOptions);
     }
 
@@ -103,6 +120,18 @@ public abstract class WorkflowTest(ITestOutputHelper output) : IntegrationTest(o
 
     protected static class AssertWorkflow
     {
+        public static void Conversation(string? conversationId, int expectedCount, IReadOnlyList<ConversationUpdateEvent> conversationEvents)
+        {
+            if (string.IsNullOrEmpty(conversationId))
+            {
+                Assert.Equal(expectedCount, conversationEvents.Count);
+            }
+            else
+            {
+                Assert.Equal(expectedCount - 1, conversationEvents.Count);
+            }
+        }
+
         public static void EventCounts(int actualCount, Testcase testcase)
         {
             Assert.True(actualCount >= testcase.Validation.MinActionCount, $"Event count less than expected: {testcase.Validation.MinActionCount} ({actualCount}).");

@@ -101,14 +101,15 @@ class SequentialBuilder:
     - The final output is the conversation produced by the last participant
 
     Usage:
-    ```python
-    from agent_framework import SequentialBuilder
 
-    workflow = SequentialBuilder().participants([agent1, agent2, summarizer_exec]).build()
+    .. code-block:: python
 
-    # Enable checkpoint persistence
-    workflow = SequentialBuilder().participants([agent1, agent2]).with_checkpointing(storage).build()
-    ```
+        from agent_framework import SequentialBuilder
+
+        workflow = SequentialBuilder().participants([agent1, agent2, summarizer_exec]).build()
+
+        # Enable checkpoint persistence
+        workflow = SequentialBuilder().participants([agent1, agent2]).with_checkpointing(storage).build()
     """
 
     def __init__(self) -> None:

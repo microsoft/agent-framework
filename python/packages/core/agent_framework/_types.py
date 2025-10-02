@@ -200,6 +200,34 @@ class UsageDetails(SerializationMixin):
         output_token_count: The number of tokens in the output.
         total_token_count: The total number of tokens used to produce the response.
         additional_counts: A dictionary of additional token counts, can be set by passing kwargs.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import UsageDetails
+
+            # Create usage details
+            usage = UsageDetails(
+                input_token_count=100,
+                output_token_count=50,
+                total_token_count=150,
+            )
+            print(usage.total_token_count)  # 150
+
+            # With additional counts
+            usage = UsageDetails(
+                input_token_count=100,
+                output_token_count=50,
+                total_token_count=150,
+                reasoning_tokens=25,
+            )
+            print(usage.additional_counts["reasoning_tokens"])  # 25
+
+            # Combine usage details
+            usage1 = UsageDetails(input_token_count=100, output_token_count=50)
+            usage2 = UsageDetails(input_token_count=200, output_token_count=100)
+            combined = usage1 + usage2
+            print(combined.input_token_count)  # 300
     """
 
     DEFAULT_EXCLUDE: ClassVar[set[str]] = {"_extra_counts"}
@@ -332,7 +360,17 @@ class UsageDetails(SerializationMixin):
 
 
 class TextSpanRegion(SerializationMixin):
-    """Represents a region of text that has been annotated."""
+    """Represents a region of text that has been annotated.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import TextSpanRegion
+
+            # Create a text span region
+            region = TextSpanRegion(start_index=0, end_index=10)
+            print(region.type)  # "text_span"
+    """
 
     def __init__(
         self,
@@ -444,6 +482,20 @@ class CitationAnnotation(BaseAnnotation):
         annotated_regions: A list of regions that have been annotated with this citation.
         additional_properties: Optional additional properties associated with the content.
         raw_representation: Optional raw representation of the content from an underlying implementation.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import CitationAnnotation, TextSpanRegion
+
+            # Create a citation annotation
+            citation = CitationAnnotation(
+                title="Agent Framework Documentation",
+                url="https://example.com/docs",
+                snippet="This is a relevant excerpt...",
+                annotated_regions=[TextSpanRegion(start_index=0, end_index=25)],
+            )
+            print(citation.title)  # "Agent Framework Documentation"
     """
 
     def __init__(
@@ -576,6 +628,21 @@ class TextContent(BaseContent):
         annotations: Optional annotations associated with the content.
         additional_properties: Optional additional properties associated with the content.
         raw_representation: Optional raw representation of the content.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import TextContent
+
+            # Create basic text content
+            text = TextContent(text="Hello, world!")
+            print(text.text)  # "Hello, world!"
+
+            # Concatenate text content
+            text1 = TextContent(text="Hello, ")
+            text2 = TextContent(text="world!")
+            combined = text1 + text2
+            print(combined.text)  # "Hello, world!"
     """
 
     def __init__(
@@ -701,6 +768,21 @@ class TextReasoningContent(BaseContent):
         annotations: Optional annotations associated with the content.
         additional_properties: Optional additional properties associated with the content.
         raw_representation: Optional raw representation of the content.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import TextReasoningContent
+
+            # Create reasoning content
+            reasoning = TextReasoningContent(text="Let me think step by step...")
+            print(reasoning.text)  # "Let me think step by step..."
+
+            # Concatenate reasoning content
+            reasoning1 = TextReasoningContent(text="First, ")
+            reasoning2 = TextReasoningContent(text="second, ")
+            combined = reasoning1 + reasoning2
+            print(combined.text)  # "First, second, "
     """
 
     def __init__(
@@ -823,6 +905,22 @@ class DataContent(BaseContent):
         additional_properties: Optional additional properties associated with the content.
         raw_representation: Optional raw representation of the content.
 
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import DataContent
+
+            # Create from binary data
+            image_data = b"raw image bytes"
+            data_content = DataContent(data=image_data, media_type="image/png")
+
+            # Create from data URI
+            data_uri = "data:image/png;base64,iVBORw0KGgoAAAANS..."
+            data_content = DataContent(uri=data_uri)
+
+            # Check media type
+            if data_content.has_top_level_media_type("image"):
+                print("This is an image")
     """
 
     @overload
@@ -960,6 +1058,26 @@ class UriContent(BaseContent):
         additional_properties: Optional additional properties associated with the content.
         raw_representation: Optional raw representation of the content.
 
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import UriContent
+
+            # Create URI content for an image
+            image_uri = UriContent(
+                uri="https://example.com/image.png",
+                media_type="image/png",
+            )
+
+            # Create URI content for a document
+            doc_uri = UriContent(
+                uri="https://example.com/document.pdf",
+                media_type="application/pdf",
+            )
+
+            # Check if it's an image
+            if image_uri.has_top_level_media_type("image"):
+                print("This is an image URI")
     """
 
     def __init__(
@@ -1028,7 +1146,22 @@ class ErrorContent(BaseContent):
         additional_properties: Optional additional properties associated with the content.
         raw_representation: Optional raw representation of the content.
 
+    Examples:
+        .. code-block:: python
 
+            from agent_framework import ErrorContent
+
+            # Create an error content
+            error = ErrorContent(
+                message="Failed to process request",
+                error_code="PROCESSING_ERROR",
+                details="The input format was invalid",
+            )
+            print(str(error))  # "Error PROCESSING_ERROR: Failed to process request"
+
+            # Error without code
+            simple_error = ErrorContent(message="Something went wrong")
+            print(str(simple_error))  # "Something went wrong"
     """
 
     def __init__(
@@ -1082,6 +1215,28 @@ class FunctionCallContent(BaseContent):
         additional_properties: Optional additional properties associated with the content.
         raw_representation: Optional raw representation of the content.
 
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import FunctionCallContent
+
+            # Create a function call
+            func_call = FunctionCallContent(
+                call_id="call_123",
+                name="get_weather",
+                arguments={"location": "Seattle", "unit": "celsius"},
+            )
+
+            # Parse arguments
+            args = func_call.parse_arguments()
+            print(args)  # {"location": "Seattle", "unit": "celsius"}
+
+            # Create with string arguments (gradual completion)
+            func_call_partial = FunctionCallContent(
+                call_id="call_124",
+                name="search",
+                arguments='{"query": "weather"}',
+            )
     """
 
     def __init__(
@@ -1170,6 +1325,23 @@ class FunctionResultContent(BaseContent):
         additional_properties: Optional additional properties associated with the content.
         raw_representation: Optional raw representation of the content.
 
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import FunctionResultContent
+
+            # Create a successful function result
+            result = FunctionResultContent(
+                call_id="call_123",
+                result={"temperature": 22, "condition": "sunny"},
+            )
+
+            # Create a failed function result
+            failed_result = FunctionResultContent(
+                call_id="call_124",
+                result="Function execution failed",
+                exception=ValueError("Invalid location"),
+            )
     """
 
     def __init__(
@@ -1216,6 +1388,20 @@ class UsageContent(BaseContent):
         additional_properties: Optional additional properties associated with the content.
         raw_representation: Optional raw representation of the content.
 
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import UsageContent, UsageDetails
+
+            # Create usage content
+            usage = UsageContent(
+                details=UsageDetails(
+                    input_token_count=100,
+                    output_token_count=50,
+                    total_token_count=150,
+                ),
+            )
+            print(usage.details.total_token_count)  # 150
     """
 
     def __init__(
@@ -1250,6 +1436,14 @@ class HostedFileContent(BaseContent):
         additional_properties: Optional additional properties associated with the content.
         raw_representation: Optional raw representation of the content.
 
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import HostedFileContent
+
+            # Create hosted file content
+            file_content = HostedFileContent(file_id="file-abc123")
+            print(file_content.file_id)  # "file-abc123"
     """
 
     def __init__(
@@ -1279,6 +1473,14 @@ class HostedVectorStoreContent(BaseContent):
         additional_properties: Optional additional properties associated with the content.
         raw_representation: Optional raw representation of the content.
 
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import HostedVectorStoreContent
+
+            # Create hosted vector store content
+            vs_content = HostedVectorStoreContent(vector_store_id="vs-xyz789")
+            print(vs_content.vector_store_id)  # "vs-xyz789"
     """
 
     def __init__(
@@ -1333,7 +1535,26 @@ class BaseUserInputRequest(BaseContent):
 
 
 class FunctionApprovalResponseContent(BaseContent):
-    """Represents a response for user approval of a function call."""
+    """Represents a response for user approval of a function call.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import FunctionApprovalResponseContent, FunctionCallContent
+
+            # Create a function approval response
+            func_call = FunctionCallContent(
+                call_id="call_123",
+                name="send_email",
+                arguments={"to": "user@example.com"},
+            )
+            response = FunctionApprovalResponseContent(
+                approved=False,
+                id="approval_001",
+                function_call=func_call,
+            )
+            print(response.approved)  # False
+    """
 
     def __init__(
         self,
@@ -1375,7 +1596,28 @@ class FunctionApprovalResponseContent(BaseContent):
 
 
 class FunctionApprovalRequestContent(BaseContent):
-    """Represents a request for user approval of a function call."""
+    """Represents a request for user approval of a function call.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import FunctionApprovalRequestContent, FunctionCallContent
+
+            # Create a function approval request
+            func_call = FunctionCallContent(
+                call_id="call_123",
+                name="send_email",
+                arguments={"to": "user@example.com", "subject": "Hello"},
+            )
+            approval_request = FunctionApprovalRequestContent(
+                id="approval_001",
+                function_call=func_call,
+            )
+
+            # Create response
+            approval_response = approval_request.create_response(approved=True)
+            print(approval_response.approved)  # True
+    """
 
     def __init__(
         self,
@@ -1453,6 +1695,24 @@ class Role(SerializationMixin, metaclass=EnumLike):
         USER: The role that provides user input for chat interactions.
         ASSISTANT: The role that provides responses to system-instructed, user-prompted input.
         TOOL: The role that provides additional information and references in response to tool use requests.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import Role
+
+            # Use predefined role constants
+            system_role = Role.SYSTEM
+            user_role = Role.USER
+            assistant_role = Role.ASSISTANT
+            tool_role = Role.TOOL
+
+            # Create custom role
+            custom_role = Role(value="custom")
+
+            # Compare roles
+            print(system_role == Role.SYSTEM)  # True
+            print(system_role.value)  # "system"
     """
 
     # Constants configuration for EnumLike metaclass
@@ -1501,6 +1761,21 @@ class FinishReason(SerializationMixin, metaclass=EnumLike):
 
     Attributes:
         value: The string representation of the finish reason.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import FinishReason
+
+            # Use predefined finish reason constants
+            stop_reason = FinishReason.STOP  # Normal completion
+            length_reason = FinishReason.LENGTH  # Max tokens reached
+            tool_calls_reason = FinishReason.TOOL_CALLS  # Tool calls triggered
+            filter_reason = FinishReason.CONTENT_FILTER  # Content filter triggered
+
+            # Check finish reason
+            if stop_reason == FinishReason.STOP:
+                print("Response completed normally")
     """
 
     # Constants configuration for EnumLike metaclass
@@ -1548,7 +1823,7 @@ class FinishReason(SerializationMixin, metaclass=EnumLike):
 
 
 class ChatMessage(SerializationMixin):
-    """Represents a chat message.
+    r"""Represents a chat message.
 
     Attributes:
         role: The role of the author of the message.
@@ -1557,6 +1832,38 @@ class ChatMessage(SerializationMixin):
         message_id: The ID of the chat message.
         additional_properties: Any additional properties associated with the chat message.
         raw_representation: The raw representation of the chat message from an underlying implementation.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import ChatMessage, TextContent
+
+            # Create a message with text
+            user_msg = ChatMessage(role="user", text="What's the weather?")
+            print(user_msg.text)  # "What's the weather?"
+
+            # Create a message with role string
+            system_msg = ChatMessage(role="system", text="You are a helpful assistant.")
+
+            # Create a message with contents
+            assistant_msg = ChatMessage(
+                role="assistant",
+                contents=[TextContent(text="The weather is sunny!")],
+            )
+            print(assistant_msg.text)  # "The weather is sunny!"
+
+            # Serialization - to_dict and from_dict
+            msg_dict = user_msg.to_dict()
+            # {'type': 'chat_message', 'role': {'type': 'role', 'value': 'user'},
+            #  'contents': [{'type': 'text', 'text': "What's the weather?"}], 'additional_properties': {}}
+            restored_msg = ChatMessage.from_dict(msg_dict)
+            print(restored_msg.text)  # "What's the weather?"
+
+            # Serialization - to_json and from_json
+            msg_json = user_msg.to_json()
+            # '{"type": "chat_message", "role": {"type": "role", "value": "user"}, "contents": [...], ...}'
+            restored_from_json = ChatMessage.from_json(msg_json)
+            print(restored_from_json.role.value)  # "user"
 
     """
 
@@ -1790,6 +2097,40 @@ class ChatResponse(SerializationMixin):
         structured_output: The structured output of the chat response, if applicable.
         additional_properties: Any additional properties associated with the chat response.
         raw_representation: The raw representation of the chat response from an underlying implementation.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import ChatResponse, ChatMessage
+
+            # Create a simple text response
+            response = ChatResponse(text="Hello, how can I help you?")
+            print(response.text)  # "Hello, how can I help you?"
+
+            # Create a response with messages
+            msg = ChatMessage(role="assistant", text="The weather is sunny.")
+            response = ChatResponse(
+                messages=[msg],
+                finish_reason="stop",
+                model_id="gpt-4",
+            )
+
+            # Combine streaming updates
+            updates = [...]  # List of ChatResponseUpdate objects
+            response = ChatResponse.from_chat_response_updates(updates)
+
+            # Serialization - to_dict and from_dict
+            response_dict = response.to_dict()
+            # {'type': 'chat_response', 'messages': [...], 'model_id': 'gpt-4',
+            #  'finish_reason': {'type': 'finish_reason', 'value': 'stop'}}
+            restored_response = ChatResponse.from_dict(response_dict)
+            print(restored_response.model_id)  # "gpt-4"
+
+            # Serialization - to_json and from_json
+            response_json = response.to_json()
+            # '{"type": "chat_response", "messages": [...], "model_id": "gpt-4", ...}'
+            restored_from_json = ChatResponse.from_json(response_json)
+            print(restored_from_json.text)  # "The weather is sunny."
     """
 
     DEFAULT_EXCLUDE: ClassVar[set[str]] = {"raw_representation", "additional_properties"}
@@ -1993,6 +2334,35 @@ class ChatResponseUpdate(SerializationMixin):
         additional_properties: Any additional properties associated with the chat response update.
         raw_representation: The raw representation of the chat response update from an underlying implementation.
 
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import ChatResponseUpdate, TextContent
+
+            # Create a response update
+            update = ChatResponseUpdate(
+                contents=[TextContent(text="Hello")],
+                role="assistant",
+                message_id="msg_123",
+            )
+            print(update.text)  # "Hello"
+
+            # Create update with text shorthand
+            update = ChatResponseUpdate(text="World!", role="assistant")
+
+            # Serialization - to_dict and from_dict
+            update_dict = update.to_dict()
+            # {'type': 'chat_response_update', 'contents': [{'type': 'text', 'text': 'Hello'}],
+            #  'role': {'type': 'role', 'value': 'assistant'}, 'message_id': 'msg_123'}
+            restored_update = ChatResponseUpdate.from_dict(update_dict)
+            print(restored_update.text)  # "Hello"
+
+            # Serialization - to_json and from_json
+            update_json = update.to_json()
+            # '{"type": "chat_response_update", "contents": [{"type": "text", "text": "Hello"}], ...}'
+            restored_from_json = ChatResponseUpdate.from_json(update_json)
+            print(restored_from_json.message_id)  # "msg_123"
+
     """
 
     DEFAULT_EXCLUDE: ClassVar[set[str]] = {"raw_representation"}
@@ -2095,6 +2465,37 @@ class AgentRunResponse(SerializationMixin):
     Provides one or more response messages and metadata about the response.
     A typical response will contain a single message, but may contain multiple
     messages in scenarios involving function calls, RAG retrievals, or complex logic.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import AgentRunResponse, ChatMessage
+
+            # Create agent response
+            msg = ChatMessage(role="assistant", text="Task completed successfully.")
+            response = AgentRunResponse(messages=[msg], response_id="run_123")
+            print(response.text)  # "Task completed successfully."
+
+            # Access user input requests
+            user_requests = response.user_input_requests
+            print(len(user_requests))  # 0
+
+            # Combine streaming updates
+            updates = [...]  # List of AgentRunResponseUpdate objects
+            response = AgentRunResponse.from_agent_run_response_updates(updates)
+
+            # Serialization - to_dict and from_dict
+            response_dict = response.to_dict()
+            # {'type': 'agent_run_response', 'messages': [...], 'response_id': 'run_123',
+            #  'additional_properties': {}}
+            restored_response = AgentRunResponse.from_dict(response_dict)
+            print(restored_response.response_id)  # "run_123"
+
+            # Serialization - to_json and from_json
+            response_json = response.to_json()
+            # '{"type": "agent_run_response", "messages": [...], "response_id": "run_123", ...}'
+            restored_from_json = AgentRunResponse.from_json(response_json)
+            print(restored_from_json.text)  # "Task completed successfully."
     """
 
     DEFAULT_EXCLUDE: ClassVar[set[str]] = {"raw_representation"}
@@ -2217,7 +2618,37 @@ class AgentRunResponse(SerializationMixin):
 
 
 class AgentRunResponseUpdate(SerializationMixin):
-    """Represents a single streaming response chunk from an Agent."""
+    """Represents a single streaming response chunk from an Agent.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import AgentRunResponseUpdate, TextContent
+
+            # Create an agent run update
+            update = AgentRunResponseUpdate(
+                contents=[TextContent(text="Processing...")],
+                role="assistant",
+                response_id="run_123",
+            )
+            print(update.text)  # "Processing..."
+
+            # Check for user input requests
+            user_requests = update.user_input_requests
+
+            # Serialization - to_dict and from_dict
+            update_dict = update.to_dict()
+            # {'type': 'agent_run_response_update', 'contents': [{'type': 'text', 'text': 'Processing...'}],
+            #  'role': {'type': 'role', 'value': 'assistant'}, 'response_id': 'run_123'}
+            restored_update = AgentRunResponseUpdate.from_dict(update_dict)
+            print(restored_update.response_id)  # "run_123"
+
+            # Serialization - to_json and from_json
+            update_json = update.to_json()
+            # '{"type": "agent_run_response_update", "contents": [{"type": "text", "text": "Processing..."}], ...}'
+            restored_from_json = AgentRunResponseUpdate.from_json(update_json)
+            print(restored_from_json.text)  # "Processing..."
+    """
 
     DEFAULT_EXCLUDE: ClassVar[set[str]] = {"raw_representation"}
 
@@ -2294,7 +2725,25 @@ class AgentRunResponseUpdate(SerializationMixin):
 
 
 class ToolMode(SerializationMixin, metaclass=EnumLike):
-    """Defines if and how tools are used in a chat request."""
+    """Defines if and how tools are used in a chat request.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import ToolMode
+
+            # Use predefined tool modes
+            auto_mode = ToolMode.AUTO  # Model decides when to use tools
+            required_mode = ToolMode.REQUIRED_ANY  # Model must use a tool
+            none_mode = ToolMode.NONE  # No tools allowed
+
+            # Require a specific function
+            specific_mode = ToolMode.REQUIRED(function_name="get_weather")
+            print(specific_mode.required_function_name)  # "get_weather"
+
+            # Compare modes
+            print(auto_mode == "auto")  # True
+    """
 
     # Constants configuration for EnumLike metaclass
     _constants: ClassVar[dict[str, tuple[str, ...]]] = {
@@ -2355,7 +2804,46 @@ class ToolMode(SerializationMixin, metaclass=EnumLike):
 
 
 class ChatOptions(SerializationMixin):
-    """Common request settings for AI services."""
+    """Common request settings for AI services.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import ChatOptions, ai_function
+
+            # Create basic chat options
+            options = ChatOptions(
+                model_id="gpt-4",
+                temperature=0.7,
+                max_tokens=1000,
+            )
+
+
+            # With tools
+            @ai_function
+            def get_weather(location: str) -> str:
+                '''Get weather for a location.'''
+                return f"Weather in {location}"
+
+
+            options = ChatOptions(
+                model_id="gpt-4",
+                tools=get_weather,
+                tool_choice="auto",
+            )
+
+            # Require a specific tool to be called
+            options_required = ChatOptions(
+                model_id="gpt-4",
+                tools=get_weather,
+                tool_choice=ToolMode.REQUIRED(function_name="get_weather"),
+            )
+
+            # Combine options
+            base_options = ChatOptions(temperature=0.5)
+            extended_options = ChatOptions(max_tokens=500, tools=get_weather)
+            combined = base_options & extended_options
+    """
 
     DEFAULT_EXCLUDE: ClassVar[set[str]] = {"_tools"}  # Internal field, use .tools property
 

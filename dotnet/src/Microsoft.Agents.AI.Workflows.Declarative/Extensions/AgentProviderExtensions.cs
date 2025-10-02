@@ -41,7 +41,7 @@ internal static class AgentProviderExtensions
 
         // Enable "autoSend" behavior if this is the workflow conversation.
         bool isWorkflowConversation = context.IsWorkflowConversation(conversationId);
-        autoSend &= isWorkflowConversation;
+        autoSend |= isWorkflowConversation;
 
         // Process the agent response updates.
         List<AgentRunResponseUpdate> updates = [];

@@ -13,9 +13,9 @@ Highlights
 ## Quick Install
 
 ```bash
-pip install agent-framework-core
+pip install agent-framework-core --pre
 # Optional: Add Azure AI integration
-pip install agent-framework-azure-ai
+pip install agent-framework-azure-ai --pre
 ```
 
 Supported Platforms:

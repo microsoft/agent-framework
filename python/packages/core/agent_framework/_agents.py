@@ -29,7 +29,7 @@ from ._types import (
     Role,
     ToolMode,
 )
-from .exceptions import AgentExecutionException
+from .exceptions import AgentExecutionException, AgentInitializationError
 from .observability import use_agent_observability
 
 if sys.version_info >= (3, 12):
@@ -53,7 +53,70 @@ __all__ = ["AgentProtocol", "BaseAgent", "ChatAgent"]
 
 @runtime_checkable
 class AgentProtocol(Protocol):
-    """A protocol for an agent that can be invoked."""
+    """A protocol for an agent that can be invoked.
+
+    This protocol defines the interface that all agents must implement,
+    including properties for identification and methods for execution.
+
+    Note:
+        Protocols use structural subtyping (duck typing). Classes don't need
+        to explicitly inherit from this protocol to be considered compatible.
+        This allows you to create completely custom agents without using
+        any Agent Framework base classes.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import AgentProtocol
+
+
+            # Any class implementing the required methods is compatible
+            # No need to inherit from AgentProtocol or use any framework classes
+            class CustomAgent:
+                def __init__(self):
+                    self._id = "custom-agent-001"
+                    self._name = "Custom Agent"
+
+                @property
+                def id(self) -> str:
+                    return self._id
+
+                @property
+                def name(self) -> str | None:
+                    return self._name
+
+                @property
+                def display_name(self) -> str:
+                    return self.name or self.id
+
+                @property
+                def description(self) -> str | None:
+                    return "A fully custom agent implementation"
+
+                async def run(self, messages=None, *, thread=None, **kwargs):
+                    # Your custom implementation
+                    from agent_framework import AgentRunResponse
+
+                    return AgentRunResponse(messages=[], response_id="custom-response")
+
+                def run_stream(self, messages=None, *, thread=None, **kwargs):
+                    # Your custom streaming implementation
+                    async def _stream():
+                        from agent_framework import AgentRunResponseUpdate
+
+                        yield AgentRunResponseUpdate()
+
+                    return _stream()
+
+                def get_new_thread(self, **kwargs):
+                    # Return your own thread implementation
+                    return {"id": "custom-thread", "messages": []}
+
+
+            # Verify the instance satisfies the protocol
+            instance = CustomAgent()
+            assert isinstance(instance, AgentProtocol)
+    """
 
     @property
     def id(self) -> str:
@@ -137,7 +200,51 @@ class AgentProtocol(Protocol):
 
 
 class BaseAgent(SerializationMixin):
-    """Base class for all Agent Framework agents."""
+    """Base class for all Agent Framework agents.
+
+    This class provides core functionality for agent implementations, including
+    context providers, middleware support, and thread management.
+
+    Note:
+        BaseAgent cannot be instantiated directly as it doesn't implement the
+        ``run()``, ``run_stream()``, and other methods required by AgentProtocol.
+        Use a concrete implementation like ChatAgent or create a subclass.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import BaseAgent, AgentThread, AgentRunResponse
+
+
+            # Create a concrete subclass that implements the protocol
+            class SimpleAgent(BaseAgent):
+                async def run(self, messages=None, *, thread=None, **kwargs):
+                    # Custom implementation
+                    return AgentRunResponse(messages=[], response_id="simple-response")
+
+                def run_stream(self, messages=None, *, thread=None, **kwargs):
+                    async def _stream():
+                        # Custom streaming implementation
+                        yield AgentRunResponseUpdate()
+
+                    return _stream()
+
+
+            # Now instantiate the concrete subclass
+            agent = SimpleAgent(name="my-agent", description="A simple agent implementation")
+
+            # Create with specific ID and additional properties
+            agent = SimpleAgent(
+                id="custom-id-123",
+                name="configured-agent",
+                description="An agent with custom configuration",
+                additional_properties={"version": "1.0", "environment": "production"},
+            )
+
+            # Access agent properties
+            print(agent.id)  # Custom or auto-generated UUID
+            print(agent.display_name)  # Returns name or id
+    """
 
     DEFAULT_EXCLUDE: ClassVar[set[str]] = {"additional_properties"}
 
@@ -152,14 +259,13 @@ class BaseAgent(SerializationMixin):
         additional_properties: MutableMapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
-        """Base class for all Agent Framework agents.
+        """Initialize a BaseAgent instance.
 
         Args:
-            id: The unique identifier of the agent  If no id is provided,
+            id: The unique identifier of the agent. If no id is provided,
                 a new UUID will be generated.
             name: The name of the agent, can be None.
             description: The description of the agent.
-            display_name: The display name of the agent, which is either the name or id.
             context_providers: The collection of multiple context providers to include during agent invocation.
             middleware: List of middleware to intercept agent and function invocations.
             additional_properties: Additional properties set on the agent.
@@ -189,6 +295,11 @@ class BaseAgent(SerializationMixin):
         """Notify the thread of new messages.
 
         This also calls the invoked method of a potential context provider on the thread.
+
+        Args:
+            thread: The thread to notify of new messages.
+            input_messages: The input messages to notify about.
+            response_messages: The response messages to notify about.
         """
         if isinstance(input_messages, ChatMessage) or len(input_messages) > 0:
             await thread.on_new_messages(input_messages)
@@ -206,11 +317,26 @@ class BaseAgent(SerializationMixin):
         return self.name or self.id
 
     def get_new_thread(self, **kwargs: Any) -> AgentThread:
-        """Returns AgentThread instance that is compatible with the agent."""
+        """Return a new AgentThread instance that is compatible with the agent.
+
+        Args:
+            kwargs: Additional keyword arguments passed to AgentThread.
+
+        Returns:
+            A new AgentThread instance configured with the agent's context provider.
+        """
         return AgentThread(**kwargs, context_provider=self.context_provider)
 
     async def deserialize_thread(self, serialized_thread: Any, **kwargs: Any) -> AgentThread:
-        """Deserializes the thread."""
+        """Deserialize a thread from its serialized state.
+
+        Args:
+            serialized_thread: The serialized thread data.
+            kwargs: Additional keyword arguments.
+
+        Returns:
+            A new AgentThread instance restored from the serialized state.
+        """
         thread: AgentThread = self.get_new_thread()
         await thread.update_from_thread_state(serialized_thread, **kwargs)
         return thread
@@ -233,11 +359,29 @@ class BaseAgent(SerializationMixin):
             description: The description for the tool. If None, uses the agent's description or empty string.
             arg_name: The name of the function argument (default: "task").
             arg_description: The description for the function argument.
-                If None, defaults to "Input for {self.display_name}".
+                If None, defaults to "Task for {tool_name}".
             stream_callback: Optional callback for streaming responses. If provided, uses run_stream.
 
         Returns:
             An AIFunction that can be used as a tool by other agents.
+
+        Raises:
+            TypeError: If the agent does not implement AgentProtocol.
+            ValueError: If the agent tool name cannot be determined.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework import ChatAgent
+
+                # Create an agent
+                agent = ChatAgent(chat_client=client, name="research-agent", description="Performs research tasks")
+
+                # Convert the agent to a tool
+                research_tool = agent.as_tool()
+
+                # Use the tool with another agent
+                coordinator = ChatAgent(chat_client=client, name="coordinator", tools=research_tool)
         """
         # Verify that self implements AgentProtocol
         if not isinstance(self, AgentProtocol):
@@ -318,7 +462,50 @@ class BaseAgent(SerializationMixin):
 @use_agent_middleware
 @use_agent_observability
 class ChatAgent(BaseAgent):
-    """A Chat Client Agent."""
+    """A Chat Client Agent.
+
+    This is the primary agent implementation that uses a chat client to interact
+    with language models. It supports tools, context providers, middleware, and
+    both streaming and non-streaming responses.
+
+    Examples:
+        Basic usage:
+
+        .. code-block:: python
+
+            from agent_framework import ChatAgent
+            from agent_framework.clients import OpenAIChatClient
+
+            # Create a basic chat agent
+            client = OpenAIChatClient(model="gpt-4")
+            agent = ChatAgent(chat_client=client, name="assistant", description="A helpful assistant")
+
+            # Run the agent with a simple message
+            response = await agent.run("Hello, how are you?")
+            print(response.text)
+
+        With tools and streaming:
+
+        .. code-block:: python
+
+            # Create an agent with tools and instructions
+            def get_weather(location: str) -> str:
+                return f"The weather in {location} is sunny."
+
+
+            agent = ChatAgent(
+                chat_client=client,
+                name="weather-agent",
+                instructions="You are a weather assistant.",
+                tools=get_weather,
+                temperature=0.7,
+                max_tokens=500,
+            )
+
+            # Use streaming responses
+            async for update in agent.run_stream("What's the weather in Paris?"):
+                print(update.text, end="")
+    """
 
     AGENT_SYSTEM_NAME: ClassVar[str] = "microsoft.agent_framework"
 
@@ -331,6 +518,7 @@ class ChatAgent(BaseAgent):
         name: str | None = None,
         description: str | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
+        conversation_id: str | None = None,
         context_providers: ContextProvider | list[ContextProvider] | AggregateContextProvider | None = None,
         middleware: Middleware | list[Middleware] | None = None,
         frequency_penalty: float | None = None,
@@ -355,43 +543,54 @@ class ChatAgent(BaseAgent):
         request_kwargs: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
-        """Create a ChatAgent.
+        """Initialize a ChatAgent instance.
 
-        Remarks:
-            The set of attributes from frequency_penalty to additional_properties are used to
-            call the chat client, they can also be passed to both run methods.
+        Note:
+            The set of parameters from frequency_penalty to request_kwargs are used to
+            call the chat client. They can also be passed to both run methods.
             When both are set, the ones passed to the run methods take precedence.
 
         Args:
             chat_client: The chat client to use for the agent.
             instructions: Optional instructions for the agent.
-            These will be put into the messages sent to the chat client service as a system message.
-            id: The unique identifier for the agent, will be created automatically if not provided.
+                These will be put into the messages sent to the chat client service as a system message.
+            id: The unique identifier for the agent. Will be created automatically if not provided.
             name: The name of the agent.
             description: A brief description of the agent's purpose.
-            chat_message_store_factory: factory function to create an instance of ChatMessageStoreProtocol.
+            chat_message_store_factory: Factory function to create an instance of ChatMessageStoreProtocol.
                 If not provided, the default in-memory store will be used.
+            conversation_id: The conversation ID for service-managed threads.
+                Cannot be used together with chat_message_store_factory.
             context_providers: The collection of multiple context providers to include during agent invocation.
             middleware: List of middleware to intercept agent and function invocations.
-            frequency_penalty: the frequency penalty to use.
-            logit_bias: the logit bias to use.
+            frequency_penalty: The frequency penalty to use.
+            logit_bias: The logit bias to use.
             max_tokens: The maximum number of tokens to generate.
-            metadata: additional metadata to include in the request.
+            metadata: Additional metadata to include in the request.
             model: The model to use for the agent.
-            presence_penalty: the presence penalty to use.
-            response_format: the format of the response.
-            seed: the random seed to use.
-            stop: the stop sequence(s) for the request.
-            store: whether to store the response.
-            temperature: the sampling temperature to use.
-            tool_choice: the tool choice for the request.
-            tools: the tools to use for the request.
-            top_p: the nucleus sampling probability to use.
-            user: the user to associate with the request.
-            request_kwargs: a dictionary of other values that will be passed through
-                to the chat_client `get_response` and `get_streaming_response` methods.
-            kwargs: any additional keyword arguments. Will be stored as `additional_properties`
+            presence_penalty: The presence penalty to use.
+            response_format: The format of the response.
+            seed: The random seed to use.
+            stop: The stop sequence(s) for the request.
+            store: Whether to store the response.
+            temperature: The sampling temperature to use.
+            tool_choice: The tool choice for the request.
+            tools: The tools to use for the request.
+            top_p: The nucleus sampling probability to use.
+            user: The user to associate with the request.
+            request_kwargs: A dictionary of other values that will be passed through
+                to the chat_client ``get_response`` and ``get_streaming_response`` methods.
+            kwargs: Any additional keyword arguments. Will be stored as ``additional_properties``.
+
+        Raises:
+            AgentInitializationError: If both conversation_id and chat_message_store_factory are provided.
         """
+        if conversation_id is not None and chat_message_store_factory is not None:
+            raise AgentInitializationError(
+                "Cannot specify both conversation_id and chat_message_store_factory. "
+                "Use conversation_id for service-managed threads or chat_message_store_factory for local storage."
+            )
+
         if not hasattr(chat_client, FUNCTION_INVOKING_CHAT_CLIENT_MARKER) and isinstance(chat_client, BaseChatClient):
             logger.warning(
                 "The provided chat client does not support function invoking, this might limit agent capabilities."
@@ -417,6 +616,7 @@ class ChatAgent(BaseAgent):
         agent_tools = [tool for tool in normalized_tools if not isinstance(tool, MCPTool)]
         self.chat_options = ChatOptions(
             model_id=model,
+            conversation_id=conversation_id,
             frequency_penalty=frequency_penalty,
             instructions=instructions,
             logit_bias=logit_bias,
@@ -438,12 +638,16 @@ class ChatAgent(BaseAgent):
         self._update_agent_name()
 
     async def __aenter__(self) -> "Self":
-        """Async context manager entry.
+        """Enter the async context manager.
 
-        If any of the chat_client, local_mcp_tools, or context_providers are context managers,
+        If any of the chat_client or local_mcp_tools are context managers,
         they will be entered into the async exit stack to ensure proper cleanup.
 
-        This list might be extended in the future.
+        Note:
+            This list might be extended in the future.
+
+        Returns:
+            The ChatAgent instance.
         """
         for context_manager in chain([self.chat_client], self._local_mcp_tools):
             if isinstance(context_manager, AbstractAsyncContextManager):
@@ -456,17 +660,22 @@ class ChatAgent(BaseAgent):
         exc_val: BaseException | None,
         exc_tb: Any,
     ) -> None:
-        """Async context manager exit.
+        """Exit the async context manager.
 
         Close the async exit stack to ensure all context managers are exited properly.
+
+        Args:
+            exc_type: The exception type if an exception was raised, None otherwise.
+            exc_val: The exception value if an exception was raised, None otherwise.
+            exc_tb: The exception traceback if an exception was raised, None otherwise.
         """
         await self._async_exit_stack.aclose()
 
     def _update_agent_name(self) -> None:
-        """Update the agent name in a chat client.
+        """Update the agent name in the chat client.
 
-        Checks if there is a agent name, the implementation
-        should check if there is already a agent name defined, and if not
+        Checks if the chat client supports agent name updates. The implementation
+        should check if there is already an agent name defined, and if not
         set it to this value.
         """
         if hasattr(self.chat_client, "_update_agent_name") and callable(self.chat_client._update_agent_name):  # type: ignore[reportAttributeAccessIssue, attr-defined]
@@ -501,33 +710,36 @@ class ChatAgent(BaseAgent):
     ) -> AgentRunResponse:
         """Run the agent with the given messages and options.
 
-        Remarks:
-            Since you won't always call the agent.run directly, but it get's called
-            through orchestration, it is advised to set your default values for
+        Note:
+            Since you won't always call ``agent.run()`` directly (it gets called
+            through workflows), it is advised to set your default values for
             all the chat client parameters in the agent constructor.
             If both parameters are used, the ones passed to the run methods take precedence.
 
         Args:
             messages: The messages to process.
             thread: The thread to use for the agent.
-            frequency_penalty: the frequency penalty to use.
-            logit_bias: the logit bias to use.
+            frequency_penalty: The frequency penalty to use.
+            logit_bias: The logit bias to use.
             max_tokens: The maximum number of tokens to generate.
-            metadata: additional metadata to include in the request.
+            metadata: Additional metadata to include in the request.
             model: The model to use for the agent.
-            presence_penalty: the presence penalty to use.
-            response_format: the format of the response.
-            seed: the random seed to use.
-            stop: the stop sequence(s) for the request.
-            store: whether to store the response.
-            temperature: the sampling temperature to use.
-            tool_choice: the tool choice for the request.
-            tools: the tools to use for the request.
-            top_p: the nucleus sampling probability to use.
-            user: the user to associate with the request.
-            additional_properties: additional properties to include in the request.
+            presence_penalty: The presence penalty to use.
+            response_format: The format of the response.
+            seed: The random seed to use.
+            stop: The stop sequence(s) for the request.
+            store: Whether to store the response.
+            temperature: The sampling temperature to use.
+            tool_choice: The tool choice for the request.
+            tools: The tools to use for the request.
+            top_p: The nucleus sampling probability to use.
+            user: The user to associate with the request.
+            additional_properties: Additional properties to include in the request.
             kwargs: Additional keyword arguments for the agent.
-                will only be passed to functions that are called.
+                Will only be passed to functions that are called.
+
+        Returns:
+            An AgentRunResponse containing the agent's response.
         """
         input_messages = self._normalize_messages(messages)
         thread, run_chat_options, thread_messages = await self._prepare_thread_and_messages(
@@ -627,34 +839,36 @@ class ChatAgent(BaseAgent):
     ) -> AsyncIterable[AgentRunResponseUpdate]:
         """Stream the agent with the given messages and options.
 
-        Remarks:
-            Since you won't always call the agent.run_stream directly, but it get's called
-            through orchestration, it is advised to set your default values for
+        Note:
+            Since you won't always call ``agent.run_stream()`` directly (it gets called
+            through orchestration), it is advised to set your default values for
             all the chat client parameters in the agent constructor.
             If both parameters are used, the ones passed to the run methods take precedence.
 
         Args:
             messages: The messages to process.
             thread: The thread to use for the agent.
-            frequency_penalty: the frequency penalty to use.
-            logit_bias: the logit bias to use.
+            frequency_penalty: The frequency penalty to use.
+            logit_bias: The logit bias to use.
             max_tokens: The maximum number of tokens to generate.
-            metadata: additional metadata to include in the request.
+            metadata: Additional metadata to include in the request.
             model: The model to use for the agent.
-            presence_penalty: the presence penalty to use.
-            response_format: the format of the response.
-            seed: the random seed to use.
-            stop: the stop sequence(s) for the request.
-            store: whether to store the response.
-            temperature: the sampling temperature to use.
-            tool_choice: the tool choice for the request.
-            tools: the tools to use for the request.
-            top_p: the nucleus sampling probability to use.
-            user: the user to associate with the request.
-            additional_properties: additional properties to include in the request.
-            kwargs: any additional keyword arguments.
-                will only be passed to functions that are called.
+            presence_penalty: The presence penalty to use.
+            response_format: The format of the response.
+            seed: The random seed to use.
+            stop: The stop sequence(s) for the request.
+            store: Whether to store the response.
+            temperature: The sampling temperature to use.
+            tool_choice: The tool choice for the request.
+            tools: The tools to use for the request.
+            top_p: The nucleus sampling probability to use.
+            user: The user to associate with the request.
+            additional_properties: Additional properties to include in the request.
+            kwargs: Any additional keyword arguments.
+                Will only be passed to functions that are called.
 
+        Yields:
+            AgentRunResponseUpdate objects containing chunks of the agent's response.
         """
         input_messages = self._normalize_messages(messages)
         thread, run_chat_options, thread_messages = await self._prepare_thread_and_messages(
@@ -737,22 +951,33 @@ class ChatAgent(BaseAgent):
 
         If you supply a service_thread_id, the thread will be marked as service managed.
 
+        If you don't supply a service_thread_id but have a conversation_id configured on the agent,
+        that conversation_id will be used to create a service-managed thread.
+
         If you don't supply a service_thread_id but have a chat_message_store_factory configured on the agent,
         that factory will be used to create a message store for the thread and the thread will be
         managed locally.
 
-        When neither is present, the thread will be created without a service ID or message store,
-        this will be updated based on usage, when you run the agent with this thread.
-        If you run with store=True, the response will respond with a thread_id and that will be set.
-        Otherwise a messages store is created from the default factory.
+        When neither is present, the thread will be created without a service ID or message store.
+        This will be updated based on usage when you run the agent with this thread.
+        If you run with ``store=True``, the response will include a thread_id and that will be set.
+        Otherwise a message store is created from the default factory.
 
         Args:
             service_thread_id: Optional service managed thread ID.
-            kwargs: not used at present.
+            kwargs: Not used at present.
+
+        Returns:
+            A new AgentThread instance.
         """
         if service_thread_id is not None:
             return AgentThread(
                 service_thread_id=service_thread_id,
+                context_provider=self.context_provider,
+            )
+        if self.chat_options.conversation_id is not None:
+            return AgentThread(
+                service_thread_id=self.chat_options.conversation_id,
                 context_provider=self.context_provider,
             )
         if self.chat_message_store_factory is not None:
@@ -800,19 +1025,23 @@ class ChatAgent(BaseAgent):
         thread: AgentThread | None,
         input_messages: list[ChatMessage] | None = None,
     ) -> tuple[AgentThread, ChatOptions, list[ChatMessage]]:
-        """Prepare the messages for agent execution.
+        """Prepare the thread and messages for agent execution.
 
-        Also updates the chat_options of the agent, with
+        This method prepares the conversation thread, merges context provider data,
+        and assembles the final message list for the chat client.
 
         Args:
             thread: The conversation thread.
             input_messages: Messages to process.
 
         Returns:
-            The validated thread and normalized messages.
+            A tuple containing:
+                - The validated or created thread
+                - The merged chat options
+                - The complete list of messages for the chat client
 
         Raises:
-            AgentExecutionException: If the thread is not of the expected type.
+            AgentExecutionException: If the conversation IDs on the thread and agent don't match.
         """
         chat_options = copy(self.chat_options) if self.chat_options else ChatOptions()
         thread = thread or self.get_new_thread()
@@ -852,4 +1081,9 @@ class ChatAgent(BaseAgent):
         return thread, chat_options, thread_messages
 
     def _get_agent_name(self) -> str:
+        """Get the agent name for message attribution.
+
+        Returns:
+            The agent's name, or 'UnnamedAgent' if no name is set.
+        """
         return self.name or "UnnamedAgent"

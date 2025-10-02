@@ -80,7 +80,7 @@ class WorkflowViz:
             import graphviz  # type: ignore
         except ImportError as e:
             raise ImportError(
-                "viz extra is required for export. Install it with: pip install agent-framework[viz]. "
+                "viz extra is required for export. Install it with: pip install agent-framework[viz] --pre. "
                 "You also need to install graphviz separately. E.g., sudo apt-get install graphviz on Debian/Ubuntu "
                 "or brew install graphviz on macOS. See https://graphviz.org/download/ for details."
             ) from e

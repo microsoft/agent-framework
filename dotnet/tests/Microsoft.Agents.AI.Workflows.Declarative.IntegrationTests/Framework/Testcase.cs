@@ -51,14 +51,16 @@ public sealed class TestcaseInput
 public sealed class TestcaseValidation
 {
     [JsonConstructor]
-    public TestcaseValidation(int minActionCount, int? maxActionCount = null, TestcaseValidationActions? actions = null)
+    public TestcaseValidation(int conversationCount, int minActionCount, int? maxActionCount = null, TestcaseValidationActions? actions = null)
     {
+        this.ConversationCount = conversationCount;
         this.MinActionCount = minActionCount;
         this.MaxActionCount = maxActionCount;
         this.Actions = actions ?? new TestcaseValidationActions([]);
     }
 
     public TestcaseValidationActions Actions { get; }
+    public int ConversationCount { get; }
     public int MinActionCount { get; }
     public int? MaxActionCount { get; }
 }

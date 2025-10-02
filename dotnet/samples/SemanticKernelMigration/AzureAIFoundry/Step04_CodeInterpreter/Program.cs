@@ -77,6 +77,9 @@ async Task AFAgentAsync()
     StringBuilder generatedCode = new();
     foreach (object? updateRawRepresentation in chatResponse?.RawRepresentation as IEnumerable<object?> ?? [])
     {
+        // To capture the code interpreter input we need to break glass all the updates raw representations, to check for the RunStepDetailsUpdate type and
+        // get the CodeInterpreterInput property which contains the generated code. 
+        // Note: Similar logic would needed for each individual update if used in the agent.RunStreamingAsync streaming API to aggregate or yield the generated code.
         if (updateRawRepresentation is RunStepDetailsUpdate update && update.CodeInterpreterInput is not null)
         {
             generatedCode.Append(update.CodeInterpreterInput);

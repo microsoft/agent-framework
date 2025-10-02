@@ -41,6 +41,16 @@ if TYPE_CHECKING:  # pragma: no cover
         FinishReason,
     )
 
+__all__ = [
+    "OBSERVABILITY_SETTINGS",
+    "OtelAttr",
+    "get_meter",
+    "get_tracer",
+    "setup_observability",
+    "use_agent_observability",
+    "use_observability",
+]
+
 
 TAgent = TypeVar("TAgent", bound="AgentProtocol")
 TChatClient = TypeVar("TChatClient", bound="ChatClientProtocol")
@@ -527,13 +537,42 @@ def get_tracer(
     schema_url: str | None = None,
     attributes: dict[str, Any] | None = None,
 ) -> "trace.Tracer":
-    """Returns a `Tracer` for use by the given instrumentation library.
+    """Returns a Tracer for use by the given instrumentation library.
 
-    This function is a convenience wrapper for
-    trace.get_tracer()
-    replicating the behavior of opentelemetry.trace.TracerProvider.get_tracer.
-
+    This function is a convenience wrapper for trace.get_tracer() replicating
+    the behavior of opentelemetry.trace.TracerProvider.get_tracer.
     If tracer_provider is omitted the current configured one is used.
+
+    Args:
+        instrumenting_module_name: The name of the instrumenting library.
+            Default is "agent_framework".
+        instrumenting_library_version: The version of the instrumenting library.
+            Default is the current agent_framework version.
+        schema_url: Optional schema URL for the emitted telemetry.
+        attributes: Optional attributes associated with the emitted telemetry.
+
+    Returns:
+        A Tracer instance for creating spans.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import get_tracer
+
+            # Get default tracer
+            tracer = get_tracer()
+
+            # Use tracer to create spans
+            with tracer.start_as_current_span("my_operation") as span:
+                span.set_attribute("custom.attribute", "value")
+                # Your operation here
+                pass
+
+            # Get tracer with custom module name
+            custom_tracer = get_tracer(
+                instrumenting_module_name="my_custom_module",
+                instrumenting_library_version="1.0.0",
+            )
     """
     return trace.get_tracer(
         instrumenting_module_name=instrumenting_module_name,
@@ -549,21 +588,44 @@ def get_meter(
     schema_url: str | None = None,
     attributes: dict[str, Any] | None = None,
 ) -> "metrics.Meter":
-    """Returns a `Meter` for Agent Framework.
+    """Returns a Meter for Agent Framework.
 
-    This is a convenience wrapper for
-    metrics.get_meter() replicating the behavior of
-    opentelemetry.metrics.get_meter().
+    This is a convenience wrapper for metrics.get_meter() replicating the behavior
+    of opentelemetry.metrics.get_meter().
 
     Args:
-        name: Optional name, default is "agent_framework". The name of the
-            instrumenting library.
+        name: The name of the instrumenting library. Default is "agent_framework".
+        version: The version of agent_framework. Default is the current version
+            of the package.
+        schema_url: Optional schema URL of the emitted telemetry.
+        attributes: Optional attributes associated with the emitted telemetry.
 
-        version: Optional. The version of `agent_framework`, default is the
-            current version of the package.
+    Returns:
+        A Meter instance for recording metrics.
 
-        schema_url: Optional. Specifies the Schema URL of the emitted telemetry.
-        attributes: Optional. Attributes that are associated with the emitted telemetry.
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import get_meter
+
+            # Get default meter
+            meter = get_meter()
+
+            # Create a counter metric
+            request_counter = meter.create_counter(
+                name="requests",
+                description="Number of requests",
+                unit="1",
+            )
+            request_counter.add(1, {"endpoint": "/api/chat"})
+
+            # Create a histogram metric
+            duration_histogram = meter.create_histogram(
+                name="request_duration",
+                description="Request duration in seconds",
+                unit="s",
+            )
+            duration_histogram.record(0.125, {"status": "success"})
     """
     try:
         return metrics.get_meter(name=name, version=version, schema_url=schema_url, attributes=attributes)
@@ -584,98 +646,75 @@ def setup_observability(
     exporters: list["LogExporter | SpanExporter | MetricExporter"] | None = None,
     vs_code_extension_port: int | None = None,
 ) -> None:
-    """Convenient method to setup observability for the application.
+    """Setup observability for the application with OpenTelemetry.
 
-    This method will create the exporters and the providers for the application,
-    based on the provided values and the environment variables.
+    This method creates the exporters and providers for the application based on
+    the provided values and environment variables.
 
     Call this method once during application startup, before any telemetry is captured.
     DO NOT call this method multiple times, as it may lead to unexpected behavior.
 
-    If you have configured the providers manually, calling this method will not have any effect:
-
-    ```python
-    # Some where in your application startup code
-    trace.set_tracer_provider(TracerProvider(...))
-
-    # After the above call, calling setup_observability will not have any effect
-    setup_observability()
-    ```
-
-    The reverse is also true:
-
-    ```python
-    # Some where in your application startup code
-    setup_observability()
-
-    # After the above call, calling trace.set_tracer_provider will not have any effect
-    trace.set_tracer_provider(TracerProvider(...))
-    ```
-
-    The OTel endpoint and the Application Insights connection string can be set through
-    environment variables or you can pass additional ones here. In the case where both
-    are present, non-duplicate values will be added:
-
-    ## With environment variables
-
-    This method will read the settings from the environment:
-
-    ```python
-    setup_observability()
-    ```
-
-    ## Without environment variables and use parameters
-
-    It is also possible to pass the settings directly:
-
-    ```python
-    setup_observability(
-        enable_sensitive_data=True,
-        otlp_endpoint=["http://localhost:7431"],
-        applicationinsights_connection_string=["..."],
-        exporters=[...],  # your custom exporters
-        vs_code_extension_port=4317,
-    )
-    ```
-
-    ## Mixed
-
-    When both environment variables and parameters are used, the following settings will get overridden:
-    - enable_sensitive_data
-    - vs_code_extension_port
-
-    The endpoints and connection strings will be combined, excluding duplicates.
-
-    ```env
-    OTEL_ENDPOINT="http://localhost:7431"
-    ```
-
-    ```python
-    setup_observability(
-        enable_sensitive_data=True,
-        otlp_endpoint=["http://localhost:4317"],
-    )
-    ```
-
-    Exporters will be created for both endpoints.
+    Note:
+        If you have configured the providers manually, calling this method will not
+        have any effect. The reverse is also true - if you call this method first,
+        subsequent provider configurations will not take effect.
 
     Args:
-        enable_sensitive_data: Enable OpenTelemetry sensitive events.
-            If set, this will override the value set through the environment variable.
+        enable_sensitive_data: Enable OpenTelemetry sensitive events. Overrides
+            the environment variable if set. Default is None.
+        otlp_endpoint: The OpenTelemetry Protocol (OTLP) endpoint. Will be used
+            to create OTLPLogExporter, OTLPMetricExporter and OTLPSpanExporter.
             Default is None.
-        otlp_endpoint:  The OpenTelemetry Protocol (OTLP) endpoint. Default is None.
-            Will be used to create a `OTLPLogExporter`, `OTLPMetricExporter` and `OTLPSpanExporter`
-        applicationinsights_connection_string: The Azure Monitor connection string. Default is None.
-            Will be used to create AzureMonitorExporters.
+        applicationinsights_connection_string: The Azure Monitor connection string.
+            Will be used to create AzureMonitorExporters. Default is None.
         credential: The credential to use for Azure Monitor Entra ID authentication.
             Default is None.
-        exporters: A list of exporters, for logs, metrics or spans, or any combination.
-            These will be added directly, and allows you to customize the spans completely.
-        vs_code_extension_port: The port the AI Toolkit or AzureAI Foundry VS Code extensions are
-            listening on. When this is set, additional OTEL exporters will be created with endpoint
-            `http://localhost:{vs_code_extension_port}` unless this endpoint is already configured.
-            This will override the value set through the environment variable.
-            Default is None.
+        exporters: A list of exporters for logs, metrics or spans, or any combination.
+            These will be added directly, allowing complete customization. Default is None.
+        vs_code_extension_port: The port the AI Toolkit or AzureAI Foundry VS Code
+            extensions are listening on. When set, additional OTEL exporters will be
+            created with endpoint `http://localhost:{vs_code_extension_port}` unless
+            already configured. Overrides the environment variable if set. Default is None.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import setup_observability
+
+            # With environment variables
+            # Set ENABLE_OTEL=true, OTLP_ENDPOINT=http://localhost:4317
+            setup_observability()
+
+            # With parameters (no environment variables)
+            setup_observability(
+                enable_sensitive_data=True,
+                otlp_endpoint="http://localhost:4317",
+            )
+
+            # With Azure Monitor
+            setup_observability(
+                applicationinsights_connection_string="InstrumentationKey=...",
+            )
+
+            # With custom exporters
+            from opentelemetry.sdk.trace.export import ConsoleSpanExporter
+
+            setup_observability(
+                exporters=[ConsoleSpanExporter()],
+            )
+
+            # Mixed: combine environment variables and parameters
+            # Environment: OTLP_ENDPOINT=http://localhost:7431
+            # Code adds additional endpoint
+            setup_observability(
+                enable_sensitive_data=True,
+                otlp_endpoint="http://localhost:4317",  # Both endpoints will be used
+            )
+
+            # VS Code extension integration
+            setup_observability(
+                vs_code_extension_port=4317,  # Connects to AI Toolkit
+            )
     """
     global OBSERVABILITY_SETTINGS
     # Update the observability settings with the provided values
@@ -928,12 +967,53 @@ def _trace_get_streaming_response(
 def use_observability(
     chat_client: type[TChatClient],
 ) -> type[TChatClient]:
-    """Class decorator that enables telemetry for a chat client.
+    """Class decorator that enables OpenTelemetry observability for a chat client.
 
-    This needs to be applied on the class itself, not a instance of it.
+    This decorator automatically traces chat completion requests, captures metrics,
+    and logs events for the decorated chat client class.
 
-    To set the proper provider name, the chat client class should have a class variable
-    OTEL_PROVIDER_NAME.
+    Note:
+        This decorator must be applied to the class itself, not an instance.
+        The chat client class should have a class variable OTEL_PROVIDER_NAME to
+        set the proper provider name for telemetry.
+
+    Args:
+        chat_client: The chat client class to enable observability for.
+
+    Returns:
+        The decorated chat client class with observability enabled.
+
+    Raises:
+        ChatClientInitializationError: If the chat client does not have required
+            methods (get_response, get_streaming_response).
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import use_observability, setup_observability
+            from agent_framework._clients import ChatClientProtocol
+
+
+            # Decorate a custom chat client class
+            @use_observability
+            class MyCustomChatClient:
+                OTEL_PROVIDER_NAME = "my_provider"
+
+                async def get_response(self, messages, **kwargs):
+                    # Your implementation
+                    pass
+
+                async def get_streaming_response(self, messages, **kwargs):
+                    # Your implementation
+                    pass
+
+
+            # Setup observability
+            setup_observability(otlp_endpoint="http://localhost:4317")
+
+            # Now all calls will be traced
+            client = MyCustomChatClient()
+            response = await client.get_response("Hello")
     """
     if getattr(chat_client, OPEN_TELEMETRY_CHAT_CLIENT_MARKER, False):
         # Already decorated
@@ -1107,7 +1187,54 @@ def _trace_agent_run_stream(
 def use_agent_observability(
     agent: type[TAgent],
 ) -> type[TAgent]:
-    """Class decorator that enables telemetry for an agent."""
+    """Class decorator that enables OpenTelemetry observability for an agent.
+
+    This decorator automatically traces agent run requests, captures events,
+    and logs interactions for the decorated agent class.
+
+    Note:
+        This decorator must be applied to the agent class itself, not an instance.
+        The agent class should have a class variable AGENT_SYSTEM_NAME to set the
+        proper system name for telemetry.
+
+    Args:
+        agent: The agent class to enable observability for.
+
+    Returns:
+        The decorated agent class with observability enabled.
+
+    Raises:
+        AgentInitializationError: If the agent does not have required methods
+            (run, run_stream).
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import use_agent_observability, setup_observability
+            from agent_framework._agents import AgentProtocol
+
+
+            # Decorate a custom agent class
+            @use_agent_observability
+            class MyCustomAgent:
+                AGENT_SYSTEM_NAME = "my_agent_system"
+
+                async def run(self, messages=None, *, thread=None, **kwargs):
+                    # Your implementation
+                    pass
+
+                async def run_stream(self, messages=None, *, thread=None, **kwargs):
+                    # Your implementation
+                    pass
+
+
+            # Setup observability
+            setup_observability(otlp_endpoint="http://localhost:4317")
+
+            # Now all agent runs will be traced
+            agent = MyCustomAgent()
+            response = await agent.run("Perform a task")
+    """
     provider_name = str(getattr(agent, "AGENT_SYSTEM_NAME", "Unknown"))
     try:
         agent.run = _trace_agent_run(agent.run, provider_name)  # type: ignore

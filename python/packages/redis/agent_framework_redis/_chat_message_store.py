@@ -168,10 +168,10 @@ class RedisChatMessageStore:
         - LTRIM operation is atomic for consistent message limits
 
         Example:
-            ```python
-            messages = [ChatMessage(role=Role.USER, text="Hello"), ChatMessage(role=Role.ASSISTANT, text="Hi there!")]
-            await store.add_messages(messages)
-            ```
+            .. code-block:: python
+
+                messages = [ChatMessage(role="user", text="Hello"), ChatMessage(role="assistant", text="Hi there!")]
+                await store.add_messages(messages)
         """
         if not messages:
             return
@@ -200,10 +200,10 @@ class RedisChatMessageStore:
             Returns empty list if no messages exist or if Redis connection fails.
 
         Example:
-            ```python
-            # Get all conversation history
-            messages = await store.list_messages()
-            ```
+            .. code-block:: python
+
+                # Get all conversation history
+                messages = await store.list_messages()
         """
         # Ensure any initial messages are persisted to Redis first
         await self._ensure_initial_messages_added()
@@ -320,14 +320,14 @@ class RedisChatMessageStore:
         - Consider exporting messages before clearing if backup is needed
 
         Example:
-            ```python
-            # Clear conversation history
-            await store.clear()
+            .. code-block:: python
 
-            # Verify messages are gone
-            messages = await store.list_messages()
-            assert len(messages) == 0
-            ```
+                # Clear conversation history
+                await store.clear()
+
+                # Verify messages are gone
+                messages = await store.list_messages()
+                assert len(messages) == 0
         """
         await self._redis_client.delete(self.redis_key)
 
