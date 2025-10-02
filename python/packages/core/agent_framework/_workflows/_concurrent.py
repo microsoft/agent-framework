@@ -185,25 +185,26 @@ class ConcurrentBuilder:
     - `with_custom_aggregator(...)` overrides the default aggregator with an Executor or callback.
 
     Usage:
-    ```python
-    from agent_framework import ConcurrentBuilder
 
-    # Minimal: use default aggregator (returns list[ChatMessage])
-    workflow = ConcurrentBuilder().participants([agent1, agent2, agent3]).build()
+    .. code-block:: python
 
+        from agent_framework import ConcurrentBuilder
 
-    # Custom aggregator via callback (sync or async). The callback receives
-    # list[AgentExecutorResponse] and its return value becomes the workflow's output.
-    def summarize(results):
-        return " | ".join(r.agent_run_response.messages[-1].text for r in results)
+        # Minimal: use default aggregator (returns list[ChatMessage])
+        workflow = ConcurrentBuilder().participants([agent1, agent2, agent3]).build()
 
 
-    workflow = ConcurrentBuilder().participants([agent1, agent2, agent3]).with_custom_aggregator(summarize).build()
+        # Custom aggregator via callback (sync or async). The callback receives
+        # list[AgentExecutorResponse] and its return value becomes the workflow's output.
+        def summarize(results):
+            return " | ".join(r.agent_run_response.messages[-1].text for r in results)
 
 
-    # Enable checkpoint persistence so runs can resume
-    workflow = ConcurrentBuilder().participants([agent1, agent2, agent3]).with_checkpointing(storage).build()
-    ```
+        workflow = ConcurrentBuilder().participants([agent1, agent2, agent3]).with_custom_aggregator(summarize).build()
+
+
+        # Enable checkpoint persistence so runs can resume
+        workflow = ConcurrentBuilder().participants([agent1, agent2, agent3]).with_checkpointing(storage).build()
     """
 
     def __init__(self) -> None:
@@ -223,12 +224,13 @@ class ConcurrentBuilder:
             TypeError: if any entry is not AgentProtocol or Executor
 
         Example:
-        ```python
-        wf = ConcurrentBuilder().participants([researcher_agent, marketer_agent, legal_agent]).build()
 
-        # Mixing agent(s) and executor(s) is supported
-        wf2 = ConcurrentBuilder().participants([researcher_agent, my_custom_executor]).build()
-        ```
+        .. code-block:: python
+
+            wf = ConcurrentBuilder().participants([researcher_agent, marketer_agent, legal_agent]).build()
+
+            # Mixing agent(s) and executor(s) is supported
+            wf2 = ConcurrentBuilder().participants([researcher_agent, my_custom_executor]).build()
         """
         if not participants:
             raise ValueError("participants cannot be empty")
@@ -264,14 +266,15 @@ class ConcurrentBuilder:
           If the callback returns a non-None value, it becomes the workflow's output.
 
         Example:
-        ```python
-        # Callback-based aggregator (string result)
-        async def summarize(results):
-            return " | ".join(r.agent_run_response.messages[-1].text for r in results)
+
+        .. code-block:: python
+
+            # Callback-based aggregator (string result)
+            async def summarize(results):
+                return " | ".join(r.agent_run_response.messages[-1].text for r in results)
 
 
-        wf = ConcurrentBuilder().participants([a1, a2, a3]).with_custom_aggregator(summarize).build()
-        ```
+            wf = ConcurrentBuilder().participants([a1, a2, a3]).with_custom_aggregator(summarize).build()
         """
         if isinstance(aggregator, Executor):
             self._aggregator = aggregator
@@ -303,9 +306,10 @@ class ConcurrentBuilder:
             ValueError: if no participants were defined
 
         Example:
-        ```python
-        workflow = ConcurrentBuilder().participants([agent1, agent2]).build()
-        ```
+
+        .. code-block:: python
+
+            workflow = ConcurrentBuilder().participants([agent1, agent2]).build()
         """
         if not self._participants:
             raise ValueError("No participants provided. Call .participants([...]) first.")

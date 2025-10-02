@@ -7,10 +7,10 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-from agent_framework import __version__ as agent_framework_version
 from py2docfx.__main__ import main as py2docfx_main
 
 load_dotenv()
+
 
 async def generate_af_docs(root_path: Path):
     """Generate documentation for the Agent Framework using py2docfx.
@@ -21,9 +21,10 @@ async def generate_af_docs(root_path: Path):
         "packages": [
             {
                 "package_info": {
-                    "name": "agent-framework",
-                    "version": agent_framework_version,
+                    "name": "agent-framework-core",
+                    "version": "1.0.0b251001",
                     "install_type": "pypi",
+                    "extras": ["all"]
                 },
                 "sphinx_extensions": [
                     "sphinxcontrib.autodoc_pydantic",
@@ -75,6 +76,7 @@ async def generate_af_docs(root_path: Path):
         str((root_path / "docs" / "build").absolute()),
         "-j",
         json.dumps(package),
+        "--verbose"
     ]
     try:
         await py2docfx_main(args)
