@@ -92,7 +92,7 @@ public sealed class A2AHostAgent
     }
 
     /// <summary>
-    /// Return the <see cref="AgentCard"/> associated with this hosted agent.
+    /// Gets the <see cref="AgentCard"/> associated with this hosted agent.
     /// </summary>
     /// <param name="agentUrl">Current URL for the agent.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
