@@ -6,6 +6,8 @@ These are custom event types that extend beyond the standard OpenAI Responses AP
 to support Agent Framework specific features like workflows, traces, and function results.
 """
 
+from __future__ import annotations
+
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -177,10 +179,18 @@ class OpenAIError(BaseModel):
     error: dict[str, Any]
 
     @classmethod
-    def create(cls, message: str, type: str = "invalid_request_error", code: str | None = None) -> "OpenAIError":
+    def create(cls, message: str, type: str = "invalid_request_error", code: str | None = None) -> OpenAIError:
         """Create a standard OpenAI error response."""
         error_data = {"message": message, "type": type, "code": code}
         return cls(error=error_data)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the error payload as a plain mapping."""
+        return {"error": dict(self.error)}
+
+    def to_json(self) -> str:
+        """Return the error payload serialized to JSON."""
+        return self.model_dump_json()
 
 
 # Export all custom types

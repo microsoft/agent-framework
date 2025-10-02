@@ -6,6 +6,13 @@ from typing import TYPE_CHECKING, Any
 from agent_framework import ChatAgent, HostedMCPTool
 from agent_framework.openai import OpenAIResponsesClient
 
+"""
+OpenAI Responses Client with Hosted MCP Example
+
+This sample demonstrates integrating hosted Model Context Protocol (MCP) tools with
+OpenAI Responses Client, including user approval workflows for function call security.
+"""
+
 if TYPE_CHECKING:
     from agent_framework import AgentProtocol, AgentThread
 
@@ -107,7 +114,7 @@ async def run_hosted_mcp_without_thread_and_specific_approval() -> None:
         print(f"{agent.name}: {result1}\n")
         print("\n=======================================\n")
         # Second query
-        query2 = "What is Microsoft Semantic Kernel?"
+        query2 = "What is Microsoft Agent Framework?"
         print(f"User: {query2}")
         result2 = await handle_approvals_without_thread(query2, agent)
         print(f"{agent.name}: {result2}\n")
@@ -139,7 +146,7 @@ async def run_hosted_mcp_without_approval() -> None:
         print(f"{agent.name}: {result1}\n")
         print("\n=======================================\n")
         # Second query
-        query2 = "What is Microsoft Semantic Kernel?"
+        query2 = "What is Microsoft Agent Framework?"
         print(f"User: {query2}")
         result2 = await handle_approvals_without_thread(query2, agent)
         print(f"{agent.name}: {result2}\n")
@@ -170,7 +177,7 @@ async def run_hosted_mcp_with_thread() -> None:
         print(f"{agent.name}: {result1}\n")
         print("\n=======================================\n")
         # Second query
-        query2 = "What is Microsoft Semantic Kernel?"
+        query2 = "What is Microsoft Agent Framework?"
         print(f"User: {query2}")
         result2 = await handle_approvals_with_thread(query2, agent, thread)
         print(f"{agent.name}: {result2}\n")
@@ -203,7 +210,7 @@ async def run_hosted_mcp_with_thread_streaming() -> None:
         print("\n")
         print("\n=======================================\n")
         # Second query
-        query2 = "What is Microsoft Semantic Kernel?"
+        query2 = "What is Microsoft Agent Framework?"
         print(f"User: {query2}")
         print(f"{agent.name}: ", end="")
         async for update in handle_approvals_with_thread_streaming(query2, agent, thread):

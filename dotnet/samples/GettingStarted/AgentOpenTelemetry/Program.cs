@@ -5,8 +5,8 @@ using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using Azure.AI.OpenAI;
 using Azure.Identity;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using OpenTelemetry;
@@ -19,9 +19,6 @@ using OpenTelemetry.Trace;
 
 const string SourceName = "OpenTelemetryAspire.ConsoleApp";
 const string ServiceName = "AgentOpenTelemetry";
-
-// Enable telemetry for agents
-AppContext.SetSwitch("Microsoft.Extensions.AI.Agents.EnableTelemetry", true);
 
 // Configure OpenTelemetry for Aspire dashboard
 var otlpEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT") ?? "http://localhost:4318";
@@ -40,7 +37,7 @@ var resource = ResourceBuilder.CreateDefault()
 using var tracerProvider = Sdk.CreateTracerProviderBuilder()
     .SetResourceBuilder(ResourceBuilder.CreateDefault().AddService(ServiceName, serviceVersion: "1.0.0"))
     .AddSource(SourceName) // Our custom activity source
-    .AddSource("Microsoft.Extensions.AI.Agents") // Agent Framework telemetry
+    .AddSource("*Microsoft.Agents.AI") // Agent Framework telemetry
     .AddHttpClientInstrumentation() // Capture HTTP calls to OpenAI
     .AddOtlpExporter(options => options.Endpoint = new Uri(otlpEndpoint))
     .Build();
@@ -49,7 +46,7 @@ using var tracerProvider = Sdk.CreateTracerProviderBuilder()
 using var meterProvider = Sdk.CreateMeterProviderBuilder()
     .SetResourceBuilder(ResourceBuilder.CreateDefault().AddService(ServiceName, serviceVersion: "1.0.0"))
     .AddMeter(SourceName) // Our custom meter
-    .AddMeter("Microsoft.Extensions.AI.Agents") // Agent Framework metrics
+    .AddMeter("*Microsoft.Agents.AI") // Agent Framework metrics
     .AddHttpClientInstrumentation() // HTTP client metrics
     .AddRuntimeInstrumentation() // .NET runtime metrics
     .AddOtlpExporter(options => options.Endpoint = new Uri(otlpEndpoint))
@@ -88,7 +85,7 @@ Console.WriteLine("""
     """);
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT environment variable is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+var deploymentName = System.Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 // Log application startup
 appLogger.LogInformation("OpenTelemetry Aspire Demo application started");
@@ -100,22 +97,23 @@ static async Task<string> GetWeatherAsync([Description("The location to get the 
     return $"The weather in {location} is cloudy with a high of 15°C.";
 }
 
-// To ensure chat client's function calling is captured in the open telemetry, the chat client needs to have UseOpenTelemetry after UseFunctionInvocation
 using var instrumentedChatClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
     .GetChatClient(deploymentName)
         .AsIChatClient() // Converts a native OpenAI SDK ChatClient into a Microsoft.Extensions.AI.IChatClient
         .AsBuilder()
         .UseFunctionInvocation()
-        .UseOpenTelemetry(loggerFactory: loggerFactory, sourceName: SourceName, (cfg) => cfg.EnableSensitiveData = true)
+        .UseOpenTelemetry(sourceName: SourceName, configure: (cfg) => cfg.EnableSensitiveData = true) // enable telemetry at the chat client level
         .Build();
 
 appLogger.LogInformation("Creating Agent with OpenTelemetry instrumentation");
 // Create the agent with the instrumented chat client
-using var agent = new ChatClientAgent(instrumentedChatClient,
-            name: "OpenTelemetryDemoAgent",
-            instructions: "You are a helpful assistant that provides concise and informative responses.",
-            tools: [AIFunctionFactory.Create(GetWeatherAsync)])
-        .WithOpenTelemetry(loggerFactory, SourceName); // Enable telemetry on the agent
+var agent = new ChatClientAgent(instrumentedChatClient,
+    name: "OpenTelemetryDemoAgent",
+    instructions: "You are a helpful assistant that provides concise and informative responses.",
+    tools: [AIFunctionFactory.Create(GetWeatherAsync)])
+    .AsBuilder()
+    .UseOpenTelemetry(SourceName) // enable telemetry at the agent level
+    .Build();
 
 var thread = agent.GetNewThread();
 

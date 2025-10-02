@@ -11,6 +11,13 @@ from azure.identity import AzureCliCredential, get_bearer_token_provider
 from openai import AsyncAzureOpenAI
 from pydantic import Field
 
+"""
+Azure OpenAI Assistants with Existing Assistant Example
+
+This sample demonstrates working with pre-existing Azure OpenAI Assistants
+using existing assistant IDs rather than creating new ones.
+"""
+
 
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],

@@ -1,0 +1,27 @@
+dirs: 
+  - .
+ignorePatterns:
+  - pattern: "/github/"
+  - pattern: "./actions"
+  - pattern: "./blob"
+  - pattern: "./issues"
+  - pattern: "./discussions"
+  - pattern: "./pulls"
+  - pattern: "https:\/\/platform.openai.com"
+  - pattern: "http:\/\/localhost"
+  - pattern: "http:\/\/127.0.0.1"
+  - pattern: "0001-spec.md"
+  - pattern: "0001-madr-architecture-decisions.md"
+  - pattern: "https://api.powerplatform.com/.default"
+  - pattern: "https://your-resource.openai.azure.com/"
+  - pattern: "http://host.docker.internal"
+# excludedDirs:
+  # Folders which include links to localhost, since it's not ignored with regular expressions
+baseUrl: https://github.com/microsoft/agent-framework/
+aliveStatusCodes: 
+  - 200
+  - 206
+  - 429
+  - 500
+  - 503
+useGitIgnore: true

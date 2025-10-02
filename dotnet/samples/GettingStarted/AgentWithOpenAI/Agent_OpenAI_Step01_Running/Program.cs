@@ -2,10 +2,8 @@
 
 // This sample shows how to create and use a simple AI agent with OpenAI as the backend.
 
-using System;
 using System.ClientModel;
-using System.Linq;
-using Microsoft.Extensions.AI.Agents;
+using Microsoft.Agents.AI;
 using OpenAI;
 using OpenAI.Chat;
 

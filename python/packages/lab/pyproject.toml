@@ -1,0 +1,167 @@
+[project]
+name = "agent-framework-lab"
+description = "Experimental modules for Microsoft Agent Framework"
+authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
+readme = "README.md"
+requires-python = ">=3.10"
+version = "1.0.0b251001"
+license-files = ["LICENSE"]
+urls.homepage = "https://aka.ms/agent-framework"
+urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
+urls.release_notes = "https://github.com/microsoft/agent-framework/releases?q=tag%3Apython-1&expanded=true"
+urls.issues = "https://github.com/microsoft/agent-framework/issues"
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+  "Development Status :: 2 - Pre-Alpha",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+  "agent-framework-core",
+]
+
+[project.optional-dependencies]
+# GAIA benchmark module dependencies
+gaia = [
+  "pydantic>=2.0.0",
+  "opentelemetry-api>=1.24.0",
+  "tqdm>=4.60.0",
+  "huggingface-hub>=0.20.0",
+  "orjson>=3.8.0",
+]
+
+# Lightning RL training module dependencies
+lightning = [
+  # Till 0.2.0 is released
+  "agentlightning @ git+https://github.com/microsoft/agent-lightning@138ad0e48780b65ccefa628ee7a5fb9fb27aca01",
+]
+
+# TAU2 benchmark module dependencies
+tau2 = [
+  "pydantic>=2.0.0",
+  "tiktoken>=0.11.0",
+  "loguru>=0.7.3",
+  "numpy",
+  "tau2@ git+https://github.com/sierra-research/tau2-bench@5ba9e3e56db57c5e4114bf7f901291f09b2c5619",
+]
+
+# Dependencies for math-related training
+math = [
+  "sympy>=1.13.0",
+]
+
+[dependency-groups]
+dev = [
+    "uv>=0.8.2,<0.9.0",
+    "pre-commit >= 3.7",
+    "ruff>=0.11.8",
+    "pytest>=8.4.1",
+    "pytest-asyncio>=1.0.0",
+    "pytest-cov>=6.2.1",
+    "pytest-env>=1.1.5",
+    "pytest-xdist[psutil]>=3.8.0",
+    "pytest-timeout>=2.3.1",
+    "pytest-retry>=1",
+    "mypy>=1.16.1",
+    "pyright>=1.1.402",
+    #tasks
+    "poethepoet>=0.36.0",
+    "rich",
+    "tomli",
+    "tomli-w",
+]
+
+[project.scripts]
+gaia_viewer = "agent_framework_lab_gaia:viewer_main"
+lightning = "agent_framework_lab_lightning:main"
+
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = [
+  "agent_framework_lab_gaia",
+  "agent_framework_lab_lightning",
+  "agent_framework_lab_tau2",
+  "agent_framework.lab.gaia",
+  "agent_framework.lab.lightning",
+  "agent_framework.lab.tau2",
+]
+
+[tool.setuptools.package-dir]
+"agent_framework_lab_gaia" = "gaia/agent_framework_lab_gaia"
+"agent_framework_lab_lightning" = "lightning/agent_framework_lab_lightning"
+"agent_framework_lab_tau2" = "tau2/agent_framework_lab_tau2"
+"agent_framework.lab.gaia" = "namespace/agent_framework/lab/gaia"
+"agent_framework.lab.lightning" = "namespace/agent_framework/lab/lightning"
+"agent_framework.lab.tau2" = "namespace/agent_framework/lab/tau2"
+
+[tool.setuptools.package-data]
+agent_framework_lab_gaia = ["py.typed"]
+agent_framework_lab_lightning = ["py.typed"]
+agent_framework_lab_tau2 = ["py.typed"]
+
+[tool.ruff]
+extend = "../../pyproject.toml"
+extend-exclude = ["**/data/**"]
+
+[tool.ruff.lint]
+ignore = ["T201", "ASYNC230", "INP001"]  # Allow print statements, blocking file operations, and implicit namespace packages in lab modules
+
+[tool.coverage.run]
+omit = [
+    "**/__init__.py"
+]
+
+[tool.pyright]
+extend = "../../pyproject.toml"
+exclude = ['gaia/tests', 'lightning/tests', 'tau2/tests', 'namespace', '**/samples']
+
+[tool.mypy]
+plugins = ['pydantic.mypy']
+strict = true
+python_version = "3.10"
+ignore_missing_imports = true
+disallow_untyped_defs = true
+no_implicit_optional = true
+check_untyped_defs = true
+warn_return_any = true
+show_error_codes = true
+warn_unused_ignores = false
+disallow_incomplete_defs = true
+disallow_untyped_decorators = true
+
+[tool.bandit]
+targets = ["agent_framework_lab_gaia", "agent_framework_lab_lightning", "agent_framework_lab_tau2"]
+exclude_dirs = ["gaia/tests", "lightning/tests", "tau2/tests"]
+
+[tool.poe]
+executor.type = "uv"
+include = "../../shared_tasks.toml"
+
+[tool.poe.tasks]
+mypy-gaia = "mypy --config-file $POE_ROOT/pyproject.toml gaia/agent_framework_lab_gaia"
+mypy-lightning = "mypy --config-file $POE_ROOT/pyproject.toml lightning/agent_framework_lab_lightning"
+mypy-tau2 = "mypy --config-file $POE_ROOT/pyproject.toml tau2/agent_framework_lab_tau2"
+mypy = ["mypy-gaia", "mypy-lightning", "mypy-tau2"]
+test = "pytest --cov-report=term-missing:skip-covered --junitxml=test-results.xml"
+test-gaia = "pytest gaia/tests --cov=agent_framework_lab_gaia --cov-report=term-missing:skip-covered"
+test-lightning = "pytest lightning/tests --cov=agent_framework_lab_lightning --cov-report=term-missing:skip-covered"
+test-tau2 = "pytest tau2/tests --cov=agent_framework_lab_tau2 --cov-report=term-missing:skip-covered"
+build = "echo 'Skipping build'"
+publish = "echo 'Skipping publish'"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+addopts = "--strict-markers --strict-config"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = [
+  "unit: marks tests as unit tests",
+  "integration: marks tests as integration tests",
+]

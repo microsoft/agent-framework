@@ -9,6 +9,13 @@ from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from pydantic import Field
 
+"""
+Azure OpenAI Responses Client with Explicit Settings Example
+
+This sample demonstrates creating Azure OpenAI Responses Client with explicit configuration
+settings rather than relying on environment variable defaults.
+"""
+
 
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],

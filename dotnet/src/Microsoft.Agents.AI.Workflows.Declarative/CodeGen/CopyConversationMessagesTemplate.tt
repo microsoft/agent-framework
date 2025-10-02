@@ -1,0 +1,29 @@
+﻿<#@ template language="C#" inherits="ActionTemplate" visibility="internal" linePragmas="false" #>
+<#@ output extension=".cs" #>
+<#@ assembly name="System.Core" #>
+<#@ include file="Snippets/Index.tt" once="true" #>
+/// <summary>
+/// Copies one or more messages into the specified agent conversation.
+/// </summary>
+internal sealed class <#= this.Name #>Executor(FormulaSession session, WorkflowAgentProvider agentProvider) : ActionExecutor(id: "<#= this.Id #>", session)
+{
+    // <inheritdoc />
+    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    {<#
+        EvaluateStringExpression(this.Model.ConversationId, "conversationId", isNullable: true); #>
+        if (string.IsNullOrWhiteSpace(conversationId))
+        {
+            throw new DeclarativeActionException($"Conversation identifier must be defined: {this.Id}");
+        }<#
+        EvaluateValueExpression<ChatMessage[]>(this.Model.Messages, "messages");
+        #>
+        if (messages is not null)
+        {
+            foreach (ChatMessage message in messages)
+            {
+                await agentProvider.CreateMessageAsync(conversationId, message, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        return default;
+    }
+}

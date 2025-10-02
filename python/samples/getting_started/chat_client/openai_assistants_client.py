@@ -7,6 +7,14 @@ from typing import Annotated
 from agent_framework.openai import OpenAIAssistantsClient
 from pydantic import Field
 
+"""
+OpenAI Assistants Client Direct Usage Example
+
+Demonstrates direct OpenAIAssistantsClient usage for chat interactions with OpenAI assistants.
+Shows function calling capabilities and automatic assistant creation.
+
+"""
+
 
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],

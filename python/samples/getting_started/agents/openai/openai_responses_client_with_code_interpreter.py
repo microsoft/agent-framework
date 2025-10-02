@@ -7,6 +7,13 @@ from agent_framework.openai import OpenAIResponsesClient
 from openai.types.responses.response import Response as OpenAIResponse
 from openai.types.responses.response_code_interpreter_tool_call import ResponseCodeInterpreterToolCall
 
+"""
+OpenAI Responses Client with Code Interpreter Example
+
+This sample demonstrates using HostedCodeInterpreterTool with OpenAI Responses Client
+for Python code execution and mathematical problem solving.
+"""
+
 
 async def main() -> None:
     """Example showing how to use the HostedCodeInterpreterTool with OpenAI Responses."""

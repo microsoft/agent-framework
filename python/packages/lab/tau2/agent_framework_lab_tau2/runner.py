@@ -5,7 +5,7 @@ from typing import cast
 
 from agent_framework._agents import ChatAgent
 from agent_framework._types import AgentRunResponse, ChatMessage, Role
-from agent_framework._workflow import (
+from agent_framework._workflows import (
     AgentExecutor,
     AgentExecutorRequest,
     AgentExecutorResponse,
@@ -29,8 +29,10 @@ from tau2.user.user_simulator import (  # type: ignore[import-untyped]
 from tau2.utils.utils import get_now  # type: ignore[import-untyped]
 
 from ._message_utils import flip_messages, log_messages
-from ._sliding_window import SlidingWindowChatMessageList
+from ._sliding_window import SlidingWindowChatMessageStore
 from ._tau2_utils import convert_agent_framework_messages_to_tau2_messages, convert_tau2_tool_to_ai_function
+
+__all__ = ["ASSISTANT_AGENT_ID", "ORCHESTRATOR_ID", "USER_SIMULATOR_ID", "TaskRunner"]
 
 # Agent instructions matching tau2's LLMAgent
 ASSISTANT_AGENT_INSTRUCTION = """
@@ -100,6 +102,7 @@ class TaskRunner:
         return self
 
     def __repr__(self) -> str:
+        """Return string representation of TaskRunner."""
         return (
             f"TaskRunner(max_steps={self.max_steps}, step_count={self.step_count}, "
             f"full_conversation_length={len(self.full_conversation)}, "
@@ -108,7 +111,6 @@ class TaskRunner:
 
     def should_not_stop(self, response: AgentExecutorResponse) -> bool:
         """Based on the response, check whether we should or not stop the conversation."""
-
         # Determine who sent this based on executor_id
         is_from_agent = response.executor_id == ASSISTANT_AGENT_ID
         is_from_user = response.executor_id == USER_SIMULATOR_ID
@@ -165,7 +167,6 @@ class TaskRunner:
         Returns:
             The assistant agent.
         """
-
         # Initialize tau2 environment and extract tools/policy
         # This provides the domain-specific context (airline customer service in this case)
         env = get_environment()
@@ -195,9 +196,9 @@ class TaskRunner:
         return ChatAgent(
             chat_client=assistant_chat_client,
             instructions=assistant_system_prompt,
-            tools=ai_functions,  # type: ignore
+            tools=ai_functions,
             temperature=self.assistant_sampling_temperature,
-            chat_message_store_factory=lambda: SlidingWindowChatMessageList(
+            chat_message_store_factory=lambda: SlidingWindowChatMessageStore(
                 system_message=assistant_system_prompt,
                 tool_definitions=[tool.openai_schema for tool in tools],
                 max_tokens=self.assistant_window_size,
@@ -216,7 +217,6 @@ class TaskRunner:
         Returns:
             The user simulator agent.
         """
-
         # User simulator follows tau2's guidelines for realistic customer behavior
         # No tools available - users typically don't have direct system access
         user_sim_guidelines = get_global_user_sim_guidelines(use_tools=False)
@@ -277,7 +277,6 @@ class TaskRunner:
         Returns:
             The conversation workflow.
         """
-
         # STEP 1: Create workflow executors
         # Each executor wraps an agent or function for workflow orchestration
         self._assistant_executor = AgentExecutor(assistant_agent, id=ASSISTANT_AGENT_ID)
@@ -287,7 +286,7 @@ class TaskRunner:
         # STEP 2: Build the conversation workflow
         # Creates a cyclic workflow: Orchestrator -> Assistant -> Orchestrator -> User -> Orchestrator...
         # The orchestrator acts as a message router that flips roles and routes to appropriate agent
-        workflow = (
+        return (
             WorkflowBuilder(max_iterations=10000)  # Unlimited - we control termination via should_not_stop
             .set_start_executor(orchestrator)  # Orchestrator manages the conversation flow
             .add_edge(orchestrator, self._assistant_executor)  # Route messages to assistant
@@ -298,8 +297,6 @@ class TaskRunner:
             .add_edge(self._user_executor, orchestrator, condition=self.should_not_stop)  # Check termination after user
             .build()
         )
-
-        return workflow
 
     async def run(
         self,
@@ -325,7 +322,6 @@ class TaskRunner:
         Returns:
             Complete conversation history as ChatMessage list for evaluation
         """
-
         logger.info(f"Starting workflow agent for task {task.id}: {task.description.purpose}")  # type: ignore[unused-ignore]
         logger.info(f"Assistant chat client: {assistant_chat_client}")
         logger.info(f"User simulator chat client: {user_simuator_chat_client}")
@@ -358,7 +354,7 @@ class TaskRunner:
         # 2. The assistant's message store (not just the truncated window)
         # 3. The final user message (if any)
         assistant_executor = cast(AgentExecutor, self._assistant_executor)
-        message_store = cast(SlidingWindowChatMessageList, assistant_executor._agent_thread.message_store)
+        message_store = cast(SlidingWindowChatMessageStore, assistant_executor._agent_thread.message_store)
         full_conversation = [first_message] + await message_store.list_all_messages()
         if self._final_user_message is not None:
             full_conversation.extend(self._final_user_message)
@@ -390,7 +386,6 @@ class TaskRunner:
         Side Effects:
             Stores detailed evaluation results in self.full_reward_info
         """
-
         # Handle missing termination reason (can happen with unexpected workflow endings)
         if termination_reason is None:
             termination_reason = TerminationReason.TOO_MANY_ERRORS
@@ -420,5 +415,8 @@ class TaskRunner:
             domain="airline",
         )
 
-        logger.info(f"Evaluation completed - Reward: {self.full_reward_info.reward}, Info: {self.full_reward_info}")
-        return self.full_reward_info.reward  # type: ignore[no-any-return]
+        logger.info(
+            f"Evaluation completed - Reward: {self.full_reward_info.reward if self.full_reward_info else None}, "
+            f"Info: {self.full_reward_info}"
+        )
+        return self.full_reward_info.reward if self.full_reward_info else 0.0

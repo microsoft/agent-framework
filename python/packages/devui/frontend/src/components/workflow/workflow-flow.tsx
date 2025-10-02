@@ -7,6 +7,7 @@ import {
   Maximize,
   Shuffle,
   Zap,
+  ArrowDown,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -53,11 +54,15 @@ function ViewOptionsPanel({
   onNodeSelect,
   viewOptions,
   onToggleViewOption,
+  layoutDirection,
+  onLayoutDirectionChange,
 }: {
   workflowDump?: Workflow;
   onNodeSelect?: (executorId: string, data: ExecutorNodeData) => void;
   viewOptions: { showMinimap: boolean; showGrid: boolean; animateRun: boolean };
   onToggleViewOption?: (key: keyof typeof viewOptions) => void;
+  layoutDirection: "LR" | "TB";
+  onLayoutDirectionChange?: (direction: "LR" | "TB") => void;
 }) {
   const { fitView, setViewport, setNodes } = useReactFlow();
 
@@ -71,9 +76,17 @@ function ViewOptionsPanel({
 
   const handleAutoArrange = () => {
     if (!workflowDump) return;
-    const currentNodes = convertWorkflowDumpToNodes(workflowDump, onNodeSelect);
+    const currentNodes = convertWorkflowDumpToNodes(
+      workflowDump,
+      onNodeSelect,
+      layoutDirection
+    );
     const currentEdges = convertWorkflowDumpToEdges(workflowDump);
-    const layoutedNodes = applyDagreLayout(currentNodes, currentEdges, "LR");
+    const layoutedNodes = applyDagreLayout(
+      currentNodes,
+      currentEdges,
+      layoutDirection
+    );
     setNodes(layoutedNodes);
   };
 
@@ -122,6 +135,35 @@ function ViewOptionsPanel({
             <Checkbox checked={viewOptions.animateRun} onChange={() => {}} />
           </DropdownMenuItem>
           <DropdownMenuSeparator />
+          <DropdownMenuItem
+            className="flex items-center justify-between"
+            onClick={() => {
+              const newDirection = layoutDirection === "LR" ? "TB" : "LR";
+              onLayoutDirectionChange?.(newDirection);
+              // Re-apply layout with new direction
+              if (workflowDump) {
+                const currentNodes = convertWorkflowDumpToNodes(
+                  workflowDump,
+                  onNodeSelect,
+                  newDirection
+                );
+                const currentEdges = convertWorkflowDumpToEdges(workflowDump);
+                const layoutedNodes = applyDagreLayout(
+                  currentNodes,
+                  currentEdges,
+                  newDirection
+                );
+                setNodes(layoutedNodes);
+              }
+            }}
+          >
+            <div className="flex items-center">
+              <ArrowDown className="mr-2 h-4 w-4" />
+              Vertical Layout
+            </div>
+            <Checkbox checked={layoutDirection === "TB"} onChange={() => {}} />
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
           <DropdownMenuItem onClick={handleResetZoom}>
             <RotateCcw className="mr-2 h-4 w-4" />
             Reset Zoom
@@ -154,6 +196,8 @@ interface WorkflowFlowProps {
   onToggleViewOption?: (
     key: keyof NonNullable<WorkflowFlowProps["viewOptions"]>
   ) => void;
+  layoutDirection?: "LR" | "TB";
+  onLayoutDirectionChange?: (direction: "LR" | "TB") => void;
 }
 
 // Animation handler component that runs inside ReactFlow context
@@ -212,6 +256,8 @@ export function WorkflowFlow({
   className = "",
   viewOptions = { showMinimap: false, showGrid: true, animateRun: true },
   onToggleViewOption,
+  layoutDirection = "LR",
+  onLayoutDirectionChange,
 }: WorkflowFlowProps) {
   // Create initial nodes and edges from workflow dump
   const { initialNodes, initialEdges } = useMemo(() => {
@@ -219,18 +265,24 @@ export function WorkflowFlow({
       return { initialNodes: [], initialEdges: [] };
     }
 
-    const nodes = convertWorkflowDumpToNodes(workflowDump, onNodeSelect);
+    const nodes = convertWorkflowDumpToNodes(
+      workflowDump,
+      onNodeSelect,
+      layoutDirection
+    );
     const edges = convertWorkflowDumpToEdges(workflowDump);
 
     // Apply auto-layout if we have nodes and edges
     const layoutedNodes =
-      nodes.length > 0 ? applyDagreLayout(nodes, edges, "LR") : nodes;
+      nodes.length > 0
+        ? applyDagreLayout(nodes, edges, layoutDirection)
+        : nodes;
 
     return {
       initialNodes: layoutedNodes,
       initialEdges: edges,
     };
-  }, [workflowDump, onNodeSelect]);
+  }, [workflowDump, onNodeSelect, layoutDirection]);
 
   const [nodes, setNodes, onNodesChange] =
     useNodesState<Node<ExecutorNodeData>>(initialNodes);
@@ -388,7 +440,7 @@ export function WorkflowFlow({
               const state = data?.state;
               switch (state) {
                 case "running":
-                  return "#3b82f6";
+                  return "#643FB2";
                 case "completed":
                   return "#10b981";
                 case "failed":
@@ -420,6 +472,8 @@ export function WorkflowFlow({
           onNodeSelect={onNodeSelect}
           viewOptions={viewOptions}
           onToggleViewOption={onToggleViewOption}
+          layoutDirection={layoutDirection}
+          onLayoutDirectionChange={onLayoutDirectionChange}
         />
       </ReactFlow>
 

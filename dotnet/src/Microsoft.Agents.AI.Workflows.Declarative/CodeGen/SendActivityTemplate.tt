@@ -1,0 +1,34 @@
+﻿<#@ template language="C#" inherits="ActionTemplate" visibility="internal" linePragmas="false" #>
+<#@ output extension=".cs" #>
+<#@ assembly name="System.Core" #>
+<#@ include file="Snippets/Index.tt" once="true" #>
+/// <summary>
+/// Formats a message template and sends an activity event.
+/// </summary>
+internal sealed class <#= this.Name #>Executor(FormulaSession session) : ActionExecutor(id: "<#= this.Id #>", session)
+{
+    // <inheritdoc />
+    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    { <#
+if (this.Model.Activity is MessageActivityTemplate messageActivity)
+{ #>
+        string activityText = 
+            await context.FormatTemplateAsync( <#
+    foreach (TemplateLine line in messageActivity.Text)
+    {  #>
+                """<#
+        foreach (string text in line.ToTemplateString().ByLine())
+        { #>
+                <#= text #><#
+        } #>
+                """<#
+    } 
+     #>
+            );
+        AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
+        await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);<#
+} #>
+
+        return default;
+    }
+}

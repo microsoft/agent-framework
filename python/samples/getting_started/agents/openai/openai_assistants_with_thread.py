@@ -8,6 +8,13 @@ from agent_framework import AgentThread, ChatAgent
 from agent_framework.openai import OpenAIAssistantsClient
 from pydantic import Field
 
+"""
+OpenAI Assistants with Thread Management Example
+
+This sample demonstrates thread management with OpenAI Assistants, showing
+persistent conversation threads and context preservation across interactions.
+"""
+
 
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],

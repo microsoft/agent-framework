@@ -6,10 +6,8 @@ using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.Agents.OpenAI;
 using OpenAI;
 
-#pragma warning disable OPENAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
-
 var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
-var modelId = System.Environment.GetEnvironmentVariable("OPENAI_MODELID") ?? "gpt-4o";
+var model = System.Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o";
 var userInput = "What is the weather like in Amsterdam?";
 
 Console.WriteLine($"User Input: {userInput}");
@@ -24,9 +22,9 @@ await AFAgentAsync();
 
 async Task SKAgentAsync()
 {
-    var builder = Kernel.CreateBuilder().AddOpenAIChatClient(modelId, apiKey);
+    var builder = Kernel.CreateBuilder().AddOpenAIChatClient(model, apiKey);
 
-    OpenAIResponseAgent agent = new(new OpenAIClient(apiKey).GetOpenAIResponseClient(modelId));
+    OpenAIResponseAgent agent = new(new OpenAIClient(apiKey).GetOpenAIResponseClient(model));
 
     // Initialize plugin and add to the agent's Kernel (same as direct Kernel usage).
     agent.Kernel.Plugins.Add(KernelPluginFactory.CreateFromFunctions("KernelPluginName", [KernelFunctionFactory.CreateFromMethod(GetWeather)]));
@@ -44,7 +42,7 @@ async Task SKAgentAsync()
 
 async Task AFAgentAsync()
 {
-    var agent = new OpenAIClient(apiKey).GetOpenAIResponseClient(modelId).CreateAIAgent(
+    var agent = new OpenAIClient(apiKey).GetOpenAIResponseClient(model).CreateAIAgent(
         instructions: "You are a helpful assistant",
         tools: [AIFunctionFactory.Create(GetWeather)]);
 

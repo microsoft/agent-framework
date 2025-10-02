@@ -5,7 +5,7 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { FileUpload } from "@/components/ui/file-upload";
 import {
@@ -21,7 +21,22 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Send, User, Bot, Plus, AlertCircle } from "lucide-react";
+import {
+  SendHorizontal,
+  User,
+  Bot,
+  Plus,
+  AlertCircle,
+  Paperclip,
+  FileText,
+  ChevronDown,
+  Package,
+  FolderOpen,
+  Database,
+  Globe,
+  CheckCircle,
+  XCircle,
+} from "lucide-react";
 import { apiClient } from "@/services/api";
 import type {
   AgentInfo,
@@ -36,7 +51,7 @@ interface ChatState {
   isStreaming: boolean;
 }
 
-type DebugEventHandler = (event: ExtendedResponseStreamEvent | 'clear') => void;
+type DebugEventHandler = (event: ExtendedResponseStreamEvent | "clear") => void;
 
 interface AgentViewProps {
   selectedAgent: AgentInfo;
@@ -136,10 +151,15 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
   const [loadingThreads, setLoadingThreads] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [dragCounter, setDragCounter] = useState(0);
+  const [pasteNotification, setPasteNotification] = useState<string | null>(
+    null
+  );
+  const [detailsExpanded, setDetailsExpanded] = useState(false);
 
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const accumulatedText = useRef<string>("");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -163,7 +183,9 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
 
           // Load messages for the selected thread
           try {
-            const threadMessages = await apiClient.getThreadMessages(mostRecentThread.id);
+            const threadMessages = await apiClient.getThreadMessages(
+              mostRecentThread.id
+            );
             setChatState({
               messages: threadMessages,
               isStreaming: false,
@@ -262,10 +284,137 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
     }
   };
 
+  // Paste handler
+  const handlePaste = async (e: React.ClipboardEvent) => {
+    const items = Array.from(e.clipboardData.items);
+    const files: File[] = [];
+    let hasProcessedText = false;
+    const TEXT_THRESHOLD = 8000; // Convert to file if text is larger than this
+
+    for (const item of items) {
+      // Handle pasted images (screenshots)
+      if (item.type.startsWith("image/")) {
+        e.preventDefault();
+        const blob = item.getAsFile();
+        if (blob) {
+          const timestamp = Date.now();
+          files.push(
+            new File([blob], `screenshot-${timestamp}.png`, { type: blob.type })
+          );
+        }
+      }
+      // Handle text - only process first text item (browsers often duplicate)
+      else if (item.type === "text/plain" && !hasProcessedText) {
+        hasProcessedText = true;
+
+        // We need to check the text synchronously to decide whether to prevent default
+        // Unfortunately, getAsString is async, so we'll prevent default for all text
+        // and then decide whether to actually create a file or manually insert the text
+        e.preventDefault();
+
+        await new Promise<void>((resolve) => {
+          item.getAsString((text) => {
+            // Check if text should be converted to file
+            const lineCount = (text.match(/\n/g) || []).length;
+            const shouldConvert =
+              text.length > TEXT_THRESHOLD ||
+              lineCount > 50 || // Many lines suggests logs/data
+              /^\s*[{[][\s\S]*[}\]]\s*$/.test(text) || // JSON-like
+              /^<\?xml|^<html|^<!DOCTYPE/i.test(text); // XML/HTML
+
+            if (shouldConvert) {
+              // Create file for large/complex text
+              const extension = detectFileExtension(text);
+              const timestamp = Date.now();
+              const blob = new Blob([text], { type: "text/plain" });
+              files.push(
+                new File([blob], `pasted-text-${timestamp}${extension}`, {
+                  type: "text/plain",
+                })
+              );
+            } else {
+              // For small text, manually insert into textarea since we prevented default
+              const textarea = textareaRef.current;
+              if (textarea) {
+                const start = textarea.selectionStart;
+                const end = textarea.selectionEnd;
+                const currentValue = textarea.value;
+                const newValue = currentValue.slice(0, start) + text + currentValue.slice(end);
+                setInputValue(newValue);
+
+                // Restore cursor position after the inserted text
+                setTimeout(() => {
+                  textarea.selectionStart = textarea.selectionEnd = start + text.length;
+                  textarea.focus();
+                }, 0);
+              }
+            }
+            resolve();
+          });
+        });
+      }
+    }
+
+    // Process collected files
+    if (files.length > 0) {
+      await handleFilesSelected(files);
+
+      // Show notification with appropriate icon
+      const message =
+        files.length === 1
+          ? files[0].name.includes("screenshot")
+            ? "Screenshot added as attachment"
+            : "Large text converted to file"
+          : `${files.length} files added`;
+
+      setPasteNotification(message);
+      setTimeout(() => setPasteNotification(null), 3000);
+    }
+  };
+
+  // Detect file extension from content
+  const detectFileExtension = (text: string): string => {
+    const trimmed = text.trim();
+    const lines = trimmed.split('\n');
+
+    // JSON detection
+    if (/^{[\s\S]*}$|^\[[\s\S]*\]$/.test(trimmed)) return ".json";
+
+    // XML/HTML detection
+    if (/^<\?xml|^<html|^<!DOCTYPE/i.test(trimmed)) return ".html";
+
+    // Markdown detection (code blocks)
+    if (/^```/.test(trimmed)) return ".md";
+
+    // TSV detection (tabs with multiple lines)
+    if (/\t/.test(text) && lines.length > 1) return ".tsv";
+
+    // CSV detection (more strict) - need multiple lines with consistent comma patterns
+    if (lines.length > 2) {
+      const commaLines = lines.filter(line => line.includes(','));
+      const semicolonLines = lines.filter(line => line.includes(';'));
+
+      // If >50% of lines have commas and it looks tabular
+      if (commaLines.length > lines.length * 0.5) {
+        const avgCommas = commaLines.reduce((sum, line) => sum + (line.match(/,/g) || []).length, 0) / commaLines.length;
+        if (avgCommas >= 2) return ".csv";
+      }
+
+      // If >50% of lines have semicolons and it looks tabular
+      if (semicolonLines.length > lines.length * 0.5) {
+        const avgSemicolons = semicolonLines.reduce((sum, line) => sum + (line.match(/;/g) || []).length, 0) / semicolonLines.length;
+        if (avgSemicolons >= 2) return ".csv";
+      }
+    }
+
+    return ".txt";
+  };
+
   // Helper functions
   const getFileType = (file: File): AttachmentItem["type"] => {
     if (file.type.startsWith("image/")) return "image";
     if (file.type === "application/pdf") return "pdf";
+    if (file.type.startsWith("audio/")) return "audio";
     return "other";
   };
 
@@ -303,6 +452,9 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
       if (!thread) return;
 
       setCurrentThread(thread);
+
+      // Clear debug panel when switching threads
+      onDebugEvent("clear");
 
       try {
         // Load thread messages from backend
@@ -354,10 +506,21 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
               } as import("@/types/agent-framework").DataContent);
             } else if (contentItem.type === "input_file") {
               const dataUri = `data:application/octet-stream;base64,${contentItem.file_data}`;
+              // Determine media type from filename
+              const filename = (contentItem as import("@/types/agent-framework").ResponseInputFileParam).filename || "";
+              let mediaType = "application/octet-stream";
+
+              if (filename.endsWith(".pdf")) mediaType = "application/pdf";
+              else if (filename.endsWith(".txt")) mediaType = "text/plain";
+              else if (filename.endsWith(".json")) mediaType = "application/json";
+              else if (filename.endsWith(".csv")) mediaType = "text/csv";
+              else if (filename.endsWith(".html")) mediaType = "text/html";
+              else if (filename.endsWith(".md")) mediaType = "text/markdown";
+
               attachmentContents.push({
                 type: "data",
                 uri: dataUri,
-                media_type: "application/pdf", // Should be dynamic based on filename
+                media_type: mediaType,
               } as import("@/types/agent-framework").DataContent);
             }
           }
@@ -427,7 +590,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
         accumulatedText.current = "";
 
         // Clear debug panel events for new agent run
-        onDebugEvent('clear');
+        onDebugEvent("clear");
 
         // Use OpenAI-compatible API streaming - direct event handling
         const streamGenerator = apiClient.streamAgentExecutionOpenAI(
@@ -576,8 +739,24 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
               type: "input_image",
               image_url: dataUri,
             } as import("@/types/agent-framework").ResponseInputImageParam);
+          } else if (
+            attachment.file.type === "text/plain" &&
+            (attachment.file.name.includes("pasted-text-") ||
+             attachment.file.name.endsWith(".txt") ||
+             attachment.file.name.endsWith(".csv") ||
+             attachment.file.name.endsWith(".json") ||
+             attachment.file.name.endsWith(".html") ||
+             attachment.file.name.endsWith(".md") ||
+             attachment.file.name.endsWith(".tsv"))
+          ) {
+            // Convert all text files (from pasted large text) back to input_text
+            const text = await attachment.file.text();
+            content.push({
+              text: text,
+              type: "input_text",
+            } as import("@/types/agent-framework").ResponseInputTextParam);
           } else {
-            // EXACT OpenAI ResponseInputFileParam (but we need to handle the required fields)
+            // EXACT OpenAI ResponseInputFileParam for other files
             const base64Data = dataUri.split(",")[1]; // Extract base64 part
             content.push({
               type: "input_file",
@@ -641,22 +820,36 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
     <div className="flex h-[calc(100vh-3.5rem)] flex-col">
       {/* Header */}
       <div className="border-b pb-2  p-4 flex-shrink-0">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="font-semibold text-sm">
-            <div className="flex items-center gap-2">
-              <Bot className="h-4 w-4" />
-              Chat with {selectedAgent.name || selectedAgent.id}
-            </div>
-          </h2>
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <h2 className="font-semibold text-sm truncate">
+              <div className="flex items-center gap-2">
+                <Bot className="h-4 w-4 flex-shrink-0" />
+                <span className="truncate">Chat with {selectedAgent.name || selectedAgent.id}</span>
+              </div>
+            </h2>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setDetailsExpanded(!detailsExpanded)}
+              className="h-6 w-6 p-0 flex-shrink-0"
+            >
+              <ChevronDown
+                className={`h-4 w-4 transition-transform duration-200 ${
+                  detailsExpanded ? "rotate-180" : ""
+                }`}
+              />
+            </Button>
+          </div>
 
           {/* Thread Controls */}
-          <div className="flex items-center gap-2">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-shrink-0">
             <Select
               value={currentThread?.id || ""}
               onValueChange={handleThreadSelect}
               disabled={loadingThreads || isSubmitting}
             >
-              <SelectTrigger className="w-48">
+              <SelectTrigger className="w-full sm:w-48">
                 <SelectValue
                   placeholder={
                     loadingThreads
@@ -690,6 +883,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
               size="lg"
               onClick={handleNewThread}
               disabled={!selectedAgent || isSubmitting}
+              className="whitespace-nowrap"
             >
               <Plus className="h-4 w-4 mr-2" />
               New Thread
@@ -702,6 +896,68 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
             {selectedAgent.description}
           </p>
         )}
+
+        {/* Collapsible Details Section */}
+        <div
+          className={`overflow-hidden transition-all duration-200 ease-in-out ${
+            detailsExpanded ? "max-h-40 mt-3" : "max-h-0"
+          }`}
+        >
+          <div className="space-y-2 text-xs">
+            {/* Tools */}
+            <div className="flex items-center gap-2">
+              <Package className="h-3.5 w-3.5 text-muted-foreground" />
+              <span className="text-muted-foreground">Tools:</span>
+              <span className="font-mono">
+                {selectedAgent.tools.length > 0
+                  ? selectedAgent.tools.join(", ")
+                  : "No tools"}
+              </span>
+              <span className="text-muted-foreground">
+                ({selectedAgent.tools.length})
+              </span>
+            </div>
+
+            {/* Source */}
+            <div className="flex items-center gap-2">
+              {selectedAgent.source === "directory" ? (
+                <FolderOpen className="h-3.5 w-3.5 text-muted-foreground" />
+              ) : selectedAgent.source === "in_memory" ? (
+                <Database className="h-3.5 w-3.5 text-muted-foreground" />
+              ) : (
+                <Globe className="h-3.5 w-3.5 text-muted-foreground" />
+              )}
+              <span className="text-muted-foreground">Source:</span>
+              <span>
+                {selectedAgent.source === "directory"
+                  ? "Local"
+                  : selectedAgent.source === "in_memory"
+                  ? "In-Memory"
+                  : "Gallery"}
+              </span>
+              {selectedAgent.module_path && (
+                <span className="text-muted-foreground font-mono text-[11px]">
+                  ({selectedAgent.module_path})
+                </span>
+              )}
+            </div>
+
+            {/* Environment */}
+            <div className="flex items-center gap-2">
+              {selectedAgent.has_env ? (
+                <XCircle className="h-3.5 w-3.5 text-orange-500" />
+              ) : (
+                <CheckCircle className="h-3.5 w-3.5 text-green-500" />
+              )}
+              <span className="text-muted-foreground">Environment:</span>
+              <span>
+                {selectedAgent.has_env
+                  ? "Requires environment variables"
+                  : "No environment variables required"}
+              </span>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Messages */}
@@ -764,16 +1020,43 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
             </div>
           )}
 
+          {/* Paste notification */}
+          {pasteNotification && (
+            <div
+              className="absolute bottom-24 left-1/2 -translate-x-1/2 z-20
+                          bg-blue-500 text-white px-4 py-2 rounded-full text-sm
+                          animate-in slide-in-from-bottom-2 fade-in duration-200
+                          flex items-center gap-2 shadow-lg"
+            >
+              {pasteNotification.includes("screenshot") ? (
+                <Paperclip className="h-3 w-3" />
+              ) : (
+                <FileText className="h-3 w-3" />
+              )}
+              {pasteNotification}
+            </div>
+          )}
+
           {/* Input form */}
-          <form onSubmit={handleSubmit} className="flex gap-2">
-            <Input
+          <form onSubmit={handleSubmit} className="flex gap-2 items-end">
+            <Textarea
+              ref={textareaRef}
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
+              onPaste={handlePaste}
+              onKeyDown={(e) => {
+                // Submit on Enter (without shift)
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSubmit(e);
+                }
+              }}
               placeholder={`Message ${
                 selectedAgent.name || selectedAgent.id
-              }...`}
+              }... (Shift+Enter for new line)`}
               disabled={isSubmitting || chatState.isStreaming}
-              className="flex-1"
+              className="flex-1 min-h-[40px] max-h-[200px] resize-none"
+              style={{ fieldSizing: "content" } as React.CSSProperties}
             />
             <FileUpload
               onFilesSelected={handleFilesSelected}
@@ -783,12 +1066,12 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
               type="submit"
               size="icon"
               disabled={!canSendMessage}
-              className="shrink-0"
+              className="shrink-0 h-10"
             >
               {isSubmitting ? (
                 <LoadingSpinner size="sm" />
               ) : (
-                <Send className="h-4 w-4" />
+                <SendHorizontal className="h-4 w-4" />
               )}
             </Button>
           </form>

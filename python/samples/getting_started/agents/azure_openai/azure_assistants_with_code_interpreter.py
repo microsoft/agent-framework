@@ -13,6 +13,13 @@ from openai.types.beta.threads.runs import (
 )
 from openai.types.beta.threads.runs.code_interpreter_tool_call_delta import CodeInterpreter
 
+"""
+Azure OpenAI Assistants with Code Interpreter Example
+
+This sample demonstrates using HostedCodeInterpreterTool with Azure OpenAI Assistants
+for Python code execution and mathematical problem solving.
+"""
+
 
 def get_code_interpreter_chunk(chunk: AgentRunResponseUpdate) -> str | None:
     """Helper method to access code interpreter data."""

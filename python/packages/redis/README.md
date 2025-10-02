@@ -1,9 +1,9 @@
 # Get Started with Microsoft Agent Framework Redis
 
-Please install this package as the extra for `agent-framework`:
+Please install this package via pip:
 
 ```bash
-pip install agent-framework[redis]
+pip install agent-framework-redis
 ```
 
 ## Components

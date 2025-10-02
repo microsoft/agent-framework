@@ -3,7 +3,15 @@
  */
 
 import { useState } from "react";
-import { Download, FileText, AlertCircle, Code } from "lucide-react";
+import {
+  Download,
+  FileText,
+  AlertCircle,
+  Code,
+  ChevronDown,
+  ChevronUp,
+  Music,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { RenderProps } from "./types";
 import {
@@ -13,13 +21,51 @@ import {
 } from "@/types/agent-framework";
 
 function TextContentRenderer({ content, isStreaming, className }: RenderProps) {
+  const [isExpanded, setIsExpanded] = useState(false);
+
   if (!isTextContent(content)) return null;
+
+  const text = content.text;
+  const TRUNCATE_LENGTH = 1600;
+  const shouldTruncate = text.length > TRUNCATE_LENGTH && !isStreaming;
+  const displayText =
+    shouldTruncate && !isExpanded
+      ? text.slice(0, TRUNCATE_LENGTH) + "..."
+      : text;
 
   return (
     <div className={`whitespace-pre-wrap break-words ${className || ""}`}>
-      {content.text}
+      <div
+        className={
+          isExpanded && shouldTruncate ? "max-h-96 overflow-y-auto" : ""
+        }
+      >
+        {displayText}
+      </div>
       {isStreaming && (
         <span className="ml-1 inline-block h-2 w-2 animate-pulse rounded-full bg-current" />
+      )}
+      {shouldTruncate && (
+        <div className="flex justify-end mt-1">
+          <button
+            onClick={() => setIsExpanded(!isExpanded)}
+            className="inline-flex items-center gap-1 text-xs
+                       bg-background/80 hover:bg-background border border-border/50 hover:border-border
+                       text-muted-foreground hover:text-foreground
+                       transition-colors cursor-pointer px-2 py-1 rounded"
+          >
+            {isExpanded ? (
+              <>
+                less <ChevronUp className="h-3 w-3" />
+              </>
+            ) : (
+              <>
+                {(text.length - TRUNCATE_LENGTH).toLocaleString()} more{" "}
+                <ChevronDown className="h-3 w-3" />
+              </>
+            )}
+          </button>
+        </div>
       )}
     </div>
   );
@@ -38,6 +84,7 @@ function DataContentRenderer({ content, className }: RenderProps) {
 
   const isImage = mediaType.startsWith("image/");
   const isPdf = mediaType === "application/pdf";
+  const isAudio = mediaType.startsWith("audio/");
 
   if (isImage && !imageError) {
     return (
@@ -58,7 +105,23 @@ function DataContentRenderer({ content, className }: RenderProps) {
     );
   }
 
-  // Fallback for non-images or failed images
+  if (isAudio) {
+    return (
+      <div className={`my-2 p-3 border rounded-lg bg-purple-50 dark:bg-purple-950/20 ${className || ""}`}>
+        <div className="flex items-center gap-2 mb-2">
+          <Music className="h-4 w-4 text-purple-500" />
+          <span className="text-sm font-medium text-purple-800 dark:text-purple-300">Audio File</span>
+          <span className="text-xs text-muted-foreground">({mediaType})</span>
+        </div>
+        <audio controls className="w-full max-w-md">
+          <source src={dataUri} type={mediaType} />
+          Your browser does not support the audio element.
+        </audio>
+      </div>
+    );
+  }
+
+  // Fallback for non-images/non-audio or failed images
   return (
     <div className={`my-2 p-3 border rounded-lg bg-muted ${className || ""}`}>
       <div className="flex items-center gap-2">
@@ -115,9 +178,7 @@ function FunctionCallRenderer({ content, className }: RenderProps) {
         <span className="text-sm font-medium text-blue-800">
           Function Call: {content.name}
         </span>
-        <span className="text-xs text-blue-600">
-          {isExpanded ? "▼" : "▶"}
-        </span>
+        <span className="text-xs text-blue-600">{isExpanded ? "▼" : "▶"}</span>
       </div>
       {isExpanded && (
         <div className="mt-2 text-xs font-mono bg-white p-2 rounded border">
@@ -137,7 +198,9 @@ function FunctionResultRenderer({ content, className }: RenderProps) {
   if (!isFunctionResultContent(content)) return null;
 
   return (
-    <div className={`my-2 p-3 border rounded-lg bg-green-50 ${className || ""}`}>
+    <div
+      className={`my-2 p-3 border rounded-lg bg-green-50 ${className || ""}`}
+    >
       <div
         className="flex items-center gap-2 cursor-pointer"
         onClick={() => setIsExpanded(!isExpanded)}
@@ -146,9 +209,7 @@ function FunctionResultRenderer({ content, className }: RenderProps) {
         <span className="text-sm font-medium text-green-800">
           Function Result
         </span>
-        <span className="text-xs text-green-600">
-          {isExpanded ? "▼" : "▶"}
-        </span>
+        <span className="text-xs text-green-600">{isExpanded ? "▼" : "▶"}</span>
       </div>
       {isExpanded && (
         <div className="mt-2 text-xs font-mono bg-white p-2 rounded border">
@@ -230,7 +291,11 @@ function UriContentRenderer({ content, className }: RenderProps) {
   );
 }
 
-export function ContentRenderer({ content, isStreaming, className }: RenderProps) {
+export function ContentRenderer({
+  content,
+  isStreaming,
+  className,
+}: RenderProps) {
   switch (content.type) {
     case "text":
       return (
@@ -245,19 +310,17 @@ export function ContentRenderer({ content, isStreaming, className }: RenderProps
     case "uri":
       return <UriContentRenderer content={content} className={className} />;
     case "function_call":
-      return (
-        <FunctionCallRenderer content={content} className={className} />
-      );
+      return <FunctionCallRenderer content={content} className={className} />;
     case "function_result":
-      return (
-        <FunctionResultRenderer content={content} className={className} />
-      );
+      return <FunctionResultRenderer content={content} className={className} />;
     case "error":
       return <ErrorContentRenderer content={content} className={className} />;
     default:
       // Fallback for unsupported content types
       return (
-        <div className={`my-2 p-2 bg-gray-100 rounded text-xs ${className || ""}`}>
+        <div
+          className={`my-2 p-2 bg-gray-100 rounded text-xs ${className || ""}`}
+        >
           <div>Unsupported content type: {content.type}</div>
           <pre className="mt-1 text-xs whitespace-pre-wrap">
             {JSON.stringify(content, null, 2)}

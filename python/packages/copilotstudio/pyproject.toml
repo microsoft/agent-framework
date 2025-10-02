@@ -4,26 +4,25 @@ description = "Copilot Studio integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "0.1.0b1"
+version = "1.0.0b251001"
 license-files = ["LICENSE"]
-urls.homepage = "https://learn.microsoft.com/en-us/semantic-kernel/overview/"
+urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
 urls.release_notes = "https://github.com/microsoft/agent-framework/releases?q=tag%3Apython-1&expanded=true"
 urls.issues = "https://github.com/microsoft/agent-framework/issues"
 classifiers = [
   "License :: OSI Approved :: MIT License",
-  "Development Status :: 5 - Production/Stable",
+  "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
-  "Framework :: Pydantic :: 2",
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework",
+    "agent-framework-core",
     "microsoft-agents-copilotstudio-client>=0.3.1",
 ]
 
@@ -84,10 +83,6 @@ include = "../../shared_tasks.toml"
 mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_copilotstudio"
 test = "pytest --cov=agent_framework_copilotstudio --cov-report=term-missing:skip-covered tests"
 
-[tool.uv.build-backend]
-module-name = "agent_framework_copilotstudio"
-module-root = ""
-
 [build-system]
-requires = ["uv_build>=0.8.2,<0.9.0"]
-build-backend = "uv_build"
+requires = ["flit-core >= 3.11,<4.0"]
+build-backend = "flit_core.buildapi"

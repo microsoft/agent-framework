@@ -19,7 +19,7 @@ Redis context provider. It covers three scenarios:
 
 Requirements:
   - A Redis instance with RediSearch enabled (e.g., Redis Stack)
-  - agent-framework with the Redis extra installed: pip install "agent-framework[redis]"
+  - agent-framework with the Redis extra installed: pip install "agent-framework-redis"
   - Optionally an OpenAI API key for the chat client in this demo
 
 Run:
@@ -30,14 +30,14 @@ import asyncio
 import os
 import uuid
 
-from agent_framework_redis._provider import RedisProvider
 from agent_framework.openai import OpenAIChatClient
-from redisvl.utils.vectorize import OpenAITextVectorizer
+from agent_framework_redis._provider import RedisProvider
 from redisvl.extensions.cache.embeddings import EmbeddingsCache
-
+from redisvl.utils.vectorize import OpenAITextVectorizer
 
 # Please set the OPENAI_API_KEY and OPENAI_CHAT_MODEL_ID environment variables to use the OpenAI vectorizer
 # Recommend default for OPENAI_CHAT_MODEL_ID is gpt-4o-mini
+
 
 async def example_global_thread_scope() -> None:
     """Example 1: Global thread_id scope (memories shared across all operations)."""
@@ -47,7 +47,7 @@ async def example_global_thread_scope() -> None:
     global_thread_id = str(uuid.uuid4())
 
     client = OpenAIChatClient(
-        ai_model_id=os.getenv("OPENAI_CHAT_MODEL_ID", "gpt-4o-mini"),
+        model_id=os.getenv("OPENAI_CHAT_MODEL_ID", "gpt-4o-mini"),
         api_key=os.getenv("OPENAI_API_KEY"),
     )
 
@@ -70,7 +70,8 @@ async def example_global_thread_scope() -> None:
             "Before answering, always check for stored context containing information"
         ),
         tools=[],
-        context_providers=provider)
+        context_providers=provider,
+    )
 
     # Store a preference in the global scope
     query = "Remember that I prefer technical responses with code examples when discussing programming."
@@ -99,7 +100,7 @@ async def example_per_operation_thread_scope() -> None:
     print("-" * 40)
 
     client = OpenAIChatClient(
-        ai_model_id=os.getenv("OPENAI_CHAT_MODEL_ID", "gpt-4o-mini"),
+        model_id=os.getenv("OPENAI_CHAT_MODEL_ID", "gpt-4o-mini"),
         api_key=os.getenv("OPENAI_API_KEY"),
     )
 
@@ -108,7 +109,7 @@ async def example_per_operation_thread_scope() -> None:
         api_config={"api_key": os.getenv("OPENAI_API_KEY")},
         cache=EmbeddingsCache(name="openai_embeddings_cache", redis_url="redis://localhost:6379"),
     )
-    
+
     provider = RedisProvider(
         redis_url="redis://localhost:6379",
         index_name="redis_threads_dynamic",
@@ -123,7 +124,7 @@ async def example_per_operation_thread_scope() -> None:
         vector_algorithm="hnsw",
         vector_distance_metric="cosine",
     )
-    
+
     agent = client.create_agent(
         name="ScopedMemoryAssistant",
         instructions="You are an assistant with thread-scoped memory.",
@@ -167,7 +168,7 @@ async def example_multiple_agents() -> None:
     print("-" * 40)
 
     client = OpenAIChatClient(
-        ai_model_id=os.getenv("OPENAI_CHAT_MODEL_ID", "gpt-4o-mini"),
+        model_id=os.getenv("OPENAI_CHAT_MODEL_ID", "gpt-4o-mini"),
         api_key=os.getenv("OPENAI_API_KEY"),
     )
 
@@ -176,7 +177,7 @@ async def example_multiple_agents() -> None:
         api_config={"api_key": os.getenv("OPENAI_API_KEY")},
         cache=EmbeddingsCache(name="openai_embeddings_cache", redis_url="redis://localhost:6379"),
     )
-    
+
     personal_provider = RedisProvider(
         redis_url="redis://localhost:6379",
         index_name="redis_threads_agents",
@@ -188,13 +189,13 @@ async def example_multiple_agents() -> None:
         vector_algorithm="hnsw",
         vector_distance_metric="cosine",
     )
-    
+
     personal_agent = client.create_agent(
         name="PersonalAssistant",
         instructions="You are a personal assistant that helps with personal tasks.",
         context_providers=personal_provider,
     )
-    
+
     work_provider = RedisProvider(
         redis_url="redis://localhost:6379",
         index_name="redis_threads_agents",
@@ -206,7 +207,7 @@ async def example_multiple_agents() -> None:
         vector_algorithm="hnsw",
         vector_distance_metric="cosine",
     )
-    
+
     work_agent = client.create_agent(
         name="WorkAssistant",
         instructions="You are a work assistant that helps with professional tasks.",

@@ -1,9 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Threading;
-using System.Threading.Tasks;
-using Microsoft.Agents.Workflows;
-using Microsoft.Agents.Workflows.Reflection;
+using Microsoft.Agents.AI.Workflows;
+using Microsoft.Agents.AI.Workflows.Reflection;
 
 namespace WorkflowCheckpointAndRehydrateSample;
 
@@ -93,14 +91,14 @@ internal sealed class GuessNumberExecutor() : ReflectingExecutor<GuessNumberExec
     /// Checkpoint the current state of the executor.
     /// This must be overridden to save any state that is needed to resume the executor.
     /// </summary>
-    protected override ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellation = default) =>
+    protected override ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default) =>
         context.QueueStateUpdateAsync(StateKey, (this.LowerBound, this.UpperBound));
 
     /// <summary>
     /// Restore the state of the executor from a checkpoint.
     /// This must be overridden to restore any state that was saved during checkpointing.
     /// </summary>
-    protected override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellation = default) =>
+    protected override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default) =>
         (this.LowerBound, this.UpperBound) = await context.ReadStateAsync<(int, int)>(StateKey).ConfigureAwait(false);
 }
 
@@ -143,13 +141,13 @@ internal sealed class JudgeExecutor() : ReflectingExecutor<JudgeExecutor>("Judge
     /// Checkpoint the current state of the executor.
     /// This must be overridden to save any state that is needed to resume the executor.
     /// </summary>
-    protected override ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellation = default) =>
+    protected override ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default) =>
         context.QueueStateUpdateAsync(StateKey, this._tries);
 
     /// <summary>
     /// Restore the state of the executor from a checkpoint.
     /// This must be overridden to restore any state that was saved during checkpointing.
     /// </summary>
-    protected override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellation = default) =>
+    protected override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default) =>
         this._tries = await context.ReadStateAsync<int>(StateKey).ConfigureAwait(false);
 }

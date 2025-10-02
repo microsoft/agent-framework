@@ -8,6 +8,13 @@ from typing import Annotated
 from agent_framework.openai import OpenAIResponsesClient
 from pydantic import Field
 
+"""
+OpenAI Responses Client with Explicit Settings Example
+
+This sample demonstrates creating OpenAI Responses Client with explicit configuration
+settings rather than relying on environment variable defaults.
+"""
+
 
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
@@ -21,7 +28,7 @@ async def main() -> None:
     print("=== OpenAI Responses Client with Explicit Settings ===")
 
     agent = OpenAIResponsesClient(
-        ai_model_id=os.environ["OPENAI_RESPONSES_MODEL_ID"],
+        model_id=os.environ["OPENAI_RESPONSES_MODEL_ID"],
         api_key=os.environ["OPENAI_API_KEY"],
     ).create_agent(
         instructions="You are a helpful weather agent.",

@@ -9,6 +9,13 @@ from azure.ai.agents.models import (
 )
 from azure.identity.aio import AzureCliCredential
 
+"""
+Azure AI Agent with Code Interpreter Example
+
+This sample demonstrates using HostedCodeInterpreterTool with Azure AI Agents
+for Python code execution and mathematical problem solving.
+"""
+
 
 def print_code_interpreter_inputs(response: AgentRunResponse) -> None:
     """Helper method to access code interpreter data."""
@@ -36,14 +43,17 @@ async def main() -> None:
     ):
         agent = chat_client.create_agent(
             name="CodingAgent",
-            instructions="You are a helpful assistant that can write and execute Python code to solve problems.",
+            instructions=(
+                "You are a helpful assistant that can write and execute Python code to solve problems."
+            ),
             tools=HostedCodeInterpreterTool(),
         )
         query = "Generate the factorial of 100 using python code, show the code and execute it."
         print(f"User: {query}")
         response = await AgentRunResponse.from_agent_response_generator(agent.run_stream(query))
         print(f"Agent: {response}")
-        # To review the code interpreter outputs, you can access them from the response raw_representations, just uncomment the next line:
+        # To review the code interpreter outputs, you can access
+        # them from the response raw_representations, just uncomment the next line:
         # print_code_interpreter_inputs(response)
 
 

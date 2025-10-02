@@ -6,8 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import numpy as np
 import pytest
 from agent_framework import ChatMessage, Role
-from agent_framework.exceptions import ServiceInitializationError
-from pydantic import ValidationError
+from agent_framework.exceptions import AgentException, ServiceInitializationError
 from redisvl.utils.vectorize import CustomTextVectorizer
 
 from agent_framework_redis import RedisProvider
@@ -121,21 +120,18 @@ class TestRedisProviderMessages:
             ChatMessage(role=Role.SYSTEM, text="You are a helpful assistant"),
         ]
 
-    @pytest.mark.asyncio
     # Writes require at least one scoping filter to avoid unbounded operations
     async def test_messages_adding_requires_filters(self, patch_index_from_dict):  # noqa: ARG002
         provider = RedisProvider()
         with pytest.raises(ServiceInitializationError):
-            await provider.messages_adding("thread123", ChatMessage(role=Role.USER, text="Hello"))
+            await provider.invoked("thread123", ChatMessage(role=Role.USER, text="Hello"))
 
-    @pytest.mark.asyncio
     # Captures the per-operation thread id when provided
     async def test_thread_created_sets_per_operation_id(self, patch_index_from_dict):  # noqa: ARG002
         provider = RedisProvider(user_id="u1")
         await provider.thread_created("t1")
         assert provider._per_operation_thread_id == "t1"
 
-    @pytest.mark.asyncio
     # Enforces single-thread usage when scope_to_per_operation_thread_id is True
     async def test_thread_created_conflict_when_scoped(self, patch_index_from_dict):  # noqa: ARG002
         provider = RedisProvider(user_id="u1", scope_to_per_operation_thread_id=True)
@@ -144,7 +140,6 @@ class TestRedisProviderMessages:
             await provider.thread_created("t2")
         assert "only be used with one thread" in str(exc.value)
 
-    @pytest.mark.asyncio
     # Aggregates all results from the async paginator into a flat list
     async def test_search_all_paginates(self, mock_index: AsyncMock, patch_index_from_dict):  # noqa: ARG002
         async def gen(_q, page_size: int = 200):  # noqa: ARG001, ANN001
@@ -158,14 +153,12 @@ class TestRedisProviderMessages:
 
 
 class TestRedisProviderModelInvoking:
-    @pytest.mark.asyncio
     # Reads require at least one scoping filter to avoid unbounded operations
     async def test_model_invoking_requires_filters(self, patch_index_from_dict):  # noqa: ARG002
         provider = RedisProvider()
         with pytest.raises(ServiceInitializationError):
-            await provider.model_invoking(ChatMessage(role=Role.USER, text="Hi"))
+            await provider.invoking(ChatMessage(role=Role.USER, text="Hi"))
 
-    @pytest.mark.asyncio
     # Ensures text-only search path is used and context is composed from hits
     async def test_textquery_path_and_context_contents(
         self, mock_index: AsyncMock, patch_index_from_dict, patch_queries
@@ -175,7 +168,7 @@ class TestRedisProviderModelInvoking:
         provider = RedisProvider(user_id="u1")
 
         # Act
-        ctx = await provider.model_invoking([ChatMessage(role=Role.USER, text="q1")])
+        ctx = await provider.invoking([ChatMessage(role=Role.USER, text="q1")])
 
         # Assert: TextQuery used (not HybridQuery), filter_expression included
         assert patch_queries["TextQuery"].call_count == 1
@@ -187,27 +180,25 @@ class TestRedisProviderModelInvoking:
         assert "filter_expression" in kwargs
 
         # Context contains memories joined after the default prompt
-        assert ctx.contents is not None and len(ctx.contents) == 1
-        text = ctx.contents[0].text
+        assert ctx.messages is not None and len(ctx.messages) == 1
+        text = ctx.messages[0].text
         assert text.endswith("A\nB")
 
-    @pytest.mark.asyncio
     # When no results are returned, Context should have no contents
     async def test_model_invoking_empty_results_returns_empty_context(
         self, mock_index: AsyncMock, patch_index_from_dict, patch_queries
     ):  # noqa: ARG002
         mock_index.query = AsyncMock(return_value=[])
         provider = RedisProvider(user_id="u1")
-        ctx = await provider.model_invoking([ChatMessage(role=Role.USER, text="any")])
-        assert ctx.contents is None
+        ctx = await provider.invoking([ChatMessage(role=Role.USER, text="any")])
+        assert ctx.messages == []
 
-    @pytest.mark.asyncio
     # Ensures hybrid vector-text search is used when a vectorizer and vector field are configured
     async def test_hybridquery_path_with_vectorizer(self, mock_index: AsyncMock, patch_index_from_dict, patch_queries):  # noqa: ARG002
         mock_index.query = AsyncMock(return_value=[{"content": "Hit"}])
         provider = RedisProvider(user_id="u1", redis_vectorizer=CUSTOM_VECTORIZER, vector_field_name="vec")
 
-        ctx = await provider.model_invoking([ChatMessage(role=Role.USER, text="hello")])
+        ctx = await provider.invoking([ChatMessage(role=Role.USER, text="hello")])
 
         # Assert: HybridQuery used with vector and vector field
         assert patch_queries["HybridQuery"].call_count == 1
@@ -220,18 +211,16 @@ class TestRedisProviderModelInvoking:
         assert "filter_expression" in k
 
         # Context assembled from returned memories
-        assert ctx.contents and "Hit" in ctx.contents[0].text
+        assert ctx.messages and "Hit" in ctx.messages[0].text
 
 
 class TestRedisProviderContextManager:
-    @pytest.mark.asyncio
     # Verifies async context manager returns self for chaining
     async def test_async_context_manager_returns_self(self, patch_index_from_dict):  # noqa: ARG002
         provider = RedisProvider(user_id="u1")
         async with provider as ctx:
             assert ctx is provider
 
-    @pytest.mark.asyncio
     # Exit should be a no-op and not raise
     async def test_aexit_noop(self, patch_index_from_dict):  # noqa: ARG002
         provider = RedisProvider(user_id="u1")
@@ -239,7 +228,6 @@ class TestRedisProviderContextManager:
 
 
 class TestMessagesAddingBehavior:
-    @pytest.mark.asyncio
     # Adds messages while injecting partition defaults and preserving allowed roles
     async def test_messages_adding_adds_partition_defaults_and_roles(
         self, mock_index: AsyncMock, patch_index_from_dict
@@ -257,7 +245,7 @@ class TestMessagesAddingBehavior:
             ChatMessage(role=Role.SYSTEM, text="s"),
         ]
 
-        await provider.messages_adding("t1", msgs)
+        await provider.invoked(msgs)
 
         # Ensure load invoked with shaped docs containing defaults
         assert mock_index.load.await_count == 1
@@ -270,9 +258,7 @@ class TestMessagesAddingBehavior:
             assert d["application_id"] == "app"
             assert d["agent_id"] == "agent"
             assert d["user_id"] == "u1"
-            assert d["thread_id"] == "t1"  # scoped via per-operation thread id
 
-    @pytest.mark.asyncio
     # Skips blank text and disallowed roles (e.g., TOOL) when adding messages
     async def test_messages_adding_ignores_blank_and_disallowed_roles(
         self, mock_index: AsyncMock, patch_index_from_dict
@@ -282,37 +268,34 @@ class TestMessagesAddingBehavior:
             ChatMessage(role=Role.USER, text="   "),
             ChatMessage(role=Role.TOOL, text="tool output"),
         ]
-        await provider.messages_adding("tid", msgs)
+        await provider.invoked(msgs)
         # No valid messages -> no load
         assert mock_index.load.await_count == 0
 
 
 class TestIndexCreationPublicCalls:
-    @pytest.mark.asyncio
     # Ensures index is created only once when drop=True on first public write call
     async def test_messages_adding_triggers_index_create_once_when_drop_true(
         self, mock_index: AsyncMock, patch_index_from_dict
     ):  # noqa: ARG002
-        provider = RedisProvider(user_id="u1", drop_redis_index=True)
-        await provider.messages_adding("t1", ChatMessage(role=Role.USER, text="m1"))
-        await provider.messages_adding("t1", ChatMessage(role=Role.USER, text="m2"))
+        provider = RedisProvider(user_id="u1")
+        await provider.invoked(ChatMessage(role=Role.USER, text="m1"))
+        await provider.invoked(ChatMessage(role=Role.USER, text="m2"))
         # create only on first call
         assert mock_index.create.await_count == 1
 
-    @pytest.mark.asyncio
     # Ensures index is created when drop=False and the index does not exist on first read
     async def test_model_invoking_triggers_create_when_drop_false_and_not_exists(
         self, mock_index: AsyncMock, patch_index_from_dict
     ):  # noqa: ARG002
         mock_index.exists = AsyncMock(return_value=False)
-        provider = RedisProvider(user_id="u1", drop_redis_index=False)
+        provider = RedisProvider(user_id="u1")
         mock_index.query = AsyncMock(return_value=[{"content": "C"}])
-        await provider.model_invoking([ChatMessage(role=Role.USER, text="q")])
+        await provider.invoking([ChatMessage(role=Role.USER, text="q")])
         assert mock_index.create.await_count == 1
 
 
 class TestThreadCreatedAdditional:
-    @pytest.mark.asyncio
     # Allows None or same thread id repeatedly; different id raises when scoped
     async def test_thread_created_allows_none_and_same_id(self, patch_index_from_dict):  # noqa: ARG002
         provider = RedisProvider(user_id="u1", scope_to_per_operation_thread_id=True)
@@ -327,8 +310,7 @@ class TestThreadCreatedAdditional:
 
 
 class TestVectorPopulation:
-    @pytest.mark.asyncio
-    # When vectorizer configured, messages_adding should embed content and populate the vector field
+    # When vectorizer configured, invoked should embed content and populate the vector field
     async def test_messages_adding_populates_vector_field_when_vectorizer_present(
         self, mock_index: AsyncMock, patch_index_from_dict
     ):  # noqa: ARG002
@@ -339,7 +321,7 @@ class TestVectorPopulation:
             vector_field_name="vec",
         )
 
-        await provider.messages_adding("t1", ChatMessage(role=Role.USER, text="hello"))
+        await provider.invoked(ChatMessage(role=Role.USER, text="hello"))
         assert mock_index.load.await_count == 1
         (loaded_args, _kwargs) = mock_index.load.call_args
         docs = loaded_args[0]
@@ -365,12 +347,11 @@ class TestRedisProviderSchemaVectors:
         class DummyVectorizer:
             pass
 
-        with pytest.raises(ValidationError):
+        with pytest.raises(AgentException):
             RedisProvider(user_id="u1", redis_vectorizer=DummyVectorizer(), vector_field_name="vec")
 
 
 class TestEnsureIndex:
-    @pytest.mark.asyncio
     # Creates index once and marks _index_initialized to prevent duplicate calls
     async def test_ensure_index_creates_once(self, mock_index: AsyncMock, patch_index_from_dict):  # noqa: ARG002
         # Mock index doesn't exist, so it will be created
@@ -386,7 +367,6 @@ class TestEnsureIndex:
         await provider._ensure_index()
         assert mock_index.create.await_count == 1
 
-    @pytest.mark.asyncio
     # Creates index with overwrite=True when overwrite_index=True
     async def test_ensure_index_with_overwrite_true(self, mock_index: AsyncMock, patch_index_from_dict):  # noqa: ARG002
         mock_index.exists = AsyncMock(return_value=True)
@@ -397,7 +377,6 @@ class TestEnsureIndex:
         # Should call create with overwrite=True, drop=False
         mock_index.create.assert_called_once_with(overwrite=True, drop=False)
 
-    @pytest.mark.asyncio
     # Creates index with overwrite=False when index doesn't exist
     async def test_ensure_index_create_if_missing(self, mock_index: AsyncMock, patch_index_from_dict):  # noqa: ARG002
         mock_index.exists = AsyncMock(return_value=False)
@@ -408,7 +387,6 @@ class TestEnsureIndex:
         # Should call create with overwrite=False, drop=False
         mock_index.create.assert_called_once_with(overwrite=False, drop=False)
 
-    @pytest.mark.asyncio
     # Validates schema compatibility when index exists and overwrite=False
     async def test_ensure_index_schema_validation_success(self, mock_index: AsyncMock, patch_index_from_dict):  # noqa: ARG002
         mock_index.exists = AsyncMock(return_value=True)
@@ -424,7 +402,6 @@ class TestEnsureIndex:
         patch_index_from_dict.from_existing.assert_called_once_with("context", redis_url="redis://localhost:6379")
         mock_index.create.assert_called_once_with(overwrite=False, drop=False)
 
-    @pytest.mark.asyncio
     # Raises ServiceInitializationError when schemas don't match
     async def test_ensure_index_schema_validation_failure(self, mock_index: AsyncMock, patch_index_from_dict):  # noqa: ARG002
         mock_index.exists = AsyncMock(return_value=True)

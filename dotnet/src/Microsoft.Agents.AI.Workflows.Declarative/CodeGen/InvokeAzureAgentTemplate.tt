@@ -1,0 +1,43 @@
+﻿<#@ template language="C#" inherits="ActionTemplate" visibility="internal" linePragmas="false" #>
+<#@ output extension=".cs" #>
+<#@ assembly name="System.Core" #>
+<#@ include file="Snippets/Index.tt" once="true" #>
+/// <summary>
+/// Invokes an agent to process messages and return a response within a conversation context.
+/// </summary>
+internal sealed class <#= this.Name #>Executor(FormulaSession session, WorkflowAgentProvider agentProvider) : AgentExecutor(id: "<#= this.Id #>", session, agentProvider)
+{
+    // <inheritdoc />
+    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    {<# 
+        EvaluateStringExpression(this.Model.Agent.Name, "agentName", isNullable: true);#>
+
+        if (string.IsNullOrWhiteSpace(agentName))
+        {
+            throw new DeclarativeActionException($"Agent name must be defined: {this.Id}");
+        }
+        <#
+        EvaluateStringExpression(this.Model.ConversationId, "conversationId", isNullable: true);
+        EvaluateBoolExpression(this.Model.Output?.AutoSend, "autoSend", defaultValue: true); 
+        EvaluateMessageTemplate(this.Model.Input?.AdditionalInstructions, "additionalInstructions");
+        EvaluateListExpression<ChatMessage>(this.Model.Input?.Messages, "inputMessages");#>
+        
+        AgentRunResponse agentResponse =
+            await InvokeAgentAsync(
+                context,
+                agentName,
+                conversationId, 
+                autoSend, 
+                additionalInstructions, 
+                inputMessages, 
+                cancellationToken).ConfigureAwait(false);
+
+        if (autoSend)
+        {
+            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
+        }
+        <#
+        AssignVariable(this.Messages, "agentResponse.Messages"); #>
+        return default;
+    }
+}

@@ -2,13 +2,13 @@
 
 // This sample shows how to create and use a simple AI agent with Azure OpenAI as the backend, to produce structured output using JSON schema from a class.
 
-using System;
+using System.ComponentModel;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Azure.AI.OpenAI;
 using Azure.Identity;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
 using OpenAI;
 using SampleApp;
 
@@ -20,10 +20,7 @@ ChatClientAgentOptions agentOptions = new(name: "HelpfulAssistant", instructions
 {
     ChatOptions = new()
     {
-        ResponseFormat = ChatResponseFormat.ForJsonSchema(
-            schema: AIJsonUtilities.CreateJsonSchema(typeof(PersonInfo)),
-            schemaName: "PersonInfo",
-            schemaDescription: "Information about a person including their name, age, and occupation")
+        ResponseFormat = ChatResponseFormat.ForJsonSchema<PersonInfo>()
     }
 };
 
@@ -62,6 +59,7 @@ namespace SampleApp
     /// <summary>
     /// Represents information about a person, including their name, age, and occupation, matched to the JSON schema used in the agent.
     /// </summary>
+    [Description("Information about a person including their name, age, and occupation")]
     public class PersonInfo
     {
         [JsonPropertyName("name")]

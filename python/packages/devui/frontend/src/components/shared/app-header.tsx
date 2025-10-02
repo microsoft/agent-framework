@@ -14,6 +14,8 @@ interface AppHeaderProps {
   workflows: WorkflowInfo[];
   selectedItem?: AgentInfo | WorkflowInfo;
   onSelect: (item: AgentInfo | WorkflowInfo) => void;
+  onRemove?: (entityId: string) => void;
+  onBrowseGallery?: () => void;
   isLoading?: boolean;
   onSettingsClick?: () => void;
 }
@@ -23,6 +25,8 @@ export function AppHeader({
   workflows,
   selectedItem,
   onSelect,
+  onRemove,
+  onBrowseGallery,
   isLoading = false,
   onSettingsClick,
 }: AppHeaderProps) {
@@ -34,6 +38,8 @@ export function AppHeader({
         workflows={workflows}
         selectedItem={selectedItem}
         onSelect={onSelect}
+        onRemove={onRemove}
+        onBrowseGallery={onBrowseGallery}
         isLoading={isLoading}
       />
 

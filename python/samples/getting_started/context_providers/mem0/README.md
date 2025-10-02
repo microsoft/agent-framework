@@ -10,12 +10,13 @@ This folder contains examples demonstrating how to use the Mem0 context provider
 |------|-------------|
 | [`mem0_basic.py`](mem0_basic.py) | Basic example of using Mem0 context provider to store and retrieve user preferences across different conversation threads. |
 | [`mem0_threads.py`](mem0_threads.py) | Advanced example demonstrating different thread scoping strategies with Mem0. Covers global thread scope (memories shared across all operations), per-operation thread scope (memories isolated per thread), and multiple agents with different memory configurations for personal vs. work contexts. |
+| [`mem0_oss.py`](mem0_oss.py) | Example of using the Mem0 Open Source self-hosted version as the context provider. Demonstrates setup and configuration for local deployment. |
 
 ## Prerequisites
 
 ### Required Resources
 
-1. [Mem0 API Key](https://app.mem0.ai/) - Sign up for a Mem0 account and get your API key
+1. [Mem0 API Key](https://app.mem0.ai/) - Sign up for a Mem0 account and get your API key - _or_ self-host [Mem0 Open Source](https://docs.mem0.ai/open-source/overview)
 2. Azure AI project endpoint (used in these examples)
 3. Azure CLI authentication (run `az login`)
 
@@ -25,8 +26,11 @@ This folder contains examples demonstrating how to use the Mem0 context provider
 
 Set the following environment variables:
 
-**For Mem0:**
-- `MEM0_API_KEY`: Your Mem0 API key (alternatively, pass it as `api_key` parameter to `Mem0Provider`)
+**For Mem0 Platform:**
+- `MEM0_API_KEY`: Your Mem0 API key (alternatively, pass it as `api_key` parameter to `Mem0Provider`). Not required if you are self-hosting [Mem0 Open Source](https://docs.mem0.ai/open-source/overview)
+
+**For Mem0 Open Source:**
+- `OPENAI_API_KEY`: Your OpenAI API key (used by Mem0 OSS for embedding generation and automatic memory extraction)
 
 **For Azure AI:**
 - `AZURE_AI_PROJECT_ENDPOINT`: Your Azure AI project endpoint

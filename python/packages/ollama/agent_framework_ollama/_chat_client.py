@@ -289,25 +289,3 @@ class OllamaChatClient(BaseChatClient):
             else:
                 chat_tools.append(tool if isinstance(tool, dict) else dict(tool))
         return chat_tools
-
-    @classmethod
-    def from_dict(cls: type[TOllamaChatClient], settings: dict[str, Any]) -> TOllamaChatClient:
-        """Initialize an Ollama service from a dictionary of settings.
-
-        Args:
-            settings: A dictionary that may contain:
-                - ``host``
-                - ``chat_model_id``
-            Unknown keys are ignored.
-        """
-        return cls(
-            chat_model_id=settings.get("chat_model_id"),
-            host=settings.get("host"),
-        )
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert the configuration to a dictionary."""
-        return {
-            "host": str(self.client._client.base_url),
-            "chat_model_id": self.chat_model_id,
-        }

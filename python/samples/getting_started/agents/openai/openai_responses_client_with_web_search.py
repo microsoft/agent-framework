@@ -5,6 +5,13 @@ import asyncio
 from agent_framework import HostedWebSearchTool
 from agent_framework.openai import OpenAIResponsesClient
 
+"""
+OpenAI Responses Client with Web Search Example
+
+This sample demonstrates using HostedWebSearchTool with OpenAI Responses Client
+for direct real-time information retrieval and current data access.
+"""
+
 
 async def main() -> None:
     client = OpenAIResponsesClient()

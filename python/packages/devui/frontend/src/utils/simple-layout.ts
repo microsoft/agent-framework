@@ -45,7 +45,7 @@ export function applySimpleLayout(
   // Constants for spacing
   const NODE_WIDTH = 220;
   const NODE_HEIGHT = 120;
-  const HORIZONTAL_SPACING = direction === "LR" ? 350 : 200;
+  const HORIZONTAL_SPACING = direction === "LR" ? 350 : 280;
   const VERTICAL_SPACING = direction === "TB" ? 250 : 180;
 
   // Track positioned nodes and level information

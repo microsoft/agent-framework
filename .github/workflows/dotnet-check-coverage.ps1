@@ -9,8 +9,8 @@ $coverageBelowThreshold = $false
 $nonExperimentalAssemblies = [System.Collections.Generic.HashSet[string]]::new()
 
 $assembliesCollection = @(
-    'Microsoft.Extensions.AI.Agents.Abstractions'
-    'Microsoft.Extensions.AI.Agents'
+    'Microsoft.Agents.AI.Abstractions'
+    'Microsoft.Agents.AI'
 )
 
 foreach ($assembly in $assembliesCollection) {

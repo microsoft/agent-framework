@@ -1,0 +1,12 @@
+﻿<#+
+void AssignVariable(PropertyPath targetVariable, string valueVariable, bool tightFormat = false)
+{
+    if (targetVariable is not null)
+    {#>
+        await context.QueueStateUpdateAsync(key: "<#= VariableName(targetVariable) #>", value: <#= valueVariable #>, scopeName: "<#= VariableScope(targetVariable) #>").ConfigureAwait(false);<#+
+        if (!tightFormat)
+        {#>
+        <#+}
+    }
+}
+#>

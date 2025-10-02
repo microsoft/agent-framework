@@ -1,0 +1,31 @@
+﻿<#@ template language="C#" inherits="ActionTemplate" visibility="internal" linePragmas="false" #>
+<#@ output extension=".cs" #>
+<#@ assembly name="System.Core" #>
+<#@ include file="Snippets/Index.tt" once="true" #>
+/// <summary>
+/// Conditional branching similar to an if / elseif / elseif / else chain.
+/// </summary>
+internal sealed class <#= this.Name #>Executor(FormulaSession session) : ActionExecutor(id: "<#= this.Id #>", session)
+{
+    // <inheritdoc />
+    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    {<#
+        for (int index = 0; index < this.Model.Conditions.Length; ++index)
+        {
+            ConditionItem conditionItem = this.Model.Conditions[index];
+            if (conditionItem.Condition is null)
+            {
+                continue; // Skip if no condition is defined
+            }
+
+            EvaluateBoolExpression(conditionItem.Condition, $"condition{index}");#>
+        if (condition<#= index #>)
+        {
+            return "<#= ConditionGroupExecutor.Steps.Item(this.Model, conditionItem)#>";
+        }
+        <#
+        }
+        #>
+        return "<#= ConditionGroupExecutor.Steps.Else(this.Model)#>";
+    }
+}

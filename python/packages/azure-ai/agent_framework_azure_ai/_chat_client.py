@@ -3,7 +3,7 @@
 import json
 import os
 import sys
-from collections.abc import AsyncIterable, MutableMapping, MutableSequence
+from collections.abc import AsyncIterable, MutableMapping, MutableSequence, Sequence
 from typing import Any, ClassVar, TypeVar
 
 from agent_framework import (
@@ -14,7 +14,6 @@ from agent_framework import (
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
-    ChatToolMode,
     Contents,
     DataContent,
     FunctionApprovalRequestContent,
@@ -29,11 +28,13 @@ from agent_framework import (
     HostedWebSearchTool,
     Role,
     TextContent,
+    ToolMode,
     ToolProtocol,
     UriContent,
     UsageContent,
     UsageDetails,
     get_logger,
+    use_chat_middleware,
     use_function_invocation,
 )
 from agent_framework._pydantic import AFBaseSettings
@@ -53,7 +54,6 @@ from azure.ai.agents.models import (
     CodeInterpreterToolDefinition,
     FileSearchTool,
     FunctionName,
-    FunctionToolOutput,
     ListSortOrder,
     McpTool,
     MessageDeltaChunk,
@@ -83,8 +83,8 @@ from azure.ai.agents.models import (
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import ConnectionType
 from azure.core.credentials_async import AsyncTokenCredential
-from azure.core.exceptions import HttpResponseError
-from pydantic import BaseModel, Field, PrivateAttr, ValidationError
+from azure.core.exceptions import HttpResponseError, ResourceNotFoundError
+from pydantic import BaseModel, ValidationError
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -123,18 +123,11 @@ TAzureAIAgentClient = TypeVar("TAzureAIAgentClient", bound="AzureAIAgentClient")
 
 @use_function_invocation
 @use_observability
+@use_chat_middleware
 class AzureAIAgentClient(BaseChatClient):
     """Azure AI Agent Chat client."""
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai"  # type: ignore[reportIncompatibleVariableOverride, misc]
-    project_client: AIProjectClient = Field(...)
-    credential: AsyncTokenCredential | None = Field(...)
-    agent_id: str | None = Field(default=None)
-    agent_name: str | None = Field(default=None)
-    ai_model_id: str | None = Field(default=None)
-    thread_id: str | None = Field(default=None)
-    _should_delete_agent: bool = PrivateAttr(default=False)  # Track whether we should delete the agent
-    _should_close_client: bool = PrivateAttr(default=False)  # Track whether we should close client connection
 
     def __init__(
         self,
@@ -165,7 +158,6 @@ class AzureAIAgentClient(BaseChatClient):
             model_deployment_name: The model deployment name to use for agent creation.
                 Can also be set via 'AZURE_AI_MODEL_DEPLOYMENT_NAME' environment variable.
             async_credential: Azure async credential to use for authentication.
-            setup_tracing: Whether to setup tracing for the project_client. Defaults to True.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
             **kwargs: Additional keyword arguments passed to the parent class.
@@ -205,29 +197,38 @@ class AzureAIAgentClient(BaseChatClient):
             )
             should_close_client = True
 
-        super().__init__(
-            project_client=project_client,  # type: ignore[reportCallIssue]
-            credential=async_credential,  # type: ignore[reportCallIssue]
-            agent_id=agent_id,  # type: ignore[reportCallIssue]
-            thread_id=thread_id,  # type: ignore[reportCallIssue]
-            agent_name=agent_name,  # type: ignore[reportCallIssue]
-            ai_model_id=azure_ai_settings.model_deployment_name,  # type: ignore[reportCallIssue]
-            **kwargs,
-        )
-        self._should_close_client = should_close_client
+        # Initialize parent
+        super().__init__(**kwargs)
 
-    async def setup_observability(self, enable_live_metrics: bool = False) -> None:
+        # Initialize instance variables
+        self.project_client = project_client
+        self.credential = async_credential
+        self.agent_id = agent_id
+        self.agent_name = agent_name
+        self.model_id = azure_ai_settings.model_deployment_name
+        self.thread_id = thread_id
+        self._should_delete_agent = False  # Track whether we should delete the agent
+        self._should_close_client = should_close_client  # Track whether we should close client connection
+
+    async def setup_azure_ai_observability(self, enable_sensitive_data: bool | None = None) -> None:
         """Use this method to setup tracing in your Azure AI Project.
 
         This will take the connection string from the project project_client.
         It will override any connection string that is set in the environment variables.
         It will disable any OTLP endpoint that might have been set.
         """
+        try:
+            conn_string = await self.project_client.telemetry.get_application_insights_connection_string()
+        except ResourceNotFoundError:
+            logger.warning(
+                "No Application Insights connection string found for the Azure AI Project, "
+                "please call setup_observability() manually."
+            )
+            return
         from agent_framework.observability import setup_observability
 
         setup_observability(
-            applicationinsights_connection_string=await self.project_client.telemetry.get_application_insights_connection_string(),  # noqa: E501
-            enable_live_metrics=enable_live_metrics,
+            applicationinsights_connection_string=conn_string, enable_sensitive_data=enable_sensitive_data
         )
 
     async def __aenter__(self) -> "Self":
@@ -244,7 +245,7 @@ class AzureAIAgentClient(BaseChatClient):
         await self._close_client_if_needed()
 
     @classmethod
-    def from_dict(cls: type[TAzureAIAgentClient], settings: dict[str, Any]) -> TAzureAIAgentClient:
+    def from_settings(cls: type[TAzureAIAgentClient], settings: dict[str, Any]) -> TAzureAIAgentClient:
         """Initialize a AzureAIAgentClient from a dictionary of settings.
 
         Args:
@@ -269,7 +270,8 @@ class AzureAIAgentClient(BaseChatClient):
         **kwargs: Any,
     ) -> ChatResponse:
         return await ChatResponse.from_chat_response_generator(
-            updates=self._inner_get_streaming_response(messages=messages, chat_options=chat_options, **kwargs)
+            updates=self._inner_get_streaming_response(messages=messages, chat_options=chat_options, **kwargs),
+            output_format_type=chat_options.response_format,
         )
 
     async def _inner_get_streaming_response(
@@ -309,14 +311,16 @@ class AzureAIAgentClient(BaseChatClient):
         """
         # If no agent_id is provided, create a temporary agent
         if self.agent_id is None:
-            if not self.ai_model_id:
+            if not self.model_id:
                 raise ServiceInitializationError("Model deployment name is required for agent creation.")
 
             agent_name: str = self.agent_name or "UnnamedAgent"
-            args: dict[str, Any] = {"model": self.ai_model_id, "name": agent_name}
+            args: dict[str, Any] = {"model": self.model_id, "name": agent_name}
             if run_options:
                 if "tools" in run_options:
                     args["tools"] = run_options["tools"]
+                if "tool_resources" in run_options:
+                    args["tool_resources"] = run_options["tool_resources"]
                 if "instructions" in run_options:
                     args["instructions"] = run_options["instructions"]
                 if "response_format" in run_options:
@@ -482,7 +486,7 @@ class AzureAIAgentClient(BaseChatClient):
                                     raw_representation=event_data,
                                     response_id=response_id,
                                     role=Role.ASSISTANT,
-                                    ai_model_id=event_data.model,
+                                    model_id=event_data.model,
                                 )
 
                     case RunStep():
@@ -627,23 +631,56 @@ class AzureAIAgentClient(BaseChatClient):
 
         if chat_options is not None:
             run_options["max_completion_tokens"] = chat_options.max_tokens
-            run_options["model"] = chat_options.ai_model_id
+            run_options["model"] = chat_options.model_id
             run_options["top_p"] = chat_options.top_p
             run_options["temperature"] = chat_options.temperature
             run_options["parallel_tool_calls"] = chat_options.allow_multiple_tool_calls
 
             if chat_options.tool_choice is not None:
                 if chat_options.tool_choice != "none" and chat_options.tools:
-                    tool_definitions = await self._prep_tools(chat_options.tools)
+                    tool_definitions = await self._prep_tools(chat_options.tools, run_options)
                     if tool_definitions:
                         run_options["tools"] = tool_definitions
+
+                    # Handle MCP tool resources for approval mode
+                    mcp_tools = [tool for tool in chat_options.tools if isinstance(tool, HostedMCPTool)]
+                    if mcp_tools:
+                        mcp_resources = []
+                        for mcp_tool in mcp_tools:
+                            server_label = mcp_tool.name.replace(" ", "_")
+                            mcp_resource: dict[str, Any] = {"server_label": server_label}
+
+                            if mcp_tool.approval_mode is not None:
+                                match mcp_tool.approval_mode:
+                                    case str():
+                                        # Map agent framework approval modes to Azure AI approval modes
+                                        approval_mode = (
+                                            "always" if mcp_tool.approval_mode == "always_require" else "never"
+                                        )
+                                        mcp_resource["require_approval"] = approval_mode
+                                    case _:
+                                        if "always_require_approval" in mcp_tool.approval_mode:
+                                            mcp_resource["require_approval"] = {
+                                                "always": mcp_tool.approval_mode["always_require_approval"]
+                                            }
+                                        elif "never_require_approval" in mcp_tool.approval_mode:
+                                            mcp_resource["require_approval"] = {
+                                                "never": mcp_tool.approval_mode["never_require_approval"]
+                                            }
+
+                            mcp_resources.append(mcp_resource)
+
+                        # Add MCP resources to tool_resources
+                        if "tool_resources" not in run_options:
+                            run_options["tool_resources"] = {}
+                        run_options["tool_resources"]["mcp"] = mcp_resources
 
                 if chat_options.tool_choice == "none":
                     run_options["tool_choice"] = AgentsToolChoiceOptionMode.NONE
                 elif chat_options.tool_choice == "auto":
                     run_options["tool_choice"] = AgentsToolChoiceOptionMode.AUTO
                 elif (
-                    isinstance(chat_options.tool_choice, ChatToolMode)
+                    isinstance(chat_options.tool_choice, ToolMode)
                     and chat_options.tool_choice == "required"
                     and chat_options.tool_choice.required_function_name is not None
                 ):
@@ -660,7 +697,7 @@ class AzureAIAgentClient(BaseChatClient):
                     )
                 )
 
-        instructions: list[str] = []
+        instructions: list[str] = [chat_options.instructions] if chat_options and chat_options.instructions else []
         required_action_results: list[FunctionResultContent | FunctionApprovalResponseContent] | None = None
 
         additional_messages: list[ThreadMessageOptions] | None = None
@@ -708,7 +745,7 @@ class AzureAIAgentClient(BaseChatClient):
         return run_options, required_action_results
 
     async def _prep_tools(
-        self, tools: list["ToolProtocol | MutableMapping[str, Any]"]
+        self, tools: Sequence["ToolProtocol | MutableMapping[str, Any]"], run_options: dict[str, Any] | None = None
     ) -> list[ToolDefinition | dict[str, Any]]:
         """Prepare tool definitions for the run options."""
         tool_definitions: list[ToolDefinition | dict[str, Any]] = []
@@ -766,18 +803,20 @@ class AzureAIAgentClient(BaseChatClient):
                 case HostedCodeInterpreterTool():
                     tool_definitions.append(CodeInterpreterToolDefinition())
                 case HostedMCPTool():
-                    tool_definitions.extend(
-                        McpTool(
-                            server_label=tool.name.replace(" ", "_"),
-                            server_url=str(tool.url),
-                            allowed_tools=list(tool.allowed_tools) if tool.allowed_tools else [],
-                        ).definitions
+                    mcp_tool = McpTool(
+                        server_label=tool.name.replace(" ", "_"),
+                        server_url=str(tool.url),
+                        allowed_tools=list(tool.allowed_tools) if tool.allowed_tools else [],
                     )
+                    tool_definitions.extend(mcp_tool.definitions)
                 case HostedFileSearchTool():
                     vector_stores = [inp for inp in tool.inputs or [] if isinstance(inp, HostedVectorStoreContent)]
                     if vector_stores:
                         file_search = FileSearchTool(vector_store_ids=[vs.vector_store_id for vs in vector_stores])
                         tool_definitions.extend(file_search.definitions)
+                        # Set tool_resources for file search to work properly with Azure AI
+                        if run_options is not None and "tool_resources" not in run_options:
+                            run_options["tool_resources"] = file_search.resources
                     else:
                         additional_props = tool.additional_properties or {}
                         index_name = additional_props.get("index_name") or os.getenv("AZURE_AI_SEARCH_INDEX_NAME")
@@ -858,19 +897,23 @@ class AzureAIAgentClient(BaseChatClient):
                 if isinstance(content, FunctionResultContent):
                     if tool_outputs is None:
                         tool_outputs = []
-                    result_contents: list[Any] = (  # type: ignore
-                        content.result if isinstance(content.result, list) else [content.result]  # type: ignore
+                    result_contents: list[Any] = (
+                        content.result if isinstance(content.result, list) else [content.result]
                     )
                     results: list[Any] = []
                     for item in result_contents:
-                        if isinstance(item, BaseModel):
+                        if isinstance(item, Contents):
+                            results.append(
+                                json.dumps(item.to_dict(exclude={"raw_representation", "additional_properties"}))
+                            )
+                        elif isinstance(item, BaseModel):
                             results.append(item.model_dump_json())
                         else:
                             results.append(json.dumps(item))
                     if len(results) == 1:
-                        tool_outputs.append(FunctionToolOutput(tool_call_id=call_id, output=results[0]))
+                        tool_outputs.append(ToolOutput(tool_call_id=call_id, output=results[0]))
                     else:
-                        tool_outputs.append(FunctionToolOutput(tool_call_id=call_id, output=json.dumps(results)))
+                        tool_outputs.append(ToolOutput(tool_call_id=call_id, output=json.dumps(results)))
                 elif isinstance(content, FunctionApprovalResponseContent):
                     if tool_approvals is None:
                         tool_approvals = []

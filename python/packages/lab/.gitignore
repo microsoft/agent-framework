@@ -1,0 +1,13 @@
+test-results.xml
+
+# GAIA data directories
+data_gaia_hub/
+**/data_gaia_hub/
+gaia/**/*.jsonl
+
+# Lightning data directories
+lightning/**/data/tau2
+
+# TAU2 data directories
+tau2/**/data/
+tau2/**/results/

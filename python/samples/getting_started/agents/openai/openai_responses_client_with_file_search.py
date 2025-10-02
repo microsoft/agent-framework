@@ -5,6 +5,13 @@ import asyncio
 from agent_framework import HostedFileSearchTool, HostedVectorStoreContent
 from agent_framework.openai import OpenAIResponsesClient
 
+"""
+OpenAI Responses Client with File Search Example
+
+This sample demonstrates using HostedFileSearchTool with OpenAI Responses Client
+for direct document-based question answering and information retrieval.
+"""
+
 # Helper functions
 
 

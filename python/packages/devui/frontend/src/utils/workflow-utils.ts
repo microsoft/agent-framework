@@ -54,7 +54,8 @@ export interface NodeUpdate {
  */
 export function convertWorkflowDumpToNodes(
   workflowDump: Workflow | Record<string, unknown> | undefined,
-  onNodeClick?: (executorId: string, data: ExecutorNodeData) => void
+  onNodeClick?: (executorId: string, data: ExecutorNodeData) => void,
+  layoutDirection?: "LR" | "TB"
 ): Node<ExecutorNodeData>[] {
   if (!workflowDump) {
     console.warn("convertWorkflowDumpToNodes: workflowDump is undefined");
@@ -108,6 +109,7 @@ export function convertWorkflowDumpToNodes(
       name: executor.name || executor.id,
       state: "pending" as ExecutorState,
       isStartNode: executor.id === startExecutorId,
+      layoutDirection: layoutDirection || "LR",
       onNodeClick,
     },
   }));
@@ -339,7 +341,7 @@ export function processWorkflowEvents(
         error = typeof eventData === "string" ? eventData : "Execution failed";
       } else if (eventType?.includes("Cancel")) {
         state = "cancelled";
-      } else if (eventType === "WorkflowCompletedEvent") {
+      } else if (eventType === "WorkflowCompletedEvent" || eventType === "WorkflowOutputEvent") {
         state = "completed";
       }
 
@@ -376,6 +378,8 @@ export function updateNodesWithEvents(
           state: update.state,
           outputData: update.data,
           error: update.error,
+          // Preserve layoutDirection
+          layoutDirection: node.data.layoutDirection,
         },
       };
     }
@@ -478,7 +482,7 @@ export function updateEdgesWithSequenceAnalysis(
     // Active edge: source completed and target is currently executing
     if (sourceState?.completed && targetIsExecuting) {
       style = {
-        stroke: "#3b82f6", // Blue
+        stroke: "#643FB2", // Purple accent
         strokeWidth: 3,
         strokeDasharray: "5,5",
       };

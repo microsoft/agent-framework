@@ -7,6 +7,13 @@ from typing import Annotated
 from agent_framework.openai import OpenAIAssistantsClient
 from pydantic import Field
 
+"""
+OpenAI Assistants Basic Example
+
+This sample demonstrates basic usage of OpenAIAssistantsClient with automatic
+assistant lifecycle management, showing both streaming and non-streaming responses.
+"""
+
 
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],

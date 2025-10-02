@@ -9,6 +9,13 @@ from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel, Field
 
+"""
+Azure Responses Client Direct Usage Example
+
+Demonstrates direct AzureResponsesClient usage for structured response generation with Azure OpenAI models.
+Shows function calling capabilities with custom business logic.
+"""
+
 
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],

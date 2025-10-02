@@ -1,6 +1,6 @@
-# DevUI - Agent Framework Debug Interface
+# DevUI - A Sample App for Running Agents and Workflows
 
-A lightweight, standalone sample app interface for running entities (agents/workflows) in the Microsoft Agent Framework supporting both **directory-based discovery** and **in-memory entity registration**.
+A lightweight, standalone sample app interface for running entities (agents/workflows) in the Microsoft Agent Framework supporting **directory-based discovery**, **in-memory entity registration**, and **sample entity gallery**.
 
 > [!IMPORTANT]
 > DevUI is a **sample app** to help you get started with the Agent Framework. It is **not** intended for production use. For production, or for features beyond what is provided in this sample app, it is recommended that you build your own custom interface and API server using the Agent Framework SDK.
@@ -12,11 +12,6 @@ A lightweight, standalone sample app interface for running entities (agents/work
 ```bash
 # Install
 pip install agent-framework-devui
-
-# Launch web UI + API server
-devui ./agents --port 8080
-# → Web UI: http://localhost:8080
-# → API: http://localhost:8080/v1/*
 ```
 
 You can also launch it programmatically
@@ -42,6 +37,18 @@ serve(entities=[agent], auto_open=True)
 # → Opens browser to http://localhost:8080
 ```
 
+In addition, if you have agents/workflows defined in a specific directory structure (see below), you can launch DevUI from the _cli_ to discover and run them.
+
+```bash
+
+# Launch web UI + API server
+devui ./agents --port 8080
+# → Web UI: http://localhost:8080
+# → API: http://localhost:8080/v1/*
+```
+
+When DevUI starts with no discovered entities, it displays a **sample entity gallery** with curated examples from the Agent Framework repository to help you get started quickly.
+
 ## Directory Structure
 
 For your agents to be discovered by the DevUI, they must be organized in a directory structure like below. Each agent/workflow must have an `__init__.py` that exports the required variable (`agent` or `workflow`).
@@ -61,6 +68,14 @@ agents/
 └── .env                 # Optional: shared environment variables
 ```
 
+## Viewing Telemetry (Otel Traces) in DevUI
+
+Agent Framework emits OpenTelemetry (Otel) traces for various operations. You can view these traces in DevUI by enabling tracing when starting the server.
+
+```bash
+devui ./agents --tracing framework
+```
+
 ## OpenAI-Compatible API
 
 For convenience, you can interact with the agents/workflows using the standard OpenAI API format. Just specify the `entity_id` in the `extra_body` field. This can be an `agent_id` or `workflow_id`.
@@ -75,26 +90,8 @@ curl -X POST http://localhost:8080/v1/responses \
   "input": "Hello world",
   "extra_body": {"entity_id": "weather_agent"}
 }
-EOF
+
 ```
-
-Messages and events from agents/workflows are mapped to OpenAI response types in `agent_framework_devui/_mapper.py`. See the mapping table below:
-
-| Agent Framework Content           | OpenAI Event                              | Type     |
-| --------------------------------- | ----------------------------------------- | -------- |
-| `TextContent`                     | `ResponseTextDeltaEvent`                  | Official |
-| `TextReasoningContent`            | `ResponseReasoningTextDeltaEvent`         | Official |
-| `FunctionCallContent`             | `ResponseFunctionCallArgumentsDeltaEvent` | Official |
-| `FunctionResultContent`           | `ResponseFunctionResultComplete`          | Custom   |
-| `ErrorContent`                    | `ResponseErrorEvent`                      | Official |
-| `UsageContent`                    | `ResponseUsageEventComplete`              | Custom   |
-| `DataContent`                     | `ResponseTraceEventComplete`              | Custom   |
-| `UriContent`                      | `ResponseTraceEventComplete`              | Custom   |
-| `HostedFileContent`               | `ResponseTraceEventComplete`              | Custom   |
-| `HostedVectorStoreContent`        | `ResponseTraceEventComplete`              | Custom   |
-| `FunctionApprovalRequestContent`  | Custom event                              | Custom   |
-| `FunctionApprovalResponseContent` | Custom event                              | Custom   |
-| `WorkflowEvent`                   | `ResponseWorkflowEventComplete`           | Custom   |
 
 ## CLI Options
 
@@ -114,6 +111,8 @@ Options:
 
 - `GET /v1/entities` - List discovered agents/workflows
 - `GET /v1/entities/{entity_id}/info` - Get detailed entity information
+- `POST /v1/entities/add` - Add entity from URL (for gallery samples)
+- `DELETE /v1/entities/{entity_id}` - Remove remote entity
 - `POST /v1/responses` - Execute agent/workflow (streaming or sync)
 - `GET /health` - Health check
 - `POST /v1/threads` - Create thread for agent (optional)

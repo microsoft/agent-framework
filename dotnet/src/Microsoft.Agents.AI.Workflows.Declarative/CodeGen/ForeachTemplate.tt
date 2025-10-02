@@ -1,0 +1,70 @@
+﻿<#@ template language="C#" inherits="ActionTemplate" visibility="internal" linePragmas="false" #>
+<#@ output extension=".cs" #>
+<#@ assembly name="System.Core" #>
+<#@ include file="Snippets/Index.tt" once="true" #>
+/// <summary>
+/// Loops over a list assignign the loop variable to "<#= this.Model.Value #>" variable.
+/// </summary>
+internal sealed class <#= this.Name #>Executor(FormulaSession session) : ActionExecutor(id: "<#= this.Id #>", session)
+{
+    private int _index;
+    private object[] _values = [];
+
+    public bool HasValue { get; private set; }
+
+    // <inheritdoc />
+    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    {
+        this._index = 0;<#
+
+        EvaluateValueExpression(this.Model.Items, "evaluatedValue");#>
+
+        if (evaluatedValue == null)
+        {
+            this._values = [];
+            this.HasValue = false;
+        }
+        else
+        if (evaluatedValue is IEnumerable evaluatedList)
+        {
+            this._values = [.. evaluatedList];
+        }
+        else
+        {
+            this._values = [evaluatedValue];
+        }
+
+        await this.ResetAsync(context, null, cancellationToken).ConfigureAwait(false);
+
+        return default;
+    }
+
+    public async ValueTask TakeNextAsync(IWorkflowContext context, object? _, CancellationToken cancellationToken)
+    {
+        if (this.HasValue = this._index < this._values.Length)
+        {
+            object value = this._values[this._index];
+            <# 
+            AssignVariable(this.Value, "value", tightFormat: true);
+
+            if (this.Index is not null)
+            {
+                AssignVariable(this.Index, "this._index", tightFormat: true);
+            }
+            #>
+
+            this._index++;
+        }
+    }
+
+    public async ValueTask ResetAsync(IWorkflowContext context, object? _, CancellationToken cancellationToken)
+    {<# 
+        AssignVariable(this.Value, "UnassignedValue.Instance", tightFormat: true);
+
+        if (this.Index is not null)
+        {
+            AssignVariable(this.Index, "UnassignedValue.Instance", tightFormat: true);
+        }
+      #>
+    }
+}

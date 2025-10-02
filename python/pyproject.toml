@@ -1,22 +1,41 @@
 [project]
-name = "agent-framework-project"
-description = "Microsoft Agent Framework for building AI Agents with Python."
-version = "0.0.0"
+name = "agent-framework"
+description = "Microsoft Agent Framework for building AI Agents with Python. This package contains all the core and optional packages."
+authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
+readme = "README.md"
 requires-python = ">=3.10"
+version = "1.0.0b251001"
+license-files = ["LICENSE"]
+urls.homepage = "https://aka.ms/agent-framework"
+urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
+urls.release_notes = "https://github.com/microsoft/agent-framework/releases?q=tag%3Apython-1&expanded=true"
+urls.issues = "https://github.com/microsoft/agent-framework/issues"
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Typing :: Typed",
+]
 dependencies = [
-    "agent-framework",
+    "agent-framework-core",
+    "agent-framework-a2a",
     "agent-framework-azure-ai",
     "agent-framework-copilotstudio",
     "agent-framework-mem0",
     "agent-framework-ollama",
     "agent-framework-redis",
     "agent-framework-devui",
-    "agent-framework-lab-gaia",
 ]
 
 [dependency-groups]
 dev = [
     "uv>=0.8.2,<0.9.0",
+    "flit>=3.12.0",
     "pre-commit >= 3.7",
     "ruff>=0.11.8",
     "pytest>=8.4.1",
@@ -25,6 +44,7 @@ dev = [
     "pytest-env>=1.1.5",
     "pytest-xdist[psutil]>=3.8.0",
     "pytest-timeout>=2.3.1",
+    "pytest-retry>=1",
     "mypy>=1.16.1",
     "pyright>=1.1.402",
     #tasks
@@ -36,7 +56,7 @@ dev = [
 docs = [
     # Documentation
     "debugpy>=1.8.16",
-    "py2docfx>=0.1.20",
+    "py2docfx>=0.1.22.dev2259826",
     "pip",
 ]
 
@@ -50,14 +70,15 @@ environments = [
 ]
 
 [tool.uv.workspace]
-members = [ "packages/*", "packages/lab/*" ]
-exclude = [ "packages/agent_framework_project.egg-info", "packages/lab", "packages/lab/cookiecutter-agent-framework-lab", "packages/lab/README.md" ]
+members = [ "packages/*" ]
 
 [tool.uv.sources]
 agent-framework = { workspace = true }
+agent-framework-core = { workspace = true }
+agent-framework-a2a = { workspace = true }
 agent-framework-azure-ai = { workspace = true }
 agent-framework-copilotstudio = { workspace = true }
-agent-framework-lab-gaia = { workspace = true }
+agent-framework-lab = { workspace = true }
 agent-framework-mem0 = { workspace = true }
 agent-framework-redis = { workspace = true }
 agent-framework-runtime = { workspace = true }
@@ -106,7 +127,8 @@ ignore = [
     "D104", # allow missing docstring in public package
     "D418", # allow overload to have a docstring
     "TD003", # allow missing link to todo issue
-    "FIX002" # allow todo
+    "FIX002", # allow todo
+    "B027" # allow empty non-abstract method in ABC
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -126,7 +148,8 @@ notice-rgx = "^# Copyright \\(c\\) Microsoft\\. All rights reserved\\."
 min-file-size = 1
 
 [tool.pytest.ini_options]
-testpaths = '**/tests'
+testpaths = 'packages/**/tests'
+norecursedirs = '**/lab/**'
 addopts = "-ra -q -r fEX"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
@@ -145,10 +168,14 @@ omit = [
 
 [tool.pyright]
 include = ["agent_framework", "samples"]
-exclude = ["**/tests/**", "docs", "**/.venv/**"]
+exclude = ["**/tests/**", "docs", "**/.venv/**", "samples/semantic-kernel-migration/**"]
 typeCheckingMode = "strict"
 reportUnnecessaryIsInstance = false
 reportMissingTypeStubs = false
+
+[[tool.pyright.executionEnvironments]]
+root = "samples/semantic-kernel-migration"
+typeCheckingMode = "off"
 
 [tool.mypy]
 plugins = ['pydantic.mypy']
@@ -186,7 +213,17 @@ format.ref = "fmt"
 lint = "python run_tasks_in_packages_if_exists.py lint"
 pyright = "python run_tasks_in_packages_if_exists.py pyright"
 mypy = "python run_tasks_in_packages_if_exists.py mypy"
-build = "python run_tasks_in_packages_if_exists.py build"
+# cleaning
+clean-dist-packages = "python run_tasks_in_packages_if_exists.py clean-dist"
+clean-dist-meta = "rm -rf dist"
+clean-dist = ["clean-dist-packages", "clean-dist-meta"]
+# build and publish
+build-packages = "python run_tasks_in_packages_if_exists.py build"
+build-meta = "python -m flit build"
+build = ["build-packages", "build-meta"]
+publish-packages = "python run_tasks_in_packages_if_exists.py publish"
+publish-meta = "uv publish"
+publish = ["publish-packages", "publish-meta"]
 # combined checks
 check = ["fmt", "lint", "pyright", "mypy", "test", "markdown-code-lint", "samples-code-check"]
 pre-commit-check = ["fmt", "lint", "pyright", "markdown-code-lint", "samples-code-check"]
@@ -195,6 +232,7 @@ pre-commit-check = ["fmt", "lint", "pyright", "markdown-code-lint", "samples-cod
 cmd = """
 pytest --import-mode=importlib
 --cov=agent_framework
+--cov=agent_framework_a2a
 --cov=agent_framework_azure_ai
 --cov=agent_framework_copilotstudio
 --cov=agent_framework_mem0
@@ -231,6 +269,14 @@ sequence = [
     { ref = "docs-clean" },
     { ref = "docs-build" }
 ]
+[tool.poe.tasks.docs-full-setup-install]
+sequence = [
+    { ref = "setup --python 3.11" },
+    { ref = "docs-install" },
+    { ref = 'build' },
+    { ref = "docs-clean" },
+    { ref = "docs-build" }
+]
 [tool.poe.tasks.docs-full-install]
 sequence = [
     { ref = "docs-install" },
@@ -253,3 +299,16 @@ sequence = [
 where = ["packages"]
 include = ["agent_framework**"]
 namespaces = true
+
+[[tool.uv.index]]
+name = "testpypi"
+url = "https://test.pypi.org/simple/"
+publish-url = "https://test.pypi.org/legacy/"
+explicit = true
+
+[tool.flit.module]
+name = "agent_framework_meta"
+
+[build-system]
+requires = ["flit-core >= 3.11,<4.0"]
+build-backend = "flit_core.buildapi"

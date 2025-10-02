@@ -1,9 +1,9 @@
 # Get Started with Microsoft Agent Framework Azure AI
 
-Please install this package as the extra for `agent-framework`:
+Please install this package via pip:
 
 ```bash
-pip install agent-framework[azure_ai]
+pip install agent-framework-azure-ai
 ```
 
 and see the [README](https://github.com/microsoft/agent-framework/tree/main/python/README.md) for more information.

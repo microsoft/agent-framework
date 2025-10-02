@@ -5,12 +5,19 @@ import asyncio
 from agent_framework import HostedCodeInterpreterTool, TextContent, TextReasoningContent, UsageContent
 from agent_framework.openai import OpenAIResponsesClient
 
+"""
+OpenAI Responses Client Reasoning Example
+
+This sample demonstrates advanced reasoning capabilities using OpenAI's o1 models,
+showing step-by-step reasoning process visualization and complex problem-solving.
+"""
+
 
 async def reasoning_example() -> None:
     """Example of reasoning response (get results as they are generated)."""
     print("=== Reasoning Example ===")
 
-    agent = OpenAIResponsesClient(ai_model_id="gpt-5").create_agent(
+    agent = OpenAIResponsesClient(model_id="gpt-5").create_agent(
         name="MathHelper",
         instructions="You are a personal math tutor. When asked a math question, "
         "write and run code using the python tool to answer the question.",

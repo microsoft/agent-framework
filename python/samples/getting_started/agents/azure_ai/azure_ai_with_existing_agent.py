@@ -11,6 +11,13 @@ from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 
+"""
+Azure AI Agent with Existing Agent Example
+
+This sample demonstrates working with pre-existing Azure AI Agents by providing
+agent IDs, showing agent reuse patterns for production scenarios.
+"""
+
 
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
@@ -37,7 +44,7 @@ async def main() -> None:
             async with ChatAgent(
                 # passing in the client is optional here, so if you take the agent_id from the portal
                 # you can use it directly without the two lines above.
-                chat_client=AzureAIAgentClient(client=client, agent_id=created_agent.id),
+                chat_client=AzureAIAgentClient(project_client=client, agent_id=created_agent.id),
                 instructions="You are a helpful weather agent.",
                 tools=get_weather,
             ) as agent:

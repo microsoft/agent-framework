@@ -1,0 +1,40 @@
+﻿<#@ template language="C#" inherits="CodeTemplate, IModeledAction" visibility="internal" linePragmas="false"  #>
+<#@ import namespace="Microsoft.Agents.AI.Workflows.Declarative.Extensions" #>
+<#@ import namespace="Microsoft.Agents.AI.Workflows.Declarative.Interpreter" #>
+<#@ import namespace="Microsoft.Bot.ObjectModel" #>
+<#@ assembly name="System.Core" #>
+/// <summary>
+/// The root executor for a declarative workflow.
+/// </summary>
+internal sealed class <#= this.TypeName #>Executor<TInput>(
+    DeclarativeWorkflowOptions options,
+    Func<TInput, ChatMessage> inputTransform) :
+    RootExecutor<TInput>("<#= this.Id #>", options, inputTransform)
+    where TInput : notnull
+{
+    protected override async ValueTask ExecuteAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken)
+    {<# 
+if (this.TypeInfo.EnvironmentVariables.Count > 0)
+{ #>
+        // Set environment variables
+        await this.InitializeEnvironmentAsync(
+            context,<#
+    int index = this.TypeInfo.EnvironmentVariables.Count - 1;
+    foreach (string variableName in this.TypeInfo.EnvironmentVariables)
+    {#>
+            "<#= variableName #>"<#= index > 0 ? "," : "" #><#
+        --index;
+    }#>).ConfigureAwait(false);
+<#}
+
+if (this.TypeInfo.UserVariables.Count > 0)
+{ 
+#>
+        // Initialize variables<#
+    foreach (VariableInformationDiagnostic variableInfo in this.TypeInfo.UserVariables)
+    {#>
+        await context.QueueStateUpdateAsync("<#= variableInfo.Path.VariableName #>", UnassignedValue.Instance, "<#= variableInfo.Path.NamespaceAlias #>").ConfigureAwait(false);<#
+    }
+}#>
+    }
+}

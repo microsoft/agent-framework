@@ -17,18 +17,8 @@ from agent_framework import (
 """
 Custom Agent Implementation Example
 
-This sample demonstrates how to implement a custom agent by extending the BaseAgent class.
-Custom agents provide complete control over the agent's behavior and capabilities, allowing
-developers to create specialized agents that don't rely on chat clients.
-
-This approach is useful when you need to:
-- Implement agents with custom logic that doesn't involve LLM interactions
-- Create agents that integrate with specialized APIs or services
-- Build agents with deterministic behaviors
-- Implement new agent types for the Microsoft Agent Framework
-
-The EchoAgent example shows the minimal requirements for implementing a custom agent,
-including both streaming and non-streaming response handling.
+This sample demonstrates implementing a custom agent by extending BaseAgent class,
+showing the minimal requirements for both streaming and non-streaming responses.
 """
 
 
@@ -101,8 +91,7 @@ class EchoAgent(BaseAgent):
 
         # Notify the thread of new messages if provided
         if thread is not None:
-            await self._notify_thread_of_new_messages(thread, normalized_messages)
-            await self._notify_thread_of_new_messages(thread, response_message)
+            await self._notify_thread_of_new_messages(thread, normalized_messages, response_message)
 
         return AgentRunResponse(messages=[response_message])
 
@@ -136,10 +125,6 @@ class EchoAgent(BaseAgent):
             else:
                 response_text = f"{self.echo_prefix}[Non-text message received]"
 
-        # Notify the thread of input messages if provided
-        if thread is not None:
-            await self._notify_thread_of_new_messages(thread, normalized_messages)
-
         # Simulate streaming by yielding the response word by word
         words = response_text.split()
         for i, word in enumerate(words):
@@ -157,7 +142,7 @@ class EchoAgent(BaseAgent):
         # Notify the thread of the complete response if provided
         if thread is not None:
             complete_response = ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text=response_text)])
-            await self._notify_thread_of_new_messages(thread, complete_response)
+            await self._notify_thread_of_new_messages(thread, normalized_messages, complete_response)
 
 
 async def main() -> None:

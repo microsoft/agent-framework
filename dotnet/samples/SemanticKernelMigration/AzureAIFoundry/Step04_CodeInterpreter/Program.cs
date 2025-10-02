@@ -3,14 +3,11 @@
 using System.Text;
 using Azure.AI.Agents.Persistent;
 using Azure.Identity;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.Agents;
 using Microsoft.SemanticKernel.Agents.AzureAI;
-
-#pragma warning disable SKEXP0110 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
-#pragma warning disable CS8321 // Local function is declared but never used
 
 var azureEndpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
 var deploymentName = System.Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME") ?? "gpt-4o";
@@ -45,7 +42,6 @@ async Task SKAgentAsync()
         foreach (var item in content.Message.Items)
         {
             // Process each item in the message
-#pragma warning disable SKEXP0110 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
             if (item is AnnotationContent annotation)
             {
                 if (annotation.Kind != AnnotationKind.UrlCitation)
@@ -57,7 +53,6 @@ async Task SKAgentAsync()
             {
                 Console.WriteLine($"  [{item.GetType().Name}] File #{fileReference.FileId}");
             }
-#pragma warning restore SKEXP0110
         }
     }
 

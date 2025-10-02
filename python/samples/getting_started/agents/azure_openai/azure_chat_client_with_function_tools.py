@@ -10,6 +10,13 @@ from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 from pydantic import Field
 
+"""
+Azure OpenAI Chat Client with Function Tools Example
+
+This sample demonstrates function tool integration with Azure OpenAI Chat Client,
+showing both agent-level and query-level tool configuration patterns.
+"""
+
 
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],

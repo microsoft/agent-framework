@@ -7,6 +7,14 @@ from typing import Annotated
 from agent_framework.openai import OpenAIResponsesClient
 from pydantic import Field
 
+"""
+OpenAI Responses Client Direct Usage Example
+
+Demonstrates direct OpenAIResponsesClient usage for structured response generation with OpenAI models.
+Shows function calling capabilities with custom business logic.
+
+"""
+
 
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],

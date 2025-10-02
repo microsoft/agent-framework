@@ -1,0 +1,25 @@
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: workflow_test
+  actions:
+
+    # Capture input
+    - kind: SetVariable
+      id: set_user_input
+      variable: Local.UserInput
+      value: =System.LastMessage.Text
+
+    # Capture environment variable
+    - kind: SetVariable
+      id: set_user_name
+      variable: Global.UserName
+      value: =Env.USERNAME
+
+    # Respond with input
+    - kind: SendActivity
+      id: send_result
+      activity: |-
+        Hello {Global.UserName},
+        You said, "{Local.UserInput}"

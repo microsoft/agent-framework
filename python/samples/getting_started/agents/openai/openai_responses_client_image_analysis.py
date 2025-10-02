@@ -5,6 +5,13 @@ import asyncio
 from agent_framework import ChatMessage, TextContent, UriContent
 from agent_framework.openai import OpenAIResponsesClient
 
+"""
+OpenAI Responses Client Image Analysis Example
+
+This sample demonstrates using OpenAI Responses Client for image analysis and vision tasks,
+showing multi-modal content handling with text and images.
+"""
+
 
 async def main():
     print("=== OpenAI Responses Agent with Image Analysis ===")

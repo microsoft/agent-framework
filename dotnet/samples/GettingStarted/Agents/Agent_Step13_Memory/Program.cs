@@ -6,16 +6,12 @@
 // The component adds a prompt to ask for this information if it is not already known
 // and provides it to the model before each invocation if known.
 
-using System;
-using System.Linq;
 using System.Text;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using Azure.AI.OpenAI;
 using Azure.Identity;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
 using OpenAI;
 using OpenAI.Chat;
 using SampleApp;
@@ -52,7 +48,7 @@ Console.WriteLine(await agent.RunAsync("My name is Ruaidhrí", thread));
 Console.WriteLine(await agent.RunAsync("I am 20 years old", thread));
 
 // We can serialize the thread. The serialized state will include the state of the memory component.
-var threadElement = await thread.SerializeAsync();
+var threadElement = thread.Serialize();
 
 Console.WriteLine("\n>> Use deserialized thread with previously created memories\n");
 
@@ -148,9 +144,9 @@ namespace SampleApp
             });
         }
 
-        public override ValueTask<JsonElement?> SerializeAsync(JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
         {
-            return new ValueTask<JsonElement?>(JsonSerializer.SerializeToElement(this.UserInfo, jsonSerializerOptions));
+            return JsonSerializer.SerializeToElement(this.UserInfo, jsonSerializerOptions);
         }
     }
 

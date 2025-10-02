@@ -1,28 +1,37 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterable, Awaitable, Callable
 from random import randint
 from typing import Annotated
 
-from agent_framework import FunctionInvocationContext
+from agent_framework import (
+    AgentRunContext,
+    AgentRunResponse,
+    AgentRunResponseUpdate,
+    ChatMessage,
+    Role,
+    TextContent,
+)
 from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 
 """
-Result Override with Middleware
+Result Override with Middleware (Regular and Streaming)
 
 This sample demonstrates how to use middleware to intercept and modify function results
-after execution. The example shows:
+after execution, supporting both regular and streaming agent responses. The example shows:
 
 - How to execute the original function first and then modify its result
 - Replacing function outputs with custom messages or transformed data
 - Using middleware for result filtering, formatting, or enhancement
+- Detecting streaming vs non-streaming execution using context.is_streaming
+- Overriding streaming results with custom async generators
 
 The weather override middleware lets the original weather function execute normally,
-then replaces its result with a custom "perfect weather" message, demonstrating
-how middleware can be used for content filtering, A/B testing, or result enhancement.
+then replaces its result with a custom "perfect weather" message. For streaming responses,
+it creates a custom async generator that yields the override message in chunks.
 """
 
 
@@ -35,32 +44,39 @@ def get_weather(
 
 
 async def weather_override_middleware(
-    context: FunctionInvocationContext, next: Callable[[FunctionInvocationContext], Awaitable[None]]
+    context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
 ) -> None:
-    function_name = context.function.name
+    """Middleware that overrides weather results for both streaming and non-streaming cases."""
 
-    # Let the original function execute first
+    # Let the original agent execution complete first
     await next(context)
 
-    # Override the result if it's a weather function
-    if function_name == "get_weather" and context.result is not None:
-        original_result = str(context.result)
-        print(f"[WeatherOverrideMiddleware] Original result: {original_result}")
+    # Check if there's a result to override (agent called weather function)
+    if context.result is not None:
+        # Create custom weather message
+        chunks = [
+            "Weather Advisory - ",
+            "due to special atmospheric conditions, ",
+            "all locations are experiencing perfect weather today! ",
+            "Temperature is a comfortable 22°C with gentle breezes. ",
+            "Perfect day for outdoor activities!",
+        ]
 
-        # Override with a custom message
-        # It's also possible to override the result before "next()" call if needed
-        custom_message = (
-            "Weather Advisory - due to special atmospheric conditions, "
-            "all locations are experiencing perfect weather today! "
-            "Temperature is a comfortable 22°C with gentle breezes. "
-            "Perfect day for outdoor activities!"
-        )
-        context.result = custom_message
-        print(f"[WeatherOverrideMiddleware] Overriding with custom message: {custom_message}")
+        if context.is_streaming:
+            # For streaming: create an async generator that yields chunks
+            async def override_stream() -> AsyncIterable[AgentRunResponseUpdate]:
+                for chunk in chunks:
+                    yield AgentRunResponseUpdate(contents=[TextContent(text=chunk)])
+
+            context.result = override_stream()
+        else:
+            # For non-streaming: just replace with the string message
+            custom_message = "".join(chunks)
+            context.result = AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text=custom_message)])
 
 
 async def main() -> None:
-    """Example demonstrating result override with middleware."""
+    """Example demonstrating result override with middleware for both streaming and non-streaming."""
     print("=== Result Override Middleware Example ===")
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
@@ -74,10 +90,21 @@ async def main() -> None:
             middleware=weather_override_middleware,
         ) as agent,
     ):
+        # Non-streaming example
+        print("\n--- Non-streaming Example ---")
         query = "What's the weather like in Seattle?"
         print(f"User: {query}")
         result = await agent.run(query)
         print(f"Agent: {result}")
+
+        # Streaming example
+        print("\n--- Streaming Example ---")
+        query = "What's the weather like in Portland?"
+        print(f"User: {query}")
+        print("Agent: ", end="", flush=True)
+        async for chunk in agent.run_stream(query):
+            if chunk.text:
+                print(chunk.text, end="", flush=True)
 
 
 if __name__ == "__main__":

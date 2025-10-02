@@ -8,6 +8,13 @@ from azure.identity import AzureCliCredential
 from openai.types.responses.response import Response as OpenAIResponse
 from openai.types.responses.response_code_interpreter_tool_call import ResponseCodeInterpreterToolCall
 
+"""
+Azure OpenAI Responses Client with Code Interpreter Example
+
+This sample demonstrates using HostedCodeInterpreterTool with Azure OpenAI Responses
+for Python code execution and mathematical problem solving.
+"""
+
 
 async def main() -> None:
     """Example showing how to use the HostedCodeInterpreterTool with Azure OpenAI Responses."""

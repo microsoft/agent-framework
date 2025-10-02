@@ -1,10 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using Amazon.BedrockRuntime;
-using Microsoft.Agents.Workflows;
+using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.AI.Agents;
 
 // Define the topic discussion.
 const string Topic = "Goldendoodles make the best pets.";

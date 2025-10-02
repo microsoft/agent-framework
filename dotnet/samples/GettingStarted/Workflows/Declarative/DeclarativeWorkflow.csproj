@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -6,7 +6,7 @@
     <ProjectsDebugTargetFrameworks>net9.0</ProjectsDebugTargetFrameworks>
     <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugTargetFrameworks)</TargetFrameworks>
     <Nullable>enable</Nullable>
-    <ImplicitUsings>disable</ImplicitUsings>
+    <ImplicitUsings>enable</ImplicitUsings>
     <NoWarn>$(NoWarn);CA1812</NoWarn>
   </PropertyGroup>
 
@@ -25,8 +25,7 @@
   </ItemGroup>
   
   <ItemGroup>
-    <ProjectReference Include="..\..\..\..\src\Microsoft.Agents.Workflows\Microsoft.Agents.Workflows.csproj" />
-    <ProjectReference Include="..\..\..\..\src\Microsoft.Agents.Workflows.Declarative\Microsoft.Agents.Workflows.Declarative.csproj" />
+    <ProjectReference Include="..\..\..\..\src\Microsoft.Agents.AI.Workflows.Declarative\Microsoft.Agents.AI.Workflows.Declarative.csproj" />
   </ItemGroup>
 
 </Project>

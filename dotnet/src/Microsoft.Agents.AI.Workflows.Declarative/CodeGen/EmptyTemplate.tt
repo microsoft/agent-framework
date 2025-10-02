@@ -1,0 +1,4 @@
+﻿<#@ template language="C#" inherits="CodeTemplate, IModeledAction" visibility="internal" linePragmas="false" #>
+<#@ import namespace="Microsoft.Agents.AI.Workflows.Declarative.Interpreter" #>
+<#@ assembly name="System.Core" #>
+DelegateExecutor <#= this.InstanceVariable #> = new(id: "<#= this.Id #>", <#= this.RootVariable #>.Session<#= this.Action is not null ? $", {this.Action}" : "" #>);

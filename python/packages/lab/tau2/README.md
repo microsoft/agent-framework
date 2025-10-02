@@ -2,7 +2,10 @@
 
 τ²-bench implements a simulation framework for evaluating customer service agents across various domains.
 
+> **Note**: This module is part of the consolidated `agent-framework-lab` package. Install the package with the `tau2` extra to use this module.
+
 The framework orchestrates conversations between two AI agents:
+
 - **Customer Service Agent**: Follows domain-specific policies and has access to tools (e.g., booking systems, databases)
 - **User Simulator**: Simulates realistic customer behavior with specific goals and scenarios
 
@@ -10,18 +13,22 @@ Each evaluation runs a multi-turn conversation where the user simulator presents
 
 ## Supported Domains
 
-| Domain | Status | Description |
-|--------|--------|-------------|
-| **airline** | ✅ Supported | Customer service for airline booking, changes, and support |
-| **retail** | 🚧 In Development | E-commerce customer support scenarios |
-| **telecom** | 🚧 In Development | Telecommunications service support |
+| Domain      | Status            | Description                                                |
+| ----------- | ----------------- | ---------------------------------------------------------- |
+| **airline** | ✅ Supported      | Customer service for airline booking, changes, and support |
+| **retail**  | 🚧 In Development | E-commerce customer support scenarios                      |
+| **telecom** | 🚧 In Development | Telecommunications service support                         |
 
-*Note: Currently only the airline domain is fully supported.*
+_Note: Currently only the airline domain is fully supported._
 
 ## Installation
 
+Install from source with TAU2 dependencies:
+
 ```bash
-pip install agent-framework-lab-tau2
+git clone https://github.com/microsoft/agent-framework.git
+cd agent-framework/python/packages/lab
+pip install -e ".[tau2]"
 ```
 
 Download data from [Tau2-Bench](https://github.com/sierra-research/tau2-bench):
@@ -45,7 +52,7 @@ export TAU2_DATA_DIR="data"
 ```python
 import asyncio
 from agent_framework.openai import OpenAIChatClient
-from agent_framework_lab_tau2 import TaskRunner
+from agent_framework.lab.tau2 import TaskRunner
 from tau2.domains.airline.environment import get_tasks
 
 async def run_single_task():
@@ -56,12 +63,12 @@ async def run_single_task():
     assistant_client = OpenAIChatClient(
         base_url="https://api.openai.com/v1",
         api_key="your-api-key",
-        ai_model_id="gpt-4o"
+        model_id="gpt-4o"
     )
     user_client = OpenAIChatClient(
         base_url="https://api.openai.com/v1",
         api_key="your-api-key",
-        ai_model_id="gpt-4o-mini"
+        model_id="gpt-4o-mini"
     )
 
     # Get a task and run it
@@ -99,15 +106,15 @@ python samples/run_benchmark.py --max-steps 20
 
 The following results are reproduced from our implementation of τ²-bench with `samples/run_benchmark.py`. It shows the average success rate over the dataset of 50 tasks.
 
-| Agent Model | User Model | Success Rate |
-|-------------|------------|----------|
-| gpt-5 | gpt-4.1 | 62.0% |
-| gpt-5-mini | gpt-4.1 | 52.0% |
-| gpt-4.1 | gpt-4.1 | 60.0% |
-| gpt-4.1-mini | gpt-4.1 | 50.0% |
-| gpt-4.1 | gpt-4o-mini | 42.0% |
-| gpt-4o | gpt-4.1 | 42.0% |
-| gpt-4o-mini | gpt-4.1 | 26.0% |
+| Agent Model  | User Model  | Success Rate |
+| ------------ | ----------- | ------------ |
+| gpt-5        | gpt-4.1     | 62.0%        |
+| gpt-5-mini   | gpt-4.1     | 52.0%        |
+| gpt-4.1      | gpt-4.1     | 60.0%        |
+| gpt-4.1-mini | gpt-4.1     | 50.0%        |
+| gpt-4.1      | gpt-4o-mini | 42.0%        |
+| gpt-4o       | gpt-4.1     | 42.0%        |
+| gpt-4o-mini  | gpt-4.1     | 26.0%        |
 
 ## Advanced Usage
 
@@ -126,7 +133,7 @@ export OPENAI_BASE_URL="https://your-custom-endpoint.com/v1"
 ### Custom Agent Implementation
 
 ```python
-from agent_framework_lab_tau2 import TaskRunner
+from agent_framework.lab.tau2 import TaskRunner
 from agent_framework import ChatAgent
 
 class CustomTaskRunner(TaskRunner):
@@ -149,8 +156,8 @@ class CustomTaskRunner(TaskRunner):
 ### Custom Workflow Integration
 
 ```python
-from agent_framework._workflow import WorkflowBuilder, AgentExecutor
-from agent_framework_lab_tau2 import TaskRunner
+from agent_framework import WorkflowBuilder, AgentExecutor
+from agent_framework.lab.tau2 import TaskRunner
 
 class WorkflowTaskRunner(TaskRunner):
     def build_conversation_workflow(self, assistant_agent, user_simulator_agent):
@@ -172,7 +179,7 @@ class WorkflowTaskRunner(TaskRunner):
 ### Utility Functions
 
 ```python
-from agent_framework_lab_tau2 import patch_env_set_state, unpatch_env_set_state
+from agent_framework.lab.tau2 import patch_env_set_state, unpatch_env_set_state
 
 # Enable compatibility patches for τ²-bench integration
 patch_env_set_state()
