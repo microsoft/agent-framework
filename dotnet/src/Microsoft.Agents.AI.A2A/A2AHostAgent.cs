@@ -64,7 +64,7 @@ public sealed class A2AHostAgent
     /// <summary>
     /// Handle a received message.
     /// </summary>
-    /// <param name="messageSend">The <see cref="MessageSendParams"/> to handle</param>
+    /// <param name="messageSend">The <see cref="MessageSendParams"/> to handle.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     public async Task<Message> OnMessageReceivedAsync(MessageSendParams messageSend, CancellationToken cancellationToken = default)
     {
