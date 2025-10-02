@@ -6,7 +6,7 @@ This folder contains examples demonstrating how to use Ollama models with the Ag
 
 1. **Install Ollama**: Download and install Ollama from [ollama.com](https://ollama.com/)
 2. **Start Ollama**: Ensure Ollama is running on your local machine
-3. **Pull a model**: Run `ollama pull mistral` (or any other model you prefer)
+3. **Pull a model**: Run `ollama pull mistral` (or any other model you prefer that supports function calling)
 
 ## Examples
 
