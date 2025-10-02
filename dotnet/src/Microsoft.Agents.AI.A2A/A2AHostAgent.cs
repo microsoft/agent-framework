@@ -44,7 +44,7 @@ public sealed class A2AHostAgent
     public AIAgent? Agent { get; }
 
     /// <summary>
-    /// The associated <see cref="ITaskManager"/> for handling agent tasks.
+    /// Gets the associated <see cref="ITaskManager"/> for handling agent tasks.
     /// </summary>
     public TaskManager? TaskManager { get; private set; }
 
