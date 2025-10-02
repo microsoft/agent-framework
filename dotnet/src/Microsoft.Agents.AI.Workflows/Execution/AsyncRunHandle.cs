@@ -36,7 +36,7 @@ internal sealed class AsyncRunHandle : ICheckpointingHandle, IAsyncDisposable, I
         this._eventStream.Start();
     }
 
-    public ValueTask WaitForNextInputAsync(CancellationToken cancellation = default)
+    public ValueTask<bool> WaitForNextInputAsync(CancellationToken cancellation = default)
         => this._waitForResponseCoordinator.WaitForCoordinationAsync(cancellation);
 
     public void ReleaseResponseWaiter() => this._waitForResponseCoordinator.MarkCoordinationPoint();

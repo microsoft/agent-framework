@@ -24,7 +24,7 @@ public sealed class StreamingRun
         this._runHandle = Throw.IfNull(runHandle);
     }
 
-    private ValueTask WaitOnInputAsync(CancellationToken cancellation = default)
+    private ValueTask<bool> WaitOnInputAsync(CancellationToken cancellation = default)
         => this._runHandle.WaitForNextInputAsync(cancellation);
 
     /// <summary>

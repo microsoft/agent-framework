@@ -7,5 +7,5 @@ namespace Microsoft.Agents.AI.Workflows.Execution;
 
 internal interface IInputCoordinator
 {
-    ValueTask WaitForNextInputAsync(CancellationToken cancellation = default);
+    ValueTask<bool> WaitForNextInputAsync(CancellationToken cancellation = default);
 }
