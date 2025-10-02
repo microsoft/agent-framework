@@ -92,6 +92,7 @@ trigger:
       agent:
         name: =Env.FOUNDRY_AGENT_RESEARCHANALYST
       output:
+        autoSend: false
         messages: Local.TaskFacts
       input:
         messages: =UserMessage(Local.InputTask)
@@ -126,6 +127,7 @@ trigger:
       agent:
         name: =Env.FOUNDRY_AGENT_RESEARCHMANAGER
       output:
+        autoSend: false
         messages: Local.Plan
       input:
         messages: =UserMessage(Local.InputTask)
@@ -179,6 +181,7 @@ trigger:
       agent:
         name: =Env.FOUNDRY_AGENT_RESEARCHMANAGER
       output:
+        autoSend: false
         messages: Local.ProgressLedgerUpdate
       input:
         messages: =UserMessage(Local.AgentResponseText)
@@ -366,6 +369,7 @@ trigger:
                       agent:
                         name: =Env.FOUNDRY_AGENT_RESEARCHANALYST
                       output:
+                        autoSend: false
                         messages: Local.TaskFacts
                       input:
                         messages: |-
@@ -395,6 +399,7 @@ trigger:
                       agent:
                         name: =Env.FOUNDRY_AGENT_RESEARCHMANAGER
                       output:
+                        autoSend: false
                         messages: Local.Plan
                       input:
                         additionalInstructions: |-
