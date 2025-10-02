@@ -1,6 +1,6 @@
 # Anthropic Examples
 
-This folder contains examples demonstrating how to use Anthropic's Claude models with the Agent Framework through the OpenAI Chat Client interface.
+This folder contains examples demonstrating how to use Anthropic's Claude models with the Agent Framework.
 
 ## Examples
 
