@@ -24,13 +24,13 @@ public static partial class AgentAbstractionsJsonUtilities
     /// <para>
     /// It additionally turns on the following settings:
     /// <list type="number">
-    /// <item>Enables <see cref="JsonSerializerDefaults.Web"/> defaults.</item>
-    /// <item>Enables <see cref="JsonIgnoreCondition.WhenWritingNull"/> as the default ignore condition for properties.</item>
-    /// <item>Enables <see cref="JsonNumberHandling.AllowReadingFromString"/> as the default number handling for number types.</item>
-    /// <item>
+    /// <item><description>Enables <see cref="JsonSerializerDefaults.Web"/> defaults.</description></item>
+    /// <item><description>Enables <see cref="JsonIgnoreCondition.WhenWritingNull"/> as the default ignore condition for properties.</description></item>
+    /// <item><description>Enables <see cref="JsonNumberHandling.AllowReadingFromString"/> as the default number handling for number types.</description></item>
+    /// <item><description>
     /// Enables <see cref="JavaScriptEncoder.UnsafeRelaxedJsonEscaping"/> when escaping JSON strings.
     /// Consuming applications must ensure that JSON outputs are adequately escaped before embedding in other document formats, such as HTML and XML.
-    /// </item>
+    /// </description></item>
     /// </list>
     /// </para>
     /// </remarks>
