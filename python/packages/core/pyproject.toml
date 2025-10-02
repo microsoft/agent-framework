@@ -41,6 +41,15 @@ dependencies = [
 viz = [
     "graphviz>=0.20.0"
 ]
+all = [
+    "agent-framework-a2a",
+    "agent-framework-azure-ai",
+    "agent-framework-copilotstudio",
+    "agent-framework-mem0",
+    "agent-framework-redis",
+    "agent-framework-devui",
+    "graphviz>=0.20.0"
+]
 
 [tool.uv]
 prerelease = "if-necessary-or-explicit"
