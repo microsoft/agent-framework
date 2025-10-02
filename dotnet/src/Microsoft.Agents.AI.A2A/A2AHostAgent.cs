@@ -22,7 +22,7 @@ namespace Microsoft.Agents.AI.A2A;
 public sealed class A2AHostAgent
 {
     /// <summary>
-    /// Initialize a new instance of the <see cref="A2AHostAgent"/> class.
+    /// Initializes a new instance of the <see cref="A2AHostAgent"/> class.
     /// </summary>
     /// <param name="agent">The <see cref="AIAgent"/> to host.</param>
     /// <param name="agentCard">The <see cref="AgentCard"/> for the hosted agent.</param>
