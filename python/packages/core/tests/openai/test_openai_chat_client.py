@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
+import contextlib
 import os
 from typing import Annotated
 from unittest.mock import MagicMock, patch
@@ -783,3 +785,58 @@ def test_openai_content_parser_data_content_image(openai_unit_test_env: dict[str
     # Should use custom filename
     assert result["type"] == "file"
     assert result["file"]["filename"] == "report.pdf"
+
+
+def test_openai_chat_client_with_callable_api_key() -> None:
+    """Test OpenAIChatClient initialization with callable API key."""
+
+    async def get_api_key() -> str:
+        return "test-api-key-123"
+
+    client = OpenAIChatClient(model_id="gpt-4o", api_key=get_api_key)
+
+    # Verify client was created successfully
+    assert client.model_id == "gpt-4o"
+    # Callable API keys should result in empty string for client.api_key
+    assert client.client.api_key == ""
+
+
+@patch("agent_framework.openai._chat_client.AsyncOpenAI")
+async def test_openai_chat_client_refresh_api_key(mock_async_openai) -> None:
+    """Test that callable API keys are refreshed when making requests."""
+    call_count = 0
+
+    async def get_api_key() -> str:
+        nonlocal call_count
+        call_count += 1
+        await asyncio.sleep(0.001)  # Simulate async operation
+        return f"refreshed-key-{call_count}"
+
+    client = OpenAIChatClient(model_id="gpt-4o", api_key=get_api_key)
+
+    # Mock the OpenAI client response
+    mock_completion = MagicMock()
+    mock_completion.id = "test-id"
+    mock_completion.created = 1234567890
+    mock_completion.model = "gpt-4o"
+    mock_completion.choices = []
+    mock_async_openai.return_value.chat.completions.create.return_value = mock_completion  # type: ignore
+
+    # Initial state - no calls yet
+    assert call_count == 0
+
+    # Make first request - should trigger refresh
+    messages = [ChatMessage(role="user", text="Hello")]
+    with contextlib.suppress(Exception):
+        await client._inner_get_response(messages=messages, chat_options=ChatOptions())  # type: ignore
+
+    # Verify callable was called and key was refreshed
+    assert call_count == 1
+    assert client.client.api_key == "refreshed-key-1"
+
+    # Make second request - should trigger another refresh
+    with contextlib.suppress(Exception):
+        await client._inner_get_response(messages=messages, chat_options=ChatOptions())  # type: ignore
+
+    assert call_count == 2
+    assert client.client.api_key == "refreshed-key-2"

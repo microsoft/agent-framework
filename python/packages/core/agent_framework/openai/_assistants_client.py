@@ -2,7 +2,7 @@
 
 import json
 import sys
-from collections.abc import AsyncIterable, Mapping, MutableMapping, MutableSequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, MutableSequence
 from typing import Any
 
 from openai import AsyncOpenAI
@@ -63,7 +63,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
         assistant_id: str | None = None,
         assistant_name: str | None = None,
         thread_id: str | None = None,
-        api_key: str | None = None,
+        api_key: str | Callable[[], str | Awaitable[str]] | None = None,
         org_id: str | None = None,
         base_url: str | None = None,
         default_headers: Mapping[str, str] | None = None,
@@ -118,9 +118,18 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
                 "Set via 'model_id' parameter or 'OPENAI_CHAT_MODEL_ID' environment variable."
             )
 
+        # Handle callable API key from settings
+        if openai_settings.api_key:
+            if callable(openai_settings.api_key):
+                api_key_value = openai_settings.api_key
+            else:
+                api_key_value = openai_settings.api_key.get_secret_value()
+        else:
+            api_key_value = None
+
         super().__init__(
             model_id=openai_settings.chat_model_id,
-            api_key=openai_settings.api_key.get_secret_value() if openai_settings.api_key else None,
+            api_key=api_key_value,
             org_id=openai_settings.org_id,
             default_headers=default_headers,
             client=async_client,
@@ -165,6 +174,9 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
         chat_options: ChatOptions,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
+        # Refresh API key if using a callable provider
+        await self._refresh_api_key()
+
         # Extract necessary state from messages and options
         run_options, tool_results = self._prepare_options(messages, chat_options, **kwargs)
 
