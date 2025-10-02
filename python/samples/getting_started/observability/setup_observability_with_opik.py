@@ -6,20 +6,20 @@ Prerequisites:
   * Install Opik: `pip install opik`
   * Set one of the OTLP endpoints below before running the script:
       - Opik Cloud:
-        ````
+        ```
         export OTEL_EXPORTER_OTLP_ENDPOINT=https://www.comet.com/opik/api/v1/private/otel
         export OTEL_EXPORTER_OTLP_HEADERS='Authorization=<your-api-key>,Comet-Workspace=<workspace>,projectName=<project>'
-        ````
+        ```
       - Opik Enterprise:
-        ````
+        ```
         export OTEL_EXPORTER_OTLP_ENDPOINT=https://<your-comet-domain>/opik/api/v1/private/otel
         export OTEL_EXPORTER_OTLP_HEADERS='Authorization=<your-api-key>,Comet-Workspace=<workspace>,projectName=<project>'
-        ````
+        ```
       - Self-hosted Opik:
-        ````
+        ```
         export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:5173/api/v1/private/otel
         export OTEL_EXPORTER_OTLP_HEADERS='projectName=<project>'
-        ````
+        ```
 
 Run the sample:
 
