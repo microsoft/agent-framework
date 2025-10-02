@@ -2,7 +2,6 @@
 
   <PropertyGroup>
     <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
-    <NoWarn>$(NoWarn);IDE1006</NoWarn>
   </PropertyGroup>
 
   <PropertyGroup>
@@ -31,6 +30,9 @@
   <ItemGroup>
     <None Update="Agents\*.yaml">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include="$(MSBuildThisFileDirectory)\..\..\..\workflow-samples\Setup\*.yaml" LinkBase="Agents">
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
     </None>
     <None Update="Testcases\*.json">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>

@@ -43,7 +43,7 @@ async def streaming_with_mcp(show_raw_stream: bool = False) -> None:
         print("")
         print("\n=======================================\n")
         # Second query
-        query2 = "What is Microsoft Semantic Kernel?"
+        query2 = "What is Microsoft Agent Framework?"
         print(f"User: {query2}")
         print(f"{agent.name}: ", end="")
         async for chunk in agent.run_stream(query2):
@@ -76,7 +76,7 @@ async def run_with_mcp() -> None:
         print(f"{agent.name}: {result1}\n")
         print("\n=======================================\n")
         # Second query
-        query2 = "What is Microsoft Semantic Kernel?"
+        query2 = "What is Microsoft Agent Framework?"
         print(f"User: {query2}")
         result2 = await agent.run(query2)
         print(f"{agent.name}: {result2}\n")

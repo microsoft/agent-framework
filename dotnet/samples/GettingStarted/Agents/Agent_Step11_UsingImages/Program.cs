@@ -2,7 +2,6 @@
 
 // This sample shows how to use Image Multi-Modality with an AI agent.
 
-using System;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Extensions.AI;

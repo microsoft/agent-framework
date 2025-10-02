@@ -55,6 +55,7 @@
   <Folder Name="/Samples/GettingStarted/AgentWithOpenAI/">
     <File Path="samples/GettingStarted/AgentWithOpenAI/README.md" />
     <Project Path="samples/GettingStarted/AgentWithOpenAI/Agent_OpenAI_Step01_Running/Agent_OpenAI_Step01_Running.csproj" />
+    <Project Path="samples/GettingStarted/AgentWithOpenAI/Agent_OpenAI_Step02_Reasoning/Agent_OpenAI_Step02_Reasoning.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/ModelContextProtocol/">
     <Project Path="samples/GettingStarted/ModelContextProtocol/Agent_MCP_Server/Agent_MCP_Server.csproj" />

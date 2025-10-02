@@ -59,14 +59,15 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.CodeGen
                     "ow new DeclarativeActionException($\"Conversation identifier must be defined: {th" +
                     "is.Id}\");\n        }\n        ChatMessage newMessage = new(ChatRole.");
             this.Write(this.ToStringHelper.ToStringWithCulture(FormatEnum(this.Model.Role, RoleMap)));
-            this.Write(", [.. this.GetContentAsync(context).ToEnumerable()]) { AdditionalProperties = thi" +
-                    "s.GetMetadata() };\n        await agentProvider.CreateMessageAsync(conversationId" +
-                    ", newMessage, cancellationToken).ConfigureAwait(false);");
+            this.Write(", await this.GetContentAsync(context).ConfigureAwait(false)) { AdditionalProperti" +
+                    "es = this.GetMetadata() };\n        await agentProvider.CreateMessageAsync(conver" +
+                    "sationId, newMessage, cancellationToken).ConfigureAwait(false);");
 
         AssignVariable(this.Message, "newMessage");
         
-            this.Write("\n        return default;\n    }\n\n    private async IAsyncEnumerable<AIContent> Get" +
-                    "ContentAsync(IWorkflowContext context)\n    {");
+            this.Write("\n        return default;\n    }\n\n    private async ValueTask<IList<AIContent>> Get" +
+                    "ContentAsync(IWorkflowContext context)\n    {\n        List<AIContent> content = [" +
+                    "];\n        ");
 
         int index = 0;
         foreach (AddConversationMessageContent content in this.Model.Content)
@@ -76,23 +77,28 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.CodeGen
             AgentMessageContentType contentType = content.Type.Value;
             if (contentType == AgentMessageContentType.ImageUrl)
             {
-            this.Write("\n        yield return new UriContent(contentValue, \"image/*\");");
+            this.Write("\n        content.Add(UriContent(contentValue");
+            this.Write(this.ToStringHelper.ToStringWithCulture(index));
+            this.Write(", \"image/*\"));");
 
             }
             else if (contentType == AgentMessageContentType.ImageFile)
             {
-            this.Write("\n        yield return new HostedFileContent(contentValue);");
+            this.Write("\n        content.Add(new HostedFileContent(contentValue");
+            this.Write(this.ToStringHelper.ToStringWithCulture(index));
+            this.Write("));");
 
             }
             else
             {
-            this.Write("\n        yield return new TextContent(contentValue");
+            this.Write("\n        content.Add(new TextContent(contentValue");
             this.Write(this.ToStringHelper.ToStringWithCulture(index));
-            this.Write(");");
+            this.Write("));");
 
             }
         }
-            this.Write("\n    }\n\n    private AdditionalPropertiesDictionary? GetMetadata()\n    {");
+            this.Write("\n        return content;\n    }\n\n    private AdditionalPropertiesDictionary? GetMe" +
+                    "tadata()\n    {");
  
         EvaluateRecordExpression<object>(this.Model.Metadata, "metadata"); 
             this.Write("\n\n        if (metadata is null)\n        {\n            return null;    \n        }\n" +

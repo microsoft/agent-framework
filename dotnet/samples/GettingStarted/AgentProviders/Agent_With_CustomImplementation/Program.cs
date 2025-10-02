@@ -4,13 +4,8 @@
 // In this case the agent doesn't use AI at all, and simply parrots back the user input in upper case.
 // You can however, build a fully custom agent that uses AI in any way you want.
 
-using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using SampleApp;

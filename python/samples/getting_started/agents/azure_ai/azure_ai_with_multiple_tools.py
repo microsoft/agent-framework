@@ -79,7 +79,7 @@ async def main() -> None:
         print(f"{agent.name}: {result1}\n")
         print("\n=======================================\n")
         # Second query
-        query2 = "What is Microsoft Semantic Kernel and use a web search to see what is Reddit saying about it?"
+        query2 = "What is Microsoft Agent Framework and use a web search to see what is Reddit saying about it?"
         print(f"User: {query2}")
         result2 = await handle_approvals_with_thread(query2, agent, thread)
         print(f"{agent.name}: {result2}\n")

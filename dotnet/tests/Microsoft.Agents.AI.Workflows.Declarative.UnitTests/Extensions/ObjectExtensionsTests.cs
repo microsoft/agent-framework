@@ -28,11 +28,11 @@ public sealed class ObjectExtensionsTests
     [Fact]
     public void AsListWithSingleElement()
     {
-        const string value = "Test";
-        IList<string>? result = value.AsList<string>();
+        const string Value = "Test";
+        IList<string>? result = Value.AsList<string>();
         Assert.NotNull(result);
         Assert.Single(result);
-        Assert.Equal(value, result[0]);
+        Assert.Equal(Value, result[0]);
     }
 
     [Fact]
@@ -88,7 +88,7 @@ public sealed class ObjectExtensionsTests
     [Fact]
     public void ConvertJson()
     {
-        const string json =
+        const string Json =
             """
             {
                 "id": "item1",
@@ -101,7 +101,7 @@ public sealed class ObjectExtensionsTests
                 { "id", "item1"},
                 { "count", 5},
             };
-        VerifyConversion(json, VariableType.Record(("id", typeof(string)), ("count", typeof(int))), expected);
+        VerifyConversion(Json, VariableType.Record(("id", typeof(string)), ("count", typeof(int))), expected);
     }
 
     private static void VerifyConversion(object? sourceValue, VariableType targetType, object? expectedValue)

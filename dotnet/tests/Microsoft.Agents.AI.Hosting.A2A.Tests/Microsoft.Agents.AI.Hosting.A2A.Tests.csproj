@@ -2,7 +2,6 @@
 
   <PropertyGroup>
     <TargetFrameworks>$(ProjectsCoreTargetFrameworks)</TargetFrameworks>
-    <NoWarn>$(NoWarn);NU1504</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

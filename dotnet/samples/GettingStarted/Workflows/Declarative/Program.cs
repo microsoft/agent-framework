@@ -1,12 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
-using System.Linq;
 using System.Reflection;
-using System.Threading.Tasks;
 using Azure.AI.Agents.Persistent;
 using Azure.Identity;
 using Microsoft.Agents.AI.Workflows;
@@ -22,7 +17,7 @@ namespace Demo.DeclarativeWorkflow;
 /// </summary>
 /// <remarks>
 /// <b>Configuration</b>
-/// Define AZURE_FOUNDRY_PROJECT_ENDPOINT as a user-secret or environment variable that
+/// Define FOUNDRY_PROJECT_ENDPOINT as a user-secret or environment variable that
 /// points to your Foundry project endpoint.
 /// <b>Usage</b>
 /// Provide the path to the workflow definition file as the first argument.

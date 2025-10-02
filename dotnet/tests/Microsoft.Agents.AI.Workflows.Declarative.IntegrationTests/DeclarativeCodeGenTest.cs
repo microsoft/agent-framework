@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -15,29 +16,29 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests;
 public sealed class DeclarativeCodeGenTest(ITestOutputHelper output) : WorkflowTest(output)
 {
     [Theory]
-    [InlineData("SendActivity.yaml", "SendActivity.json", Skip = "Needs configuration")]
-    [InlineData("InvokeAgent.yaml", "InvokeAgent.json", Skip = "Needs configuration")]
-    [InlineData("ConversationMessages.yaml", "ConversationMessages.json", Skip = "Needs configuration")]
+    [InlineData("SendActivity.yaml", "SendActivity.json")]
+    [InlineData("InvokeAgent.yaml", "InvokeAgent.json")]
+    [InlineData("ConversationMessages.yaml", "ConversationMessages.json")]
     public Task ValidateCaseAsync(string workflowFileName, string testcaseFileName) =>
-        this.RunWorkflowAsync(Path.Combine("Workflows", workflowFileName), testcaseFileName);
+        this.RunWorkflowAsync(Path.Combine(Environment.CurrentDirectory, "Workflows", workflowFileName), testcaseFileName);
 
     [Theory]
-    [InlineData("Marketing.yaml", "Marketing.json", Skip = "Needs configuration")]
-    [InlineData("MathChat.yaml", "MathChat.json", Skip = "Needs configuration")]
-    [InlineData("DeepResearch.yaml", "DeepResearch.json", Skip = "Needs configuration")]
-    [InlineData("HumanInLoop.yaml", "HumanInLoop.json", Skip = "TODO")]
+    [InlineData("Marketing.yaml", "Marketing.json")]
+    [InlineData("MathChat.yaml", "MathChat.json")]
+    [InlineData("DeepResearch.yaml", "DeepResearch.json", Skip = "Long running")]
+    [InlineData("HumanInLoop.yaml", "HumanInLoop.json", Skip = "Needs test support")]
     public Task ValidateScenarioAsync(string workflowFileName, string testcaseFileName) =>
         this.RunWorkflowAsync(Path.Combine(GetRepoFolder(), "workflow-samples", workflowFileName), testcaseFileName);
 
     protected override async Task RunAndVerifyAsync<TInput>(Testcase testcase, string workflowPath, DeclarativeWorkflowOptions workflowOptions)
     {
-        const string workflowNamespace = "Test.WorkflowProviders";
-        const string workflowPrefix = "Test";
+        const string WorkflowNamespace = "Test.WorkflowProviders";
+        const string WorkflowPrefix = "Test";
 
-        string workflowProviderCode = DeclarativeWorkflowBuilder.Eject(workflowPath, DeclarativeWorkflowLanguage.CSharp, workflowNamespace, workflowPrefix);
+        string workflowProviderCode = DeclarativeWorkflowBuilder.Eject(workflowPath, DeclarativeWorkflowLanguage.CSharp, WorkflowNamespace, WorkflowPrefix);
         try
         {
-            WorkflowEvents workflowEvents = await WorkflowHarness.RunCodeAsync(workflowProviderCode, $"{workflowPrefix}WorkflowProvider", workflowNamespace, workflowOptions, (TInput)GetInput<TInput>(testcase));
+            WorkflowEvents workflowEvents = await WorkflowHarness.RunCodeAsync(workflowProviderCode, $"{WorkflowPrefix}WorkflowProvider", WorkflowNamespace, workflowOptions, (TInput)GetInput<TInput>(testcase));
             foreach (ExecutorEvent invokeEvent in workflowEvents.ExecutorInvokeEvents)
             {
                 this.Output.WriteLine($"EXEC: {invokeEvent.ExecutorId}");

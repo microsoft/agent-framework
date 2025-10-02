@@ -40,7 +40,7 @@ async def mcp_tools_on_run_level() -> None:
         print(f"{agent.name}: {result1}\n")
         print("\n=======================================\n")
         # Second query
-        query2 = "What is Microsoft Semantic Kernel?"
+        query2 = "What is Microsoft Agent Framework?"
         print(f"User: {query2}")
         result2 = await agent.run(query2, tools=mcp_server)
         print(f"{agent.name}: {result2}\n")
@@ -71,7 +71,7 @@ async def mcp_tools_on_agent_level() -> None:
         print(f"{agent.name}: {result1}\n")
         print("\n=======================================\n")
         # Second query
-        query2 = "What is Microsoft Semantic Kernel?"
+        query2 = "What is Microsoft Agent Framework?"
         print(f"User: {query2}")
         result2 = await agent.run(query2)
         print(f"{agent.name}: {result2}\n")

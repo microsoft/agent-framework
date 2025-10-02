@@ -11,6 +11,11 @@ from azure.identity import AzureCliCredential
 
 async def test_image() -> None:
     """Test image analysis with Azure."""
+    # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
+    # authentication option. Requires AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
+    # environment variables to be set.
+    # Alternatively, you can pass deployment_name explicitly:
+    # client = AzureOpenAIChatClient(credential=AzureCliCredential(), deployment_name="your-deployment-name")
     client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     # Fetch image from httpbin
