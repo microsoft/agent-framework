@@ -970,16 +970,17 @@ async def _auto_invoke_function(
         FunctionResultContent,
     )
 
+    tool: AIFunction[BaseModel, Any] | None = None
     if isinstance(function_call_content, FunctionCallContent):
-        tool: AIFunction[BaseModel, Any] | None = tool_map.get(function_call_content.name)
+        tool = tool_map.get(function_call_content.name)
         if tool is None:
             raise KeyError(f"No tool or function named '{function_call_content.name}'")
-        if tool.approval_mode == "always_require" and isinstance(function_call_content, FunctionCallContent):
+        if tool.approval_mode == "always_require":
             return FunctionApprovalRequestContent(id=function_call_content.call_id, function_call=function_call_content)
     else:
         if isinstance(function_call_content, FunctionApprovalResponseContent):
             if function_call_content.approved:
-                tool: AIFunction[BaseModel, Any] | None = tool_map.get(function_call_content.function_call.name)
+                tool = tool_map.get(function_call_content.function_call.name)
                 if tool is None:
                     # we assume it is a hosted tool
                     return function_call_content
