@@ -13,7 +13,7 @@ using OpenAI.Assistants;
 namespace Microsoft.Agents.AI.OpenAI.UnitTests.Extensions;
 
 /// <summary>
-/// Unit tests for the <see cref="global::OpenAI.OpenAIAssistantClientExtensions"/> class.
+/// Unit tests for the <see cref="OpenAIAssistantClientExtensions"/> class.
 /// </summary>
 public sealed class OpenAIAssistantClientExtensionsTests
 {
