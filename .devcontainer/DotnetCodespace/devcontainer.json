@@ -4,5 +4,13 @@
   "features": {
     "ghcr.io/devcontainers/features/dotnet:2.4.0": {},
     "ghcr.io/devcontainers/features/powershell:1.5.1": {}
+  },
+  "workspaceFolder": "/dotnet",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-dotnettools.csdevkit"
+      ]
+    }
   }
 }
