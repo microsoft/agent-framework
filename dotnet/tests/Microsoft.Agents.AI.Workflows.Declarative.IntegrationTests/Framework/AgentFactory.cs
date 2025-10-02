@@ -60,10 +60,10 @@ internal static class AgentFactory
         {
             try
             {
-                string filePath = Path.Combine("Agents", file);
+                string filePath = Path.Combine(Environment.CurrentDirectory, "Agents", file);
                 if (!File.Exists(filePath))
                 {
-                    filePath = Path.Combine(repoRoot, "workflow-samples/setup", file);
+                    filePath = Path.Combine(repoRoot, "workflow-samples", "setup", file);
                 }
                 Assert.True(File.Exists(filePath), $"Agent definition file not found: {file}");
 
@@ -80,7 +80,7 @@ internal static class AgentFactory
             }
             catch (Exception exception)
             {
-                Console.WriteLine($"FAILURE: Error creating agent {id} from file {file}: {exception.Message}");
+                Console.WriteLine($"FAILURE: Error creating agent {id}: {exception.Message}");
                 throw;
             }
         }

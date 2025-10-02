@@ -18,6 +18,19 @@ Azure AI Agent with Multiple Tools Example
 
 This sample demonstrates integrating multiple tools (MCP and Web Search) with Azure AI Agents,
 including user approval workflows for function call security.
+
+Prerequisites:
+1. Set AZURE_AI_PROJECT_ENDPOINT and AZURE_AI_MODEL_DEPLOYMENT_NAME environment variables
+2. For Bing search functionality, set BING_CONNECTION_ID environment variable to your Bing connection ID
+   Example: BING_CONNECTION_ID="/subscriptions/{subscription-id}/resourceGroups/{resource-group}/
+            providers/Microsoft.CognitiveServices/accounts/{ai-service-name}/projects/{project-name}/
+            connections/{connection-name}"
+
+To set up Bing Grounding:
+1. Go to Azure AI Foundry portal (https://ai.azure.com)
+2. Navigate to your project's "Connected resources" section
+3. Add a new connection for "Grounding with Bing Search"
+4. Copy the connection ID and set it as the BING_CONNECTION_ID environment variable
 """
 
 
@@ -66,7 +79,6 @@ async def main() -> None:
                     name="Microsoft Learn MCP",
                     url="https://learn.microsoft.com/api/mcp",
                 ),
-                # needs BING_CONNECTION_ID set in the env
                 HostedWebSearchTool(count=5),
                 get_time,
             ],
@@ -79,7 +91,7 @@ async def main() -> None:
         print(f"{agent.name}: {result1}\n")
         print("\n=======================================\n")
         # Second query
-        query2 = "What is Microsoft Semantic Kernel and use a web search to see what is Reddit saying about it?"
+        query2 = "What is Microsoft Agent Framework and use a web search to see what is Reddit saying about it?"
         print(f"User: {query2}")
         result2 = await handle_approvals_with_thread(query2, agent, thread)
         print(f"{agent.name}: {result2}\n")
