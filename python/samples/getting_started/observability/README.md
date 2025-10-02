@@ -163,6 +163,43 @@ exporter = OTLPSpanExporter(endpoint="your-otlp-endpoint", compression=Compressi
 setup_observability(exporters=[exporter])
 ```
 
+### Sending telemetry to Opik
+
+[Opik](https://www.comet.com/opik/) is Comet's observability, evaluation, and optimization platform for LLM and agent workloads. Because Agent Framework already uses OpenTelemetry semantic conventions, you only need to point the OTLP exporter at the Opik collector.
+
+1. Install the Opik Python SDK:
+
+   ```bash
+   pip install opik
+   ```
+
+2. Set the OTLP endpoint and headers for your deployment type before starting the application:
+
+   ```bash
+   # Opik Cloud
+   export OTEL_EXPORTER_OTLP_ENDPOINT=https://www.comet.com/opik/api/v1/private/otel
+   export OTEL_EXPORTER_OTLP_HEADERS='Authorization=<your-api-key>,Comet-Workspace=<workspace>,projectName=<project>'
+
+   # Opik Enterprise
+   export OTEL_EXPORTER_OTLP_ENDPOINT=https://<your-comet-domain>/opik/api/v1/private/otel
+   export OTEL_EXPORTER_OTLP_HEADERS='Authorization=<your-api-key>,Comet-Workspace=<workspace>,projectName=<project>'
+
+   # Self-hosted Opik
+   export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:5173/api/v1/private/otel
+   export OTEL_EXPORTER_OTLP_HEADERS='projectName=<project>'
+   ```
+
+3. Call `setup_observability` with the OTLP HTTP exporter (the environment variables above provide the endpoint and headers):
+
+   ```python
+   from agent_framework.observability import setup_observability
+   from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+
+   setup_observability(exporters=[OTLPSpanExporter()])
+   ```
+
+When you run the samples, Opik will display the full agent → tool → model hierarchy, token usage, cost estimates, and any errors captured during execution. See the [Opik + Microsoft Agent Framework guide](https://www.comet.com/docs/opik/integrations/microsoft-agent-framework) for screenshots and advanced configuration tips.
+
 ### Logs
 
 When you are in Azure Monitor and want to have a overall view of the span, use this query in the logs section:
