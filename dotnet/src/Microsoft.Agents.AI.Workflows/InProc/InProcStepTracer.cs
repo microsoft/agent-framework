@@ -73,12 +73,12 @@ internal sealed class InProcStepTracer : IStepTracer
     {
         StringBuilder sb = new();
 
-        if (this.Instantiated.Keys.Count != 0)
+        if (!this.Instantiated.IsEmpty)
         {
             sb.Append("Instantiated: ").Append(string.Join(", ", this.Instantiated.Keys.OrderBy(id => id, StringComparer.Ordinal)));
         }
 
-        if (this.Activated.Keys.Count != 0)
+        if (!this.Activated.IsEmpty)
         {
             if (sb.Length != 0)
             {
