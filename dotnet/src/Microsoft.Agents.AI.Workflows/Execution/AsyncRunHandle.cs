@@ -17,7 +17,7 @@ internal sealed class AsyncRunHandle : ICheckpointingHandle, IAsyncDisposable, I
     private readonly ISuperStepRunner _stepRunner;
     private readonly ICheckpointingHandle _checkpointingHandle;
 
-    private readonly IRunEventStream _eventStream;
+    private readonly LockstepRunEventStream _eventStream;
     private readonly CancellationTokenSource _endRunSource = new();
     private int _isDisposed;
     private int _isEventStreamTaken;
@@ -29,7 +29,7 @@ internal sealed class AsyncRunHandle : ICheckpointingHandle, IAsyncDisposable, I
 
         this._eventStream = mode switch
         {
-            ExecutionMode.OffThread => new OffThreadRunEventStream(stepRunner, this),
+            //ExecutionMode.OffThread => Not supported yet
             ExecutionMode.Lockstep => new LockstepRunEventStream(stepRunner),
             _ => throw new ArgumentOutOfRangeException(nameof(mode), $"Unknown execution mode {mode}")
         };
