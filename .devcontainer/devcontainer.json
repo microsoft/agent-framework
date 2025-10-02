@@ -4,5 +4,5 @@
   "features": {
     "ghcr.io/devcontainers-extra/features/coverage-py:2": {}
   },
-  "workspaceFolder": "/python"
+  "workspaceFolder": "/workspaces/agent-framework-1/python/"
 }
