@@ -23,6 +23,8 @@ public abstract class RootExecutor<TInput> : Executor<TInput> where TInput : not
     private readonly WorkflowFormulaState _state;
     private readonly Func<TInput, ChatMessage>? _inputTransform;
 
+    private string? _conversationId;
+
     /// <summary>
     /// Get the shared formula session to provide to workflow <see cref="ActionExecutor"/> instances.
     /// </summary>
@@ -39,6 +41,7 @@ public abstract class RootExecutor<TInput> : Executor<TInput> where TInput : not
     {
         this._configuration = options.Configuration;
         this._agentProvider = options.AgentProvider;
+        this._conversationId = options.ConversationId;
         this._inputTransform = inputTransform;
         this._state = new WorkflowFormulaState(options.CreateRecalcEngine());
         this._state.InitializeSystem();
@@ -53,10 +56,13 @@ public abstract class RootExecutor<TInput> : Executor<TInput> where TInput : not
 
         ChatMessage input = (this._inputTransform ?? DefaultInputTransform).Invoke(message);
 
-        string conversationId = await this._agentProvider.CreateConversationAsync(cancellationToken: default).ConfigureAwait(false);
-        await declarativeContext.QueueConversationUpdateAsync(conversationId).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(this._conversationId))
+        {
+            this._conversationId = await this._agentProvider.CreateConversationAsync(cancellationToken: default).ConfigureAwait(false);
+        }
+        await declarativeContext.QueueConversationUpdateAsync(this._conversationId).ConfigureAwait(false);
 
-        await this._agentProvider.CreateMessageAsync(conversationId, input, cancellationToken: default).ConfigureAwait(false);
+        await this._agentProvider.CreateMessageAsync(this._conversationId, input, cancellationToken: default).ConfigureAwait(false);
         await declarativeContext.SetLastMessageAsync(input).ConfigureAwait(false);
 
         await declarativeContext.SendMessageAsync(new ActionExecutorResult(this.Id)).ConfigureAwait(false);

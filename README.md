@@ -88,7 +88,7 @@ dotnet add package Microsoft.Agents.AI
 Create a simple Azure Responses Agent that writes a haiku about the Microsoft Agent Framework
 
 ```python
-# pip install agent-framework --prerelease=allow
+# pip install agent-framework --pre
 # Use `az login` to authenticate with Azure CLI
 import asyncio
 from agent_framework.azure import AzureOpenAIResponsesClient
