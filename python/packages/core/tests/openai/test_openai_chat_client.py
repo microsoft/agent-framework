@@ -836,7 +836,9 @@ def test_openai_content_parser_document_file_mapping(openai_unit_test_env: dict[
         # Should now use file format with filename
         assert result["type"] == "file"
         assert result["file"]["filename"] == case["filename"]
-        assert result["file"]["file_data"] == doc_with_filename.uri  # Test edge case: empty additional_properties dict
+        assert result["file"]["file_data"] == doc_with_filename.uri
+
+    # Test edge case: empty additional_properties dict
     pdf_empty_props = DataContent(
         uri="data:application/pdf;base64,JVBERi0xLjQ=",
         media_type="application/pdf",
