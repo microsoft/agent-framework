@@ -49,7 +49,7 @@ public sealed class A2AHostAgent
     public TaskManager? TaskManager { get; private set; }
 
     /// <summary>
-    /// Attach the <see cref="A2AAgent"/> to the provided <see cref="ITaskManager"/>.
+    /// Attaches the <see cref="A2AAgent"/> to the provided <see cref="ITaskManager"/>.
     /// </summary>
     /// <param name="taskManager">The <see cref="ITaskManager"/> to attach to.</param>
     public void Attach(TaskManager taskManager)
