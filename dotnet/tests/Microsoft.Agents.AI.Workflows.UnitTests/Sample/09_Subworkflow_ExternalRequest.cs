@@ -262,9 +262,15 @@ internal sealed class ResourceRequestor() : Executor(nameof(ResourceRequestor))
     protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
     {
         return routeBuilder.AddHandler<List<UserRequest>>(this.RequestResourcesAsync)
-                           .AddHandler<UserRequest>((request, context) => this.RequestResourcesAsync([request], context))
+                           .AddHandler<UserRequest>(InvokeResourceRequestAsync)
                            .AddHandler<ResourceResponse>(this.HandleResponseAsync)
                            .AddHandler<PolicyResponse>(this.HandleResponseAsync);
+
+        // For some reason, using a lambda here causes the analyzer to generate a spurious
+        // VSTHRD110: "Observe the awaitable result of this method call by awaiting it, assigning
+        // to a variable, or passing it to another method"
+        ValueTask InvokeResourceRequestAsync(UserRequest request, IWorkflowContext context)
+            => this.RequestResourcesAsync([request], context);
     }
 
     private async ValueTask RequestResourcesAsync(List<UserRequest> requests, IWorkflowContext context)
@@ -432,8 +438,14 @@ internal sealed class Coordinator() : Executor(nameof(Coordinator))
     protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
     {
         return routeBuilder.AddHandler<List<UserRequest>>(this.StartAsync)
-                           .AddHandler<UserRequest>((request, context) => this.StartAsync([request], context))
+                           .AddHandler<UserRequest>(InvokeStartAsync)
                            .AddHandler<RequestFinished>(this.HandleFinishedRequestAsync);
+
+        // For some reason, using a lambda here causes the analyzer to generate a spurious
+        // VSTHRD110: "Observe the awaitable result of this method call by awaiting it, assigning
+        // to a variable, or passing it to another method"
+        ValueTask InvokeStartAsync(UserRequest request, IWorkflowContext context)
+            => this.StartAsync([request], context);
     }
 
     private ValueTask HandleFinishedRequestAsync(RequestFinished finished, IWorkflowContext context)
