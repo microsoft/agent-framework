@@ -54,6 +54,7 @@ jobs:
             .
             .github
             dotnet
+            workflow-samples
       - name: Setup dotnet
         uses: actions/setup-dotnet@v5.0.0
         with:
@@ -136,6 +137,10 @@ jobs:
           # Azure AI Foundry
           AzureAI__Endpoint: ${{ secrets.AZUREAI__ENDPOINT }}
           AzureAI__DeploymentName: ${{ vars.AZUREAI__DEPLOYMENTNAME }}
+          AzureAI__BingConnectionId: ${{ vars.AZUREAI__BINGCONECTIONID }}
+          FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+          FOUNDRY_MODEL_DEPLOYMENT_NAME: ${{ vars.FOUNDRY_MODEL_DEPLOYMENT_NAME }}
+          FOUNDRY_CONNECTION_GROUNDING_TOOL: ${{ vars.FOUNDRY_CONNECTION_GROUNDING_TOOL }}
 
       # Generate test reports and check coverage
       - name: Generate test reports

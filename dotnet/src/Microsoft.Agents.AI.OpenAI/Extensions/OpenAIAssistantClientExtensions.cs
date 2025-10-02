@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.ClientModel;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
@@ -20,6 +21,68 @@ namespace OpenAI;
 /// </remarks>
 public static class OpenAIAssistantClientExtensions
 {
+    /// <summary>
+    /// Converts a <see cref="ClientResult{Assistant}"/> to a <see cref="ChatClientAgent"/>.
+    /// </summary>
+    /// <param name="assistantClient">The assistant client.</param>
+    /// <param name="assistantClientResult">The client result containing the assistant.</param>
+    /// <param name="chatOptions">Optional chat options.</param>
+    /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
+    /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the assistant.</returns>
+    public static ChatClientAgent AsAIAgent(
+        this AssistantClient assistantClient,
+        ClientResult<Assistant> assistantClientResult,
+        ChatOptions? chatOptions = null,
+        Func<IChatClient, IChatClient>? clientFactory = null)
+    {
+        if (assistantClientResult is null)
+        {
+            throw new ArgumentNullException(nameof(assistantClientResult));
+        }
+
+        return assistantClient.AsAIAgent(assistantClientResult.Value, chatOptions, clientFactory);
+    }
+
+    /// <summary>
+    /// Converts an <see cref="Assistant"/> to a <see cref="ChatClientAgent"/>.
+    /// </summary>
+    /// <param name="assistantClient">The assistant client.</param>
+    /// <param name="assistantMetadata">The assistant metadata.</param>
+    /// <param name="chatOptions">Optional chat options.</param>
+    /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
+    /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the assistant.</returns>
+    public static ChatClientAgent AsAIAgent(
+        this AssistantClient assistantClient,
+        Assistant assistantMetadata,
+        ChatOptions? chatOptions = null,
+        Func<IChatClient, IChatClient>? clientFactory = null)
+    {
+        if (assistantMetadata is null)
+        {
+            throw new ArgumentNullException(nameof(assistantMetadata));
+        }
+        if (assistantClient is null)
+        {
+            throw new ArgumentNullException(nameof(assistantClient));
+        }
+
+        var chatClient = assistantClient.AsIChatClient(assistantMetadata.Id);
+
+        if (clientFactory is not null)
+        {
+            chatClient = clientFactory(chatClient);
+        }
+
+        return new ChatClientAgent(chatClient, options: new()
+        {
+            Id = assistantMetadata.Id,
+            Name = assistantMetadata.Name,
+            Description = assistantMetadata.Description,
+            Instructions = assistantMetadata.Instructions,
+            ChatOptions = chatOptions
+        });
+    }
+
     /// <summary>
     /// Retrieves an existing server side agent, wrapped as a <see cref="ChatClientAgent"/> using the provided <see cref="AssistantClient"/>.
     /// </summary>
@@ -47,7 +110,7 @@ public static class OpenAIAssistantClientExtensions
         }
 
         var assistant = assistantClient.GetAssistant(agentId, cancellationToken);
-        return assistant.AsAIAgent(assistantClient, chatOptions, clientFactory);
+        return assistantClient.AsAIAgent(assistant, chatOptions, clientFactory);
     }
 
     /// <summary>
@@ -76,9 +139,8 @@ public static class OpenAIAssistantClientExtensions
             throw new ArgumentException($"{nameof(agentId)} should not be null or whitespace.", nameof(agentId));
         }
 
-        var assistanceResponse = await assistantClient.GetAssistantAsync(agentId, cancellationToken).ConfigureAwait(false);
-
-        return assistanceResponse.AsAIAgent(assistantClient, chatOptions, clientFactory);
+        var assistantResponse = await assistantClient.GetAssistantAsync(agentId, cancellationToken).ConfigureAwait(false);
+        return assistantClient.AsAIAgent(assistantResponse, chatOptions, clientFactory);
     }
 
     /// <summary>

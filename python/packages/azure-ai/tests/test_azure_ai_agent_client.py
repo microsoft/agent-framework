@@ -48,6 +48,7 @@ from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import HttpResponseError
 from azure.identity.aio import AzureCliCredential
 from pydantic import BaseModel, Field, ValidationError
+from pytest import MonkeyPatch
 
 from agent_framework_azure_ai import AzureAIAgentClient, AzureAISettings
 
@@ -1006,8 +1007,11 @@ async def test_azure_ai_chat_client_prep_tools_file_search_no_connection(mock_ai
         await chat_client._prep_tools([file_search_tool])  # type: ignore
 
 
-async def test_azure_ai_chat_client_prep_tools_file_search_no_index_name(mock_ai_project_client: MagicMock) -> None:
+async def test_azure_ai_chat_client_prep_tools_file_search_no_index_name(
+    mock_ai_project_client: MagicMock, monkeypatch: MonkeyPatch
+) -> None:
     """Test _prep_tools with HostedFileSearchTool missing index_name and vector stores."""
+    monkeypatch.delenv("AZURE_AI_SEARCH_INDEX_NAME", raising=False)
 
     chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, agent_id="test-agent")
 

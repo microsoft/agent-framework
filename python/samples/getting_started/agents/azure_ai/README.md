@@ -22,7 +22,47 @@ This folder contains examples demonstrating different ways to create and use age
 
 ## Environment Variables
 
-Make sure to set the following environment variables before running the examples:
+Before running the examples, you need to set up your environment variables. You can do this in one of two ways:
 
-- `AZURE_AI_PROJECT_ENDPOINT`: Your Azure AI project endpoint
-- `AZURE_AI_MODEL_DEPLOYMENT_NAME`: The name of your model deployment
+### Option 1: Using a .env file (Recommended)
+
+1. Copy the `.env.example` file from the `python` directory to create a `.env` file:
+   ```bash
+   cp ../../.env.example ../../.env
+   ```
+
+2. Edit the `.env` file and add your values:
+   ```
+   AZURE_AI_PROJECT_ENDPOINT="your-project-endpoint"
+   AZURE_AI_MODEL_DEPLOYMENT_NAME="your-model-deployment-name"
+   ```
+
+3. For samples using Bing Grounding search (like `azure_ai_with_bing_grounding.py` and `azure_ai_with_multiple_tools.py`), you'll also need:
+   ```
+   BING_CONNECTION_ID="/subscriptions/{subscription-id}/resourceGroups/{resource-group}/providers/Microsoft.CognitiveServices/accounts/{ai-service-name}/projects/{project-name}/connections/{connection-name}"
+   ```
+
+   To get your Bing connection ID:
+   - Go to [Azure AI Foundry portal](https://ai.azure.com)
+   - Navigate to your project's "Connected resources" section
+   - Add a new connection for "Grounding with Bing Search"
+   - Copy the connection ID
+
+### Option 2: Using environment variables directly
+
+Set the environment variables in your shell:
+
+```bash
+export AZURE_AI_PROJECT_ENDPOINT="your-project-endpoint"
+export AZURE_AI_MODEL_DEPLOYMENT_NAME="your-model-deployment-name"
+export BING_CONNECTION_ID="your-bing-connection-id"  # Optional, only needed for web search samples
+```
+
+### Required Variables
+
+- `AZURE_AI_PROJECT_ENDPOINT`: Your Azure AI project endpoint (required for all examples)
+- `AZURE_AI_MODEL_DEPLOYMENT_NAME`: The name of your model deployment (required for all examples)
+
+### Optional Variables
+
+- `BING_CONNECTION_ID`: Your Bing connection ID (required for `azure_ai_with_bing_grounding.py` and `azure_ai_with_multiple_tools.py`)
