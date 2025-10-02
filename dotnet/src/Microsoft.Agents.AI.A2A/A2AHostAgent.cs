@@ -26,7 +26,7 @@ public sealed class A2AHostAgent
     /// </summary>
     /// <param name="agent">The <see cref="AIAgent"/> to host.</param>
     /// <param name="agentCard">The <see cref="AgentCard"/> for the hosted agent.</param>
-    /// <param name="taskManager">The <see cref="ITaskManager"/> for handling agent tasks.
+    /// <param name="taskManager">The <see cref="ITaskManager"/> for handling agent tasks.</param>
     public A2AHostAgent(AIAgent agent, AgentCard agentCard, TaskManager? taskManager = null)
     {
         Throw.IfNull(agent);
