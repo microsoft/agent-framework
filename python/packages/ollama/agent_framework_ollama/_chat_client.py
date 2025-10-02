@@ -3,7 +3,7 @@
 import json
 from collections.abc import AsyncIterable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
 from itertools import chain
-from typing import Any, ClassVar, TypeVar
+from typing import Any, ClassVar
 
 from agent_framework import (
     AIFunction,
@@ -18,9 +18,11 @@ from agent_framework import (
     FunctionResultContent,
     Role,
     TextContent,
+    TextReasoningContent,
     ToolProtocol,
     UsageDetails,
     get_logger,
+    use_chat_middleware,
     use_function_invocation,
 )
 from agent_framework._pydantic import AFBaseSettings
@@ -44,17 +46,15 @@ class OllamaSettings(AFBaseSettings):
 
 
 logger = get_logger("agent_framework.ollama")
-TOllamaChatClient = TypeVar("TOllamaChatClient", bound="OllamaChatClient")
 
 
 @use_function_invocation
 @use_observability
+@use_chat_middleware
 class OllamaChatClient(BaseChatClient):
     """Ollama Chat completion class."""
 
-    OTEL_PROVIDER_NAME: ClassVar[str] = "ollama"  # type: ignore[reportIncompatibleVariableOverride, misc]
-    client: AsyncClient
-    chat_model_id: str
+    OTEL_PROVIDER_NAME: ClassVar[str] = "ollama"
 
     def __init__(
         self,
@@ -63,6 +63,7 @@ class OllamaChatClient(BaseChatClient):
         chat_model_id: str | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
+        **kwargs: Any,
     ) -> None:
         """Initialize an Ollama Chat client.
 
@@ -72,6 +73,7 @@ class OllamaChatClient(BaseChatClient):
             chat_model_id: The Ollama chat model ID to use. Can be set via the OLLAMA_CHAT_MODEL_ID env variable.
             env_file_path: An optional path to a dotenv (.env) file to load environment variables from.
             env_file_encoding: The encoding to use when reading the dotenv (.env) file. Defaults to 'utf-8'.
+            **kwargs: Additional keyword arguments passed to BaseChatClient.
         """
         try:
             ollama_settings = OllamaSettings(
@@ -85,12 +87,24 @@ class OllamaChatClient(BaseChatClient):
                 "Ollama chat model ID must be provided via chat_model_id or OLLAMA_CHAT_MODEL_ID environment variable."
             )
 
-        client = client or AsyncClient(host=ollama_settings.host)
+        self.chat_model_id = ollama_settings.chat_model_id
+        self.client = client or AsyncClient(host=ollama_settings.host)
+        # Save Host URL for serialization with to_dict()
+        self.host = str(self.client._client.base_url)
 
-        super().__init__(
-            client=client,  # type: ignore[reportCallIssue]
-            chat_model_id=ollama_settings.chat_model_id,  # type: ignore[reportCallIssue]
-        )
+        # Call super().__init__() to continue MRO chain (e.g., BaseChatClient)
+        # Extract known kwargs that belong to other base classes
+        additional_properties = kwargs.pop("additional_properties", None)
+        middleware = kwargs.pop("middleware", None)
+
+        # Build super().__init__() args
+        super_kwargs = {}
+        if additional_properties is not None:
+            super_kwargs["additional_properties"] = additional_properties
+        if middleware is not None:
+            super_kwargs["middleware"] = middleware
+
+        super().__init__(**super_kwargs)
 
     async def _inner_get_response(
         self,
@@ -137,7 +151,7 @@ class OllamaChatClient(BaseChatClient):
 
     def _prepare_options(self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions) -> dict[str, Any]:
         # Preprocess web search tool if it exists
-        options_dict = chat_options.to_provider_settings()
+        options_dict = chat_options.to_provider_settings(exclude={"instructions"})
         # Prepare Messages from Agent Framework format to Ollama format
         if messages and "messages" not in options_dict:
             options_dict["messages"] = self._prepare_chat_history_for_request(messages)
@@ -192,11 +206,17 @@ class OllamaChatClient(BaseChatClient):
         return [user_message]
 
     def _format_assistant_message(self, message: ChatMessage) -> list[OllamaMessage]:
-        if not any(isinstance(c, (FunctionCallContent, TextContent)) for c in message.contents):
+        if not any(isinstance(c, (FunctionCallContent, TextContent, TextReasoningContent)) for c in message.contents):
             raise ServiceInvalidRequestError(
-                "Ollama connector currently only supports user messages with TextContent or FunctionCallContent."
+                "Ollama connector currently only supports user messages with TextContent,"
+                " TextReasoningContent, or FunctionCallContent."
             )
-        assistant_message = OllamaMessage(role="assistant", content=message.text)
+
+        assistant_message = OllamaMessage(role="assistant")
+        if isinstance(message, TextContent):
+            assistant_message.content = message.text
+        if isinstance(message, TextReasoningContent):
+            assistant_message.thinking = message.text
 
         tool_calls = [item for item in message.contents if isinstance(item, FunctionCallContent)]
         if tool_calls:
@@ -229,6 +249,8 @@ class OllamaChatClient(BaseChatClient):
 
     def _ollama_to_agent_framework_content(self, response: OllamaChatResponse) -> list[Contents]:
         contents: list[Contents] = []
+        if response.message.thinking:
+            contents.append(TextReasoningContent(text=response.message.thinking))
         if response.message.content:
             contents.append(TextContent(text=response.message.content))
         if response.message.tool_calls:
