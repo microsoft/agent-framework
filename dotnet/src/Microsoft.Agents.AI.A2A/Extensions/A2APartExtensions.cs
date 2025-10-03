@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using Microsoft.Extensions.AI;
 
 namespace A2A;
