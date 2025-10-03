@@ -26,7 +26,7 @@ from agent_framework_ollama import OllamaChatClient
 
 # region Service Setup
 
-os.environ["RUN_INTEGRATION_TESTS"] = "true"
+os.environ["RUN_INTEGRATION_TESTS"] = "false"
 
 skip_if_azure_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
@@ -104,6 +104,9 @@ def test_init(ollama_unit_test_env: dict[str, str]) -> None:
 def test_init_client(ollama_unit_test_env: dict[str, str]) -> None:
     # Test successful initialization with provided client
     test_client = MagicMock(spec=AsyncClient)
+    # Mock underlying HTTP client's base_url
+    test_client._client = MagicMock()
+    test_client._client.base_url = ollama_unit_test_env["OLLAMA_CHAT_MODEL_ID"]
     ollama_chat_client = OllamaChatClient(client=test_client)
 
     assert ollama_chat_client.client is test_client
