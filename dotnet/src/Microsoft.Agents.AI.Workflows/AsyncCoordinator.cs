@@ -19,14 +19,12 @@ internal sealed class AsyncCoordinator
     /// </returns>
     public async ValueTask<bool> WaitForCoordinationAsync(CancellationToken cancellation = default)
     {
-        // Init, but do not wait into a new Barrier
-        AsyncBarrier newBarrier = new();
-
-        // Check if there is not already a barrier; if there is, use that one instead
-        AsyncBarrier? actualBarrier = Interlocked.CompareExchange(ref this._coordinationBarrier, newBarrier, null);
-
-        // If actualBarrier was not null, there exists a barrier; use that one. If it is null, use the new one we created.
-        actualBarrier ??= newBarrier;
+        // There is a chance that we might get a stale barrier that is getting released if there is a
+        // release happening concurrently with this call. This is by design, and should be considered
+        // when using this class.
+        AsyncBarrier actualBarrier = this._coordinationBarrier
+                                  ?? Interlocked.CompareExchange(ref this._coordinationBarrier, new(), null)
+                                  ?? this._coordinationBarrier!; // Re-read after setting
 
         return await actualBarrier.JoinAsync(cancellation).ConfigureAwait(false);
     }
