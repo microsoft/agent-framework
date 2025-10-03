@@ -7,7 +7,6 @@ from typing import Annotated
 
 import google.auth.transport.requests
 from agent_framework.openai import OpenAIChatClient
-from google.auth import default, transport
 
 """
 Vertex AI with OpenAI Chat Client Example
