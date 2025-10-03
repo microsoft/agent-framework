@@ -16,7 +16,7 @@ from agent_framework import (
     TextContent,
     UriContent,
 )
-from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError
+from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError, ServiceResponseException
 from ollama import AsyncClient
 from ollama._types import ChatResponse as OllamaChatResponse
 from ollama._types import Message as OllamaMessage
@@ -25,8 +25,6 @@ from openai import AsyncStream
 from agent_framework_ollama import OllamaChatClient
 
 # region Service Setup
-
-os.environ["RUN_INTEGRATION_TESTS"] = "false"
 
 skip_if_azure_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
@@ -218,6 +216,25 @@ async def test_cmc_reasoning(
 
 
 @patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_chat_failure(
+    mock_chat: AsyncMock,
+    ollama_unit_test_env: dict[str, str],
+    chat_history: list[ChatMessage],
+) -> None:
+    # Simulate a failure in the Ollama client
+    mock_chat.side_effect = Exception("Connection error")
+    chat_history.append(ChatMessage(text="hello world", role="user"))
+
+    ollama_client = OllamaChatClient()
+
+    with pytest.raises(ServiceResponseException) as exc_info:
+        await ollama_client.get_response(messages=chat_history)
+
+    assert "Ollama chat request failed" in str(exc_info.value)
+    assert "Connection error" in str(exc_info.value)
+
+
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
 async def test_cmc_streaming(
     mock_chat: AsyncMock,
     ollama_unit_test_env: dict[str, str],
@@ -249,6 +266,26 @@ async def test_cmc_streaming_reasoning(
 
     async for chunk in result:
         assert chunk.reasoning == "test"
+
+
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_streaming_chat_failure(
+    mock_chat: AsyncMock,
+    ollama_unit_test_env: dict[str, str],
+    chat_history: list[ChatMessage],
+) -> None:
+    # Simulate a failure in the Ollama client for streaming
+    mock_chat.side_effect = Exception("Streaming connection error")
+    chat_history.append(ChatMessage(text="hello world", role="user"))
+
+    ollama_client = OllamaChatClient()
+
+    with pytest.raises(ServiceResponseException) as exc_info:
+        async for _ in ollama_client.get_streaming_response(messages=chat_history):
+            pass
+
+    assert "Ollama streaming chat request failed" in str(exc_info.value)
+    assert "Streaming connection error" in str(exc_info.value)
 
 
 @patch.object(AsyncClient, "chat", new_callable=AsyncMock)

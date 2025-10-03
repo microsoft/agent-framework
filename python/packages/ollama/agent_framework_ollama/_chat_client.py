@@ -144,7 +144,7 @@ class OllamaChatClient(BaseChatClient):
                 **kwargs,
             )
         except Exception as ex:
-            raise ServiceResponseException("Ollama streaming chat request failed.", ex) from ex
+            raise ServiceResponseException(f"Ollama streaming chat request failed : {ex}", ex) from ex
 
         async for part in response_object:
             yield self._ollama_streaming_response_to_agent_framework_message(part)
