@@ -2,6 +2,8 @@
 
 using System;
 using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace RealtimeKeypoints.Memory;
 
@@ -13,5 +15,5 @@ public abstract class InMemoryVectorStore
     /// <summary>
     /// Gets recent transcripts within the specified time window.
     /// </summary>
-    public abstract List<string> GetRecentTranscripts(TimeSpan timeWindow);
+    public abstract Task<List<string>> GetRecentTranscriptsAsync(TimeSpan timeWindow, CancellationToken cancellationToken = default);
 }

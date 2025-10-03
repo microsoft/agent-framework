@@ -35,7 +35,7 @@ public sealed class RealtimeQuestionAnswerAgent
         {
             await Task.Delay(2000, cancellationToken); // Check every 2 seconds
 
-            var recentTranscripts = this._memoryStore.GetRecentTranscripts(TimeSpan.FromSeconds(15));
+            var recentTranscripts = await this._memoryStore.GetRecentTranscriptsAsync(TimeSpan.FromSeconds(15), cancellationToken);
 
             if (recentTranscripts.Count == 0)
             {
@@ -43,9 +43,15 @@ public sealed class RealtimeQuestionAnswerAgent
             }
 
             // Get only transcripts we haven't processed yet
-            var newTranscripts = recentTranscripts
-                .Where(t => this._memoryStore.GetTranscriptTimestamp(t) > lastProcessedTime)
-                .ToList();
+            var newTranscripts = new List<string>();
+            foreach (var t in recentTranscripts)
+            {
+                var timestamp = await this._memoryStore.GetTranscriptTimestampAsync(t, cancellationToken);
+                if (timestamp > lastProcessedTime)
+                {
+                    newTranscripts.Add(t);
+                }
+            }
 
             if (newTranscripts.Count == 0)
             {
@@ -53,7 +59,7 @@ public sealed class RealtimeQuestionAnswerAgent
             }
 
             // Update last processed time
-            lastProcessedTime = this._memoryStore.GetTranscriptTimestamp(recentTranscripts.Last());
+            lastProcessedTime = await this._memoryStore.GetTranscriptTimestampAsync(recentTranscripts.Last(), cancellationToken);
 
             // Process each new transcript separately in background
             foreach (var transcript in newTranscripts)

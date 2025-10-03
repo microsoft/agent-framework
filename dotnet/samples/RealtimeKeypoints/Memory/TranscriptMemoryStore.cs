@@ -113,15 +113,20 @@ public sealed class TranscriptMemoryStore : InMemoryVectorStore, IDisposable
         }
     }
 
-    public override List<string> GetRecentTranscripts(TimeSpan timeWindow)
+    public override async Task<List<string>> GetRecentTranscriptsAsync(TimeSpan timeWindow, CancellationToken cancellationToken = default)
     {
         var cutoff = DateTimeOffset.UtcNow - timeWindow;
-        lock (this._entries)
+        await this._lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
             return this._entries
                 .Where(e => e.Timestamp >= cutoff)
                 .Select(e => e.Text)
                 .ToList();
+        }
+        finally
+        {
+            this._lock.Release();
         }
     }
 
@@ -129,12 +134,17 @@ public sealed class TranscriptMemoryStore : InMemoryVectorStore, IDisposable
     /// Gets the timestamp of a specific transcript text.
     /// Returns DateTimeOffset.MinValue if not found.
     /// </summary>
-    public DateTimeOffset GetTranscriptTimestamp(string text)
+    public async Task<DateTimeOffset> GetTranscriptTimestampAsync(string text, CancellationToken cancellationToken = default)
     {
-        lock (this._entries)
+        await this._lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
             var entry = this._entries.FirstOrDefault(e => e.Text == text);
             return entry?.Timestamp ?? DateTimeOffset.MinValue;
+        }
+        finally
+        {
+            this._lock.Release();
         }
     }
 
