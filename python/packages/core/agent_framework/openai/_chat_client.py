@@ -420,7 +420,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
                     },
                 }
             case DataContent() | UriContent() if (
-                content.media_type and content.media_type.startswith("application/") and content.uri.startswith("data:")
+                content.has_top_level_media_type("application") and content.uri.startswith("data:")
             ):
                 # All application/* media types should be treated as files for OpenAI
                 filename = getattr(content, "filename", None) or (
