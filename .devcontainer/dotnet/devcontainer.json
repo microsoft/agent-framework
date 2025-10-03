@@ -6,7 +6,7 @@
     "ghcr.io/devcontainers/features/powershell:1.5.1": {}
   },
   "workspaceMount": "source=${localWorkspaceFolder},target=/,type=bind",
-  "workspaceFolder": "/dotnet/",
+  "workspaceFolder": "/dotnet",
   "customizations": {
     "vscode": {
       "extensions": [
