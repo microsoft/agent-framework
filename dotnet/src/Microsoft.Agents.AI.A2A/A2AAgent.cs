@@ -91,7 +91,7 @@ internal sealed class A2AAgent : AIAgent
 
         this._logger.LogAgentChatClientInvokedAgent(nameof(RunAsync), this.Id, this.Name);
 
-        if (a2aResponse is Message message)
+        if (a2aResponse is AgentMessage message)
         {
             UpdateThreadConversationId(typedThread, message.ContextId);
 
@@ -139,13 +139,13 @@ internal sealed class A2AAgent : AIAgent
 
         this._logger.LogA2AAgentInvokingAgent(nameof(RunStreamingAsync), this.Id, this.Name);
 
-        var a2aSseEvents = this._a2aClient.SendMessageStreamAsync(new MessageSendParams { Message = a2aMessage }, cancellationToken).ConfigureAwait(false);
+        var a2aSseEvents = this._a2aClient.SendMessageStreamingAsync(new MessageSendParams { Message = a2aMessage }, cancellationToken).ConfigureAwait(false);
 
         this._logger.LogAgentChatClientInvokedAgent(nameof(RunStreamingAsync), this.Id, this.Name);
 
         await foreach (var sseEvent in a2aSseEvents)
         {
-            if (sseEvent.Data is not Message message)
+            if (sseEvent.Data is not AgentMessage message)
             {
                 throw new NotSupportedException($"Only message responses are supported from A2A agents. Received: {sseEvent.Data?.GetType().FullName ?? "null"}");
             }

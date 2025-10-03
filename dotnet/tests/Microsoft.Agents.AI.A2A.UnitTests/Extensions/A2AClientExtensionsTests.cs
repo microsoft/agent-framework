@@ -6,7 +6,7 @@ using A2A;
 namespace Microsoft.Agents.AI.A2A.UnitTests;
 
 /// <summary>
-/// Unit tests for the <see cref="A2AClientExtensions"/> class.
+/// Unit tests for the A2AClientExtensions class.
 /// </summary>
 public sealed class A2AClientExtensionsTests
 {

@@ -65,10 +65,10 @@ internal static class MessageConverter
     }
 
     /// <summary>
-    /// Converts collection of A2A <see cref="Message"/> to a collection of <see cref="ChatMessage"/> objects.
+    /// Converts collection of A2A <see cref="AgentMessage"/> to a collection of <see cref="ChatMessage"/> objects.
     /// </summary>
     /// <returns>A read-only collection of ChatMessage objects.</returns>
-    public static IReadOnlyCollection<ChatMessage> ToChatMessages(this ICollection<Message> messages)
+    public static IReadOnlyCollection<ChatMessage> ToChatMessages(this ICollection<AgentMessage> messages)
     {
         if (messages is null || messages.Count == 0)
         {
@@ -89,11 +89,11 @@ internal static class MessageConverter
     }
 
     /// <summary>
-    /// Converts a single <see cref="Message"/> to a <see cref="ChatMessage"/>.
+    /// Converts a single <see cref="AgentMessage"/> to a <see cref="ChatMessage"/>.
     /// </summary>
     /// <param name="message">The A2A message to convert.</param>
     /// <returns>A ChatMessage object, or null if conversion is not possible.</returns>
-    public static ChatMessage? ToChatMessage(this Message message)
+    public static ChatMessage? ToChatMessage(this AgentMessage message)
     {
         if (message?.Parts is not { Count: > 0 })
         {
@@ -169,14 +169,14 @@ internal static class MessageConverter
     /// </summary>
     /// <param name="chatMessage">The ChatMessage to convert.</param>
     /// <returns>An A2A Message object.</returns>
-    public static Message ToA2AMessage(this ChatMessage chatMessage)
+    public static AgentMessage ToA2AMessage(this ChatMessage chatMessage)
     {
         if (chatMessage is null)
         {
             throw new ArgumentNullException(nameof(chatMessage));
         }
 
-        var message = new Message
+        var message = new AgentMessage
         {
             MessageId = chatMessage.MessageId ?? Guid.NewGuid().ToString("N"),
             Role = ConvertChatRoleToMessageRole(chatMessage.Role),

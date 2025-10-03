@@ -35,7 +35,7 @@ public static class AIAgentExtensions
 
         return taskManager;
 
-        async Task<Message> OnMessageReceivedAsync(MessageSendParams messageSendParams, CancellationToken cancellationToken)
+        async Task<A2AResponse> OnMessageReceivedAsync(MessageSendParams messageSendParams, CancellationToken cancellationToken)
         {
             var response = await agent.RunAsync(
                 messageSendParams.ToChatMessages(),
@@ -43,7 +43,7 @@ public static class AIAgentExtensions
             var contextId = messageSendParams.Message.ContextId ?? Guid.NewGuid().ToString("N");
             var parts = response.Messages.ToParts();
 
-            return new Message
+            return new AgentMessage
             {
                 MessageId = response.ResponseId ?? Guid.NewGuid().ToString("N"),
                 ContextId = contextId,
