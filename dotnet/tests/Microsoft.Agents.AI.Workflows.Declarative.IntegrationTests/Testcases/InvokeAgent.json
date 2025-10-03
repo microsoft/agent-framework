@@ -7,6 +7,7 @@
     }
   },
   "validation": {
+    "conversation_count": 2,
     "min_action_count": 1,
     "actions": {
       "start": [

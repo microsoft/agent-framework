@@ -50,6 +50,7 @@ DO's:
 
 - **DO** give priority to the current style of the project or file you're changing
   if it diverges from the general guidelines.
+- **DO** use the pre-commit hooks for python to ensure proper formatting.
 - **DO** include tests when adding new features. When fixing bugs, start with
   adding a test that highlights how the current behavior is broken.
 - **DO** keep the discussions focused. When a new or related topic comes up

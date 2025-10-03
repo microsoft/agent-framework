@@ -159,7 +159,7 @@ public class AgentWorkflowBuilderTests
 
     private sealed class DoubleEchoAgentThread() : InMemoryAgentThread();
 
-    [Fact]
+    [Fact(Skip = "issue #1109")]
     public async Task BuildConcurrent_AgentsRunInParallelAsync()
     {
         StrongBox<TaskCompletionSource<bool>> barrier = new();

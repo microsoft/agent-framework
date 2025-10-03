@@ -108,7 +108,7 @@ This sample contains a [.http file](https://learn.microsoft.com/aspnet/core/test
 1. In Visual Studio open [./A2AServer/A2AServer.http](./A2AServer/A2AServer.http)
 1. There are two sent requests for each agent, e.g., for the invoice agent:
     1. Query agent card for the invoice agent
-        `GET {{hostInvoice}}/.well-known/agent.json`
+        `GET {{hostInvoice}}/.well-known/agent-card.json`
     1. Send a message to the invoice agent
         ```
         POST {{hostInvoice}}
@@ -121,6 +121,7 @@ This sample contains a [.http file](https://learn.microsoft.com/aspnet/core/test
             "params": {
                 "id": "12345",
                 "message": {
+                    "kind": "message",
                     "role": "user",
                     "messageId": "msg_1",
                     "parts": [

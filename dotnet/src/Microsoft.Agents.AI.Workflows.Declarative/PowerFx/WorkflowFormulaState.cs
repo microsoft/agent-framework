@@ -121,10 +121,7 @@ internal sealed class WorkflowFormulaState
 
     public static string GetScopeName(string? scopeName)
     {
-        if (!ProductContext.IsLocalScopeSupported())
-        {
-            ProductContext.SetContext(Product.Foundry);
-        }
+        WorkflowDiagnostics.SetFoundryProduct();
 
         scopeName ??= DefaultScopeName;
 

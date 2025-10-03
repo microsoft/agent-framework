@@ -19,7 +19,7 @@ internal sealed class DelegateActionExecutor(string actionId, WorkflowFormulaSta
     }
 }
 
-internal class DelegateActionExecutor<TMessage> : Executor<TMessage>, IModeledAction where TMessage : notnull
+internal class DelegateActionExecutor<TMessage> : Executor<TMessage>, IResettableExecutor, IModeledAction where TMessage : notnull
 {
     private readonly WorkflowFormulaState _state;
     private readonly DelegateAction<TMessage>? _action;
@@ -31,6 +31,12 @@ internal class DelegateActionExecutor<TMessage> : Executor<TMessage>, IModeledAc
         this._state = state;
         this._action = action;
         this._emitResult = emitResult;
+    }
+
+    /// <inheritdoc/>
+    public ValueTask ResetAsync()
+    {
+        return default;
     }
 
     public override async ValueTask HandleAsync(TMessage message, IWorkflowContext context)

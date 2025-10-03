@@ -25,10 +25,24 @@ public static class WorkflowBuilderExtensions
     /// <param name="executors">The target executors to which messages will be forwarded.</param>
     /// <returns>The updated <see cref="WorkflowBuilder"/> instance.</returns>
     public static WorkflowBuilder ForwardMessage<TMessage>(this WorkflowBuilder builder, ExecutorIsh source, params IEnumerable<ExecutorIsh> executors)
+        => builder.ForwardMessage<TMessage>(source, condition: null, executors);
+
+    /// <summary>
+    /// Adds edges to the workflow that forward messages of the specified type from the source executor to
+    /// one or more target executors.
+    /// </summary>
+    /// <typeparam name="TMessage">The type of message to forward.</typeparam>
+    /// <param name="builder">The <see cref="WorkflowBuilder"/> to which the edges will be added.</param>
+    /// <param name="source">The source executor from which messages will be forwarded.</param>
+    /// <param name="condition">An optional condition that messages must satisfy to be forwarded. If <see langword="null"/>,
+    /// all messages of type <typeparamref name="TMessage"/> will be forwarded.</param>
+    /// <param name="executors">The target executors to which messages will be forwarded.</param>
+    /// <returns>The updated <see cref="WorkflowBuilder"/> instance.</returns>
+    public static WorkflowBuilder ForwardMessage<TMessage>(this WorkflowBuilder builder, ExecutorIsh source, Func<TMessage, bool>? condition = null, params IEnumerable<ExecutorIsh> executors)
     {
         Throw.IfNull(executors);
 
-        Func<object?, bool> predicate = WorkflowBuilder.CreateConditionFunc<TMessage>((Func<object?, bool>)IsAllowedType)!;
+        Func<object?, bool> predicate = WorkflowBuilder.CreateConditionFunc<TMessage>(IsAllowedTypeAndMatchingCondition)!;
 
 #if NET
         if (executors.TryGetNonEnumeratedCount(out int count) && count == 1)
@@ -43,7 +57,7 @@ public static class WorkflowBuilderExtensions
 
         // The reason we can check for "not null" here is that CreateConditionFunc<T> will do the correct unwrapping
         // logic for PortableValues.
-        static bool IsAllowedType(object? message) => message is not null;
+        bool IsAllowedTypeAndMatchingCondition(TMessage? message) => message != null && (condition == null || condition(message));
     }
 
     /// <summary>
@@ -84,10 +98,11 @@ public static class WorkflowBuilderExtensions
     /// executor in the order provided.</remarks>
     /// <param name="builder">The workflow builder to which the executor chain will be added. </param>
     /// <param name="source">The initial executor in the chain. Cannot be null.</param>
+    /// <param name="allowRepetition">If set to <see langword="true"/>, the same executor can be added to the chain multiple times.</param>
     /// <param name="executors">An ordered array of executors to be added to the chain after the source.</param>
     /// <returns>The original workflow builder instance with the specified executor chain added.</returns>
     /// <exception cref="ArgumentException">Thrown if there is a cycle in the chain.</exception>
-    public static WorkflowBuilder AddChain(this WorkflowBuilder builder, ExecutorIsh source, params IEnumerable<ExecutorIsh> executors)
+    public static WorkflowBuilder AddChain(this WorkflowBuilder builder, ExecutorIsh source, bool allowRepetition = false, params IEnumerable<ExecutorIsh> executors)
     {
         Throw.IfNull(builder);
         Throw.IfNull(source);
@@ -98,13 +113,13 @@ public static class WorkflowBuilderExtensions
         {
             Throw.IfNull(executor, nameof(executors));
 
-            if (seenExecutors.Contains(executor.Id))
+            if (!allowRepetition && seenExecutors.Contains(executor.Id))
             {
                 throw new ArgumentException($"Executor '{executor.Id}' is already in the chain.", nameof(executors));
             }
             seenExecutors.Add(executor.Id);
 
-            builder.AddEdge(source, executor);
+            builder.AddEdge(source, executor, idempotent: true);
             source = executor;
         }
 
@@ -130,7 +145,7 @@ public static class WorkflowBuilderExtensions
         Throw.IfNull(source);
         Throw.IfNull(portId);
 
-        InputPort port = new(portId, typeof(TRequest), typeof(TResponse));
+        RequestPort port = new(portId, typeof(TRequest), typeof(TResponse));
         return builder.AddEdge(source, port)
                       .AddEdge(port, source);
     }

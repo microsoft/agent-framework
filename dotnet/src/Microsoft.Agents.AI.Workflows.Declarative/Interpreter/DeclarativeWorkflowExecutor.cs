@@ -13,11 +13,17 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 /// </summary>
 internal sealed class DeclarativeWorkflowExecutor<TInput>(
     string workflowId,
-    WorkflowAgentProvider agentProvider,
+    DeclarativeWorkflowOptions options,
     WorkflowFormulaState state,
     Func<TInput, ChatMessage> inputTransform) :
-    Executor<TInput>(workflowId), IModeledAction where TInput : notnull
+    Executor<TInput>(workflowId), IResettableExecutor, IModeledAction where TInput : notnull
 {
+    /// <inheritdoc/>
+    public ValueTask ResetAsync()
+    {
+        return default;
+    }
+
     public override async ValueTask HandleAsync(TInput message, IWorkflowContext context)
     {
         // No state to restore if we're starting from the beginning.
@@ -26,10 +32,14 @@ internal sealed class DeclarativeWorkflowExecutor<TInput>(
         DeclarativeWorkflowContext declarativeContext = new(context, state);
         ChatMessage input = inputTransform.Invoke(message);
 
-        string conversationId = await agentProvider.CreateConversationAsync(cancellationToken: default).ConfigureAwait(false);
+        string? conversationId = options.ConversationId;
+        if (string.IsNullOrWhiteSpace(conversationId))
+        {
+            conversationId = await options.AgentProvider.CreateConversationAsync(cancellationToken: default).ConfigureAwait(false);
+        }
         await declarativeContext.QueueConversationUpdateAsync(conversationId).ConfigureAwait(false);
 
-        await agentProvider.CreateMessageAsync(conversationId, input, cancellationToken: default).ConfigureAwait(false);
+        await options.AgentProvider.CreateMessageAsync(conversationId, input, cancellationToken: default).ConfigureAwait(false);
         await declarativeContext.SetLastMessageAsync(input).ConfigureAwait(false);
 
         await context.SendResultMessageAsync(this.Id).ConfigureAwait(false);
