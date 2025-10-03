@@ -24,4 +24,5 @@ aliveStatusCodes:
   - 429
   - 500
   - 503
+  - null
 useGitIgnore: true
