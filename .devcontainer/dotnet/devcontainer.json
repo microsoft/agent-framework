@@ -5,7 +5,8 @@
     "ghcr.io/devcontainers/features/dotnet:2.4.0": {},
     "ghcr.io/devcontainers/features/powershell:1.5.1": {}
   },
-  "workspaceFolder": "/workspaces/agent-framework-1/dotnet/",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/,type=bind",
+  "workspaceFolder": "/dotnet/",
   "customizations": {
     "vscode": {
       "extensions": [
