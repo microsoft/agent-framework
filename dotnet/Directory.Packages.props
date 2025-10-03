@@ -19,6 +19,7 @@
     <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.5" />
     <PackageVersion Include="Azure.AI.OpenAI" Version="2.3.0-beta.2" />
     <PackageVersion Include="Azure.Identity" Version="1.16.0" />
+    <PackageVersion Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.4.0" />
     <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="9.8.0" />
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="9.0.9" />
     <PackageVersion Include="Microsoft.Extensions.AI.AzureAIInference" Version="9.9.1-preview.1.25474.6" />
@@ -50,6 +51,10 @@
     <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.12.0" />
     <!-- Microsoft.Extensions.* -->
     <PackageVersion Include="Microsoft.Bcl.HashCode" Version="6.0.0" />
+    <PackageVersion Include="Microsoft.Agents.AI" Version="1.0.0-preview.251001.3" />
+    <PackageVersion Include="Microsoft.Agents.AI.Abstractions" Version="1.0.0-preview.251001.3" />
+    <PackageVersion Include="Microsoft.Agents.AI.AzureAI" Version="1.0.0-preview.251001.3" />
+    <PackageVersion Include="Microsoft.Agents.AI.OpenAI" Version="1.0.0-preview.251001.3" />
     <PackageVersion Include="Microsoft.Bcl.AsyncInterfaces" Version="9.0.9" />
     <PackageVersion Include="OpenAI" Version="2.4.0" />
     <PackageVersion Include="Microsoft.Extensions.AI" Version="9.9.1" />
@@ -78,17 +83,17 @@
     <!-- Agent SDKs -->
     <PackageVersion Include="Microsoft.Agents.CopilotStudio.Client" Version="1.2.41" />
     <!-- A2A -->
-    <PackageVersion Include="A2A" Version="0.1.0-preview.2" />
-    <PackageVersion Include="A2A.AspNetCore" Version="0.1.0-preview.2" />
+    <PackageVersion Include="A2A" Version="0.3.1-preview" />
+    <PackageVersion Include="A2A.AspNetCore" Version="0.3.1-preview" />
     <!-- MCP -->
     <PackageVersion Include="ModelContextProtocol" Version="0.4.0-preview.1" />
     <!-- Inference SDKs -->
-    <PackageVersion Include="Anthropic.SDK" Version="5.5.2" />
+    <PackageVersion Include="Anthropic.SDK" Version="5.5.3" />
     <PackageVersion Include="AWSSDK.Extensions.Bedrock.MEAI" Version="4.0.3.2" />
     <PackageVersion Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.9.2" />
     <PackageVersion Include="OllamaSharp" Version="5.4.7" />
     <!-- Identity -->
-    <PackageVersion Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.77.0" />
+    <PackageVersion Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.77.1" />
     <!-- Workflows -->
     <PackageVersion Include="Microsoft.Bot.ObjectModel" Version="1.2025.926-1" />
     <PackageVersion Include="Microsoft.Bot.ObjectModel.Json" Version="1.2025.926-1" />
@@ -96,7 +101,7 @@
     <PackageVersion Include="Microsoft.PowerFx.Interpreter" Version="1.4.0-build.20250821-1001" />
     <!-- Test -->
     <PackageVersion Include="FluentAssertions" Version="8.7.0" />
-    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.0.0" />
     <PackageVersion Include="Moq" Version="[4.18.4]" />
     <PackageVersion Include="Microsoft.SemanticKernel.Agents.Abstractions" Version="1.65.0" />
     <PackageVersion Include="Microsoft.SemanticKernel.Agents.Yaml" Version="1.65.0-beta" />

@@ -35,15 +35,15 @@ public class RepresentationTests
             throw new NotImplementedException();
     }
 
-    private static InputPort TestInputPort =>
-        InputPort.Create<FunctionCallContent, FunctionResultContent>("ExternalFunction");
+    private static RequestPort TestRequestPort =>
+        RequestPort.Create<FunctionCallContent, FunctionResultContent>("ExternalFunction");
 
     private static async ValueTask RunExecutorishInfoMatchTestAsync(ExecutorIsh target)
     {
         ExecutorRegistration registration = target.Registration;
         ExecutorInfo info = registration.ToExecutorInfo();
 
-        info.IsMatch(await registration.ProviderAsync()).Should().BeTrue();
+        info.IsMatch(await registration.CreateInstanceAsync(runId: string.Empty)).Should().BeTrue();
     }
 
     [Fact]
@@ -51,8 +51,9 @@ public class RepresentationTests
     {
         int testsRun = 0;
         await RunExecutorishTestAsync(new TestExecutor());
-        await RunExecutorishTestAsync(TestInputPort);
+        await RunExecutorishTestAsync(TestRequestPort);
         await RunExecutorishTestAsync(new TestAgent());
+        await RunExecutorishTestAsync(Step1EntryPoint.WorkflowInstance.ConfigureSubWorkflow(nameof(Step1EntryPoint)));
 
         Func<int, IWorkflowContext, CancellationToken, ValueTask> function = MessageHandlerAsync;
         await RunExecutorishTestAsync(function.AsExecutor("FunctionExecutor"));
@@ -77,7 +78,7 @@ public class RepresentationTests
     public async Task Test_SpecializedExecutor_InfosAsync()
     {
         await RunExecutorishInfoMatchTestAsync(new AIAgentHostExecutor(new TestAgent()));
-        await RunExecutorishInfoMatchTestAsync(new RequestInfoExecutor(TestInputPort));
+        await RunExecutorishInfoMatchTestAsync(new RequestInfoExecutor(TestRequestPort));
     }
 
     private static string Source(int id) => $"Source/{id}";

@@ -62,7 +62,7 @@ public sealed class A2ACardResolverExtensionsTests : IDisposable
         {
             Url = "http://test-endpoint/agent"
         });
-        this._handler.ResponsesToReturn.Enqueue(new Message
+        this._handler.ResponsesToReturn.Enqueue(new AgentMessage
         {
             Role = MessageRole.Agent,
             Parts = [new TextPart { Text = "Response" }],
@@ -104,7 +104,7 @@ public sealed class A2ACardResolverExtensionsTests : IDisposable
                     Content = new StringContent(json, Encoding.UTF8, "application/json")
                 };
             }
-            else if (response is Message message)
+            else if (response is AgentMessage message)
             {
                 var jsonRpcResponse = JsonRpcResponse.CreateJsonRpcResponse<A2AEvent>("response-id", message);
 

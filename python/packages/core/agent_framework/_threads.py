@@ -17,6 +17,38 @@ class ChatMessageStoreProtocol(Protocol):
 
     Implementations of this protocol are responsible for managing the storage of chat messages,
     including handling large volumes of data by truncating or summarizing messages as necessary.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import ChatMessage
+
+
+            class MyMessageStore:
+                def __init__(self):
+                    self._messages = []
+
+                async def list_messages(self) -> list[ChatMessage]:
+                    return self._messages
+
+                async def add_messages(self, messages: Sequence[ChatMessage]) -> None:
+                    self._messages.extend(messages)
+
+                @classmethod
+                async def deserialize(cls, serialized_store_state, **kwargs):
+                    store = cls()
+                    store._messages = serialized_store_state.get("messages", [])
+                    return store
+
+                async def update_from_state(self, serialized_store_state, **kwargs) -> None:
+                    self._messages = serialized_store_state.get("messages", [])
+
+                async def serialize(self, **kwargs):
+                    return {"messages": self._messages}
+
+
+            # Use the custom store
+            store = MyMessageStore()
     """
 
     async def list_messages(self) -> list[ChatMessage]:
@@ -27,21 +59,32 @@ class ChatMessageStoreProtocol(Protocol):
         If the messages stored in the store become very large, it is up to the store to
         truncate, summarize or otherwise limit the number of messages returned.
 
-        When using implementations of ChatMessageStoreProtocol, a new one should be created for each thread
+        When using implementations of ``ChatMessageStoreProtocol``, a new one should be created for each thread
         since they may contain state that is specific to a thread.
         """
         ...
 
     async def add_messages(self, messages: Sequence[ChatMessage]) -> None:
-        """Adds messages to the store."""
+        """Adds messages to the store.
+
+        Args:
+            messages: The sequence of ChatMessage objects to add to the store.
+        """
         ...
 
     @classmethod
     async def deserialize(cls, serialized_store_state: Any, **kwargs: Any) -> "ChatMessageStoreProtocol":
         """Creates a new instance of the store from previously serialized state.
 
-        This method, together with serialize_state can be used to save and load messages from a persistent store
+        This method, together with ``serialize()`` can be used to save and load messages from a persistent store
         if this store only has messages in memory.
+
+        Args:
+            serialized_store_state: The previously serialized state data containing messages.
+            **kwargs: Additional arguments for deserialization.
+
+        Returns:
+            A new instance of the store populated with messages from the serialized state.
         """
         ...
 
@@ -57,8 +100,14 @@ class ChatMessageStoreProtocol(Protocol):
     async def serialize(self, **kwargs: Any) -> Any:
         """Serializes the current object's state.
 
-        This method, together with deserialize can be used to save and load messages from a persistent store
+        This method, together with ``deserialize()`` can be used to save and load messages from a persistent store
         if this store only has messages in memory.
+
+        Args:
+            **kwargs: Additional arguments for serialization.
+
+        Returns:
+            The serialized state data that can be used with ``deserialize()``.
         """
         ...
 
@@ -107,13 +156,34 @@ class ChatMessageStore:
 
     This implementation provides a simple, list-based storage for chat messages
     with support for serialization and deserialization. It implements all the
-    required methods of the ChatMessageStoreProtocol protocol.
+    required methods of the ``ChatMessageStoreProtocol`` protocol.
 
     The store maintains messages in memory and provides methods to serialize
     and deserialize the state for persistence purposes.
 
     Args:
-        messages: Optional initial list of ChatMessage objects to populate the store.
+        messages: The optional initial list of ChatMessage objects to populate the store.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import ChatMessageStore, ChatMessage
+
+            # Create an empty store
+            store = ChatMessageStore()
+
+            # Add messages
+            message = ChatMessage(role="user", content="Hello")
+            await store.add_messages([message])
+
+            # Retrieve messages
+            messages = await store.list_messages()
+
+            # Serialize for persistence
+            state = await store.serialize()
+
+            # Deserialize from saved state
+            restored_store = await ChatMessageStore.deserialize(state)
     """
 
     def __init__(self, messages: Sequence[ChatMessage] | None = None):
@@ -188,7 +258,36 @@ TAgentThread = TypeVar("TAgentThread", bound="AgentThread")
 
 
 class AgentThread:
-    """The Agent thread class, this can represent both a locally managed thread or a thread managed by the service."""
+    """The Agent thread class, this can represent both a locally managed thread or a thread managed by the service.
+
+    An ``AgentThread`` maintains the conversation state and message history for an agent interaction.
+    It can either use a service-managed thread (via ``service_thread_id``) or a local message store
+    (via ``message_store``), but not both.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import ChatAgent, ChatMessageStore
+            from agent_framework.openai import OpenAIChatClient
+
+            client = OpenAIChatClient(model="gpt-4o")
+
+            # Create agent with service-managed threads using a service_thread_id
+            service_agent = ChatAgent(name="assistant", client=client)
+            service_thread = await service_agent.get_new_thread(service_thread_id="thread_abc123")
+
+            # Create agent with service-managed threads using conversation_id
+            conversation_agent = ChatAgent(name="assistant", client=client, conversation_id="thread_abc123")
+            conversation_thread = await conversation_agent.get_new_thread()
+
+            # Create agent with custom message store factory
+            local_agent = ChatAgent(name="assistant", client=client, chat_message_store_factory=ChatMessageStore)
+            local_thread = await local_agent.get_new_thread()
+
+            # Serialize and restore thread state
+            state = await local_thread.serialize()
+            restored_thread = await local_agent.deserialize_thread(state)
+    """
 
     def __init__(
         self,
@@ -197,15 +296,15 @@ class AgentThread:
         message_store: ChatMessageStoreProtocol | None = None,
         context_provider: AggregateContextProvider | None = None,
     ) -> None:
-        """Initialize an AgentThread, do not use this method manually, always use: agent.get_new_thread().
+        """Initialize an AgentThread, do not use this method manually, always use: ``agent.get_new_thread()``.
 
         Args:
-            service_thread_id: Optional ID of the thread managed by the agent service.
-            message_store: Optional ChatMessageStore implementation for managing chat messages.
-            context_provider: Optional ContextProvider for the thread.
+            service_thread_id: The optional ID of the thread managed by the agent service.
+            message_store: The optional ChatMessageStore implementation for managing chat messages.
+            context_provider: The optional ContextProvider for the thread.
 
         Note:
-            Either service_thread_id or message_store may be set, but not both.
+            Either ``service_thread_id`` or ``message_store`` may be set, but not both.
         """
         if service_thread_id is not None and message_store is not None:
             raise AgentThreadException("Only the service_thread_id or message_store may be set, but not both.")
@@ -218,7 +317,7 @@ class AgentThread:
     def is_initialized(self) -> bool:
         """Indicates if the thread is initialized.
 
-        This means either the service_thread_id or the message_store is set.
+        This means either the ``service_thread_id`` or the ``message_store`` is set.
         """
         return self._service_thread_id is not None or self._message_store is not None
 
@@ -231,7 +330,8 @@ class AgentThread:
     def service_thread_id(self, service_thread_id: str | None) -> None:
         """Sets the ID of the current thread to support cases where the thread is owned by the agent service.
 
-        Note that either service_thread_id or message_store may be set, but not both.
+        Note:
+            Either ``service_thread_id`` or ``message_store`` may be set, but not both.
         """
         if service_thread_id is None:
             return
@@ -245,14 +345,15 @@ class AgentThread:
 
     @property
     def message_store(self) -> ChatMessageStoreProtocol | None:
-        """Gets the ChatMessageStoreProtocol used by this thread."""
+        """Gets the ``ChatMessageStoreProtocol`` used by this thread."""
         return self._message_store
 
     @message_store.setter
     def message_store(self, message_store: ChatMessageStoreProtocol | None) -> None:
-        """Sets the ChatMessageStoreProtocol used by this thread.
+        """Sets the ``ChatMessageStoreProtocol`` used by this thread.
 
-        Note that either service_thread_id or message_store may be set, but not both.
+        Note:
+            Either ``service_thread_id`` or ``message_store`` may be set, but not both.
         """
         if message_store is None:
             return
@@ -266,7 +367,11 @@ class AgentThread:
         self._message_store = message_store
 
     async def on_new_messages(self, new_messages: ChatMessage | Sequence[ChatMessage]) -> None:
-        """Invoked when a new message has been contributed to the chat by any participant."""
+        """Invoked when a new message has been contributed to the chat by any participant.
+
+        Args:
+            new_messages: The new ChatMessage or sequence of ChatMessage objects to add to the thread.
+        """
         if self._service_thread_id is not None:
             # If the thread messages are stored in the service there is nothing to do here,
             # since invoking the service should already update the thread.

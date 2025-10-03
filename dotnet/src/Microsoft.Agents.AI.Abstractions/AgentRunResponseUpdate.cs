@@ -21,6 +21,9 @@ namespace Microsoft.Agents.AI;
 /// <see cref="AgentRunResponse"/> and <see cref="ChatMessage"/> in streaming output.
 /// </para>
 /// <para>
+/// To get the text result of this response chunk, use the <see cref="Text"/> property or simply call <see cref="ToString()"/> on the <see cref="AgentRunResponseUpdate"/>.
+/// </para>
+/// <para>
 /// The relationship between <see cref="AgentRunResponse"/> and <see cref="AgentRunResponseUpdate"/> is
 /// codified in the <see cref="AgentRunResponseExtensions.ToAgentRunResponseAsync"/> and
 /// <see cref="AgentRunResponse.ToAgentRunResponseUpdates"/>, which enable bidirectional conversions

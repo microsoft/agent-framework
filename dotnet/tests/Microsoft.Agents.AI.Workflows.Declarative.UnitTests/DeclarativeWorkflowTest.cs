@@ -216,7 +216,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         WorkflowFormulaState state = new(RecalcEngineFactory.Create());
         Mock<WorkflowAgentProvider> mockAgentProvider = CreateMockProvider();
         DeclarativeWorkflowOptions options = new(mockAgentProvider.Object);
-        WorkflowActionVisitor visitor = new(new DeclarativeWorkflowExecutor<string>(WorkflowActionVisitor.Steps.Root("anything"), mockAgentProvider.Object, state, (message) => DeclarativeWorkflowBuilder.DefaultTransform(message)), state, options);
+        WorkflowActionVisitor visitor = new(new DeclarativeWorkflowExecutor<string>(WorkflowActionVisitor.Steps.Root("anything"), options, state, (message) => DeclarativeWorkflowBuilder.DefaultTransform(message)), state, options);
         WorkflowElementWalker walker = new(visitor);
         walker.Visit(dialog);
         Assert.True(visitor.HasUnsupportedActions);

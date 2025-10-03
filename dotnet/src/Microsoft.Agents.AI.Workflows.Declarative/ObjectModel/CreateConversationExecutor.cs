@@ -2,6 +2,7 @@
 
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
@@ -16,6 +17,7 @@ internal sealed class CreateConversationExecutor(CreateConversation model, Workf
     {
         string conversationId = await agentProvider.CreateConversationAsync(cancellationToken).ConfigureAwait(false);
         await this.AssignAsync(this.Model.ConversationId?.Path, FormulaValue.New(conversationId), context).ConfigureAwait(false);
+        await context.QueueConversationUpdateAsync(conversationId).ConfigureAwait(false);
 
         return default;
     }

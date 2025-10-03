@@ -37,6 +37,7 @@ internal static class Step5EntryPoint
 
         CheckpointInfo targetCheckpoint = checkpoints[2];
 
+        Console.WriteLine($"Restoring to checkpoint {targetCheckpoint} from run {targetCheckpoint.RunId}");
         if (rehydrateToRestore)
         {
             await handle.EndRunAsync().ConfigureAwait(false);
@@ -72,6 +73,7 @@ internal static class Step5EntryPoint
             List<ExternalRequest> requests = [];
             await foreach (WorkflowEvent evt in handle.WatchStreamAsync(cancellationSource.Token).ConfigureAwait(false))
             {
+                Console.WriteLine($"!!! Processing event: {evt}");
                 switch (evt)
                 {
                     case WorkflowOutputEvent outputEvent:
@@ -91,11 +93,14 @@ internal static class Step5EntryPoint
                         break;
 
                     case RequestInfoEvent requestInputEvt:
+                        Console.WriteLine($"!!! Queuing request: {requestInputEvt.Request}");
                         requests.Add(requestInputEvt.Request);
                         break;
 
                     case SuperStepCompletedEvent stepCompletedEvt:
+                        Console.WriteLine($"*** Step {stepCompletedEvt.StepNumber} completed.");
                         CheckpointInfo? checkpoint = stepCompletedEvt.CompletionInfo!.Checkpoint;
+                        Console.WriteLine($"*** Checkpoint: {checkpoint}");
                         if (checkpoint is not null)
                         {
                             checkpoints.Add(checkpoint);
@@ -105,17 +110,21 @@ internal static class Step5EntryPoint
 
                         if (maxStep.HasValue && stepCompletedEvt.StepNumber >= maxStep.Value - 1)
                         {
+                            Console.WriteLine($"*** Max step {maxStep} reached, cancelling.");
                             cancellationSource.Cancel();
                         }
                         else
                         {
+                            Console.WriteLine($"*** Processing {requests.Count} queued requests.");
                             foreach (ExternalRequest request in requests)
                             {
                                 ExternalResponse response = ExecuteExternalRequest(request, userGuessCallback, prompt);
+                                Console.WriteLine($"!!! Sending response: {response}");
                                 await handle.SendResponseAsync(response).ConfigureAwait(false);
                             }
 
                             requests.Clear();
+                            Console.WriteLine("*** Completed processing requests.");
                         }
                         break;
 
@@ -123,6 +132,7 @@ internal static class Step5EntryPoint
                         writer.WriteLine($"'{executorCompleteEvt.ExecutorId}: {executorCompleteEvt.Data}");
                         break;
                 }
+                Console.WriteLine($"!!! Completed processing event: {evt.GetType()}");
             }
 
             if (cancellationSource.IsCancellationRequested)

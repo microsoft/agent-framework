@@ -209,16 +209,32 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+all = [
+    { name = "agent-framework-a2a", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-azure-ai", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-copilotstudio", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-devui", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-mem0", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-redis", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "graphviz", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
 viz = [
     { name = "graphviz", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "agent-framework-a2a", marker = "extra == 'all'", editable = "packages/a2a" },
+    { name = "agent-framework-azure-ai", marker = "extra == 'all'", editable = "packages/azure-ai" },
+    { name = "agent-framework-copilotstudio", marker = "extra == 'all'", editable = "packages/copilotstudio" },
+    { name = "agent-framework-devui", marker = "extra == 'all'", editable = "packages/devui" },
+    { name = "agent-framework-mem0", marker = "extra == 'all'", editable = "packages/mem0" },
+    { name = "agent-framework-redis", marker = "extra == 'all'", editable = "packages/redis" },
     { name = "aiofiles", specifier = ">=24.1.0" },
     { name = "azure-identity", specifier = ">=1,<2" },
     { name = "azure-monitor-opentelemetry", specifier = ">=1.7.0" },
     { name = "azure-monitor-opentelemetry-exporter", specifier = ">=1.0.0b41" },
+    { name = "graphviz", marker = "extra == 'all'", specifier = ">=0.20.0" },
     { name = "graphviz", marker = "extra == 'viz'", specifier = ">=0.20.0" },
     { name = "mcp", extras = ["ws"], specifier = ">=1.13" },
     { name = "openai", specifier = ">=1.99.0" },
@@ -230,7 +246,7 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2,<3" },
     { name = "typing-extensions" },
 ]
-provides-extras = ["viz"]
+provides-extras = ["viz", "all"]
 
 [[package]]
 name = "agent-framework-devui"

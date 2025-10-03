@@ -16,12 +16,14 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Kit;
 /// Base class for an entry-point workflow executor that receives the initial trigger message.
 /// </summary>
 /// <typeparam name="TInput">The type of the initial message that starts the workflow.</typeparam>
-public abstract class RootExecutor<TInput> : Executor<TInput> where TInput : notnull
+public abstract class RootExecutor<TInput> : Executor<TInput>, IResettableExecutor where TInput : notnull
 {
     private readonly IConfiguration? _configuration;
     private readonly WorkflowAgentProvider _agentProvider;
     private readonly WorkflowFormulaState _state;
     private readonly Func<TInput, ChatMessage>? _inputTransform;
+
+    private string? _conversationId;
 
     /// <summary>
     /// Get the shared formula session to provide to workflow <see cref="ActionExecutor"/> instances.
@@ -39,10 +41,17 @@ public abstract class RootExecutor<TInput> : Executor<TInput> where TInput : not
     {
         this._configuration = options.Configuration;
         this._agentProvider = options.AgentProvider;
+        this._conversationId = options.ConversationId;
         this._inputTransform = inputTransform;
         this._state = new WorkflowFormulaState(options.CreateRecalcEngine());
         this._state.InitializeSystem();
         this.Session = new RootFormulaSession(this._state);
+    }
+
+    /// <inheritdoc/>
+    public ValueTask ResetAsync()
+    {
+        return default;
     }
 
     /// <inheritdoc/>
@@ -53,10 +62,13 @@ public abstract class RootExecutor<TInput> : Executor<TInput> where TInput : not
 
         ChatMessage input = (this._inputTransform ?? DefaultInputTransform).Invoke(message);
 
-        string conversationId = await this._agentProvider.CreateConversationAsync(cancellationToken: default).ConfigureAwait(false);
-        await declarativeContext.QueueConversationUpdateAsync(conversationId).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(this._conversationId))
+        {
+            this._conversationId = await this._agentProvider.CreateConversationAsync(cancellationToken: default).ConfigureAwait(false);
+        }
+        await declarativeContext.QueueConversationUpdateAsync(this._conversationId).ConfigureAwait(false);
 
-        await this._agentProvider.CreateMessageAsync(conversationId, input, cancellationToken: default).ConfigureAwait(false);
+        await this._agentProvider.CreateMessageAsync(this._conversationId, input, cancellationToken: default).ConfigureAwait(false);
         await declarativeContext.SetLastMessageAsync(input).ConfigureAwait(false);
 
         await declarativeContext.SendMessageAsync(new ActionExecutorResult(this.Id)).ConfigureAwait(false);

@@ -21,9 +21,15 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Framework;
 /// </summary>
 public abstract class WorkflowTest(ITestOutputHelper output) : IntegrationTest(output)
 {
-    protected abstract Task RunAndVerifyAsync<TInput>(Testcase testcase, string workflowPath, DeclarativeWorkflowOptions workflowOptions) where TInput : notnull;
+    protected abstract Task RunAndVerifyAsync<TInput>(
+        Testcase testcase,
+        string workflowPath,
+        DeclarativeWorkflowOptions workflowOptions) where TInput : notnull;
 
-    protected Task RunWorkflowAsync(string workflowPath, string testcaseFileName)
+    protected Task RunWorkflowAsync(
+        string workflowPath,
+        string testcaseFileName,
+        bool externalConversation = false)
     {
         this.Output.WriteLine($"WORKFLOW: {workflowPath}");
         this.Output.WriteLine($"TESTCASE: {testcaseFileName}");
@@ -45,7 +51,8 @@ public abstract class WorkflowTest(ITestOutputHelper output) : IntegrationTest(o
     protected async Task TestWorkflowAsync<TInput>(
         Testcase testcase,
         string workflowPath,
-        IConfiguration configuration) where TInput : notnull
+        IConfiguration configuration,
+        bool externalConversation = false) where TInput : notnull
     {
         this.Output.WriteLine($"INPUT: {testcase.Setup.Input.Value}");
 
@@ -59,12 +66,22 @@ public abstract class WorkflowTest(ITestOutputHelper output) : IntegrationTest(o
                 .AddInMemoryCollection(agentMap)
                 .Build();
 
+        AzureAgentProvider agentProvider = new(foundryConfig.Endpoint, new AzureCliCredential());
+
+        string? conversationId = null;
+        if (externalConversation)
+        {
+            conversationId = await agentProvider.CreateConversationAsync().ConfigureAwait(false);
+        }
+
         DeclarativeWorkflowOptions workflowOptions =
-            new(new AzureAgentProvider(foundryConfig.Endpoint, new AzureCliCredential()))
+            new(agentProvider)
             {
                 Configuration = workflowConfig,
+                ConversationId = conversationId,
                 LoggerFactory = this.Output
             };
+
         await this.RunAndVerifyAsync<TInput>(testcase, workflowPath, workflowOptions);
     }
 
@@ -103,9 +120,22 @@ public abstract class WorkflowTest(ITestOutputHelper output) : IntegrationTest(o
 
     protected static class AssertWorkflow
     {
-        public static void EventCounts(int actualCount, Testcase testcase)
+        public static void Conversation(string? conversationId, int expectedCount, IReadOnlyList<ConversationUpdateEvent> conversationEvents)
         {
-            Assert.True(actualCount >= testcase.Validation.MinActionCount, $"Event count less than expected: {testcase.Validation.MinActionCount} ({actualCount}).");
+            if (string.IsNullOrEmpty(conversationId))
+            {
+                Assert.Equal(expectedCount, conversationEvents.Count);
+            }
+            else
+            {
+                Assert.Equal(expectedCount - 1, conversationEvents.Count);
+            }
+        }
+
+        // "isCompletion" adjusts validation logic to account for when condition completion is not experienced due to goto.  Remove this test logic once addressed.
+        public static void EventCounts(int actualCount, Testcase testcase, bool isCompletion = false)
+        {
+            Assert.True(actualCount + (isCompletion ? 1 : 0) >= testcase.Validation.MinActionCount, $"Event count less than expected: {testcase.Validation.MinActionCount} ({actualCount}).");
             Assert.True(actualCount <= (testcase.Validation.MaxActionCount ?? testcase.Validation.MinActionCount), $"Event count greater than expected: {testcase.Validation.MaxActionCount ?? testcase.Validation.MinActionCount} ({actualCount}).");
         }
 
@@ -167,6 +197,7 @@ public abstract class WorkflowTest(ITestOutputHelper output) : IntegrationTest(o
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+        ReadCommentHandling = JsonCommentHandling.Skip,
         WriteIndented = true,
     };
 }

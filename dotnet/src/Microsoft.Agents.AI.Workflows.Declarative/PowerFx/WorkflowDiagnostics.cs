@@ -19,6 +19,14 @@ internal static class WorkflowDiagnostics
 {
     private static readonly WorkflowFeatureConfiguration s_semanticFeatureConfig = new();
 
+    public static void SetFoundryProduct()
+    {
+        if (!ProductContext.IsLocalScopeSupported())
+        {
+            ProductContext.SetContext(Product.Foundry);
+        }
+    }
+
     public static WorkflowTypeInfo Describe<TElement>(this TElement workflowElement) where TElement : BotElement, IDialogBase
     {
         SemanticModel semanticModel = workflowElement.GetSemanticModel(new PowerFxExpressionChecker(s_semanticFeatureConfig), s_semanticFeatureConfig);

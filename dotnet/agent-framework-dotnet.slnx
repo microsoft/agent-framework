@@ -24,7 +24,8 @@
   <Folder Name="/Samples/GettingStarted/AgentProviders/">
     <File Path="samples/GettingStarted/AgentProviders/README.md" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_A2A/Agent_With_A2A.csproj" />
-    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureFoundry/Agent_With_AzureFoundry.csproj" />
+    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureFoundryAgent/Agent_With_AzureFoundryAgent.csproj" />
+    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureFoundryModel/Agent_With_AzureFoundryModel.csproj" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureOpenAIChatCompletion/Agent_With_AzureOpenAIChatCompletion.csproj" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureOpenAIResponses/Agent_With_AzureOpenAIResponses.csproj" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_CustomImplementation/Agent_With_CustomImplementation.csproj" />
@@ -131,6 +132,10 @@
     <Project Path="samples/SemanticKernelMigration/AzureAIFoundry/Step03_DependencyInjection/AzureAIFoundry_Step03_DependencyInjection.csproj" />
     <Project Path="samples/SemanticKernelMigration/AzureAIFoundry/Step04_CodeInterpreter/AzureAIFoundry_Step04_CodeInterpreter.csproj" />
   </Folder>
+  <Folder Name="/Samples/SemanticKernelMigration/Playground/">
+    <File Path="samples/SemanticKernelMigration/Playground/README.md" />
+    <Project Path="samples/SemanticKernelMigration/Playground/SemanticKernelBasic/SemanticKernelBasic.csproj" />
+  </Folder>
   <Folder Name="/Samples/SemanticKernelMigration/OpenAI/">
     <Project Path="samples/SemanticKernelMigration/OpenAI/Step01_Basics/OpenAI_Step01_Basics.csproj" />
     <Project Path="samples/SemanticKernelMigration/OpenAI/Step02_ToolCall/OpenAI_Step02_ToolCall.csproj" />
@@ -175,6 +180,10 @@
     <File Path="nuget.config" />
   </Folder>
   <Folder Name="/Solution Items/.github/" />
+  <Folder Name="/Solution Items/.github/upgrades/" />
+  <Folder Name="/Solution Items/.github/upgrades/prompts/">
+    <File Path="../.github/upgrades/prompts/SemanticKernelToAgentFramework.md" />
+  </Folder>
   <Folder Name="/Solution Items/.github/workflows/">
     <File Path="../.github/workflows/dotnet-build-and-test.yml" />
     <File Path="../.github/workflows/dotnet-check-coverage.ps1" />
