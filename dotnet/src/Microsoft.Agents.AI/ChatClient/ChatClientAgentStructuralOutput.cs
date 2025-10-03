@@ -1,0 +1,197 @@
+﻿// Copyright (c) Microsoft. All rights reserved.
+
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.Extensions.AI;
+using Microsoft.Shared.Diagnostics;
+
+namespace Microsoft.Agents.AI;
+
+/// <summary>
+/// Provides an <see cref="AIAgent"/> that delegates to an <see cref="IChatClient"/> implementation.
+/// </summary>
+public sealed partial class ChatClientAgent
+{
+    /// <summary>
+    /// Run the agent with no message assuming that all required instructions are already provided to the agent or on the thread, and requesting a response of the specified type <typeparamref name="T"/>.
+    /// </summary>
+    /// <param name="thread">
+    /// The conversation thread to use for this invocation. If <see langword="null"/>, a new thread will be created.
+    /// The thread will be updated with any response messages generated during invocation.
+    /// </param>
+    /// <param name="serializerOptions">The JSON serialization options to use.</param>
+    /// <param name="options">Optional configuration parameters for controlling the agent's invocation behavior.</param>
+    /// <param name="useJsonSchemaResponseFormat">
+    /// <see langword="true" /> to set a JSON schema on the <see cref="ChatResponseFormat"/>; otherwise, <see langword="false" />. The default is <see langword="true" />.
+    /// Using a JSON schema improves reliability if the underlying model supports native structured output with a schema, but might cause an error if the model does not support it.
+    /// </param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentRunResponse"/> with the agent's output.</returns>
+    /// <remarks>
+    /// This overload is useful when the agent has sufficient context from previous messages in the thread
+    /// or from its initial configuration to generate a meaningful response without additional input.
+    /// </remarks>
+    public Task<AgentRunResponse<T>> RunAsync<T>(
+        AgentThread? thread = null,
+        JsonSerializerOptions? serializerOptions = null,
+        AgentRunOptions? options = null,
+        bool? useJsonSchemaResponseFormat = null,
+        CancellationToken cancellationToken = default) =>
+        this.RunAsync<T>([], thread, serializerOptions, options, useJsonSchemaResponseFormat, cancellationToken);
+
+    /// <summary>
+    /// Runs the agent with a text message from the user, requesting a response of the specified type <typeparamref name="T"/>.
+    /// </summary>
+    /// <param name="message">The user message to send to the agent.</param>
+    /// <param name="thread">
+    /// The conversation thread to use for this invocation. If <see langword="null"/>, a new thread will be created.
+    /// The thread will be updated with the input message and any response messages generated during invocation.
+    /// </param>
+    /// <param name="serializerOptions">The JSON serialization options to use.</param>
+    /// <param name="options">Optional configuration parameters for controlling the agent's invocation behavior.</param>
+    /// <param name="useJsonSchemaResponseFormat">
+    /// <see langword="true" /> to set a JSON schema on the <see cref="ChatResponseFormat"/>; otherwise, <see langword="false" />. The default is <see langword="true" />.
+    /// Using a JSON schema improves reliability if the underlying model supports native structured output with a schema, but might cause an error if the model does not support it.
+    /// </param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentRunResponse"/> with the agent's output.</returns>
+    /// <exception cref="ArgumentException"><paramref name="message"/> is <see langword="null"/>, empty, or contains only whitespace.</exception>
+    /// <remarks>
+    /// The provided text will be wrapped in a <see cref="ChatMessage"/> with the <see cref="ChatRole.User"/> role
+    /// before being sent to the agent. This is a convenience method for simple text-based interactions.
+    /// </remarks>
+    public Task<AgentRunResponse<T>> RunAsync<T>(
+        string message,
+        AgentThread? thread = null,
+        JsonSerializerOptions? serializerOptions = null,
+        AgentRunOptions? options = null,
+        bool? useJsonSchemaResponseFormat = null,
+        CancellationToken cancellationToken = default)
+    {
+        _ = Throw.IfNullOrWhitespace(message);
+
+        return this.RunAsync<T>(new ChatMessage(ChatRole.User, message), thread, serializerOptions, options, useJsonSchemaResponseFormat, cancellationToken);
+    }
+
+    /// <summary>
+    /// Runs the agent with a single chat message, requesting a response of the specified type <typeparamref name="T"/>.
+    /// </summary>
+    /// <param name="message">The chat message to send to the agent.</param>
+    /// <param name="thread">
+    /// The conversation thread to use for this invocation. If <see langword="null"/>, a new thread will be created.
+    /// The thread will be updated with the input message and any response messages generated during invocation.
+    /// </param>
+    /// <param name="serializerOptions">The JSON serialization options to use.</param>
+    /// <param name="options">Optional configuration parameters for controlling the agent's invocation behavior.</param>
+    /// <param name="useJsonSchemaResponseFormat">
+    /// <see langword="true" /> to set a JSON schema on the <see cref="ChatResponseFormat"/>; otherwise, <see langword="false" />. The default is <see langword="true" />.
+    /// Using a JSON schema improves reliability if the underlying model supports native structured output with a schema, but might cause an error if the model does not support it.
+    /// </param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentRunResponse"/> with the agent's output.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="message"/> is <see langword="null"/>.</exception>
+    public Task<AgentRunResponse<T>> RunAsync<T>(
+        ChatMessage message,
+        AgentThread? thread = null,
+        JsonSerializerOptions? serializerOptions = null,
+        AgentRunOptions? options = null,
+        bool? useJsonSchemaResponseFormat = null,
+        CancellationToken cancellationToken = default)
+    {
+        _ = Throw.IfNull(message);
+
+        return this.RunAsync<T>([message], thread, serializerOptions, options, useJsonSchemaResponseFormat, cancellationToken);
+    }
+
+    /// <summary>
+    /// Runs the agent with a collection of chat messages, requesting a response of the specified type <typeparamref name="T"/>.
+    /// </summary>
+    /// <param name="messages">The collection of messages to send to the agent for processing.</param>
+    /// <param name="thread">
+    /// The conversation thread to use for this invocation. If <see langword="null"/>, a new thread will be created.
+    /// The thread will be updated with the input messages and any response messages generated during invocation.
+    /// </param>
+    /// <param name="serializerOptions">The JSON serialization options to use.</param>
+    /// <param name="options">Optional configuration parameters for controlling the agent's invocation behavior.</param>
+    /// <param name="useJsonSchemaResponseFormat">
+    /// <see langword="true" /> to set a JSON schema on the <see cref="ChatResponseFormat"/>; otherwise, <see langword="false" />. The default is <see langword="true" />.
+    /// Using a JSON schema improves reliability if the underlying model supports native structured output with a schema, but might cause an error if the model does not support it.
+    /// </param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentRunResponse"/> with the agent's output.</returns>
+    /// <typeparam name="T">The type of structured output to request.</typeparam>
+    /// <remarks>
+    /// <para>
+    /// This is the primary invocation method that implementations must override. It handles collections of messages,
+    /// allowing for complex conversational scenarios including multi-turn interactions, function calls, and
+    /// context-rich conversations.
+    /// </para>
+    /// <para>
+    /// The messages are processed in the order provided and become part of the conversation history.
+    /// The agent's response will also be added to <paramref name="thread"/> if one is provided.
+    /// </para>
+    /// </remarks>
+    public async Task<AgentRunResponse<T>> RunAsync<T>(
+        IEnumerable<ChatMessage> messages,
+        AgentThread? thread = null,
+        JsonSerializerOptions? serializerOptions = null,
+        AgentRunOptions? options = null,
+        bool? useJsonSchemaResponseFormat = null,
+        CancellationToken cancellationToken = default)
+    {
+        var inputMessages = Throw.IfNull(messages) as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
+
+        (ChatClientAgentThread safeThread, ChatOptions? chatOptions, List<ChatMessage> threadMessages) =
+            await this.PrepareThreadAndMessagesAsync(thread, inputMessages, options, cancellationToken).ConfigureAwait(false);
+
+        var chatClient = this.ChatClient;
+
+        chatClient = ApplyRunOptionsTransformations(options, chatClient);
+
+        var agentName = this.GetLoggingAgentName();
+
+        this._logger.LogAgentChatClientInvokingAgent(nameof(RunAsync), this.Id, agentName, this._chatClientType);
+
+        // Call the IChatClient and notify the AIContextProvider of any failures.
+        ChatResponse<T> chatResponse;
+        try
+        {
+            chatResponse = await chatClient.GetResponseAsync<T>(
+                threadMessages,
+                serializerOptions ?? AgentJsonUtilities.DefaultOptions,
+                chatOptions,
+                useJsonSchemaResponseFormat,
+                cancellationToken
+            ).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            await NotifyAIContextProviderOfFailureAsync(safeThread, ex, inputMessages, cancellationToken).ConfigureAwait(false);
+            throw;
+        }
+
+        this._logger.LogAgentChatClientInvokedAgent(nameof(RunAsync), this.Id, agentName, this._chatClientType, inputMessages.Count);
+
+        // We can derive the type of supported thread from whether we have a conversation id,
+        // so let's update it and set the conversation id for the service thread case.
+        this.UpdateThreadWithTypeAndConversationId(safeThread, chatResponse.ConversationId);
+
+        // Ensure that the author name is set for each message in the response.
+        foreach (ChatMessage chatResponseMessage in chatResponse.Messages)
+        {
+            chatResponseMessage.AuthorName ??= agentName;
+        }
+
+        // Only notify the thread of new messages if the chatResponse was successful to avoid inconsistent message state in the thread.
+        await NotifyThreadOfNewMessagesAsync(safeThread, inputMessages.Concat(chatResponse.Messages), cancellationToken).ConfigureAwait(false);
+
+        // Notify the AIContextProvider of all new messages.
+        await NotifyAIContextProviderOfSuccessAsync(safeThread, inputMessages, chatResponse.Messages, cancellationToken).ConfigureAwait(false);
+
+        return new AgentRunResponse<T>(chatResponse) { AgentId = this.Id };
+    }
+}

@@ -17,7 +17,7 @@ namespace Microsoft.Agents.AI;
 /// <summary>
 /// Provides an <see cref="AIAgent"/> that delegates to an <see cref="IChatClient"/> implementation.
 /// </summary>
-public sealed class ChatClientAgent : AIAgent
+public sealed partial class ChatClientAgent : AIAgent
 {
     private readonly ChatClientAgentOptions? _agentOptions;
     private readonly AIAgentMetadata _agentMetadata;
