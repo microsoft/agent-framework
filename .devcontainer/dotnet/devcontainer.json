@@ -9,7 +9,8 @@
   "customizations": {
     "vscode": {
       "extensions": [
-        "ms-dotnettools.csdevkit"
+        "ms-dotnettools.csdevkit",
+        "vscode-icons-team.vscode-icons"
       ]
     }
   }
