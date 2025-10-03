@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import importlib
 import importlib.metadata
 from typing import Final
 

@@ -3,7 +3,7 @@
 Please install this package via pip:
 
 ```bash
-pip install agent-framework-mem0
+pip install agent-framework-mem0 --pre
 ```
 
 ## Memory Context Provider
@@ -18,4 +18,3 @@ See the [Mem0 basic example](https://github.com/microsoft/agent-framework/tree/m
 - Teaching the agent user preferences
 - Retrieving information using remembered context across new threads
 - Persistent memory
-

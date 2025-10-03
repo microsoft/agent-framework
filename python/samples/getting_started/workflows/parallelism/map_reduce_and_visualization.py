@@ -296,7 +296,7 @@ async def main():
         svg_file = viz.export(format="svg")
         print(f"SVG file saved to: {svg_file}")
     except ImportError:
-        print("Tip: Install 'viz' extra to export workflow visualization: pip install agent-framework[viz]")
+        print("Tip: Install 'viz' extra to export workflow visualization: pip install agent-framework[viz] --pre")
 
     # Step 3: Open the text file and read its content.
     async with aiofiles.open(os.path.join(DIR, "../resources", "long_text.txt"), "r") as f:

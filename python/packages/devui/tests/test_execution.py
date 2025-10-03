@@ -15,6 +15,26 @@ from agent_framework_devui._mapper import MessageMapper
 from agent_framework_devui.models._openai_custom import AgentFrameworkExtraBody, AgentFrameworkRequest
 
 
+class _DummyStartExecutor:
+    """Minimal executor stub exposing handler metadata for tests."""
+
+    def __init__(self, *, input_types=None, handlers=None):
+        if input_types is not None:
+            self.input_types = list(input_types)
+        if handlers is not None:
+            self._handlers = dict(handlers)
+
+
+class _DummyWorkflow:
+    """Simple workflow stub returning configured start executor."""
+
+    def __init__(self, start_executor):
+        self._start_executor = start_executor
+
+    def get_start_executor(self):
+        return self._start_executor
+
+
 @pytest.fixture
 def test_entities_dir():
     """Use the samples directory which has proper entity structure."""
@@ -135,6 +155,50 @@ async def test_executor_missing_entity_id(executor):
 
     entity_id = request.get_entity_id()
     assert entity_id is None
+
+
+def test_executor_get_start_executor_message_types_uses_handlers():
+    """Ensure handler metadata is surfaced when input_types missing."""
+    executor = AgentFrameworkExecutor(EntityDiscovery(None), MessageMapper())
+    start_executor = _DummyStartExecutor(handlers={str: lambda *_: None})
+    workflow = _DummyWorkflow(start_executor)
+
+    start, message_types = executor._get_start_executor_message_types(workflow)
+
+    assert start is start_executor
+    assert str in message_types
+
+
+def test_executor_select_primary_input_prefers_string():
+    """Select string input even when discovered after other handlers."""
+    executor = AgentFrameworkExecutor(EntityDiscovery(None), MessageMapper())
+    placeholder_type = type("Placeholder", (), {})
+
+    chosen = executor._select_primary_input_type([placeholder_type, str])
+
+    assert chosen is str
+
+
+def test_executor_parse_structured_prefers_input_field():
+    """Structured payloads map to string when agent start requires text."""
+    executor = AgentFrameworkExecutor(EntityDiscovery(None), MessageMapper())
+    start_executor = _DummyStartExecutor(handlers={type("Req", (), {}): None, str: lambda *_: None})
+    workflow = _DummyWorkflow(start_executor)
+
+    parsed = executor._parse_structured_workflow_input(workflow, {"input": "hello"})
+
+    assert parsed == "hello"
+
+
+def test_executor_parse_raw_falls_back_to_string():
+    """Raw inputs remain untouched when start executor expects text."""
+    executor = AgentFrameworkExecutor(EntityDiscovery(None), MessageMapper())
+    start_executor = _DummyStartExecutor(handlers={str: lambda *_: None})
+    workflow = _DummyWorkflow(start_executor)
+
+    parsed = executor._parse_raw_workflow_input(workflow, "hi there")
+
+    assert parsed == "hi there"
 
 
 if __name__ == "__main__":

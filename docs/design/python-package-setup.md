@@ -22,7 +22,7 @@
             "agent-framework-google == 1.0.0"
         ]
         ```
-    * this means developers can use `pip install agent-framework[google]` to get AF with all Google connectors and dependencies, as well as manually installing the subpackage with `pip install agent-framework-google`.
+    * this means developers can use `pip install agent-framework[google] --pre` to get AF with all Google connectors and dependencies, as well as manually installing the subpackage with `pip install agent-framework-google --pre`.
 
 ### Sample getting started code
 ```python

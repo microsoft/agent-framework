@@ -101,7 +101,9 @@ internal sealed class Program
         DeclarativeWorkflowOptions options =
             new(new AzureAgentProvider(this.FoundryEndpoint, new AzureCliCredential()))
             {
-                Configuration = this.Configuration
+                Configuration = this.Configuration,
+                //ConversationId = null, // Assign to continue a conversation
+                //LoggerFactory = null, // Assign to enable logging
             };
 
         return DeclarativeWorkflowBuilder.Build<string>(this.WorkflowFile, options);
