@@ -36,7 +36,11 @@ public class AgentRunResponse<T> : AgentRunResponse
     }
 
     /// <summary>
-    /// TBD
+    /// Gets the result value of the agent response as an instance of <typeparamref name="T"/>.
     /// </summary>
+    /// <remarks>
+    /// If the response did not contain JSON, or if deserialization fails, this property will throw.
+    /// To avoid exceptions, use <see cref="AgentRunResponse.TryDeserialize{T}"/> instead.
+    /// </remarks>
     public T Result => this._response.Result;
 }
