@@ -213,11 +213,7 @@ class OllamaChatClient(BaseChatClient):
                 " TextReasoningContent, or FunctionCallContent."
             )
 
-        assistant_message = OllamaMessage(role="assistant")
-        if isinstance(message, TextContent):
-            assistant_message.content = message.text
-        if isinstance(message, TextReasoningContent):
-            assistant_message.thinking = message.text
+        assistant_message = OllamaMessage(role="assistant", content=message.text, thinking=message.reasoning)
 
         tool_calls = [item for item in message.contents if isinstance(item, FunctionCallContent)]
         if tool_calls:
@@ -278,9 +274,11 @@ class OllamaChatClient(BaseChatClient):
             usage_details=UsageDetails(
                 input_token_count=response.prompt_eval_count,
                 output_token_count=response.eval_count,
-                total_token_count=response.prompt_eval_count + response.eval_count
-                if response.prompt_eval_count is not None and response.eval_count is not None
-                else None,
+                total_token_count=(
+                    response.prompt_eval_count + response.eval_count
+                    if response.prompt_eval_count is not None and response.eval_count is not None
+                    else None
+                ),
             ),
         )
 
