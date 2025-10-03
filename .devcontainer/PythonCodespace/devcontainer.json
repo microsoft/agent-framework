@@ -1,8 +1,0 @@
-{
-  "name": "Python 3",
-  "image": "mcr.microsoft.com/devcontainers/python:0-3.11-bullseye",
-  "features": {
-    "ghcr.io/devcontainers-extra/features/coverage-py:2": {}
-  },
-  "workspaceFolder": "/workspaces/agent-framework-1/python/"
-}
