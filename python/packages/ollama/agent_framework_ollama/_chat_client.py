@@ -123,7 +123,7 @@ class OllamaChatClient(BaseChatClient):
                 **kwargs,
             )
         except Exception as ex:
-            raise ServiceResponseException("Ollama chat request failed.", ex) from ex
+            raise ServiceResponseException(f"Ollama chat request failed : {ex}", ex) from ex
 
         return self._ollama_response_to_agent_framework_message(response)
 
