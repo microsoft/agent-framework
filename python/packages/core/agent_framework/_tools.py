@@ -1180,7 +1180,7 @@ def _replace_approval_contents_with_results(
                     # Create a "not approved" result for rejected calls
                     msg.contents[content_idx] = FunctionResultContent(
                         call_id=content.id,
-                        result="This tool call was not approved.",
+                        result="Error: Tool call invocation was rejected by user.",
                     )
 
 
