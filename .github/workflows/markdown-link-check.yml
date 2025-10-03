@@ -6,6 +6,8 @@ on:
     branches: ["main"]
     paths:
       - '**.md'
+      - '.github/workflows/markdown-link-check.yml'
+      - '.github/.linkspector.yml'
   schedule:
     - cron: "0 0 * * *" # Run at midnight UTC daily
 
