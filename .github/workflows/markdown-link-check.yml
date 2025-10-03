@@ -4,6 +4,10 @@ on:
   workflow_dispatch:
   pull_request:
     branches: ["main"]
+    paths:
+      - '**.md'
+  schedule:
+    - cron: "0 0 * * *" # Run at midnight UTC daily
 
 permissions:
   contents: read
