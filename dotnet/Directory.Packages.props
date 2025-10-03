@@ -42,8 +42,11 @@
     <PackageVersion Include="System.Collections.Immutable" Version="9.0.9" />
     <PackageVersion Include="System.CommandLine" Version="2.0.0-rc.1.25451.107" />
     <PackageVersion Include="System.Diagnostics.DiagnosticSource" Version="9.0.9" />
+    <PackageVersion Include="System.Numerics.Tensors" Version="9.0.0" />
     <PackageVersion Include="System.Threading.Channels" Version="9.0.9" />
     <PackageVersion Include="System.Threading.Tasks.Extensions" Version="4.6.3" />
+  <!-- Audio -->
+  <PackageVersion Include="NAudio" Version="2.2.1" />
     <!-- OpenTelemetry -->
     <PackageVersion Include="OpenTelemetry" Version="1.12.0" />
     <PackageVersion Include="OpenTelemetry.Exporter.Console" Version="1.12.0" />
