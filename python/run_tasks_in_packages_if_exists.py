@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import argparse
 import glob
 import sys
 from pathlib import Path
@@ -9,12 +10,16 @@ from poethepoet.app import PoeThePoet
 from rich import print
 
 
-def discover_projects(workspace_pyproject_file: Path) -> list[Path]:
+def discover_projects(workspace_pyproject_file: Path, additional_exclude: list[str] | None = None) -> list[Path]:
     with workspace_pyproject_file.open("rb") as f:
         data = tomli.load(f)
 
     projects = data["tool"]["uv"]["workspace"]["members"]
     exclude = data["tool"]["uv"]["workspace"].get("exclude", [])
+
+    # Add additional excludes from command line
+    if additional_exclude:
+        exclude.extend(additional_exclude)
 
     all_projects: list[Path] = []
     for project in projects:
@@ -53,20 +58,25 @@ def extract_poe_tasks(file: Path) -> set[str]:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Run tasks in packages if they exist")
+    parser.add_argument("task", help="Task name to run")
+    parser.add_argument("--exclude", action="append", help="Additional packages to exclude (can be used multiple times)")
+
+    args, unknown_args = parser.parse_known_args()
+
     pyproject_file = Path(__file__).parent / "pyproject.toml"
-    projects = discover_projects(pyproject_file)
+    projects = discover_projects(pyproject_file, args.exclude)
 
-    if len(sys.argv) < 2:
-        print("Please provide a task name")
-        sys.exit(1)
-
-    task_name = sys.argv[1]
+    task_name = args.task
     for project in projects:
         tasks = extract_poe_tasks(project / "pyproject.toml")
         if task_name in tasks:
             print(f"Running task {task_name} in {project}")
             app = PoeThePoet(cwd=project)
-            result = app(cli_args=sys.argv[1:])
+            # Pass task name and all unknown args to poe
+            poe_args = [task_name] + unknown_args
+
+            result = app(cli_args=poe_args)
             if result:
                 sys.exit(result)
         else:
