@@ -7,6 +7,12 @@ from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
 
+def create_sample_image() -> str:
+    """Create a simple 1x1 pixel PNG image for testing."""
+    # This is a tiny red pixel in PNG format
+    png_data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
+    return f"data:image/png;base64,{png_data}"
+
 async def test_image() -> None:
     """Test image analysis with Azure OpenAI."""
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
@@ -29,16 +35,7 @@ async def test_image() -> None:
 async def main() -> None:
     print("=== Testing Azure OpenAI Multimodal ===")
     print("Testing image analysis (supported by Chat Completions API)")
-    print("Note: For PDF support, use the Azure OpenAI Responses API instead.")
     await test_image()
-
-
-def create_sample_image() -> str:
-    """Create a simple 1x1 pixel PNG image for testing."""
-    # This is a tiny red pixel in PNG format
-    png_data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
-    return f"data:image/png;base64,{png_data}"
-
 
 if __name__ == "__main__":
     asyncio.run(main())
