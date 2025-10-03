@@ -9,10 +9,10 @@ We recommend two common installation paths depending on your use case.
 If you are exploring or developing locally, install the entire framework with all sub-packages:
 
 ```bash
-pip install agent-framework
+pip install agent-framework --pre
 ```
 
-This installs the core and every integration package, making sure that all features are available without additional steps. This is the simplest way to get started.
+This installs the core and every integration package, making sure that all features are available without additional steps. The `--pre` flag is required while Agent Framework is in preview. This is the simplest way to get started.
 
 ### 2. Selective install
 
@@ -22,16 +22,16 @@ If you only need specific integrations, you can install at a more granular level
 # Core only
 # includes Azure OpenAI and OpenAI support by default
 # also includes workflows and orchestrations
-pip install agent-framework-core
+pip install agent-framework-core --pre
 
 # Core + Azure AI integration
-pip install agent-framework-azure-ai
+pip install agent-framework-azure-ai --pre
 
 # Core + Microsoft Copilot Studio integration
-pip install agent-framework-copilotstudio
+pip install agent-framework-copilotstudio --pre
 
 # Core + both Microsoft Copilot Studio and Azure AI integration
-pip install agent-framework-microsoft agent-framework-azure-ai
+pip install agent-framework-microsoft agent-framework-azure-ai --pre
 ```
 
 This selective approach is useful when you know which integrations you need, and it is the recommended way to set up lightweight environments.

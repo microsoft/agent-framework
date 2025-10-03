@@ -6,11 +6,11 @@ using Microsoft.Extensions.AI;
 namespace A2A;
 
 /// <summary>
-/// Extension methods for the <see cref="Message"/> class.
+/// Extension methods for the <see cref="AgentMessage"/> class.
 /// </summary>
 internal static class A2AMessageExtensions
 {
-    internal static ChatMessage ToChatMessage(this Message message)
+    internal static ChatMessage ToChatMessage(this AgentMessage message)
     {
         List<AIContent>? aiContents = null;
 

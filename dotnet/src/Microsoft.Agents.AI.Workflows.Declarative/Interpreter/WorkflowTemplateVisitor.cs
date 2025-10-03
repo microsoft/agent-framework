@@ -22,6 +22,8 @@ internal sealed class WorkflowTemplateVisitor : DialogActionVisitor
     {
         this._rootId = workflowId;
         this._workflowModel = new WorkflowModel<string>(new RootTemplate(workflowId, typeInfo));
+
+        WorkflowDiagnostics.SetFoundryProduct();
     }
 
     public bool HasUnsupportedActions { get; private set; }

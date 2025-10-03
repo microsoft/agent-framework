@@ -7,7 +7,7 @@ Microsoft Agent Framework Workflows support ships with the core `agent-framework
 To install with visualization support:
 
 ```bash
-pip install agent-framework[viz]
+pip install agent-framework[viz] --pre
 ```
 
 To export visualization images you also need to [install GraphViz](https://graphviz.org/download/).
