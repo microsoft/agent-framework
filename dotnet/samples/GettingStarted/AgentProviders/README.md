@@ -15,7 +15,8 @@ See the README.md for each sample for the prerequisites for that sample.
 |Sample|Description|
 |---|---|
 |[Creating an AIAgent with A2A](./Agent_With_A2A/)|This sample demonstrates how to create AIAgent for an existing A2A agent.|
-|[Creating an AIAgent with AzureFoundry](./Agent_With_AzureFoundry/)|This sample demonstrates how to create an Azure Foundry agent and expose it as an AIAgent|
+|[Creating an AIAgent with AzureFoundry Agent](./Agent_With_AzureFoundryAgent/)|This sample demonstrates how to create an Azure Foundry agent and expose it as an AIAgent|
+|[Creating an AIAgent with AzureFoundry Model](./Agent_With_AzureFoundryModel/)|This sample demonstrates how to use any model deployed to Azure Foundry to create an AIAgent|
 |[Creating an AIAgent with Azure OpenAI ChatCompletion](./Agent_With_AzureOpenAIChatCompletion/)|This sample demonstrates how to create an AIAgent using Azure OpenAI ChatCompletion as the underlying inference service|
 |[Creating an AIAgent with Azure OpenAI Responses](./Agent_With_AzureOpenAIResponses/)|This sample demonstrates how to create an AIAgent using Azure OpenAI Responses as the underlying inference service|
 |[Creating an AIAgent with a custom implementation](./Agent_With_CustomImplementation/)|This sample demonstrates how to create an AIAgent with a custom implementation|
