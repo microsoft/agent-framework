@@ -66,9 +66,6 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
         chat_options: ChatOptions,
         **kwargs: Any,
     ) -> ChatResponse:
-        # Refresh API key if using a callable provider
-        await self._refresh_api_key()
-
         options_dict = self._prepare_options(messages, chat_options)
         try:
             return self._create_chat_response(
@@ -97,9 +94,6 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
         chat_options: ChatOptions,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
-        # Refresh API key if using a callable provider
-        await self._refresh_api_key()
-
         options_dict = self._prepare_options(messages, chat_options)
         options_dict["stream_options"] = {"include_usage": True}
         try:
@@ -523,18 +517,9 @@ class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient):
                 "Set via 'model_id' parameter or 'OPENAI_CHAT_MODEL_ID' environment variable."
             )
 
-        # Handle callable API key from settings
-        if openai_settings.api_key:
-            if callable(openai_settings.api_key):
-                api_key_value = openai_settings.api_key
-            else:
-                api_key_value = openai_settings.api_key.get_secret_value()
-        else:
-            api_key_value = None
-
         super().__init__(
             model_id=openai_settings.chat_model_id,
-            api_key=api_key_value,
+            api_key=self._get_api_key(openai_settings.api_key),
             base_url=openai_settings.base_url if openai_settings.base_url else None,
             org_id=openai_settings.org_id,
             default_headers=default_headers,

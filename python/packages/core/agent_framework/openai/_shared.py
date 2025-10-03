@@ -111,9 +111,6 @@ class OpenAIBase(SerializationMixin):
 
     INJECTABLE: ClassVar[set[str]] = {"client"}
 
-    # Callable API key provider for dynamic token refresh
-    _api_key_provider: Callable[[], str | Awaitable[str]] | None = None
-
     def __init__(self, *, client: AsyncOpenAI, model_id: str, **kwargs: Any) -> None:
         """Initialize OpenAIBase.
 
@@ -149,16 +146,22 @@ class OpenAIBase(SerializationMixin):
         for key, value in kwargs.items():
             setattr(self, key, value)
 
-    async def _refresh_api_key(self) -> None:
-        """Refresh the API key if a callable provider is available."""
-        if self._api_key_provider:
-            # Get fresh token from the provider
-            token = self._api_key_provider()
-            # Handle both sync and async callables
-            if hasattr(token, "__await__"):
-                token = await token  # type: ignore
-            # Update the underlying client's API key
-            self.client.api_key = str(token)
+    def _get_api_key(
+        self, api_key: str | SecretStr | Callable[[], str | Awaitable[str]] | None
+    ) -> str | Callable[[], str | Awaitable[str]] | None:
+        """Get the appropriate API key value for client initialization.
+
+        Args:
+            api_key: The API key parameter which can be a string, SecretStr, callable, or None.
+
+        Returns:
+            For callable API keys: returns the callable directly.
+            For SecretStr API keys: returns the string value.
+            For string/None API keys: returns as-is.
+        """
+        if isinstance(api_key, SecretStr):
+            return api_key.get_secret_value()
+        return api_key  # Pass callable, string, or None directly to OpenAI SDK
 
 
 class OpenAIConfigMixin(OpenAIBase):
@@ -205,12 +208,8 @@ class OpenAIConfigMixin(OpenAIBase):
             merged_headers.update(APP_INFO)
             merged_headers = prepend_agent_framework_to_user_agent(merged_headers)
 
-        # Handle callable API key
-        if callable(api_key):
-            self._api_key_provider = api_key
-            api_key_value = ""  # Set empty string for OpenAI client
-        else:
-            api_key_value = api_key
+        # Handle callable API key using base class method
+        api_key_value = self._get_api_key(api_key)
 
         if not client:
             if not api_key:

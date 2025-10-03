@@ -1,11 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import asyncio
-import contextlib
 import json
 import os
 from typing import Annotated, Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from openai.types.beta.threads import MessageDeltaEvent, Run, TextDeltaBlock
@@ -1273,48 +1271,5 @@ def test_openai_assistants_client_with_callable_api_key() -> None:
 
     # Verify client was created successfully
     assert client.model_id == "gpt-4o"
-    # Callable API keys should result in empty string for client.api_key
-    assert client.client.api_key == ""
-
-
-@patch("agent_framework.openai._assistants_client.AsyncOpenAI")
-async def test_openai_assistants_client_refresh_api_key(mock_async_openai: MagicMock) -> None:
-    """Test that callable API keys are refreshed when making requests."""
-    call_count = 0
-
-    async def get_api_key() -> str:
-        nonlocal call_count
-        call_count += 1
-        await asyncio.sleep(0.001)  # Simulate async operation
-        return f"refreshed-key-{call_count}"
-
-    client = OpenAIAssistantsClient(model_id="gpt-4o", api_key=get_api_key)
-
-    # Mock the OpenAI client response for streaming
-    async def mock_stream():
-        yield MagicMock()
-
-    mock_async_openai.return_value.beta.threads.runs.stream.return_value = mock_stream()
-
-    # Initial state - no calls yet
-    assert call_count == 0
-
-    # Make first request - should trigger refresh
-    messages = [ChatMessage(role="user", text="Hello")]
-    with contextlib.suppress(Exception):
-        response_stream = client._inner_get_streaming_response(messages=messages, chat_options=ChatOptions())  # type: ignore
-        async for _ in response_stream:
-            break  # Just get the first chunk
-
-    # Verify callable was called and key was refreshed
-    assert call_count == 1
-    assert client.client.api_key == "refreshed-key-1"
-
-    # Make second request - should trigger another refresh
-    with contextlib.suppress(Exception):
-        response_stream = client._inner_get_streaming_response(messages=messages, chat_options=ChatOptions())  # type: ignore
-        async for _ in response_stream:
-            break  # Just get the first chunk
-
-    assert call_count == 2
-    assert client.client.api_key == "refreshed-key-2"
+    # OpenAI SDK now manages callable API keys internally
+    assert client.client is not None

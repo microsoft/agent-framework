@@ -88,9 +88,6 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         chat_options: ChatOptions,
         **kwargs: Any,
     ) -> ChatResponse:
-        # Refresh API key if using a callable provider
-        await self._refresh_api_key()
-
         options_dict = self._prepare_options(messages, chat_options)
         try:
             if not chat_options.response_format:
@@ -132,9 +129,6 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         chat_options: ChatOptions,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
-        # Refresh API key if using a callable provider
-        await self._refresh_api_key()
-
         options_dict = self._prepare_options(messages, chat_options)
         function_call_ids: dict[int, tuple[str, str]] = {}  # output_index: (call_id, name)
         try:
@@ -1001,18 +995,9 @@ class OpenAIResponsesClient(OpenAIConfigMixin, OpenAIBaseResponsesClient):
                 "Set via 'model_id' parameter or 'OPENAI_RESPONSES_MODEL_ID' environment variable."
             )
 
-        # Handle callable API key from settings
-        if openai_settings.api_key:
-            if callable(openai_settings.api_key):
-                api_key_value = openai_settings.api_key
-            else:
-                api_key_value = openai_settings.api_key.get_secret_value()
-        else:
-            api_key_value = None
-
         super().__init__(
             model_id=openai_settings.responses_model_id,
-            api_key=api_key_value,
+            api_key=self._get_api_key(openai_settings.api_key),
             org_id=openai_settings.org_id,
             default_headers=default_headers,
             client=async_client,
