@@ -58,45 +58,62 @@ def deserialize_flag(
 ) -> FlagT | None:  # pragma: no cover
     """Deserialize arbitrary input into a flag enum instance.
 
-    Accepts existing enum instances, integers, comma separated strings, or iterables
-    of parts. Unknown parts are ignored. Returns ``None`` for unsupported input.
+    Accepted forms:
+      - Existing flag enum instance (returned as-is)
+      - Integer value (converted directly to enum if valid)
+      - Comma separated string, e.g. "a,b,c"
+      - Iterable (list/tuple/set) containing any mix of:
+          * strings (possibly with commas)
+          * enum members
+          * integers (attempted conversion)
+    Unknown parts are ignored. Returns ``None`` only for unsupported input types
+    or invalid integer values.
     """
     if value is None:
         return None
     if isinstance(value, enum_cls):
         return value
-    # Accept int directly
     if isinstance(value, int):
         try:
             return enum_cls(value)
         except Exception:
             return None
-    # Accept comma separated string or single string
-    parts: list[str]
+
+    flag_value = enum_cls(0)
+    parts: list[str] = []
+
     if isinstance(value, str):
-        value = value.strip()
-        if not value:
+        raw = value.strip()
+        if not raw:
+            # empty string -> zero flag
             return enum_cls(0)
-        parts = [p.strip() for p in value.split(",") if p.strip()]
+        parts.extend([p.strip() for p in raw.split(",") if p.strip()])
     elif isinstance(value, (list, tuple, set)):
-        parts = []
         for item in value:
             if isinstance(item, str):
                 parts.extend([p.strip() for p in item.split(",") if p.strip()])
             elif isinstance(item, enum_cls):
-                # accumulate and continue
-                return_flag = enum_cls(0)
-                return_flag |= item
-        # fall through
+                flag_value |= item
+            elif isinstance(item, int):
+                try:
+                    flag_value |= enum_cls(item)
+                except Exception:
+                    # ignore invalid ints
+                    pass
+            # silently ignore unsupported element types
     else:
         return None
-    flag_value = enum_cls(0)
+
+    # Resolve string parts via mapping
     for part in parts:
         member = mapping.get(part)
         if member is not None:
             flag_value |= member
-    if flag_value == enum_cls(0) and mapping.get("none") is not None:
-        return mapping["none"]  # type: ignore[index]
+
+    if flag_value == enum_cls(0):
+        none_member = mapping.get("none")
+        if none_member is not None:
+            return none_member  # type: ignore[return-value,index]
     return flag_value
 
 
@@ -174,7 +191,7 @@ class PolicyPivotProperty(str, Enum):
 def translate_activity(activity: Activity) -> ProtectionScopeActivities:
     """Map Activity enum to ProtectionScopeActivities flag value.
 
-    Keeps UNKNOWN -> NONE for backward compatibility; unknown future values map to UNKNOWN_FUTURE_VALUE.
+    Keeps UNKNOWN -> NONE for backward compatibility.
     """
     mapping = {
         Activity.UNKNOWN: ProtectionScopeActivities.NONE,

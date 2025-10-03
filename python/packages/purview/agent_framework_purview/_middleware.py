@@ -18,7 +18,7 @@ class PurviewPolicyMiddleware(AgentMiddleware):
 
     Accepts either a synchronous TokenCredential or an AsyncTokenCredential.
 
-    Usage (recommended direct injection - simpler than the previous decorator):
+    Usage:
 
         from agent_framework_purview import PurviewPolicyMiddleware, PurviewSettings
         from agent_framework import ChatAgent

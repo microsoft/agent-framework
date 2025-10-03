@@ -70,7 +70,7 @@ class ScopedContentProcessor:
             token_info = await self._client.get_user_info_from_token(tenant_id=self._settings.tenant_id)
 
         tenant_id = self._settings.tenant_id or (token_info or {}).get("tenant_id")
-        if not tenant_id:
+        if not tenant_id or not _is_valid_guid(tenant_id):
             raise ValueError("Tenant id required or must be inferable from credential")
 
         for m in messages:
@@ -104,7 +104,7 @@ class ScopedContentProcessor:
             protected_app = ProtectedAppMetadata(
                 name=self._settings.app_name,
                 version="1.0",
-                applicationLocation=policy_location,  # alias form
+                applicationLocation=policy_location,
             )  # type: ignore[call-arg]
             integrated_app = IntegratedAppMetadata(name=self._settings.app_name, version="1.0")
             device_meta = DeviceMetadata(
@@ -117,7 +117,7 @@ class ScopedContentProcessor:
             # Only use author_name if it's a valid GUID format
             if m.author_name and _is_valid_guid(m.author_name):
                 user_id = m.author_name
-            if not user_id:
+            if not user_id or not _is_valid_guid(user_id):
                 raise ValueError("User id required or inferable from message author/credential")
 
             ctp = ContentToProcess(**{

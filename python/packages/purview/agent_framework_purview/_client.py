@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import base64
 import json
-from typing import Any, TypeVar
+from typing import Any, cast
 
 import httpx
 from agent_framework import AGENT_FRAMEWORK_USER_AGENT, get_logger
@@ -29,9 +29,6 @@ from ._models import (
 from ._settings import PurviewSettings
 
 logger = get_logger("agent_framework.purview")
-
-TResp = TypeVar("TResp", bound=BaseModel)
-
 
 class PurviewClient:
     """Async client for calling Graph Purview endpoints.
@@ -102,23 +99,23 @@ class PurviewClient:
         with tracer.start_as_current_span("purview.process_content"):
             token = await self._get_token(tenant_id=request.tenant_id)
             url = f"{self._graph_uri}/users/{request.user_id}/dataSecurityAndGovernance/processContent"
-            return await self._post(url, request, ProcessContentResponse, token)
+            return cast(ProcessContentResponse, await self._post(url, request, ProcessContentResponse, token))
 
     async def get_protection_scopes(self, request: ProtectionScopesRequest) -> ProtectionScopesResponse:
         tracer = get_tracer()
         with tracer.start_as_current_span("purview.get_protection_scopes"):
             token = await self._get_token()
             url = f"{self._graph_uri}/users/{request.user_id}/dataSecurityAndGovernance/protectionScopes/compute"
-            return await self._post(url, request, ProtectionScopesResponse, token)
+            return cast(ProtectionScopesResponse, await self._post(url, request, ProtectionScopesResponse, token))
 
     async def send_content_activities(self, request: ContentActivitiesRequest) -> ContentActivitiesResponse:
         tracer = get_tracer()
         with tracer.start_as_current_span("purview.send_content_activities"):
             token = await self._get_token()
             url = f"{self._graph_uri}/users/{request.user_id}/dataSecurityAndGovernance/activities/contentActivities"
-            return await self._post(url, request, ContentActivitiesResponse, token)
+            return cast(ContentActivitiesResponse, await self._post(url, request, ContentActivitiesResponse, token))
 
-    async def _post(self, url: str, model: Any, response_type: type[TResp], token: str) -> TResp:
+    async def _post(self, url: str, model: Any, response_type: type[BaseModel], token: str) -> BaseModel:
         payload = model.model_dump(by_alias=True, exclude_none=True, mode="json")
         headers = {
             "Authorization": f"Bearer {token}",
@@ -137,6 +134,6 @@ class PurviewClient:
         except ValueError:
             data = {}
         try:
-            return response_type.model_validate(data)  # type: ignore[no-any-return]
+            return response_type.model_validate(data)
         except Exception as ex:  # pragma: no cover
             raise PurviewServiceError(f"Failed to deserialize Purview response: {ex}") from ex
