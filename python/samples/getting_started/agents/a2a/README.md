@@ -1,6 +1,6 @@
 # A2A Agent Examples
 
-This folder contains examples demonstrating how to create and use agents with the A2A (Agent-to-Agent) protocol from the `agent_framework` package to communicate with remote A2A agents.
+This folder contains examples demonstrating how to create and use agents with the A2A (Agent2Agent) protocol from the `agent_framework` package to communicate with remote A2A agents.
 
 For more information about the A2A protocol specification, visit: https://a2a-protocol.org/latest/
 ## Examples
