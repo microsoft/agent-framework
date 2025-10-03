@@ -26,12 +26,28 @@ __all__ = ["AggregateContextProvider", "Context", "ContextProvider"]
 
 
 class Context:
-    """A class containing any context that should be provided to the AI model as supplied by an ContextProvider.
+    """A class containing any context that should be provided to the AI model as supplied by a ContextProvider.
 
     Each ContextProvider has the ability to provide its own context for each invocation.
     The Context class contains the additional context supplied by the ContextProvider.
     This context will be combined with context supplied by other providers before being passed to the AI model.
     This context is per invocation, and will not be stored as part of the chat history.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import Context, ChatMessage
+
+            # Create context with instructions
+            context = Context(
+                instructions="Use a professional tone when responding.",
+                messages=[ChatMessage(content="Previous context", role="user")],
+                tools=[my_tool],
+            )
+
+            # Access context properties
+            print(context.instructions)
+            print(len(context.messages))
     """
 
     def __init__(
@@ -43,9 +59,9 @@ class Context:
         """Create a new Context object.
 
         Args:
-            instructions: Instructions to provide to the AI model.
-            messages: a list of messages.
-            tools: a list of tools to provide to this run.
+            instructions: The instructions to provide to the AI model.
+            messages: The list of messages to include in the context.
+            tools: The list of tools to provide to this run.
         """
         self.instructions = instructions
         self.messages: Sequence[ChatMessage] = messages or []
@@ -62,7 +78,27 @@ class ContextProvider(ABC):
     It can listen to changes in the conversation and provide additional context to the AI model
     just before invocation.
 
-    It also has a default memory prompt that can be used by all providers.
+    Note:
+        ContextProvider is an abstract base class. You must subclass it and implement
+        the ``invoking()`` method to create a custom context provider. Ideally, you should
+        also implement the ``invoked()`` and ``thread_created()`` methods to track conversation
+        state, but these are optional.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import ContextProvider, Context, ChatMessage
+
+
+            class CustomContextProvider(ContextProvider):
+                async def invoking(self, messages, **kwargs):
+                    # Add custom instructions before each invocation
+                    return Context(instructions="Always be concise and helpful.", messages=[], tools=[])
+
+
+            # Use with a chat agent
+            async with CustomContextProvider() as provider:
+                agent = ChatAgent(chat_client=client, name="assistant", context_providers=provider)
     """
 
     # Default prompt to be used by all context providers when assembling memories/instructions
@@ -71,9 +107,9 @@ class ContextProvider(ABC):
     async def thread_created(self, thread_id: str | None) -> None:
         """Called just after a new thread is created.
 
-        Implementers can use this method to do any operations required at the creation of a new thread.
-        For example, checking long term storage for any data that is relevant
-        to the current session based on the input text.
+        Implementers can use this method to perform any operations required at the creation
+        of a new thread. For example, checking long-term storage for any data that is relevant
+        to the current session.
 
         Args:
             thread_id: The ID of the new thread.
@@ -89,36 +125,39 @@ class ContextProvider(ABC):
     ) -> None:
         """Called after the agent has received a response from the underlying inference service.
 
-        You can inspect the request and response messages, and update the state of the context provider
+        You can inspect the request and response messages, and update the state of the context provider.
 
         Args:
-            request_messages: messages that were sent to the model/agent
-            response_messages: messages that were returned by the model/agent
-            invoke_exception: exception that was thrown, if any.
-            kwargs: not used at present.
+            request_messages: The messages that were sent to the model/agent.
+            response_messages: The messages that were returned by the model/agent.
+            invoke_exception: The exception that was thrown, if any.
+            kwargs: Additional keyword arguments (not used at present).
         """
         pass
 
     @abstractmethod
     async def invoking(self, messages: ChatMessage | MutableSequence[ChatMessage], **kwargs: Any) -> Context:
-        """Called just before the Model/Agent/etc. is invoked.
+        """Called just before the model/agent is invoked.
 
         Implementers can load any additional context required at this time,
         and they should return any context that should be passed to the agent.
 
         Args:
             messages: The most recent messages that the agent is being invoked with.
-            kwargs: not used at present.
+            kwargs: Additional keyword arguments (not used at present).
+
+        Returns:
+            A Context object containing instructions, messages, and tools to include.
         """
         pass
 
     async def __aenter__(self) -> "Self":
-        """Async context manager entry.
+        """Enter the async context manager.
 
         Override this method to perform any setup operations when the context provider is entered.
 
         Returns:
-            Self for chaining.
+            The ContextProvider instance for chaining.
         """
         return self
 
@@ -128,14 +167,14 @@ class ContextProvider(ABC):
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> None:
-        """Async context manager exit.
+        """Exit the async context manager.
 
         Override this method to perform any cleanup operations when the context provider is exited.
 
         Args:
-            exc_type: Exception type if an exception occurred, None otherwise.
-            exc_val: Exception value if an exception occurred, None otherwise.
-            exc_tb: Exception traceback if an exception occurred, None otherwise.
+            exc_type: The exception type if an exception occurred, None otherwise.
+            exc_val: The exception value if an exception occurred, None otherwise.
+            exc_tb: The exception traceback if an exception occurred, None otherwise.
         """
         pass
 
@@ -146,14 +185,40 @@ class ContextProvider(ABC):
 class AggregateContextProvider(ContextProvider):
     """A ContextProvider that contains multiple context providers.
 
-    It delegates events to multiple context providers and aggregates responses from those events before returning.
+    It delegates events to multiple context providers and aggregates responses from those
+    events before returning. This allows you to combine multiple context providers into a
+    single provider.
+
+    Note:
+        An AggregateContextProvider is created automatically when you pass a single context
+        provider or a sequence of context providers to the agent constructor.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import AggregateContextProvider, ChatAgent
+
+            # Create multiple context providers
+            provider1 = CustomContextProvider1()
+            provider2 = CustomContextProvider2()
+            provider3 = CustomContextProvider3()
+
+            # Pass them to the agent - AggregateContextProvider is created automatically
+            agent = ChatAgent(chat_client=client, name="assistant", context_providers=[provider1, provider2, provider3])
+
+            # Verify that an AggregateContextProvider was created
+            assert isinstance(agent.context_providers, AggregateContextProvider)
+
+            # Add additional providers to the agent
+            provider4 = CustomContextProvider4()
+            agent.context_providers.add(provider4)
     """
 
     def __init__(self, context_providers: ContextProvider | Sequence[ContextProvider] | None = None) -> None:
         """Initialize the AggregateContextProvider with context providers.
 
         Args:
-            context_providers: Context providers to add.
+            context_providers: The context provider(s) to add.
         """
         if isinstance(context_providers, ContextProvider):
             self.providers = [context_providers]
@@ -162,10 +227,10 @@ class AggregateContextProvider(ContextProvider):
         self._exit_stack: AsyncExitStack | None = None
 
     def add(self, context_provider: ContextProvider) -> None:
-        """Adds new context provider.
+        """Add a new context provider.
 
         Args:
-            context_provider: Context provider to add.
+            context_provider: The context provider to add.
         """
         self.providers.append(context_provider)
 
@@ -208,10 +273,10 @@ class AggregateContextProvider(ContextProvider):
 
     @override
     async def __aenter__(self) -> "Self":
-        """Enter async context manager and set up all providers.
+        """Enter the async context manager and set up all providers.
 
         Returns:
-            Self for chaining.
+            The AggregateContextProvider instance for chaining.
         """
         self._exit_stack = AsyncExitStack()
         await self._exit_stack.__aenter__()
@@ -229,12 +294,12 @@ class AggregateContextProvider(ContextProvider):
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> None:
-        """Exit async context manager and clean up all providers.
+        """Exit the async context manager and clean up all providers.
 
         Args:
-            exc_type: Exception type if an exception occurred, None otherwise.
-            exc_val: Exception value if an exception occurred, None otherwise.
-            exc_tb: Exception traceback if an exception occurred, None otherwise.
+            exc_type: The exception type if an exception occurred, None otherwise.
+            exc_val: The exception value if an exception occurred, None otherwise.
+            exc_tb: The exception traceback if an exception occurred, None otherwise.
         """
         if self._exit_stack is not None:
             await self._exit_stack.__aexit__(exc_type, exc_val, exc_tb)
