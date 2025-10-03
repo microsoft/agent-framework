@@ -6,13 +6,11 @@
 
 ### Key Features
 
-- Middleware-based policy enforcement (no wrapper ceremony)
+- Middleware-based policy enforcement
 - Blocks or allows content at both ingress (prompt) and egress (response)
 - Works with any `ChatAgent` / agent orchestration using the standard Agent Framework middleware pipeline
-- Async-safe – evaluates policies without blocking the event loop
 - Supports both synchronous `TokenCredential` and `AsyncTokenCredential` from `azure-identity`
 - Simple, typed configuration via `PurviewSettings` / `PurviewAppLocation`
-- Helpful exception types: auth, rate limit, request, and service errors
 
 ### When to Use
 Add Purview when you need to:
@@ -56,28 +54,21 @@ If a policy violation is detected on the prompt, the middleware terminates the r
 
 ---
 
-## Configuration & Authentication
+## Authentication
 
-Environment variables commonly used (set via shell, `.env`, or CI secrets):
+`PurviewClient` uses the `azure-identity` library for token acquisition. You can use any `TokenCredential` or `AsyncTokenCredential` implementation.
 
-| Variable | Required | Purpose |
-|----------|----------|---------|
-| `AZURE_OPENAI_ENDPOINT` | Yes (for Azure OpenAI chat client) | Endpoint for Azure OpenAI deployment |
-| `AZURE_OPENAI_DEPLOYMENT_NAME` | Optional | Model deployment name (falls back to library defaults) |
-| `PURVIEW_CLIENT_APP_ID` | Yes* | Application (client) ID used for Purview auth (Interactive or Certificate) |
-| `PURVIEW_USE_CERT_AUTH` | Optional (`true`/`false`) | Switch between certificate and interactive browser auth |
-| `PURVIEW_TENANT_ID` | Yes (certificate mode) | Tenant ID for certificate auth |
-| `PURVIEW_CERT_PATH` | Yes (certificate mode) | Path to .pfx file |
-| `PURVIEW_CERT_PASSWORD` | Optional | Password if the certificate is encrypted |
+The APIs require the following Graph Permissions:
+- ProtectionScopes.Compute.All : (userProtectionScopeContainer)[https://learn.microsoft.com/en-us/graph/api/userprotectionscopecontainer-compute]
+- Content.Process.All : (processContent)[https://learn.microsoft.com/en-us/graph/api/userdatasecurityandgovernance-processcontent]
+- ContentActivity.Write : (contentActivity)[https://learn.microsoft.com/en-us/graph/api/activitiescontainer-post-contentactivities]
 
-*If omitted in some samples a default may be used for demonstration only – always supply your own in production.
+### Scopes
+`PurviewSettings.get_scopes()` derives the Graph scope list (currently `https://graph.microsoft.com/.default` style).
 
-### Choosing a Credential
+---
 
-Supported (explicit) credential types for Purview integration:
-
-- `InteractiveBrowserCredential` (local developer interactive sign-in)
-- `CertificateCredential` (service principal / automation)
+## Configuration
 
 ### `PurviewSettings`
 
@@ -108,9 +99,6 @@ settings = PurviewSettings(
 		location_value="<app-client-id>")
 )
 ```
-
-### Scopes
-`PurviewSettings.get_scopes()` derives the Graph scope list (currently `https://graph.microsoft.com/.default` style). Use it when acquiring tokens manually.
 
 ---
 
@@ -150,15 +138,4 @@ except (PurviewAuthenticationError, PurviewRateLimitError, PurviewRequestError, 
 ```
 
 ---
-
-## Frequently Asked (Preview) Questions
-
-Q: Does this send my entire conversation to Purview?  
-A: Only the messages provided at each enforcement point (prompt phase: incoming conversation window; response phase: agent-produced messages). You control truncation upstream.
-
-Q: Can I customize block messages?  
-A: Yes – either subclass the middleware or add a later middleware that rewrites `context.result` when it matches the default block text.
-
-Q: How do I disable response checks but keep prompt checks?  
-A: Wrap the middleware and short-circuit the post-phase call to `_processor.process_messages`.
 

@@ -51,7 +51,7 @@ class ProtectionScopesRequest(BaseModel):
 
     @field_validator("activities", mode="before")
     @classmethod
-    def _parse_flag(cls, v: object) -> ProtectionScopeActivities | None:  # pragma: no cover - simple adapter
+    def _parse_flag(cls, v: object) -> ProtectionScopeActivities | None:  # pragma: no cover
         return deserialize_flag(v, _PROTECTION_SCOPE_ACTIVITIES_MAP, ProtectionScopeActivities)
 
     @field_serializer("activities", when_used="json")

@@ -2,8 +2,7 @@
 
 """Public re-export surface for Purview models.
 
-Concrete implementations live under `agent_framework_purview.models`. This shim preserves
-backward compatibility for existing imports while allowing internal package structure.
+Concrete implementations live under `agent_framework_purview.models`.
 """
 
 from __future__ import annotations

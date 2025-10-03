@@ -50,7 +50,7 @@ def build_credential() -> Any:
     1. CertificateCredential (if PURVIEW_USE_CERT_AUTH=true)
     2. InteractiveBrowserCredential (requires PURVIEW_CLIENT_APP_ID)
     """
-    client_id = _get_env("PURVIEW_CLIENT_APP_ID", required=False, default=None)
+    client_id = _get_env("PURVIEW_CLIENT_APP_ID", required=True, default=None)
     use_cert_auth = _get_env("PURVIEW_USE_CERT_AUTH", required=False, default="false").lower() == "true"
 
     if not client_id:
@@ -93,7 +93,7 @@ async def run_with_middleware() -> None:
         build_credential(),
         PurviewSettings(
             appName="Agent Framework Sample App",
-            defaultUserId=os.environ.get("PURVIEW_DEFAULT_USER_ID", "00000000-0000-0000-0000-000000000000"),
+            defaultUserId=os.environ.get("PURVIEW_DEFAULT_USER_ID"),
         ),
     )
 
