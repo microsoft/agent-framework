@@ -7,7 +7,7 @@ import logging
 import os
 import uuid
 from collections.abc import AsyncGenerator
-from typing import Any
+from typing import Any, get_origin
 
 from agent_framework import AgentThread
 
@@ -638,6 +638,54 @@ class AgentFrameworkExecutor:
             logger.warning(f"Error parsing workflow input: {e}")
             return raw_input
 
+    def _get_start_executor_message_types(self, workflow: Any) -> tuple[Any | None, list[Any]]:
+        """Return start executor and its declared input types."""
+        try:
+            start_executor = workflow.get_start_executor()
+        except Exception as exc:  # pragma: no cover - defensive logging path
+            logger.debug(f"Unable to access workflow start executor: {exc}")
+            return None, []
+
+        if not start_executor:
+            return None, []
+
+        message_types: list[Any] = []
+
+        try:
+            input_types = getattr(start_executor, "input_types", None)
+        except Exception as exc:  # pragma: no cover - defensive logging path
+            logger.debug(f"Failed to read executor input_types: {exc}")
+        else:
+            if input_types:
+                message_types = list(input_types)
+
+        if not message_types and hasattr(start_executor, "_handlers"):
+            try:
+                handlers = start_executor._handlers
+                if isinstance(handlers, dict):
+                    message_types = list(handlers.keys())
+            except Exception as exc:  # pragma: no cover - defensive logging path
+                logger.debug(f"Failed to read executor handlers: {exc}")
+
+        return start_executor, message_types
+
+    def _select_primary_input_type(self, message_types: list[Any]) -> Any | None:
+        """Choose the most user-friendly input type for workflow kick-off."""
+        if not message_types:
+            return None
+
+        preferred = (str, dict)
+
+        for candidate in preferred:
+            for message_type in message_types:
+                if message_type is candidate:
+                    return candidate
+                origin = get_origin(message_type)
+                if origin is candidate:
+                    return candidate
+
+        return message_types[0]
+
     def _parse_structured_workflow_input(self, workflow: Any, input_data: dict[str, Any]) -> Any:
         """Parse structured input data for workflow execution.
 
@@ -650,18 +698,20 @@ class AgentFrameworkExecutor:
         """
         try:
             # Get the start executor and its input type
-            start_executor = workflow.get_start_executor()
-            if not start_executor or not hasattr(start_executor, "_handlers"):
+            start_executor, message_types = self._get_start_executor_message_types(workflow)
+            if not start_executor:
                 logger.debug("Cannot determine input type for workflow - using raw dict")
                 return input_data
 
-            message_types = list(start_executor._handlers.keys())
             if not message_types:
                 logger.debug("No message types found for start executor - using raw dict")
                 return input_data
 
             # Get the first (primary) input type
-            input_type = message_types[0]
+            input_type = self._select_primary_input_type(message_types)
+            if input_type is None:
+                logger.debug("Could not select primary input type for workflow - using raw dict")
+                return input_data
 
             # If input type is dict, return as-is
             if input_type is dict:
@@ -715,18 +765,20 @@ class AgentFrameworkExecutor:
         """
         try:
             # Get the start executor and its input type
-            start_executor = workflow.get_start_executor()
-            if not start_executor or not hasattr(start_executor, "_handlers"):
+            start_executor, message_types = self._get_start_executor_message_types(workflow)
+            if not start_executor:
                 logger.debug("Cannot determine input type for workflow - using raw string")
                 return raw_input
 
-            message_types = list(start_executor._handlers.keys())
             if not message_types:
                 logger.debug("No message types found for start executor - using raw string")
                 return raw_input
 
             # Get the first (primary) input type
-            input_type = message_types[0]
+            input_type = self._select_primary_input_type(message_types)
+            if input_type is None:
+                logger.debug("Could not select primary input type for workflow - using raw string")
+                return raw_input
 
             # If input type is str, return as-is
             if input_type is str:
