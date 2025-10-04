@@ -89,11 +89,11 @@ public class JsonSerializationTests
         }
     }
 
-    private static InputPort TestPort => InputPort.Create<string, int>("StringToInt");
-    private static InputPortInfo TestPortInfo => TestPort.ToPortInfo();
+    private static RequestPort TestPort => RequestPort.Create<string, int>("StringToInt");
+    private static RequestPortInfo TestPortInfo => TestPort.ToPortInfo();
 
     [Fact]
-    public void Test_InputPortInfo_JsonRoundtrip()
+    public void Test_RequestPortInfo_JsonRoundtrip()
     {
         RunJsonRoundtrip(TestPortInfo, predicate: TestPort.CreatePortInfoValidator());
     }
@@ -152,16 +152,16 @@ public class JsonSerializationTests
     private const string IntToStringId = nameof(IntToString);
     private const string StringToIntId = nameof(StringToInt);
 
-    private static InputPortInfo IntToString => InputPort.Create<int, string>(IntToStringId).ToPortInfo();
-    private static InputPortInfo StringToInt => InputPort.Create<string, int>(StringToIntId).ToPortInfo();
+    private static RequestPortInfo IntToString => RequestPort.Create<int, string>(IntToStringId).ToPortInfo();
+    private static RequestPortInfo StringToInt => RequestPort.Create<string, int>(StringToIntId).ToPortInfo();
 
     private static ValueTask<Workflow<string>> CreateTestWorkflowAsync()
     {
         ForwardMessageExecutor<string> forwardString = new(ForwardStringId);
         ForwardMessageExecutor<int> forwardInt = new(ForwardIntId);
 
-        InputPort stringToInt = InputPort.Create<string, int>(StringToIntId);
-        InputPort intToString = InputPort.Create<int, string>(IntToStringId);
+        RequestPort stringToInt = RequestPort.Create<string, int>(StringToIntId);
+        RequestPort intToString = RequestPort.Create<int, string>(IntToStringId);
 
         WorkflowBuilder builder = new(forwardString);
         builder.AddEdge(forwardString, stringToInt)
@@ -181,7 +181,7 @@ public class JsonSerializationTests
     private static void ValidateWorkflowInfo(WorkflowInfo actual, WorkflowInfo prototype)
     {
         ValidateExecutorDictionary(prototype.Executors, prototype.Edges, actual.Executors, actual.Edges);
-        ValidateInputPorts(prototype.InputPorts, actual.InputPorts);
+        ValidateRequestPorts(prototype.RequestPorts, actual.RequestPorts);
 
         actual.InputType.Should().Match(prototype.InputType.CreateValidator());
         actual.StartExecutorId.Should().Be(prototype.StartExecutorId);
@@ -225,7 +225,7 @@ public class JsonSerializationTests
             }
         }
 
-        void ValidateInputPorts(HashSet<InputPortInfo> expected, HashSet<InputPortInfo> actual)
+        void ValidateRequestPorts(HashSet<RequestPortInfo> expected, HashSet<RequestPortInfo> actual)
             => actual.Should().HaveCount(expected.Count).And.IntersectWith(expected);
     }
 

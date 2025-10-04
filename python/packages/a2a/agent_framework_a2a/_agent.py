@@ -58,7 +58,7 @@ def _get_uri_data(uri: str) -> str:
 
 
 class A2AAgent(BaseAgent):
-    """Agent-to-Agent (A2A) protocol implementation.
+    """Agent2Agent (A2A) protocol implementation.
 
     Wraps an A2A Client to connect the Agent Framework with external A2A-compliant agents
     via HTTP/JSON-RPC. Converts framework ChatMessages to A2A Messages on send, and converts

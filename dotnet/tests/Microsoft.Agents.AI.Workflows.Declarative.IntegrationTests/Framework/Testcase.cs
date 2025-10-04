@@ -28,11 +28,13 @@ public sealed class Testcase
 public sealed class TestcaseSetup
 {
     [JsonConstructor]
-    public TestcaseSetup(TestcaseInput input)
+    public TestcaseSetup(TestcaseInput input, IList<TestcaseInput>? responses = null)
     {
         this.Input = input;
+        this.Responses = responses ?? [];
     }
     public TestcaseInput Input { get; }
+    public IList<TestcaseInput>? Responses { get; }
 }
 
 public sealed class TestcaseInput

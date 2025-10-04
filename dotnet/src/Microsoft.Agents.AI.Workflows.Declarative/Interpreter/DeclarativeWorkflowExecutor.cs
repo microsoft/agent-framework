@@ -16,8 +16,14 @@ internal sealed class DeclarativeWorkflowExecutor<TInput>(
     DeclarativeWorkflowOptions options,
     WorkflowFormulaState state,
     Func<TInput, ChatMessage> inputTransform) :
-    Executor<TInput>(workflowId), IModeledAction where TInput : notnull
+    Executor<TInput>(workflowId), IResettableExecutor, IModeledAction where TInput : notnull
 {
+    /// <inheritdoc/>
+    public ValueTask ResetAsync()
+    {
+        return default;
+    }
+
     public override async ValueTask HandleAsync(TInput message, IWorkflowContext context)
     {
         // No state to restore if we're starting from the beginning.

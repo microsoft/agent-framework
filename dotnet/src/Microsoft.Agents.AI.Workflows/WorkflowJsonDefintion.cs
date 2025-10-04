@@ -15,6 +15,6 @@ internal class WorkflowJsonDefinitionData
 {
     public string StartExecutorId { get; set; } = string.Empty;
     public IEnumerable<Edge> Edges { get; set; } = [];
-    public IEnumerable<InputPort> Ports { get; set; } = [];
+    public IEnumerable<RequestPort> Ports { get; set; } = [];
     public IEnumerable<string> OutputExecutors { get; set; } = [];
 }

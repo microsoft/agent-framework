@@ -27,7 +27,7 @@ internal static class RepresentationExtensions
         };
     }
 
-    public static InputPortInfo ToPortInfo(this InputPort port)
+    public static RequestPortInfo ToPortInfo(this RequestPort port)
     {
         Throw.IfNull(port);
         return new(new TypeId(port.Request), new TypeId(port.Response), port.Id);
@@ -46,7 +46,7 @@ internal static class RepresentationExtensions
             keySelector: sourceId => sourceId,
             elementSelector: sourceId => workflow.Edges[sourceId].Select(ToEdgeInfo).ToList());
 
-        HashSet<InputPortInfo> inputPorts = new(workflow.Ports.Values.Select(ToPortInfo));
+        HashSet<RequestPortInfo> inputPorts = new(workflow.Ports.Values.Select(ToPortInfo));
 
         return new WorkflowInfo(executors, edges, inputPorts, inputType, workflow.StartExecutorId, workflow.OutputExecutors);
     }
