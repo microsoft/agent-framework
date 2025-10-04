@@ -2,12 +2,21 @@
 
 import asyncio
 import tempfile
+from collections.abc import AsyncIterable
 from dataclasses import dataclass
 from typing import Any
 
 import pytest
 
 from agent_framework import (
+    AgentExecutor,
+    AgentRunEvent,
+    AgentRunResponse,
+    AgentRunResponseUpdate,
+    AgentRunUpdateEvent,
+    AgentThread,
+    BaseAgent,
+    ChatMessage,
     Executor,
     FileCheckpointStorage,
     Message,
@@ -15,6 +24,8 @@ from agent_framework import (
     RequestInfoExecutor,
     RequestInfoMessage,
     RequestResponse,
+    Role,
+    TextContent,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowEvent,
@@ -789,3 +800,76 @@ async def test_workflow_concurrent_execution_prevention_mixed_methods():
     # Now all methods should work again
     result = await workflow.run(NumberMessage(data=0))
     assert result.get_final_state() == WorkflowRunState.IDLE
+
+
+class _StreamingTestAgent(BaseAgent):
+    """Test agent that supports both streaming and non-streaming modes."""
+
+    def __init__(self, *, reply_text: str, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._reply_text = reply_text
+
+    async def run(
+        self,
+        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        *,
+        thread: AgentThread | None = None,
+        **kwargs: Any,
+    ) -> AgentRunResponse:
+        """Non-streaming run - returns complete response."""
+        return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text=self._reply_text)])
+
+    async def run_stream(
+        self,
+        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        *,
+        thread: AgentThread | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterable[AgentRunResponseUpdate]:
+        """Streaming run - yields incremental updates."""
+        # Simulate streaming by yielding character by character
+        for char in self._reply_text:
+            yield AgentRunResponseUpdate(contents=[TextContent(text=char)])
+
+
+async def test_agent_streaming_vs_non_streaming() -> None:
+    """Test that run() emits AgentRunEvent while run_stream() emits AgentRunUpdateEvent."""
+    agent = _StreamingTestAgent(id="test_agent", name="TestAgent", reply_text="Hello World")
+    agent_exec = AgentExecutor(agent, id="agent_exec")
+
+    workflow = WorkflowBuilder().set_start_executor(agent_exec).build()
+
+    # Test non-streaming mode with run()
+    result = await workflow.run("test message")
+
+    # Filter for agent events (result is a list of events)
+    agent_run_events = [e for e in result if isinstance(e, AgentRunEvent)]
+    agent_update_events = [e for e in result if isinstance(e, AgentRunUpdateEvent)]
+
+    # In non-streaming mode, should have AgentRunEvent, no AgentRunUpdateEvent
+    assert len(agent_run_events) == 1, "Expected exactly one AgentRunEvent in non-streaming mode"
+    assert len(agent_update_events) == 0, "Expected no AgentRunUpdateEvent in non-streaming mode"
+    assert agent_run_events[0].executor_id == "agent_exec"
+    assert agent_run_events[0].data.messages[0].text == "Hello World"
+
+    # Test streaming mode with run_stream()
+    stream_events: list[WorkflowEvent] = []
+    async for event in workflow.run_stream("test message"):
+        stream_events.append(event)
+
+    # Filter for agent events
+    stream_agent_run_events = [e for e in stream_events if isinstance(e, AgentRunEvent)]
+    stream_agent_update_events = [e for e in stream_events if isinstance(e, AgentRunUpdateEvent)]
+
+    # In streaming mode, should have AgentRunUpdateEvent, no AgentRunEvent
+    assert len(stream_agent_run_events) == 0, "Expected no AgentRunEvent in streaming mode"
+    assert len(stream_agent_update_events) > 0, "Expected AgentRunUpdateEvent events in streaming mode"
+
+    # Verify we got incremental updates (one per character in "Hello World")
+    assert len(stream_agent_update_events) == len("Hello World"), "Expected one update per character"
+
+    # Verify the updates build up to the full message
+    accumulated_text = "".join(
+        e.data.contents[0].text for e in stream_agent_update_events if e.data.contents and e.data.contents[0].text
+    )
+    assert accumulated_text == "Hello World", f"Expected 'Hello World', got '{accumulated_text}'"

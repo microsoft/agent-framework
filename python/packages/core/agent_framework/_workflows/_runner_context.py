@@ -393,6 +393,22 @@ class RunnerContext(Protocol):
         """Reset the context for a new workflow run."""
         ...
 
+    def set_streaming(self, streaming: bool) -> None:
+        """Set whether agents should stream incremental updates.
+
+        Args:
+            streaming: True for streaming mode (run_stream), False for non-streaming (run).
+        """
+        ...
+
+    def is_streaming(self) -> bool:
+        """Check if the workflow is in streaming mode.
+
+        Returns:
+            True if streaming mode is enabled, False otherwise.
+        """
+        ...
+
     async def create_checkpoint(self, metadata: dict[str, Any] | None = None) -> str:
         """Create a checkpoint of the current workflow state.
 
@@ -449,6 +465,9 @@ class InProcRunnerContext:
         self._executor_states: dict[str, dict[str, Any]] = {}
         self._iteration_count: int = 0
         self._max_iterations: int = 100
+
+        # Streaming flag - set by workflow's run_stream() vs run()
+        self._streaming: bool = False
 
     async def send_message(self, message: Message) -> None:
         self._messages.setdefault(message.source_id, [])
@@ -524,6 +543,22 @@ class InProcRunnerContext:
     def set_workflow_id(self, workflow_id: str) -> None:
         self._workflow_id = workflow_id
 
+    def set_streaming(self, streaming: bool) -> None:
+        """Set whether agents should stream incremental updates.
+
+        Args:
+            streaming: True for streaming mode (run_stream), False for non-streaming (run).
+        """
+        self._streaming = streaming
+
+    def is_streaming(self) -> bool:
+        """Check if the workflow is in streaming mode.
+
+        Returns:
+            True if streaming mode is enabled, False otherwise.
+        """
+        return self._streaming
+
     def reset_for_new_run(self, workflow_shared_state: SharedState | None = None) -> None:
         self._messages.clear()
         # Clear any pending events (best-effort) by recreating the queue
@@ -531,6 +566,7 @@ class InProcRunnerContext:
         self._shared_state.clear()
         self._executor_states.clear()
         self._iteration_count = 0
+        self._streaming = False  # Reset streaming flag
         if workflow_shared_state is not None and hasattr(workflow_shared_state, "_state"):
             workflow_shared_state._state.clear()  # type: ignore[attr-defined]
 
