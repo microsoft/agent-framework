@@ -5,7 +5,7 @@ from collections.abc import Awaitable, Callable
 from contextlib import AsyncExitStack
 from typing import Any
 
-from agent_framework import AgentRunUpdateEvent, WorkflowBuilder, WorkflowOutputEvent, AgentExecutor
+from agent_framework import AgentRunUpdateEvent, WorkflowBuilder, WorkflowOutputEvent
 from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
 
@@ -16,12 +16,12 @@ A Writer agent generates content, then a Reviewer agent critiques it.
 The workflow uses streaming so you can observe incremental AgentRunUpdateEvent chunks as each agent produces tokens.
 
 Purpose:
-Show how to wire chat agents into a WorkflowBuilder pipeline using AgentExecutor
+Show how to wire chat agents into a WorkflowBuilder pipeline using add_agent
 with settings for streaming and workflow outputs.
 
 Demonstrate:
 - Automatic streaming of agent deltas via AgentRunUpdateEvent.
-- Add an agent via AgentExecutor wrapper with streaming=True to enable streaming 
+- Add an agent via WorkflowBuilder.add_agent() with streaming=True to enable streaming
   and output_response=True to emit final AgentRunResponse.
 
 Prerequisites:
@@ -67,12 +67,13 @@ async def main() -> None:
                 "Provide the feedback in the most concise manner possible."
             ),
         )
-        # Wrap agent as a streaming AgentExecutor that emits AgentRunUpdateEvent events
-        # as well as a final AgentRunResponse output when done.
-        writer_executor = AgentExecutor(writer, streaming=True, id="Writer")
-        reviewer_executor = AgentExecutor(reviewer, streaming=True, id="Reviewer", output_response=True)
+        # Add agents to workflow with custom settings using add_agent.
+        # Writer agent streams updates, Reviewer agent streams and emits final AgentRunResponse.
+        builder = WorkflowBuilder()
+        builder.add_agent(writer, streaming=True, id="Writer")
+        builder.add_agent(reviewer, streaming=True, id="Reviewer", output_response=True)
 
-        workflow = WorkflowBuilder().set_start_executor(writer_executor).add_edge(writer_executor, reviewer_executor).build()
+        workflow = builder.set_start_executor(writer).add_edge(writer, reviewer).build()
 
         last_executor_id: str | None = None
 

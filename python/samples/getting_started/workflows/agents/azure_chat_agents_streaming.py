@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import AgentExecutor, AgentRunUpdateEvent, WorkflowBuilder, WorkflowOutputEvent
+from agent_framework import AgentRunUpdateEvent, WorkflowBuilder, WorkflowOutputEvent
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
@@ -13,12 +13,12 @@ A Writer agent generates content, then a Reviewer agent critiques it.
 The workflow uses streaming so you can observe incremental AgentRunUpdateEvent chunks as each agent produces tokens.
 
 Purpose:
-Show how to wire chat agents into a WorkflowBuilder pipeline using AgentExecutor
+Show how to wire chat agents into a WorkflowBuilder pipeline using add_agent
 with settings for streaming and workflow outputs.
 
 Demonstrate:
 - Automatic streaming of agent deltas via AgentRunUpdateEvent.
-- Add an agent via AgentExecutor wrapper with streaming=True to enable streaming
+- Add an agent via WorkflowBuilder.add_agent() with streaming=True to enable streaming
   and output_response=True to emit final AgentRunResponse.
 
 Prerequisites:
@@ -50,14 +50,15 @@ async def main():
         name="reviewer_agent",
     )
 
-    # Wrap agent as a streaming AgentExecutor that emits AgentRunUpdateEvent events
-    # as well as a final AgentRunResponse output when done.
-    writer_executor = AgentExecutor(writer_agent, streaming=True, id="Writer")
-    reviewer_executor = AgentExecutor(reviewer_agent, streaming=True, id="Reviewer", output_response=True)
+    # Add agents to workflow with custom settings using add_agent.
+    # Writer agent streams updates, Reviewer agent streams and emits final AgentRunResponse.
+    builder = WorkflowBuilder()
+    builder.add_agent(writer_agent, streaming=True, id="Writer")
+    builder.add_agent(reviewer_agent, streaming=True, id="Reviewer", output_response=True)
 
     # Build the workflow using the fluent builder.
     # Set the start node and connect an edge from writer to reviewer.
-    workflow = WorkflowBuilder().set_start_executor(writer_executor).add_edge(writer_executor, reviewer_executor).build()
+    workflow = builder.set_start_executor(writer_agent).add_edge(writer_agent, reviewer_agent).build()
 
     # Stream events from the workflow. We aggregate partial token updates per executor for readable output.
     last_executor_id: str | None = None

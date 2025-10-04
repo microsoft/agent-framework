@@ -900,11 +900,25 @@ class WorkflowBuilder:
             self._executors[executor.id] = executor
         return executor.id
 
-    def _maybe_wrap_agent(self, candidate: Executor | AgentProtocol) -> Executor:
+    def _maybe_wrap_agent(
+        self,
+        candidate: Executor | AgentProtocol,
+        agent_thread: Any | None = None,
+        streaming: bool = True,
+        output_response: bool = False,
+        executor_id: str | None = None,
+    ) -> Executor:
         """If the provided object implements AgentProtocol, wrap it in an AgentExecutor.
 
         This allows fluent builder APIs to directly accept agents instead of
         requiring callers to manually instantiate AgentExecutor.
+
+        Args:
+            candidate: The executor or agent to wrap.
+            agent_thread: The thread to use for running the agent. If None, a new thread will be created.
+            streaming: Enable streaming (emits incremental AgentRunUpdateEvent events) vs single response.
+            output_response: Whether to yield an AgentRunResponse as a workflow output when the agent completes.
+            executor_id: A unique identifier for the executor. If None, the agent's name will be used if available.
         """
         try:  # Local import to avoid hard dependency at import time
             from agent_framework import AgentProtocol  # type: ignore
@@ -915,25 +929,65 @@ class WorkflowBuilder:
             return candidate
         if isinstance(candidate, AgentProtocol):  # type: ignore[arg-type]
             # Reuse existing wrapper for the same agent instance if present
-            existing = self._agent_wrappers.get(id(candidate))
+            agent_instance_id = id(candidate)
+            existing = self._agent_wrappers.get(agent_instance_id)
             if existing is not None:
                 return existing
             # Use agent name if available and unique among current executors
             name = getattr(candidate, "name", None)
-            proposed_id: str | None = None
-            if name:
+            proposed_id: str | None = executor_id
+            if proposed_id is None and name:
                 proposed_id = str(name)
                 if proposed_id in self._executors:
                     raise ValueError(
                         f"Duplicate executor ID '{proposed_id}' from agent name. "
                         "Agent names must be unique within a workflow."
                     )
-            wrapper = AgentExecutor(candidate, id=proposed_id, streaming=True)
-            self._agent_wrappers[id(candidate)] = wrapper
+            wrapper = AgentExecutor(
+                candidate,
+                agent_thread=agent_thread,
+                streaming=streaming,
+                output_response=output_response,
+                id=proposed_id,
+            )
+            self._agent_wrappers[agent_instance_id] = wrapper
             return wrapper
         raise TypeError(
             f"WorkflowBuilder expected an Executor or AgentProtocol instance; got {type(candidate).__name__}."
         )
+
+    def add_agent(
+        self,
+        agent: AgentProtocol,
+        agent_thread: Any | None = None,
+        streaming: bool = True,
+        output_response: bool = False,
+        id: str | None = None,
+    ) -> Executor:
+        """Add an agent to the workflow by wrapping it in an AgentExecutor.
+
+        This method creates an AgentExecutor that wraps the agent with the given parameters
+        and ensures that subsequent uses of the same agent instance in other builder methods
+        (like add_edge, set_start_executor, etc.) will reuse the same wrapped executor.
+
+        Args:
+            agent: The agent to add to the workflow.
+            agent_thread: The thread to use for running the agent. If None, a new thread will be created.
+            streaming: Enable streaming (emits incremental AgentRunUpdateEvent events) vs single response.
+            output_response: Whether to yield an AgentRunResponse as a workflow output when the agent completes.
+            id: A unique identifier for the executor. If None, the agent's name will be used if available.
+
+        Returns:
+            The AgentExecutor instance that wraps the agent.
+
+        Raises:
+            ValueError: If the provided id or agent name conflicts with an existing executor.
+        """
+        executor = self._maybe_wrap_agent(
+            agent, agent_thread=agent_thread, streaming=streaming, output_response=output_response, executor_id=id
+        )
+        self._add_executor(executor)
+        return executor
 
     def add_edge(
         self,
