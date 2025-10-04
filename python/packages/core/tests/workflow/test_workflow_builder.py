@@ -47,12 +47,12 @@ def test_builder_accepts_agents_directly():
     assert any(isinstance(e, AgentExecutor) and e.id in {"writer", "reviewer"} for e in wf.executors.values())
 
 
-def test_builder_agents_always_stream():
+def test_builder_agents_by_default_not_stream():
     agent = DummyAgent(id="agentX", name="streamer")
     wf = WorkflowBuilder().set_start_executor(agent).build()
     exec_obj = wf.get_start_executor()
     assert isinstance(exec_obj, AgentExecutor)
-    assert getattr(exec_obj, "_streaming", False) is True
+    assert getattr(exec_obj, "_streaming", False) is False
 
 
 @dataclass
