@@ -37,6 +37,7 @@ from .._types import (
     UriContent,
     UsageContent,
     UsageDetails,
+    prepare_function_call_results,
 )
 from ..exceptions import ServiceInitializationError
 from ..observability import use_observability
@@ -481,7 +482,13 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
 
                 if tool_outputs is None:
                     tool_outputs = []
-                tool_outputs.append(ToolOutput(tool_call_id=call_id, output=str(function_result_content.result)))
+                if function_result_content.result:
+                    output = prepare_function_call_results(function_result_content.result)
+                elif function_result_content.exception:
+                    output = "Error: " + str(function_result_content.exception)
+                else:
+                    output = "No output received."
+                tool_outputs.append(ToolOutput(tool_call_id=call_id, output=output))
 
         return run_id, tool_outputs
 

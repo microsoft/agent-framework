@@ -35,6 +35,7 @@ from .._types import (
     UriContent,
     UsageContent,
     UsageDetails,
+    prepare_function_call_results,
 )
 from ..exceptions import (
     ServiceInitializationError,
@@ -43,7 +44,7 @@ from ..exceptions import (
 )
 from ..observability import use_observability
 from ._exceptions import OpenAIContentFilterException
-from ._shared import OpenAIBase, OpenAIConfigMixin, OpenAISettings, prepare_function_call_results
+from ._shared import OpenAIBase, OpenAIConfigMixin, OpenAISettings
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover

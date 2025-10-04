@@ -992,51 +992,62 @@ async def _auto_invoke_function(
 
     # Merge with user-supplied args; right-hand side dominates, so parsed args win on conflicts.
     merged_args: dict[str, Any] = (custom_args or {}) | parsed_args
-    args = tool.input_model.model_validate(merged_args)
-    exception = None
-
-    # Execute through middleware pipeline if available
-    if middleware_pipeline and hasattr(middleware_pipeline, "has_middlewares") and middleware_pipeline.has_middlewares:
-        from ._middleware import FunctionInvocationContext
-
-        middleware_context = FunctionInvocationContext(
-            function=tool,
-            arguments=args,
-            kwargs=custom_args or {},
+    try:
+        args = tool.input_model.model_validate(merged_args)
+    except ValidationError as exc:
+        return FunctionResultContent(
+            call_id=function_call_content.call_id,
+            exception=exc,
         )
-
-        async def final_function_handler(context_obj: Any) -> Any:
-            return await tool.invoke(
-                arguments=context_obj.arguments,
-                tool_call_id=function_call_content.call_id,
-            )
-
-        try:
-            function_result = await middleware_pipeline.execute(
-                function=tool,
-                arguments=args,
-                context=middleware_context,
-                final_handler=final_function_handler,
-            )
-        except Exception as ex:
-            exception = ex
-            function_result = None
-    else:
+    if not middleware_pipeline or (
+        not hasattr(middleware_pipeline, "has_middlewares") and not middleware_pipeline.has_middlewares
+    ):
         # No middleware - execute directly
         try:
             function_result = await tool.invoke(
                 arguments=args,
                 tool_call_id=function_call_content.call_id,
             )  # type: ignore[arg-type]
-        except Exception as ex:
-            exception = ex
-            function_result = None
+            return FunctionResultContent(
+                call_id=function_call_content.call_id,
+                result=function_result,
+            )
+        except Exception as exc:
+            return FunctionResultContent(
+                call_id=function_call_content.call_id,
+                exception=exc,
+            )
+    # Execute through middleware pipeline if available
+    from ._middleware import FunctionInvocationContext
 
-    return FunctionResultContent(
-        call_id=function_call_content.call_id,
-        exception=exception,
-        result=function_result,
+    middleware_context = FunctionInvocationContext(
+        function=tool,
+        arguments=args,
+        kwargs=custom_args or {},
     )
+
+    async def final_function_handler(context_obj: Any) -> Any:
+        return await tool.invoke(
+            arguments=context_obj.arguments,
+            tool_call_id=function_call_content.call_id,
+        )
+
+    try:
+        function_result = await middleware_pipeline.execute(
+            function=tool,
+            arguments=args,
+            context=middleware_context,
+            final_handler=final_function_handler,
+        )
+        return FunctionResultContent(
+            call_id=function_call_content.call_id,
+            result=function_result,
+        )
+    except Exception as exc:
+        return FunctionResultContent(
+            call_id=function_call_content.call_id,
+            exception=exc,
+        )
 
 
 def _get_tool_map(

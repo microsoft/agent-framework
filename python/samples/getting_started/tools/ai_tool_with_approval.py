@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from agent_framework import AgentProtocol
 
 """
-OpenAI Responses Client with Function Approval Example
+Demonstration of a tool with approvals.
 
 This sample demonstrates using AI functions with user approval workflows.
 It shows how to handle function call approvals without using threads.
@@ -93,7 +93,7 @@ async def run_weather_agent_with_approval() -> None:
 
 
 async def main() -> None:
-    print("=== OpenAI Responses Client Agent with Function Approval Examples ===\n")
+    print("=== Demonstration of a tool with approvals ===\n")
 
     await run_weather_agent_with_approval()
 
