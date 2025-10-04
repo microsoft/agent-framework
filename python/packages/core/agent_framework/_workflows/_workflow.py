@@ -960,7 +960,7 @@ class WorkflowBuilder:
         self,
         agent: AgentProtocol,
         agent_thread: Any | None = None,
-        streaming: bool = True,
+        streaming: bool = False,
         output_response: bool = False,
         id: str | None = None,
     ) -> Executor:

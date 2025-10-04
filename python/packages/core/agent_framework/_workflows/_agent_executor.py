@@ -37,10 +37,10 @@ class AgentExecutorResponse:
 
     Attributes:
         executor_id: The ID of the executor that generated the response.
-    agent_run_response: The underlying agent run response (unaltered from client).
-    full_conversation: The full conversation context (prior inputs + all assistant/tool outputs) that
-        should be used when chaining to another AgentExecutor. This prevents downstream agents losing
-        user prompts while keeping the emitted AgentRunEvent text faithful to the raw agent output.
+        agent_run_response: The underlying agent run response (unaltered from client).
+        full_conversation: The full conversation context (prior inputs + all assistant/tool outputs) that
+            should be used when chaining to another AgentExecutor. This prevents downstream agents losing
+            user prompts while keeping the emitted AgentRunEvent text faithful to the raw agent output.
     """
 
     executor_id: str
@@ -67,7 +67,7 @@ class AgentExecutor(Executor):
             agent_thread: The thread to use for running the agent. If None, a new thread will be created.
             streaming: Enable streaming (emits incremental AgentRunUpdateEvent events) vs single response.
             output_response: Whether to yield an AgentRunResponse as a workflow output when the agent completes.
-            id: A unique identifier for the executor. If None, a new UUID will be generated.
+            id: A unique identifier for the executor. If None, the agent's name will be used if available.
         """
         # Prefer provided id; else use agent.name if present; else generate deterministic prefix
         if id is not None:
@@ -77,8 +77,7 @@ class AgentExecutor(Executor):
             if agent_name:
                 exec_id = str(agent_name)
             else:
-                logger.warning("Agent has no name, using fallback ID 'executor_unnamed'")
-                exec_id = "executor_unnamed"
+                raise ValueError("Agent must have a name or an explicit id must be provided.")
         super().__init__(exec_id)
         self._agent = agent
         self._agent_thread = agent_thread or self._agent.get_new_thread()
