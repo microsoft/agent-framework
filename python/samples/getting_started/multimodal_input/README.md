@@ -10,11 +10,17 @@ This folder contains examples demonstrating how to send multimodal content (imag
 - **Description**: Shows how to send images, audio, and PDF files to OpenAI's Chat Completions API
 - **Supported formats**: PNG/JPEG images, WAV/MP3 audio, PDF documents
 
-### Azure Chat Client
+### Azure OpenAI Chat Client
 
 - **File**: `azure_chat_multimodal.py`
-- **Description**: Shows how to send multimodal content to Azure OpenAI service
-- **Supported formats**: PNG/JPEG images, WAV/MP3 audio, PDF documents
+- **Description**: Shows how to send images to Azure OpenAI Chat Completions API
+- **Supported formats**: PNG/JPEG images (PDF files are NOT supported by Chat Completions API)
+
+### Azure OpenAI Responses Client
+
+- **File**: `azure_responses_multimodal.py`
+- **Description**: Shows how to send images and PDF files to Azure OpenAI Responses API
+- **Supported formats**: PNG/JPEG images, PDF documents (full multimodal support)
 
 ## Environment Variables
 
@@ -24,8 +30,10 @@ Set the following environment variables before running the examples:
 - `OPENAI_API_KEY`: Your OpenAI API key
 
 **For Azure OpenAI:**
+
 - `AZURE_OPENAI_ENDPOINT`: Your Azure OpenAI endpoint
 - `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`: The name of your Azure OpenAI chat model deployment
+- `AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME`: The name of your Azure OpenAI responses model deployment
 
 Optionally for Azure OpenAI:
 - `AZURE_OPENAI_API_VERSION`: The API version to use (default is `2024-10-21`)
@@ -51,8 +59,11 @@ The Azure example uses `AzureCliCredential` for authentication. Run `az login` i
 # Run OpenAI example
 python openai_chat_multimodal.py
 
-# Run Azure example (requires az login or API key)
+# Run Azure Chat example (requires az login or API key)
 python azure_chat_multimodal.py
+
+# Run Azure Responses example (requires az login or API key)
+python azure_responses_multimodal.py
 ```
 
 ## Using Your Own Files
@@ -101,8 +112,8 @@ DataContent(
 
 ## API Differences
 
-- **Chat Completions API**: Supports images, audio, and PDF files
-- **Assistants API**: Only supports text and images (no audio/PDF)
-- **Responses API**: Similar to Chat Completions
+- **OpenAI Chat Completions API**: Supports images, audio, and PDF files
+- **Azure OpenAI Chat Completions API**: Supports images only (no PDF/audio file types)
+- **Azure OpenAI Responses API**: Supports images and PDF files (full multimodal support)
 
-Choose the appropriate client based on your multimodal needs.
+Choose the appropriate client based on your multimodal needs and available APIs.
