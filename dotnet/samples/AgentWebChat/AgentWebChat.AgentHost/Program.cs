@@ -1,10 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using A2A.AspNetCore;
 using AgentWebChat.AgentHost;
 using AgentWebChat.AgentHost.Utilities;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hosting;
 using Microsoft.Agents.AI.Hosting.A2A.AspNetCore;
+using Microsoft.Agents.AI.Hosting.OpenAI;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 
@@ -83,6 +85,9 @@ app.MapA2A(agentName: "knights-and-knaves", path: "/a2a/knights-and-knaves", age
     // Url can be not set, and SDK will help assign it.
     // Url = "http://localhost:5390/a2a/knights-and-knaves"
 });
+
+app.MapOpenAIResponses("pirate");
+app.MapOpenAIResponses("knights-and-knaves");
 
 // Map the agents HTTP endpoints
 app.MapAgentDiscovery("/agents");
