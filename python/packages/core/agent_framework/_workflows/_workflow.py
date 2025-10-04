@@ -904,7 +904,7 @@ class WorkflowBuilder:
         self,
         candidate: Executor | AgentProtocol,
         agent_thread: Any | None = None,
-        streaming: bool = True,
+        streaming: bool = False,
         output_response: bool = False,
         executor_id: str | None = None,
     ) -> Executor:
