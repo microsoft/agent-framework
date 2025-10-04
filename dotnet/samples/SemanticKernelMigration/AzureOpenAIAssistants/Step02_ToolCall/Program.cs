@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.ClientModel.Primitives;
 using System.ComponentModel;
-using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
@@ -30,7 +30,10 @@ async Task SKAgent()
     Console.WriteLine("\n=== SK Agent ===\n");
 
     var builder = Kernel.CreateBuilder();
-    var assistantsClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetAssistantClient();
+    var assistantsClient = new OpenAIClient(
+        new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+        new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") })
+        .GetAssistantClient();
 
     Assistant assistant = await assistantsClient.CreateAssistantAsync(deploymentName,
         instructions: "You are a helpful assistant");
@@ -71,7 +74,10 @@ async Task AFAgent()
 {
     Console.WriteLine("\n=== AF Agent ===\n");
 
-    var assistantClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetAssistantClient();
+    var assistantClient = new OpenAIClient(
+        new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+        new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") })
+        .GetAssistantClient();
 
     var agent = await assistantClient.CreateAIAgentAsync(deploymentName,
         instructions: "You are a helpful assistant",

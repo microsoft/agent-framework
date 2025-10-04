@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Azure.AI.OpenAI;
+using System.ClientModel.Primitives;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.DependencyInjection;
@@ -24,7 +24,10 @@ async Task SKAgent()
     Console.WriteLine("\n=== SK Agent ===\n");
 
     var serviceCollection = new ServiceCollection();
-    serviceCollection.AddSingleton((sp) => new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetAssistantClient());
+    serviceCollection.AddSingleton((sp) => new OpenAIClient(
+        new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+        new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") })
+        .GetAssistantClient());
     serviceCollection.AddKernel().AddAzureOpenAIChatClient(deploymentName, endpoint, new AzureCliCredential());
     serviceCollection.AddTransient((sp) =>
     {
@@ -65,7 +68,10 @@ async Task AFAgent()
     Console.WriteLine("\n=== AF Agent ===\n");
 
     var serviceCollection = new ServiceCollection();
-    serviceCollection.AddSingleton((sp) => new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetAssistantClient());
+    serviceCollection.AddSingleton((sp) => new OpenAIClient(
+        new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+        new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") })
+        .GetAssistantClient());
     serviceCollection.AddTransient((sp) =>
     {
         var assistantClient = sp.GetRequiredService<AssistantClient>();

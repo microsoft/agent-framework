@@ -2,7 +2,7 @@
 
 // This sample shows how to create and use a simple AI agent with a multi-turn conversation.
 
-using Azure.AI.OpenAI;
+using System.ClientModel.Primitives;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using OpenAI;
@@ -13,9 +13,9 @@ var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT
 const string JokerName = "Joker";
 const string JokerInstructions = "You are good at telling jokes.";
 
-AIAgent agent = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new AzureCliCredential())
+AIAgent agent = new OpenAIClient(
+    new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+    new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") })
      .GetChatClient(deploymentName)
      .CreateAIAgent(JokerInstructions, JokerName);
 

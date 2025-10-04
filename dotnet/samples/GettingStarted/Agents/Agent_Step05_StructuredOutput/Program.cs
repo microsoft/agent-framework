@@ -2,10 +2,10 @@
 
 // This sample shows how to create and use a simple AI agent with Azure OpenAI as the backend, to produce structured output using JSON schema from a class.
 
+using System.ClientModel.Primitives;
 using System.ComponentModel;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
@@ -25,9 +25,9 @@ ChatClientAgentOptions agentOptions = new(name: "HelpfulAssistant", instructions
 };
 
 // Create the agent using Azure OpenAI.
-AIAgent agent = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new AzureCliCredential())
+AIAgent agent = new OpenAIClient(
+    new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+    new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") })
         .GetChatClient(deploymentName)
         .CreateAIAgent(agentOptions);
 

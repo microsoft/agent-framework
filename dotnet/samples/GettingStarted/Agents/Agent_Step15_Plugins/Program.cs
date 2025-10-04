@@ -9,7 +9,7 @@
 // as AI functions. The AsAITools method of the plugin class shows how to specify
 // which methods should be exposed to the AI agent.
 
-using Azure.AI.OpenAI;
+using System.ClientModel.Primitives;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
@@ -30,9 +30,9 @@ IServiceProvider serviceProvider = services.BuildServiceProvider();
 const string AgentName = "Assistant";
 const string AgentInstructions = "You are a helpful assistant that helps people find information.";
 
-AIAgent agent = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new AzureCliCredential())
+AIAgent agent = new OpenAIClient(
+    new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+    new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") })
      .GetChatClient(deploymentName)
      .CreateAIAgent(
         instructions: AgentInstructions,

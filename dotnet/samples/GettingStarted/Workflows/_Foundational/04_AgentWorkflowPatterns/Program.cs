@@ -1,11 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.ClientModel.Primitives;
 using System.Text.Json;
-using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
+using OpenAI;
 
 namespace WorkflowAgentsInWorkflowsSample;
 
@@ -25,7 +26,10 @@ public static class Program
         // Set up the Azure OpenAI client.
         var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
         var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
-        var client = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName).AsIChatClient();
+        var client = new OpenAIClient(
+            new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+            new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") })
+            .GetChatClient(deploymentName).AsIChatClient();
 
         Console.Write("Choose workflow type ('sequential', 'concurrent', 'handoffs', 'groupchat'): ");
         switch (Console.ReadLine())

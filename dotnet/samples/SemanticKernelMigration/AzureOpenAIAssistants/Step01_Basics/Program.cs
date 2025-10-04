@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Azure.AI.OpenAI;
+using System.ClientModel.Primitives;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.SemanticKernel;
@@ -23,7 +23,10 @@ async Task SKAgent()
     Console.WriteLine("\n=== SK Agent ===\n");
     var _ = Kernel.CreateBuilder().AddAzureOpenAIChatClient(deploymentName, endpoint, new AzureCliCredential());
 
-    var assistantsClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetAssistantClient();
+    var assistantsClient = new OpenAIClient(
+        new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+        new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") })
+        .GetAssistantClient();
 
     // Define the assistant
     Assistant assistant = await assistantsClient.CreateAssistantAsync(deploymentName, name: "Joker", instructions: "You are good at telling jokes.");
@@ -56,7 +59,10 @@ async Task AFAgent()
 {
     Console.WriteLine("\n=== AF Agent ===\n");
 
-    var assistantClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetAssistantClient();
+    var assistantClient = new OpenAIClient(
+        new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+        new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") })
+        .GetAssistantClient();
 
     var agent = await assistantClient.CreateAIAgentAsync(deploymentName, name: "Joker", instructions: "You are good at telling jokes.");
 
