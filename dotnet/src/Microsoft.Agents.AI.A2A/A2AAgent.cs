@@ -159,7 +159,7 @@ internal sealed class A2AAgent : AIAgent
                 RawRepresentation = message,
                 Role = ChatRole.Assistant,
                 MessageId = message.MessageId,
-                Contents = [.. message.Parts.Select(part => part.ToAIContent())],
+                Contents = [.. message.Parts.Select(part => part.ToAIContent()).OfType<AIContent>()],
                 AdditionalProperties = message.Metadata.ToAdditionalProperties(),
             };
         }
