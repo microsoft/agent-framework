@@ -12,6 +12,7 @@ from typing import Any
 from .._agents import AgentProtocol
 from ..observability import OtelAttr, capture_exception, create_workflow_span
 from ._agent import WorkflowAgent
+from ._agent_executor import AgentExecutor
 from ._checkpoint import CheckpointStorage
 from ._const import DEFAULT_MAX_ITERATIONS
 from ._edge import (
@@ -36,7 +37,7 @@ from ._events import (
     WorkflowStatusEvent,
     _framework_event_origin,  # type: ignore
 )
-from ._executor import AgentExecutor, Executor, RequestInfoExecutor
+from ._executor import Executor, RequestInfoExecutor
 from ._model_utils import DictConvertible
 from ._runner import Runner
 from ._runner_context import InProcRunnerContext, RunnerContext

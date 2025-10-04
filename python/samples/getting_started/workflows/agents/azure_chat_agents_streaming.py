@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import AgentRunUpdateEvent, WorkflowBuilder, WorkflowOutputEvent
+from agent_framework import AgentExecutor, AgentRunUpdateEvent, WorkflowBuilder, WorkflowOutputEvent
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
@@ -13,12 +13,13 @@ A Writer agent generates content, then a Reviewer agent critiques it.
 The workflow uses streaming so you can observe incremental AgentRunUpdateEvent chunks as each agent produces tokens.
 
 Purpose:
-Show how to wire chat agents directly into a WorkflowBuilder pipeline where agents are auto wrapped as executors.
+Show how to wire chat agents into a WorkflowBuilder pipeline using AgentExecutor
+with settings for streaming and workflow outputs.
 
 Demonstrate:
 - Automatic streaming of agent deltas via AgentRunUpdateEvent.
-- A simple console aggregator that groups updates by executor id and prints them as they arrive.
-- The workflow completes when idle and outputs are available in events.get_outputs().
+- Add an agent via AgentExecutor wrapper with streaming=True to enable streaming
+  and output_response=True to emit final AgentRunResponse.
 
 Prerequisites:
 - Azure OpenAI configured for AzureOpenAIChatClient with required environment variables.
@@ -32,7 +33,7 @@ async def main():
     # Create the Azure chat client. AzureCliCredential uses your current az login.
     chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
-    # Define two domain specific chat agents. The builder will wrap these as executors.
+    # Define two domain specific chat agents.
     writer_agent = chat_client.create_agent(
         instructions=(
             "You are an excellent content writer. You create new content and edit contents based on the feedback."
@@ -49,12 +50,17 @@ async def main():
         name="reviewer_agent",
     )
 
+    # Wrap agent as a streaming AgentExecutor that emits AgentRunUpdateEvent events
+    # as well as a final AgentRunResponse output when done.
+    writer_executor = AgentExecutor(writer_agent, streaming=True, id="Writer")
+    reviewer_executor = AgentExecutor(reviewer_agent, streaming=True, id="Reviewer", output_response=True)
+
     # Build the workflow using the fluent builder.
     # Set the start node and connect an edge from writer to reviewer.
-    workflow = WorkflowBuilder().set_start_executor(writer_agent).add_edge(writer_agent, reviewer_agent).build()
+    workflow = WorkflowBuilder().set_start_executor(writer_executor).add_edge(writer_executor, reviewer_executor).build()
 
     # Stream events from the workflow. We aggregate partial token updates per executor for readable output.
-    last_executor_id = None
+    last_executor_id: str | None = None
 
     events = workflow.run_stream("Create a slogan for a new electric SUV that is affordable and fun to drive.")
     async for event in events:
@@ -62,14 +68,14 @@ async def main():
             # AgentRunUpdateEvent contains incremental text deltas from the underlying agent.
             # Print a prefix when the executor changes, then append updates on the same line.
             eid = event.executor_id
-            if eid != last_executor_id:  # type: ignore[reportUnnecessaryComparison]
+            if eid != last_executor_id:
                 if last_executor_id is not None:
                     print()
                 print(f"{eid}:", end=" ", flush=True)
                 last_executor_id = eid
             print(event.data, end="", flush=True)
         elif isinstance(event, WorkflowOutputEvent):
-            print("===== Final Output =====")
+            print("\n===== Final output =====")
             print(event.data)
 
     """
