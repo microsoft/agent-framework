@@ -207,7 +207,7 @@ public class AgentRunResponseUpdateExtensionsTests
         Assert.Equal("Hello, world!", Assert.IsType<TextContent>(Assert.Single(Assert.Single(response.Messages).Contents)).Text);
     }
 
-    [Theory]
+    [Theory(Skip = "Reactive once M.E.AI 9.10 is imported")]
     [InlineData(false)]
     [InlineData(true)]
     public async Task ToAgentRunResponse_AlternativeTimestampsAsync(bool useAsync)
@@ -275,7 +275,7 @@ public class AgentRunResponseUpdateExtensionsTests
         }
     }
 
-    [Theory]
+    [Theory(Skip = "Reactive once M.E.AI 9.10 is imported")]
     [MemberData(nameof(ToAgentRunResponse_TimestampFolding_MemberData))]
     public async Task ToAgentRunResponse_TimestampFoldingAsync(bool useAsync, string? timestamp1, string? timestamp2, string? expectedTimestamp)
     {
