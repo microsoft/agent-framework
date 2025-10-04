@@ -388,7 +388,7 @@ async def test_rejected_approval(chat_client_base: ChatClientProtocol):
 
     # The rejected function should have a "not approved" result and NOT have been executed
     assert rejected_result is not None, "Should have found result for rejected function"
-    assert rejected_result.result == "This tool call was not approved."
+    assert rejected_result.result == "Error: Tool call invocation was rejected by user."
     assert exec_counter_rejected == 0
 
 
