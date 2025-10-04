@@ -111,17 +111,20 @@ def test_add_agent_with_custom_parameters():
     builder = WorkflowBuilder()
 
     # Add agent with custom parameters
-    executor = builder.add_agent(agent, output_response=True, id="my_custom_id")
+    result = builder.add_agent(agent, output_response=True, id="my_custom_id")
 
-    # Verify the executor was created with correct parameters
-    assert isinstance(executor, AgentExecutor)
-    assert executor.id == "my_custom_id"
-    assert getattr(executor, "_output_response", False) is True
+    # Verify that add_agent returns the builder for chaining
+    assert result is builder
 
     # Build workflow and verify executor is present
     workflow = builder.set_start_executor(agent).build()
     assert "my_custom_id" in workflow.executors
-    assert workflow.executors["my_custom_id"] is executor
+
+    # Verify the executor was created with correct parameters
+    executor = workflow.executors["my_custom_id"]
+    assert isinstance(executor, AgentExecutor)
+    assert executor.id == "my_custom_id"
+    assert getattr(executor, "_output_response", False) is True
 
 
 def test_add_agent_reuses_same_wrapper():
@@ -180,12 +183,17 @@ def test_add_agent_without_explicit_id_uses_agent_name():
     agent = DummyAgent(id="agent_x", name="named_agent")
     builder = WorkflowBuilder()
 
-    executor = builder.add_agent(agent)
+    result = builder.add_agent(agent)
 
-    assert executor.id == "named_agent"
+    # Verify that add_agent returns the builder for chaining
+    assert result is builder
 
     workflow = builder.set_start_executor(agent).build()
     assert "named_agent" in workflow.executors
+
+    # Verify the executor id matches the agent name
+    executor = workflow.executors["named_agent"]
+    assert executor.id == "named_agent"
 
 
 def test_add_agent_duplicate_id_raises_error():
