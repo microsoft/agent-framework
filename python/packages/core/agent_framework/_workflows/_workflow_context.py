@@ -449,3 +449,11 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
         if hasattr(self._runner_context, "get_state"):
             return await self._runner_context.get_state(self._executor_id)  # type: ignore[return-value]
         return None
+
+    def is_streaming(self) -> bool:
+        """Check if the workflow is running in streaming mode.
+
+        Returns:
+            True if the workflow was started with run_stream(), False if started with run().
+        """
+        return self._runner_context.is_streaming()

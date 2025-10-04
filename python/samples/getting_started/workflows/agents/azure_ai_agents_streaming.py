@@ -20,9 +20,9 @@ Show how to wire chat agents into a WorkflowBuilder pipeline using add_agent
 with settings for streaming and workflow outputs.
 
 Demonstrate:
-- Automatic streaming of agent deltas via AgentRunUpdateEvent.
-- Add an agent via WorkflowBuilder.add_agent() with streaming=True to enable streaming
-  and output_response=True to emit final AgentRunResponse.
+- Automatic streaming of agent deltas via AgentRunUpdateEvent when using run_stream().
+- Add an agent via WorkflowBuilder.add_agent() with output_response=True to emit final AgentRunResponse.
+- Agents adapt to workflow mode: run_stream() emits incremental updates, run() emits complete responses.
 
 Prerequisites:
 - Azure AI Agent Service configured, along with the required environment variables.
@@ -68,10 +68,11 @@ async def main() -> None:
             ),
         )
         # Add agents to workflow with custom settings using add_agent.
-        # Writer agent streams updates, Reviewer agent streams and emits final AgentRunResponse.
+        # Agents adapt to workflow mode: run_stream() for incremental updates, run() for complete responses.
+        # Reviewer agent emits final AgentRunResponse as a workflow output.
         builder = WorkflowBuilder()
-        builder.add_agent(writer, streaming=True, id="Writer")
-        builder.add_agent(reviewer, streaming=True, id="Reviewer", output_response=True)
+        builder.add_agent(writer, id="Writer")
+        builder.add_agent(reviewer, id="Reviewer", output_response=True)
 
         workflow = builder.set_start_executor(writer).add_edge(writer, reviewer).build()
 

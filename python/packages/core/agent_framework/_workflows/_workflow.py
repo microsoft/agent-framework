@@ -270,7 +270,10 @@ class Workflow(DictConvertible):
         return list(self.executors.values())
 
     async def _run_workflow_with_tracing(
-        self, initial_executor_fn: Callable[[], Awaitable[None]] | None = None, reset_context: bool = True
+        self,
+        initial_executor_fn: Callable[[], Awaitable[None]] | None = None,
+        reset_context: bool = True,
+        streaming: bool = False,
     ) -> AsyncIterable[WorkflowEvent]:
         """Private method to run workflow with proper tracing.
 
@@ -280,6 +283,7 @@ class Workflow(DictConvertible):
         Args:
             initial_executor_fn: Optional function to execute initial executor
             reset_context: Whether to reset the context for a new run
+            streaming: Whether to enable streaming mode for agents
 
         Yields:
             WorkflowEvent: The events generated during the workflow execution.
@@ -307,6 +311,9 @@ class Workflow(DictConvertible):
                 # Reset context for a new run if supported
                 if reset_context:
                     self._runner.context.reset_for_new_run(self._shared_state)
+
+                # Set streaming mode after reset
+                self._runner_context.set_streaming(streaming)
 
                 # Execute initial setup if provided
                 if initial_executor_fn:
@@ -379,7 +386,7 @@ class Workflow(DictConvertible):
                 )
 
             async for event in self._run_workflow_with_tracing(
-                initial_executor_fn=initial_execution, reset_context=True
+                initial_executor_fn=initial_execution, reset_context=True, streaming=True
             ):
                 yield event
         finally:
@@ -461,6 +468,7 @@ class Workflow(DictConvertible):
             async for event in self._run_workflow_with_tracing(
                 initial_executor_fn=checkpoint_restoration,
                 reset_context=False,  # Don't reset context when resuming from checkpoint
+                streaming=True,
             ):
                 yield event
         finally:
@@ -506,6 +514,7 @@ class Workflow(DictConvertible):
             async for event in self._run_workflow_with_tracing(
                 initial_executor_fn=send_responses,
                 reset_context=False,  # Don't reset context when sending responses
+                streaming=True,
             ):
                 yield event
         finally:
@@ -523,9 +532,6 @@ class Workflow(DictConvertible):
         """
         self._ensure_not_running()
         try:
-            from agent_framework import AgentRunResponse, AgentRunResponseUpdate
-
-            from ._events import AgentRunEvent, AgentRunUpdateEvent  # Local import to avoid cycles
 
             async def initial_execution() -> None:
                 executor = self.get_start_executor()
@@ -541,43 +547,18 @@ class Workflow(DictConvertible):
             raw_events = [
                 event
                 async for event in self._run_workflow_with_tracing(
-                    initial_executor_fn=initial_execution, reset_context=True
+                    initial_executor_fn=initial_execution,
+                    reset_context=True,
                 )
             ]
         finally:
             self._reset_running_flag()
 
-        # Coalesce streaming update events into a single AgentRunEvent per executor sequence.
-        coalesced: list[WorkflowEvent] = []
-        pending_updates: list[AgentRunResponseUpdate] = []
-        pending_executor: str | None = None
+        # Filter events for non-streaming mode
+        filtered: list[WorkflowEvent] = []
         status_events: list[WorkflowStatusEvent] = []
 
-        def _flush_pending() -> None:
-            nonlocal pending_updates, pending_executor
-            if pending_executor is None or not pending_updates:
-                return
-            # Aggregate updates into a final AgentRunResponse using existing helper
-            aggregated = AgentRunResponse.from_agent_run_response_updates(pending_updates)
-            coalesced.append(AgentRunEvent(pending_executor, aggregated))
-            pending_updates = []
-            pending_executor = None
-
         for ev in raw_events:
-            if isinstance(ev, AgentRunUpdateEvent):
-                # Start new grouping or continue existing if same executor
-                if pending_executor is None:
-                    pending_executor = ev.executor_id
-                if ev.executor_id != pending_executor:
-                    # Different executor encountered; flush previous first
-                    _flush_pending()
-                    pending_executor = ev.executor_id
-                if ev.data is not None:
-                    pending_updates.append(ev.data)
-                # Do NOT append update event itself (non-streaming contract)
-                continue
-            # Flush before adding any non-update event
-            _flush_pending()
             # Omit WorkflowStartedEvent from non-streaming (telemetry-only)
             if isinstance(ev, WorkflowStartedEvent):
                 continue
@@ -585,15 +566,11 @@ class Workflow(DictConvertible):
             if isinstance(ev, WorkflowStatusEvent):
                 status_events.append(ev)
                 if include_status_events:
-                    coalesced.append(ev)
+                    filtered.append(ev)
                 continue
-            coalesced.append(ev)
+            filtered.append(ev)
 
-        # Flush any trailing updates
-        _flush_pending()
-
-        # coalesced already excludes start events; includes status events only if opted in
-        return WorkflowRunResult(coalesced, status_events)
+        return WorkflowRunResult(filtered, status_events)
 
     async def run_from_checkpoint(
         self,
@@ -904,7 +881,6 @@ class WorkflowBuilder:
         self,
         candidate: Executor | AgentProtocol,
         agent_thread: Any | None = None,
-        streaming: bool = False,
         output_response: bool = False,
         executor_id: str | None = None,
     ) -> Executor:
@@ -916,7 +892,6 @@ class WorkflowBuilder:
         Args:
             candidate: The executor or agent to wrap.
             agent_thread: The thread to use for running the agent. If None, a new thread will be created.
-            streaming: Enable streaming (emits incremental AgentRunUpdateEvent events) vs single response.
             output_response: Whether to yield an AgentRunResponse as a workflow output when the agent completes.
             executor_id: A unique identifier for the executor. If None, the agent's name will be used if available.
         """
@@ -946,7 +921,6 @@ class WorkflowBuilder:
             wrapper = AgentExecutor(
                 candidate,
                 agent_thread=agent_thread,
-                streaming=streaming,
                 output_response=output_response,
                 id=proposed_id,
             )
@@ -960,7 +934,6 @@ class WorkflowBuilder:
         self,
         agent: AgentProtocol,
         agent_thread: Any | None = None,
-        streaming: bool = False,
         output_response: bool = False,
         id: str | None = None,
     ) -> Executor:
@@ -970,10 +943,13 @@ class WorkflowBuilder:
         and ensures that subsequent uses of the same agent instance in other builder methods
         (like add_edge, set_start_executor, etc.) will reuse the same wrapped executor.
 
+        Note: Agents adapt their behavior based on how the workflow is executed:
+        - run_stream(): Agents emit incremental AgentRunUpdateEvent events as tokens are produced
+        - run(): Agents emit a single AgentRunEvent containing the complete response
+
         Args:
             agent: The agent to add to the workflow.
             agent_thread: The thread to use for running the agent. If None, a new thread will be created.
-            streaming: Enable streaming (emits incremental AgentRunUpdateEvent events) vs single response.
             output_response: Whether to yield an AgentRunResponse as a workflow output when the agent completes.
             id: A unique identifier for the executor. If None, the agent's name will be used if available.
 
@@ -984,7 +960,7 @@ class WorkflowBuilder:
             ValueError: If the provided id or agent name conflicts with an existing executor.
         """
         executor = self._maybe_wrap_agent(
-            agent, agent_thread=agent_thread, streaming=streaming, output_response=output_response, executor_id=id
+            agent, agent_thread=agent_thread, output_response=output_response, executor_id=id
         )
         self._add_executor(executor)
         return executor

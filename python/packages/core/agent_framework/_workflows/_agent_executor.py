@@ -49,14 +49,20 @@ class AgentExecutorResponse:
 
 
 class AgentExecutor(Executor):
-    """built-in executor that wraps an agent for handling messages."""
+    """built-in executor that wraps an agent for handling messages.
+
+    AgentExecutor adapts its behavior based on the workflow execution mode:
+    - run_stream(): Emits incremental AgentRunUpdateEvent events as the agent produces tokens
+    - run(): Emits a single AgentRunEvent containing the complete response
+
+    The executor automatically detects the mode via WorkflowContext.is_streaming().
+    """
 
     def __init__(
         self,
         agent: AgentProtocol,
         *,
         agent_thread: AgentThread | None = None,
-        streaming: bool = False,
         output_response: bool = False,
         id: str | None = None,
     ):
@@ -65,7 +71,6 @@ class AgentExecutor(Executor):
         Args:
             agent: The agent to be wrapped by this executor.
             agent_thread: The thread to use for running the agent. If None, a new thread will be created.
-            streaming: Enable streaming (emits incremental AgentRunUpdateEvent events) vs single response.
             output_response: Whether to yield an AgentRunResponse as a workflow output when the agent completes.
             id: A unique identifier for the executor. If None, the agent's name will be used if available.
         """
@@ -81,7 +86,6 @@ class AgentExecutor(Executor):
         super().__init__(exec_id)
         self._agent = agent
         self._agent_thread = agent_thread or self._agent.get_new_thread()
-        self._streaming = streaming
         self._output_response = output_response
         self._cache: list[ChatMessage] = []
 
@@ -95,11 +99,11 @@ class AgentExecutor(Executor):
     async def _run_agent_and_emit(self, ctx: WorkflowContext[AgentExecutorResponse, AgentRunResponse]) -> None:
         """Execute the underlying agent, emit events, and enqueue response.
 
-        Terminal detection is handled centrally in Runner.
-        This method only produces AgentRunEvent/AgentRunUpdateEvent plus enqueues an
-        AgentExecutorResponse message for routing.
+        Checks ctx.is_streaming() to determine whether to emit incremental AgentRunUpdateEvent
+        events (streaming mode) or a single AgentRunEvent (non-streaming mode).
         """
-        if self._streaming:
+        if ctx.is_streaming():
+            # Streaming mode: emit incremental updates
             updates: list[AgentRunResponseUpdate] = []
             async for update in self._agent.run_stream(
                 self._cache,
@@ -122,6 +126,7 @@ class AgentExecutor(Executor):
                 await ctx.add_event(AgentRunUpdateEvent(self.id, update))
             response = AgentRunResponse.from_agent_run_response_updates(updates)
         else:
+            # Non-streaming mode: use run() and emit single event
             response = await self._agent.run(
                 self._cache,
                 thread=self._agent_thread,
