@@ -936,7 +936,7 @@ class WorkflowBuilder:
         agent_thread: Any | None = None,
         output_response: bool = False,
         id: str | None = None,
-    ) -> Executor:
+    ) -> Self:
         """Add an agent to the workflow by wrapping it in an AgentExecutor.
 
         This method creates an AgentExecutor that wraps the agent with the given parameters
@@ -954,7 +954,7 @@ class WorkflowBuilder:
             id: A unique identifier for the executor. If None, the agent's name will be used if available.
 
         Returns:
-            The AgentExecutor instance that wraps the agent.
+            The WorkflowBuilder instance (for method chaining).
 
         Raises:
             ValueError: If the provided id or agent name conflicts with an existing executor.
@@ -963,7 +963,7 @@ class WorkflowBuilder:
             agent, agent_thread=agent_thread, output_response=output_response, executor_id=id
         )
         self._add_executor(executor)
-        return executor
+        return self
 
     def add_edge(
         self,
