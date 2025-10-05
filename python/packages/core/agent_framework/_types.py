@@ -58,6 +58,7 @@ __all__ = [
     "UriContent",
     "UsageContent",
     "UsageDetails",
+    "prepare_function_call_results",
 ]
 
 logger = get_logger("agent_framework")
@@ -1680,6 +1681,31 @@ Contents = (
     | FunctionApprovalRequestContent
     | FunctionApprovalResponseContent
 )
+
+
+def _prepare_function_call_results_as_dumpable(content: Contents | Any | list[Contents | Any]) -> Any:
+    if isinstance(content, list):
+        # Particularly deal with lists of Content
+        return [_prepare_function_call_results_as_dumpable(item) for item in content]
+    if isinstance(content, dict):
+        return {k: _prepare_function_call_results_as_dumpable(v) for k, v in content.items()}
+    if hasattr(content, "to_dict"):
+        return content.to_dict(exclude={"raw_representation", "additional_properties"})
+    return content
+
+
+def prepare_function_call_results(content: Contents | Any | list[Contents | Any]) -> str:
+    """Prepare the values of the function call results."""
+    if isinstance(content, Contents):
+        # For BaseContent objects, use to_dict and serialize to JSON
+        return json.dumps(content.to_dict(exclude={"raw_representation", "additional_properties"}))
+
+    dumpable = _prepare_function_call_results_as_dumpable(content)
+    if isinstance(dumpable, str):
+        return dumpable
+    # fallback
+    return json.dumps(dumpable)
+
 
 # region Chat Response constants
 

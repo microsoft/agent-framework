@@ -151,6 +151,20 @@ class AgentFrameworkExecutor:
                 if not display_contents:
                     continue
 
+                # Extract usage information if present
+                usage_data = None
+                for content in af_msg.contents:
+                    content_type = getattr(content, "type", None)
+                    if content_type == "usage":
+                        details = getattr(content, "details", None)
+                        if details:
+                            usage_data = {
+                                "total_tokens": getattr(details, "total_token_count", 0) or 0,
+                                "prompt_tokens": getattr(details, "input_token_count", 0) or 0,
+                                "completion_tokens": getattr(details, "output_token_count", 0) or 0,
+                            }
+                        break
+
                 ui_message = {
                     "id": af_msg.message_id or f"restored-{i}",
                     "role": role,
@@ -159,6 +173,10 @@ class AgentFrameworkExecutor:
                     "author_name": af_msg.author_name,
                     "message_id": af_msg.message_id,
                 }
+
+                # Add usage data if available
+                if usage_data:
+                    ui_message["usage"] = usage_data
 
                 ui_messages.append(ui_message)
 
@@ -697,6 +715,8 @@ class AgentFrameworkExecutor:
             Parsed input for workflow
         """
         try:
+            from ._utils import parse_input_for_type
+
             # Get the start executor and its input type
             start_executor, message_types = self._get_start_executor_message_types(workflow)
             if not start_executor:
@@ -713,45 +733,12 @@ class AgentFrameworkExecutor:
                 logger.debug("Could not select primary input type for workflow - using raw dict")
                 return input_data
 
-            # If input type is dict, return as-is
-            if input_type is dict:
-                return input_data
-
-            # Handle primitive types
-            if input_type in (str, int, float, bool):
-                try:
-                    if isinstance(input_data, input_type):
-                        return input_data
-                    if "input" in input_data:
-                        return input_type(input_data["input"])
-                    if len(input_data) == 1:
-                        value = next(iter(input_data.values()))
-                        return input_type(value)
-                    return input_data
-                except (ValueError, TypeError) as e:
-                    logger.warning(f"Failed to convert input to {input_type}: {e}")
-                    return input_data
-
-            # If it's a Pydantic model, validate and create instance
-            if hasattr(input_type, "model_validate"):
-                try:
-                    return input_type.model_validate(input_data)
-                except Exception as e:
-                    logger.warning(f"Failed to validate input as {input_type}: {e}")
-                    return input_data
-
-            # If it's a dataclass or other type with annotations
-            elif hasattr(input_type, "__annotations__"):
-                try:
-                    return input_type(**input_data)
-                except Exception as e:
-                    logger.warning(f"Failed to create {input_type} from input data: {e}")
-                    return input_data
+            # Use consolidated parsing logic from _utils
+            return parse_input_for_type(input_data, input_type)
 
         except Exception as e:
             logger.warning(f"Error parsing structured workflow input: {e}")
-
-        return input_data
+            return input_data
 
     def _parse_raw_workflow_input(self, workflow: Any, raw_input: str) -> Any:
         """Parse raw input string based on workflow's expected input type.
@@ -764,6 +751,8 @@ class AgentFrameworkExecutor:
             Parsed input for workflow
         """
         try:
+            from ._utils import parse_input_for_type
+
             # Get the start executor and its input type
             start_executor, message_types = self._get_start_executor_message_types(workflow)
             if not start_executor:
@@ -780,43 +769,9 @@ class AgentFrameworkExecutor:
                 logger.debug("Could not select primary input type for workflow - using raw string")
                 return raw_input
 
-            # If input type is str, return as-is
-            if input_type is str:
-                return raw_input
-
-            # If it's a Pydantic model, try to parse JSON
-            if hasattr(input_type, "model_validate_json"):
-                try:
-                    # First try to parse as JSON
-                    if raw_input.strip().startswith("{"):
-                        return input_type.model_validate_json(raw_input)
-
-                    # Try common field names
-                    common_fields = ["message", "text", "input", "data", "content"]
-                    for field in common_fields:
-                        try:
-                            return input_type(**{field: raw_input})
-                        except Exception as e:
-                            logger.debug(f"Failed to parse input using field '{field}': {e}")
-                            continue
-
-                    # Last resort: try default constructor
-                    return input_type()
-
-                except Exception as e:
-                    logger.debug(f"Failed to parse input as {input_type}: {e}")
-
-            # If it's a dataclass, try JSON parsing
-            elif hasattr(input_type, "__annotations__"):
-                try:
-                    if raw_input.strip().startswith("{"):
-                        parsed = json.loads(raw_input)
-                        return input_type(**parsed)
-                except Exception as e:
-                    logger.debug(f"Failed to parse input as {input_type}: {e}")
+            # Use consolidated parsing logic from _utils
+            return parse_input_for_type(raw_input, input_type)
 
         except Exception as e:
-            logger.debug(f"Error determining workflow input type: {e}")
-
-        # Fallback: return raw string
-        return raw_input
+            logger.debug(f"Error parsing workflow input: {e}")
+            return raw_input

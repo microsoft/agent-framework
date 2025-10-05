@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 namespace Microsoft.Agents.AI.Workflows.Checkpointing;
 
-internal interface ICheckpointingRunner
+internal interface ICheckpointingHandle
 {
     // TODO: Convert this to a multi-timeline (e.g.: Live timeline + forks for orphaned checkpoints due to timetravel)
     IReadOnlyList<CheckpointInfo> Checkpoints { get; }

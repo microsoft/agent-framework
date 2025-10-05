@@ -282,6 +282,23 @@ async def test_end_to_end_workflow_tracing(span_exporter: InMemorySpanExporter) 
     assert "build.validation_completed" in build_event_names
     assert "build.completed" in build_event_names
 
+    # Clear spans to test workflow with name and description
+    span_exporter.clear()
+
+    # Test workflow with name and description - verify OTEL attributes
+    (
+        WorkflowBuilder(name="Test Pipeline", description="Test workflow description")
+        .set_start_executor(MockExecutor("start"))
+        .build()
+    )
+
+    build_spans_with_metadata = [s for s in span_exporter.get_finished_spans() if s.name == "workflow.build"]
+    assert len(build_spans_with_metadata) == 1
+    metadata_build_span = build_spans_with_metadata[0]
+    assert metadata_build_span.attributes is not None
+    assert metadata_build_span.attributes.get(OtelAttr.WORKFLOW_NAME) == "Test Pipeline"
+    assert metadata_build_span.attributes.get(OtelAttr.WORKFLOW_DESCRIPTION) == "Test workflow description"
+
     # Clear spans to separate build from run tracing
     span_exporter.clear()
 

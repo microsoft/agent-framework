@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import json
 import logging
 from collections.abc import Mapping
 from copy import copy
@@ -23,7 +22,7 @@ from .._logging import get_logger
 from .._pydantic import AFBaseSettings
 from .._serialization import SerializationMixin
 from .._telemetry import APP_INFO, USER_AGENT_KEY, prepend_agent_framework_to_user_agent
-from .._types import ChatOptions, Contents
+from .._types import ChatOptions
 from ..exceptions import ServiceInitializationError
 
 logger: logging.Logger = get_logger("agent_framework.openai")
@@ -48,30 +47,6 @@ OPTION_TYPE = Union[ChatOptions, dict[str, Any]]
 __all__ = [
     "OpenAISettings",
 ]
-
-
-def _prepare_function_call_results_as_dumpable(content: Contents | Any | list[Contents | Any]) -> Any:
-    if isinstance(content, list):
-        # Particularly deal with lists of Content
-        return [_prepare_function_call_results_as_dumpable(item) for item in content]
-    if isinstance(content, dict):
-        return {k: _prepare_function_call_results_as_dumpable(v) for k, v in content.items()}
-    if hasattr(content, "to_dict"):
-        return content.to_dict(exclude={"raw_representation", "additional_properties"})
-    return content
-
-
-def prepare_function_call_results(content: Contents | Any | list[Contents | Any]) -> str | list[str]:
-    """Prepare the values of the function call results."""
-    if isinstance(content, Contents):
-        # For BaseContent objects, use to_dict and serialize to JSON
-        return json.dumps(content.to_dict(exclude={"raw_representation", "additional_properties"}))
-
-    dumpable = _prepare_function_call_results_as_dumpable(content)
-    if isinstance(dumpable, str):
-        return dumpable
-    # fallback
-    return json.dumps(dumpable)
 
 
 class OpenAISettings(AFBaseSettings):

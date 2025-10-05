@@ -11,12 +11,7 @@ import {
   Play,
   Settings,
   RotateCcw,
-  ChevronDown,
-  Package,
-  FolderOpen,
-  Database,
-  Globe,
-  XCircle,
+  Info,
   Workflow as WorkflowIcon,
 } from "lucide-react";
 import { LoadingState } from "@/components/ui/loading-state";
@@ -24,6 +19,7 @@ import { WorkflowInputForm } from "@/components/workflow/workflow-input-form";
 import { Button } from "@/components/ui/button";
 import { WorkflowFlow } from "@/components/workflow/workflow-flow";
 import { useWorkflowEventCorrelation } from "@/hooks/useWorkflowEventCorrelation";
+import { WorkflowDetailsModal } from "@/components/shared/workflow-details-modal";
 import { apiClient } from "@/services/api";
 import type {
   WorkflowInfo,
@@ -190,11 +186,12 @@ function RunWorkflowButton({
               variant={
                 buttonVariant === "destructive" ? "destructive" : "default"
               }
-              size="icon"
-              className="rounded-l-none border-l-0 w-9"
-              title="Configure inputs"
+              size="default"
+              className="rounded-l-none border-l-0 px-3"
+              title="Configure workflow inputs - customize parameters before running"
             >
-              <ChevronDown className="w-4 h-4" />
+              <Settings className="w-4 h-4" />
+              <span className="ml-1.5">Inputs</span>
             </Button>
           )}
         </div>
@@ -273,7 +270,7 @@ export function WorkflowView({
   const [workflowResult, setWorkflowResult] = useState<string>("");
   const [workflowError, setWorkflowError] = useState<string>("");
   const accumulatedText = useRef<string>("");
-  const [detailsExpanded, setDetailsExpanded] = useState(false);
+  const [detailsModalOpen, setDetailsModalOpen] = useState(false);
 
   // Panel resize state
   const [bottomPanelHeight, setBottomPanelHeight] = useState(() => {
@@ -554,14 +551,11 @@ export function WorkflowView({
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setDetailsExpanded(!detailsExpanded)}
+              onClick={() => setDetailsModalOpen(true)}
               className="h-6 w-6 p-0 flex-shrink-0"
+              title="View workflow details"
             >
-              <ChevronDown
-                className={`h-4 w-4 transition-transform duration-200 ${
-                  detailsExpanded ? "rotate-180" : ""
-                }`}
-              />
+              <Info className="h-4 w-4" />
             </Button>
           </div>
 
@@ -593,78 +587,6 @@ export function WorkflowView({
             {selectedWorkflow.description}
           </p>
         )}
-
-        {/* Executors - Always visible */}
-        {selectedWorkflow.executors.length > 0 && (
-          <div className="flex items-center gap-2 text-xs mt-2 mb-2">
-            <Package className="h-3.5 w-3.5 text-muted-foreground" />
-            <span className="text-muted-foreground">Executors:</span>
-            <span className="font-mono">
-              {selectedWorkflow.executors.slice(0, 3).join(", ")}
-              {selectedWorkflow.executors.length > 3 && "..."}
-            </span>
-            <span className="text-muted-foreground">
-              ({selectedWorkflow.executors.length})
-            </span>
-          </div>
-        )}
-
-        {/* Collapsible Details Section */}
-        <div
-          className={`overflow-hidden transition-all duration-200 ease-in-out ${
-            detailsExpanded ? "max-h-40 mt-3" : "max-h-0"
-          }`}
-        >
-          <div className="space-y-2 text-xs">
-            {/* Start Executor */}
-            <div className="flex items-center gap-2">
-              <WorkflowIcon className="h-3.5 w-3.5 text-muted-foreground" />
-              <span className="text-muted-foreground">Start:</span>
-              <span className="font-mono">
-                {selectedWorkflow.start_executor_id}
-              </span>
-            </div>
-
-            {/* Source */}
-            <div className="flex items-center gap-2">
-              {selectedWorkflow.source === "directory" ? (
-                <FolderOpen className="h-3.5 w-3.5 text-muted-foreground" />
-              ) : selectedWorkflow.source === "in_memory" ? (
-                <Database className="h-3.5 w-3.5 text-muted-foreground" />
-              ) : (
-                <Globe className="h-3.5 w-3.5 text-muted-foreground" />
-              )}
-              <span className="text-muted-foreground">Source:</span>
-              <span>
-                {selectedWorkflow.source === "directory"
-                  ? "Local"
-                  : selectedWorkflow.source === "in_memory"
-                  ? "In-Memory"
-                  : "Gallery"}
-              </span>
-              {selectedWorkflow.module_path && (
-                <span className="text-muted-foreground font-mono text-[11px]">
-                  ({selectedWorkflow.module_path})
-                </span>
-              )}
-            </div>
-
-            {/* Environment */}
-            <div className="flex items-center gap-2">
-              {selectedWorkflow.has_env ? (
-                <XCircle className="h-3.5 w-3.5 text-orange-500" />
-              ) : (
-                <CheckCircle className="h-3.5 w-3.5 text-green-500" />
-              )}
-              <span className="text-muted-foreground">Environment:</span>
-              <span>
-                {selectedWorkflow.has_env
-                  ? "Requires environment variables"
-                  : "No environment variables required"}
-              </span>
-            </div>
-          </div>
-        </div>
       </div>
 
       {/* Workflow Visualization */}
@@ -954,6 +876,13 @@ export function WorkflowView({
           )}
         </div>
       </div>
+
+      {/* Workflow Details Modal */}
+      <WorkflowDetailsModal
+        workflow={selectedWorkflow}
+        open={detailsModalOpen}
+        onOpenChange={setDetailsModalOpen}
+      />
     </div>
   );
 }

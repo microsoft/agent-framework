@@ -95,10 +95,10 @@
     <!-- Identity -->
     <PackageVersion Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.77.1" />
     <!-- Workflows -->
-    <PackageVersion Include="Microsoft.Bot.ObjectModel" Version="1.2025.926-1" />
-    <PackageVersion Include="Microsoft.Bot.ObjectModel.Json" Version="1.2025.926-1" />
-    <PackageVersion Include="Microsoft.Bot.ObjectModel.PowerFx" Version="1.2025.926-1" />
-    <PackageVersion Include="Microsoft.PowerFx.Interpreter" Version="1.4.0-build.20250821-1001" />
+    <PackageVersion Include="Microsoft.Bot.ObjectModel" Version="1.2025.1003.2" />
+    <PackageVersion Include="Microsoft.Bot.ObjectModel.Json" Version="1.2025.1003.2" />
+    <PackageVersion Include="Microsoft.Bot.ObjectModel.PowerFx" Version="1.2025.1003.2" />
+    <PackageVersion Include="Microsoft.PowerFx.Interpreter" Version="1.4.0" />
     <!-- Test -->
     <PackageVersion Include="FluentAssertions" Version="8.7.0" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.0.0" />

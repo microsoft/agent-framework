@@ -22,7 +22,7 @@ internal abstract class DeclarativeActionExecutor<TAction>(TAction model, Workfl
     public new TAction Model => (TAction)base.Model;
 }
 
-internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResult>, IModeledAction
+internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResult>, IResettableExecutor, IModeledAction
 {
     private string? _parentId;
     private readonly WorkflowFormulaState _state;
@@ -53,6 +53,12 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
     protected virtual bool IsDiscreteAction => true;
 
     protected virtual bool EmitResultEvent => true;
+
+    /// <inheritdoc/>
+    public ValueTask ResetAsync()
+    {
+        return default;
+    }
 
     /// <inheritdoc/>
     public override async ValueTask HandleAsync(ActionExecutorResult message, IWorkflowContext context)

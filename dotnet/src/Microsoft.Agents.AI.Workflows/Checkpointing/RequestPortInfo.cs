@@ -8,4 +8,4 @@ namespace Microsoft.Agents.AI.Workflows.Checkpointing;
 /// <param name="RequestType"></param>
 /// <param name="ResponseType"></param>
 /// <param name="PortId"></param>
-public record class InputPortInfo(TypeId RequestType, TypeId ResponseType, string PortId);
+public record class RequestPortInfo(TypeId RequestType, TypeId ResponseType, string PortId);

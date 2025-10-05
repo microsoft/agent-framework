@@ -16,7 +16,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Kit;
 /// Base class for an entry-point workflow executor that receives the initial trigger message.
 /// </summary>
 /// <typeparam name="TInput">The type of the initial message that starts the workflow.</typeparam>
-public abstract class RootExecutor<TInput> : Executor<TInput> where TInput : notnull
+public abstract class RootExecutor<TInput> : Executor<TInput>, IResettableExecutor where TInput : notnull
 {
     private readonly IConfiguration? _configuration;
     private readonly WorkflowAgentProvider _agentProvider;
@@ -46,6 +46,12 @@ public abstract class RootExecutor<TInput> : Executor<TInput> where TInput : not
         this._state = new WorkflowFormulaState(options.CreateRecalcEngine());
         this._state.InitializeSystem();
         this.Session = new RootFormulaSession(this._state);
+    }
+
+    /// <inheritdoc/>
+    public ValueTask ResetAsync()
+    {
+        return default;
     }
 
     /// <inheritdoc/>

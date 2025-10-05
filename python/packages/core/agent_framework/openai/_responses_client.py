@@ -57,6 +57,7 @@ from .._types import (
     UriContent,
     UsageContent,
     UsageDetails,
+    prepare_function_call_results,
 )
 from ..exceptions import (
     ServiceInitializationError,
@@ -65,7 +66,7 @@ from ..exceptions import (
 )
 from ..observability import use_observability
 from ._exceptions import OpenAIContentFilterException
-from ._shared import OpenAIBase, OpenAIConfigMixin, OpenAISettings, prepare_function_call_results
+from ._shared import OpenAIBase, OpenAIConfigMixin, OpenAISettings
 
 logger = get_logger("agent_framework.openai")
 
@@ -471,6 +472,8 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                 }
                 if content.result:
                     args["output"] = prepare_function_call_results(content.result)
+                if content.exception:
+                    args["output"] = "Error: " + str(content.exception)
                 return args
             case FunctionApprovalRequestContent():
                 return {

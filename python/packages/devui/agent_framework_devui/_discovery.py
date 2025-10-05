@@ -134,6 +134,52 @@ class EntityDiscovery:
         # Extract tools/executors using Agent Framework specific logic
         tools_list = await self._extract_tools_from_object(entity_object, entity_type)
 
+        # Extract agent-specific fields (for agents only)
+        instructions = None
+        model = None
+        chat_client_type = None
+        context_providers_list = None
+        middleware_list = None
+
+        if entity_type == "agent":
+            # Try to get instructions
+            if hasattr(entity_object, "chat_options") and hasattr(entity_object.chat_options, "instructions"):
+                instructions = entity_object.chat_options.instructions
+
+            # Try to get model - check both chat_options and chat_client
+            if (
+                hasattr(entity_object, "chat_options")
+                and hasattr(entity_object.chat_options, "model_id")
+                and entity_object.chat_options.model_id
+            ):
+                model = entity_object.chat_options.model_id
+            elif hasattr(entity_object, "chat_client") and hasattr(entity_object.chat_client, "model_id"):
+                model = entity_object.chat_client.model_id
+
+            # Try to get chat client type
+            if hasattr(entity_object, "chat_client"):
+                chat_client_type = entity_object.chat_client.__class__.__name__
+
+            # Try to get context providers
+            if (
+                hasattr(entity_object, "context_provider")
+                and entity_object.context_provider
+                and hasattr(entity_object.context_provider, "__class__")
+            ):
+                context_providers_list = [entity_object.context_provider.__class__.__name__]
+
+            # Try to get middleware
+            if hasattr(entity_object, "middleware") and entity_object.middleware:
+                middleware_list = []
+                for m in entity_object.middleware:
+                    # Try multiple ways to get a good name for middleware
+                    if hasattr(m, "__name__"):  # Function or callable
+                        middleware_list.append(m.__name__)
+                    elif hasattr(m, "__class__"):  # Class instance
+                        middleware_list.append(m.__class__.__name__)
+                    else:
+                        middleware_list.append(str(m))
+
         # Create EntityInfo with Agent Framework specifics
         return EntityInfo(
             id=entity_id,
@@ -142,6 +188,11 @@ class EntityDiscovery:
             type=entity_type,
             framework="agent_framework",
             tools=[str(tool) for tool in (tools_list or [])],
+            instructions=instructions,
+            model=model,
+            chat_client_type=chat_client_type,
+            context_providers=context_providers_list,
+            middleware=middleware_list,
             executors=tools_list if entity_type == "workflow" else [],
             input_schema={"type": "string"},  # Default schema
             start_executor_id=tools_list[0] if tools_list and entity_type == "workflow" else None,
@@ -446,6 +497,48 @@ class EntityDiscovery:
             if tools:
                 tools_union = [tool for tool in tools]
 
+            # Extract agent-specific fields (for agents only)
+            instructions = None
+            model = None
+            chat_client_type = None
+            context_providers_list = None
+            middleware_list = None
+
+            if obj_type == "agent":
+                # Try to get instructions
+                if hasattr(obj, "chat_options") and hasattr(obj.chat_options, "instructions"):
+                    instructions = obj.chat_options.instructions
+
+                # Try to get model - check both chat_options and chat_client
+                if hasattr(obj, "chat_options") and hasattr(obj.chat_options, "model_id") and obj.chat_options.model_id:
+                    model = obj.chat_options.model_id
+                elif hasattr(obj, "chat_client") and hasattr(obj.chat_client, "model_id"):
+                    model = obj.chat_client.model_id
+
+                # Try to get chat client type
+                if hasattr(obj, "chat_client"):
+                    chat_client_type = obj.chat_client.__class__.__name__
+
+                # Try to get context providers
+                if (
+                    hasattr(obj, "context_provider")
+                    and obj.context_provider
+                    and hasattr(obj.context_provider, "__class__")
+                ):
+                    context_providers_list = [obj.context_provider.__class__.__name__]
+
+                # Try to get middleware
+                if hasattr(obj, "middleware") and obj.middleware:
+                    middleware_list = []
+                    for m in obj.middleware:
+                        # Try multiple ways to get a good name for middleware
+                        if hasattr(m, "__name__"):  # Function or callable
+                            middleware_list.append(m.__name__)
+                        elif hasattr(m, "__class__"):  # Class instance
+                            middleware_list.append(m.__class__.__name__)
+                        else:
+                            middleware_list.append(str(m))
+
             entity_info = EntityInfo(
                 id=entity_id,
                 type=obj_type,
@@ -453,6 +546,11 @@ class EntityDiscovery:
                 framework="agent_framework",
                 description=description,
                 tools=tools_union,
+                instructions=instructions,
+                model=model,
+                chat_client_type=chat_client_type,
+                context_providers=context_providers_list,
+                middleware=middleware_list,
                 metadata={
                     "module_path": module_path,
                     "entity_type": obj_type,

@@ -52,7 +52,7 @@
         <div class="protocol-select-wrapper">
             <select id="protocol-select" class="protocol-select" @bind="selectedProtocol" disabled="@(isStreaming)">
                 <option value="AgenticFramework">Agentic Framework</option>
-                <option value="A2A">A2A (Agent-to-Agent)</option>
+                <option value="A2A">A2A (Agent2Agent)</option>
             </select>
             <div class="protocol-info">
                 @switch (selectedProtocol)
@@ -902,7 +902,7 @@
     private enum Protocol
     {
         AgenticFramework,
-        A2A // Agent-to-Agent protocol
+        A2A // Agent2Agent protocol
     }
 
     private sealed class Conversation

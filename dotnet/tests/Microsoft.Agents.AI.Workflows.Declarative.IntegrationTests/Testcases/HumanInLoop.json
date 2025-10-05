@@ -4,17 +4,30 @@
     "input": {
       "type": "String",
       "value": "Iko"
-    }
+    },
+    "responses": [
+      {
+        "type": "String",
+        "value": "Adsf"
+      },
+      {
+        "type": "String",
+        "value": "Iko"
+      }
+    ]
   },
   "validation": {
     "conversation_count": 1,
-    "min_action_count": 1,
+    "min_action_count": 8,
     "actions": {
       "start": [
-        "invoke_agent"
+        "set_project"
+      ],
+      "repeat": [
+        "question_confirm"
       ],
       "final": [
-        "invoke_agent"
+        "sendActivity_confirmed"
       ]
     }
   }
