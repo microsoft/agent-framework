@@ -70,11 +70,14 @@ async def main() -> None:
         # Add agents to workflow with custom settings using add_agent.
         # Agents adapt to workflow mode: run_stream() for incremental updates, run() for complete responses.
         # Reviewer agent emits final AgentRunResponse as a workflow output.
-        builder = WorkflowBuilder()
-        builder.add_agent(writer, id="Writer")
-        builder.add_agent(reviewer, id="Reviewer", output_response=True)
-
-        workflow = builder.set_start_executor(writer).add_edge(writer, reviewer).build()
+        workflow = (
+            WorkflowBuilder()
+            .add_agent(writer, id="Writer")
+            .add_agent(reviewer, id="Reviewer", output_response=True)
+            .set_start_executor(writer)
+            .add_edge(writer, reviewer)
+            .build()
+        )
 
         last_executor_id: str | None = None
 

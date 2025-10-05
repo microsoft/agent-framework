@@ -50,16 +50,19 @@ async def main():
         name="reviewer_agent",
     )
 
+    # Build the workflow using the fluent builder.
     # Add agents to workflow with custom settings using add_agent.
     # Agents adapt to workflow mode: run_stream() for incremental updates, run() for complete responses.
     # Reviewer agent emits final AgentRunResponse as a workflow output.
-    builder = WorkflowBuilder()
-    builder.add_agent(writer_agent, id="Writer")
-    builder.add_agent(reviewer_agent, id="Reviewer", output_response=True)
-
-    # Build the workflow using the fluent builder.
     # Set the start node and connect an edge from writer to reviewer.
-    workflow = builder.set_start_executor(writer_agent).add_edge(writer_agent, reviewer_agent).build()
+    workflow = (
+        WorkflowBuilder()
+        .add_agent(writer_agent, id="Writer")
+        .add_agent(reviewer_agent, id="Reviewer", output_response=True)
+        .set_start_executor(writer_agent)
+        .add_edge(writer_agent, reviewer_agent)
+        .build()
+    )
 
     # Stream events from the workflow. We aggregate partial token updates per executor for readable output.
     last_executor_id: str | None = None
