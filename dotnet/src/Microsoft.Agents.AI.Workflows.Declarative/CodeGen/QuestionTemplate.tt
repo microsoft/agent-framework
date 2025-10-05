@@ -10,6 +10,8 @@ internal sealed class <#= this.Name #>Executor(FormulaSession session) : ActionE
     // <inheritdoc />
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
+        await Task.Delay(0).ConfigureAwait(false);
+
         return default;
     }
 }

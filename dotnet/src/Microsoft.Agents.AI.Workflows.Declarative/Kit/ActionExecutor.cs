@@ -45,6 +45,17 @@ public abstract class ActionExecutor(string id, FormulaSession session) : Action
 
         return false;
     }
+
+    /// <summary>
+    /// %%% COMMENT
+    /// </summary>
+    /// <param name="message"></param>
+    /// <returns></returns>
+    public static bool HasResult(object? message)
+    {
+        ActionExecutorResult executorMessage = ActionExecutorResult.ThrowIfNot(message);
+        return executorMessage.Result is not null;
+    }
 }
 
 /// <summary>

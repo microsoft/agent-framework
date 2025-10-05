@@ -27,6 +27,7 @@ public sealed class DeclarativeEjectionTest(ITestOutputHelper output) : Workflow
     [InlineData("LoopContinue.yaml")]
     [InlineData("LoopEach.yaml")]
     [InlineData("ParseValue.yaml")]
+    [InlineData("Question.yaml")]
     [InlineData("ResetVariable.yaml")]
     [InlineData("SendActivity.yaml")]
     [InlineData("SetVariable.yaml")]

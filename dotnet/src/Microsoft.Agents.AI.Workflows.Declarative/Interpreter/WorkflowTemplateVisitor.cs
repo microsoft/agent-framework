@@ -4,7 +4,9 @@ using System;
 using System.Diagnostics;
 using System.Linq;
 using Microsoft.Agents.AI.Workflows.Declarative.CodeGen;
+using Microsoft.Agents.AI.Workflows.Declarative.Events;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
+using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
@@ -131,12 +133,13 @@ internal sealed class WorkflowTemplateVisitor : DialogActionVisitor
         this.Trace(item);
 
         // Represent action with default executor
-        DefaultTemplate action = new(item, this._rootId);
-        this.ContinueWith(action);
+        string parentId = GetParentId(item);
+        DefaultTemplate action = new(item.Id.Value, this._rootId);
+        this.ContinueWith(action, parentId);
         // Transition to target action
         this._workflowModel.AddLink(action.Id, item.ActionId.Value);
         // Define a clean-start to ensure "goto" is not a source for any edge
-        this.RestartAfter(action.Id, action.ParentId);
+        this.RestartAfter(action.Id, parentId);
     }
 
     protected override void Visit(Foreach item)
@@ -179,12 +182,13 @@ internal sealed class WorkflowTemplateVisitor : DialogActionVisitor
         if (loopAction is not null)
         {
             // Represent action with default executor
-            DefaultTemplate action = new(item, this._rootId);
-            this.ContinueWith(action);
+            string parentId = GetParentId(item);
+            DefaultTemplate action = new(item.Id.Value, this._rootId);
+            this.ContinueWith(action, parentId);
             // Transition to post action
             this._workflowModel.AddLink(action.Id, WorkflowActionVisitor.Steps.Post(loopAction.Id));
             // Define a clean-start to ensure "break" is not a source for any edge
-            this.RestartAfter(action.Id, action.ParentId);
+            this.RestartAfter(action.Id, parentId);
         }
     }
 
@@ -198,21 +202,48 @@ internal sealed class WorkflowTemplateVisitor : DialogActionVisitor
         if (loopAction is not null)
         {
             // Represent action with default executor
-            DefaultTemplate action = new(item, this._rootId);
-            this.ContinueWith(action);
+            string parentId = GetParentId(item);
+            DefaultTemplate action = new(item.Id.Value, this._rootId);
+            this.ContinueWith(action, parentId);
             // Transition to select the next item
             this._workflowModel.AddLink(action.Id, ForeachExecutor.Steps.Start(loopAction.Id));
             // Define a clean-start to ensure "continue" is not a source for any edge
-            this.RestartAfter(action.Id, action.ParentId);
+            this.RestartAfter(action.Id, parentId);
         }
     }
 
     protected override void Visit(Question item)
     {
-        this.NotSupported(item);
-        //this.Trace(item);
+        this.Trace(item);
 
-        //this.ContinueWith(new QuestionTemplate(item));
+        string parentId = GetParentId(item);
+        string actionId = item.GetId();
+        string postId = WorkflowActionVisitor.Steps.Post(actionId);
+
+        // Entry point for question
+        QuestionTemplate action = new(item);
+        this.ContinueWith(action);
+        // Transition to post action if complete
+        this._workflowModel.AddLink(actionId, postId, $"!{nameof(ActionExecutor)}.{nameof(ActionExecutor.HasResult)}(result)");
+
+        // Prepare for input request if not complete
+        string prepareId = QuestionExecutor.Steps.Prepare(actionId);
+        this.ContinueWith(new EmptyTemplate(prepareId, this._rootId/*, // %%% ACTION: action.PrepareResponseAsync*/), parentId, $"{nameof(ActionExecutor)}.{nameof(ActionExecutor.HasResult)}(result)");
+
+        // Define input action
+        string inputId = QuestionExecutor.Steps.Input(actionId);
+        RequestPortAction inputPort = new(RequestPort.Create<InputRequest, InputResponse>(inputId));
+        this._workflowModel.AddNode(inputPort, parentId);
+        this._workflowModel.AddLinkFromPeer(parentId, inputId);
+
+        // Capture input response
+        string captureId = QuestionExecutor.Steps.Capture(actionId);
+        this.ContinueWith(new EmptyTemplate/* // %%% INPUT: <InputResponse>*/(captureId, this._rootId/*, // %%% ACTION: , action.CaptureResponseAsync*/), parentId);
+
+        // Transition to post action if complete
+        this.ContinueWith(new EmptyTemplate(postId, this._rootId/*, // %%% ACTION: action.CompleteAsync*/), parentId, $"!{nameof(ActionExecutor)}.{nameof(ActionExecutor.HasResult)}(result)");
+        // Transition to prepare action if not complete
+        this._workflowModel.AddLink(captureId, prepareId, $"{nameof(ActionExecutor)}.{nameof(ActionExecutor.HasResult)}(result)");
     }
 
     protected override void Visit(EndDialog item)
@@ -220,10 +251,11 @@ internal sealed class WorkflowTemplateVisitor : DialogActionVisitor
         this.Trace(item);
 
         // Represent action with default executor
-        DefaultTemplate action = new(item, this._rootId);
-        this.ContinueWith(action);
+        string parentId = GetParentId(item);
+        DefaultTemplate action = new(item.Id.Value, this._rootId);
+        this.ContinueWith(action, parentId);
         // Define a clean-start to ensure "end" is not a source for any edge
-        this.RestartAfter(action.Id, action.ParentId);
+        this.RestartAfter(action.Id, parentId);
     }
 
     protected override void Visit(EndConversation item)
@@ -231,10 +263,11 @@ internal sealed class WorkflowTemplateVisitor : DialogActionVisitor
         this.Trace(item);
 
         // Represent action with default executor
-        DefaultTemplate action = new(item, this._rootId);
-        this.ContinueWith(action);
+        string parentId = GetParentId(item);
+        DefaultTemplate action = new(item.Id.Value, this._rootId);
+        this.ContinueWith(action, parentId);
         // Define a clean-start to ensure "end" is not a source for any edge
-        this.RestartAfter(action.Id, action.ParentId);
+        this.RestartAfter(action.Id, parentId);
     }
 
     protected override void Visit(CreateConversation item)

@@ -48,27 +48,40 @@ internal sealed class WorkflowCodeBuilder : IModelBuilder<string>
     private void HandelAction(IModeledAction action)
     {
         // All templates are based on "CodeTemplate"
-        if (action is not CodeTemplate template)
+        switch (action)
         {
-            // Something has gone very wrong.
-            throw new DeclarativeModelException($"Unable to generate code for: {action.GetType().Name}.");
+            case CodeTemplate template:
+                ProcessTemplate(template);
+                break;
+            case RequestPortAction:
+                if (this._actions.Add(action.Id))
+                {
+                    this._instances.Add(new DefaultTemplate(action.Id, this._rootId).TransformText()); // %%% TODO: Something real
+                }
+                break;
+            default:
+                // Something has gone very wrong.
+                throw new DeclarativeModelException($"Unable to generate code for: {action.GetType().Name}.");
         }
 
-        if (this._actions.Add(action.Id))
+        void ProcessTemplate(CodeTemplate template)
         {
-            switch (action)
+            if (this._actions.Add(action.Id))
             {
-                case EmptyTemplate:
-                case DefaultTemplate:
-                    this._instances.Add(template.TransformText());
-                    break;
-                case ActionTemplate actionTemplate:
-                    this._definitions.Add(template.TransformText());
-                    this._instances.Add(new InstanceTemplate(action.Id, this._rootId, actionTemplate.UseAgentProvider).TransformText());
-                    break;
-                case RootTemplate:
-                    this._definitions.Add(template.TransformText());
-                    break;
+                switch (action)
+                {
+                    case EmptyTemplate:
+                    case DefaultTemplate:
+                        this._instances.Add(template.TransformText());
+                        break;
+                    case ActionTemplate actionTemplate:
+                        this._definitions.Add(template.TransformText());
+                        this._instances.Add(new InstanceTemplate(action.Id, this._rootId, actionTemplate.UseAgentProvider).TransformText());
+                        break;
+                    case RootTemplate:
+                        this._definitions.Add(template.TransformText());
+                        break;
+                }
             }
         }
     }

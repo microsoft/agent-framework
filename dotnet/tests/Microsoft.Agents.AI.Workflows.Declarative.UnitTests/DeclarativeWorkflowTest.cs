@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
+using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.AI;
@@ -21,7 +22,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests;
 /// </summary>
 public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : WorkflowTest(output)
 {
-    private List<WorkflowEvent> WorkflowEvents { get; set; } = [];
+    private List<WorkflowEvent> WorkflowEvents { get; } = [];
 
     private Dictionary<Type, int> WorkflowEventCounts { get; set; } = [];
 
@@ -89,6 +90,15 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         this.AssertNotExecuted("sendActivity_1");
         this.AssertNotExecuted("sendActivity_2");
         this.AssertNotExecuted("sendActivity_3");
+    }
+
+    [Fact]
+    public async Task QuestionAsync()
+    {
+        await this.RunWorkflowAsync("Question.yaml");
+        this.AssertExecutionCount(expectedCount: 3, adjustCompletion: true);
+        this.AssertExecuted(QuestionExecutor.Steps.Prepare("question_input"), isScope: true);
+        this.AssertExecuted("question_input", isScope: true);
     }
 
     [Theory]
@@ -222,10 +232,10 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         Assert.True(visitor.HasUnsupportedActions);
     }
 
-    private void AssertExecutionCount(int expectedCount)
+    private void AssertExecutionCount(int expectedCount, bool adjustCompletion = false)
     {
         Assert.Equal(expectedCount + 2, this.WorkflowEventCounts[typeof(ExecutorInvokedEvent)]);
-        Assert.Equal(expectedCount + 2, this.WorkflowEventCounts[typeof(ExecutorCompletedEvent)]);
+        Assert.Equal(expectedCount + (adjustCompletion ? 1 : 2), this.WorkflowEventCounts[typeof(ExecutorCompletedEvent)]);
     }
 
     private void AssertNotExecuted(string executorId)
@@ -261,29 +271,36 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
 
         StreamingRun run = await InProcessExecution.StreamAsync(workflow, workflowInput);
 
-        this.WorkflowEvents = run.WatchStreamAsync().ToEnumerable().ToList();
-        foreach (WorkflowEvent workflowEvent in this.WorkflowEvents)
+        await foreach (WorkflowEvent workflowEvent in run.WatchStreamAsync())
         {
-            if (workflowEvent is ExecutorInvokedEvent invokeEvent)
+            bool exitLoop = false;
+            this.WorkflowEvents.Add(workflowEvent);
+            switch (workflowEvent)
             {
-                ActionExecutorResult? message = invokeEvent.Data as ActionExecutorResult;
-                this.Output.WriteLine($"EXEC: {invokeEvent.ExecutorId} << {message?.ExecutorId ?? "?"} [{message?.Result ?? "-"}]");
+                case ExecutorInvokedEvent invokeEvent:
+                    ActionExecutorResult? message = invokeEvent.Data as ActionExecutorResult;
+                    this.Output.WriteLine($"EXEC: {invokeEvent.ExecutorId} << {message?.ExecutorId ?? "?"} [{message?.Result ?? "-"}]");
+                    break;
+                case DeclarativeActionInvokedEvent actionInvokeEvent:
+                    this.Output.WriteLine($"ACTION ENTER: {actionInvokeEvent.ActionId}");
+                    break;
+                case DeclarativeActionCompletedEvent actionCompleteEvent:
+                    this.Output.WriteLine($"ACTION EXIT: {actionCompleteEvent.ActionId}");
+                    break;
+                case MessageActivityEvent activityEvent:
+                    this.Output.WriteLine($"ACTIVITY: {activityEvent.Message}");
+                    break;
+                case AgentRunResponseEvent messageEvent:
+                    this.Output.WriteLine($"MESSAGE: {messageEvent.Response.Messages[0].Text.Trim()}");
+                    break;
+                case RequestInfoEvent:
+                    await run.EndRunAsync();
+                    exitLoop = true;
+                    break;
             }
-            else if (workflowEvent is DeclarativeActionInvokedEvent actionInvokeEvent)
+            if (exitLoop)
             {
-                this.Output.WriteLine($"ACTION ENTER: {actionInvokeEvent.ActionId}");
-            }
-            else if (workflowEvent is DeclarativeActionCompletedEvent actionCompleteEvent)
-            {
-                this.Output.WriteLine($"ACTION EXIT: {actionCompleteEvent.ActionId}");
-            }
-            else if (workflowEvent is MessageActivityEvent activityEvent)
-            {
-                this.Output.WriteLine($"ACTIVITY: {activityEvent.Message}");
-            }
-            else if (workflowEvent is AgentRunResponseEvent messageEvent)
-            {
-                this.Output.WriteLine($"MESSAGE: {messageEvent.Response.Messages[0].Text.Trim()}");
+                break;
             }
         }
         this.WorkflowEventCounts = this.WorkflowEvents.GroupBy(e => e.GetType()).ToDictionary(e => e.Key, e => e.Count());
