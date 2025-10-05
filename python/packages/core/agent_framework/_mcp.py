@@ -464,6 +464,18 @@ class MCPTool:
                 case _:
                     logger.debug("Unhandled notification: %s", message.root.method)
 
+    def _determine_approval_mode(
+        self,
+        local_name: str,
+    ) -> Literal["always_require", "never_require"] | None:
+        if isinstance(self.approval_mode, dict):
+            if (always_require := self.approval_mode.get("always_require_approval")) and local_name in always_require:
+                return "always_require"
+            if (never_require := self.approval_mode.get("never_require_approval")) and local_name in never_require:
+                return "never_require"
+            return None
+        return self.approval_mode  # type: ignore[reportReturnType]
+
     async def load_prompts(self) -> None:
         """Load prompts from the MCP server.
 
@@ -486,18 +498,7 @@ class MCPTool:
         for prompt in prompt_list.prompts if prompt_list else []:
             local_name = _normalize_mcp_name(prompt.name)
             input_model = _get_input_model_from_mcp_prompt(prompt)
-            approval_mode: Literal["always_require", "never_require"] | None = None
-            if isinstance(self.approval_mode, dict):
-                if (
-                    always_require_approval := self.approval_mode.get("always_require_approval")
-                ) and local_name in always_require_approval:
-                    approval_mode = "always_require"
-                elif (
-                    never_require_approval := self.approval_mode.get("never_require_approval")
-                ) and local_name in never_require_approval:
-                    approval_mode = "never_require"
-            else:
-                approval_mode = self.approval_mode  # type: ignore[reportAssignmentType]
+            approval_mode = self._determine_approval_mode(local_name)
             func: AIFunction[BaseModel, list[ChatMessage]] = AIFunction(
                 func=partial(self.get_prompt, prompt.name),
                 name=local_name,
@@ -529,18 +530,7 @@ class MCPTool:
         for tool in tool_list.tools if tool_list else []:
             local_name = _normalize_mcp_name(tool.name)
             input_model = _get_input_model_from_mcp_tool(tool)
-            approval_mode: Literal["always_require", "never_require"] | None = None
-            if isinstance(self.approval_mode, dict):
-                if (
-                    always_require_approval := self.approval_mode.get("always_require_approval")
-                ) and local_name in always_require_approval:
-                    approval_mode = "always_require"
-                elif (
-                    never_require_approval := self.approval_mode.get("never_require_approval")
-                ) and local_name in never_require_approval:
-                    approval_mode = "never_require"
-            else:
-                approval_mode = self.approval_mode  # type: ignore[reportAssignmentType]
+            approval_mode = self._determine_approval_mode(local_name)
             # Create AIFunctions out of each tool
             func: AIFunction[BaseModel, list[Contents]] = AIFunction(
                 func=partial(self.call_tool, tool.name),
@@ -729,6 +719,7 @@ class MCPStdioTool(MCPTool):
                 - "never_require": The tool never requires approval before use.
                 - A dict with keys `always_require_approval` or `never_require_approval`,
                   followed by a sequence of strings with the names of the relevant tools.
+                A tool should not be listed in both, if so, it will require approval.
             allowed_tools: A list of tools that are allowed to use this tool.
             additional_properties: Additional properties.
             args: The arguments to pass to the command.
@@ -840,6 +831,7 @@ class MCPStreamableHTTPTool(MCPTool):
                 - "never_require": The tool never requires approval before use.
                 - A dict with keys `always_require_approval` or `never_require_approval`,
                   followed by a sequence of strings with the names of the relevant tools.
+                A tool should not be listed in both, if so, it will require approval.
             allowed_tools: A list of tools that are allowed to use this tool.
             additional_properties: Additional properties.
             headers: The headers to send with the request.
@@ -950,6 +942,7 @@ class MCPWebsocketTool(MCPTool):
                 - "never_require": The tool never requires approval before use.
                 - A dict with keys `always_require_approval` or `never_require_approval`,
                   followed by a sequence of strings with the names of the relevant tools.
+                A tool should not be listed in both, if so, it will require approval.
             allowed_tools: A list of tools that are allowed to use this tool.
             additional_properties: Additional properties.
             chat_client: The chat client to use for sampling.
