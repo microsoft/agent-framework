@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from copy import copy
 from typing import Any, ClassVar, Union
 
@@ -74,7 +74,7 @@ class OpenAISettings(AFBaseSettings):
 
     env_prefix: ClassVar[str] = "OPENAI_"
 
-    api_key: SecretStr | None = None
+    api_key: SecretStr | Callable[[], str | Awaitable[str]] | None = None
     base_url: str | None = None
     org_id: str | None = None
     chat_model_id: str | None = None
@@ -121,6 +121,23 @@ class OpenAIBase(SerializationMixin):
         for key, value in kwargs.items():
             setattr(self, key, value)
 
+    def _get_api_key(
+        self, api_key: str | SecretStr | Callable[[], str | Awaitable[str]] | None
+    ) -> str | Callable[[], str | Awaitable[str]] | None:
+        """Get the appropriate API key value for client initialization.
+
+        Args:
+            api_key: The API key parameter which can be a string, SecretStr, callable, or None.
+
+        Returns:
+            For callable API keys: returns the callable directly.
+            For SecretStr API keys: returns the string value.
+            For string/None API keys: returns as-is.
+        """
+        if isinstance(api_key, SecretStr):
+            return api_key.get_secret_value()
+        return api_key  # Pass callable, string, or None directly to OpenAI SDK
+
 
 class OpenAIConfigMixin(OpenAIBase):
     """Internal class for configuring a connection to an OpenAI service."""
@@ -130,7 +147,7 @@ class OpenAIConfigMixin(OpenAIBase):
     def __init__(
         self,
         model_id: str,
-        api_key: str | None = None,
+        api_key: str | Callable[[], str | Awaitable[str]] | None = None,
         org_id: str | None = None,
         default_headers: Mapping[str, str] | None = None,
         client: AsyncOpenAI | None = None,
@@ -146,7 +163,7 @@ class OpenAIConfigMixin(OpenAIBase):
         Args:
             model_id: OpenAI model identifier. Must be non-empty.
                 Default to a preset value.
-            api_key: OpenAI API key for authentication.
+            api_key: OpenAI API key for authentication, or a callable that returns an API key.
                 Must be non-empty. (Optional)
             org_id: OpenAI organization ID. This is optional
                 unless the account belongs to multiple organizations.
@@ -166,10 +183,13 @@ class OpenAIConfigMixin(OpenAIBase):
             merged_headers.update(APP_INFO)
             merged_headers = prepend_agent_framework_to_user_agent(merged_headers)
 
+        # Handle callable API key using base class method
+        api_key_value = self._get_api_key(api_key)
+
         if not client:
             if not api_key:
                 raise ServiceInitializationError("Please provide an api_key")
-            args: dict[str, Any] = {"api_key": api_key, "default_headers": merged_headers}
+            args: dict[str, Any] = {"api_key": api_key_value, "default_headers": merged_headers}
             if org_id:
                 args["organization"] = org_id
             if base_url:

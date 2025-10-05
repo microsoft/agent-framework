@@ -2088,3 +2088,17 @@ def test_prepare_options_store_parameter_handling() -> None:
     options = client._prepare_options(messages, chat_options)  # type: ignore
     assert options["store"] is False
     assert "previous_response_id" not in options
+
+
+def test_openai_responses_client_with_callable_api_key() -> None:
+    """Test OpenAIResponsesClient initialization with callable API key."""
+
+    async def get_api_key() -> str:
+        return "test-api-key-123"
+
+    client = OpenAIResponsesClient(model_id="gpt-4o", api_key=get_api_key)
+
+    # Verify client was created successfully
+    assert client.model_id == "gpt-4o"
+    # OpenAI SDK now manages callable API keys internally
+    assert client.client is not None
