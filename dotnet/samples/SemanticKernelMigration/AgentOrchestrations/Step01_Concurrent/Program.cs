@@ -72,7 +72,6 @@ ValueTask StreamingResultCallback(StreamingChatMessageContent streamedResponse, 
 # region AFConcurrentAgentWorkflow
 async Task AFConcurrentAgentWorkflow()
 {
-    // This sample demonstrates how to run a concurrent agent workflow using the Agent Framework.
     var client = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName).AsIChatClient();
     var concurrentAgentWorkflow = AgentWorkflowBuilder.BuildConcurrent(
         from lang in (string[])["French", "Spanish"] select GetAFTranslationAgent(lang, client));

@@ -73,7 +73,6 @@ ValueTask StreamingResultCallback(StreamingChatMessageContent streamedResponse, 
 # region AFSequentialAgentWorkflow
 async Task AFSequentialAgentWorkflow()
 {
-    // This sample demonstrates how to run a sequential agent workflow using the Agent Framework.
     var client = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName).AsIChatClient();
     var sequentialAgentWorkflow = AgentWorkflowBuilder.BuildSequential(
         from lang in (string[])["French", "Spanish", "English"] select GetAFTranslationAgent(lang, client));
