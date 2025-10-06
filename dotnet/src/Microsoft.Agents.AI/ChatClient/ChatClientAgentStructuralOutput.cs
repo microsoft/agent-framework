@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -135,7 +134,7 @@ public sealed partial class ChatClientAgent
     /// The agent's response will also be added to <paramref name="thread"/> if one is provided.
     /// </para>
     /// </remarks>
-    public async Task<AgentRunResponse<T>> RunAsync<T>(
+    public Task<AgentRunResponse<T>> RunAsync<T>(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         JsonSerializerOptions? serializerOptions = null,
@@ -143,55 +142,21 @@ public sealed partial class ChatClientAgent
         bool? useJsonSchemaResponseFormat = null,
         CancellationToken cancellationToken = default)
     {
-        var inputMessages = Throw.IfNull(messages) as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
-
-        (ChatClientAgentThread safeThread, ChatOptions? chatOptions, List<ChatMessage> threadMessages) =
-            await this.PrepareThreadAndMessagesAsync(thread, inputMessages, options, cancellationToken).ConfigureAwait(false);
-
-        var chatClient = this.ChatClient;
-
-        chatClient = ApplyRunOptionsTransformations(options, chatClient);
-
-        var agentName = this.GetLoggingAgentName();
-
-        this._logger.LogAgentChatClientInvokingAgent(nameof(RunAsync), this.Id, agentName, this._chatClientType);
-
-        // Call the IChatClient and notify the AIContextProvider of any failures.
-        ChatResponse<T> chatResponse;
-        try
+        async Task<ChatResponse<T>> GetResponseAsync(IChatClient chatClient, List<ChatMessage> threadMessages, ChatOptions? chatOptions, CancellationToken ct)
         {
-            chatResponse = await chatClient.GetResponseAsync<T>(
+            return await chatClient.GetResponseAsync<T>(
                 threadMessages,
                 serializerOptions ?? AgentJsonUtilities.DefaultOptions,
                 chatOptions,
                 useJsonSchemaResponseFormat,
-                cancellationToken
-            ).ConfigureAwait(false);
+                ct).ConfigureAwait(false);
         }
-        catch (Exception ex)
+
+        static AgentRunResponse<T> CreateResponse(ChatResponse<T> chatResponse)
         {
-            await NotifyAIContextProviderOfFailureAsync(safeThread, ex, inputMessages, cancellationToken).ConfigureAwait(false);
-            throw;
+            return new AgentRunResponse<T>(chatResponse);
         }
 
-        this._logger.LogAgentChatClientInvokedAgent(nameof(RunAsync), this.Id, agentName, this._chatClientType, inputMessages.Count);
-
-        // We can derive the type of supported thread from whether we have a conversation id,
-        // so let's update it and set the conversation id for the service thread case.
-        this.UpdateThreadWithTypeAndConversationId(safeThread, chatResponse.ConversationId);
-
-        // Ensure that the author name is set for each message in the response.
-        foreach (ChatMessage chatResponseMessage in chatResponse.Messages)
-        {
-            chatResponseMessage.AuthorName ??= agentName;
-        }
-
-        // Only notify the thread of new messages if the chatResponse was successful to avoid inconsistent message state in the thread.
-        await NotifyThreadOfNewMessagesAsync(safeThread, inputMessages.Concat(chatResponse.Messages), cancellationToken).ConfigureAwait(false);
-
-        // Notify the AIContextProvider of all new messages.
-        await NotifyAIContextProviderOfSuccessAsync(safeThread, inputMessages, chatResponse.Messages, cancellationToken).ConfigureAwait(false);
-
-        return new AgentRunResponse<T>(chatResponse) { AgentId = this.Id };
+        return this.RunCoreAsync(GetResponseAsync, CreateResponse, messages, thread, options, cancellationToken);
     }
 }
