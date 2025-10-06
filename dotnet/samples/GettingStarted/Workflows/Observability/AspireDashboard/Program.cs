@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Diagnostics;
+using Azure.Monitor.OpenTelemetry.Exporter;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Agents.AI.Workflows.Reflection;
 using OpenTelemetry;
@@ -32,16 +33,24 @@ public static class Program
         // Configure OpenTelemetry for Aspire dashboard
         var otlpEndpoint = Environment.GetEnvironmentVariable("OTLP_ENDPOINT") ?? "http://localhost:4317";
 
+        var applicationInsightsConnectionString = Environment.GetEnvironmentVariable("APPLICATIONINSIGHTS_CONNECTION_STRING");
+
         var resourceBuilder = ResourceBuilder
             .CreateDefault()
             .AddService("WorkflowSample");
 
-        using var traceProvider = Sdk.CreateTracerProviderBuilder()
+        var tracerProviderBuilder = Sdk.CreateTracerProviderBuilder()
             .SetResourceBuilder(resourceBuilder)
             .AddSource("Microsoft.Agents.AI.Workflows*")
             .AddSource(SourceName)
-            .AddOtlpExporter(options => options.Endpoint = new Uri(otlpEndpoint))
-            .Build();
+            .AddOtlpExporter(options => options.Endpoint = new Uri(otlpEndpoint));
+
+        if (!string.IsNullOrWhiteSpace(applicationInsightsConnectionString))
+        {
+            tracerProviderBuilder.AddAzureMonitorTraceExporter(options => options.ConnectionString = applicationInsightsConnectionString);
+        }
+
+        using var traceProvider = tracerProviderBuilder.Build();
 
         // Start a root activity for the application
         using var activity = s_activitySource.StartActivity("main");
