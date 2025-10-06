@@ -14,7 +14,7 @@ namespace Microsoft.Agents.AI;
 /// Language models are not guaranteed to honor the requested schema. If the model's output is not
 /// parsable as the expected type, you can access the underlying JSON response on the <see cref="AgentRunResponse.Text"/> property.
 /// </remarks>
-public class ChatClientAgentRunResponse<T> : AgentRunResponse<T>
+public sealed class ChatClientAgentRunResponse<T> : AgentRunResponse<T>
 {
     private readonly ChatResponse<T> _response;
 
