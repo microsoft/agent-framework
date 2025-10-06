@@ -63,6 +63,7 @@ from azure.ai.agents.models import (
     MessageInputImageUrlBlock,
     MessageInputTextBlock,
     MessageRole,
+    OpenApiToolDefinition,
     RequiredFunctionToolCall,
     RequiredMcpToolCall,
     ResponseFormatJsonSchema,
@@ -898,6 +899,9 @@ class AzureAIAgentClient(BaseChatClient):
                                 filter=additional_props.get("filter", ""),
                             )
                             tool_definitions.extend(ai_search.definitions)
+                case OpenApiToolDefinition():
+                    # Handle Azure AI OpenAPI tool definitions directly
+                    tool_definitions.append(tool)
                 case dict():
                     tool_definitions.append(tool)
                 case _:

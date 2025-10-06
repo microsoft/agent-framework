@@ -14,6 +14,10 @@ This sample demonstrates using Ollama models through OpenAI Chat Client by
 configuring the base URL to point to your local Ollama server for local AI inference.
 Ollama allows you to run large language models locally on your machine.
 
+Note: This example uses a placeholder API key since OpenAIChatClient requires one for
+validation, but Ollama doesn't actually require authentication. The placeholder value
+is ignored by the Ollama server.
+
 Environment Variables:
 - OLLAMA_ENDPOINT: The base URL for your Ollama server (e.g., "http://localhost:11434/v1/")
 - OLLAMA_MODEL: The model name to use (e.g., "mistral", "llama3.2", "phi3")
@@ -35,6 +39,7 @@ async def non_streaming_example() -> None:
     agent = OpenAIChatClient(
         base_url=os.getenv("OLLAMA_ENDPOINT"),
         model_id=os.getenv("OLLAMA_MODEL"),
+        api_key="ollama",  # Placeholder API key - Ollama doesn't require authentication
     ).create_agent(
         name="WeatherAgent",
         instructions="You are a helpful weather agent.",
@@ -44,7 +49,7 @@ async def non_streaming_example() -> None:
     query = "What's the weather like in Seattle?"
     print(f"User: {query}")
     result = await agent.run(query)
-    print(f"Result: {result}\n")
+    print(f"Agent: {result}\n")
 
 
 async def streaming_example() -> None:
@@ -54,6 +59,7 @@ async def streaming_example() -> None:
     agent = OpenAIChatClient(
         base_url=os.getenv("OLLAMA_ENDPOINT"),
         model_id=os.getenv("OLLAMA_MODEL"),
+        api_key="ollama",  # Placeholder API key - Ollama doesn't require authentication
     ).create_agent(
         name="WeatherAgent",
         instructions="You are a helpful weather agent.",
