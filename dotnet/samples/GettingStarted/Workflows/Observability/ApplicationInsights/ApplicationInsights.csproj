@@ -9,9 +9,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Azure.Monitor.OpenTelemetry.Exporter" />
     <PackageReference Include="OpenTelemetry" />
-    <PackageReference Include="OpenTelemetry.Exporter.Console" />
-    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
     <PackageReference Include="System.Diagnostics.DiagnosticSource" />
   </ItemGroup>
 

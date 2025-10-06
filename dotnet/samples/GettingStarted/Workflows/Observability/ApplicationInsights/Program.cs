@@ -1,11 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Diagnostics;
+using Azure.Monitor.OpenTelemetry.Exporter;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Agents.AI.Workflows.Reflection;
 using OpenTelemetry;
-using OpenTelemetry.Logs;
-using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 
@@ -13,7 +12,7 @@ namespace WorkflowObservabilitySample;
 
 /// <summary>
 /// This sample shows how to enable observability in a workflow and send the traces
-/// to be visualized in Aspire Dashboard.
+/// to be visualized in Application Insights.
 ///
 /// In this example, we create a simple text processing pipeline that:
 /// 1. Takes input text and converts it to uppercase using an UppercaseExecutor
@@ -24,13 +23,12 @@ namespace WorkflowObservabilitySample;
 /// </summary>
 public static class Program
 {
-    private const string SourceName = "Workflow.Sample";
+    private const string SourceName = "Workflow.ApplicationInsightsSample";
     private static readonly ActivitySource s_activitySource = new(SourceName);
 
     private static async Task Main()
     {
-        // Configure OpenTelemetry for Aspire dashboard
-        var otlpEndpoint = Environment.GetEnvironmentVariable("OTLP_ENDPOINT") ?? "http://localhost:4317";
+        var applicationInsightsConnectionString = Environment.GetEnvironmentVariable("APPLICATIONINSIGHTS_CONNECTION_STRING") ?? throw new InvalidOperationException("APPLICATIONINSIGHTS_CONNECTION_STRING is not set.");
 
         var resourceBuilder = ResourceBuilder
             .CreateDefault()
@@ -40,7 +38,7 @@ public static class Program
             .SetResourceBuilder(resourceBuilder)
             .AddSource("Microsoft.Agents.AI.Workflows*")
             .AddSource(SourceName)
-            .AddOtlpExporter(options => options.Endpoint = new Uri(otlpEndpoint))
+            .AddAzureMonitorTraceExporter(options => options.ConnectionString = applicationInsightsConnectionString)
             .Build();
 
         // Start a root activity for the application
