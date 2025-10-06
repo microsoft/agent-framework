@@ -1786,7 +1786,7 @@ public class ChatClientAgentTests
     /// Verify that RunStreamingAsync uses the ChatMessageStore factory when the chat client returns no conversation id.
     /// </summary>
     [Fact]
-    public async Task RunStreamingAsynccUsesChatMessageStoreWhenNoConversationIdReturnedByChatClientAsync()
+    public async Task RunStreamingAsyncUsesChatMessageStoreWhenNoConversationIdReturnedByChatClientAsync()
     {
         // Arrange
         Mock<IChatClient> mockService = new();
