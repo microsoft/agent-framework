@@ -40,7 +40,7 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
     {
         Console.WriteLine("RUNNING WORKFLOW...");
         Checkpointed<StreamingRun> run = await InProcessExecution.StreamAsync(workflow, input, this._checkpointManager, runId);
-        IReadOnlyList<WorkflowEvent> workflowEvents = await this.MonitorWorkflowRunAsync(run).ToArrayAsync();
+        IReadOnlyList<WorkflowEvent> workflowEvents = await MonitorWorkflowRunAsync(run).ToArrayAsync();
         this.LastCheckpoint = workflowEvents.OfType<SuperStepCompletedEvent>().LastOrDefault()?.CompletionInfo?.Checkpoint;
         return new WorkflowEvents(workflowEvents);
     }
@@ -50,7 +50,7 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
         Console.WriteLine("RESUMING WORKFLOW...");
         Assert.NotNull(this.LastCheckpoint);
         Checkpointed<StreamingRun> run = await InProcessExecution.ResumeStreamAsync(workflow, this.LastCheckpoint, this._checkpointManager, runId);
-        IReadOnlyList<WorkflowEvent> workflowEvents = await this.MonitorWorkflowRunAsync(run, response).ToArrayAsync();
+        IReadOnlyList<WorkflowEvent> workflowEvents = await MonitorWorkflowRunAsync(run, response).ToArrayAsync();
         return new WorkflowEvents(workflowEvents);
     }
 
@@ -75,7 +75,7 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
         return new WorkflowHarness(workflow, runId);
     }
 
-    private async IAsyncEnumerable<WorkflowEvent> MonitorWorkflowRunAsync(Checkpointed<StreamingRun> run, InputResponse? response = null)
+    private static async IAsyncEnumerable<WorkflowEvent> MonitorWorkflowRunAsync(Checkpointed<StreamingRun> run, InputResponse? response = null)
     {
         await foreach (WorkflowEvent workflowEvent in run.Run.WatchStreamAsync().ConfigureAwait(false))
         {
