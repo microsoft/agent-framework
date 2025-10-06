@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using Microsoft.Extensions.AI;
 using Moq;
@@ -69,5 +70,25 @@ public sealed class ChatClientExtensionsTests
         Assert.Equal("Desc", agent.Description);
         Assert.Equal("Instr", agent.Instructions);
         Assert.Same(chatClientMock.Object, agent.ChatClient);
+    }
+
+    [Fact]
+    public void CreateAIAgent_WithNullClient_Throws()
+    {
+        // Arrange
+        IChatClient chatClient = null!;
+
+        // Act & Assert
+        Assert.Throws<ArgumentNullException>(() => chatClient.CreateAIAgent(instructions: "instructions"));
+    }
+
+    [Fact]
+    public void CreateAIAgent_WithNullClientAndOptions_Throws()
+    {
+        // Arrange
+        IChatClient chatClient = null!;
+
+        // Act & Assert
+        Assert.Throws<ArgumentNullException>(() => chatClient.CreateAIAgent(options: new() { Instructions = "instructions" }));
     }
 }
