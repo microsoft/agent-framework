@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using Microsoft.Extensions.AI;
 
 namespace A2A;
@@ -14,8 +13,8 @@ internal static class A2APartExtensions
     /// Converts an A2A <see cref="Part"/> to an <see cref="AIContent"/>.
     /// </summary>
     /// <param name="part">The A2A part to convert.</param>
-    /// <returns>The corresponding <see cref="AIContent"/>.</returns>
-    internal static AIContent ToAIContent(this Part part) =>
+    /// <returns>The corresponding <see cref="AIContent"/>, or null if the part type is not supported.</returns>
+    internal static AIContent? ToAIContent(this Part part) =>
         part switch
         {
             TextPart textPart => new TextContent(textPart.Text)
@@ -30,6 +29,7 @@ internal static class A2APartExtensions
                 AdditionalProperties = filePart.Metadata.ToAdditionalProperties()
             },
 
-            _ => throw new NotSupportedException($"Part type '{part.GetType().Name}' is not supported.")
+            // Ignore unknown part types (DataPart, etc.)
+            _ => null
         };
 }

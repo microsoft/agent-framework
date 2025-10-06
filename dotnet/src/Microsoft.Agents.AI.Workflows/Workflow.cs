@@ -57,13 +57,27 @@ public class Workflow
     public string StartExecutorId { get; }
 
     /// <summary>
+    /// Gets the optional human-readable name of the workflow.
+    /// </summary>
+    public string? Name { get; internal init; }
+
+    /// <summary>
+    /// Gets the optional description of what the workflow does.
+    /// </summary>
+    public string? Description { get; internal init; }
+
+    /// <summary>
     /// Initializes a new instance of the <see cref="Workflow"/> class with the specified starting executor identifier
     /// and input type.
     /// </summary>
     /// <param name="startExecutorId">The unique identifier of the starting executor for the workflow. Cannot be <c>null</c>.</param>
-    internal Workflow(string startExecutorId)
+    /// <param name="name">Optional human-readable name for the workflow.</param>
+    /// <param name="description">Optional description of what the workflow does.</param>
+    internal Workflow(string startExecutorId, string? name = null, string? description = null)
     {
         this.StartExecutorId = Throw.IfNull(startExecutorId);
+        this.Name = name;
+        this.Description = description;
     }
 
     /// <summary>
@@ -193,7 +207,10 @@ public class Workflow<T> : Workflow
     /// Initializes a new instance of the <see cref="Workflow{T}"/> class with the specified starting executor identifier
     /// </summary>
     /// <param name="startExecutorId">The unique identifier of the starting executor for the workflow. Cannot be <c>null</c>.</param>
-    public Workflow(string startExecutorId) : base(startExecutorId)
+    /// <param name="name">Optional human-readable name for the workflow.</param>
+    /// <param name="description">Optional description of what the workflow does.</param>
+    public Workflow(string startExecutorId, string? name = null, string? description = null)
+        : base(startExecutorId, name, description)
     {
     }
 
