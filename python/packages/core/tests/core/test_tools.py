@@ -616,3 +616,507 @@ def test_hosted_mcp_tool_with_dict_of_allowed_tools():
             url="https://mcp.example",
             allowed_tools={"toolA": "Tool A", "toolC": "Tool C"},
         )
+
+
+# region Approval Flow Tests
+
+
+@pytest.fixture
+def mock_chat_client():
+    """Create a mock chat client for testing approval flows."""
+    from agent_framework import ChatMessage, ChatResponse, ChatResponseUpdate
+
+    class MockChatClient:
+        def __init__(self):
+            self.call_count = 0
+            self.responses = []
+
+        async def get_response(self, messages, **kwargs):
+            """Mock get_response that returns predefined responses."""
+            if self.call_count < len(self.responses):
+                response = self.responses[self.call_count]
+                self.call_count += 1
+                return response
+            # Default response
+            return ChatResponse(
+                messages=[ChatMessage(role="assistant", contents=["Default response"])],
+            )
+
+        async def get_streaming_response(self, messages, **kwargs):
+            """Mock get_streaming_response that yields predefined updates."""
+            if self.call_count < len(self.responses):
+                response = self.responses[self.call_count]
+                self.call_count += 1
+                # Yield updates from the response
+                for msg in response.messages:
+                    for content in msg.contents:
+                        yield ChatResponseUpdate(contents=[content], role=msg.role)
+            else:
+                # Default response
+                yield ChatResponseUpdate(contents=["Default response"], role="assistant")
+
+    return MockChatClient()
+
+
+@ai_function(name="no_approval_tool", description="Tool that doesn't require approval")
+def no_approval_tool(x: int) -> int:
+    """A tool that doesn't require approval."""
+    return x * 2
+
+
+@ai_function(
+    name="requires_approval_tool",
+    description="Tool that requires approval",
+    approval_mode="always_require",
+)
+def requires_approval_tool(x: int) -> int:
+    """A tool that requires approval."""
+    return x * 3
+
+
+async def test_non_streaming_single_function_no_approval():
+    """Test non-streaming handler with single function call that doesn't require approval."""
+    from agent_framework import ChatMessage, ChatResponse, FunctionCallContent
+    from agent_framework._tools import _handle_function_calls_response
+
+    # Create mock client
+    mock_client = type("MockClient", (), {})()
+
+    # Create responses: first with function call, second with final answer
+    initial_response = ChatResponse(
+        messages=[
+            ChatMessage(
+                role="assistant",
+                contents=[FunctionCallContent(call_id="call_1", name="no_approval_tool", arguments='{"x": 5}')],
+            )
+        ]
+    )
+    final_response = ChatResponse(messages=[ChatMessage(role="assistant", contents=["The result is 10"])])
+
+    call_count = [0]
+    responses = [initial_response, final_response]
+
+    async def mock_get_response(self, messages, **kwargs):
+        result = responses[call_count[0]]
+        call_count[0] += 1
+        return result
+
+    # Wrap the function
+    wrapped = _handle_function_calls_response(mock_get_response)
+
+    # Execute
+    result = await wrapped(mock_client, messages=[], tools=[no_approval_tool])
+
+    # Verify: should have 3 messages: function call, function result, final answer
+    assert len(result.messages) == 3
+    assert isinstance(result.messages[0].contents[0], FunctionCallContent)
+    from agent_framework import FunctionResultContent
+
+    assert isinstance(result.messages[1].contents[0], FunctionResultContent)
+    assert result.messages[1].contents[0].result == 10  # 5 * 2
+    assert result.messages[2].contents[0] == "The result is 10"
+
+
+async def test_non_streaming_single_function_requires_approval():
+    """Test non-streaming handler with single function call that requires approval."""
+    from agent_framework import ChatMessage, ChatResponse, FunctionCallContent
+    from agent_framework._tools import _handle_function_calls_response
+
+    mock_client = type("MockClient", (), {})()
+
+    # Initial response with function call
+    initial_response = ChatResponse(
+        messages=[
+            ChatMessage(
+                role="assistant",
+                contents=[FunctionCallContent(call_id="call_1", name="requires_approval_tool", arguments='{"x": 5}')],
+            )
+        ]
+    )
+
+    call_count = [0]
+    responses = [initial_response]
+
+    async def mock_get_response(self, messages, **kwargs):
+        result = responses[call_count[0]]
+        call_count[0] += 1
+        return result
+
+    wrapped = _handle_function_calls_response(mock_get_response)
+
+    # Execute
+    result = await wrapped(mock_client, messages=[], tools=[requires_approval_tool])
+
+    # Verify: should return 2 messages - function call and approval request
+    from agent_framework import FunctionApprovalRequestContent
+
+    assert len(result.messages) == 2
+    assert isinstance(result.messages[0].contents[0], FunctionCallContent)
+    assert isinstance(result.messages[1].contents[0], FunctionApprovalRequestContent)
+    assert result.messages[1].contents[0].function_call.name == "requires_approval_tool"
+
+
+async def test_non_streaming_two_functions_both_no_approval():
+    """Test non-streaming handler with two function calls, neither requiring approval."""
+    from agent_framework import ChatMessage, ChatResponse, FunctionCallContent
+    from agent_framework._tools import _handle_function_calls_response
+
+    mock_client = type("MockClient", (), {})()
+
+    # Initial response with two function calls to the same tool
+    initial_response = ChatResponse(
+        messages=[
+            ChatMessage(
+                role="assistant",
+                contents=[
+                    FunctionCallContent(call_id="call_1", name="no_approval_tool", arguments='{"x": 5}'),
+                    FunctionCallContent(call_id="call_2", name="no_approval_tool", arguments='{"x": 3}'),
+                ],
+            )
+        ]
+    )
+    final_response = ChatResponse(
+        messages=[ChatMessage(role="assistant", contents=["Both tools executed successfully"])]
+    )
+
+    call_count = [0]
+    responses = [initial_response, final_response]
+
+    async def mock_get_response(self, messages, **kwargs):
+        result = responses[call_count[0]]
+        call_count[0] += 1
+        return result
+
+    wrapped = _handle_function_calls_response(mock_get_response)
+
+    # Execute
+    result = await wrapped(mock_client, messages=[], tools=[no_approval_tool])
+
+    # Verify: should have function calls, results, and final answer
+    from agent_framework import FunctionResultContent
+
+    assert len(result.messages) == 3
+    # First message has both function calls
+    assert len(result.messages[0].contents) == 2
+    # Second message has both results
+    assert len(result.messages[1].contents) == 2
+    assert all(isinstance(c, FunctionResultContent) for c in result.messages[1].contents)
+    assert result.messages[1].contents[0].result == 10  # 5 * 2
+    assert result.messages[1].contents[1].result == 6  # 3 * 2
+
+
+async def test_non_streaming_two_functions_both_require_approval():
+    """Test non-streaming handler with two function calls, both requiring approval."""
+    from agent_framework import ChatMessage, ChatResponse, FunctionCallContent
+    from agent_framework._tools import _handle_function_calls_response
+
+    mock_client = type("MockClient", (), {})()
+
+    # Initial response with two function calls to the same tool
+    initial_response = ChatResponse(
+        messages=[
+            ChatMessage(
+                role="assistant",
+                contents=[
+                    FunctionCallContent(call_id="call_1", name="requires_approval_tool", arguments='{"x": 5}'),
+                    FunctionCallContent(call_id="call_2", name="requires_approval_tool", arguments='{"x": 3}'),
+                ],
+            )
+        ]
+    )
+
+    call_count = [0]
+    responses = [initial_response]
+
+    async def mock_get_response(self, messages, **kwargs):
+        result = responses[call_count[0]]
+        call_count[0] += 1
+        return result
+
+    wrapped = _handle_function_calls_response(mock_get_response)
+
+    # Execute
+    result = await wrapped(mock_client, messages=[], tools=[requires_approval_tool])
+
+    # Verify: should return 2 messages - function calls and approval requests
+    from agent_framework import FunctionApprovalRequestContent
+
+    assert len(result.messages) == 2
+    assert len(result.messages[0].contents) == 2  # Both function calls
+    assert all(isinstance(c, FunctionCallContent) for c in result.messages[0].contents)
+    assert len(result.messages[1].contents) == 2  # Both approval requests
+    assert all(isinstance(c, FunctionApprovalRequestContent) for c in result.messages[1].contents)
+    assert result.messages[1].contents[0].function_call.name == "requires_approval_tool"
+    assert result.messages[1].contents[1].function_call.name == "requires_approval_tool"
+
+
+async def test_non_streaming_two_functions_mixed_approval():
+    """Test non-streaming handler with two function calls, one requiring approval."""
+    from agent_framework import ChatMessage, ChatResponse, FunctionCallContent
+    from agent_framework._tools import _handle_function_calls_response
+
+    mock_client = type("MockClient", (), {})()
+
+    # Initial response with two function calls
+    initial_response = ChatResponse(
+        messages=[
+            ChatMessage(
+                role="assistant",
+                contents=[
+                    FunctionCallContent(call_id="call_1", name="no_approval_tool", arguments='{"x": 5}'),
+                    FunctionCallContent(call_id="call_2", name="requires_approval_tool", arguments='{"x": 3}'),
+                ],
+            )
+        ]
+    )
+
+    call_count = [0]
+    responses = [initial_response]
+
+    async def mock_get_response(self, messages, **kwargs):
+        result = responses[call_count[0]]
+        call_count[0] += 1
+        return result
+
+    wrapped = _handle_function_calls_response(mock_get_response)
+
+    # Execute
+    result = await wrapped(mock_client, messages=[], tools=[no_approval_tool, requires_approval_tool])
+
+    # Verify: should return approval requests for both (when one needs approval, all are sent for approval)
+    from agent_framework import FunctionApprovalRequestContent
+
+    assert len(result.messages) == 2
+    assert len(result.messages[0].contents) == 2  # Both function calls
+    assert len(result.messages[1].contents) == 2  # Both approval requests
+    assert all(isinstance(c, FunctionApprovalRequestContent) for c in result.messages[1].contents)
+
+
+async def test_streaming_single_function_no_approval():
+    """Test streaming handler with single function call that doesn't require approval."""
+    from agent_framework import ChatResponseUpdate, FunctionCallContent
+    from agent_framework._tools import _handle_function_calls_streaming_response
+
+    mock_client = type("MockClient", (), {})()
+
+    # Initial response with function call, then final response after function execution
+    initial_updates = [
+        ChatResponseUpdate(
+            contents=[FunctionCallContent(call_id="call_1", name="no_approval_tool", arguments='{"x": 5}')],
+            role="assistant",
+        )
+    ]
+    final_updates = [ChatResponseUpdate(contents=["The result is 10"], role="assistant")]
+
+    call_count = [0]
+    updates_list = [initial_updates, final_updates]
+
+    async def mock_get_streaming_response(self, messages, **kwargs):
+        updates = updates_list[call_count[0]]
+        call_count[0] += 1
+        for update in updates:
+            yield update
+
+    wrapped = _handle_function_calls_streaming_response(mock_get_streaming_response)
+
+    # Execute and collect updates
+    updates = []
+    async for update in wrapped(mock_client, messages=[], tools=[no_approval_tool]):
+        updates.append(update)
+
+    # Verify: should have function call update, tool result update (injected), and final update
+    from agent_framework import FunctionResultContent, Role
+
+    assert len(updates) >= 3
+    # First update is the function call
+    assert isinstance(updates[0].contents[0], FunctionCallContent)
+    # Second update should be the tool result (injected by the wrapper)
+    assert updates[1].role == Role.TOOL
+    assert isinstance(updates[1].contents[0], FunctionResultContent)
+    assert updates[1].contents[0].result == 10  # 5 * 2
+    # Last update is the final message
+    assert updates[-1].contents[0] == "The result is 10"
+
+
+async def test_streaming_single_function_requires_approval():
+    """Test streaming handler with single function call that requires approval."""
+    from agent_framework import ChatResponseUpdate, FunctionCallContent
+    from agent_framework._tools import _handle_function_calls_streaming_response
+
+    mock_client = type("MockClient", (), {})()
+
+    # Initial response with function call
+    initial_updates = [
+        ChatResponseUpdate(
+            contents=[FunctionCallContent(call_id="call_1", name="requires_approval_tool", arguments='{"x": 5}')],
+            role="assistant",
+        )
+    ]
+
+    call_count = [0]
+    updates_list = [initial_updates]
+
+    async def mock_get_streaming_response(self, messages, **kwargs):
+        updates = updates_list[call_count[0]]
+        call_count[0] += 1
+        for update in updates:
+            yield update
+
+    wrapped = _handle_function_calls_streaming_response(mock_get_streaming_response)
+
+    # Execute and collect updates
+    updates = []
+    async for update in wrapped(mock_client, messages=[], tools=[requires_approval_tool]):
+        updates.append(update)
+
+    # Verify: should yield function call and then approval request
+    from agent_framework import FunctionApprovalRequestContent, Role
+
+    assert len(updates) == 2
+    assert isinstance(updates[0].contents[0], FunctionCallContent)
+    assert updates[1].role == Role.TOOL
+    assert isinstance(updates[1].contents[0], FunctionApprovalRequestContent)
+
+
+async def test_streaming_two_functions_both_no_approval():
+    """Test streaming handler with two function calls, neither requiring approval."""
+    from agent_framework import ChatResponseUpdate, FunctionCallContent
+    from agent_framework._tools import _handle_function_calls_streaming_response
+
+    mock_client = type("MockClient", (), {})()
+
+    # Initial response with two function calls to the same tool
+    initial_updates = [
+        ChatResponseUpdate(
+            contents=[FunctionCallContent(call_id="call_1", name="no_approval_tool", arguments='{"x": 5}')],
+            role="assistant",
+        ),
+        ChatResponseUpdate(
+            contents=[FunctionCallContent(call_id="call_2", name="no_approval_tool", arguments='{"x": 3}')],
+            role="assistant",
+        ),
+    ]
+    final_updates = [ChatResponseUpdate(contents=["Both tools executed successfully"], role="assistant")]
+
+    call_count = [0]
+    updates_list = [initial_updates, final_updates]
+
+    async def mock_get_streaming_response(self, messages, **kwargs):
+        updates = updates_list[call_count[0]]
+        call_count[0] += 1
+        for update in updates:
+            yield update
+
+    wrapped = _handle_function_calls_streaming_response(mock_get_streaming_response)
+
+    # Execute and collect updates
+    updates = []
+    async for update in wrapped(mock_client, messages=[], tools=[no_approval_tool]):
+        updates.append(update)
+
+    # Verify: should have both function calls, one tool result update with both results, and final message
+    from agent_framework import FunctionResultContent, Role
+
+    assert len(updates) >= 3
+    # First two updates are function calls
+    assert isinstance(updates[0].contents[0], FunctionCallContent)
+    assert isinstance(updates[1].contents[0], FunctionCallContent)
+    # Should have a tool result update with both results
+    tool_updates = [u for u in updates if u.role == Role.TOOL]
+    assert len(tool_updates) == 1
+    assert len(tool_updates[0].contents) == 2
+    assert all(isinstance(c, FunctionResultContent) for c in tool_updates[0].contents)
+
+
+async def test_streaming_two_functions_both_require_approval():
+    """Test streaming handler with two function calls, both requiring approval."""
+    from agent_framework import ChatResponseUpdate, FunctionCallContent
+    from agent_framework._tools import _handle_function_calls_streaming_response
+
+    mock_client = type("MockClient", (), {})()
+
+    # Initial response with two function calls to the same tool
+    initial_updates = [
+        ChatResponseUpdate(
+            contents=[FunctionCallContent(call_id="call_1", name="requires_approval_tool", arguments='{"x": 5}')],
+            role="assistant",
+        ),
+        ChatResponseUpdate(
+            contents=[FunctionCallContent(call_id="call_2", name="requires_approval_tool", arguments='{"x": 3}')],
+            role="assistant",
+        ),
+    ]
+
+    call_count = [0]
+    updates_list = [initial_updates]
+
+    async def mock_get_streaming_response(self, messages, **kwargs):
+        updates = updates_list[call_count[0]]
+        call_count[0] += 1
+        for update in updates:
+            yield update
+
+    wrapped = _handle_function_calls_streaming_response(mock_get_streaming_response)
+
+    # Execute and collect updates
+    updates = []
+    async for update in wrapped(mock_client, messages=[], tools=[requires_approval_tool]):
+        updates.append(update)
+
+    # Verify: should yield both function calls and then approval requests
+    from agent_framework import FunctionApprovalRequestContent, Role
+
+    assert len(updates) == 3
+    assert isinstance(updates[0].contents[0], FunctionCallContent)
+    assert isinstance(updates[1].contents[0], FunctionCallContent)
+    # Tool update with both approval requests
+    assert updates[2].role == Role.TOOL
+    assert len(updates[2].contents) == 2
+    assert all(isinstance(c, FunctionApprovalRequestContent) for c in updates[2].contents)
+
+
+async def test_streaming_two_functions_mixed_approval():
+    """Test streaming handler with two function calls, one requiring approval."""
+    from agent_framework import ChatResponseUpdate, FunctionCallContent
+    from agent_framework._tools import _handle_function_calls_streaming_response
+
+    mock_client = type("MockClient", (), {})()
+
+    # Initial response with two function calls
+    initial_updates = [
+        ChatResponseUpdate(
+            contents=[FunctionCallContent(call_id="call_1", name="no_approval_tool", arguments='{"x": 5}')],
+            role="assistant",
+        ),
+        ChatResponseUpdate(
+            contents=[FunctionCallContent(call_id="call_2", name="requires_approval_tool", arguments='{"x": 3}')],
+            role="assistant",
+        ),
+    ]
+
+    call_count = [0]
+    updates_list = [initial_updates]
+
+    async def mock_get_streaming_response(self, messages, **kwargs):
+        updates = updates_list[call_count[0]]
+        call_count[0] += 1
+        for update in updates:
+            yield update
+
+    wrapped = _handle_function_calls_streaming_response(mock_get_streaming_response)
+
+    # Execute and collect updates
+    updates = []
+    async for update in wrapped(mock_client, messages=[], tools=[no_approval_tool, requires_approval_tool]):
+        updates.append(update)
+
+    # Verify: should yield both function calls and then approval requests (when one needs approval, all wait)
+    from agent_framework import FunctionApprovalRequestContent, Role
+
+    assert len(updates) == 3
+    assert isinstance(updates[0].contents[0], FunctionCallContent)
+    assert isinstance(updates[1].contents[0], FunctionCallContent)
+    # Tool update with both approval requests
+    assert updates[2].role == Role.TOOL
+    assert len(updates[2].contents) == 2
+    assert all(isinstance(c, FunctionApprovalRequestContent) for c in updates[2].contents)

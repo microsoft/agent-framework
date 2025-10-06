@@ -31,6 +31,7 @@ from agent_framework import (
     TextContent,
     UriContent,
 )
+from agent_framework._serialization import SerializationMixin
 from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.agents.models import (
     CodeInterpreterToolDefinition,
@@ -1123,7 +1124,7 @@ async def test_azure_ai_chat_client_convert_required_action_to_tool_output_funct
     assert tool_outputs is not None
     assert len(tool_outputs) == 1
     assert tool_outputs[0].tool_call_id == "call_456"
-    assert tool_outputs[0].output == '"Simple result"'
+    assert tool_outputs[0].output == "Simple result"
 
 
 async def test_azure_ai_chat_client_convert_required_action_invalid_call_id(mock_ai_project_client: MagicMock) -> None:
@@ -1155,14 +1156,15 @@ async def test_azure_ai_chat_client_convert_required_action_invalid_structure(
     assert tool_approvals is None
 
 
-async def test_azure_ai_chat_client_convert_required_action_basemodel_results(
+async def test_azure_ai_chat_client_convert_required_action_serde_model_results(
     mock_ai_project_client: MagicMock,
 ) -> None:
     """Test _convert_required_action_to_tool_output with BaseModel results."""
 
-    class MockResult(BaseModel):
-        name: str
-        value: int
+    class MockResult(SerializationMixin):
+        def __init__(self, name: str, value: int):
+            self.name = name
+            self.value = value
 
     chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, agent_id="test-agent")
 
@@ -1178,7 +1180,7 @@ async def test_azure_ai_chat_client_convert_required_action_basemodel_results(
     assert len(tool_outputs) == 1
     assert tool_outputs[0].tool_call_id == "call_456"
     # Should use model_dump_json for BaseModel
-    expected_json = mock_result.model_dump_json()
+    expected_json = mock_result.to_json()
     assert tool_outputs[0].output == expected_json
 
 
@@ -1187,8 +1189,9 @@ async def test_azure_ai_chat_client_convert_required_action_multiple_results(
 ) -> None:
     """Test _convert_required_action_to_tool_output with multiple results."""
 
-    class MockResult(BaseModel):
-        data: str
+    class MockResult(SerializationMixin):
+        def __init__(self, data: str):
+            self.data = data
 
     chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, agent_id="test-agent")
 
@@ -1206,9 +1209,9 @@ async def test_azure_ai_chat_client_convert_required_action_multiple_results(
 
     # Should JSON dump the entire results array since len > 1
     expected_results = [
-        mock_basemodel.model_dump_json(),  # BaseModel uses model_dump_json
-        json.dumps({"key": "value"}),  # Dict uses json.dumps
-        json.dumps("string_result"),  # String uses json.dumps
+        mock_basemodel.to_dict(),
+        {"key": "value"},
+        "string_result",
     ]
     expected_output = json.dumps(expected_results)
     assert tool_outputs[0].output == expected_output

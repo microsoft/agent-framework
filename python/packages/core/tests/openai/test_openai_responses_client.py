@@ -782,7 +782,7 @@ def test_create_streaming_response_content_with_mcp_approval_request() -> None:
 
 @pytest.mark.parametrize("enable_otel", [False], indirect=True)
 @pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
-def test_end_to_end_mcp_approval_flow(span_exporter) -> None:
+async def test_end_to_end_mcp_approval_flow(span_exporter) -> None:
     """End-to-end mocked test:
     model issues an mcp_approval_request, user approves, client sends mcp_approval_response.
     """
@@ -824,7 +824,7 @@ def test_end_to_end_mcp_approval_flow(span_exporter) -> None:
     # Patch the create call to return the two mocked responses in sequence
     with patch.object(client.client.responses, "create", side_effect=[mock_response1, mock_response2]) as mock_create:
         # First call: get the approval request
-        response = asyncio.run(client.get_response(messages=[ChatMessage(role="user", text="Trigger approval")]))
+        response = await client.get_response(messages=[ChatMessage(role="user", text="Trigger approval")])
         assert isinstance(response.messages[0].contents[0], FunctionApprovalRequestContent)
         req = response.messages[0].contents[0]
         assert req.id == "approval-1"
@@ -832,7 +832,7 @@ def test_end_to_end_mcp_approval_flow(span_exporter) -> None:
         # Build a user approval and send it (include required function_call)
         approval = FunctionApprovalResponseContent(approved=True, id=req.id, function_call=req.function_call)
         approval_message = ChatMessage(role="user", contents=[approval])
-        _ = asyncio.run(client.get_response(messages=[approval_message]))
+        _ = await client.get_response(messages=[approval_message])
 
         # Ensure two calls were made and the second includes the mcp_approval_response
         assert mock_create.call_count == 2

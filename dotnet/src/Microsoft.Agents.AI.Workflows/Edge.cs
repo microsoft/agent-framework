@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Diagnostics;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows;
@@ -32,6 +33,7 @@ public enum EdgeKind
 /// additional information relevant to the edge, and its concrete type depends on the value of <see
 /// cref="Kind"/>, functioning as a tagged union.
 /// </remarks>
+[DebuggerDisplay("[{Data.Id}]: {Kind}Edge({Data.Connection})")]
 public sealed class Edge
 {
     /// <summary>
