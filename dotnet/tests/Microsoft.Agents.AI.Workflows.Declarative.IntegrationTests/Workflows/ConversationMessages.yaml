@@ -33,7 +33,7 @@ trigger:
     - kind: SendActivity
       id: sendActivity_message
       activity: |-
-        Messsage 1: {Local.MyMessage1}
+        Message 1: {Local.MyMessage1}
 
     - kind: CopyConversationMessages
       id: copy_messages
