@@ -700,6 +700,8 @@ class StandardMagenticManager(MagenticManagerBase):
         Args:
             chat_client: The chat client to use for LLM calls.
             instructions: Instructions for the orchestrator agent.
+
+        Keyword Args:
             task_ledger: Optional task ledger for managing task state.
             task_ledger_facts_prompt: Optional prompt for the task ledger facts.
             task_ledger_plan_prompt: Optional prompt for the task ledger plan.

@@ -228,13 +228,16 @@ public class MessageConverterTests
     }
 
     [Fact]
-    public void ToA2AMessage_ChatMessageWithUnsupportedContent_ThrowsNotSupportedException()
+    public void ToA2AMessage_ChatMessageWithUnsupportedContent_IgnoresUnsupportedContent()
     {
         var unsupportedContent = new DataContent(new byte[] { 1, 2, 3 }, "image/png");
         var chatMessage = new ChatMessage(ChatRole.User, [unsupportedContent]);
 
-        var exception = Assert.Throws<NotSupportedException>(chatMessage.ToA2AMessage);
-        Assert.Contains("Content type 'DataContent' is not supported", exception.Message);
+        var result = chatMessage.ToA2AMessage();
+
+        // Should create a message but ignore the unsupported content
+        Assert.NotNull(result);
+        Assert.Empty(result.Parts);
     }
 
     [Fact]
@@ -389,7 +392,7 @@ public class MessageConverterTests
     }
 
     [Fact]
-    public void ConvertPartToAIContent_FilePart_ThrowsNotSupportedException()
+    public void ConvertPartToAIContent_FilePart_IgnoresUnsupportedPart()
     {
         var filePart = new FilePart();
         var message = new AgentMessage
@@ -399,12 +402,15 @@ public class MessageConverterTests
             Parts = [filePart]
         };
 
-        var exception = Assert.Throws<NotSupportedException>(() => new List<AgentMessage> { message }.ToChatMessages());
-        Assert.Contains("Part type 'FilePart' is not supported", exception.Message);
+        var result = new List<AgentMessage> { message }.ToChatMessages();
+
+        // Should return empty collection since FilePart is ignored
+        Assert.NotNull(result);
+        Assert.Empty(result);
     }
 
     [Fact]
-    public void ConvertPartToAIContent_DataPart_ThrowsNotSupportedException()
+    public void ConvertPartToAIContent_DataPart_IgnoresUnsupportedPart()
     {
         var dataPart = new DataPart();
         var message = new AgentMessage
@@ -414,8 +420,11 @@ public class MessageConverterTests
             Parts = [dataPart]
         };
 
-        var exception = Assert.Throws<NotSupportedException>(() => new List<AgentMessage> { message }.ToChatMessages());
-        Assert.Contains("Part type 'DataPart' is not supported", exception.Message);
+        var result = new List<AgentMessage> { message }.ToChatMessages();
+
+        // Should return empty collection since DataPart is ignored
+        Assert.NotNull(result);
+        Assert.Empty(result);
     }
 
     [Fact]
@@ -528,5 +537,58 @@ public class MessageConverterTests
 
         var chatMessage = result.First();
         Assert.Null(chatMessage.AdditionalProperties);
+    }
+
+    [Fact]
+    public void ConvertPartToAIContent_MixedPartsWithUnsupported_IgnoresUnsupportedParts()
+    {
+        var message = new AgentMessage
+        {
+            MessageId = "test",
+            Role = MessageRole.User,
+            Parts = [
+                new TextPart { Text = "First part" },
+                new DataPart(), // Unsupported - should be ignored
+                new TextPart { Text = "Second part" },
+                new FilePart() // Unsupported - should be ignored
+            ]
+        };
+
+        var result = new List<AgentMessage> { message }.ToChatMessages();
+
+        Assert.NotNull(result);
+        Assert.Single(result);
+
+        var chatMessage = result.First();
+        Assert.Equal(2, chatMessage.Contents.Count);
+
+        var firstContent = Assert.IsType<TextContent>(chatMessage.Contents[0]);
+        Assert.Equal("First part", firstContent.Text);
+
+        var secondContent = Assert.IsType<TextContent>(chatMessage.Contents[1]);
+        Assert.Equal("Second part", secondContent.Text);
+    }
+
+    [Fact]
+    public void ToA2AMessage_MixedContentWithUnsupported_IgnoresUnsupportedContent()
+    {
+        var contents = new List<AIContent>
+        {
+            new TextContent("First text"),
+            new DataContent(new byte[] { 1, 2, 3 }, "image/png"), // Unsupported - should be ignored
+            new TextContent("Second text")
+        };
+        var chatMessage = new ChatMessage(ChatRole.User, contents);
+
+        var result = chatMessage.ToA2AMessage();
+
+        Assert.NotNull(result);
+        Assert.Equal(2, result.Parts.Count);
+
+        var firstPart = Assert.IsType<TextPart>(result.Parts[0]);
+        Assert.Equal("First text", firstPart.Text);
+
+        var secondPart = Assert.IsType<TextPart>(result.Parts[1]);
+        Assert.Equal("Second text", secondPart.Text);
     }
 }

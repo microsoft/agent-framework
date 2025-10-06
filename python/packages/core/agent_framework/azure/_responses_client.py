@@ -29,6 +29,7 @@ class AzureOpenAIResponsesClient(AzureOpenAIConfigMixin, OpenAIBaseResponsesClie
 
     def __init__(
         self,
+        *,
         api_key: str | None = None,
         deployment_name: str | None = None,
         endpoint: str | None = None,
@@ -45,31 +46,55 @@ class AzureOpenAIResponsesClient(AzureOpenAIConfigMixin, OpenAIBaseResponsesClie
         instruction_role: str | None = None,
         **kwargs: Any,
     ) -> None:
-        """Initialize an AzureResponses service.
+        """Initialize an Azure OpenAI Responses client.
 
-        Args:
-            api_key: The optional api key. If provided, will override the value in the
-                env vars or .env file.
-            deployment_name: The optional deployment. If provided, will override the value
+        Keyword Args:
+            api_key: The API key. If provided, will override the value in the env vars or .env file.
+                Can also be set via environment variable AZURE_OPENAI_API_KEY.
+            deployment_name: The deployment name. If provided, will override the value
                 (responses_deployment_name) in the env vars or .env file.
-            endpoint: The optional deployment endpoint. If provided will override the value
+                Can also be set via environment variable AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME.
+            endpoint: The deployment endpoint. If provided will override the value
                 in the env vars or .env file.
-            base_url: The optional deployment base_url. If provided will override the value
-                in the env vars or .env file. Currently, the base_url must end with "/openai/v1/"
-            api_version: The optional deployment api version. If provided will override the value
+                Can also be set via environment variable AZURE_OPENAI_ENDPOINT.
+            base_url: The deployment base URL. If provided will override the value
+                in the env vars or .env file. Currently, the base_url must end with "/openai/v1/".
+                Can also be set via environment variable AZURE_OPENAI_BASE_URL.
+            api_version: The deployment API version. If provided will override the value
                 in the env vars or .env file. Currently, the api_version must be "preview".
-            ad_token: The Azure Active Directory token. (Optional)
-            ad_token_provider: The Azure Active Directory token provider. (Optional)
-            token_endpoint: The token endpoint to request an Azure token. (Optional)
-            credential: The Azure credential for authentication. (Optional)
+                Can also be set via environment variable AZURE_OPENAI_API_VERSION.
+            ad_token: The Azure Active Directory token.
+            ad_token_provider: The Azure Active Directory token provider.
+            token_endpoint: The token endpoint to request an Azure token.
+                Can also be set via environment variable AZURE_OPENAI_TOKEN_ENDPOINT.
+            credential: The Azure credential for authentication.
             default_headers: The default headers mapping of string keys to
-                string values for HTTP requests. (Optional)
-            async_client: An existing client to use. (Optional)
+                string values for HTTP requests.
+            async_client: An existing client to use.
             env_file_path: Use the environment settings file as a fallback to using env vars.
             env_file_encoding: The encoding of the environment settings file, defaults to 'utf-8'.
             instruction_role: The role to use for 'instruction' messages, for example, summarization
-                prompts could use `developer` or `system`. (Optional)
+                prompts could use `developer` or `system`.
             kwargs: Additional keyword arguments.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.azure import AzureOpenAIResponsesClient
+
+                # Using environment variables
+                # Set AZURE_OPENAI_ENDPOINT=https://your-endpoint.openai.azure.com
+                # Set AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME=gpt-4o
+                # Set AZURE_OPENAI_API_KEY=your-key
+                client = AzureOpenAIResponsesClient()
+
+                # Or passing parameters directly
+                client = AzureOpenAIResponsesClient(
+                    endpoint="https://your-endpoint.openai.azure.com", deployment_name="gpt-4o", api_key="your-key"
+                )
+
+                # Or loading from a .env file
+                client = AzureOpenAIResponsesClient(env_file_path="path/to/.env")
         """
         if model_id := kwargs.pop("model_id", None) and not deployment_name:
             deployment_name = str(model_id)

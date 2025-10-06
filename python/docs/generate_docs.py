@@ -34,7 +34,7 @@ async def generate_af_docs(root_path: Path):
                 "extension_config": {
                     "napoleon_google_docstring": 1,
                     "napoleon_preprocess_types": 1,
-                    "napoleon_use_param": 1,
+                    "napoleon_use_param": 0,
                     "autodoc_pydantic_field_doc_policy": "both",
                     "autodoc_pydantic_model_show_json": 0,
                     "autodoc_pydantic_model_show_config_summary": 1,
@@ -46,7 +46,7 @@ async def generate_af_docs(root_path: Path):
                     "python_use_unqualified_type_names": 1,
                     "autodoc_preserve_defaults": 1,
                     "autodoc_class_signature": "separated",
-                    "autodoc_typehints": "both",
+                    "autodoc_typehints": "description",
                     "autodoc_typehints_format": "fully-qualified",
                     "autodoc_default_options": {
                         "members": 1,

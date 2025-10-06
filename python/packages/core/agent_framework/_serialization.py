@@ -47,7 +47,7 @@ class SerializationProtocol(Protocol):
     def to_dict(self, **kwargs: Any) -> dict[str, Any]:
         """Convert the instance to a dictionary.
 
-        Args:
+        Keyword Args:
             kwargs: Additional keyword arguments for serialization.
 
         Returns:
@@ -61,6 +61,8 @@ class SerializationProtocol(Protocol):
 
         Args:
             value: Dictionary containing the instance data (positional-only).
+
+        Keyword Args:
             kwargs: Additional keyword arguments for deserialization.
 
         Returns:
@@ -123,7 +125,7 @@ class SerializationMixin:
     Examples:
         .. code-block:: python
 
-            from libary import Client
+            from library import Client
 
 
             class MyClass(SerializationMixin):
@@ -147,7 +149,7 @@ class SerializationMixin:
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
         """Convert the instance and any nested objects to a dictionary.
 
-        Args:
+        Keyword Args:
             exclude: The set of field names to exclude from serialization.
             exclude_none: Whether to exclude None values from the output. Defaults to True.
 
@@ -213,7 +215,7 @@ class SerializationMixin:
     def to_json(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> str:
         """Convert the instance to a JSON string.
 
-        Args:
+        Keyword Args:
             exclude: The set of field names to exclude from serialization.
             exclude_none: Whether to exclude None values from the output. Defaults to True.
 
@@ -224,12 +226,14 @@ class SerializationMixin:
 
     @classmethod
     def from_dict(
-        cls: type[TClass], value: MutableMapping[str, Any], /, dependencies: MutableMapping[str, Any] | None = None
+        cls: type[TClass], value: MutableMapping[str, Any], /, *, dependencies: MutableMapping[str, Any] | None = None
     ) -> TClass:
         """Create an instance from a dictionary.
 
         Args:
             value: The dictionary containing the instance data (positional-only).
+
+        Keyword Args:
             dependencies: The dictionary mapping dependency keys to values.
                 Keys should be in format ``"<type>.<parameter>"`` or ``"<type>.<dict-parameter>.<key>"``.
 
@@ -278,11 +282,13 @@ class SerializationMixin:
         return cls(**kwargs)
 
     @classmethod
-    def from_json(cls: type[TClass], value: str, /, dependencies: MutableMapping[str, Any] | None = None) -> TClass:
+    def from_json(cls: type[TClass], value: str, /, *, dependencies: MutableMapping[str, Any] | None = None) -> TClass:
         """Create an instance from a JSON string.
 
         Args:
             value: The JSON string containing the instance data (positional-only).
+
+        Keyword Args:
             dependencies: The dictionary mapping dependency keys to values.
                 Keys should be in format ``"<type>.<parameter>"`` or ``"<type>.<dict-parameter>.<key>"``.
 

@@ -89,7 +89,7 @@ internal static class HostAgentFactory
             PushNotifications = false,
         };
 
-        var invoiceQuery = new AgentSkill()
+        var policyQuery = new AgentSkill()
         {
             Id = "id_policy_agent",
             Name = "PolicyAgent",
@@ -109,7 +109,7 @@ internal static class HostAgentFactory
             DefaultInputModes = ["text"],
             DefaultOutputModes = ["text"],
             Capabilities = capabilities,
-            Skills = [invoiceQuery],
+            Skills = [policyQuery],
         };
     }
 

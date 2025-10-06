@@ -159,6 +159,8 @@ class AgentProtocol(Protocol):
 
         Args:
             messages: The message(s) to send to the agent.
+
+        Keyword Args:
             thread: The conversation thread associated with the message(s).
             kwargs: Additional keyword arguments.
 
@@ -183,6 +185,8 @@ class AgentProtocol(Protocol):
 
         Args:
             messages: The message(s) to send to the agent.
+
+        Keyword Args:
             thread: The conversation thread associated with the message(s).
             kwargs: Additional keyword arguments.
 
@@ -261,7 +265,7 @@ class BaseAgent(SerializationMixin):
     ) -> None:
         """Initialize a BaseAgent instance.
 
-        Args:
+        Keyword Args:
             id: The unique identifier of the agent. If no id is provided,
                 a new UUID will be generated.
             name: The name of the agent, can be None.
@@ -319,7 +323,7 @@ class BaseAgent(SerializationMixin):
     def get_new_thread(self, **kwargs: Any) -> AgentThread:
         """Return a new AgentThread instance that is compatible with the agent.
 
-        Args:
+        Keyword Args:
             kwargs: Additional keyword arguments passed to AgentThread.
 
         Returns:
@@ -332,6 +336,8 @@ class BaseAgent(SerializationMixin):
 
         Args:
             serialized_thread: The serialized thread data.
+
+        Keyword Args:
             kwargs: Additional keyword arguments.
 
         Returns:
@@ -354,7 +360,7 @@ class BaseAgent(SerializationMixin):
     ) -> AIFunction[BaseModel, str]:
         """Create an AIFunction tool that wraps this agent.
 
-        Args:
+        Keyword Args:
             name: The name for the tool. If None, uses the agent's name.
             description: The description for the tool. If None, uses the agent's description or empty string.
             arg_name: The name of the function argument (default: "task").
@@ -554,6 +560,8 @@ class ChatAgent(BaseAgent):
             chat_client: The chat client to use for the agent.
             instructions: Optional instructions for the agent.
                 These will be put into the messages sent to the chat client service as a system message.
+
+        Keyword Args:
             id: The unique identifier for the agent. Will be created automatically if not provided.
             name: The name of the agent.
             description: A brief description of the agent's purpose.
@@ -718,6 +726,8 @@ class ChatAgent(BaseAgent):
 
         Args:
             messages: The messages to process.
+
+        Keyword Args:
             thread: The thread to use for the agent.
             frequency_penalty: The frequency penalty to use.
             logit_bias: The logit bias to use.
@@ -847,6 +857,8 @@ class ChatAgent(BaseAgent):
 
         Args:
             messages: The messages to process.
+
+        Keyword Args:
             thread: The thread to use for the agent.
             frequency_penalty: The frequency penalty to use.
             logit_bias: The logit bias to use.
@@ -963,7 +975,7 @@ class ChatAgent(BaseAgent):
         If you run with ``store=True``, the response will include a thread_id and that will be set.
         Otherwise a message store is created from the default factory.
 
-        Args:
+        Keyword Args:
             service_thread_id: Optional service managed thread ID.
             kwargs: Not used at present.
 
@@ -1030,7 +1042,7 @@ class ChatAgent(BaseAgent):
         This method prepares the conversation thread, merges context provider data,
         and assembles the final message list for the chat client.
 
-        Args:
+        Keyword Args:
             thread: The conversation thread.
             input_messages: Messages to process.
 

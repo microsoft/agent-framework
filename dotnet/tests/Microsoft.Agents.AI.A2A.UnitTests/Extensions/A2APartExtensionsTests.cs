@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Generic;
 using System.Text.Json;
 using A2A;
@@ -80,14 +79,16 @@ public sealed class A2APartExtensionsTests
     }
 
     [Fact]
-    public void ToAIContent_WithCustomPartType_ThrowsNotSupportedException()
+    public void ToAIContent_WithCustomPartType_ReturnsNull()
     {
         // Arrange
         var customPart = new MockPart();
 
-        // Act & Assert
-        var exception = Assert.Throws<NotSupportedException>(customPart.ToAIContent);
-        Assert.Equal("Part type 'MockPart' is not supported.", exception.Message);
+        // Act
+        var result = customPart.ToAIContent();
+
+        // Assert
+        Assert.Null(result);
     }
 
     // Mock class for testing unsupported scenarios

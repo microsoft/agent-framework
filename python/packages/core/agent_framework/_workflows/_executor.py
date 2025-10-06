@@ -178,14 +178,13 @@ class Executor(DictConvertible):
 
         @executor
         async def process_text(text: str, ctx: WorkflowContext[str]) -> None:
-        await ctx.send_message(text.upper())
+            await ctx.send_message(text.upper())
 
 
-    # Or with custom ID:
-    @executor(id="text_processor")
-    def sync_process(text: str, ctx: WorkflowContext[str]) -> None:
-        ctx.send_message(text.lower())  # Sync functions run in thread pool
-    ```
+        # Or with custom ID:
+        @executor(id="text_processor")
+        def sync_process(text: str, ctx: WorkflowContext[str]) -> None:
+            ctx.send_message(text.lower())  # Sync functions run in thread pool
 
     ## Sub-workflow Composition
     Executors can contain sub-workflows using WorkflowExecutor. Sub-workflows can make requests
@@ -214,6 +213,8 @@ class Executor(DictConvertible):
 
         Args:
             id: A unique identifier for the executor.
+
+        Keyword Args:
             type: The executor type name. If not provided, uses class name.
             type_: Alternative parameter name for executor type.
             defer_discovery: If True, defer handler method discovery until later.
@@ -1395,6 +1396,8 @@ class AgentExecutor(Executor):
 
         Args:
             agent: The agent to be wrapped by this executor.
+
+        Keyword Args:
             agent_thread: The thread to use for running the agent. If None, a new thread will be created.
             streaming: Enable streaming (emits incremental AgentRunUpdateEvent events) vs single response.
             id: A unique identifier for the executor. If None, a new UUID will be generated.

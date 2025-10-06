@@ -542,6 +542,8 @@ class MCPTool:
 
         Args:
             tool_name: The name of the tool to call.
+
+        Keyword Args:
             kwargs: Arguments to pass to the tool.
 
         Returns:
@@ -569,6 +571,8 @@ class MCPTool:
 
         Args:
             prompt_name: The name of the prompt to retrieve.
+
+        Keyword Args:
             kwargs: Arguments to pass to the prompt.
 
         Returns:
@@ -683,6 +687,8 @@ class MCPStdioTool(MCPTool):
         Args:
             name: The name of the tool.
             command: The command to run the MCP server.
+
+        Keyword Args:
             load_tools: Whether to load tools from the MCP server.
             load_prompts: Whether to load prompts from the MCP server.
             request_timeout: The default timeout in seconds for all requests.
@@ -782,6 +788,8 @@ class MCPStreamableHTTPTool(MCPTool):
         Args:
             name: The name of the tool.
             url: The URL of the MCP server.
+
+        Keyword Args:
             load_tools: Whether to load tools from the MCP server.
             load_prompts: Whether to load prompts from the MCP server.
             request_timeout: The default timeout in seconds for all requests.
@@ -880,6 +888,8 @@ class MCPWebsocketTool(MCPTool):
         Args:
             name: The name of the tool.
             url: The URL of the MCP server.
+
+        Keyword Args:
             load_tools: Whether to load tools from the MCP server.
             load_prompts: Whether to load prompts from the MCP server.
             request_timeout: The default timeout in seconds for all requests.

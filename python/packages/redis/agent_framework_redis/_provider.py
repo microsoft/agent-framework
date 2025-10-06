@@ -154,7 +154,7 @@ class RedisProvider(ContextProvider):
 
         Defines text and tag fields for messages plus an optional vector field enabling KNN/hybrid search.
 
-        Args:
+        Keyword Args:
             index_name: Index name.
             prefix: Key prefix.
             vector_field_name: Vector field name or None.
@@ -300,7 +300,7 @@ class RedisProvider(ContextProvider):
 
         Fills default partition fields, optionally embeds content when configured, and loads documents in a batch.
 
-        Args:
+        Keyword Args:
             data: Single document or list of documents to insert.
             metadata: Optional metadata dictionary (unused placeholder).
 
@@ -363,6 +363,8 @@ class RedisProvider(ContextProvider):
 
         Args:
             text: Query text.
+
+        Keyword Args:
             text_scorer: Scorer to use for text ranking.
             filter_expression: Additional filter expression to AND with partition filters.
             return_fields: Fields to return in results.
@@ -526,7 +528,9 @@ class RedisProvider(ContextProvider):
 
         Args:
             messages: List of new messages in the thread.
-            kwargs: not used at present at present.
+
+        Keyword Args:
+            **kwargs: not used at present at present.
 
         Returns:
             Context: Context object containing instructions with memories.

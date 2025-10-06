@@ -27,6 +27,8 @@ def get_entra_auth_token(
     Args:
         credential: The Azure credential to use for authentication.
         token_endpoint: The token endpoint to use to retrieve the authentication token.
+
+    Keyword Args:
         **kwargs: Additional keyword arguments to pass to the token retrieval method.
 
     Returns:
@@ -57,6 +59,8 @@ async def get_entra_auth_token_async(
     Args:
         credential: The async Azure credential to use for authentication.
         token_endpoint: The token endpoint to use to retrieve the authentication token.
+
+    Keyword Args:
         **kwargs: Additional keyword arguments to pass to the token retrieval method.
 
     Returns:

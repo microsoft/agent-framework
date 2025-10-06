@@ -15,6 +15,7 @@ downloads/
 eggs/
 .eggs/
 lib/
+!python/packages/devui/frontend/src/lib/
 lib64/
 parts/
 sdist/

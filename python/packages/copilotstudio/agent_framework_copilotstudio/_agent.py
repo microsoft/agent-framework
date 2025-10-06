@@ -31,18 +31,33 @@ class CopilotStudioSettings(AFBaseSettings):
     with the encoding 'utf-8'. If the settings are not found in the .env file, the settings
     are ignored; however, validation will fail alerting that the settings are missing.
 
-    Attributes:
-        environmentid: Environment ID of environment with the Copilot Studio App..
-            (Env var COPILOTSTUDIOAGENT__ENVIRONMENTID)
+    Keyword Args:
+        environmentid: Environment ID of environment with the Copilot Studio App.
+            Can be set via environment variable COPILOTSTUDIOAGENT__ENVIRONMENTID.
         schemaname: The agent identifier or schema name of the Copilot to use.
-            (Env var COPILOTSTUDIOAGENT__SCHEMANAME)
+            Can be set via environment variable COPILOTSTUDIOAGENT__SCHEMANAME.
         agentappid: The app ID of the App Registration used to login.
-            (Env var COPILOTSTUDIOAGENT__AGENTAPPID)
+            Can be set via environment variable COPILOTSTUDIOAGENT__AGENTAPPID.
         tenantid: The tenant ID of the App Registration used to login.
-            (Env var COPILOTSTUDIOAGENT__TENANTID)
-    Parameters:
+            Can be set via environment variable COPILOTSTUDIOAGENT__TENANTID.
         env_file_path: If provided, the .env settings are read from this file path location.
         env_file_encoding: The encoding of the .env file, defaults to 'utf-8'.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework_copilotstudio import CopilotStudioSettings
+
+            # Using environment variables
+            # Set COPILOTSTUDIOAGENT__ENVIRONMENTID=env-123
+            # Set COPILOTSTUDIOAGENT__SCHEMANAME=my-agent
+            settings = CopilotStudioSettings()
+
+            # Or passing parameters directly
+            settings = CopilotStudioSettings(environmentid="env-123", schemaname="my-agent")
+
+            # Or loading from a .env file
+            settings = CopilotStudioSettings(env_file_path="path/to/.env")
     """
 
     env_prefix: ClassVar[str] = "COPILOTSTUDIOAGENT__"
@@ -87,6 +102,8 @@ class CopilotStudioAgent(BaseAgent):
                 a new client will be created using the other parameters.
             settings: Optional pre-configured ConnectionSettings. If not provided,
                 settings will be created from the other parameters.
+
+        Keyword Args:
             id: id of the CopilotAgent
             name: Name of the CopilotAgent
             description: Description of the CopilotAgent
@@ -209,6 +226,8 @@ class CopilotStudioAgent(BaseAgent):
 
         Args:
             messages: The message(s) to send to the agent.
+
+        Keyword Args:
             thread: The conversation thread associated with the message(s).
             kwargs: Additional keyword arguments.
 
@@ -248,6 +267,8 @@ class CopilotStudioAgent(BaseAgent):
 
         Args:
             messages: The message(s) to send to the agent.
+
+        Keyword Args:
             thread: The conversation thread associated with the message(s).
             kwargs: Additional keyword arguments.
 

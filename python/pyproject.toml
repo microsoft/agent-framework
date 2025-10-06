@@ -202,6 +202,7 @@ docs-install = "uv sync --all-packages --all-extras --dev -U --prerelease=if-nec
 docs-clean = "rm -rf docs/build"
 docs-build = "uv run python ./docs/generate_docs.py"
 docs-debug = "uv run python -m debugpy --listen 5678 ./docs/generate_docs.py"
+docs-rename = "mv docs/build/agent-framework-core docs/build/agent-framework"
 pre-commit-install = "uv run pre-commit install --install-hooks --overwrite"
 install = "uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit --no-group=docs"
 test = "python run_tasks_in_packages_if_exists.py test"
@@ -218,9 +219,7 @@ clean-dist = ["clean-dist-packages", "clean-dist-meta"]
 build-packages = "python run_tasks_in_packages_if_exists.py build"
 build-meta = "python -m flit build"
 build = ["build-packages", "build-meta"]
-publish-packages = "python run_tasks_in_packages_if_exists.py publish"
-publish-meta = "uv publish"
-publish = ["publish-packages", "publish-meta"]
+publish = "uv publish"
 # combined checks
 check = ["fmt", "lint", "pyright", "mypy", "test", "markdown-code-lint", "samples-code-check"]
 pre-commit-check = ["fmt", "lint", "pyright", "markdown-code-lint", "samples-code-check"]
@@ -262,9 +261,11 @@ sequence = [
 args = [{ name = "python", default = "3.13", options = ['-p', '--python'] }]
 [tool.poe.tasks.docs-full]
 sequence = [
+    { ref = "clean-dist" },
     { ref = 'build' },
     { ref = "docs-clean" },
-    { ref = "docs-build" }
+    { ref = "docs-build" },
+    { ref = "docs-rename" }
 ]
 [tool.poe.tasks.docs-full-setup-install]
 sequence = [
@@ -272,24 +273,28 @@ sequence = [
     { ref = "docs-install" },
     { ref = 'build' },
     { ref = "docs-clean" },
-    { ref = "docs-build" }
+    { ref = "docs-build" },
+    { ref = "docs-rename" }
 ]
 [tool.poe.tasks.docs-full-install]
 sequence = [
     { ref = "docs-install" },
     { ref = 'build' },
     { ref = "docs-clean" },
-    { ref = "docs-build" }
+    { ref = "docs-build" },
+    { ref = "docs-rename" }
 ]
 [tool.poe.tasks.docs-rebuild]
 sequence = [
     { ref = "docs-clean" },
-    { ref = "docs-build" }
+    { ref = "docs-build" },
+    { ref = "docs-rename" }
 ]
 [tool.poe.tasks.docs-rebuild-debug]
 sequence = [
     { ref = "docs-clean" },
-    { ref = "docs-debug" }
+    { ref = "docs-debug" },
+    { ref = "docs-rename" }
 ]
 
 [tool.setuptools.packages.find]

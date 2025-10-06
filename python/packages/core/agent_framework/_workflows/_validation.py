@@ -138,6 +138,8 @@ class WorkflowGraphValidator:
             edge_groups: list of edge groups in the workflow
             executors: Map of executor IDs to executor instances
             start_executor: The starting executor (can be instance or ID)
+
+        Keyword Args:
             duplicate_executor_ids: Optional list of known duplicate executor IDs to pre-populate
 
         Raises:
@@ -588,6 +590,8 @@ def validate_workflow_graph(
         edge_groups: list of edge groups in the workflow
         executors: Map of executor IDs to executor instances
         start_executor: The starting executor (can be instance or ID)
+
+    Keyword Args:
         duplicate_executor_ids: Optional list of known duplicate executor IDs to pre-populate
 
     Raises:
