@@ -6,18 +6,17 @@ from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 
 """
-Azure OpenAI Responses Client with Hosted MCP Example
+Azure OpenAI Responses Client with local Model Context Protocol (MCP) Example
 
-This sample demonstrates integration of Azure OpenAI Responses Client with hosted Model Context Protocol (MCP)
+This sample demonstrates integration of Azure OpenAI Responses Client with local Model Context Protocol (MCP)
 servers.
 """
 
 
 # --- Below code uses Microsoft Learn MCP server over Streamable HTTP ---
-# --- Users can set these environment variables, or just edit the values below to the desired MCP server
+# --- Users can set these environment variables, or just edit the values below to their desired local MCP server
 MCP_NAME = os.environ.get("MCP_NAME", "Microsoft Learn MCP")  # example name
 MCP_URL = os.environ.get("MCP_URL", "https://learn.microsoft.com/api/mcp")   # example endpoint
-# MCP_BEARER = os.environ.get("MCP_AUTH_BEARER")  # optional: pass a token if your server requires auth
 
 # Environment variables for Azure OpenAI Responses authentication
 # AZURE_OPENAI_ENDPOINT="<your-azure openai-endpoint>"
@@ -25,7 +24,7 @@ MCP_URL = os.environ.get("MCP_URL", "https://learn.microsoft.com/api/mcp")   # e
 # AZURE_OPENAI_API_VERSION="<your-api-version>"  # e.g. "2025-03-01-preview"
 
 async def main():
-    """Example showing Hosted MCP tools for a Azure OpenAI Responses Agent."""
+    """Example showing local MCP tools for a Azure OpenAI Responses Agent."""
     # AuthN: use Azure CLI
     credential = AzureCliCredential()
 
@@ -42,12 +41,11 @@ async def main():
         ),
     )
 
-    # Connect to the remote MCP server (Streamable HTTP)
-    # headers = {"Authorization": f"Bearer {MCP_BEARER}"} if MCP_BEARER else None
+    # Connect to the MCP server (Streamable HTTP)
     async with MCPStreamableHTTPTool(
         name=MCP_NAME,
         url=MCP_URL,
-        # headers=headers,
+        
     ) as mcp_tool:
         # First query — expect the agent to use the MCP tool if it helps
         q1 = "How to create an Azure storage account using az cli?"
