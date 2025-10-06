@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Linq;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
@@ -21,13 +21,17 @@ internal sealed class RetrieveConversationMessagesExecutor(RetrieveConversationM
         Throw.IfNull(this.Model.ConversationId, $"{nameof(this.Model)}.{nameof(this.Model.ConversationId)}");
         string conversationId = this.Evaluator.GetValue(this.Model.ConversationId).Value;
 
-        ChatMessage[] messages = await agentProvider.GetMessagesAsync(
+        List<ChatMessage> messages = [];
+        await foreach (var m in agentProvider.GetMessagesAsync(
             conversationId,
             limit: this.GetLimit(),
             after: this.GetMessage(this.Model.MessageAfter),
             before: this.GetMessage(this.Model.MessageBefore),
             newestFirst: this.IsDescending(),
-            cancellationToken).ToArrayAsync(cancellationToken).ConfigureAwait(false);
+            cancellationToken).ConfigureAwait(false))
+        {
+            messages.Add(m);
+        }
 
         await this.AssignAsync(this.Model.Messages?.Path, messages.ToTable(), context).ConfigureAwait(false);
 

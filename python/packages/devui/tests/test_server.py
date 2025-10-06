@@ -9,7 +9,18 @@ from pathlib import Path
 import pytest
 
 from agent_framework_devui import DevServer
+from agent_framework_devui._server import _extract_executor_message_types, _select_primary_input_type
 from agent_framework_devui.models._openai_custom import AgentFrameworkExtraBody, AgentFrameworkRequest
+
+
+class _StubExecutor:
+    """Simple executor stub exposing handler metadata."""
+
+    def __init__(self, *, input_types=None, handlers=None):
+        if input_types is not None:
+            self.input_types = list(input_types)
+        if handlers is not None:
+            self._handlers = dict(handlers)
 
 
 @pytest.fixture
@@ -95,6 +106,36 @@ def test_configuration():
     assert server.entities_dir == "test"
     assert server.cors_origins == ["*"]
     assert server.ui_enabled
+
+
+def test_extract_executor_message_types_prefers_input_types():
+    """Input types property is used when available."""
+    stub = _StubExecutor(input_types=[str, dict])
+
+    types = _extract_executor_message_types(stub)
+
+    assert types == [str, dict]
+
+
+def test_extract_executor_message_types_falls_back_to_handlers():
+    """Handlers provide message metadata when input_types missing."""
+    stub = _StubExecutor(handlers={str: object(), int: object()})
+
+    types = _extract_executor_message_types(stub)
+
+    assert str in types
+    assert int in types
+
+
+def test_select_primary_input_type_prefers_string_and_dict():
+    """Primary type selection prefers user-friendly primitives."""
+    string_first = _select_primary_input_type([dict[str, str], str])
+    dict_first = _select_primary_input_type([dict[str, str]])
+    fallback = _select_primary_input_type([int, float])
+
+    assert string_first is str
+    assert dict_first is dict
+    assert fallback is int
 
 
 if __name__ == "__main__":

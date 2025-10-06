@@ -8,6 +8,13 @@ from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 
+"""
+Azure AI Agent Basic Example
+
+This sample demonstrates basic usage of AzureAIAgentClient to create agents with automatic
+lifecycle management. Shows both streaming and non-streaming responses with function tools.
+"""
+
 
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],

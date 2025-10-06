@@ -44,6 +44,7 @@ if TYPE_CHECKING:
         ChatResponse,
         ChatResponseUpdate,
         Contents,
+        FunctionApprovalResponseContent,
         FunctionCallContent,
     )
 
@@ -51,6 +52,11 @@ if sys.version_info >= (3, 12):
     from typing import TypedDict  # pragma: no cover
 else:
     from typing_extensions import TypedDict  # pragma: no cover
+
+if sys.version_info >= (3, 11):
+    from typing import overload  # pragma: no cover
+else:
+    from typing_extensions import overload  # pragma: no cover
 
 logger = get_logger()
 
@@ -89,7 +95,18 @@ _NOOP_HISTOGRAM = _NoOpHistogram()
 def _parse_inputs(
     inputs: "Contents | dict[str, Any] | str | list[Contents | dict[str, Any] | str] | None",
 ) -> list["Contents"]:
-    """Parse the inputs for a tool, ensuring they are of type Contents."""
+    """Parse the inputs for a tool, ensuring they are of type Contents.
+
+    Args:
+        inputs: The inputs to parse. Can be a single item or list of Contents, dicts, or strings.
+
+    Returns:
+        A list of Contents objects.
+
+    Raises:
+        ValueError: If an unsupported input type is encountered.
+        TypeError: If the input type is not supported.
+    """
     if inputs is None:
         return []
 
@@ -133,10 +150,32 @@ def _parse_inputs(
 class ToolProtocol(Protocol):
     """Represents a generic tool that can be specified to an AI service.
 
-    Parameters:
+    This protocol defines the interface that all tools must implement to be compatible
+    with the agent framework.
+
+    Attributes:
         name: The name of the tool.
-        description: A description of the tool.
+        description: A description of the tool, suitable for use in describing the purpose to a model.
         additional_properties: Additional properties associated with the tool.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import ToolProtocol
+
+
+            class CustomTool:
+                def __init__(self, name: str, description: str) -> None:
+                    self.name = name
+                    self.description = description
+                    self.additional_properties = None
+
+                def __str__(self) -> str:
+                    return f"CustomTool(name={self.name})"
+
+
+            # Tool now implements ToolProtocol
+            tool: ToolProtocol = CustomTool("my_tool", "Does something useful")
     """
 
     name: str
@@ -154,10 +193,22 @@ class ToolProtocol(Protocol):
 class BaseTool(SerializationMixin):
     """Base class for AI tools, providing common attributes and methods.
 
-    Args:
-        name: The name of the tool.
-        description: A description of the tool.
-        additional_properties: Additional properties associated with the tool.
+    This class provides the foundation for creating custom tools with serialization support.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import BaseTool
+
+
+            class MyCustomTool(BaseTool):
+                def __init__(self, name: str, custom_param: str) -> None:
+                    super().__init__(name=name, description="My custom tool")
+                    self.custom_param = custom_param
+
+
+            tool = MyCustomTool(name="custom", custom_param="value")
+            print(tool)  # MyCustomTool(name=custom, description=My custom tool)
     """
 
     DEFAULT_EXCLUDE: ClassVar[set[str]] = {"additional_properties"}
@@ -172,7 +223,7 @@ class BaseTool(SerializationMixin):
     ) -> None:
         """Initialize the BaseTool.
 
-        Args:
+        Keyword Args:
             name: The name of the tool.
             description: A description of the tool.
             additional_properties: Additional properties associated with the tool.
@@ -196,6 +247,17 @@ class HostedCodeInterpreterTool(BaseTool):
 
     This tool does not implement code interpretation itself. It serves as a marker to inform a service
     that it is allowed to execute generated code if the service is capable of doing so.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import HostedCodeInterpreterTool
+
+            # Create a code interpreter tool
+            code_tool = HostedCodeInterpreterTool()
+
+            # With file inputs
+            code_tool_with_files = HostedCodeInterpreterTool(inputs=[{"file_id": "file-123"}, {"file_id": "file-456"}])
     """
 
     def __init__(
@@ -208,7 +270,7 @@ class HostedCodeInterpreterTool(BaseTool):
     ) -> None:
         """Initialize the HostedCodeInterpreterTool.
 
-        Args:
+        Keyword Args:
             inputs: A list of contents that the tool can accept as input. Defaults to None.
                 This should mostly be HostedFileContent or HostedVectorStoreContent.
                 Can also be DataContent, depending on the service used.
@@ -235,7 +297,22 @@ class HostedCodeInterpreterTool(BaseTool):
 
 
 class HostedWebSearchTool(BaseTool):
-    """Represents a web search tool that can be specified to an AI service to enable it to perform web searches."""
+    """Represents a web search tool that can be specified to an AI service to enable it to perform web searches.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import HostedWebSearchTool
+
+            # Create a basic web search tool
+            search_tool = HostedWebSearchTool()
+
+            # With location context
+            search_tool_with_location = HostedWebSearchTool(
+                description="Search the web for information",
+                additional_properties={"user_location": {"city": "Seattle", "country": "US"}},
+            )
+    """
 
     def __init__(
         self,
@@ -245,7 +322,7 @@ class HostedWebSearchTool(BaseTool):
     ):
         """Initialize a HostedWebSearchTool.
 
-        Args:
+        Keyword Args:
             description: A description of the tool.
             additional_properties: Additional properties associated with the tool
                 (e.g., {"user_location": {"city": "Seattle", "country": "US"}}).
@@ -265,13 +342,14 @@ class HostedWebSearchTool(BaseTool):
 
 
 class HostedMCPSpecificApproval(TypedDict, total=False):
-    """Represents the `specific` mode for a hosted tool.
+    """Represents the specific mode for a hosted tool.
 
     When using this mode, the user must specify which tools always or never require approval.
     This is represented as a dictionary with two optional keys:
-    - `always_require_approval`: A sequence of tool names that always require approval.
-    - `never_require_approval`: A sequence of tool names that never require approval.
 
+    Attributes:
+        always_require_approval: A sequence of tool names that always require approval.
+        never_require_approval: A sequence of tool names that never require approval.
     """
 
     always_require_approval: Collection[str] | None
@@ -279,7 +357,39 @@ class HostedMCPSpecificApproval(TypedDict, total=False):
 
 
 class HostedMCPTool(BaseTool):
-    """Represents a MCP tool that is managed and executed by the service."""
+    """Represents a MCP tool that is managed and executed by the service.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import HostedMCPTool
+
+            # Create a basic MCP tool
+            mcp_tool = HostedMCPTool(
+                name="my_mcp_tool",
+                url="https://example.com/mcp",
+            )
+
+            # With approval mode and allowed tools
+            mcp_tool_with_approval = HostedMCPTool(
+                name="my_mcp_tool",
+                description="My MCP tool",
+                url="https://example.com/mcp",
+                approval_mode="always_require",
+                allowed_tools=["tool1", "tool2"],
+                headers={"Authorization": "Bearer token"},
+            )
+
+            # With specific approval mode
+            mcp_tool_specific = HostedMCPTool(
+                name="my_mcp_tool",
+                url="https://example.com/mcp",
+                approval_mode={
+                    "always_require_approval": ["dangerous_tool"],
+                    "never_require_approval": ["safe_tool"],
+                },
+            )
+    """
 
     def __init__(
         self,
@@ -295,7 +405,7 @@ class HostedMCPTool(BaseTool):
     ) -> None:
         """Create a hosted MCP tool.
 
-        Args:
+        Keyword Args:
             name: The name of the tool.
             description: A description of the tool.
             url: The URL of the tool.
@@ -346,10 +456,27 @@ class HostedMCPTool(BaseTool):
 
 
 class HostedFileSearchTool(BaseTool):
-    """Represents a file search tool that can be specified to an AI service to enable it to perform file searches."""
+    """Represents a file search tool that can be specified to an AI service to enable it to perform file searches.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import HostedFileSearchTool
+
+            # Create a basic file search tool
+            file_search = HostedFileSearchTool()
+
+            # With vector store inputs and max results
+            file_search_with_inputs = HostedFileSearchTool(
+                inputs=[{"vector_store_id": "vs_123"}],
+                max_results=10,
+                description="Search files in vector store",
+            )
+    """
 
     def __init__(
         self,
+        *,
         inputs: "Contents | dict[str, Any] | str | list[Contents | dict[str, Any] | str] | None" = None,
         max_results: int | None = None,
         description: str | None = None,
@@ -358,7 +485,7 @@ class HostedFileSearchTool(BaseTool):
     ):
         """Initialize a FileSearchTool.
 
-        Args:
+        Keyword Args:
             inputs: A list of contents that the tool can accept as input. Defaults to None.
                 This should be one or more HostedVectorStoreContents.
                 When supplying a list, it can contain:
@@ -387,7 +514,12 @@ class HostedFileSearchTool(BaseTool):
 
 
 def _default_histogram() -> Histogram:
-    """Get the default histogram for function invocation duration."""
+    """Get the default histogram for function invocation duration.
+
+    Returns:
+        A Histogram instance for recording function invocation duration,
+        or a no-op histogram if observability is disabled.
+    """
     from .observability import OBSERVABILITY_SETTINGS  # local import to avoid circulars
 
     if not OBSERVABILITY_SETTINGS.ENABLED:  # type: ignore[name-defined]
@@ -409,14 +541,45 @@ def _default_histogram() -> Histogram:
 
 
 class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
-    """A AITool that is callable as code.
+    """A tool that wraps a Python function to make it callable by AI models.
 
-    Args:
-        name: The name of the function.
-        description: A description of the function.
-        additional_properties: Additional properties to set on the function.
-        func: The function to wrap. If None, returns a decorator.
-        input_model: The Pydantic model that defines the input parameters for the function.
+    This class wraps a Python function to make it callable by AI models with automatic
+    parameter validation and JSON schema generation.
+
+    Examples:
+        .. code-block:: python
+
+            from typing import Annotated
+            from pydantic import BaseModel, Field
+            from agent_framework import AIFunction, ai_function
+
+
+            # Using the decorator with string annotations
+            @ai_function
+            def get_weather(
+                location: Annotated[str, "The city name"],
+                unit: Annotated[str, "Temperature unit"] = "celsius",
+            ) -> str:
+                '''Get the weather for a location.'''
+                return f"Weather in {location}: 22°{unit[0].upper()}"
+
+
+            # Using direct instantiation with Field
+            class WeatherArgs(BaseModel):
+                location: Annotated[str, Field(description="The city name")]
+                unit: Annotated[str, Field(description="Temperature unit")] = "celsius"
+
+
+            weather_func = AIFunction(
+                name="get_weather",
+                description="Get the weather for a location",
+                func=lambda location, unit="celsius": f"Weather in {location}: 22°{unit[0].upper()}",
+                approval_mode="never_require",
+                input_model=WeatherArgs,
+            )
+
+            # Invoke the function
+            result = await weather_func.invoke(arguments=WeatherArgs(location="Seattle"))
     """
 
     INJECTABLE: ClassVar[set[str]] = {"func"}
@@ -427,6 +590,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
         *,
         name: str,
         description: str = "",
+        approval_mode: Literal["always_require", "never_require"] | None = None,
         additional_properties: dict[str, Any] | None = None,
         func: Callable[..., Awaitable[ReturnT] | ReturnT],
         input_model: type[ArgsT],
@@ -434,9 +598,11 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
     ) -> None:
         """Initialize the AIFunction.
 
-        Args:
+        Keyword Args:
             name: The name of the function.
             description: A description of the function.
+            approval_mode: Whether or not approval is required to run this tool.
+                Default is that approval is not needed.
             additional_properties: Additional properties to set on the function.
             func: The function to wrap.
             input_model: The Pydantic model that defines the input parameters for the function.
@@ -450,6 +616,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
         )
         self.func = func
         self.input_model = input_model
+        self.approval_mode = approval_mode or "never_require"
         self._invocation_duration_histogram = _default_histogram()
 
     def __call__(self, *args: Any, **kwargs: Any) -> ReturnT | Awaitable[ReturnT]:
@@ -464,9 +631,15 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
     ) -> ReturnT:
         """Run the AI function with the provided arguments as a Pydantic model.
 
-        Args:
+        Keyword Args:
             arguments: A Pydantic model instance containing the arguments for the function.
-            kwargs: keyword arguments to pass to the function, will not be used if `arguments` is provided.
+            kwargs: Keyword arguments to pass to the function, will not be used if ``arguments`` is provided.
+
+        Returns:
+            The result of the function execution.
+
+        Raises:
+            TypeError: If arguments is not an instance of the expected input model.
         """
         global OBSERVABILITY_SETTINGS
         from .observability import OBSERVABILITY_SETTINGS
@@ -530,11 +703,19 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
                 logger.info("Function duration: %fs", duration)
 
     def parameters(self) -> dict[str, Any]:
-        """Create the json schema of the parameters."""
+        """Create the JSON schema of the parameters.
+
+        Returns:
+            A dictionary containing the JSON schema for the function's parameters.
+        """
         return self.input_model.model_json_schema()
 
     def to_json_schema_spec(self) -> dict[str, Any]:
-        """Convert a AIFunction to the JSON Schema function specification format."""
+        """Convert a AIFunction to the JSON Schema function specification format.
+
+        Returns:
+            A dictionary containing the function specification in JSON Schema format.
+        """
         return {
             "type": "function",
             "function": {
@@ -554,7 +735,14 @@ def _tools_to_dict(
         | None
     ),
 ) -> list[str | dict[str, Any]] | None:
-    """Parse the tools to a dict."""
+    """Parse the tools to a dict.
+
+    Args:
+        tools: The tools to parse. Can be a single tool or a sequence of tools.
+
+    Returns:
+        A list of tool specifications as dictionaries, or None if no tools provided.
+    """
     if not tools:
         return None
     if not isinstance(tools, list):
@@ -592,8 +780,14 @@ def _tools_to_dict(
 def _parse_annotation(annotation: Any) -> Any:
     """Parse a type annotation and return the corresponding type.
 
-    If the second annotation (after the type) is a string, then we convert that to a pydantic Field description.
+    If the second annotation (after the type) is a string, then we convert that to a Pydantic Field description.
     The rest are returned as-is, allowing for multiple annotations.
+
+    Args:
+        annotation: The type annotation to parse.
+
+    Returns:
+        The parsed annotation, potentially wrapped in Annotated with a Field.
     """
     origin = get_origin(annotation)
     if origin is not None:
@@ -608,41 +802,91 @@ def _parse_annotation(annotation: Any) -> Any:
     return annotation
 
 
+@overload
+def ai_function(
+    func: Callable[..., ReturnT | Awaitable[ReturnT]],
+    *,
+    name: str | None = None,
+    description: str | None = None,
+    approval_mode: Literal["always_require", "never_require"] | None = None,
+    additional_properties: dict[str, Any] | None = None,
+) -> AIFunction[Any, ReturnT]: ...
+
+
+@overload
+def ai_function(
+    func: None = None,
+    *,
+    name: str | None = None,
+    description: str | None = None,
+    approval_mode: Literal["always_require", "never_require"] | None = None,
+    additional_properties: dict[str, Any] | None = None,
+) -> Callable[[Callable[..., ReturnT | Awaitable[ReturnT]]], AIFunction[Any, ReturnT]]: ...
+
+
 def ai_function(
     func: Callable[..., ReturnT | Awaitable[ReturnT]] | None = None,
     *,
     name: str | None = None,
     description: str | None = None,
+    approval_mode: Literal["always_require", "never_require"] | None = None,
     additional_properties: dict[str, Any] | None = None,
-) -> AIFunction[Any, ReturnT]:
+) -> AIFunction[Any, ReturnT] | Callable[[Callable[..., ReturnT | Awaitable[ReturnT]]], AIFunction[Any, ReturnT]]:
     """Decorate a function to turn it into a AIFunction that can be passed to models and executed automatically.
 
-    This function will create a Pydantic model from the function's signature,
-    which will be used to validate the arguments passed to the function.
-    And will be used to generate the JSON schema for the function's parameters.
-    In order to add descriptions to parameters, in your function signature,
-    use the `Annotated` type from `typing` and the `Field` class from `pydantic`:
+    This decorator creates a Pydantic model from the function's signature,
+    which will be used to validate the arguments passed to the function
+    and to generate the JSON schema for the function's parameters.
+
+    To add descriptions to parameters, use the ``Annotated`` type from ``typing``
+    with a string description as the second argument. You can also use Pydantic's
+    ``Field`` class for more advanced configuration.
+
+    Note:
+        When approval_mode is set to "always_require", the function will not be executed
+        until explicit approval is given, this only applies to the auto-invocation flow.
+        It is also important to note that if the model returns multiple function calls, some that require approval
+        and others that do not, it will ask approval for all of them.
 
     Example:
 
         .. code-block:: python
 
+            from agent_framework import ai_function
             from typing import Annotated
-            from pydantic import Field
 
 
+            @ai_function
             def ai_function_example(
-                arg1: Annotated[str, Field(description="The first argument")],
-                arg2: Annotated[int, Field(description="The second argument")],
+                arg1: Annotated[str, "The first argument"],
+                arg2: Annotated[int, "The second argument"],
             ) -> str:
                 # An example function that takes two arguments and returns a string.
                 return f"arg1: {arg1}, arg2: {arg2}"
 
-    Args:
-        func: The function to wrap. If None, returns a decorator.
-        name: The name of the tool. Defaults to the function's name.
-        description: A description of the tool. Defaults to the function's docstring.
-        additional_properties: Additional properties to set on the tool.
+
+            # the same function but with approval required to run
+            @ai_function(approval_mode="always_require")
+            def ai_function_example(
+                arg1: Annotated[str, "The first argument"],
+                arg2: Annotated[int, "The second argument"],
+            ) -> str:
+                # An example function that takes two arguments and returns a string.
+                return f"arg1: {arg1}, arg2: {arg2}"
+
+
+            # With custom name and description
+            @ai_function(name="custom_weather", description="Custom weather function")
+            def another_weather_func(location: str) -> str:
+                return f"Weather in {location}"
+
+
+            # Async functions are also supported
+            @ai_function
+            async def async_get_weather(location: str) -> str:
+                '''Get weather asynchronously.'''
+                # Simulate async operation
+                return f"Weather in {location}"
 
     """
 
@@ -667,6 +911,7 @@ def ai_function(
             return AIFunction[Any, ReturnT](
                 name=tool_name,
                 description=tool_desc,
+                approval_mode=approval_mode,
                 additional_properties=additional_properties or {},
                 func=f,
                 input_model=input_model,
@@ -674,14 +919,14 @@ def ai_function(
 
         return wrapper(func)
 
-    return decorator(func) if func else decorator  # type: ignore[reportReturnType, return-value]
+    return decorator(func) if func else decorator
 
 
 # region Function Invoking Chat Client
 
 
 async def _auto_invoke_function(
-    function_call_content: "FunctionCallContent",
+    function_call_content: "FunctionCallContent | FunctionApprovalResponseContent",
     custom_args: dict[str, Any] | None = None,
     *,
     tool_map: dict[str, AIFunction[BaseModel, Any]],
@@ -689,62 +934,109 @@ async def _auto_invoke_function(
     request_index: int | None = None,
     middleware_pipeline: Any = None,  # Optional MiddlewarePipeline
 ) -> "Contents":
-    """Invoke a function call requested by the agent, applying filters that are defined in the agent."""
-    from ._types import FunctionResultContent
+    """Invoke a function call requested by the agent, applying middleware that is defined.
 
-    tool: AIFunction[BaseModel, Any] | None = tool_map.get(function_call_content.name)
-    if tool is None:
-        raise KeyError(f"No tool or function named '{function_call_content.name}'")
+    Args:
+        function_call_content: The function call content from the model.
+        custom_args: Additional custom arguments to merge with parsed arguments.
+
+    Keyword Args:
+        tool_map: A mapping of tool names to AIFunction instances.
+        sequence_index: The index of the function call in the sequence.
+        request_index: The index of the request iteration.
+        middleware_pipeline: Optional middleware pipeline to apply during execution.
+
+    Returns:
+        A FunctionResultContent containing the result or exception.
+
+    Raises:
+        KeyError: If the requested function is not found in the tool map.
+    """
+    from ._types import (
+        FunctionApprovalRequestContent,
+        FunctionApprovalResponseContent,
+        FunctionCallContent,
+        FunctionResultContent,
+    )
+
+    tool: AIFunction[BaseModel, Any] | None = None
+    if isinstance(function_call_content, FunctionCallContent):
+        tool = tool_map.get(function_call_content.name)
+        if tool is None:
+            raise KeyError(f"No tool or function named '{function_call_content.name}'")
+        if tool.approval_mode == "always_require":
+            return FunctionApprovalRequestContent(id=function_call_content.call_id, function_call=function_call_content)
+    else:
+        if isinstance(function_call_content, FunctionApprovalResponseContent):
+            if function_call_content.approved:
+                tool = tool_map.get(function_call_content.function_call.name)
+                if tool is None:
+                    # we assume it is a hosted tool
+                    return function_call_content
+                function_call_content = function_call_content.function_call
+            else:
+                raise ToolException("Unapproved tool cannot be executed.")
 
     parsed_args: dict[str, Any] = dict(function_call_content.parse_arguments() or {})
 
     # Merge with user-supplied args; right-hand side dominates, so parsed args win on conflicts.
     merged_args: dict[str, Any] = (custom_args or {}) | parsed_args
-    args = tool.input_model.model_validate(merged_args)
-    exception = None
-
-    # Execute through middleware pipeline if available
-    if middleware_pipeline and hasattr(middleware_pipeline, "has_middlewares") and middleware_pipeline.has_middlewares:
-        from ._middleware import FunctionInvocationContext
-
-        middleware_context = FunctionInvocationContext(
-            function=tool,
-            arguments=args,
-            kwargs=custom_args or {},
+    try:
+        args = tool.input_model.model_validate(merged_args)
+    except ValidationError as exc:
+        return FunctionResultContent(
+            call_id=function_call_content.call_id,
+            exception=exc,
         )
-
-        async def final_function_handler(context_obj: Any) -> Any:
-            return await tool.invoke(
-                arguments=context_obj.arguments,
-                tool_call_id=function_call_content.call_id,
-            )
-
-        try:
-            function_result = await middleware_pipeline.execute(
-                function=tool,
-                arguments=args,
-                context=middleware_context,
-                final_handler=final_function_handler,
-            )
-        except Exception as ex:
-            exception = ex
-            function_result = None
-    else:
+    if not middleware_pipeline or (
+        not hasattr(middleware_pipeline, "has_middlewares") and not middleware_pipeline.has_middlewares
+    ):
         # No middleware - execute directly
         try:
             function_result = await tool.invoke(
                 arguments=args,
                 tool_call_id=function_call_content.call_id,
             )  # type: ignore[arg-type]
-        except Exception as ex:
-            exception = ex
-            function_result = None
+            return FunctionResultContent(
+                call_id=function_call_content.call_id,
+                result=function_result,
+            )
+        except Exception as exc:
+            return FunctionResultContent(
+                call_id=function_call_content.call_id,
+                exception=exc,
+            )
+    # Execute through middleware pipeline if available
+    from ._middleware import FunctionInvocationContext
 
-    return FunctionResultContent(
-        call_id=function_call_content.call_id,
-        exception=exception,
-        result=function_result,
+    middleware_context = FunctionInvocationContext(
+        function=tool,
+        arguments=args,
+        kwargs=custom_args or {},
     )
+
+    async def final_function_handler(context_obj: Any) -> Any:
+        return await tool.invoke(
+            arguments=context_obj.arguments,
+            tool_call_id=function_call_content.call_id,
+        )
+
+    try:
+        function_result = await middleware_pipeline.execute(
+            function=tool,
+            arguments=args,
+            context=middleware_context,
+            final_handler=final_function_handler,
+        )
+        return FunctionResultContent(
+            call_id=function_call_content.call_id,
+            result=function_result,
+        )
+    except Exception as exc:
+        return FunctionResultContent(
+            call_id=function_call_content.call_id,
+            exception=exc,
+        )
 
 
 def _get_tool_map(
@@ -765,21 +1057,51 @@ def _get_tool_map(
     return ai_function_list
 
 
-async def execute_function_calls(
+async def _execute_function_calls(
     custom_args: dict[str, Any],
     attempt_idx: int,
-    function_calls: Sequence["FunctionCallContent"],
+    function_calls: Sequence["FunctionCallContent"] | Sequence["FunctionApprovalResponseContent"],
     tools: "ToolProtocol \
     | Callable[..., Any] \
     | MutableMapping[str, Any] \
     | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]",
     middleware_pipeline: Any = None,  # Optional MiddlewarePipeline to avoid circular imports
-) -> list["Contents"]:
+) -> Sequence["Contents"]:
+    """Execute multiple function calls concurrently.
+
+    Args:
+        custom_args: Custom arguments to pass to each function.
+        attempt_idx: The index of the current attempt iteration.
+        function_calls: A sequence of FunctionCallContent to execute.
+        tools: The tools available for execution.
+        middleware_pipeline: Optional middleware pipeline to apply during execution.
+
+    Returns:
+        A list of Contents containing the results of each function call.
+    """
+    from ._types import FunctionApprovalRequestContent, FunctionCallContent
+
     tool_map = _get_tool_map(tools)
+    approval_tools = [tool_name for tool_name, tool in tool_map.items() if tool.approval_mode == "always_require"]
+    # check if any are calling functions that need approval
+    # if so, we return approval request for all
+    approval_needed = False
+    for fcc in function_calls:
+        if isinstance(fcc, FunctionCallContent) and fcc.name in approval_tools:
+            approval_needed = True
+            break
+    if approval_needed:
+        # approval can only be needed for Function Call Contents, not Approval Responses.
+        return [
+            FunctionApprovalRequestContent(id=fcc.call_id, function_call=fcc)
+            for fcc in function_calls
+            if isinstance(fcc, FunctionCallContent)
+        ]
+
     # Run all function calls concurrently
     return await asyncio.gather(*[
         _auto_invoke_function(
-            function_call_content=function_call,
+            function_call_content=function_call,  # type: ignore[arg-type]
             custom_args=custom_args,
             tool_map=tool_map,
             sequence_index=seq_idx,
@@ -790,8 +1112,13 @@ async def execute_function_calls(
     ])
 
 
-def update_conversation_id(kwargs: dict[str, Any], conversation_id: str | None) -> None:
-    """Update kwargs with conversation id."""
+def _update_conversation_id(kwargs: dict[str, Any], conversation_id: str | None) -> None:
+    """Update kwargs with conversation id.
+
+    Args:
+        kwargs: The keyword arguments dictionary to update.
+        conversation_id: The conversation ID to set, or None to skip.
+    """
     if conversation_id is None:
         return
     if "chat_options" in kwargs:
@@ -800,17 +1127,73 @@ def update_conversation_id(kwargs: dict[str, Any], conversation_id: str | None) 
         kwargs["conversation_id"] = conversation_id
 
 
+def _extract_tools(kwargs: dict[str, Any]) -> Any:
+    """Extract tools from kwargs or chat_options.
+
+    Returns:
+        ToolProtocol | Callable[..., Any] | MutableMapping[str, Any] |
+        Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] | None
+    """
+    from ._types import ChatOptions
+
+    tools = kwargs.get("tools")
+    if not tools and (chat_options := kwargs.get("chat_options")) and isinstance(chat_options, ChatOptions):
+        tools = chat_options.tools
+    return tools
+
+
+def _collect_approval_todos(
+    messages: "list[ChatMessage]",
+) -> dict[str, "FunctionApprovalResponseContent"]:
+    """Collect approved function calls from messages."""
+    from ._types import ChatMessage, FunctionApprovalResponseContent
+
+    fcc_todo: dict[str, FunctionApprovalResponseContent] = {}
+    for msg in messages:
+        for content in msg.contents if isinstance(msg, ChatMessage) else []:
+            if isinstance(content, FunctionApprovalResponseContent) and content.approved:
+                fcc_todo[content.id] = content
+    return fcc_todo
+
+
+def _replace_approval_contents_with_results(
+    messages: "list[ChatMessage]",
+    fcc_todo: dict[str, "FunctionApprovalResponseContent"],
+    approved_function_results: "list[Contents]",
+) -> None:
+    """Replace approval request/response contents with function call/result contents in-place."""
+    from ._types import FunctionApprovalRequestContent, FunctionApprovalResponseContent, FunctionResultContent
+
+    result_idx = 0
+    for msg in messages:
+        for content_idx, content in enumerate(msg.contents):
+            if isinstance(content, FunctionApprovalRequestContent):
+                # put back the function call content
+                msg.contents[content_idx] = content.function_call
+            if isinstance(content, FunctionApprovalResponseContent):
+                if content.approved and content.id in fcc_todo:
+                    # Replace with the corresponding result
+                    if result_idx < len(approved_function_results):
+                        msg.contents[content_idx] = approved_function_results[result_idx]
+                        result_idx += 1
+                else:
+                    # Create a "not approved" result for rejected calls
+                    msg.contents[content_idx] = FunctionResultContent(
+                        call_id=content.id,
+                        result="Error: Tool call invocation was rejected by user.",
+                    )
+
+
 def _handle_function_calls_response(
     func: Callable[..., Awaitable["ChatResponse"]],
-    *,
-    max_iterations: int = 10,
 ) -> Callable[..., Awaitable["ChatResponse"]]:
     """Decorate the get_response method to enable function calls.
 
     Args:
         func: The get_response method to decorate.
-        max_iterations: The maximum number of function call iterations to perform.
 
+    Returns:
+        A decorated function that handles function calls automatically.
     """
 
     def decorator(
@@ -826,19 +1209,43 @@ def _handle_function_calls_response(
         ) -> "ChatResponse":
             from ._clients import prepare_messages
             from ._middleware import extract_and_merge_function_middleware
-            from ._types import ChatMessage, ChatOptions, FunctionCallContent, FunctionResultContent
+            from ._types import (
+                ChatMessage,
+                FunctionApprovalRequestContent,
+                FunctionCallContent,
+                FunctionResultContent,
+            )
 
             # Extract and merge function middleware from chat client with kwargs pipeline
-            extract_and_merge_function_middleware(self, kwargs)
+            extract_and_merge_function_middleware(self, **kwargs)
 
             # Extract the middleware pipeline before calling the underlying function
             # because the underlying function may not preserve it in kwargs
             stored_middleware_pipeline = kwargs.get("_function_middleware_pipeline")
 
+            # Get max_iterations from instance additional_properties or class attribute
+            instance_max_iterations: int = DEFAULT_MAX_ITERATIONS
+            if hasattr(self, "additional_properties") and self.additional_properties:
+                instance_max_iterations = self.additional_properties.get("max_iterations", DEFAULT_MAX_ITERATIONS)
+            elif hasattr(self.__class__, "MAX_ITERATIONS"):
+                instance_max_iterations = getattr(self.__class__, "MAX_ITERATIONS", DEFAULT_MAX_ITERATIONS)
+
             prepped_messages = prepare_messages(messages)
             response: "ChatResponse | None" = None
             fcc_messages: "list[ChatMessage]" = []
-            for attempt_idx in range(max_iterations):
+            for attempt_idx in range(instance_max_iterations):
+                fcc_todo = _collect_approval_todos(prepped_messages)
+                if fcc_todo:
+                    tools = _extract_tools(kwargs)
+                    approved_function_results: list[Contents] = await _execute_function_calls(
+                        custom_args=kwargs,
+                        attempt_idx=attempt_idx,
+                        function_calls=list(fcc_todo.values()),
+                        tools=tools,  # type: ignore
+                        middleware_pipeline=stored_middleware_pipeline,
+                    )
+                    _replace_approval_contents_with_results(prepped_messages, fcc_todo, approved_function_results)
+
                 response = await func(self, messages=prepped_messages, **kwargs)
                 # if there are function calls, we will handle them first
                 function_results = {
@@ -851,22 +1258,20 @@ def _handle_function_calls_response(
                 ]
 
                 if response.conversation_id is not None:
-                    update_conversation_id(kwargs, response.conversation_id)
+                    _update_conversation_id(kwargs, response.conversation_id)
                     prepped_messages = []
 
-                tools = kwargs.get("tools")
-                if not tools and (chat_options := kwargs.get("chat_options")) and isinstance(chat_options, ChatOptions):
-                    tools = chat_options.tools
+                # we load the tools here, since middleware might have changed them compared to before calling func.
+                tools = _extract_tools(kwargs)
                 if function_calls and tools:
                     # Use the stored middleware pipeline instead of extracting from kwargs
                     # because kwargs may have been modified by the underlying function
-                    middleware_pipeline = stored_middleware_pipeline
-                    function_call_results: list[Contents] = await execute_function_calls(
+                    function_call_results: list[Contents] = await _execute_function_calls(
                         custom_args=kwargs,
                         attempt_idx=attempt_idx,
                         function_calls=function_calls,
                         tools=tools,  # type: ignore
-                        middleware_pipeline=middleware_pipeline,
+                        middleware_pipeline=stored_middleware_pipeline,
                     )
                     # add a single ChatMessage to the response with the results
                     result_message = ChatMessage(role="tool", contents=function_call_results)
@@ -879,6 +1284,8 @@ def _handle_function_calls_response(
                     # we need to keep track of all function call messages
                     fcc_messages.extend(response.messages)
                     # and add them as additional context to the messages
+                    if any(isinstance(fccr, FunctionApprovalRequestContent) for fccr in function_call_results):
+                        return response
                     if getattr(kwargs.get("chat_options"), "store", False):
                         prepped_messages.clear()
                         prepped_messages.append(result_message)
@@ -909,15 +1316,14 @@ def _handle_function_calls_response(
 
 def _handle_function_calls_streaming_response(
     func: Callable[..., AsyncIterable["ChatResponseUpdate"]],
-    *,
-    max_iterations: int = 10,
 ) -> Callable[..., AsyncIterable["ChatResponseUpdate"]]:
     """Decorate the get_streaming_response method to handle function calls.
 
     Args:
         func: The get_streaming_response method to decorate.
-        max_iterations: The maximum number of function call iterations to perform.
 
+    Returns:
+        A decorated function that handles function calls in streaming mode.
     """
 
     def decorator(
@@ -934,17 +1340,43 @@ def _handle_function_calls_streaming_response(
             """Wrap the inner get streaming response method to handle tool calls."""
             from ._clients import prepare_messages
             from ._middleware import extract_and_merge_function_middleware
-            from ._types import ChatMessage, ChatOptions, ChatResponse, ChatResponseUpdate, FunctionCallContent
+            from ._types import (
+                ChatMessage,
+                ChatResponse,
+                ChatResponseUpdate,
+                FunctionCallContent,
+                FunctionResultContent,
+            )
 
             # Extract and merge function middleware from chat client with kwargs pipeline
-            extract_and_merge_function_middleware(self, kwargs)
+            extract_and_merge_function_middleware(self, **kwargs)
 
             # Extract the middleware pipeline before calling the underlying function
             # because the underlying function may not preserve it in kwargs
             stored_middleware_pipeline = kwargs.get("_function_middleware_pipeline")
 
+            # Get max_iterations from instance additional_properties or class attribute
+            instance_max_iterations: int = DEFAULT_MAX_ITERATIONS
+            if hasattr(self, "additional_properties") and self.additional_properties:
+                instance_max_iterations = self.additional_properties.get("max_iterations", DEFAULT_MAX_ITERATIONS)
+            elif hasattr(self.__class__, "MAX_ITERATIONS"):
+                instance_max_iterations = getattr(self.__class__, "MAX_ITERATIONS", DEFAULT_MAX_ITERATIONS)
+
             prepped_messages = prepare_messages(messages)
-            for attempt_idx in range(max_iterations):
+            fcc_messages: "list[ChatMessage]" = []
+            for attempt_idx in range(instance_max_iterations):
+                fcc_todo = _collect_approval_todos(prepped_messages)
+                if fcc_todo:
+                    tools = _extract_tools(kwargs)
+                    approved_function_results: list[Contents] = await _execute_function_calls(
+                        custom_args=kwargs,
+                        attempt_idx=attempt_idx,
+                        function_calls=list(fcc_todo.values()),
+                        tools=tools,  # type: ignore
+                        middleware_pipeline=stored_middleware_pipeline,
+                    )
+                    _replace_approval_contents_with_results(prepped_messages, fcc_todo, approved_function_results)
+
                 all_updates: list["ChatResponseUpdate"] = []
                 async for update in func(self, messages=prepped_messages, **kwargs):
                     all_updates.append(update)
@@ -953,7 +1385,13 @@ def _handle_function_calls_streaming_response(
                 # efficient check for FunctionCallContent in the updates
                 # if there is at least one, this stops and continuous
                 # if there are no FCC's then it returns
-                if not any(isinstance(item, FunctionCallContent) for upd in all_updates for item in upd.contents):
+                from ._types import FunctionApprovalRequestContent
+
+                if not any(
+                    isinstance(item, (FunctionCallContent, FunctionApprovalRequestContent))
+                    for upd in all_updates
+                    for item in upd.contents
+                ):
                     return
 
                 # Now combining the updates to create the full response.
@@ -961,39 +1399,57 @@ def _handle_function_calls_streaming_response(
                 # content and others
 
                 response: "ChatResponse" = ChatResponse.from_chat_response_updates(all_updates)
-                # add the response message to the previous messages
-                prepped_messages.append(response.messages[0])
-                # get the fccs
+                # get the function calls (excluding ones that already have results)
+                function_results = {
+                    it.call_id for it in response.messages[0].contents if isinstance(it, FunctionResultContent)
+                }
                 function_calls = [
-                    item for item in response.messages[0].contents if isinstance(item, FunctionCallContent)
+                    it
+                    for it in response.messages[0].contents
+                    if isinstance(it, FunctionCallContent) and it.call_id not in function_results
                 ]
 
                 # When conversation id is present, it means that messages are hosted on the server.
                 # In this case, we need to update kwargs with conversation id and also clear messages
                 if response.conversation_id is not None:
-                    update_conversation_id(kwargs, response.conversation_id)
+                    _update_conversation_id(kwargs, response.conversation_id)
                     prepped_messages = []
 
-                tools: Sequence[ToolProtocol | MutableMapping[str, Any]] | None = kwargs.get("tools")
-                if not tools and (chat_options := kwargs.get("chat_options")) and isinstance(chat_options, ChatOptions):
-                    tools = chat_options.tools
-
+                # we load the tools here, since middleware might have changed them compared to before calling func.
+                tools = _extract_tools(kwargs)
                 if function_calls and tools:
                     # Use the stored middleware pipeline instead of extracting from kwargs
                     # because kwargs may have been modified by the underlying function
-                    middleware_pipeline = stored_middleware_pipeline
-                    function_results = await execute_function_calls(
+                    function_call_results: list[Contents] = await _execute_function_calls(
                         custom_args=kwargs,
                         attempt_idx=attempt_idx,
                         function_calls=function_calls,
-                        tools=tools,
-                        middleware_pipeline=middleware_pipeline,
+                        tools=tools,  # type: ignore
+                        middleware_pipeline=stored_middleware_pipeline,
                     )
-                    function_result_msg = ChatMessage(role="tool", contents=function_results)
-                    yield ChatResponseUpdate(contents=function_results, role="tool")
-                    response.messages.append(function_result_msg)
-                    prepped_messages.append(function_result_msg)
+                    # add a single ChatMessage to the response with the results
+                    result_message = ChatMessage(role="tool", contents=function_call_results)
+                    yield ChatResponseUpdate(contents=function_call_results, role="tool")
+                    response.messages.append(result_message)
+                    # response should contain 2 messages after this,
+                    # one with function call contents
+                    # and one with function result contents
+                    # the amount and call_id's should match
+                    # this runs in every but the first run
+                    # we need to keep track of all function call messages
+                    fcc_messages.extend(response.messages)
+                    # and add them as additional context to the messages
+                    if any(isinstance(fccr, FunctionApprovalRequestContent) for fccr in function_call_results):
+                        return
+                    if getattr(kwargs.get("chat_options"), "store", False):
+                        prepped_messages.clear()
+                        prepped_messages.append(result_message)
+                    else:
+                        prepped_messages.extend(response.messages)
                     continue
+                # If we reach this point, it means there were no function calls to handle,
+                # so we're done
+                return
 
             # Failsafe: give up on tools, ask model for plain answer
             kwargs["tool_choice"] = "none"
@@ -1008,16 +1464,51 @@ def _handle_function_calls_streaming_response(
 def use_function_invocation(
     chat_client: type[TChatClient],
 ) -> type[TChatClient]:
-    """Class decorator that enables tool calling for a chat client."""
+    """Class decorator that enables tool calling for a chat client.
+
+    This decorator wraps the ``get_response`` and ``get_streaming_response`` methods
+    to automatically handle function calls from the model, execute them, and return
+    the results back to the model for further processing.
+
+    Args:
+        chat_client: The chat client class to decorate.
+
+    Returns:
+        The decorated chat client class with function invocation enabled.
+
+    Raises:
+        ChatClientInitializationError: If the chat client does not have the required methods.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import use_function_invocation, BaseChatClient
+
+
+            @use_function_invocation
+            class MyCustomClient(BaseChatClient):
+                async def get_response(self, messages, **kwargs):
+                    # Implementation here
+                    pass
+
+                async def get_streaming_response(self, messages, **kwargs):
+                    # Implementation here
+                    pass
+
+
+            # The client now automatically handles function calls
+            client = MyCustomClient()
+    """
     if getattr(chat_client, FUNCTION_INVOKING_CHAT_CLIENT_MARKER, False):
         return chat_client
 
-    max_iterations = DEFAULT_MAX_ITERATIONS
+    # Set MAX_ITERATIONS as a class variable if not already set
+    if not hasattr(chat_client, "MAX_ITERATIONS"):
+        chat_client.MAX_ITERATIONS = DEFAULT_MAX_ITERATIONS  # type: ignore
 
     try:
         chat_client.get_response = _handle_function_calls_response(  # type: ignore
             func=chat_client.get_response,  # type: ignore
-            max_iterations=max_iterations,
         )
     except AttributeError as ex:
         raise ChatClientInitializationError(
@@ -1026,7 +1517,6 @@ def use_function_invocation(
     try:
         chat_client.get_streaming_response = _handle_function_calls_streaming_response(  # type: ignore
             func=chat_client.get_streaming_response,
-            max_iterations=max_iterations,
         )
     except AttributeError as ex:
         raise ChatClientInitializationError(

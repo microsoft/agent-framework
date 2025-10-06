@@ -19,6 +19,9 @@ To set your secrets as an environment variable (PowerShell):
 $env:FOUNDRY_PROJECT_ENDPOINT="https://..."
 ```
 
+etc...
+
+
 To set your secrets with .NET Secret Manager:
 
 1. From the root of the repository, navigate the console to the project folder:
@@ -45,6 +48,18 @@ To set your secrets with .NET Secret Manager:
     dotnet user-secrets set "FOUNDRY_PROJECT_ENDPOINT" "https://..."
     ```
 
+5. Define setting that identifies your Azure Foundry Model Deployment (endpoint):
+
+    ```
+    dotnet user-secrets set "FOUNDRY_MODEL_DEPLOYMENT_NAME" "gpt-4.1"
+    ```
+
+6. Define setting that identifies your Bing Grounding connection:
+
+    ```
+    dotnet user-secrets set "FOUNDRY_CONNECTION_GROUNDING_TOOL" "mybinggrounding"
+    ```
+
 #### Authorization
 
 Use [_Azure CLI_](https://learn.microsoft.com/cli/azure/authenticate-azure-cli) to authorize access to your Azure Foundry Project:
@@ -58,10 +73,10 @@ az account get-access-token
 
 The sample workflows rely on agents defined in your Azure Foundry Project.
 
-To create agents, run the [`Create.ps1`](../../../../../workflows/) script.
+To create agents, run the [`Create.ps1`](../../../../../workflow-samples/setup/) script.
 This will create the agents used in the sample workflows in your Azure Foundry Project and format a script you can copy and use to configure your environment.
 
-> Note: `Create.ps1` relies upon the `FOUNDRY_PROJECT_ENDPOINT` setting.
+> Note: `Create.ps1` relies upon the `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_MODEL_DEPLOYMENT_NAME`, and `FOUNDRY_CONNECTION_GROUNDING_TOOL` settings.
 
 ## Execution
 

@@ -1,12 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
-using System.Linq;
 using System.Reflection;
-using System.Threading.Tasks;
 using Azure.AI.Agents.Persistent;
 using Azure.Identity;
 using Microsoft.Agents.AI.Workflows;
@@ -106,7 +101,9 @@ internal sealed class Program
         DeclarativeWorkflowOptions options =
             new(new AzureAgentProvider(this.FoundryEndpoint, new AzureCliCredential()))
             {
-                Configuration = this.Configuration
+                Configuration = this.Configuration,
+                //ConversationId = null, // Assign to continue a conversation
+                //LoggerFactory = null, // Assign to enable logging
             };
 
         return DeclarativeWorkflowBuilder.Build<string>(this.WorkflowFile, options);

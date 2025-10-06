@@ -8,6 +8,13 @@ from typing import Annotated
 from agent_framework.openai import OpenAIAssistantsClient
 from pydantic import Field
 
+"""
+OpenAI Assistants with Explicit Settings Example
+
+This sample demonstrates creating OpenAI Assistants with explicit configuration
+settings rather than relying on environment variable defaults.
+"""
+
 
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],

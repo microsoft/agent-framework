@@ -29,8 +29,13 @@ public sealed class CheckpointInfo : IEquatable<CheckpointInfo>
     /// hexadecimal format  and sets the timestamp to the current UTC time.</remarks>
     internal CheckpointInfo(string runId) : this(runId, Guid.NewGuid().ToString("N")) { }
 
+    /// <summary>
+    /// Initializes a new instance of the CheckpointInfo class with the specified run and checkpoint identifiers.
+    /// </summary>
+    /// <param name="runId">The unique identifier for the run. Cannot be null or empty.</param>
+    /// <param name="checkpointId">The unique identifier for the checkpoint. Cannot be null or empty.</param>
     [JsonConstructor]
-    internal CheckpointInfo(string runId, string checkpointId)
+    public CheckpointInfo(string runId, string checkpointId)
     {
         this.RunId = Throw.IfNullOrEmpty(runId);
         this.CheckpointId = Throw.IfNullOrEmpty(checkpointId);

@@ -57,6 +57,135 @@ public sealed class FunctionInvocationDelegatingAgentTests
     #region Function Invocation Tests
 
     /// <summary>
+    /// Tests that middleware is invoked when functions are called during agent execution without options.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_WithFunctionCall_NoOptions_InvokesMiddlewareAsync()
+    {
+        // Arrange
+        var executionOrder = new List<string>();
+        var testFunction = AIFunctionFactory.Create(() =>
+        {
+            executionOrder.Add("Function-Executed");
+            return "Function result";
+        }, "TestFunction", "A test function");
+
+        var functionCall = new FunctionCallContent("call_123", "TestFunction", new Dictionary<string, object?>());
+        var mockChatClient = CreateMockChatClientWithFunctionCalls(functionCall);
+
+        var innerAgent = new ChatClientAgent(mockChatClient.Object, tools: [testFunction]);
+        var messages = new List<ChatMessage> { new(ChatRole.User, "Test message") };
+
+        async ValueTask<object?> MiddlewareCallbackAsync(AIAgent agent, FunctionInvocationContext context, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next, CancellationToken cancellationToken)
+        {
+            executionOrder.Add("Middleware-Pre");
+            var result = await next(context, cancellationToken);
+            executionOrder.Add("Middleware-Post");
+            return result;
+        }
+
+        var middleware = new FunctionInvocationDelegatingAgent(innerAgent, MiddlewareCallbackAsync);
+
+        // Act
+        await middleware.RunAsync(messages, null, null, CancellationToken.None);
+
+        // Assert
+        Assert.Contains("Middleware-Pre", executionOrder);
+        Assert.Contains("Function-Executed", executionOrder);
+        Assert.Contains("Middleware-Post", executionOrder);
+
+        // Verify execution order
+        var middlewarePreIndex = executionOrder.IndexOf("Middleware-Pre");
+        var functionIndex = executionOrder.IndexOf("Function-Executed");
+        var middlewarePostIndex = executionOrder.IndexOf("Middleware-Post");
+
+        Assert.True(middlewarePreIndex < functionIndex);
+        Assert.True(functionIndex < middlewarePostIndex);
+    }
+
+    /// <summary>
+    /// Tests that middleware is invoked when functions are called during agent execution without options.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_WithFunctionCall_AgentRunOptions_InvokesMiddlewareAsync()
+    {
+        // Arrange
+        var executionOrder = new List<string>();
+        var testFunction = AIFunctionFactory.Create(() =>
+        {
+            executionOrder.Add("Function-Executed");
+            return "Function result";
+        }, "TestFunction", "A test function");
+
+        var functionCall = new FunctionCallContent("call_123", "TestFunction", new Dictionary<string, object?>());
+        var mockChatClient = CreateMockChatClientWithFunctionCalls(functionCall);
+
+        var innerAgent = new ChatClientAgent(mockChatClient.Object, tools: [testFunction]);
+        var messages = new List<ChatMessage> { new(ChatRole.User, "Test message") };
+
+        async ValueTask<object?> MiddlewareCallbackAsync(AIAgent agent, FunctionInvocationContext context, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next, CancellationToken cancellationToken)
+        {
+            executionOrder.Add("Middleware-Pre");
+            var result = await next(context, cancellationToken);
+            executionOrder.Add("Middleware-Post");
+            return result;
+        }
+
+        var middleware = new FunctionInvocationDelegatingAgent(innerAgent, MiddlewareCallbackAsync);
+
+        // Act
+        await middleware.RunAsync(messages, null, new AgentRunOptions(), CancellationToken.None);
+
+        // Assert
+        Assert.Contains("Middleware-Pre", executionOrder);
+        Assert.Contains("Function-Executed", executionOrder);
+        Assert.Contains("Middleware-Post", executionOrder);
+
+        // Verify execution order
+        var middlewarePreIndex = executionOrder.IndexOf("Middleware-Pre");
+        var functionIndex = executionOrder.IndexOf("Function-Executed");
+        var middlewarePostIndex = executionOrder.IndexOf("Middleware-Post");
+
+        Assert.True(middlewarePreIndex < functionIndex);
+        Assert.True(functionIndex < middlewarePostIndex);
+    }
+
+    /// <summary>
+    /// Tests that middleware is invoked when functions are called during agent execution without options.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_WithFunctionCall_CustomAgentRunOptions_ThrowsNotSupportedAsync()
+    {
+        // Arrange
+        var executionOrder = new List<string>();
+        var testFunction = AIFunctionFactory.Create(() =>
+        {
+            executionOrder.Add("Function-Executed");
+            return "Function result";
+        }, "TestFunction", "A test function");
+
+        var functionCall = new FunctionCallContent("call_123", "TestFunction", new Dictionary<string, object?>());
+        var mockChatClient = CreateMockChatClientWithFunctionCalls(functionCall);
+
+        var innerAgent = new ChatClientAgent(mockChatClient.Object, tools: [testFunction]);
+        var messages = new List<ChatMessage> { new(ChatRole.User, "Test message") };
+
+        async ValueTask<object?> MiddlewareCallbackAsync(AIAgent agent, FunctionInvocationContext context, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next, CancellationToken cancellationToken)
+        {
+            executionOrder.Add("Middleware-Pre");
+            var result = await next(context, cancellationToken);
+            executionOrder.Add("Middleware-Post");
+            return result;
+        }
+
+        var middleware = new FunctionInvocationDelegatingAgent(innerAgent, MiddlewareCallbackAsync);
+
+        // Act
+        await Assert.ThrowsAsync<NotSupportedException>(() =>
+            middleware.RunAsync(messages, null, new CustomAgentRunOptions(), CancellationToken.None));
+    }
+
+    /// <summary>
     /// Tests that middleware is invoked when functions are called during agent execution.
     /// </summary>
     [Fact]
@@ -848,4 +977,9 @@ public sealed class FunctionInvocationDelegatingAgentTests
     {
         return new ChatResponse([new ChatMessage(ChatRole.Assistant, "Default response")]);
     }
+
+    /// <summary>
+    /// Custom AgentRunOptions class for testing
+    /// </summary>
+    private sealed class CustomAgentRunOptions : AgentRunOptions;
 }

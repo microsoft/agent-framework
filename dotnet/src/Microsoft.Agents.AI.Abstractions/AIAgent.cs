@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -11,32 +12,67 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Agents.AI;
 
 /// <summary>
-/// Base abstraction for all agents. An agent instance may participate in one or more conversations.
-/// A conversation may include one or more agents.
+/// Provides the base abstraction for all AI agents, defining the core interface for agent interactions and conversation management.
 /// </summary>
+/// <remarks>
+/// <see cref="AIAgent"/> serves as the foundational class for implementing AI agents that can participate in conversations
+/// and process user requests. An agent instance may participate in multiple concurrent conversations, and each conversation
+/// may involve multiple agents working together.
+/// </remarks>
+[DebuggerDisplay("{DisplayName,nq}")]
 public abstract class AIAgent
 {
-    /// <summary>
-    /// Gets the identifier of the agent.
-    /// </summary>
-    /// <value>
-    /// The identifier of the agent. The default is a random GUID value, but for service agents, it will match the id of the agent in the service.
-    /// </value>
-    public virtual string Id { get; } = Guid.NewGuid().ToString("N");
+    /// <summary>Default ID of this agent instance.</summary>
+    private readonly string _id = Guid.NewGuid().ToString("N");
 
     /// <summary>
-    /// Gets the name of the agent (optional).
+    /// Gets the unique identifier for this agent instance.
     /// </summary>
+    /// <value>
+    /// A unique string identifier for the agent. For in-memory agents, this defaults to a randomly-generated ID,
+    /// while service-backed agents typically use the identifier assigned by the backing service.
+    /// </value>
+    /// <remarks>
+    /// Agent identifiers are used for tracking, telemetry, and distinguishing between different
+    /// agent instances in multi-agent scenarios. They should remain stable for the lifetime
+    /// of the agent instance.
+    /// </remarks>
+    public virtual string Id => this._id;
+
+    /// <summary>
+    /// Gets the human-readable name of the agent.
+    /// </summary>
+    /// <value>
+    /// The agent's name, or <see langword="null"/> if no name has been assigned.
+    /// </value>
+    /// <remarks>
+    /// The agent name is typically used for display purposes and to help users identify
+    /// the agent's purpose or capabilities in user interfaces.
+    /// </remarks>
     public virtual string? Name { get; }
 
     /// <summary>
-    /// Gets a display name for the agent, which is either the <see cref="Name"/> or <see cref="Id"/> if the name is not set.
+    /// Gets a display-friendly name for the agent.
     /// </summary>
-    public virtual string DisplayName => this.Name ?? this.Id;
+    /// <value>
+    /// The agent's <see cref="Name"/> if available, otherwise the <see cref="Id"/>.
+    /// </value>
+    /// <remarks>
+    /// This property provides a guaranteed non-null string suitable for display in user interfaces,
+    /// logs, or other contexts where a readable identifier is needed.
+    /// </remarks>
+    public virtual string DisplayName => this.Name ?? this.Id ?? this._id; // final fallback to _id in case Id override returns null
 
     /// <summary>
-    /// Gets the description of the agent (optional).
+    /// Gets a description of the agent's purpose, capabilities, or behavior.
     /// </summary>
+    /// <value>
+    /// A descriptive text explaining what the agent does, or <see langword="null"/> if no description is available.
+    /// </value>
+    /// <remarks>
+    /// The description helps models and users understand the agent's intended purpose and capabilities,
+    /// which is particularly useful in multi-agent systems.
+    /// </remarks>
     public virtual string? Description { get; }
 
     /// <summary>Asks the <see cref="AIAgent"/> for an object of the specified type <paramref name="serviceType"/>.</summary>
@@ -70,38 +106,52 @@ public abstract class AIAgent
         => this.GetService(typeof(TService), serviceKey) is TService service ? service : default;
 
     /// <summary>
-    /// Get a new <see cref="AgentThread"/> instance that is compatible with the agent.
+    /// Creates a new conversation thread that is compatible with this agent.
     /// </summary>
-    /// <returns>A new <see cref="AgentThread"/> instance.</returns>
+    /// <returns>A new <see cref="AgentThread"/> instance ready for use with this agent.</returns>
     /// <remarks>
     /// <para>
-    /// If an agent supports multiple thread types, this method should return the default thread
-    /// type for the agent or whatever the agent was configured to use.
+    /// This method creates a fresh conversation thread that can be used to maintain state
+    /// and context for interactions with this agent. Each thread represents an independent
+    /// conversation session.
     /// </para>
     /// <para>
-    /// If the thread needs to be created via a service call it would be created on first use.
+    /// If the agent supports multiple thread types, this method returns the default or
+    /// configured thread type. For service-backed agents, the actual thread creation
+    /// may be deferred until first use to optimize performance.
     /// </para>
     /// </remarks>
     public abstract AgentThread GetNewThread();
 
     /// <summary>
-    /// Deserialize the thread from JSON.
+    /// Deserializes an agent thread from its JSON serialized representation.
     /// </summary>
-    /// <param name="serializedThread">The <see cref="JsonElement"/> representing the thread state.</param>
-    /// <param name="jsonSerializerOptions">Optional <see cref="JsonSerializerOptions"/> to use for deserializing the thread state.</param>
-    /// <returns>The deserialized <see cref="AgentThread"/> instance.</returns>
+    /// <param name="serializedThread">A <see cref="JsonElement"/> containing the serialized thread state.</param>
+    /// <param name="jsonSerializerOptions">Optional settings to customize the deserialization process.</param>
+    /// <returns>A restored <see cref="AgentThread"/> instance with the state from <paramref name="serializedThread"/>.</returns>
+    /// <exception cref="ArgumentException">The <paramref name="serializedThread"/> is not in the expected format.</exception>
+    /// <exception cref="JsonException">The serialized data is invalid or cannot be deserialized.</exception>
+    /// <remarks>
+    /// This method enables restoration of conversation threads from previously saved state,
+    /// allowing conversations to resume across application restarts or be migrated between
+    /// different agent instances.
+    /// </remarks>
     public abstract AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null);
 
     /// <summary>
     /// Run the agent with no message assuming that all required instructions are already provided to the agent or on the thread.
     /// </summary>
     /// <param name="thread">
-    /// The conversation thread to continue with this invocation. If not provided, creates a new thread.
-    /// The thread will be mutated with the provided messages and agent response.
+    /// The conversation thread to use for this invocation. If <see langword="null"/>, a new thread will be created.
+    /// The thread will be updated with any response messages generated during invocation.
     /// </param>
-    /// <param name="options">Optional parameters for agent invocation.</param>
+    /// <param name="options">Optional configuration parameters for controlling the agent's invocation behavior.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A <see cref="AgentRunResponse"/> containing the list of <see cref="ChatMessage"/> items.</returns>
+    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentRunResponse"/> with the agent's output.</returns>
+    /// <remarks>
+    /// This overload is useful when the agent has sufficient context from previous messages in the thread
+    /// or from its initial configuration to generate a meaningful response without additional input.
+    /// </remarks>
     public Task<AgentRunResponse> RunAsync(
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -109,18 +159,20 @@ public abstract class AIAgent
         this.RunAsync([], thread, options, cancellationToken);
 
     /// <summary>
-    /// Run the agent with the provided message and arguments.
+    /// Runs the agent with a text message from the user.
     /// </summary>
-    /// <param name="message">The message to pass to the agent.</param>
+    /// <param name="message">The user message to send to the agent.</param>
     /// <param name="thread">
-    /// The conversation thread to continue with this invocation. If not provided, creates a new thread.
-    /// The thread will be mutated with the provided messages and agent response.
+    /// The conversation thread to use for this invocation. If <see langword="null"/>, a new thread will be created.
+    /// The thread will be updated with the input message and any response messages generated during invocation.
     /// </param>
-    /// <param name="options">Optional parameters for agent invocation.</param>
+    /// <param name="options">Optional configuration parameters for controlling the agent's invocation behavior.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A <see cref="AgentRunResponse"/> containing the list of <see cref="ChatMessage"/> items.</returns>
+    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentRunResponse"/> with the agent's output.</returns>
+    /// <exception cref="ArgumentException"><paramref name="message"/> is <see langword="null"/>, empty, or contains only whitespace.</exception>
     /// <remarks>
-    /// The provided message string will be treated as a user message.
+    /// The provided text will be wrapped in a <see cref="ChatMessage"/> with the <see cref="ChatRole.User"/> role
+    /// before being sent to the agent. This is a convenience method for simple text-based interactions.
     /// </remarks>
     public Task<AgentRunResponse> RunAsync(
         string message,
@@ -134,16 +186,17 @@ public abstract class AIAgent
     }
 
     /// <summary>
-    /// Run the agent with the provided message and arguments.
+    /// Runs the agent with a single chat message.
     /// </summary>
-    /// <param name="message">The message to pass to the agent.</param>
+    /// <param name="message">The chat message to send to the agent.</param>
     /// <param name="thread">
-    /// The conversation thread to continue with this invocation. If not provided, creates a new thread.
-    /// The thread will be mutated with the provided messages and agent response.
+    /// The conversation thread to use for this invocation. If <see langword="null"/>, a new thread will be created.
+    /// The thread will be updated with the input message and any response messages generated during invocation.
     /// </param>
-    /// <param name="options">Optional parameters for agent invocation.</param>
+    /// <param name="options">Optional configuration parameters for controlling the agent's invocation behavior.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A <see cref="AgentRunResponse"/> containing the list of <see cref="ChatMessage"/> items.</returns>
+    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentRunResponse"/> with the agent's output.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="message"/> is <see langword="null"/>.</exception>
     public Task<AgentRunResponse> RunAsync(
         ChatMessage message,
         AgentThread? thread = null,
@@ -156,16 +209,27 @@ public abstract class AIAgent
     }
 
     /// <summary>
-    /// Run the agent with the provided message and arguments.
+    /// Runs the agent with a collection of chat messages, providing the core invocation logic that all other overloads delegate to.
     /// </summary>
-    /// <param name="messages">The messages to pass to the agent.</param>
+    /// <param name="messages">The collection of messages to send to the agent for processing.</param>
     /// <param name="thread">
-    /// The conversation thread to continue with this invocation. If not provided, creates a new thread.
-    /// The thread will be mutated with the provided messages and agent response.
+    /// The conversation thread to use for this invocation. If <see langword="null"/>, a new thread will be created.
+    /// The thread will be updated with the input messages and any response messages generated during invocation.
     /// </param>
-    /// <param name="options">Optional parameters for agent invocation.</param>
+    /// <param name="options">Optional configuration parameters for controlling the agent's invocation behavior.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A <see cref="AgentRunResponse"/> containing the list of <see cref="ChatMessage"/> items.</returns>
+    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentRunResponse"/> with the agent's output.</returns>
+    /// <remarks>
+    /// <para>
+    /// This is the primary invocation method that implementations must override. It handles collections of messages,
+    /// allowing for complex conversational scenarios including multi-turn interactions, function calls, and
+    /// context-rich conversations.
+    /// </para>
+    /// <para>
+    /// The messages are processed in the order provided and become part of the conversation history.
+    /// The agent's response will also be added to <paramref name="thread"/> if one is provided.
+    /// </para>
+    /// </remarks>
     public abstract Task<AgentRunResponse> RunAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
@@ -173,15 +237,15 @@ public abstract class AIAgent
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Run the agent with no message assuming that all required instructions are already provided to the agent or on the thread.
+    /// Runs the agent in streaming mode without providing new input messages, relying on existing context and instructions.
     /// </summary>
     /// <param name="thread">
-    /// The conversation thread to continue with this invocation. If not provided, creates a new thread.
-    /// The thread will be mutated with the provided messages and agent response.
+    /// The conversation thread to use for this invocation. If <see langword="null"/>, a new thread will be created.
+    /// The thread will be updated with any response messages generated during invocation.
     /// </param>
-    /// <param name="options">Optional parameters for agent invocation.</param>
+    /// <param name="options">Optional configuration parameters for controlling the agent's invocation behavior.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>An async list of response items that each contain a <see cref="AgentRunResponseUpdate"/>.</returns>
+    /// <returns>An asynchronous enumerable of <see cref="AgentRunResponseUpdate"/> instances representing the streaming response.</returns>
     public IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -189,18 +253,20 @@ public abstract class AIAgent
         this.RunStreamingAsync([], thread, options, cancellationToken);
 
     /// <summary>
-    /// Run the agent with the provided message and arguments.
+    /// Runs the agent in streaming mode with a text message from the user.
     /// </summary>
-    /// <param name="message">The message to pass to the agent.</param>
+    /// <param name="message">The user message to send to the agent.</param>
     /// <param name="thread">
-    /// The conversation thread to continue with this invocation. If not provided, creates a new thread.
-    /// The thread will be mutated with the provided messages and agent response.
+    /// The conversation thread to use for this invocation. If <see langword="null"/>, a new thread will be created.
+    /// The thread will be updated with the input message and any response messages generated during invocation.
     /// </param>
-    /// <param name="options">Optional parameters for agent invocation.</param>
+    /// <param name="options">Optional configuration parameters for controlling the agent's invocation behavior.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>An async list of response items that each contain a <see cref="AgentRunResponseUpdate"/>.</returns>
+    /// <returns>An asynchronous enumerable of <see cref="AgentRunResponseUpdate"/> instances representing the streaming response.</returns>
+    /// <exception cref="ArgumentException"><paramref name="message"/> is <see langword="null"/>, empty, or contains only whitespace.</exception>
     /// <remarks>
-    /// The provided message string will be treated as a user message.
+    /// The provided text will be wrapped in a <see cref="ChatMessage"/> with the <see cref="ChatRole.User"/> role.
+    /// Streaming invocation provides real-time updates as the agent generates its response.
     /// </remarks>
     public IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
         string message,
@@ -214,16 +280,17 @@ public abstract class AIAgent
     }
 
     /// <summary>
-    /// Run the agent with the provided message and arguments.
+    /// Runs the agent in streaming mode with a single chat message.
     /// </summary>
-    /// <param name="message">The message to pass to the agent.</param>
+    /// <param name="message">The chat message to send to the agent.</param>
     /// <param name="thread">
-    /// The conversation thread to continue with this invocation. If not provided, creates a new thread.
-    /// The thread will be mutated with the provided messages and agent response.
+    /// The conversation thread to use for this invocation. If <see langword="null"/>, a new thread will be created.
+    /// The thread will be updated with the input message and any response messages generated during invocation.
     /// </param>
-    /// <param name="options">Optional parameters for agent invocation.</param>
+    /// <param name="options">Optional configuration parameters for controlling the agent's invocation behavior.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>An async list of response items that each contain a <see cref="AgentRunResponseUpdate"/>.</returns>
+    /// <returns>An asynchronous enumerable of <see cref="AgentRunResponseUpdate"/> instances representing the streaming response.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="message"/> is <see langword="null"/>.</exception>
     public IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
         ChatMessage message,
         AgentThread? thread = null,
@@ -236,16 +303,26 @@ public abstract class AIAgent
     }
 
     /// <summary>
-    /// Run the agent with the provided message and arguments.
+    /// Runs the agent in streaming mode with a collection of chat messages, providing the core streaming invocation logic.
     /// </summary>
-    /// <param name="messages">The messages to pass to the agent.</param>
+    /// <param name="messages">The collection of messages to send to the agent for processing.</param>
     /// <param name="thread">
-    /// The conversation thread to continue with this invocation. If not provided, creates a new thread.
-    /// The thread will be mutated with the provided messages and agent response.
+    /// The conversation thread to use for this invocation. If <see langword="null"/>, a new thread will be created.
+    /// The thread will be updated with the input messages and any response updates generated during invocation.
     /// </param>
-    /// <param name="options">Optional parameters for agent invocation.</param>
+    /// <param name="options">Optional configuration parameters for controlling the agent's invocation behavior.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>An async list of response items that each contain a <see cref="AgentRunResponseUpdate"/>.</returns>
+    /// <returns>An asynchronous enumerable of <see cref="AgentRunResponseUpdate"/> instances representing the streaming response.</returns>
+    /// <remarks>
+    /// <para>
+    /// This is the primary streaming invocation method that implementations must override. It provides real-time
+    /// updates as the agent processes the input and generates its response, enabling more responsive user experiences.
+    /// </para>
+    /// <para>
+    /// Each <see cref="AgentRunResponseUpdate"/> represents a portion of the complete response, allowing consumers
+    /// to display partial results, implement progressive loading, or provide immediate feedback to users.
+    /// </para>
+    /// </remarks>
     public abstract IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
@@ -253,29 +330,21 @@ public abstract class AIAgent
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Notfiy the given thread that new messages are available.
+    /// Notifies the specified thread about new messages that have been added to the conversation.
     /// </summary>
+    /// <param name="thread">The conversation thread to notify about the new messages.</param>
+    /// <param name="messages">The collection of new messages to report to the thread.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A task that represents the asynchronous notification operation.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="thread"/> or <paramref name="messages"/> is <see langword="null"/>.</exception>
     /// <remarks>
     /// <para>
-    /// Note that while all agents should notify their threads of new messages,
-    /// not all threads will necessarily take action. For some treads, this may be
-    /// the only way that they would know that a new message is available to be added
-    /// to their history.
-    /// </para>
-    /// <para>
-    /// For other thread types, where history is managed by the service, the thread may
-    /// not need to take any action.
-    /// </para>
-    /// <para>
-    /// Where threads manage other memory components that need access to new messages,
-    /// notifying the thread will be important, even if the thread itself does not
-    /// require the message.
+    /// This method ensures that conversation threads are kept informed about message additions, which
+    /// is important for threads that manage their own state, memory components, or derived context.
+    /// While all agent implementations should notify their threads, the specific actions taken by
+    /// each thread type may vary.
     /// </para>
     /// </remarks>
-    /// <param name="thread">The thread to notify of the new messages.</param>
-    /// <param name="messages">The messages to pass to the thread.</param>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>An async task that completes once the notification is complete.</returns>
     protected static async Task NotifyThreadOfNewMessagesAsync(AgentThread thread, IEnumerable<ChatMessage> messages, CancellationToken cancellationToken)
     {
         _ = Throw.IfNull(thread);

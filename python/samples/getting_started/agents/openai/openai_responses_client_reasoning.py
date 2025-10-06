@@ -5,6 +5,13 @@ import asyncio
 from agent_framework import HostedCodeInterpreterTool, TextContent, TextReasoningContent, UsageContent
 from agent_framework.openai import OpenAIResponsesClient
 
+"""
+OpenAI Responses Client Reasoning Example
+
+This sample demonstrates advanced reasoning capabilities using OpenAI's o1 models,
+showing step-by-step reasoning process visualization and complex problem-solving.
+"""
+
 
 async def reasoning_example() -> None:
     """Example of reasoning response (get results as they are generated)."""

@@ -1,7 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-#pragma warning disable OPENAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates
-
 using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;

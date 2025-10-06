@@ -1,7 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-#pragma warning disable OPENAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
-
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.SemanticKernel;
@@ -11,7 +9,7 @@ using OpenAI;
 using OpenAI.Assistants;
 
 var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
-var modelId = System.Environment.GetEnvironmentVariable("OPENAI_MODELID") ?? "gpt-4o";
+var model = System.Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o";
 var userInput = "Tell me a joke about a pirate.";
 
 Console.WriteLine($"User Input: {userInput}");
@@ -25,12 +23,12 @@ async Task SKAgentAsync()
 
     var serviceCollection = new ServiceCollection();
     serviceCollection.AddSingleton((sp) => new AssistantClient(apiKey));
-    serviceCollection.AddKernel().AddOpenAIChatClient(modelId, apiKey);
+    serviceCollection.AddKernel().AddOpenAIChatClient(model, apiKey);
     serviceCollection.AddTransient((sp) =>
     {
         var assistantsClient = sp.GetRequiredService<AssistantClient>();
 
-        Assistant assistant = assistantsClient.CreateAssistant(modelId, new() { Name = "Joker", Instructions = "You are good at telling jokes." });
+        Assistant assistant = assistantsClient.CreateAssistant(model, new() { Name = "Joker", Instructions = "You are good at telling jokes." });
 
         return new OpenAIAssistantAgent(assistant, assistantsClient);
     });
@@ -70,7 +68,7 @@ async Task AFAgentAsync()
     {
         var assistantClient = sp.GetRequiredService<AssistantClient>();
 
-        return assistantClient.CreateAIAgent(modelId, name: "Joker", instructions: "You are good at telling jokes.");
+        return assistantClient.CreateAIAgent(model, name: "Joker", instructions: "You are good at telling jokes.");
     });
 
     await using ServiceProvider serviceProvider = serviceCollection.BuildServiceProvider();

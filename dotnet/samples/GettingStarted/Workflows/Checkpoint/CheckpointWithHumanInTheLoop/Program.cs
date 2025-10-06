@@ -1,9 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
-using System.Collections.Generic;
-using System.Threading;
-using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows;
 
 namespace WorkflowCheckpointWithHumanInTheLoopSample;
@@ -13,9 +9,9 @@ namespace WorkflowCheckpointWithHumanInTheLoopSample;
 /// checkpointing support. The workflow plays a number guessing game where the user provides
 /// guesses based on feedback from the workflow. The workflow state is checkpointed at the end
 /// of each super step, allowing it to be restored and resumed later.
-/// Each InputPort request and response cycle takes two super steps:
-/// 1. The InputPort sends a RequestInfoEvent to request input from the external world.
-/// 2. The external world sends a response back to the InputPort.
+/// Each RequestPort request and response cycle takes two super steps:
+/// 1. The RequestPort sends a RequestInfoEvent to request input from the external world.
+/// 2. The external world sends a response back to the RequestPort.
 /// Thus, two checkpoints are created for each human-in-the-loop interaction.
 /// </summary>
 /// <remarks>

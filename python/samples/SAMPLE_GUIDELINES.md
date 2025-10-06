@@ -22,14 +22,6 @@ Try not to include too many concepts in a single sample. The goal is to demonstr
 
 The getting started samples are the simplest samples that require minimal setup. These samples should be named in the following format: `step<number>_<name>.py`. One exception to this rule is when the sample is a notebook, in which case the sample should be named in the following format: `<number>_<name>.ipynb`.
 
-#### Concept Samples
-
-Concept samples under [./concepts](./concepts) should be grouped by feature or capability. These samples should be relatively short and demonstrate a specific concept. These samples are more advanced than the getting started samples.
-
-#### Demos
-
-Demos under [./demos](./demos) are full console applications that demonstrate a specific set of features or capabilities of Agent Framework, potentially with external dependencies. Each of the demos should have a README.md file that explains the purpose of the demo and how to run it.
-
 ### **Incremental Complexity**
 
 Try to do a best effort to make sure that the samples are incremental in complexity. For example, in the getting started samples, each step should build on the previous step, and the concept samples should build on the getting started samples, same with the demos.

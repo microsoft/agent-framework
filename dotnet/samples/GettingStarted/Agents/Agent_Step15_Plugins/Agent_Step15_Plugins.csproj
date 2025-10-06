@@ -5,8 +5,8 @@
     <TargetFramework>net9.0</TargetFramework>
 
     <Nullable>enable</Nullable>
-    <ImplicitUsings>disable</ImplicitUsings>
-    <NoWarn>VSTHRD200;CA1707;CA1812</NoWarn>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <NoWarn>$(NoWarn);CA1812</NoWarn>
     <RootNamespace>Agent_Step15_Plugins</RootNamespace>
   </PropertyGroup>
 

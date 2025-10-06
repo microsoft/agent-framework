@@ -580,14 +580,6 @@ def test_chat_response_update():
     assert response_update.text == "I'm doing well, thank you!"
 
 
-def test_chat_response_update_with_method():
-    u = ChatResponseUpdate(text="Hello", message_id="1")
-    v = u.with_(contents=[TextContent(" world")])
-    assert v is not u
-    assert v.text == "Hello world"
-    assert v.message_id == "1"
-
-
 def test_chat_response_updates_to_chat_response_one():
     """Test converting ChatResponseUpdate to ChatResponse."""
     # Create a ChatMessage

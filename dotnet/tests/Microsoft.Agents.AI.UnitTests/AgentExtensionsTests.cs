@@ -12,7 +12,7 @@ using Moq;
 namespace Microsoft.Agents.AI.UnitTests;
 
 /// <summary>
-/// Unit tests for the <see cref="AgentExtensions.AsAIFunction"/> method.
+/// Unit tests for the <see cref="AIAgentExtensions.AsAIFunction"/> method.
 /// </summary>
 public class AgentExtensionsTests
 {
@@ -21,7 +21,7 @@ public class AgentExtensionsTests
     {
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            AgentExtensions.AsAIFunction(null!));
+            AIAgentExtensions.AsAIFunction(null!));
 
         Assert.Equal("agent", exception.ParamName);
     }

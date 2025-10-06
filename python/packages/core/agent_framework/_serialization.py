@@ -18,20 +18,68 @@ _CAMEL_TO_SNAKE_PATTERN = re.compile(r"(?<!^)(?=[A-Z])")
 
 @runtime_checkable
 class SerializationProtocol(Protocol):
-    """Protocol for objects that support serialization and deserialization."""
+    """Protocol for objects that support serialization and deserialization.
+
+    This protocol defines the interface for objects that can be converted to and from dictionaries.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import SerializationProtocol
+
+
+            class MySerializable:
+                def __init__(self, value: str):
+                    self.value = value
+
+                def to_dict(self, **kwargs):
+                    return {"value": self.value}
+
+                @classmethod
+                def from_dict(cls, value, **kwargs):
+                    return cls(value["value"])
+
+
+            # Verify it implements the protocol
+            assert isinstance(MySerializable("test"), SerializationProtocol)
+    """
 
     def to_dict(self, **kwargs: Any) -> dict[str, Any]:
-        """Convert the instance to a dictionary."""
+        """Convert the instance to a dictionary.
+
+        Keyword Args:
+            kwargs: Additional keyword arguments for serialization.
+
+        Returns:
+            Dictionary representation of the instance.
+        """
         ...
 
     @classmethod
     def from_dict(cls: type[TProtocol], value: MutableMapping[str, Any], /, **kwargs: Any) -> TProtocol:
-        """Create an instance from a dictionary."""
+        """Create an instance from a dictionary.
+
+        Args:
+            value: Dictionary containing the instance data (positional-only).
+
+        Keyword Args:
+            kwargs: Additional keyword arguments for deserialization.
+
+        Returns:
+            New instance of the class.
+        """
         ...
 
 
 def is_serializable(value: Any) -> bool:
-    """Check if a value is JSON serializable."""
+    """Check if a value is JSON serializable.
+
+    Args:
+        value: The value to check.
+
+    Returns:
+        True if the value is JSON serializable, False otherwise.
+    """
     return isinstance(value, (str, int, float, bool, type(None), list, dict))
 
 
@@ -47,8 +95,7 @@ class SerializationMixin:
     Because we setup the __init__ method to handle MutableMapping,
     we can pass in a dict to the second class and it will convert it to an instance of the first class.
 
-    Example:
-
+    Examples:
         .. code-block:: python
 
             class SerializableMixinType(SerializationMixin):
@@ -72,28 +119,17 @@ class SerializationMixin:
 
             instance = MyClass.from_dict({"regular_param": "value", "param": {"param1": "value1", "param2": 42}})
 
-    A more complex use case involves a injectable dependency that is not serialized.
+    A more complex use case involves an injectable dependency that is not serialized.
     In this case, the dependency is passed in via the dependencies parameter to from_dict/from_json.
 
-    Example:
-
+    Examples:
         .. code-block:: python
 
-            from libary import Client
+            from library import Client
 
 
             class MyClass(SerializationMixin):
                 INJECTABLE = {"client"}
-
-                def __init__(self, regular_param: str, client: Client) -> None:
-                    self.client = client
-                    self.regular_param = regular_param
-
-
-            json_of_class = MyClass(regular_param="value", client=Client()).to_json()
-            # this looks like: {"type": "my_class", "regular_param": "value"}
-
-            instance = MyClass.from_dict(json_of_class, dependencies={"my_class.client": Client()})
 
     During serialization, the field listed as INJECTABLE (and also DEFAULT_EXCLUDE) will be excluded from the output.
     Then in deserialization,
@@ -113,8 +149,8 @@ class SerializationMixin:
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
         """Convert the instance and any nested objects to a dictionary.
 
-        Args:
-            exclude: Set of field names to exclude from serialization.
+        Keyword Args:
+            exclude: The set of field names to exclude from serialization.
             exclude_none: Whether to exclude None values from the output. Defaults to True.
 
         Returns:
@@ -179,8 +215,8 @@ class SerializationMixin:
     def to_json(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> str:
         """Convert the instance to a JSON string.
 
-        Args:
-            exclude: Set of field names to exclude from serialization.
+        Keyword Args:
+            exclude: The set of field names to exclude from serialization.
             exclude_none: Whether to exclude None values from the output. Defaults to True.
 
         Returns:
@@ -190,14 +226,16 @@ class SerializationMixin:
 
     @classmethod
     def from_dict(
-        cls: type[TClass], value: MutableMapping[str, Any], /, dependencies: MutableMapping[str, Any] | None = None
+        cls: type[TClass], value: MutableMapping[str, Any], /, *, dependencies: MutableMapping[str, Any] | None = None
     ) -> TClass:
         """Create an instance from a dictionary.
 
         Args:
-            value: Dictionary containing the instance data (positional-only).
-            dependencies: Dictionary mapping dependency keys to values.
-                Keys should be in format "<type>.<parameter>" or "<type>.<dict-parameter>.<key>".
+            value: The dictionary containing the instance data (positional-only).
+
+        Keyword Args:
+            dependencies: The dictionary mapping dependency keys to values.
+                Keys should be in format ``"<type>.<parameter>"`` or ``"<type>.<dict-parameter>.<key>"``.
 
         Returns:
             New instance of the class.
@@ -244,13 +282,15 @@ class SerializationMixin:
         return cls(**kwargs)
 
     @classmethod
-    def from_json(cls: type[TClass], value: str, /, dependencies: MutableMapping[str, Any] | None = None) -> TClass:
+    def from_json(cls: type[TClass], value: str, /, *, dependencies: MutableMapping[str, Any] | None = None) -> TClass:
         """Create an instance from a JSON string.
 
         Args:
-            value: JSON string containing the instance data (positional-only).
-            dependencies: Dictionary mapping dependency keys to values.
-                Keys should be in format "<type>.<parameter>" or "<type>.<dict-parameter>.<key>".
+            value: The JSON string containing the instance data (positional-only).
+
+        Keyword Args:
+            dependencies: The dictionary mapping dependency keys to values.
+                Keys should be in format ``"<type>.<parameter>"`` or ``"<type>.<dict-parameter>.<key>"``.
 
         Returns:
             New instance of the class.
@@ -262,7 +302,7 @@ class SerializationMixin:
     def _get_type_identifier(cls) -> str:
         """Get the type identifier for this class.
 
-        Returns the value of the 'type' class variable if present,
+        Returns the value of the ``type`` class variable if present,
         otherwise returns a snake_cased version of the class name.
 
         Returns:

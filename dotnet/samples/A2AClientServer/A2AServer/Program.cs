@@ -36,8 +36,8 @@ IConfigurationRoot configuration = new ConfigurationBuilder()
     .Build();
 
 string? apiKey = configuration["OPENAI_API_KEY"];
-string modelId = configuration["OPENAI_MODEL_ID"] ?? "gpt-4o-mini";
-string? endpoint = configuration["FOUNDRY_PROJECT_ENDPOINT"];
+string model = configuration["OPENAI_MODEL"] ?? "gpt-4o-mini";
+string? endpoint = configuration["AZURE_FOUNDRY_PROJECT_ENDPOINT"];
 
 var invoiceQueryPlugin = new InvoiceQuery();
 IList<AITool> tools =
@@ -52,9 +52,9 @@ if (!string.IsNullOrEmpty(endpoint) && !string.IsNullOrEmpty(agentId))
 {
     hostAgent = agentType.ToUpperInvariant() switch
     {
-        "INVOICE" => await HostAgentFactory.CreateFoundryHostAgentAsync(agentType, modelId, endpoint, agentId, tools),
-        "POLICY" => await HostAgentFactory.CreateFoundryHostAgentAsync(agentType, modelId, endpoint, agentId),
-        "LOGISTICS" => await HostAgentFactory.CreateFoundryHostAgentAsync(agentType, modelId, endpoint, agentId),
+        "INVOICE" => await HostAgentFactory.CreateFoundryHostAgentAsync(agentType, model, endpoint, agentId, tools),
+        "POLICY" => await HostAgentFactory.CreateFoundryHostAgentAsync(agentType, model, endpoint, agentId),
+        "LOGISTICS" => await HostAgentFactory.CreateFoundryHostAgentAsync(agentType, model, endpoint, agentId),
         _ => throw new ArgumentException($"Unsupported agent type: {agentType}"),
     };
 }
@@ -63,12 +63,12 @@ else if (!string.IsNullOrEmpty(apiKey))
     hostAgent = agentType.ToUpperInvariant() switch
     {
         "INVOICE" => await HostAgentFactory.CreateChatCompletionHostAgentAsync(
-            agentType, modelId, apiKey, "InvoiceAgent",
+            agentType, model, apiKey, "InvoiceAgent",
             """
             You specialize in handling queries related to invoices.
             """, tools),
         "POLICY" => await HostAgentFactory.CreateChatCompletionHostAgentAsync(
-            agentType, modelId, apiKey, "PolicyAgent",
+            agentType, model, apiKey, "PolicyAgent",
             """
             You specialize in handling queries related to policies and customer communications.
             
@@ -84,7 +84,7 @@ else if (!string.IsNullOrEmpty(apiKey))
             template."
             """),
         "LOGISTICS" => await HostAgentFactory.CreateChatCompletionHostAgentAsync(
-            agentType, modelId, apiKey, "LogisticsAgent",
+            agentType, model, apiKey, "LogisticsAgent",
             """
             You specialize in handling queries related to logistics.
             
@@ -103,5 +103,6 @@ else
 }
 
 app.MapA2A(hostAgent!.TaskManager!, "/");
+app.MapWellKnownAgentCard(hostAgent!.TaskManager!, "/");
 
 await app.RunAsync();

@@ -238,9 +238,10 @@ export interface AgentThread {
 
 // Workflow events
 export interface WorkflowEvent {
-  type?: string; // Event class name like "WorkflowCompletedEvent", "ExecutorInvokedEvent", etc.
+  type?: string; // Event class name like "WorkflowOutputEvent", "WorkflowCompletedEvent", "ExecutorInvokedEvent", etc.
   data?: unknown;
   executor_id?: string; // Present for executor-related events
+  source_executor_id?: string; // Present for WorkflowOutputEvent
 }
 
 export interface WorkflowStartedEvent extends WorkflowEvent {
@@ -249,8 +250,14 @@ export interface WorkflowStartedEvent extends WorkflowEvent {
 }
 
 export interface WorkflowCompletedEvent extends WorkflowEvent {
-  // Event-specific data for workflow completion
+  // Event-specific data for workflow completion (legacy)
   readonly event_type: "workflow_completed";
+}
+
+export interface WorkflowOutputEvent extends WorkflowEvent {
+  // Event-specific data for workflow output (new)
+  readonly event_type: "workflow_output";
+  source_executor_id: string; // ID of executor that yielded the output
 }
 
 export interface WorkflowWarningEvent extends WorkflowEvent {

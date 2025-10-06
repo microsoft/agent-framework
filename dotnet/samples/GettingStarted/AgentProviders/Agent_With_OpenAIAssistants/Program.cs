@@ -5,14 +5,11 @@
 // WARNING: The Assistants API is deprecated and will be shut down.
 // For more information see the OpenAI documentation: https://platform.openai.com/docs/assistants/migration
 
-#pragma warning disable OPENAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
-
-using System;
 using Microsoft.Agents.AI;
 using OpenAI;
 
 var apiKey = Environment.GetEnvironmentVariable("OPENAI_APIKEY") ?? throw new InvalidOperationException("OPENAI_APIKEY is not set.");
-var mmodel = Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o-mini";
+var model = Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o-mini";
 
 const string JokerName = "Joker";
 const string JokerInstructions = "You are good at telling jokes.";
@@ -21,14 +18,14 @@ const string JokerInstructions = "You are good at telling jokes.";
 var assistantClient = new OpenAIClient(apiKey).GetAssistantClient();
 
 // You can create a server side assistant with the OpenAI SDK.
-var createResult = await assistantClient.CreateAssistantAsync(mmodel, new() { Name = JokerName, Instructions = JokerInstructions });
+var createResult = await assistantClient.CreateAssistantAsync(model, new() { Name = JokerName, Instructions = JokerInstructions });
 
 // You can retrieve an already created server side assistant as an AIAgent.
 AIAgent agent1 = await assistantClient.GetAIAgentAsync(createResult.Value.Id);
 
 // You can also create a server side assistant and return it as an AIAgent directly.
 AIAgent agent2 = await assistantClient.CreateAIAgentAsync(
-    model: mmodel,
+    model: model,
     name: JokerName,
     instructions: JokerInstructions);
 

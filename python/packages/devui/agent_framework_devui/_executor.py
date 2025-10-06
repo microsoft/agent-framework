@@ -7,7 +7,7 @@ import logging
 import os
 import uuid
 from collections.abc import AsyncGenerator
-from typing import Any
+from typing import Any, get_origin
 
 from agent_framework import AgentThread
 
@@ -71,18 +71,17 @@ class AgentFrameworkExecutor:
 
     def _setup_agent_framework_tracing(self) -> None:
         """Set up Agent Framework's built-in tracing."""
-        # Configure Agent Framework tracing only if OTLP endpoint is configured
-        otlp_endpoint = os.environ.get("OTLP_ENDPOINT")
-        if otlp_endpoint:
+        # Configure Agent Framework tracing only if ENABLE_OTEL is set
+        if os.environ.get("ENABLE_OTEL"):
             try:
                 from agent_framework.observability import setup_observability
 
-                setup_observability(enable_sensitive_data=True, otlp_endpoint=otlp_endpoint)
-                logger.info(f"Enabled Agent Framework observability with endpoint: {otlp_endpoint}")
+                setup_observability(enable_sensitive_data=True)
+                logger.info("Enabled Agent Framework observability")
             except Exception as e:
                 logger.warning(f"Failed to enable Agent Framework observability: {e}")
         else:
-            logger.debug("No OTLP endpoint configured, skipping observability setup")
+            logger.debug("ENABLE_OTEL not set, skipping observability setup")
 
     # Thread Management Methods
     def create_thread(self, agent_id: str) -> str:
@@ -118,7 +117,6 @@ class AgentFrameworkExecutor:
         if thread_id not in self.thread_storage:
             return False
 
-        # Remove from agent mapping
         for _agent_id, thread_ids in self.agent_threads.items():
             if thread_id in thread_ids:
                 thread_ids.remove(thread_id)
@@ -128,7 +126,7 @@ class AgentFrameworkExecutor:
         return True
 
     async def get_thread_messages(self, thread_id: str) -> list[dict[str, Any]]:
-        """Get messages from a thread's message store, filtering for UI display."""
+        """Get messages from a thread's message store, preserving all content types for UI display."""
         thread = self.get_thread(thread_id)
         if not thread or not thread.message_store:
             return []
@@ -142,25 +140,43 @@ class AgentFrameworkExecutor:
                 # Extract role value (handle enum)
                 role = af_msg.role.value if hasattr(af_msg.role, "value") else str(af_msg.role)
 
-                # Skip tool/function messages - only show user and assistant text
+                # Skip tool/function messages - only show user and assistant messages
                 if role not in ["user", "assistant"]:
                     continue
 
-                # Extract user-facing text content only
-                text_content = self._extract_display_text(af_msg.contents)
+                # Extract all user-facing content (text, images, files, etc.)
+                display_contents = self._extract_display_contents(af_msg.contents)
 
-                # Skip messages with no displayable text
-                if not text_content:
+                # Skip messages with no displayable content
+                if not display_contents:
                     continue
+
+                # Extract usage information if present
+                usage_data = None
+                for content in af_msg.contents:
+                    content_type = getattr(content, "type", None)
+                    if content_type == "usage":
+                        details = getattr(content, "details", None)
+                        if details:
+                            usage_data = {
+                                "total_tokens": getattr(details, "total_token_count", 0) or 0,
+                                "prompt_tokens": getattr(details, "input_token_count", 0) or 0,
+                                "completion_tokens": getattr(details, "output_token_count", 0) or 0,
+                            }
+                        break
 
                 ui_message = {
                     "id": af_msg.message_id or f"restored-{i}",
                     "role": role,
-                    "contents": [{"type": "text", "text": text_content}],
+                    "contents": display_contents,
                     "timestamp": __import__("datetime").datetime.now().isoformat(),
                     "author_name": af_msg.author_name,
                     "message_id": af_msg.message_id,
                 }
+
+                # Add usage data if available
+                if usage_data:
+                    ui_message["usage"] = usage_data
 
                 ui_messages.append(ui_message)
 
@@ -174,14 +190,18 @@ class AgentFrameworkExecutor:
             logger.error(traceback.format_exc())
             return []
 
-    def _extract_display_text(self, contents: list[Any]) -> str:
-        """Extract user-facing text from message contents, filtering out internal mechanics."""
-        text_parts = []
+    def _extract_display_contents(self, contents: list[Any]) -> list[dict[str, Any]]:
+        """Extract all user-facing content (text, images, files, etc.) from message contents.
+
+        Filters out internal mechanics like function calls/results while preserving
+        all content types that should be displayed in the UI.
+        """
+        display_contents = []
 
         for content in contents:
             content_type = getattr(content, "type", None)
 
-            # Only include text content for display
+            # Text content
             if content_type == "text":
                 text = getattr(content, "text", "")
 
@@ -194,15 +214,31 @@ class AgentFrameworkExecutor:
                         if parsed.get("contents"):
                             for sub_content in parsed["contents"]:
                                 if sub_content.get("type") == "text":
-                                    text_parts.append(sub_content.get("text", ""))
+                                    display_contents.append({"type": "text", "text": sub_content.get("text", "")})
                     except Exception:
-                        text_parts.append(text)  # Fallback to raw text
+                        display_contents.append({"type": "text", "text": text})
                 else:
-                    text_parts.append(text)
+                    display_contents.append({"type": "text", "text": text})
+
+            # Data content (images, files, PDFs, etc.)
+            elif content_type == "data":
+                display_contents.append({
+                    "type": "data",
+                    "uri": getattr(content, "uri", ""),
+                    "media_type": getattr(content, "media_type", None),
+                })
+
+            # URI content (external links to images/files)
+            elif content_type == "uri":
+                display_contents.append({
+                    "type": "uri",
+                    "uri": getattr(content, "uri", ""),
+                    "media_type": getattr(content, "media_type", None),
+                })
 
             # Skip function_call, function_result, and other internal content types
 
-        return " ".join(text_parts).strip()
+        return display_contents
 
     async def serialize_thread(self, thread_id: str) -> dict[str, Any] | None:
         """Serialize thread state for persistence."""
@@ -380,7 +416,6 @@ class AgentFrameworkExecutor:
                 else:
                     logger.warning(f"Thread {thread_id} not found, proceeding without thread")
 
-            # Debug logging - handle both string and ChatMessage
             if isinstance(user_message, str):
                 logger.debug(f"Executing agent with text input: {user_message[:100]}...")
             else:
@@ -389,19 +424,15 @@ class AgentFrameworkExecutor:
             # Use Agent Framework's native streaming with optional thread
             if thread:
                 async for update in agent.run_stream(user_message, thread=thread):
-                    # Yield any pending trace events first
                     for trace_event in trace_collector.get_pending_events():
                         yield trace_event
 
-                    # Then yield the execution update
                     yield update
             else:
                 async for update in agent.run_stream(user_message):
-                    # Yield any pending trace events first
                     for trace_event in trace_collector.get_pending_events():
                         yield trace_event
 
-                    # Then yield the execution update
                     yield update
 
         except Exception as e:
@@ -546,6 +577,17 @@ class AgentFrameworkExecutor:
                                             media_type = "application/pdf"
                                         elif filename.lower().endswith((".png", ".jpg", ".jpeg", ".gif")):
                                             media_type = f"image/{filename.split('.')[-1].lower()}"
+                                        elif filename.lower().endswith((
+                                            ".wav",
+                                            ".mp3",
+                                            ".m4a",
+                                            ".ogg",
+                                            ".flac",
+                                            ".aac",
+                                        )):
+                                            ext = filename.split(".")[-1].lower()
+                                            # Normalize extensions to match audio MIME types
+                                            media_type = "audio/mp4" if ext == "m4a" else f"audio/{ext}"
 
                                     # Use file_data or file_url
                                     if file_data:
@@ -562,8 +604,17 @@ class AgentFrameworkExecutor:
         if not contents:
             contents.append(TextContent(text=""))
 
-        # Create ChatMessage with user role
-        return ChatMessage(role=Role.USER, contents=contents)
+        chat_message = ChatMessage(role=Role.USER, contents=contents)
+
+        logger.info(f"Created ChatMessage with {len(contents)} contents:")
+        for idx, content in enumerate(contents):
+            content_type = content.__class__.__name__
+            if hasattr(content, "media_type"):
+                logger.info(f"  [{idx}] {content_type} - media_type: {content.media_type}")
+            else:
+                logger.info(f"  [{idx}] {content_type}")
+
+        return chat_message
 
     def _extract_user_message_fallback(self, input_data: Any) -> str:
         """Fallback method to extract user message as string.
@@ -605,6 +656,54 @@ class AgentFrameworkExecutor:
             logger.warning(f"Error parsing workflow input: {e}")
             return raw_input
 
+    def _get_start_executor_message_types(self, workflow: Any) -> tuple[Any | None, list[Any]]:
+        """Return start executor and its declared input types."""
+        try:
+            start_executor = workflow.get_start_executor()
+        except Exception as exc:  # pragma: no cover - defensive logging path
+            logger.debug(f"Unable to access workflow start executor: {exc}")
+            return None, []
+
+        if not start_executor:
+            return None, []
+
+        message_types: list[Any] = []
+
+        try:
+            input_types = getattr(start_executor, "input_types", None)
+        except Exception as exc:  # pragma: no cover - defensive logging path
+            logger.debug(f"Failed to read executor input_types: {exc}")
+        else:
+            if input_types:
+                message_types = list(input_types)
+
+        if not message_types and hasattr(start_executor, "_handlers"):
+            try:
+                handlers = start_executor._handlers
+                if isinstance(handlers, dict):
+                    message_types = list(handlers.keys())
+            except Exception as exc:  # pragma: no cover - defensive logging path
+                logger.debug(f"Failed to read executor handlers: {exc}")
+
+        return start_executor, message_types
+
+    def _select_primary_input_type(self, message_types: list[Any]) -> Any | None:
+        """Choose the most user-friendly input type for workflow kick-off."""
+        if not message_types:
+            return None
+
+        preferred = (str, dict)
+
+        for candidate in preferred:
+            for message_type in message_types:
+                if message_type is candidate:
+                    return candidate
+                origin = get_origin(message_type)
+                if origin is candidate:
+                    return candidate
+
+        return message_types[0]
+
     def _parse_structured_workflow_input(self, workflow: Any, input_data: dict[str, Any]) -> Any:
         """Parse structured input data for workflow execution.
 
@@ -616,59 +715,30 @@ class AgentFrameworkExecutor:
             Parsed input for workflow
         """
         try:
+            from ._utils import parse_input_for_type
+
             # Get the start executor and its input type
-            start_executor = workflow.get_start_executor()
-            if not start_executor or not hasattr(start_executor, "_handlers"):
+            start_executor, message_types = self._get_start_executor_message_types(workflow)
+            if not start_executor:
                 logger.debug("Cannot determine input type for workflow - using raw dict")
                 return input_data
 
-            message_types = list(start_executor._handlers.keys())
             if not message_types:
                 logger.debug("No message types found for start executor - using raw dict")
                 return input_data
 
             # Get the first (primary) input type
-            input_type = message_types[0]
-
-            # If input type is dict, return as-is
-            if input_type is dict:
+            input_type = self._select_primary_input_type(message_types)
+            if input_type is None:
+                logger.debug("Could not select primary input type for workflow - using raw dict")
                 return input_data
 
-            # Handle primitive types
-            if input_type in (str, int, float, bool):
-                try:
-                    if isinstance(input_data, input_type):
-                        return input_data
-                    if "input" in input_data:
-                        return input_type(input_data["input"])
-                    if len(input_data) == 1:
-                        value = next(iter(input_data.values()))
-                        return input_type(value)
-                    return input_data
-                except (ValueError, TypeError) as e:
-                    logger.warning(f"Failed to convert input to {input_type}: {e}")
-                    return input_data
-
-            # If it's a Pydantic model, validate and create instance
-            if hasattr(input_type, "model_validate"):
-                try:
-                    return input_type.model_validate(input_data)
-                except Exception as e:
-                    logger.warning(f"Failed to validate input as {input_type}: {e}")
-                    return input_data
-
-            # If it's a dataclass or other type with annotations
-            elif hasattr(input_type, "__annotations__"):
-                try:
-                    return input_type(**input_data)
-                except Exception as e:
-                    logger.warning(f"Failed to create {input_type} from input data: {e}")
-                    return input_data
+            # Use consolidated parsing logic from _utils
+            return parse_input_for_type(input_data, input_type)
 
         except Exception as e:
             logger.warning(f"Error parsing structured workflow input: {e}")
-
-        return input_data
+            return input_data
 
     def _parse_raw_workflow_input(self, workflow: Any, raw_input: str) -> Any:
         """Parse raw input string based on workflow's expected input type.
@@ -681,57 +751,27 @@ class AgentFrameworkExecutor:
             Parsed input for workflow
         """
         try:
+            from ._utils import parse_input_for_type
+
             # Get the start executor and its input type
-            start_executor = workflow.get_start_executor()
-            if not start_executor or not hasattr(start_executor, "_handlers"):
+            start_executor, message_types = self._get_start_executor_message_types(workflow)
+            if not start_executor:
                 logger.debug("Cannot determine input type for workflow - using raw string")
                 return raw_input
 
-            message_types = list(start_executor._handlers.keys())
             if not message_types:
                 logger.debug("No message types found for start executor - using raw string")
                 return raw_input
 
             # Get the first (primary) input type
-            input_type = message_types[0]
-
-            # If input type is str, return as-is
-            if input_type is str:
+            input_type = self._select_primary_input_type(message_types)
+            if input_type is None:
+                logger.debug("Could not select primary input type for workflow - using raw string")
                 return raw_input
 
-            # If it's a Pydantic model, try to parse JSON
-            if hasattr(input_type, "model_validate_json"):
-                try:
-                    # First try to parse as JSON
-                    if raw_input.strip().startswith("{"):
-                        return input_type.model_validate_json(raw_input)
-
-                    # Try common field names
-                    common_fields = ["message", "text", "input", "data", "content"]
-                    for field in common_fields:
-                        try:
-                            return input_type(**{field: raw_input})
-                        except Exception as e:
-                            logger.debug(f"Failed to parse input using field '{field}': {e}")
-                            continue
-
-                    # Last resort: try default constructor
-                    return input_type()
-
-                except Exception as e:
-                    logger.debug(f"Failed to parse input as {input_type}: {e}")
-
-            # If it's a dataclass, try JSON parsing
-            elif hasattr(input_type, "__annotations__"):
-                try:
-                    if raw_input.strip().startswith("{"):
-                        parsed = json.loads(raw_input)
-                        return input_type(**parsed)
-                except Exception as e:
-                    logger.debug(f"Failed to parse input as {input_type}: {e}")
+            # Use consolidated parsing logic from _utils
+            return parse_input_for_type(raw_input, input_type)
 
         except Exception as e:
-            logger.debug(f"Error determining workflow input type: {e}")
-
-        # Fallback: return raw string
-        return raw_input
+            logger.debug(f"Error parsing workflow input: {e}")
+            return raw_input

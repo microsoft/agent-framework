@@ -172,6 +172,8 @@ class Workflow(DictConvertible):
         start_executor: Executor | str,
         runner_context: RunnerContext,
         max_iterations: int = DEFAULT_MAX_ITERATIONS,
+        name: str | None = None,
+        description: str | None = None,
         **kwargs: Any,
     ):
         """Initialize the workflow with a list of edges.
@@ -182,6 +184,8 @@ class Workflow(DictConvertible):
             start_executor: The starting executor for the workflow, which can be an Executor instance or its ID.
             runner_context: The RunnerContext instance to be used during workflow execution.
             max_iterations: The maximum number of iterations the workflow will run for convergence.
+            name: Optional human-readable name for the workflow.
+            description: Optional description of what the workflow does.
             kwargs: Additional keyword arguments. Unused in this implementation.
         """
         # Convert start_executor to string ID if it's an Executor instance
@@ -194,6 +198,8 @@ class Workflow(DictConvertible):
         self.start_executor_id = start_executor_id
         self.max_iterations = max_iterations
         self.id = id
+        self.name = name
+        self.description = description
 
         # Store non-serializable runtime objects as private attributes
         self._runner_context = runner_context
@@ -235,6 +241,12 @@ class Workflow(DictConvertible):
             "edge_groups": [group.to_dict() for group in self.edge_groups],
             "executors": {executor_id: executor.to_dict() for executor_id, executor in self.executors.items()},
         }
+
+        # Add optional name and description if provided
+        if self.name is not None:
+            data["name"] = self.name
+        if self.description is not None:
+            data["description"] = self.description
 
         executors_data: dict[str, dict[str, Any]] = data.get("executors", {})
         for executor_id, executor_payload in executors_data.items():
@@ -284,11 +296,15 @@ class Workflow(DictConvertible):
             WorkflowEvent: The events generated during the workflow execution.
         """
         # Create workflow span that encompasses the entire execution
+        attributes: dict[str, Any] = {OtelAttr.WORKFLOW_ID: self.id}
+        if self.name:
+            attributes[OtelAttr.WORKFLOW_NAME] = self.name
+        if self.description:
+            attributes[OtelAttr.WORKFLOW_DESCRIPTION] = self.description
+
         with create_workflow_span(
             OtelAttr.WORKFLOW_RUN_SPAN,
-            {
-                OtelAttr.WORKFLOW_ID: self.id,
-            },
+            attributes,
         ) as span:
             saw_request = False
             emitted_in_progress_pending = False
@@ -874,14 +890,27 @@ class WorkflowBuilder:
     This class provides methods to add edges and set the starting executor for the workflow.
     """
 
-    def __init__(self, max_iterations: int = DEFAULT_MAX_ITERATIONS):
-        """Initialize the WorkflowBuilder with an empty list of edges and no starting executor."""
+    def __init__(
+        self,
+        max_iterations: int = DEFAULT_MAX_ITERATIONS,
+        name: str | None = None,
+        description: str | None = None,
+    ):
+        """Initialize the WorkflowBuilder with an empty list of edges and no starting executor.
+
+        Args:
+            max_iterations: Maximum number of iterations for workflow convergence.
+            name: Optional human-readable name for the workflow.
+            description: Optional description of what the workflow does.
+        """
         self._edge_groups: list[EdgeGroup] = []
         self._executors: dict[str, Executor] = {}
         self._duplicate_executor_ids: set[str] = set()
         self._start_executor: Executor | str | None = None
         self._checkpoint_storage: CheckpointStorage | None = None
         self._max_iterations: int = max_iterations
+        self._name: str | None = name
+        self._description: str | None = description
         # Maps underlying AgentProtocol object id -> wrapped Executor so we reuse the same wrapper
         # across set_start_executor / add_edge calls. Without this, unnamed agents (which receive
         # random UUID based executor ids) end up wrapped multiple times, giving different ids for
@@ -1185,12 +1214,23 @@ class WorkflowBuilder:
 
                 # Create workflow instance after validation
                 workflow = Workflow(
-                    self._edge_groups, self._executors, self._start_executor, context, self._max_iterations
+                    self._edge_groups,
+                    self._executors,
+                    self._start_executor,
+                    context,
+                    self._max_iterations,
+                    name=self._name,
+                    description=self._description,
                 )
-                span.set_attributes({
+                build_attributes: dict[str, Any] = {
                     OtelAttr.WORKFLOW_ID: workflow.id,
                     OtelAttr.WORKFLOW_DEFINITION: workflow.to_json(),
-                })
+                }
+                if workflow.name:
+                    build_attributes[OtelAttr.WORKFLOW_NAME] = workflow.name
+                if workflow.description:
+                    build_attributes[OtelAttr.WORKFLOW_DESCRIPTION] = workflow.description
+                span.set_attributes(build_attributes)
 
                 # Add workflow build completed event
                 span.add_event(OtelAttr.BUILD_COMPLETED)

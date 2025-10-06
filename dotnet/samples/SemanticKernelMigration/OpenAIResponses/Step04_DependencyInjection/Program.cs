@@ -6,10 +6,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.SemanticKernel.Agents.OpenAI;
 using OpenAI;
 
-#pragma warning disable OPENAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
-
 var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
-var modelId = System.Environment.GetEnvironmentVariable("OPENAI_MODELID") ?? "gpt-4o";
+var model = System.Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o";
 var userInput = "Tell me a joke about a pirate.";
 
 Console.WriteLine($"User Input: {userInput}");
@@ -23,7 +21,7 @@ async Task SKAgentAsync()
 
     var serviceCollection = new ServiceCollection();
     serviceCollection.AddTransient<Microsoft.SemanticKernel.Agents.Agent>((sp)
-        => new OpenAIResponseAgent(new OpenAIClient(apiKey).GetOpenAIResponseClient(modelId))
+        => new OpenAIResponseAgent(new OpenAIClient(apiKey).GetOpenAIResponseClient(model))
         {
             Name = "Joker",
             Instructions = "You are good at telling jokes."
@@ -42,7 +40,7 @@ async Task AFAgentAsync()
 
     var serviceCollection = new ServiceCollection();
     serviceCollection.AddTransient((sp) => new OpenAIClient(apiKey)
-        .GetOpenAIResponseClient(modelId)
+        .GetOpenAIResponseClient(model)
         .CreateAIAgent(name: "Joker", instructions: "You are good at telling jokes."));
 
     await using ServiceProvider serviceProvider = serviceCollection.BuildServiceProvider();

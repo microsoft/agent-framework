@@ -1,9 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Diagnostics;
-using System.IO;
-using System.Linq;
 using Microsoft.Agents.AI.Workflows.Declarative;
 
 namespace Demo.DeclarativeEject;
@@ -33,7 +30,12 @@ internal sealed class Program
         Stopwatch timer = Stopwatch.StartNew();
 
         // Use DeclarativeWorkflowBuilder to generate code based on a YAML file.
-        string code = DeclarativeWorkflowBuilder.Eject(this.WorkflowFile, DeclarativeWorkflowLanguage.CSharp, workflowNamespace: "Demo.DeclarativeCode", workflowPrefix: "Sample");
+        string code =
+            DeclarativeWorkflowBuilder.Eject(
+                this.WorkflowFile,
+                DeclarativeWorkflowLanguage.CSharp,
+                workflowNamespace: "Demo.DeclarativeCode",
+                workflowPrefix: "Sample");
 
         Notify($"\nWORKFLOW: Defined {timer.Elapsed}\n");
 

@@ -5,6 +5,13 @@ import asyncio
 from agent_framework import ChatAgent, MCPStreamableHTTPTool
 from agent_framework.openai import OpenAIResponsesClient
 
+"""
+OpenAI Responses Client with Local MCP Example
+
+This sample demonstrates integrating local Model Context Protocol (MCP) tools with
+OpenAI Responses Client for direct response generation with external capabilities.
+"""
+
 
 async def streaming_with_mcp(show_raw_stream: bool = False) -> None:
     """Example showing tools defined when creating the agent.
@@ -36,7 +43,7 @@ async def streaming_with_mcp(show_raw_stream: bool = False) -> None:
         print("")
         print("\n=======================================\n")
         # Second query
-        query2 = "What is Microsoft Semantic Kernel?"
+        query2 = "What is Microsoft Agent Framework?"
         print(f"User: {query2}")
         print(f"{agent.name}: ", end="")
         async for chunk in agent.run_stream(query2):
@@ -69,7 +76,7 @@ async def run_with_mcp() -> None:
         print(f"{agent.name}: {result1}\n")
         print("\n=======================================\n")
         # Second query
-        query2 = "What is Microsoft Semantic Kernel?"
+        query2 = "What is Microsoft Agent Framework?"
         print(f"User: {query2}")
         result2 = await agent.run(query2)
         print(f"{agent.name}: {result2}\n")

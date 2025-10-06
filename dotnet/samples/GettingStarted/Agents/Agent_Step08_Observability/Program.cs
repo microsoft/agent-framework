@@ -2,7 +2,6 @@
 
 // This sample shows how to create and use a simple AI agent with Azure OpenAI as the backend that logs telemetry using OpenTelemetry.
 
-using System;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
@@ -25,12 +24,12 @@ using var tracerProvider = Sdk.CreateTracerProviderBuilder()
     .Build();
 
 // Create the agent, and enable OpenTelemetry instrumentation.
-AIAgent agent = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new AzureCliCredential())
-     .GetChatClient(deploymentName)
-     .CreateAIAgent(JokerInstructions, JokerName)
-     .WithOpenTelemetry(sourceName: sourceName);
+AIAgent agent = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
+    .GetChatClient(deploymentName)
+    .CreateAIAgent(JokerInstructions, JokerName)
+    .AsBuilder()
+    .UseOpenTelemetry(sourceName: sourceName)
+    .Build();
 
 // Invoke the agent and output the text result.
 Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate."));

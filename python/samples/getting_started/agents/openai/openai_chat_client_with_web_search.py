@@ -5,6 +5,13 @@ import asyncio
 from agent_framework import HostedWebSearchTool
 from agent_framework.openai import OpenAIChatClient
 
+"""
+OpenAI Chat Client with Web Search Example
+
+This sample demonstrates using HostedWebSearchTool with OpenAI Chat Client
+for real-time information retrieval and current data access.
+"""
+
 
 async def main() -> None:
     client = OpenAIChatClient(model_id="gpt-4o-search-preview")

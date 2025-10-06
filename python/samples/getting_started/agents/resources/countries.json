@@ -1,0 +1,141 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "REST Countries API",
+    "description": "Get information about countries of the world",
+    "version": "3.1"
+  },
+  "servers": [
+    {
+      "url": "https://restcountries.com/v3.1"
+    }
+  ],
+  "paths": {
+    "/currency/{currency}": {
+      "get": {
+        "operationId": "getCountriesByCurrency",
+        "summary": "Get countries by currency",
+        "description": "Search for countries by currency code",
+        "parameters": [
+          {
+            "name": "currency",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Currency code (e.g., THB, USD, EUR)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "object",
+                        "properties": {
+                          "common": {"type": "string"},
+                          "official": {"type": "string"}
+                        }
+                      },
+                      "population": {"type": "integer"},
+                      "region": {"type": "string"},
+                      "subregion": {"type": "string"},
+                      "capital": {
+                        "type": "array",
+                        "items": {"type": "string"}
+                      },
+                      "currencies": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "object",
+                          "properties": {
+                            "name": {"type": "string"},
+                            "symbol": {"type": "string"}
+                          }
+                        }
+                      },
+                      "languages": {
+                        "type": "object",
+                        "additionalProperties": {"type": "string"}
+                      },
+                      "latlng": {
+                        "type": "array",
+                        "items": {"type": "number"}
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/name/{name}": {
+      "get": {
+        "operationId": "getCountryByName",
+        "summary": "Get country by name",
+        "description": "Search for countries by name",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Country name"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "object",
+                        "properties": {
+                          "common": {"type": "string"},
+                          "official": {"type": "string"}
+                        }
+                      },
+                      "population": {"type": "integer"},
+                      "region": {"type": "string"},
+                      "subregion": {"type": "string"},
+                      "capital": {
+                        "type": "array",
+                        "items": {"type": "string"}
+                      },
+                      "currencies": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "object",
+                          "properties": {
+                            "name": {"type": "string"},
+                            "symbol": {"type": "string"}
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -9,6 +9,13 @@ from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 
+"""
+Azure AI Agent with Thread Management Example
+
+This sample demonstrates thread management with Azure AI Agents, comparing
+automatic thread creation with explicit thread management for persistent context.
+"""
+
 
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],

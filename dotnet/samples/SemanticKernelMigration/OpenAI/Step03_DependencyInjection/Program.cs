@@ -8,7 +8,7 @@ using Microsoft.SemanticKernel.Agents;
 using OpenAI;
 
 var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
-var modelId = System.Environment.GetEnvironmentVariable("OPENAI_MODELID") ?? "gpt-4o";
+var model = System.Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o";
 var userInput = "Tell me a joke about a pirate.";
 
 Console.WriteLine($"User Input: {userInput}");
@@ -21,7 +21,7 @@ async Task SKAgentAsync()
     Console.WriteLine("\n=== SK Agent ===\n");
 
     var serviceCollection = new ServiceCollection();
-    serviceCollection.AddKernel().AddOpenAIChatClient(modelId, apiKey);
+    serviceCollection.AddKernel().AddOpenAIChatClient(model, apiKey);
     serviceCollection.AddTransient((sp) => new ChatCompletionAgent()
     {
         Kernel = sp.GetRequiredService<Kernel>(),
@@ -42,7 +42,7 @@ async Task AFAgentAsync()
 
     var serviceCollection = new ServiceCollection();
     serviceCollection.AddTransient((sp) => new OpenAIClient(apiKey)
-        .GetChatClient(modelId)
+        .GetChatClient(model)
         .CreateAIAgent(name: "Joker", instructions: "You are good at telling jokes."));
 
     await using ServiceProvider serviceProvider = serviceCollection.BuildServiceProvider();

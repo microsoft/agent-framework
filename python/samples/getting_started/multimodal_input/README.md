@@ -16,21 +16,44 @@ This folder contains examples demonstrating how to send multimodal content (imag
 - **Description**: Shows how to send multimodal content to Azure OpenAI service
 - **Supported formats**: PNG/JPEG images, WAV/MP3 audio, PDF documents
 
+## Environment Variables
+
+Set the following environment variables before running the examples:
+
+**For OpenAI:**
+- `OPENAI_API_KEY`: Your OpenAI API key
+
+**For Azure OpenAI:**
+- `AZURE_OPENAI_ENDPOINT`: Your Azure OpenAI endpoint
+- `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`: The name of your Azure OpenAI chat model deployment
+
+Optionally for Azure OpenAI:
+- `AZURE_OPENAI_API_VERSION`: The API version to use (default is `2024-10-21`)
+- `AZURE_OPENAI_API_KEY`: Your Azure OpenAI API key (if not using `AzureCliCredential`)
+
+**Note:** You can also provide configuration directly in code instead of using environment variables:
+```python
+# Example: Pass deployment_name directly
+client = AzureOpenAIChatClient(
+    credential=AzureCliCredential(),
+    deployment_name="your-deployment-name",
+    endpoint="https://your-resource.openai.azure.com"
+)
+```
+
+## Authentication
+
+The Azure example uses `AzureCliCredential` for authentication. Run `az login` in your terminal before running the example, or replace `AzureCliCredential` with your preferred authentication method (e.g., provide `api_key` parameter).
+
 ## Running the Examples
 
-1. Set your API keys:
+```bash
+# Run OpenAI example
+python openai_chat_multimodal.py
 
-   ```bash
-   export OPENAI_API_KEY="your-openai-key"
-   export AZURE_OPENAI_API_KEY="your-azure-key"
-   export AZURE_OPENAI_ENDPOINT="your-azure-endpoint"
-   ```
-
-2. Run an example:
-   ```bash
-   python openai_chat_client_multimodal.py
-   python azure_chat_client_multimodal.py
-   ```
+# Run Azure example (requires az login or API key)
+python azure_chat_multimodal.py
+```
 
 ## Using Your Own Files
 

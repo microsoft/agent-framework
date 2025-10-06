@@ -7,6 +7,7 @@ import { useRef, useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Activity,
   Search,
@@ -19,6 +20,7 @@ import {
   ChevronRight,
   ChevronDown,
   Info,
+  PanelRightClose,
 } from "lucide-react";
 import type { ExtendedResponseStreamEvent } from "@/types";
 
@@ -65,6 +67,7 @@ interface TraceEventData extends EventDataBase {
 interface DebugPanelProps {
   events: ExtendedResponseStreamEvent[];
   isStreaming?: boolean;
+  onClose?: () => void;
 }
 
 // Helper function to accumulate OpenAI events into meaningful units
@@ -973,6 +976,10 @@ function TracesTab({ events }: { events: ExtendedResponseStreamEvent[] }) {
                   <span className="font-mono bg-accent/10 px-1 rounded">
                     ENABLE_OTEL=true
                   </span>{" "}
+                  or restart devui with the tracing flag{" "}
+                  <div className="font-mono bg-accent/10 px-1 rounded">
+                    devui --enable-tracing
+                  </div>
                   to enable tracing.
                 </div>
               )}
@@ -1355,12 +1362,16 @@ function ToolEventItem({ event }: { event: ExtendedResponseStreamEvent }) {
   );
 }
 
-export function DebugPanel({ events, isStreaming = false }: DebugPanelProps) {
+export function DebugPanel({
+  events,
+  isStreaming = false,
+  onClose,
+}: DebugPanelProps) {
   return (
     <div className=" overflow-auto h-[calc(100vh-3.7rem)] border-l">
       <Tabs defaultValue="events" className="h-full flex flex-col">
-        <div className="px-3 pt-3">
-          <TabsList className="w-full">
+        <div className="px-3 pt-3 flex items-center gap-2">
+          <TabsList className="flex-1">
             <TabsTrigger value="events" className="flex-1">
               Events
             </TabsTrigger>
@@ -1371,6 +1382,17 @@ export function DebugPanel({ events, isStreaming = false }: DebugPanelProps) {
               Tools
             </TabsTrigger>
           </TabsList>
+          {onClose && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onClose}
+              className="h-8 w-8 p-0 flex-shrink-0"
+              title="Hide debug panel"
+            >
+              <PanelRightClose className="h-4 w-4" />
+            </Button>
+          )}
         </div>
 
         <TabsContent value="events" className="flex-1 mt-0">

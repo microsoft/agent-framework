@@ -283,34 +283,38 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
 
     ### WorkflowContext (no parameters)
     For executors that only perform side effects without sending messages or yielding outputs:
-    ```python
-    async def log_handler(message: str, ctx: WorkflowContext) -> None:
-        print(f"Received: {message}")  # Only side effects
-    ```
+
+    .. code-block:: python
+
+        async def log_handler(message: str, ctx: WorkflowContext) -> None:
+            print(f"Received: {message}")  # Only side effects
 
     ### WorkflowContext[T_Out]
     Enables sending messages of type T_Out to other executors:
-    ```python
-    async def processor(message: str, ctx: WorkflowContext[int]) -> None:
-        result = len(message)
-        await ctx.send_message(result)  # Send int to downstream executors
-    ```
+
+    .. code-block:: python
+
+        async def processor(message: str, ctx: WorkflowContext[int]) -> None:
+            result = len(message)
+            await ctx.send_message(result)  # Send int to downstream executors
 
     ### WorkflowContext[T_Out, T_W_Out]
     Enables both sending messages (T_Out) and yielding workflow outputs (T_W_Out):
-    ```python
-    async def dual_output(message: str, ctx: WorkflowContext[int, str]) -> None:
-        await ctx.send_message(42)  # Send int message
-        await ctx.yield_output("complete")  # Yield str workflow output
-    ```
+
+    .. code-block:: python
+
+        async def dual_output(message: str, ctx: WorkflowContext[int, str]) -> None:
+            await ctx.send_message(42)  # Send int message
+            await ctx.yield_output("complete")  # Yield str workflow output
 
     ### Union Types
     Multiple types can be specified using union notation:
-    ```python
-    async def flexible(message: str, ctx: WorkflowContext[int | str, bool | dict]) -> None:
-        await ctx.send_message("text")  # or send 42
-        await ctx.yield_output(True)  # or yield {"status": "done"}
-    ```
+
+    .. code-block:: python
+
+        async def flexible(message: str, ctx: WorkflowContext[int | str, bool | dict]) -> None:
+            await ctx.send_message("text")  # or send 42
+            await ctx.yield_output(True)  # or yield {"status": "done"}
     """
 
     def __init__(

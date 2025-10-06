@@ -7,10 +7,12 @@ It includes built-in benchmarks as well as utilities for running custom evaluati
 
 ## Setup
 
-Install the agent-framework-lab package with GAIA dependencies:
+Install from source with GAIA dependencies:
 
 ```bash
-pip install "agent-framework-lab[gaia]"
+git clone https://github.com/microsoft/agent-framework.git
+cd agent-framework/python/packages/lab
+pip install -e ".[gaia]"
 ```
 
 Set up Hugging Face token:

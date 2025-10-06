@@ -34,6 +34,7 @@ from agent_framework import (
     UsageContent,
     UsageDetails,
     get_logger,
+    prepare_function_call_results,
     use_chat_middleware,
     use_function_invocation,
 )
@@ -84,7 +85,7 @@ from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import ConnectionType
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import HttpResponseError, ResourceNotFoundError
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -103,13 +104,31 @@ class AzureAISettings(AFBaseSettings):
     with the encoding 'utf-8'. If the settings are not found in the .env file, the settings
     are ignored; however, validation will fail alerting that the settings are missing.
 
-    Args:
+    Keyword Args:
         project_endpoint: The Azure AI Project endpoint URL.
-            (Env var AZURE_AI_PROJECT_ENDPOINT)
+            Can be set via environment variable AZURE_AI_PROJECT_ENDPOINT.
         model_deployment_name: The name of the model deployment to use.
-            (Env var AZURE_AI_MODEL_DEPLOYMENT_NAME)
+            Can be set via environment variable AZURE_AI_MODEL_DEPLOYMENT_NAME.
         env_file_path: If provided, the .env settings are read from this file path location.
         env_file_encoding: The encoding of the .env file, defaults to 'utf-8'.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework_azure_ai import AzureAISettings
+
+            # Using environment variables
+            # Set AZURE_AI_PROJECT_ENDPOINT=https://your-project.cognitiveservices.azure.com
+            # Set AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4
+            settings = AzureAISettings()
+
+            # Or passing parameters directly
+            settings = AzureAISettings(
+                project_endpoint="https://your-project.cognitiveservices.azure.com", model_deployment_name="gpt-4"
+            )
+
+            # Or loading from a .env file
+            settings = AzureAISettings(env_file_path="path/to/.env")
     """
 
     env_prefix: ClassVar[str] = "AZURE_AI_"
@@ -143,24 +162,47 @@ class AzureAIAgentClient(BaseChatClient):
         env_file_encoding: str | None = None,
         **kwargs: Any,
     ) -> None:
-        """Initialize a AzureAIAgentClient.
+        """Initialize an Azure AI Agent client.
 
-        Args:
+        Keyword Args:
             project_client: An existing AIProjectClient to use. If not provided, one will be created.
             agent_id: The ID of an existing agent to use. If not provided and project_client is provided,
                 a new agent will be created (and deleted after the request). If neither project_client
                 nor agent_id is provided, both will be created and managed automatically.
             agent_name: The name to use when creating new agents.
             thread_id: Default thread ID to use for conversations. Can be overridden by
-                conversation_id property, when making a request.
-            project_endpoint: The Azure AI Project endpoint URL, can also be set via
-                'AZURE_AI_PROJECT_ENDPOINT' environment variable. Is ignored when a project_client is passed.
+                conversation_id property when making a request.
+            project_endpoint: The Azure AI Project endpoint URL.
+                Can also be set via environment variable AZURE_AI_PROJECT_ENDPOINT.
+                Ignored when a project_client is passed.
             model_deployment_name: The model deployment name to use for agent creation.
-                Can also be set via 'AZURE_AI_MODEL_DEPLOYMENT_NAME' environment variable.
+                Can also be set via environment variable AZURE_AI_MODEL_DEPLOYMENT_NAME.
             async_credential: Azure async credential to use for authentication.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
-            **kwargs: Additional keyword arguments passed to the parent class.
+            kwargs: Additional keyword arguments passed to the parent class.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework_azure_ai import AzureAIAgentClient
+                from azure.identity.aio import DefaultAzureCredential
+
+                # Using environment variables
+                # Set AZURE_AI_PROJECT_ENDPOINT=https://your-project.cognitiveservices.azure.com
+                # Set AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4
+                credential = DefaultAzureCredential()
+                client = AzureAIAgentClient(async_credential=credential)
+
+                # Or passing parameters directly
+                client = AzureAIAgentClient(
+                    project_endpoint="https://your-project.cognitiveservices.azure.com",
+                    model_deployment_name="gpt-4",
+                    async_credential=credential,
+                )
+
+                # Or loading from a .env file
+                client = AzureAIAgentClient(async_credential=credential, env_file_path="path/to/.env")
         """
         try:
             azure_ai_settings = AzureAISettings(
@@ -319,6 +361,8 @@ class AzureAIAgentClient(BaseChatClient):
             if run_options:
                 if "tools" in run_options:
                     args["tools"] = run_options["tools"]
+                if "tool_resources" in run_options:
+                    args["tool_resources"] = run_options["tool_resources"]
                 if "instructions" in run_options:
                     args["instructions"] = run_options["instructions"]
                 if "response_format" in run_options:
@@ -636,9 +680,42 @@ class AzureAIAgentClient(BaseChatClient):
 
             if chat_options.tool_choice is not None:
                 if chat_options.tool_choice != "none" and chat_options.tools:
-                    tool_definitions = await self._prep_tools(chat_options.tools)
+                    tool_definitions = await self._prep_tools(chat_options.tools, run_options)
                     if tool_definitions:
                         run_options["tools"] = tool_definitions
+
+                    # Handle MCP tool resources for approval mode
+                    mcp_tools = [tool for tool in chat_options.tools if isinstance(tool, HostedMCPTool)]
+                    if mcp_tools:
+                        mcp_resources = []
+                        for mcp_tool in mcp_tools:
+                            server_label = mcp_tool.name.replace(" ", "_")
+                            mcp_resource: dict[str, Any] = {"server_label": server_label}
+
+                            if mcp_tool.approval_mode is not None:
+                                match mcp_tool.approval_mode:
+                                    case str():
+                                        # Map agent framework approval modes to Azure AI approval modes
+                                        approval_mode = (
+                                            "always" if mcp_tool.approval_mode == "always_require" else "never"
+                                        )
+                                        mcp_resource["require_approval"] = approval_mode
+                                    case _:
+                                        if "always_require_approval" in mcp_tool.approval_mode:
+                                            mcp_resource["require_approval"] = {
+                                                "always": mcp_tool.approval_mode["always_require_approval"]
+                                            }
+                                        elif "never_require_approval" in mcp_tool.approval_mode:
+                                            mcp_resource["require_approval"] = {
+                                                "never": mcp_tool.approval_mode["never_require_approval"]
+                                            }
+
+                            mcp_resources.append(mcp_resource)
+
+                        # Add MCP resources to tool_resources
+                        if "tool_resources" not in run_options:
+                            run_options["tool_resources"] = {}
+                        run_options["tool_resources"]["mcp"] = mcp_resources
 
                 if chat_options.tool_choice == "none":
                     run_options["tool_choice"] = AgentsToolChoiceOptionMode.NONE
@@ -710,7 +787,7 @@ class AzureAIAgentClient(BaseChatClient):
         return run_options, required_action_results
 
     async def _prep_tools(
-        self, tools: Sequence["ToolProtocol | MutableMapping[str, Any]"]
+        self, tools: Sequence["ToolProtocol | MutableMapping[str, Any]"], run_options: dict[str, Any] | None = None
     ) -> list[ToolDefinition | dict[str, Any]]:
         """Prepare tool definitions for the run options."""
         tool_definitions: list[ToolDefinition | dict[str, Any]] = []
@@ -768,18 +845,20 @@ class AzureAIAgentClient(BaseChatClient):
                 case HostedCodeInterpreterTool():
                     tool_definitions.append(CodeInterpreterToolDefinition())
                 case HostedMCPTool():
-                    tool_definitions.extend(
-                        McpTool(
-                            server_label=tool.name.replace(" ", "_"),
-                            server_url=str(tool.url),
-                            allowed_tools=list(tool.allowed_tools) if tool.allowed_tools else [],
-                        ).definitions
+                    mcp_tool = McpTool(
+                        server_label=tool.name.replace(" ", "_"),
+                        server_url=str(tool.url),
+                        allowed_tools=list(tool.allowed_tools) if tool.allowed_tools else [],
                     )
+                    tool_definitions.extend(mcp_tool.definitions)
                 case HostedFileSearchTool():
                     vector_stores = [inp for inp in tool.inputs or [] if isinstance(inp, HostedVectorStoreContent)]
                     if vector_stores:
                         file_search = FileSearchTool(vector_store_ids=[vs.vector_store_id for vs in vector_stores])
                         tool_definitions.extend(file_search.definitions)
+                        # Set tool_resources for file search to work properly with Azure AI
+                        if run_options is not None and "tool_resources" not in run_options:
+                            run_options["tool_resources"] = file_search.resources
                     else:
                         additional_props = tool.additional_properties or {}
                         index_name = additional_props.get("index_name") or os.getenv("AZURE_AI_SEARCH_INDEX_NAME")
@@ -860,23 +939,9 @@ class AzureAIAgentClient(BaseChatClient):
                 if isinstance(content, FunctionResultContent):
                     if tool_outputs is None:
                         tool_outputs = []
-                    result_contents: list[Any] = (
-                        content.result if isinstance(content.result, list) else [content.result]
+                    tool_outputs.append(
+                        ToolOutput(tool_call_id=call_id, output=prepare_function_call_results(content.result))
                     )
-                    results: list[Any] = []
-                    for item in result_contents:
-                        if isinstance(item, Contents):
-                            results.append(
-                                json.dumps(item.to_dict(exclude={"raw_representation", "additional_properties"}))
-                            )
-                        elif isinstance(item, BaseModel):
-                            results.append(item.model_dump_json())
-                        else:
-                            results.append(json.dumps(item))
-                    if len(results) == 1:
-                        tool_outputs.append(ToolOutput(tool_call_id=call_id, output=results[0]))
-                    else:
-                        tool_outputs.append(ToolOutput(tool_call_id=call_id, output=json.dumps(results)))
                 elif isinstance(content, FunctionApprovalResponseContent):
                     if tool_approvals is None:
                         tool_approvals = []

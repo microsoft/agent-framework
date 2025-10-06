@@ -11,6 +11,13 @@ from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 
+"""
+Azure AI Agent with Existing Agent Example
+
+This sample demonstrates working with pre-existing Azure AI Agents by providing
+agent IDs, showing agent reuse patterns for production scenarios.
+"""
+
 
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],

@@ -96,8 +96,18 @@ class MessageMapper:
         # Import Agent Framework types for proper isinstance checks
         try:
             from agent_framework import AgentRunResponseUpdate, WorkflowEvent
+            from agent_framework._workflows._events import AgentRunUpdateEvent
 
-            # Handle agent updates (AgentRunResponseUpdate)
+            # Handle AgentRunUpdateEvent - workflow event wrapping AgentRunResponseUpdate
+            # This must be checked BEFORE generic WorkflowEvent check
+            if isinstance(raw_event, AgentRunUpdateEvent):
+                # Extract the AgentRunResponseUpdate from the event's data attribute
+                if raw_event.data and isinstance(raw_event.data, AgentRunResponseUpdate):
+                    return await self._convert_agent_update(raw_event.data, context)
+                # If no data, treat as generic workflow event
+                return await self._convert_workflow_event(raw_event, context)
+
+            # Handle agent updates (AgentRunResponseUpdate) - for direct agent execution
             if isinstance(raw_event, AgentRunResponseUpdate):
                 return await self._convert_agent_update(raw_event, context)
 
@@ -257,12 +267,22 @@ class MessageMapper:
             List of OpenAI response stream events
         """
         try:
+            # Get event data and serialize if it's a SerializationMixin
+            event_data = getattr(event, "data", None)
+            if event_data is not None and hasattr(event_data, "to_dict"):
+                # SerializationMixin objects - convert to dict for JSON serialization
+                try:
+                    event_data = event_data.to_dict()
+                except Exception as e:
+                    logger.debug(f"Failed to serialize event data with to_dict(): {e}")
+                    event_data = str(event_data)
+
             # Create structured workflow event
             workflow_event = ResponseWorkflowEventComplete(
                 type="response.workflow_event.complete",
                 data={
                     "event_type": event.__class__.__name__,
-                    "data": getattr(event, "data", None),
+                    "data": event_data,
                     "executor_id": getattr(event, "executor_id", None),
                     "timestamp": datetime.now().isoformat(),
                 },
@@ -354,13 +374,24 @@ class MessageMapper:
             context["usage_data"] = []
         context["usage_data"].append(content)
 
+        # Extract usage from UsageContent.details (UsageDetails object)
+        details = getattr(content, "details", None)
+        total_tokens = 0
+        prompt_tokens = 0
+        completion_tokens = 0
+
+        if details:
+            total_tokens = getattr(details, "total_token_count", 0) or 0
+            prompt_tokens = getattr(details, "input_token_count", 0) or 0
+            completion_tokens = getattr(details, "output_token_count", 0) or 0
+
         return ResponseUsageEventComplete(
             type="response.usage.complete",
             data={
-                "usage_data": getattr(content, "usage_data", {}),
-                "total_tokens": getattr(content, "total_tokens", 0),
-                "completion_tokens": getattr(content, "completion_tokens", 0),
-                "prompt_tokens": getattr(content, "prompt_tokens", 0),
+                "usage_data": details.to_dict() if details and hasattr(details, "to_dict") else {},
+                "total_tokens": total_tokens,
+                "completion_tokens": completion_tokens,
+                "prompt_tokens": prompt_tokens,
                 "timestamp": datetime.now().isoformat(),
             },
             item_id=context["item_id"],

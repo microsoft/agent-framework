@@ -29,10 +29,10 @@ public static class A2ACardResolverExtensions
     /// Retrieves an instance of <see cref="AIAgent"/> for an existing A2A agent.
     /// </summary>
     /// <remarks>
-    /// This method can be used to create AI agents for A2A agents whose hosts support one of the A2A discovery mechanisms:
+    /// Creates an AI agent for an A2A agent whose host supports one of the A2A discovery mechanisms:
     /// <list type="bullet">
-    /// <item><see href="https://github.com/a2aproject/A2A/blob/main/docs/topics/agent-discovery.md#1-well-known-uri">Well-Known URI</see></item>
-    /// <item><see href="https://github.com/a2aproject/A2A/blob/main/docs/topics/agent-discovery.md#2-curated-registries-catalog-based-discovery">Curated Registries (Catalog-Based Discovery)</see></item>
+    /// <item><description><see href="https://github.com/a2aproject/A2A/blob/main/docs/topics/agent-discovery.md#1-well-known-uri">Well-Known URI</see></description></item>
+    /// <item><description><see href="https://github.com/a2aproject/A2A/blob/main/docs/topics/agent-discovery.md#2-curated-registries-catalog-based-discovery">Curated Registries (Catalog-Based Discovery)</see></description></item>
     /// </list>
     /// </remarks>
     /// <param name="resolver">The <see cref="A2ACardResolver" /> to use for the agent creation.</param>

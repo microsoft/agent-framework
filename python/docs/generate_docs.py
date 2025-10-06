@@ -7,10 +7,10 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-from agent_framework import __version__ as agent_framework_version
 from py2docfx.__main__ import main as py2docfx_main
 
 load_dotenv()
+
 
 async def generate_af_docs(root_path: Path):
     """Generate documentation for the Agent Framework using py2docfx.
@@ -21,10 +21,10 @@ async def generate_af_docs(root_path: Path):
         "packages": [
             {
                 "package_info": {
-                    "name": "agent-framework",
-                    "version": agent_framework_version,
+                    "name": "agent-framework-core",
+                    "version": "1.0.0b251001",
                     "install_type": "pypi",
-                    "extras": ["all"],
+                    "extras": ["all"]
                 },
                 "sphinx_extensions": [
                     "sphinxcontrib.autodoc_pydantic",
@@ -32,28 +32,28 @@ async def generate_af_docs(root_path: Path):
                     "sphinx.ext.autosummary"
                 ],
                 "extension_config": {
-                    "napoleon_google_docstring": True,
-                    "napoleon_preprocess_types": True,
-                    "napoleon_use_param": True,
+                    "napoleon_google_docstring": 1,
+                    "napoleon_preprocess_types": 1,
+                    "napoleon_use_param": 0,
                     "autodoc_pydantic_field_doc_policy": "both",
-                    "autodoc_pydantic_model_show_json": False,
-                    "autodoc_pydantic_model_show_config_summary": True,
-                    "autodoc_pydantic_model_show_field_summary": True,
-                    "autodoc_pydantic_model_hide_paramlist": False,
+                    "autodoc_pydantic_model_show_json": 0,
+                    "autodoc_pydantic_model_show_config_summary": 1,
+                    "autodoc_pydantic_model_show_field_summary": 1,
+                    "autodoc_pydantic_model_hide_paramlist": 0,
                     "autodoc_pydantic_model_show_json_error_strategy": "coerce",
-                    "autodoc_pydantic_settings_show_config_summary": True,
-                    "autodoc_pydantic_settings_show_field_summary": True,
-                    "python_use_unqualified_type_names": True,
-                    "autodoc_preserve_defaults": True,
+                    "autodoc_pydantic_settings_show_config_summary": 1,
+                    "autodoc_pydantic_settings_show_field_summary": 1,
+                    "python_use_unqualified_type_names": 1,
+                    "autodoc_preserve_defaults": 1,
                     "autodoc_class_signature": "separated",
-                    "autodoc_typehints": "both",
+                    "autodoc_typehints": "description",
                     "autodoc_typehints_format": "fully-qualified",
                     "autodoc_default_options": {
-                        "members": True,
+                        "members": 1,
                         "member-order": "alphabetical",
-                        "undoc-members": True,
-                        "show-inheritance": True,
-                        "imported-members": True,
+                        "undoc-members": 1,
+                        "show-inheritance": 1,
+                        "imported-members": 1,
                     },
                 },
             }
@@ -76,6 +76,7 @@ async def generate_af_docs(root_path: Path):
         str((root_path / "docs" / "build").absolute()),
         "-j",
         json.dumps(package),
+        "--verbose"
     ]
     try:
         await py2docfx_main(args)

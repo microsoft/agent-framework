@@ -6,12 +6,8 @@
 // The component adds a prompt to ask for this information if it is not already known
 // and provides it to the model before each invocation if known.
 
-using System;
-using System.Linq;
 using System.Text;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;

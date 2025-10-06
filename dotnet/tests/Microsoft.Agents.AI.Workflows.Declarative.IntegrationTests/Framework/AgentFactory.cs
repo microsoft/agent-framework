@@ -20,11 +20,9 @@ using Shared.IntegrationTests;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Framework;
 
-#pragma warning disable SKEXP0110 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
-
 internal static class AgentFactory
 {
-    private static readonly Dictionary<string, string> _agentDefinitions =
+    private static readonly Dictionary<string, string> s_agentDefinitions =
         new()
         {
             ["FOUNDRY_AGENT_TEST"] = "TestAgent.yaml",
@@ -56,16 +54,16 @@ internal static class AgentFactory
         AzureAIAgentFactory factory = new();
         string repoRoot = WorkflowTest.GetRepoFolder();
 
-        return s_agentMap = (await Task.WhenAll(_agentDefinitions.Select(kvp => CreateAgentAsync(kvp.Key, kvp.Value, cancellationToken)))).ToFrozenDictionary(t => t.Name, t => t.Id);
+        return s_agentMap = (await Task.WhenAll(s_agentDefinitions.Select(kvp => CreateAgentAsync(kvp.Key, kvp.Value, cancellationToken)))).ToFrozenDictionary(t => t.Name, t => t.Id);
 
         async Task<(string Name, string? Id)> CreateAgentAsync(string id, string file, CancellationToken cancellationToken)
         {
             try
             {
-                string filePath = Path.Combine("Agents", file);
+                string filePath = Path.Combine(Environment.CurrentDirectory, "Agents", file);
                 if (!File.Exists(filePath))
                 {
-                    filePath = Path.Combine(repoRoot, "workflow-samples/setup", file);
+                    filePath = Path.Combine(repoRoot, "workflow-samples", "setup", file);
                 }
                 Assert.True(File.Exists(filePath), $"Agent definition file not found: {file}");
 
@@ -82,7 +80,7 @@ internal static class AgentFactory
             }
             catch (Exception exception)
             {
-                Console.WriteLine($"FAILURE: Error creating agent {id} from file {file}: {exception.Message}");
+                Console.WriteLine($"FAILURE: Error creating agent {id}: {exception.Message}");
                 throw;
             }
         }

@@ -84,7 +84,7 @@ You must create the agents in an Azure AI Foundry project and then provide the p
     ```
 
 ```powershell
-$env:FOUNDRY_PROJECT_ENDPOINT="https://ai-foundry-your-project.services.ai.azure.com/api/projects/ai-proj-ga-your-project" # Replace with your Foundry Project endpoint
+$env:AZURE_FOUNDRY_PROJECT_ENDPOINT="https://ai-foundry-your-project.services.ai.azure.com/api/projects/ai-proj-ga-your-project" # Replace with your Foundry Project endpoint
 ```
 
 Use the following commands to run each A2A server
@@ -108,7 +108,7 @@ This sample contains a [.http file](https://learn.microsoft.com/aspnet/core/test
 1. In Visual Studio open [./A2AServer/A2AServer.http](./A2AServer/A2AServer.http)
 1. There are two sent requests for each agent, e.g., for the invoice agent:
     1. Query agent card for the invoice agent
-        `GET {{hostInvoice}}/.well-known/agent.json`
+        `GET {{hostInvoice}}/.well-known/agent-card.json`
     1. Send a message to the invoice agent
         ```
         POST {{hostInvoice}}
@@ -121,6 +121,7 @@ This sample contains a [.http file](https://learn.microsoft.com/aspnet/core/test
             "params": {
                 "id": "12345",
                 "message": {
+                    "kind": "message",
                     "role": "user",
                     "messageId": "msg_1",
                     "parts": [
@@ -144,7 +145,7 @@ Sample output from the request to send a message to the agent via A2A protocol:
 
 ### Testing the Agents using the A2A Inspector
 
-The A2A Inspector is a web-based tool designed to help developers inspect, debug, and validate servers that implement the Google A2A (Agent-to-Agent) protocol. It provides a user-friendly interface to interact with an A2A agent, view communication, and ensure specification compliance.
+The A2A Inspector is a web-based tool designed to help developers inspect, debug, and validate servers that implement the Google A2A (Agent2Agent) protocol. It provides a user-friendly interface to interact with an A2A agent, view communication, and ensure specification compliance.
 
 For more information go [here](https://github.com/a2aproject/a2a-inspector).
 
@@ -223,7 +224,7 @@ Agent: The transaction details for **TICKET-XYZ987** are as follows:
   - **Hats:** 200 units at $15.00 each
   - **Glasses:** 300 units at $5.00 each
 
-To proceed with the dispute regarding the quantity of t-shirts delivered, please specify the exact quantity issue – how many t-shirts were actually received compared to the ordered amount.
+To proceed with the dispute regarding the quantity of t-shirts delivered, please specify the exact quantity issue ï¿½ how many t-shirts were actually received compared to the ordered amount.
 
 ### Customer Service Policy for Handling Disputes
 **Short Shipment Dispute Handling Policy V2.1**

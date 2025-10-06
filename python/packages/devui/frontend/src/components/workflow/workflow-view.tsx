@@ -11,13 +11,15 @@ import {
   Play,
   Settings,
   RotateCcw,
-  ChevronDown,
+  Info,
+  Workflow as WorkflowIcon,
 } from "lucide-react";
 import { LoadingState } from "@/components/ui/loading-state";
 import { WorkflowInputForm } from "@/components/workflow/workflow-input-form";
 import { Button } from "@/components/ui/button";
 import { WorkflowFlow } from "@/components/workflow/workflow-flow";
 import { useWorkflowEventCorrelation } from "@/hooks/useWorkflowEventCorrelation";
+import { WorkflowDetailsModal } from "@/components/shared/workflow-details-modal";
 import { apiClient } from "@/services/api";
 import type {
   WorkflowInfo,
@@ -184,11 +186,12 @@ function RunWorkflowButton({
               variant={
                 buttonVariant === "destructive" ? "destructive" : "default"
               }
-              size="icon"
-              className="rounded-l-none border-l-0 w-9"
-              title="Configure inputs"
+              size="default"
+              className="rounded-l-none border-l-0 px-3"
+              title="Configure workflow inputs - customize parameters before running"
             >
-              <ChevronDown className="w-4 h-4" />
+              <Settings className="w-4 h-4" />
+              <span className="ml-1.5">Inputs</span>
             </Button>
           )}
         </div>
@@ -197,7 +200,7 @@ function RunWorkflowButton({
       {/* Modal with proper Dialog component - matching WorkflowInputForm structure */}
       <Dialog open={showModal} onOpenChange={setShowModal}>
         <DialogContent className="w-full max-w-md sm:max-w-lg md:max-w-2xl lg:max-w-4xl xl:max-w-5xl max-h-[90vh] flex flex-col">
-          <DialogHeader>
+          <DialogHeader className="px-8 pt-6">
             <DialogTitle>Configure Workflow Inputs</DialogTitle>
             <DialogClose onClose={() => setShowModal(false)} />
           </DialogHeader>
@@ -267,6 +270,7 @@ export function WorkflowView({
   const [workflowResult, setWorkflowResult] = useState<string>("");
   const [workflowError, setWorkflowError] = useState<string>("");
   const accumulatedText = useRef<string>("");
+  const [detailsModalOpen, setDetailsModalOpen] = useState(false);
 
   // Panel resize state
   const [bottomPanelHeight, setBottomPanelHeight] = useState(() => {
@@ -287,6 +291,12 @@ export function WorkflowView({
         };
   });
 
+  // Layout direction state
+  const [layoutDirection, setLayoutDirection] = useState<"LR" | "TB">(() => {
+    const saved = localStorage.getItem("workflowLayoutDirection");
+    return (saved as "LR" | "TB") || "LR";
+  });
+
   const { selectExecutor, getExecutorData } = useWorkflowEventCorrelation(
     openAIEvents,
     isStreaming
@@ -296,6 +306,11 @@ export function WorkflowView({
   useEffect(() => {
     localStorage.setItem("workflowViewOptions", JSON.stringify(viewOptions));
   }, [viewOptions]);
+
+  // Save layout direction to localStorage
+  useEffect(() => {
+    localStorage.setItem("workflowLayoutDirection", layoutDirection);
+  }, [layoutDirection]);
 
   // View option handlers
   const toggleViewOption = (key: keyof typeof viewOptions) => {
@@ -467,7 +482,11 @@ export function WorkflowView({
               event_type?: string;
               data?: unknown;
             };
-            if (data.event_type === "WorkflowCompletedEvent" && data.data) {
+            if (
+              (data.event_type === "WorkflowCompletedEvent" ||
+                data.event_type === "WorkflowOutputEvent") &&
+              data.data
+            ) {
               setWorkflowResult(String(data.data));
             }
           }
@@ -517,54 +536,73 @@ export function WorkflowView({
 
   return (
     <div className="workflow-view flex flex-col h-full">
-      {/* Top Panel - Workflow Visualization */}
-      <div className="flex-1 min-h-0 p-4">
-        {/* Workflow Diagram Section */}
-        {workflowInfo?.workflow_dump && (
-          <div className="border border-border rounded bg-card shadow-sm h-full flex flex-col">
-            <div className="border-b border-border px-4 py-3 bg-muted rounded-t flex-shrink-0">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-medium text-foreground">
-                  Workflow Visualization
-                </h3>
-
-                {/* Smart Run Workflow CTA - Show for all states */}
-                {workflowInfo && (
-                  <div className="flex items-center gap-3">
-                    <RunWorkflowButton
-                      inputSchema={workflowInfo.input_schema}
-                      onRun={handleSendWorkflowData}
-                      isSubmitting={isStreaming}
-                      workflowState={
-                        isStreaming
-                          ? "running"
-                          : workflowError
-                          ? "error"
-                          : executorHistory.length > 0
-                          ? "completed"
-                          : "ready"
-                      }
-                      executorHistory={executorHistory}
-                      workflowError={workflowError}
-                    />
-                  </div>
-                )}
-
-                {/* Status is now handled by the RunWorkflowButton component */}
+      {/* Header */}
+      <div className="border-b pb-2 p-4 flex-shrink-0">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <h2 className="font-semibold text-sm truncate">
+              <div className="flex items-center gap-2">
+                <WorkflowIcon className="h-4 w-4 flex-shrink-0" />
+                <span className="truncate">
+                  {selectedWorkflow.name || selectedWorkflow.id}
+                </span>
               </div>
-            </div>
-            <div className="flex-1 min-h-0">
-              <WorkflowFlow
-                workflowDump={workflowInfo.workflow_dump}
-                events={openAIEvents}
-                isStreaming={isStreaming}
-                onNodeSelect={handleNodeSelect}
-                className="h-full"
-                viewOptions={viewOptions}
-                onToggleViewOption={toggleViewOption}
+            </h2>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setDetailsModalOpen(true)}
+              className="h-6 w-6 p-0 flex-shrink-0"
+              title="View workflow details"
+            >
+              <Info className="h-4 w-4" />
+            </Button>
+          </div>
+
+          {/* Run Workflow Controls */}
+          {workflowInfo && (
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-shrink-0">
+              <RunWorkflowButton
+                inputSchema={workflowInfo.input_schema}
+                onRun={handleSendWorkflowData}
+                isSubmitting={isStreaming}
+                workflowState={
+                  isStreaming
+                    ? "running"
+                    : workflowError
+                    ? "error"
+                    : executorHistory.length > 0
+                    ? "completed"
+                    : "ready"
+                }
+                executorHistory={executorHistory}
+                workflowError={workflowError}
               />
             </div>
-          </div>
+          )}
+        </div>
+
+        {selectedWorkflow.description && (
+          <p className="text-sm text-muted-foreground">
+            {selectedWorkflow.description}
+          </p>
+        )}
+      </div>
+
+      {/* Workflow Visualization */}
+      <div className="flex-1 min-h-0">
+        {workflowInfo?.workflow_dump && (
+          <WorkflowFlow
+            workflowDump={workflowInfo.workflow_dump}
+            events={openAIEvents}
+            isStreaming={isStreaming}
+            onNodeSelect={handleNodeSelect}
+            className="h-full"
+            viewOptions={viewOptions}
+            onToggleViewOption={toggleViewOption}
+            layoutDirection={layoutDirection}
+            onLayoutDirectionChange={setLayoutDirection}
+          />
         )}
       </div>
 
@@ -598,13 +636,17 @@ export function WorkflowView({
           executorHistory.length > 0 ||
           workflowResult ||
           workflowError ? (
-            <div className="h-full space-y-4">
+            <div className="h-full flex gap-4">
               {/* Current/Last Executor Panel */}
               {(selectedExecutor ||
                 activeExecutors.length > 0 ||
                 executorHistory.length > 0) && (
-                <div className="border border-border rounded bg-card shadow-sm">
-                  <div className="border-b border-border px-4 py-3 bg-muted rounded-t">
+                <div
+                  className={`border border-border rounded bg-card shadow-sm flex flex-col ${
+                    workflowResult || workflowError ? "flex-1" : "w-full"
+                  }`}
+                >
+                  <div className="border-b border-border px-4 py-3 bg-muted rounded-t flex-shrink-0">
                     <h4 className="text-sm font-medium text-foreground">
                       {selectedExecutor
                         ? `Executor: ${
@@ -615,14 +657,14 @@ export function WorkflowView({
                         : "Last Executor"}
                     </h4>
                   </div>
-                  <div className="p-4">
+                  <div className="p-4 overflow-auto flex-1">
                     {selectedExecutor ? (
                       <div className="space-y-3">
                         <div className="flex items-center gap-2">
                           <div
                             className={`w-3 h-3 rounded-full ${
                               selectedExecutor.state === "running"
-                                ? "bg-blue-500 dark:bg-blue-400 animate-pulse"
+                                ? "bg-[#643FB2] dark:bg-[#8B5CF6] animate-pulse"
                                 : selectedExecutor.state === "completed"
                                 ? "bg-green-500 dark:bg-green-400"
                                 : selectedExecutor.state === "failed"
@@ -754,7 +796,7 @@ export function WorkflowView({
                               <div
                                 className={`w-3 h-3 rounded-full ${
                                   isStreaming
-                                    ? "bg-blue-500 dark:bg-blue-400 animate-pulse"
+                                    ? "bg-[#643FB2] dark:bg-[#8B5CF6] animate-pulse"
                                     : historyItem?.status === "completed"
                                     ? "bg-green-500 dark:bg-green-400"
                                     : historyItem?.status === "error"
@@ -791,8 +833,8 @@ export function WorkflowView({
 
               {/* Enhanced Result Display */}
               {workflowResult && (
-                <div className="border-2 border-emerald-300 dark:border-emerald-600 rounded bg-emerald-50 dark:bg-emerald-950/50 shadow">
-                  <div className="border-b border-emerald-300 dark:border-emerald-600 px-4 py-3 bg-emerald-100 dark:bg-emerald-900/50 rounded-t">
+                <div className="border-2 border-emerald-300 dark:border-emerald-600 rounded bg-emerald-50 dark:bg-emerald-950/50 shadow flex-1 flex flex-col">
+                  <div className="border-b border-emerald-300 dark:border-emerald-600 px-4 py-3 bg-emerald-100 dark:bg-emerald-900/50 rounded-t flex-shrink-0">
                     <div className="flex items-center gap-3">
                       <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                       <h4 className="text-sm font-semibold text-emerald-800 dark:text-emerald-200">
@@ -800,7 +842,7 @@ export function WorkflowView({
                       </h4>
                     </div>
                   </div>
-                  <div className="p-4">
+                  <div className="p-4 overflow-auto flex-1">
                     <div className="text-emerald-700 dark:text-emerald-300 whitespace-pre-wrap break-words text-sm">
                       {workflowResult}
                     </div>
@@ -810,8 +852,8 @@ export function WorkflowView({
 
               {/* Enhanced Error Display */}
               {workflowError && (
-                <div className="border-2 border-destructive/70 rounded bg-destructive/5 shadow">
-                  <div className="border-b border-destructive/70 px-4 py-3 bg-destructive/10 rounded-t">
+                <div className="border-2 border-destructive/70 rounded bg-destructive/5 shadow flex-1 flex flex-col">
+                  <div className="border-b border-destructive/70 px-4 py-3 bg-destructive/10 rounded-t flex-shrink-0">
                     <div className="flex items-center gap-3">
                       <AlertCircle className="w-4 h-4 text-destructive" />
                       <h4 className="text-sm font-semibold text-destructive">
@@ -819,7 +861,7 @@ export function WorkflowView({
                       </h4>
                     </div>
                   </div>
-                  <div className="p-4">
+                  <div className="p-4 overflow-auto flex-1">
                     <div className="text-destructive whitespace-pre-wrap break-words text-sm">
                       {workflowError}
                     </div>
@@ -834,6 +876,13 @@ export function WorkflowView({
           )}
         </div>
       </div>
+
+      {/* Workflow Details Modal */}
+      <WorkflowDetailsModal
+        workflow={selectedWorkflow}
+        open={detailsModalOpen}
+        onOpenChange={setDetailsModalOpen}
+      />
     </div>
   );
 }

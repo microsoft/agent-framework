@@ -2,11 +2,12 @@
 
 """FastAPI server implementation."""
 
+import inspect
 import json
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, get_origin
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,9 +20,48 @@ from ._mapper import MessageMapper
 from .models import AgentFrameworkRequest, OpenAIError
 from .models._discovery_models import DiscoveryResponse, EntityInfo
 
-# Removed ExecutionEngine import - using direct executor approach
-
 logger = logging.getLogger(__name__)
+
+
+def _extract_executor_message_types(executor: Any) -> list[Any]:
+    """Return declared input types for the given executor."""
+    message_types: list[Any] = []
+
+    try:
+        input_types = getattr(executor, "input_types", None)
+    except Exception as exc:  # pragma: no cover - defensive logging path
+        logger.debug(f"Failed to access executor input_types: {exc}")
+    else:
+        if input_types:
+            message_types = list(input_types)
+
+    if not message_types and hasattr(executor, "_handlers"):
+        try:
+            handlers = executor._handlers
+            if isinstance(handlers, dict):
+                message_types = list(handlers.keys())
+        except Exception as exc:  # pragma: no cover - defensive logging path
+            logger.debug(f"Failed to read executor handlers: {exc}")
+
+    return message_types
+
+
+def _select_primary_input_type(message_types: list[Any]) -> Any | None:
+    """Choose the most user-friendly input type for rendering workflow inputs."""
+    if not message_types:
+        return None
+
+    preferred = (str, dict)
+
+    for candidate in preferred:
+        for message_type in message_types:
+            if message_type is candidate:
+                return candidate
+            origin = get_origin(message_type)
+            if origin is candidate:
+                return candidate
+
+    return message_types[0]
 
 
 class DevServer:
@@ -72,7 +112,7 @@ class DevServer:
                 discovery = self.executor.entity_discovery
                 for entity in self._pending_entities:
                     try:
-                        entity_info = await discovery.create_entity_info_from_object(entity)
+                        entity_info = await discovery.create_entity_info_from_object(entity, source="in-memory")
                         discovery.register_entity(entity_info.id, entity_info, entity)
                         logger.info(f"Registered in-memory entity: {entity_info.id}")
                     except Exception as e:
@@ -85,6 +125,33 @@ class DevServer:
 
         return self.executor
 
+    async def _cleanup_entities(self) -> None:
+        """Cleanup entity resources (close clients, credentials, etc.)."""
+        if not self.executor:
+            return
+
+        logger.info("Cleaning up entity resources...")
+        entities = self.executor.entity_discovery.list_entities()
+        closed_count = 0
+
+        for entity_info in entities:
+            try:
+                entity_obj = self.executor.entity_discovery.get_entity_object(entity_info.id)
+                if entity_obj and hasattr(entity_obj, "chat_client"):
+                    client = entity_obj.chat_client
+                    if hasattr(client, "close") and callable(client.close):
+                        if inspect.iscoroutinefunction(client.close):
+                            await client.close()
+                        else:
+                            client.close()
+                        closed_count += 1
+                        logger.debug(f"Closed client for entity: {entity_info.id}")
+            except Exception as e:
+                logger.warning(f"Error closing entity {entity_info.id}: {e}")
+
+        if closed_count > 0:
+            logger.info(f"Closed {closed_count} entity client(s)")
+
     def create_app(self) -> FastAPI:
         """Create the FastAPI application."""
 
@@ -96,6 +163,10 @@ class DevServer:
             yield
             # Shutdown
             logger.info("Shutting down Agent Framework Server")
+
+            # Cleanup entity resources (e.g., close credentials, clients)
+            if self.executor:
+                await self._cleanup_entities()
 
         app = FastAPI(
             title="Agent Framework Server",
@@ -125,7 +196,8 @@ class DevServer:
         async def health_check() -> dict[str, Any]:
             """Health check endpoint."""
             executor = await self._ensure_executor()
-            entities = await executor.discover_entities()
+            # Use list_entities() to avoid re-discovering and re-registering entities
+            entities = executor.entity_discovery.list_entities()
 
             return {"status": "healthy", "entities_count": len(entities), "framework": "agent_framework"}
 
@@ -191,24 +263,30 @@ class DevServer:
                         start_executor_id = ""
 
                         try:
+                            from ._utils import generate_input_schema
+
                             start_executor = entity_obj.get_start_executor()
-                            if start_executor and hasattr(start_executor, "_handlers"):
-                                message_types = list(start_executor._handlers.keys())
-                                if message_types:
-                                    input_type = message_types[0]
-                                    input_type_name = getattr(input_type, "__name__", str(input_type))
-
-                                    # Basic schema generation for common types
-                                    if input_type is str:
-                                        input_schema = {"type": "string"}
-                                    elif input_type is dict:
-                                        input_schema = {"type": "object"}
-                                    elif hasattr(input_type, "model_json_schema"):
-                                        input_schema = input_type.model_json_schema()
-
-                                    start_executor_id = getattr(start_executor, "executor_id", "")
                         except Exception as e:
                             logger.debug(f"Could not extract input info for workflow {entity_id}: {e}")
+                        else:
+                            if start_executor:
+                                start_executor_id = getattr(start_executor, "executor_id", "") or getattr(
+                                    start_executor, "id", ""
+                                )
+
+                                message_types = _extract_executor_message_types(start_executor)
+                                input_type = _select_primary_input_type(message_types)
+
+                                if input_type:
+                                    input_type_name = getattr(input_type, "__name__", str(input_type))
+
+                                    # Generate schema using comprehensive schema generation
+                                    input_schema = generate_input_schema(input_type)
+
+                        if not input_schema:
+                            input_schema = {"type": "string"}
+                            if input_type_name == "Unknown":
+                                input_type_name = "string"
 
                         # Get executor list
                         executor_list = []
@@ -235,11 +313,75 @@ class DevServer:
                 logger.error(f"Error getting entity info for {entity_id}: {e}")
                 raise HTTPException(status_code=500, detail=f"Failed to get entity info: {e!s}") from e
 
+        @app.post("/v1/entities/add")
+        async def add_entity(request: dict[str, Any]) -> dict[str, Any]:
+            """Add entity from URL."""
+            try:
+                url = request.get("url")
+                metadata = request.get("metadata", {})
+
+                if not url:
+                    raise HTTPException(status_code=400, detail="URL is required")
+
+                logger.info(f"Attempting to add entity from URL: {url}")
+                executor = await self._ensure_executor()
+                entity_info, error_msg = await executor.entity_discovery.fetch_remote_entity(url, metadata)
+
+                if not entity_info:
+                    # Sanitize error message - only return safe, user-friendly errors
+                    logger.error(f"Failed to fetch or validate entity from {url}: {error_msg}")
+                    safe_error = error_msg if error_msg else "Failed to fetch or validate entity"
+                    raise HTTPException(status_code=400, detail=safe_error)
+
+                logger.info(f"Successfully added entity: {entity_info.id}")
+                return {"success": True, "entity": entity_info.model_dump()}
+
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Error adding entity: {e}", exc_info=True)
+                # Don't expose internal error details to client
+                raise HTTPException(
+                    status_code=500, detail="An unexpected error occurred while adding the entity"
+                ) from e
+
+        @app.delete("/v1/entities/{entity_id}")
+        async def remove_entity(entity_id: str) -> dict[str, Any]:
+            """Remove entity by ID."""
+            try:
+                executor = await self._ensure_executor()
+
+                # Cleanup entity resources before removal
+                try:
+                    entity_obj = executor.entity_discovery.get_entity_object(entity_id)
+                    if entity_obj and hasattr(entity_obj, "chat_client"):
+                        client = entity_obj.chat_client
+                        if hasattr(client, "close") and callable(client.close):
+                            if inspect.iscoroutinefunction(client.close):
+                                await client.close()
+                            else:
+                                client.close()
+                            logger.info(f"Closed client for entity: {entity_id}")
+                except Exception as e:
+                    logger.warning(f"Error closing entity {entity_id} during removal: {e}")
+
+                # Remove entity from registry
+                success = executor.entity_discovery.remove_remote_entity(entity_id)
+
+                if success:
+                    return {"success": True}
+                raise HTTPException(status_code=404, detail="Entity not found or cannot be removed")
+
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Error removing entity {entity_id}: {e}")
+                raise HTTPException(status_code=500, detail=f"Failed to remove entity: {e!s}") from e
+
         @app.post("/v1/responses")
         async def create_response(request: AgentFrameworkRequest, raw_request: Request) -> Any:
             """OpenAI Responses API endpoint."""
             try:
-                # Debug: log the incoming request
                 raw_body = await raw_request.body()
                 logger.info(f"Raw request body: {raw_body.decode()}")
                 logger.info(f"Parsed request: model={request.model}, extra_body={request.extra_body}")
@@ -385,15 +527,21 @@ class DevServer:
         try:
             # Direct call to executor - simple and clean
             async for event in executor.execute_streaming(request):
-                if hasattr(event, "to_json") and callable(getattr(event, "to_json", None)):
-                    payload = event.to_json()  # type: ignore[attr-defined]
-                elif hasattr(event, "model_dump_json"):
+                # IMPORTANT: Check model_dump_json FIRST because to_json() can have newlines (pretty-printing)
+                # which breaks SSE format. model_dump_json() returns single-line JSON.
+                if hasattr(event, "model_dump_json"):
                     payload = event.model_dump_json()  # type: ignore[attr-defined]
+                elif hasattr(event, "to_json") and callable(getattr(event, "to_json", None)):
+                    payload = event.to_json()  # type: ignore[attr-defined]
+                    # Strip newlines from pretty-printed JSON for SSE compatibility
+                    payload = payload.replace("\n", "").replace("\r", "")
+                elif isinstance(event, dict):
+                    # Handle plain dict events (e.g., error events from executor)
+                    payload = json.dumps(event)
+                elif hasattr(event, "to_dict") and callable(getattr(event, "to_dict", None)):
+                    payload = json.dumps(event.to_dict())  # type: ignore[attr-defined]
                 else:
-                    if hasattr(event, "to_dict") and callable(getattr(event, "to_dict", None)):
-                        payload = json.dumps(event.to_dict())  # type: ignore[attr-defined]
-                    else:
-                        payload = json.dumps(str(event))
+                    payload = json.dumps(str(event))
                 yield f"data: {payload}\n\n"
 
             # Send final done event
@@ -402,7 +550,7 @@ class DevServer:
         except Exception as e:
             logger.error(f"Error in streaming execution: {e}")
             error_event = {"id": "error", "object": "error", "error": {"message": str(e), "type": "execution_error"}}
-            yield f"data: {error_event}\n\n"
+            yield f"data: {json.dumps(error_event)}\n\n"
 
     def _mount_ui(self, app: FastAPI) -> None:
         """Mount the UI as static files."""

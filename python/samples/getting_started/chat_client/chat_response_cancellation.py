@@ -4,6 +4,13 @@ import asyncio
 
 from agent_framework.openai import OpenAIChatClient
 
+"""
+Chat Response Cancellation Example
+
+Demonstrates proper cancellation of streaming chat responses during execution.
+Shows asyncio task cancellation and resource cleanup techniques.
+"""
+
 
 async def main() -> None:
     """

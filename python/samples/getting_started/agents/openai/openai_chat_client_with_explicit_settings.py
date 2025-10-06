@@ -8,6 +8,13 @@ from typing import Annotated
 from agent_framework.openai import OpenAIChatClient
 from pydantic import Field
 
+"""
+OpenAI Chat Client with Explicit Settings Example
+
+This sample demonstrates creating OpenAI Chat Client with explicit configuration
+settings rather than relying on environment variable defaults.
+"""
+
 
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],

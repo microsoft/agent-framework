@@ -1,7 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Threading;
-using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Agents.AI.Workflows.Reflection;
 
@@ -13,18 +11,18 @@ internal static class WorkflowHelper
     /// Get a workflow that plays a number guessing game with human-in-the-loop interaction.
     /// An input port allows the external world to provide inputs to the workflow upon requests.
     /// </summary>
-    internal static ValueTask<Workflow<NumberSignal>> GetWorkflowAsync()
+    internal static ValueTask<Workflow<SignalWithNumber>> GetWorkflowAsync()
     {
         // Create the executors
-        InputPort numberInputPort = InputPort.Create<SignalWithNumber, int>("GuessNumber");
+        RequestPort numberRequest = RequestPort.Create<SignalWithNumber, int>("GuessNumber");
         JudgeExecutor judgeExecutor = new(42);
 
         // Build the workflow by connecting executors in a loop
-        return new WorkflowBuilder(numberInputPort)
-            .AddEdge(numberInputPort, judgeExecutor)
-            .AddEdge(judgeExecutor, numberInputPort)
+        return new WorkflowBuilder(numberRequest)
+            .AddEdge(numberRequest, judgeExecutor)
+            .AddEdge(judgeExecutor, numberRequest)
             .WithOutputFrom(judgeExecutor)
-            .BuildAsync<NumberSignal>();
+            .BuildAsync<SignalWithNumber>();
     }
 }
 

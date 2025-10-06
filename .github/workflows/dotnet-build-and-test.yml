@@ -8,17 +8,11 @@ name: dotnet-build-and-test
 on:
   workflow_dispatch:
   pull_request:
-    branches: ["main", "feature*"]
-    paths:
-      - dotnet/**
-      - '.github/workflows/dotnet-build-and-test.yml'
+    branches: ["main"]
   merge_group:
     branches: ["main"]
   push:
-    branches: ["main", "feature*"]
-    paths:
-      - dotnet/**
-      - '.github/workflows/dotnet-build-and-test.yml'
+    branches: ["main"]
   schedule:
     - cron: "0 0 * * *" # Run at midnight UTC daily
 
@@ -34,7 +28,33 @@ permissions:
   id-token: "write"
 
 jobs:
+  paths-filter:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      dotnetChanges: ${{ steps.filter.outputs.dotnet}}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            dotnet:
+              - 'dotnet/**'
+      # run only if 'dotnet' files were changed
+      - name: dotnet tests
+        if: steps.filter.outputs.dotnet == 'true'
+        run: echo "Dotnet file"
+      # run only if not 'dotnet' files were changed
+      - name: not dotnet tests
+        if: steps.filter.outputs.dotnet != 'true'
+        run: echo "NOT dotnet file"
+
   dotnet-build-and-test:
+    needs: paths-filter
+    if: needs.paths-filter.outputs.dotnetChanges == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -54,6 +74,8 @@ jobs:
             .
             .github
             dotnet
+            workflow-samples
+
       - name: Setup dotnet
         uses: actions/setup-dotnet@v5.0.0
         with:
@@ -136,6 +158,10 @@ jobs:
           # Azure AI Foundry
           AzureAI__Endpoint: ${{ secrets.AZUREAI__ENDPOINT }}
           AzureAI__DeploymentName: ${{ vars.AZUREAI__DEPLOYMENTNAME }}
+          AzureAI__BingConnectionId: ${{ vars.AZUREAI__BINGCONECTIONID }}
+          FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+          FOUNDRY_MODEL_DEPLOYMENT_NAME: ${{ vars.FOUNDRY_MODEL_DEPLOYMENT_NAME }}
+          FOUNDRY_CONNECTION_GROUNDING_TOOL: ${{ vars.FOUNDRY_CONNECTION_GROUNDING_TOOL }}
 
       # Generate test reports and check coverage
       - name: Generate test reports

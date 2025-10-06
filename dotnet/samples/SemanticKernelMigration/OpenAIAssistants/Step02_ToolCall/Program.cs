@@ -1,7 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-#pragma warning disable OPENAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
-
 using System.ComponentModel;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
@@ -12,7 +10,7 @@ using OpenAI;
 using OpenAI.Assistants;
 
 var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
-var modelId = System.Environment.GetEnvironmentVariable("OPENAI_MODELID") ?? "gpt-4o";
+var model = System.Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o";
 var userInput = "What is the weather like in Amsterdam?";
 
 [KernelFunction]
@@ -32,7 +30,7 @@ async Task SKAgentAsync()
     var builder = Kernel.CreateBuilder();
     var assistantsClient = new AssistantClient(apiKey);
 
-    Assistant assistant = await assistantsClient.CreateAssistantAsync(modelId,
+    Assistant assistant = await assistantsClient.CreateAssistantAsync(model,
         instructions: "You are a helpful assistant");
 
     OpenAIAssistantAgent agent = new(assistant, assistantsClient)
@@ -73,7 +71,7 @@ async Task AFAgentAsync()
 
     var assistantClient = new AssistantClient(apiKey);
 
-    var agent = await assistantClient.CreateAIAgentAsync(modelId,
+    var agent = await assistantClient.CreateAIAgentAsync(model,
         instructions: "You are a helpful assistant",
         tools: [AIFunctionFactory.Create(GetWeather)]);
 

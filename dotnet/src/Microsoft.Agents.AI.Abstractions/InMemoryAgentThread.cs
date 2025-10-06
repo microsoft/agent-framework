@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -10,36 +11,67 @@ using Microsoft.Extensions.AI;
 namespace Microsoft.Agents.AI;
 
 /// <summary>
-/// A base class for agent threads that operate entirely in memory without external storage.
+/// Provides an abstract base class for agent threads that maintain all conversation state in local memory.
 /// </summary>
+/// <remarks>
+/// <para>
+/// <see cref="InMemoryAgentThread"/> is designed for scenarios where conversation state should be stored locally
+/// rather than in external services or databases. This approach provides high performance and simplicity while
+/// maintaining full control over the conversation data.
+/// </para>
+/// <para>
+/// In-memory threads do not persist conversation data across application restarts
+/// unless explicitly serialized and restored.
+/// </para>
+/// </remarks>
+[DebuggerDisplay("{DebuggerDisplay,nq}")]
 public abstract class InMemoryAgentThread : AgentThread
 {
     /// <summary>
     /// Initializes a new instance of the <see cref="InMemoryAgentThread"/> class.
     /// </summary>
-    /// <param name="messageStore">An optional <see cref="InMemoryChatMessageStore"/> to use for storing chat messages. If null, a new instance will be created.</param>
+    /// <param name="messageStore">
+    /// An optional <see cref="InMemoryChatMessageStore"/> instance to use for storing chat messages.
+    /// If <see langword="null"/>, a new empty message store will be created.
+    /// </param>
+    /// <remarks>
+    /// This constructor allows sharing of message stores between threads or providing pre-configured
+    /// message stores with specific reduction or processing logic.
+    /// </remarks>
     protected InMemoryAgentThread(InMemoryChatMessageStore? messageStore = null)
     {
         this.MessageStore = messageStore ?? [];
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="InMemoryAgentThread"/> class with the specified initial messages.
+    /// Initializes a new instance of the <see cref="InMemoryAgentThread"/> class.
     /// </summary>
-    /// <param name="messages">The messages to initialize the thread with.</param>
+    /// <param name="messages">The initial messages to populate the conversation history.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="messages"/> is <see langword="null"/>.</exception>
+    /// <remarks>
+    /// This constructor is useful for initializing threads with existing conversation history or
+    /// for migrating conversations from other storage systems.
+    /// </remarks>
     protected InMemoryAgentThread(IEnumerable<ChatMessage> messages)
     {
         this.MessageStore = [.. messages];
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="InMemoryAgentThread"/> class from serialized state.
+    /// Initializes a new instance of the <see cref="InMemoryAgentThread"/> class from previously serialized state.
     /// </summary>
     /// <param name="serializedThreadState">A <see cref="JsonElement"/> representing the serialized state of the thread.</param>
     /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
-    /// <param name="messageStoreFactory">A factory function to create the <see cref="InMemoryChatMessageStore"/> from its serialized state.</param>
+    /// <param name="messageStoreFactory">
+    /// Optional factory function to create the <see cref="InMemoryChatMessageStore"/> from its serialized state.
+    /// If not provided, a default factory will be used that creates a basic in-memory store.
+    /// </param>
     /// <exception cref="ArgumentException">The <paramref name="serializedThreadState"/> is not a JSON object.</exception>
     /// <exception cref="JsonException">The <paramref name="serializedThreadState"/> is invalid or cannot be deserialized to the expected type.</exception>
+    /// <remarks>
+    /// This constructor enables restoration of in-memory threads from previously saved state, allowing
+    /// conversations to be resumed across application restarts or migrated between different instances.
+    /// </remarks>
     protected InMemoryAgentThread(
         JsonElement serializedThreadState,
         JsonSerializerOptions? jsonSerializerOptions = null,
@@ -87,6 +119,9 @@ public abstract class InMemoryAgentThread : AgentThread
     /// <inheritdoc />
     protected internal override Task MessagesReceivedAsync(IEnumerable<ChatMessage> newMessages, CancellationToken cancellationToken = default)
         => this.MessageStore.AddMessagesAsync(newMessages, cancellationToken);
+
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    private string DebuggerDisplay => $"Count = {this.MessageStore.Count}";
 
     internal sealed class InMemoryAgentThreadState
     {

@@ -8,6 +8,13 @@ from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from pydantic import Field
 
+"""
+Azure OpenAI Responses Client Basic Example
+
+This sample demonstrates basic usage of AzureOpenAIResponsesClient for structured
+response generation, showing both streaming and non-streaming responses.
+"""
+
 
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],

@@ -4,7 +4,7 @@
  */
 
 export type AgentType = "agent" | "workflow";
-export type AgentSource = "directory" | "in_memory";
+export type AgentSource = "directory" | "in_memory" | "remote_gallery";
 export type StreamEventType =
   | "agent_run_update"
   | "workflow_event"
@@ -13,6 +13,13 @@ export type StreamEventType =
   | "error"
   | "debug_trace"
   | "trace_span";
+
+export interface EnvVarRequirement {
+  name: string;
+  description: string;
+  required: boolean;
+  example?: string;
+}
 
 export interface AgentInfo {
   id: string;
@@ -23,6 +30,13 @@ export interface AgentInfo {
   tools: string[];
   has_env: boolean;
   module_path?: string;
+  required_env_vars?: EnvVarRequirement[];
+  // Agent-specific fields
+  instructions?: string;
+  model?: string;
+  chat_client_type?: string;
+  context_providers?: string[];
+  middleware?: string[];
 }
 
 // JSON Schema types for workflow input
@@ -125,6 +139,11 @@ export interface ChatMessage {
   author_name?: string;
   message_id?: string;
   error?: boolean; // Flag to indicate this is an error message
+  usage?: {
+    total_tokens: number;
+    prompt_tokens: number;
+    completion_tokens: number;
+  };
 }
 
 // UI State types

@@ -5,16 +5,19 @@
 
 import type {
   AgentInfo,
+  AgentSource,
   HealthResponse,
   RunAgentRequest,
   RunWorkflowRequest,
   ThreadInfo,
+  WorkflowInfo,
 } from "@/types";
 import type { AgentFrameworkRequest } from "@/types/agent-framework";
 import type { ExtendedResponseStreamEvent } from "@/types/openai";
 
-// Backend API response types to match Python Pydantic models
-interface EntityInfo {
+// Backend API response type - polymorphic entity that can be agent or workflow
+// This matches the Python Pydantic EntityInfo model which has all fields optional
+interface BackendEntityInfo {
   id: string;
   type: "agent" | "workflow";
   name: string;
@@ -22,6 +25,15 @@ interface EntityInfo {
   framework: string;
   tools?: (string | Record<string, unknown>)[];
   metadata: Record<string, unknown>;
+  source?: string;
+  original_url?: string;
+  // Agent-specific fields (present when type === "agent")
+  instructions?: string;
+  model?: string;
+  chat_client_type?: string;
+  context_providers?: string[];
+  middleware?: string[];
+  // Workflow-specific fields (present when type === "workflow")
   executors?: string[];
   workflow_dump?: Record<string, unknown>;
   input_schema?: Record<string, unknown>;
@@ -30,7 +42,7 @@ interface EntityInfo {
 }
 
 interface DiscoveryResponse {
-  entities: EntityInfo[];
+  entities: BackendEntityInfo[];
 }
 
 interface ThreadApiResponse {
@@ -52,16 +64,30 @@ interface ThreadApiObject {
   created_at?: string;
 }
 
-const API_BASE_URL =
+const DEFAULT_API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL !== undefined
     ? import.meta.env.VITE_API_BASE_URL
     : "http://localhost:8080";
 
+// Get backend URL from localStorage or default
+function getBackendUrl(): string {
+  return localStorage.getItem("devui_backend_url") || DEFAULT_API_BASE_URL;
+}
+
 class ApiClient {
   private baseUrl: string;
 
-  constructor(baseUrl: string = API_BASE_URL) {
-    this.baseUrl = baseUrl;
+  constructor(baseUrl?: string) {
+    this.baseUrl = baseUrl || getBackendUrl();
+  }
+
+  // Allow updating the base URL at runtime
+  setBaseUrl(url: string) {
+    this.baseUrl = url;
+  }
+
+  getBaseUrl(): string {
+    return this.baseUrl;
   }
 
   private async request<T>(
@@ -79,9 +105,17 @@ class ApiClient {
     });
 
     if (!response.ok) {
-      throw new Error(
-        `API request failed: ${response.status} ${response.statusText}`
-      );
+      // Try to extract error message from response body
+      let errorMessage = `API request failed: ${response.status} ${response.statusText}`;
+      try {
+        const errorData = await response.json();
+        if (errorData.detail) {
+          errorMessage = errorData.detail;
+        }
+      } catch {
+        // If parsing fails, use default message
+      }
+      throw new Error(errorMessage);
     }
 
     return response.json();
@@ -94,15 +128,15 @@ class ApiClient {
 
   // Entity discovery using new unified endpoint
   async getEntities(): Promise<{
-    entities: (AgentInfo | import("@/types").WorkflowInfo)[];
+    entities: (AgentInfo | WorkflowInfo)[];
     agents: AgentInfo[];
-    workflows: import("@/types").WorkflowInfo[];
+    workflows: WorkflowInfo[];
   }> {
     const response = await this.request<DiscoveryResponse>("/v1/entities");
 
     // Separate agents and workflows
     const agents: AgentInfo[] = [];
-    const workflows: import("@/types").WorkflowInfo[] = [];
+    const workflows: WorkflowInfo[] = [];
 
     response.entities.forEach((entity) => {
       if (entity.type === "agent") {
@@ -111,7 +145,7 @@ class ApiClient {
           name: entity.name,
           description: entity.description,
           type: "agent",
-          source: "directory", // Default source
+          source: (entity.source as AgentSource) || "directory",
           tools: (entity.tools || []).map((tool) =>
             typeof tool === "string" ? tool : JSON.stringify(tool)
           ),
@@ -120,6 +154,12 @@ class ApiClient {
             typeof entity.metadata?.module_path === "string"
               ? entity.metadata.module_path
               : undefined,
+          // Agent-specific fields
+          instructions: entity.instructions,
+          model: entity.model,
+          chat_client_type: entity.chat_client_type,
+          context_providers: entity.context_providers,
+          middleware: entity.middleware,
         });
       } else if (entity.type === "workflow") {
         const firstTool = entity.tools?.[0];
@@ -130,7 +170,7 @@ class ApiClient {
           name: entity.name,
           description: entity.description,
           type: "workflow",
-          source: "directory",
+          source: (entity.source as AgentSource) || "directory",
           executors: (entity.tools || []).map((tool) =>
             typeof tool === "string" ? tool : JSON.stringify(tool)
           ),
@@ -158,7 +198,7 @@ class ApiClient {
     return agents;
   }
 
-  async getWorkflows(): Promise<import("@/types").WorkflowInfo[]> {
+  async getWorkflows(): Promise<WorkflowInfo[]> {
     const { workflows } = await this.getEntities();
     return workflows;
   }
@@ -439,6 +479,31 @@ class ApiClient {
       method: "POST",
       body: JSON.stringify(request),
     });
+  }
+
+  // Add entity from URL
+  async addEntity(url: string, metadata?: Record<string, unknown>): Promise<BackendEntityInfo> {
+    const response = await this.request<{ success: boolean; entity: BackendEntityInfo }>("/v1/entities/add", {
+      method: "POST",
+      body: JSON.stringify({ url, metadata }),
+    });
+
+    if (!response.success || !response.entity) {
+      throw new Error("Failed to add entity");
+    }
+
+    return response.entity;
+  }
+
+  // Remove entity by ID
+  async removeEntity(entityId: string): Promise<void> {
+    const response = await this.request<{ success: boolean }>(`/v1/entities/${entityId}`, {
+      method: "DELETE",
+    });
+
+    if (!response.success) {
+      throw new Error("Failed to remove entity");
+    }
   }
 }
 

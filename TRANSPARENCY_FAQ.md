@@ -1,4 +1,6 @@
-# **What is Microsoft Agent Framework?**
+# Responsible AI Transparency FAQs
+
+**What is Microsoft Agent Framework?**
 
 Microsoft Agent Framework is a comprehensive multi-language (C#/.NET and Python) framework for building, orchestrating, and deploying AI agents and multi-agent workflows. The system takes user instructions and conversation inputs and produces intelligent responses through AI agents that can integrate with various LLM providers (OpenAI, Azure OpenAI, Azure AI Foundry). It provides both simple chat agents and complex multi-agent workflows with graph-based orchestration.
 
@@ -95,7 +97,7 @@ Microsoft Agent Framework relies on existing LLMs. Using the framework retains c
 The framework supports multiple external service types: 
 
 - **Native Functions**: Custom Python/C# functions that agents can invoke
-- **A2A Integration**: Agent-to-agent communication and coordination
+- **A2A (Agent2Agent)Integration**: Agent-to-agent communication and coordination
 - **Model Context Protocol (MCP)**: External tools and data sources through MCP servers
 - **Tools & External Capabilities**: Agent-invokable external services
 
@@ -108,7 +110,7 @@ Microsoft Agent Framework is an open-source framework that allows integration wi
 **Data Access by Service Type**:
 
 - **Native Functions**: Custom functions you develop have access to whatever data you explicitly pass to them as parameters
-- **A2A (Agent-to-Agent)**: External agents can access conversation history, messages, and any data you configure to share through the communication interface
+- **A2A (Agent2Agent)**: External agents can access conversation history, messages, and any data you configure to share through the communication interface
 - **Model Context Protocol (MCP) Servers**: External MCP servers can access data according to the specific MCP server implementation and your configuration
 - **External Tools**: Third-party tools and APIs have access to data you explicitly send to them through function calls
 
