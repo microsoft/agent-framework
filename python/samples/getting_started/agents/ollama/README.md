@@ -21,6 +21,9 @@ The examples use environment variables for configuration:
 ### Environment Variables
 
 Set the following environment variables before running the examples:
+- `OLLAMA_API_KEY`: Random string for api key
+  - Example: `export OLLAMA_API_KEY="ollama"`
+  - It is required but unused.
 
 - `OLLAMA_ENDPOINT`: The base URL for your Ollama server
   - Example: `export OLLAMA_ENDPOINT="http://localhost:11434/v1/"`
