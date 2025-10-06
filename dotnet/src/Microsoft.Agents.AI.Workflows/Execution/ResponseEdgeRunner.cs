@@ -8,15 +8,15 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows.Execution;
 
-internal sealed class InputEdgeRunner(IRunnerContext runContext, string sinkId)
+internal sealed class ResponseEdgeRunner(IRunnerContext runContext, string sinkId)
     : EdgeRunner<string>(runContext, sinkId)
 {
-    public static InputEdgeRunner ForPort(IRunnerContext runContext, InputPort port)
+    public static ResponseEdgeRunner ForPort(IRunnerContext runContext, RequestPort port)
     {
         Throw.IfNull(port);
 
-        // The port is an input port, so we can use the port's ID as the sink ID.
-        return new InputEdgeRunner(runContext, port.Id);
+        // The port is an request port, so we can use the port's ID as the sink ID.
+        return new ResponseEdgeRunner(runContext, port.Id);
     }
 
     protected internal override async ValueTask<DeliveryMapping?> ChaseEdgeAsync(MessageEnvelope envelope, IStepTracer? stepTracer)
@@ -25,7 +25,7 @@ internal sealed class InputEdgeRunner(IRunnerContext runContext, string sinkId)
 
         using var activity = s_activitySource.StartActivity(ActivityNames.EdgeGroupProcess);
         activity?
-            .SetTag(Tags.EdgeGroupType, nameof(InputEdgeRunner))
+            .SetTag(Tags.EdgeGroupType, nameof(ResponseEdgeRunner))
             .SetTag(Tags.MessageSourceId, envelope.SourceId)
             .SetTag(Tags.MessageTargetId, this.EdgeData);
 

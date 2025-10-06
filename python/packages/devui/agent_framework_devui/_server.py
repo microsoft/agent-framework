@@ -263,6 +263,8 @@ class DevServer:
                         start_executor_id = ""
 
                         try:
+                            from ._utils import generate_input_schema
+
                             start_executor = entity_obj.get_start_executor()
                         except Exception as e:
                             logger.debug(f"Could not extract input info for workflow {entity_id}: {e}")
@@ -278,17 +280,8 @@ class DevServer:
                                 if input_type:
                                     input_type_name = getattr(input_type, "__name__", str(input_type))
 
-                                    if input_type is str:
-                                        input_schema = {"type": "string"}
-                                    elif input_type is dict:
-                                        input_schema = {"type": "object"}
-                                    elif hasattr(input_type, "model_json_schema"):
-                                        try:
-                                            input_schema = input_type.model_json_schema()
-                                        except Exception as exc:  # pragma: no cover - defensive path
-                                            logger.debug(f"model_json_schema() failed for workflow {entity_id}: {exc}")
-                                    elif hasattr(input_type, "__annotations__"):
-                                        input_schema = {"type": "object"}
+                                    # Generate schema using comprehensive schema generation
+                                    input_schema = generate_input_schema(input_type)
 
                         if not input_schema:
                             input_schema = {"type": "string"}

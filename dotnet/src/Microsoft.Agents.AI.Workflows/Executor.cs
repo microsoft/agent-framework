@@ -24,8 +24,6 @@ public abstract class Executor : IIdentified
     /// </summary>
     public string Id { get; }
 
-    private readonly ExecutorOptions _options;
-
     private static readonly string s_namespace = typeof(Executor).Namespace!;
     private static readonly ActivitySource s_activitySource = new(s_namespace);
 
@@ -37,8 +35,13 @@ public abstract class Executor : IIdentified
     protected Executor(string id, ExecutorOptions? options = null)
     {
         this.Id = id;
-        this._options = options ?? ExecutorOptions.Default;
+        this.Options = options ?? ExecutorOptions.Default;
     }
+
+    /// <summary>
+    /// Gets the configuration options for the executor.
+    /// </summary>
+    protected ExecutorOptions Options { get; }
 
     /// <summary>
     /// Override this method to register handlers for the executor.
@@ -57,7 +60,7 @@ public abstract class Executor : IIdentified
     /// <returns></returns>
     protected virtual ISet<Type> ConfigureYieldTypes()
     {
-        if (this._options.AutoYieldOutputHandlerResultObject)
+        if (this.Options.AutoYieldOutputHandlerResultObject)
         {
             return this.Router.DefaultOutputTypes;
         }
@@ -132,11 +135,11 @@ public abstract class Executor : IIdentified
         }
 
         // If we had a real return type, raise it as a SendMessage; TODO: Should we have a way to disable this behaviour?
-        if (result.Result is not null && this._options.AutoSendMessageHandlerResultObject)
+        if (result.Result is not null && this.Options.AutoSendMessageHandlerResultObject)
         {
             await context.SendMessageAsync(result.Result).ConfigureAwait(false);
         }
-        if (result.Result is not null && this._options.AutoYieldOutputHandlerResultObject)
+        if (result.Result is not null && this.Options.AutoYieldOutputHandlerResultObject)
         {
             await context.YieldOutputAsync(result.Result).ConfigureAwait(false);
         }

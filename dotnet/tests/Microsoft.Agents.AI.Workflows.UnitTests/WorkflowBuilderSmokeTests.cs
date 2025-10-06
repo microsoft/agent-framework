@@ -81,4 +81,35 @@ public partial class WorkflowBuilderSmokeTests
         workflow.Registrations.Should().ContainKey("start");
         workflow.Registrations["start"].ExecutorType.Should().Be<NoOpExecutor>();
     }
+
+    [Fact]
+    public void Test_Workflow_NameAndDescription()
+    {
+        // Test with name and description
+        Workflow workflow1 = new WorkflowBuilder("start")
+            .WithName("Test Pipeline")
+            .WithDescription("Test workflow description")
+            .BindExecutor(new NoOpExecutor("start"))
+            .Build();
+
+        workflow1.Name.Should().Be("Test Pipeline");
+        workflow1.Description.Should().Be("Test workflow description");
+
+        // Test without (defaults to null)
+        Workflow workflow2 = new WorkflowBuilder("start2")
+            .BindExecutor(new NoOpExecutor("start2"))
+            .Build();
+
+        workflow2.Name.Should().BeNull();
+        workflow2.Description.Should().BeNull();
+
+        // Test with only name (no description)
+        Workflow workflow3 = new WorkflowBuilder("start3")
+            .WithName("Named Only")
+            .BindExecutor(new NoOpExecutor("start3"))
+            .Build();
+
+        workflow3.Name.Should().Be("Named Only");
+        workflow3.Description.Should().BeNull();
+    }
 }

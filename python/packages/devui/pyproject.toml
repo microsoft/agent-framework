@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 version = "1.0.0b251001"
 license-files = ["LICENSE"]
-urls.homepage = "https://aka.ms/agent-framework"
+urls.homepage = "https://github.com/microsoft/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
 urls.release_notes = "https://github.com/microsoft/agent-framework/releases?q=tag%3Apython-1&expanded=true"
 urls.issues = "https://github.com/microsoft/agent-framework/issues"

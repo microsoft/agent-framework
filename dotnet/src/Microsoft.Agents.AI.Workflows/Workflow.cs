@@ -35,7 +35,7 @@ public class Workflow
         );
     }
 
-    internal Dictionary<string, InputPort> Ports { get; init; } = [];
+    internal Dictionary<string, RequestPort> Ports { get; init; } = [];
 
     /// <summary>
     /// Gets the collection of external request ports, keyed by their ID.
@@ -43,7 +43,7 @@ public class Workflow
     /// <remarks>
     /// Each port has a corresponding entry in the <see cref="Registrations"/> dictionary.
     /// </remarks>
-    public Dictionary<string, InputPortInfo> ReflectPorts()
+    public Dictionary<string, RequestPortInfo> ReflectPorts()
     {
         return this.Ports.Keys.ToDictionary(
             keySelector: key => key,
@@ -57,13 +57,27 @@ public class Workflow
     public string StartExecutorId { get; }
 
     /// <summary>
+    /// Gets the optional human-readable name of the workflow.
+    /// </summary>
+    public string? Name { get; internal init; }
+
+    /// <summary>
+    /// Gets the optional description of what the workflow does.
+    /// </summary>
+    public string? Description { get; internal init; }
+
+    /// <summary>
     /// Initializes a new instance of the <see cref="Workflow"/> class with the specified starting executor identifier
     /// and input type.
     /// </summary>
     /// <param name="startExecutorId">The unique identifier of the starting executor for the workflow. Cannot be <c>null</c>.</param>
-    internal Workflow(string startExecutorId)
+    /// <param name="name">Optional human-readable name for the workflow.</param>
+    /// <param name="description">Optional description of what the workflow does.</param>
+    internal Workflow(string startExecutorId, string? name = null, string? description = null)
     {
         this.StartExecutorId = Throw.IfNull(startExecutorId);
+        this.Name = name;
+        this.Description = description;
     }
 
     /// <summary>
@@ -84,7 +98,7 @@ public class Workflow
 
         // TODO: Can we cache this somehow to avoid having to instantiate a new one when running?
         // Does that break some user expectations?
-        Executor startExecutor = await startRegistration.ProviderAsync().ConfigureAwait(false);
+        Executor startExecutor = await startRegistration.CreateInstanceAsync(string.Empty).ConfigureAwait(false);
 
         if (!startExecutor.InputTypes.Any(t => t.IsAssignableFrom(typeof(TInput))))
         {
@@ -125,9 +139,16 @@ public class Workflow
     }
 
     private object? _ownerToken;
-    internal void TakeOwnership(object ownerToken)
+    private bool _ownedAsSubworkflow;
+    internal void TakeOwnership(object ownerToken, bool subworkflow = false, object? existingOwnershipSignoff = null)
     {
-        object? maybeToken = Interlocked.CompareExchange(ref this._ownerToken, ownerToken, null);
+        object? maybeToken = Interlocked.CompareExchange(ref this._ownerToken, ownerToken, existingOwnershipSignoff);
+        if (maybeToken == null && existingOwnershipSignoff != null)
+        {
+            // We expected to already be owned, but we were not
+            throw new InvalidOperationException("Existing ownership token was provided, but the workflow is unowned.");
+        }
+
         if (maybeToken == null && this._needsReset)
         {
             // There is no owner, but the workflow failed to reset on ownership release (because there are
@@ -137,14 +158,22 @@ public class Workflow
                 );
         }
 
-        if (maybeToken != null && !ReferenceEquals(maybeToken, ownerToken))
+        if (!ReferenceEquals(maybeToken, existingOwnershipSignoff) && !ReferenceEquals(maybeToken, ownerToken))
         {
             // Someone else owns the workflow
             Debug.Assert(maybeToken != null);
-            throw new InvalidOperationException("Cannot use a Workflow in multiple simultaneous (Streaming)Runs.");
+            throw new InvalidOperationException(
+                (subworkflow, this._ownedAsSubworkflow) switch
+                {
+                    (true, true) => "Cannot use a Workflow as a subworkflow of multiple parent workflows.",
+                    (true, false) => "Cannot use a running Workflow as a subworkflow.",
+                    (false, true) => "Cannot directly run a Workflow that is a subworkflow of another workflow.",
+                    (false, false) => "Cannot use a Workflow that is already owned by another runner or parent workflow.",
+                });
         }
 
         this._needsReset = true;
+        this._ownedAsSubworkflow = subworkflow;
     }
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1513:Use ObjectDisposedException throw helper",
@@ -178,7 +207,10 @@ public class Workflow<T> : Workflow
     /// Initializes a new instance of the <see cref="Workflow{T}"/> class with the specified starting executor identifier
     /// </summary>
     /// <param name="startExecutorId">The unique identifier of the starting executor for the workflow. Cannot be <c>null</c>.</param>
-    public Workflow(string startExecutorId) : base(startExecutorId)
+    /// <param name="name">Optional human-readable name for the workflow.</param>
+    /// <param name="description">Optional description of what the workflow does.</param>
+    public Workflow(string startExecutorId, string? name = null, string? description = null)
+        : base(startExecutorId, name, description)
     {
     }
 

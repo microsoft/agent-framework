@@ -56,4 +56,7 @@ public readonly struct EdgeId : IEquatable<EdgeId>
 
     /// <inheritdoc />
     public static bool operator !=(EdgeId left, EdgeId right) => !left.Equals(right);
+
+    /// <inheritdoc />
+    public override string ToString() => this.EdgeIndex.ToString();
 }

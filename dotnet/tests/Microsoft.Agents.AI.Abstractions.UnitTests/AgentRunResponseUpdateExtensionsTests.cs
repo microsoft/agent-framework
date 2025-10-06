@@ -207,6 +207,98 @@ public class AgentRunResponseUpdateExtensionsTests
         Assert.Equal("Hello, world!", Assert.IsType<TextContent>(Assert.Single(Assert.Single(response.Messages).Contents)).Text);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ToAgentRunResponse_AlternativeTimestampsAsync(bool useAsync)
+    {
+        DateTimeOffset early = new(2024, 1, 1, 10, 0, 0, TimeSpan.Zero);
+        DateTimeOffset middle = new(2024, 1, 1, 11, 0, 0, TimeSpan.Zero);
+        DateTimeOffset late = new(2024, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        DateTimeOffset unixEpoch = new(1970, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
+        AgentRunResponseUpdate[] updates =
+        [
+
+            // Start with an early timestamp
+            new(ChatRole.Tool, "a") { MessageId = "4", CreatedAt = early },
+
+            // Unix epoch (as "null") should not overwrite
+            new(null, "b") { CreatedAt = unixEpoch },
+
+            // Newer timestamp should overwrite
+            new(null, "c") { CreatedAt = middle },
+
+            // Older timestamp should not overwrite
+            new(null, "d") { CreatedAt = early },
+
+            // Even newer timestamp should overwrite
+            new(null, "e") { CreatedAt = late },
+
+            // Unix epoch should not overwrite again
+            new(null, "f") { CreatedAt = unixEpoch },
+
+            // null should not overwrite
+            new(null, "g") { CreatedAt = null },
+        ];
+
+        AgentRunResponse response = useAsync ?
+            updates.ToAgentRunResponse() :
+            await YieldAsync(updates).ToAgentRunResponseAsync();
+        Assert.Single(response.Messages);
+
+        Assert.Equal("abcdefg", response.Messages[0].Text);
+        Assert.Equal(ChatRole.Tool, response.Messages[0].Role);
+        Assert.Equal(late, response.Messages[0].CreatedAt);
+        Assert.Equal(late, response.CreatedAt);
+    }
+
+    public static IEnumerable<object?[]> ToAgentRunResponse_TimestampFolding_MemberData()
+    {
+        // Base test cases
+        var testCases = new (string? timestamp1, string? timestamp2, string? expectedTimestamp)[]
+        {
+            (null, null, null),
+            ("2024-01-01T10:00:00Z", null, "2024-01-01T10:00:00Z"),
+            (null, "2024-01-01T10:00:00Z", "2024-01-01T10:00:00Z"),
+            ("2024-01-01T10:00:00Z", "2024-01-01T11:00:00Z", "2024-01-01T11:00:00Z"),
+            ("2024-01-01T11:00:00Z", "2024-01-01T10:00:00Z", "2024-01-01T11:00:00Z"),
+            ("2024-01-01T10:00:00Z", "1970-01-01T00:00:00Z", "2024-01-01T10:00:00Z"),
+            ("1970-01-01T00:00:00Z", "2024-01-01T10:00:00Z", "2024-01-01T10:00:00Z"),
+        };
+
+        // Yield each test case twice, once for useAsync = false and once for useAsync = true
+        foreach (var (timestamp1, timestamp2, expectedTimestamp) in testCases)
+        {
+            yield return new object?[] { false, timestamp1, timestamp2, expectedTimestamp };
+            yield return new object?[] { true, timestamp1, timestamp2, expectedTimestamp };
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(ToAgentRunResponse_TimestampFolding_MemberData))]
+    public async Task ToAgentRunResponse_TimestampFoldingAsync(bool useAsync, string? timestamp1, string? timestamp2, string? expectedTimestamp)
+    {
+        DateTimeOffset? first = timestamp1 is not null ? DateTimeOffset.Parse(timestamp1) : null;
+        DateTimeOffset? second = timestamp2 is not null ? DateTimeOffset.Parse(timestamp2) : null;
+        DateTimeOffset? expected = expectedTimestamp is not null ? DateTimeOffset.Parse(expectedTimestamp) : null;
+
+        AgentRunResponseUpdate[] updates =
+        [
+            new(ChatRole.Assistant, "a") { CreatedAt = first },
+            new(null, "b") { CreatedAt = second },
+        ];
+
+        AgentRunResponse response = useAsync ?
+            updates.ToAgentRunResponse() :
+            await YieldAsync(updates).ToAgentRunResponseAsync();
+
+        Assert.Single(response.Messages);
+        Assert.Equal("ab", response.Messages[0].Text);
+        Assert.Equal(expected, response.Messages[0].CreatedAt);
+        Assert.Equal(expected, response.CreatedAt);
+    }
+
     private static async IAsyncEnumerable<AgentRunResponseUpdate> YieldAsync(IEnumerable<AgentRunResponseUpdate> updates)
     {
         foreach (AgentRunResponseUpdate update in updates)

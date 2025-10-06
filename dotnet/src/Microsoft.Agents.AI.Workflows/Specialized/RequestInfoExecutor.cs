@@ -9,21 +9,26 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows.Specialized;
 
+internal sealed class RequestPortOptions
+{
+}
+
 internal sealed class RequestInfoExecutor : Executor
 {
-    private readonly Dictionary<string, ExternalRequest> _wrappedRequests = [];
-    private InputPort Port { get; }
+    private readonly Dictionary<string, ExternalRequest> _wrappedRequests = new();
+    private RequestPort Port { get; }
     private IExternalRequestSink? RequestSink { get; set; }
 
     private static ExecutorOptions DefaultOptions => new()
     {
         // We need to be able to return the ExternalRequest/Result objects so they can be bubbled up
         // through the event system, but we do not want to forward the Request message.
-        AutoSendMessageHandlerResultObject = false
+        AutoSendMessageHandlerResultObject = false,
+        AutoYieldOutputHandlerResultObject = false
     };
 
     private readonly bool _allowWrapped;
-    public RequestInfoExecutor(InputPort port, bool allowWrapped = true) : base(port.Id, DefaultOptions)
+    public RequestInfoExecutor(RequestPort port, bool allowWrapped = true) : base(port.Id, DefaultOptions)
     {
         this.Port = port;
 
@@ -34,7 +39,7 @@ internal sealed class RequestInfoExecutor : Executor
     {
         routeBuilder = routeBuilder
             // Handle incoming requests (as raw request payloads)
-            .AddHandler(this.Port.Request, this.HandleAsync)
+            .AddHandlerUntyped(this.Port.Request, this.HandleAsync)
             .AddCatchAll(this.HandleCatchAllAsync);
 
         if (this._allowWrapped)
@@ -45,12 +50,12 @@ internal sealed class RequestInfoExecutor : Executor
 
         return routeBuilder
             // Handle incoming responses (as wrapped Response object)
-            .AddHandler<ExternalResponse, ExternalResponse>(this.HandleAsync);
+            .AddHandler<ExternalResponse, ExternalResponse?>(this.HandleAsync);
     }
 
     internal void AttachRequestSink(IExternalRequestSink requestSink) => this.RequestSink = Throw.IfNull(requestSink);
 
-    public async ValueTask<ExternalRequest> HandleCatchAllAsync(PortableValue message, IWorkflowContext context)
+    public async ValueTask<ExternalRequest?> HandleCatchAllAsync(PortableValue message, IWorkflowContext context)
     {
         Throw.IfNull(message);
 
@@ -61,9 +66,14 @@ internal sealed class RequestInfoExecutor : Executor
 
             ExternalRequest request = ExternalRequest.Create(this.Port, maybeRequest!);
             await this.RequestSink!.PostAsync(request).ConfigureAwait(false);
+            return request;
+        }
+        else if (message.Is(out ExternalRequest? request))
+        {
+            return await this.HandleAsync(request, context).ConfigureAwait(false);
         }
 
-        throw new InvalidOperationException($"Message type {message.TypeId} could not be interpreted as a value of Request Type {this.Port.Request}");
+        return null;
     }
 
     public async ValueTask<ExternalRequest> HandleAsync(ExternalRequest message, IWorkflowContext context)
@@ -71,7 +81,7 @@ internal sealed class RequestInfoExecutor : Executor
         Debug.Assert(this._allowWrapped);
         Throw.IfNull(message);
 
-        if (!message.Data.IsType(this.Port.Request))
+        if (!message.Data.IsType(this.Port.Request, out var requestData))
         {
             throw new InvalidOperationException($"Message type {message.Data.TypeId} could not be interpreted as a value of Request Type {this.Port.Request}");
         }
@@ -81,9 +91,9 @@ internal sealed class RequestInfoExecutor : Executor
             throw new InvalidOperationException($"Response type {this.Port.Response} is not a valid response for original request, whose expected response is {message.PortInfo.ResponseType}");
         }
 
-        ExternalRequest request = ExternalRequest.Create(this.Port, message);
+        ExternalRequest request = ExternalRequest.Create(this.Port, requestData, message.RequestId);
 
-        this._wrappedRequests.Add(request.RequestId, message);
+        this._wrappedRequests.Add(message.RequestId, message);
 
         await this.RequestSink!.PostAsync(request).ConfigureAwait(false);
 
@@ -101,10 +111,15 @@ internal sealed class RequestInfoExecutor : Executor
         return request;
     }
 
-    public async ValueTask<ExternalResponse> HandleAsync(ExternalResponse message, IWorkflowContext context)
+    public async ValueTask<ExternalResponse?> HandleAsync(ExternalResponse message, IWorkflowContext context)
     {
         Throw.IfNull(message);
         Throw.IfNull(message.Data);
+
+        if (message.PortInfo.PortId != this.Port.Id)
+        {
+            return null;
+        }
 
         object data = message.DataAs(this.Port.Response) ??
             throw new InvalidOperationException(

@@ -21,6 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { AgentDetailsModal } from "@/components/shared/agent-details-modal";
 import {
   SendHorizontal,
   User,
@@ -28,14 +29,9 @@ import {
   Plus,
   AlertCircle,
   Paperclip,
+  Info,
+  Trash2,
   FileText,
-  ChevronDown,
-  Package,
-  FolderOpen,
-  Database,
-  Globe,
-  CheckCircle,
-  XCircle,
 } from "lucide-react";
 import { apiClient } from "@/services/api";
 import type {
@@ -111,8 +107,33 @@ function MessageBubble({ message }: MessageBubbleProps) {
           </div>
         </div>
 
-        <div className="text-xs text-muted-foreground font-mono">
-          {new Date(message.timestamp).toLocaleTimeString()}
+        <div className="flex items-center gap-2 text-xs text-muted-foreground font-mono">
+          <span>{new Date(message.timestamp).toLocaleTimeString()}</span>
+          {!isUser && message.usage && (
+            <>
+              <span>•</span>
+              <span className="text-[11px]">
+                {message.usage.total_tokens >= 1000
+                  ? `${(message.usage.total_tokens / 1000).toFixed(2)}k`
+                  : message.usage.total_tokens}{" "}
+                tokens
+                {message.usage.prompt_tokens > 0 && (
+                  <span className="opacity-70">
+                    {" "}
+                    (
+                    {message.usage.prompt_tokens >= 1000
+                      ? `${(message.usage.prompt_tokens / 1000).toFixed(1)}k`
+                      : message.usage.prompt_tokens}{" "}
+                    in,{" "}
+                    {message.usage.completion_tokens >= 1000
+                      ? `${(message.usage.completion_tokens / 1000).toFixed(1)}k`
+                      : message.usage.completion_tokens}{" "}
+                    out)
+                  </span>
+                )}
+              </span>
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -154,12 +175,21 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
   const [pasteNotification, setPasteNotification] = useState<string | null>(
     null
   );
-  const [detailsExpanded, setDetailsExpanded] = useState(false);
+  const [detailsModalOpen, setDetailsModalOpen] = useState(false);
+  const [threadUsage, setThreadUsage] = useState<{
+    total_tokens: number;
+    message_count: number;
+  }>({ total_tokens: 0, message_count: 0 });
 
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const accumulatedText = useRef<string>("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const currentMessageUsage = useRef<{
+    total_tokens: number;
+    prompt_tokens: number;
+    completion_tokens: number;
+  } | null>(null);
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -439,11 +469,77 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
         messages: [],
         isStreaming: false,
       });
+      setThreadUsage({ total_tokens: 0, message_count: 0 });
       accumulatedText.current = "";
     } catch (error) {
       console.error("Failed to create thread:", error);
     }
   }, [selectedAgent]);
+
+  // Handle thread deletion
+  const handleDeleteThread = useCallback(
+    async (threadId: string, e?: React.MouseEvent) => {
+      // Prevent event from bubbling to SelectItem
+      if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+
+      // Confirm deletion
+      if (!confirm("Delete this thread? This cannot be undone.")) {
+        return;
+      }
+
+      try {
+        const success = await apiClient.deleteThread(threadId);
+        if (success) {
+          // Remove thread from available threads
+          const updatedThreads = availableThreads.filter((t) => t.id !== threadId);
+          setAvailableThreads(updatedThreads);
+
+          // If deleted thread was selected, switch to another thread or clear chat
+          if (currentThread?.id === threadId) {
+            if (updatedThreads.length > 0) {
+              // Select the most recent remaining thread
+              const nextThread = updatedThreads[0];
+              setCurrentThread(nextThread);
+
+              // Load messages for the next thread
+              try {
+                const threadMessages = await apiClient.getThreadMessages(nextThread.id);
+                setChatState({
+                  messages: threadMessages,
+                  isStreaming: false,
+                });
+              } catch (error) {
+                console.error("Failed to load thread messages:", error);
+                setChatState({
+                  messages: [],
+                  isStreaming: false,
+                });
+              }
+            } else {
+              // No threads left, clear everything
+              setCurrentThread(undefined);
+              setChatState({
+                messages: [],
+                isStreaming: false,
+              });
+              setThreadUsage({ total_tokens: 0, message_count: 0 });
+              accumulatedText.current = "";
+            }
+          }
+
+          // Clear debug panel
+          onDebugEvent("clear");
+        }
+      } catch (error) {
+        console.error("Failed to delete thread:", error);
+        alert("Failed to delete thread. Please try again.");
+      }
+    },
+    [availableThreads, currentThread, onDebugEvent]
+  );
 
   // Handle thread selection
   const handleThreadSelect = useCallback(
@@ -464,6 +560,16 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
           messages: threadMessages,
           isStreaming: false,
         });
+
+        // Calculate cumulative usage for this thread
+        const totalTokens = threadMessages.reduce(
+          (sum, msg) => sum + (msg.usage?.total_tokens || 0),
+          0
+        );
+        const messageCount = threadMessages.filter(
+          (msg) => msg.role === "assistant" && msg.usage
+        ).length;
+        setThreadUsage({ total_tokens: totalTokens, message_count: messageCount });
 
         console.log(
           `Restored ${threadMessages.length} messages for thread ${threadId}`
@@ -602,6 +708,20 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
           // Pass all events to debug panel
           onDebugEvent(openAIEvent);
 
+          // Handle usage events
+          if (openAIEvent.type === "response.usage.complete") {
+            const usageEvent = openAIEvent as import("@/types").ResponseUsageEventComplete;
+            console.log("📊 Usage event received:", usageEvent.data);
+            if (usageEvent.data) {
+              currentMessageUsage.current = {
+                total_tokens: usageEvent.data.total_tokens || 0,
+                prompt_tokens: usageEvent.data.prompt_tokens || 0,
+                completion_tokens: usageEvent.data.completion_tokens || 0,
+              };
+              console.log("📊 Set usage:", currentMessageUsage.current);
+            }
+          }
+
           // Handle error events from the stream
           if (openAIEvent.type === "error") {
             const errorEvent = openAIEvent as ExtendedResponseStreamEvent & {
@@ -663,14 +783,35 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
           // (Server will close the stream when done, so we'll exit the loop naturally)
         }
 
-        // Stream ended - mark as complete
+        // Stream ended - mark as complete and attach usage
+        const finalUsage = currentMessageUsage.current;
+        console.log("📊 Stream ended, attaching usage to message:", finalUsage);
+
         setChatState((prev) => ({
           ...prev,
           isStreaming: false,
           messages: prev.messages.map((msg) =>
-            msg.id === assistantMessage.id ? { ...msg, streaming: false } : msg
+            msg.id === assistantMessage.id
+              ? {
+                  ...msg,
+                  streaming: false,
+                  usage: finalUsage || undefined,
+                }
+              : msg
           ),
         }));
+
+        // Update thread-level usage stats
+        if (finalUsage) {
+          setThreadUsage((prev) => ({
+            total_tokens: prev.total_tokens + finalUsage.total_tokens,
+            message_count: prev.message_count + 1,
+          }));
+          console.log("📊 Updated thread usage");
+        }
+
+        // Reset usage for next message
+        currentMessageUsage.current = null;
       } catch (error) {
         console.error("Streaming error:", error);
         setChatState((prev) => ({
@@ -831,14 +972,11 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setDetailsExpanded(!detailsExpanded)}
+              onClick={() => setDetailsModalOpen(true)}
               className="h-6 w-6 p-0 flex-shrink-0"
+              title="View agent details"
             >
-              <ChevronDown
-                className={`h-4 w-4 transition-transform duration-200 ${
-                  detailsExpanded ? "rotate-180" : ""
-                }`}
-              />
+              <Info className="h-4 w-4" />
             </Button>
           </div>
 
@@ -849,7 +987,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
               onValueChange={handleThreadSelect}
               disabled={loadingThreads || isSubmitting}
             >
-              <SelectTrigger className="w-full sm:w-48">
+              <SelectTrigger className="w-full sm:w-64">
                 <SelectValue
                   placeholder={
                     loadingThreads
@@ -860,7 +998,24 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
                       ? `Thread ${currentThread.id.slice(-8)}`
                       : "Select thread"
                   }
-                />
+                >
+                  {currentThread && (
+                    <div className="flex items-center gap-2 text-xs">
+                      <span>Thread {currentThread.id.slice(-8)}</span>
+                      {threadUsage.total_tokens > 0 && (
+                        <>
+                          <span className="text-muted-foreground">•</span>
+                          <span className="text-muted-foreground">
+                            {threadUsage.total_tokens >= 1000
+                              ? `${(threadUsage.total_tokens / 1000).toFixed(1)}k`
+                              : threadUsage.total_tokens}{" "}
+                            tokens
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {availableThreads.map((thread) => (
@@ -880,6 +1035,16 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
 
             <Button
               variant="outline"
+              size="icon"
+              onClick={() => currentThread && handleDeleteThread(currentThread.id)}
+              disabled={!currentThread || isSubmitting}
+              title={currentThread ? `Delete Thread ${currentThread.id.slice(-8)}` : "No thread selected"}
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+
+            <Button
+              variant="outline"
               size="lg"
               onClick={handleNewThread}
               disabled={!selectedAgent || isSubmitting}
@@ -896,68 +1061,6 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
             {selectedAgent.description}
           </p>
         )}
-
-        {/* Collapsible Details Section */}
-        <div
-          className={`overflow-hidden transition-all duration-200 ease-in-out ${
-            detailsExpanded ? "max-h-40 mt-3" : "max-h-0"
-          }`}
-        >
-          <div className="space-y-2 text-xs">
-            {/* Tools */}
-            <div className="flex items-center gap-2">
-              <Package className="h-3.5 w-3.5 text-muted-foreground" />
-              <span className="text-muted-foreground">Tools:</span>
-              <span className="font-mono">
-                {selectedAgent.tools.length > 0
-                  ? selectedAgent.tools.join(", ")
-                  : "No tools"}
-              </span>
-              <span className="text-muted-foreground">
-                ({selectedAgent.tools.length})
-              </span>
-            </div>
-
-            {/* Source */}
-            <div className="flex items-center gap-2">
-              {selectedAgent.source === "directory" ? (
-                <FolderOpen className="h-3.5 w-3.5 text-muted-foreground" />
-              ) : selectedAgent.source === "in_memory" ? (
-                <Database className="h-3.5 w-3.5 text-muted-foreground" />
-              ) : (
-                <Globe className="h-3.5 w-3.5 text-muted-foreground" />
-              )}
-              <span className="text-muted-foreground">Source:</span>
-              <span>
-                {selectedAgent.source === "directory"
-                  ? "Local"
-                  : selectedAgent.source === "in_memory"
-                  ? "In-Memory"
-                  : "Gallery"}
-              </span>
-              {selectedAgent.module_path && (
-                <span className="text-muted-foreground font-mono text-[11px]">
-                  ({selectedAgent.module_path})
-                </span>
-              )}
-            </div>
-
-            {/* Environment */}
-            <div className="flex items-center gap-2">
-              {selectedAgent.has_env ? (
-                <XCircle className="h-3.5 w-3.5 text-orange-500" />
-              ) : (
-                <CheckCircle className="h-3.5 w-3.5 text-green-500" />
-              )}
-              <span className="text-muted-foreground">Environment:</span>
-              <span>
-                {selectedAgent.has_env
-                  ? "Requires environment variables"
-                  : "No environment variables required"}
-              </span>
-            </div>
-          </div>
-        </div>
       </div>
 
       {/* Messages */}
@@ -1077,6 +1180,13 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
           </form>
         </div>
       </div>
+
+      {/* Agent Details Modal */}
+      <AgentDetailsModal
+        agent={selectedAgent}
+        open={detailsModalOpen}
+        onOpenChange={setDetailsModalOpen}
+      />
     </div>
   );
 }
