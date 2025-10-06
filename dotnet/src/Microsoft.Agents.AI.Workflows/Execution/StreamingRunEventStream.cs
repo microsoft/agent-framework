@@ -224,6 +224,9 @@ internal sealed class StreamingRunEventStream : IRunEventStream
         // Cancel the run loop
         this._runLoopCancellation.Cancel();
 
+        // Release the event waiter, if any
+        this._inputWaiter.SignalInput();
+
         // Wait for clean shutdown
         if (this._runLoopTask != null)
         {
