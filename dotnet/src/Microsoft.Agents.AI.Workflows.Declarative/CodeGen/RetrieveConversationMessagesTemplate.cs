@@ -60,14 +60,19 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.CodeGen
         EvaluateStringExpression(this.Model.MessageBefore, "before", isNullable: true);
         EvaluateEnumExpression<AgentMessageSortOrderWrapper, bool>(this.Model.SortOrder, "newestFirst", SortMap, defaultValue: DefaultSort); 
             this.Write(@"
-        IAsyncEnumerable<ChatMessage> messages = 
+        IAsyncEnumerable<ChatMessage> messagesResult = 
             agentProvider.GetMessagesAsync(
                 conversationId, 
                 limit, 
                 after,
                 before,
                 newestFirst,
-                cancellationToken);");
+                cancellationToken);
+        List<ChatMessage> messages = [];
+        await foreach (ChatMessage message in messagesResult.ConfigureAwait(false))
+        {
+            messages.Add(message);
+        }");
 
         AssignVariable(this.Model.Messages, "messages");
         

@@ -63,7 +63,7 @@ public static class WorkflowProvider
                 throw new DeclarativeActionException($"Conversation identifier must be defined: {this.Id}");
             }
             ChatMessage newMessage = new(ChatRole.User, await this.GetContentAsync(context).ConfigureAwait(false)) { AdditionalProperties = this.GetMetadata() };
-            await agentProvider.CreateMessageAsync(conversationId, newMessage, cancellationToken).ConfigureAwait(false);
+            newMessage = await agentProvider.CreateMessageAsync(conversationId, newMessage, cancellationToken).ConfigureAwait(false);
             await context.QueueStateUpdateAsync(key: "MyMessage1", value: newMessage, scopeName: "Local").ConfigureAwait(false);
     
             return default;
