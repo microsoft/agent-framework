@@ -419,9 +419,9 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
                         "format": audio_format,
                     },
                 }
-            case DataContent() | UriContent() if (
-                content.has_top_level_media_type("application") and content.uri.startswith("data:")
-            ):
+            case DataContent() | UriContent() if content.has_top_level_media_type(
+                "application"
+            ) and content.uri.startswith("data:"):
                 # All application/* media types should be treated as files for OpenAI
                 filename = getattr(content, "filename", None) or (
                     content.additional_properties.get("filename")
