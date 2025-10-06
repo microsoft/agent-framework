@@ -47,7 +47,7 @@ public static class WorkflowProvider
             await context.QueueStateUpdateAsync("AllMessages", UnassignedValue.Instance, "Local").ConfigureAwait(false);
         }
     }
-
+    
     f
     /// <summary>
     /// Retrieves a specific message from an agent conversation.
@@ -62,23 +62,23 @@ public static class WorkflowProvider
             string? after = null;
             string? before = null;
             bool newestFirst = false;
-            IAsyncEnumerable<ChatMessage> messages =
+            ChatMessage messages =
                 agentProvider.GetMessagesAsync(
                     conversationId,
                     limit,
                     after,
                     before,
                     newestFirst,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
             await context.QueueStateUpdateAsync(key: "AllMessages", value: messages, scopeName: "Local").ConfigureAwait(false);
-
+    
             return default;
         }
     }
-
+    
     public static Workflow CreateWorkflow<TInput>(
         DeclarativeWorkflowOptions options,
-        Func<TInput, ChatMessage>? inputTransform = null)
+        Func<TInput, ChatMessage>? inputTransform = null) 
         where TInput : notnull
     {
         // Create root executor to initialize the workflow.
