@@ -227,7 +227,7 @@ class RedisChatMessageStore:
         Captures the Redis connection configuration and thread information needed to
         reconstruct the store and reconnect to the same conversation data.
 
-        Args:
+        Keyword Args:
             **kwargs: Additional arguments passed to Pydantic model_dump() for serialization.
                      Common options: exclude_none=True, by_alias=True
 
@@ -254,6 +254,8 @@ class RedisChatMessageStore:
         Args:
             serialized_store_state: Previously serialized state data from serialize_state().
                                    Should be a dictionary with thread_id, redis_url, etc.
+
+        Keyword Args:
             **kwargs: Additional arguments passed to Pydantic model validation.
 
         Returns:
@@ -286,6 +288,8 @@ class RedisChatMessageStore:
         Args:
             serialized_store_state: Previously serialized state data from serialize_state().
                                    Should be a dictionary with thread_id, redis_url, etc.
+
+        Keyword Args:
             **kwargs: Additional arguments passed to Pydantic model validation.
         """
         if not serialized_store_state:

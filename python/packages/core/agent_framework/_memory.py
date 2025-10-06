@@ -131,6 +131,8 @@ class ContextProvider(ABC):
             request_messages: The messages that were sent to the model/agent.
             response_messages: The messages that were returned by the model/agent.
             invoke_exception: The exception that was thrown, if any.
+
+        Keyword Args:
             kwargs: Additional keyword arguments (not used at present).
         """
         pass
@@ -144,6 +146,8 @@ class ContextProvider(ABC):
 
         Args:
             messages: The most recent messages that the agent is being invoked with.
+
+        Keyword Args:
             kwargs: Additional keyword arguments (not used at present).
 
         Returns:

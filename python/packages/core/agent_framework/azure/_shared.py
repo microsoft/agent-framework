@@ -122,6 +122,8 @@ class AzureOpenAISettings(AFBaseSettings):
         Args:
             credential: The Azure AD credential to use.
             token_endpoint: The token endpoint to use. Defaults to `https://cognitiveservices.azure.com/.default`.
+
+        Keyword Args:
             **kwargs: Additional keyword arguments to pass to the token retrieval method.
 
         Returns:

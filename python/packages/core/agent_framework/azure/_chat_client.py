@@ -67,7 +67,7 @@ class AzureOpenAIChatClient(AzureOpenAIConfigMixin, OpenAIBaseChatClient):
     ) -> None:
         """Initialize an Azure OpenAI Chat completion client.
 
-        Args:
+        Keyword Args:
             api_key: The API key. If provided, will override the value in the env vars or .env file.
                 Can also be set via environment variable AZURE_OPENAI_API_KEY.
             deployment_name: The deployment name. If provided, will override the value

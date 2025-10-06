@@ -82,7 +82,7 @@ class A2AAgent(BaseAgent):
     ) -> None:
         """Initialize the A2AAgent.
 
-        Args:
+        Keyword Args:
             name: The name of the agent.
             id: The unique identifier for the agent, will be created automatically if not provided.
             description: A brief description of the agent's purpose.
@@ -155,6 +155,8 @@ class A2AAgent(BaseAgent):
 
         Args:
             messages: The message(s) to send to the agent.
+
+        Keyword Args:
             thread: The conversation thread associated with the message(s).
             kwargs: Additional keyword arguments.
 
@@ -179,6 +181,8 @@ class A2AAgent(BaseAgent):
 
         Args:
             messages: The message(s) to send to the agent.
+
+        Keyword Args:
             thread: The conversation thread associated with the message(s).
             kwargs: Additional keyword arguments.
 
