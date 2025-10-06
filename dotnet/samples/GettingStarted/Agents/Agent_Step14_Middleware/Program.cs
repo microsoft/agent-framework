@@ -10,6 +10,7 @@ using System.Text.RegularExpressions;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.ChatClient;
 using Microsoft.Extensions.AI;
 
 // Get Azure AI Foundry configuration from environment variables
@@ -28,17 +29,13 @@ static string GetWeather([Description("The location to get the weather for.")] s
 static string GetDateTime()
     => DateTimeOffset.Now.ToString();
 
-// Adding middleware to the chat client level
-var chatClient = azureOpenAIClient.AsIChatClient()
+// Adding middleware to the chat client level and building an agent on top of it
+var originalAgent = azureOpenAIClient.AsIChatClient()
     .AsBuilder()
         .Use(getResponseFunc: ChatClientMiddleware, getStreamingResponseFunc: null)
-    .Build();
-
-// For flexibility we create the agent without any middleware.
-var originalAgent = new ChatClientAgent(chatClient, new ChatClientAgentOptions(
+    .BuildAIAgent(
         instructions: "You are an AI assistant that helps people find information.",
-        // Agent level tools
-        tools: [AIFunctionFactory.Create(GetDateTime, name: nameof(GetDateTime))]));
+        tools: [AIFunctionFactory.Create(GetDateTime, name: nameof(GetDateTime))]);
 
 // Adding middleware to the agent level
 var middlewareEnabledAgent = originalAgent
