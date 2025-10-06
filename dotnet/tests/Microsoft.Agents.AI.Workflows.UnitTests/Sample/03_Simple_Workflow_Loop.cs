@@ -4,7 +4,9 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.InProc;
 using Microsoft.Agents.AI.Workflows.Reflection;
+using Microsoft.Agents.AI.Workflows.UnitTests;
 
 namespace Microsoft.Agents.AI.Workflows.Sample;
 
@@ -25,9 +27,10 @@ internal static class Step3EntryPoint
         }
     }
 
-    public static async ValueTask<string> RunAsync(TextWriter writer)
+    public static async ValueTask<string> RunAsync(TextWriter writer, ExecutionMode executionMode)
     {
-        StreamingRun run = await InProcessExecution.StreamAsync(WorkflowInstance, NumberSignal.Init).ConfigureAwait(false);
+        InProcessExecutionEnvironment env = executionMode.GetEnvironment();
+        StreamingRun run = await env.StreamAsync(WorkflowInstance, NumberSignal.Init).ConfigureAwait(false);
 
         await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
         {

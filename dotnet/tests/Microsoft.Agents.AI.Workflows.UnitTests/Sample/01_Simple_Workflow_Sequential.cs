@@ -1,9 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.InProc;
 using Microsoft.Agents.AI.Workflows.Reflection;
+using Microsoft.Agents.AI.Workflows.UnitTests;
 
 namespace Microsoft.Agents.AI.Workflows.Sample;
 
@@ -23,9 +26,11 @@ internal static class Step1EntryPoint
         }
     }
 
-    public static async ValueTask RunAsync(TextWriter writer)
+    public static async ValueTask RunAsync(TextWriter writer, ExecutionMode executionMode)
     {
-        StreamingRun run = await InProcessExecution.StreamAsync(WorkflowInstance, "Hello, World!").ConfigureAwait(false);
+        InProcessExecutionEnvironment env = executionMode.GetEnvironment();
+
+        StreamingRun run = await env.StreamAsync(WorkflowInstance, "Hello, World!").ConfigureAwait(false);
 
         await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
         {

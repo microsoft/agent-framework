@@ -11,13 +11,12 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows.Execution;
 
-internal sealed class AsyncRunHandle : ICheckpointingHandle, IAsyncDisposable, IInputCoordinator
+internal sealed class AsyncRunHandle : ICheckpointingHandle, IAsyncDisposable
 {
     private readonly ISuperStepRunner _stepRunner;
     private readonly ICheckpointingHandle _checkpointingHandle;
 
     private readonly IRunEventStream _eventStream;
-    //private readonly AsyncCoordinator? _legacyCoordinator; // Only used for LegacyStreaming mode
     private readonly CancellationTokenSource _endRunSource = new();
     private int _isDisposed;
     private int _isEventStreamTaken;
@@ -29,10 +28,12 @@ internal sealed class AsyncRunHandle : ICheckpointingHandle, IAsyncDisposable, I
 
         this._eventStream = mode switch
         {
-            ExecutionMode.Normal => new StreamingRunEventStream(stepRunner, this),
+            ExecutionMode.OffThread => new StreamingRunEventStream(stepRunner),
+            ExecutionMode.Subworkflow => new StreamingRunEventStream(stepRunner, disableRunLoop: true),
             ExecutionMode.Lockstep => new LockstepRunEventStream(stepRunner),
             _ => throw new ArgumentOutOfRangeException(nameof(mode), $"Unknown execution mode {mode}")
         };
+
         this._eventStream.Start();
 
         // If there are already unprocessed messages (e.g., from a checkpoint restore that happened
@@ -41,25 +42,12 @@ internal sealed class AsyncRunHandle : ICheckpointingHandle, IAsyncDisposable, I
         {
             this.SignalInputToRunLoop();
         }
-
-        static IRunEventStream CreateLegacyStreaming(
-            ISuperStepRunner stepRunner,
-            IInputCoordinator inputCoordinator,
-            out AsyncCoordinator coordinator)
-        {
-            coordinator = new AsyncCoordinator();
-            return new OffThreadRunEventStream(stepRunner, inputCoordinator);
-        }
     }
 
-    public ValueTask<bool> WaitForNextInputAsync(CancellationToken cancellation = default)
-        => this._waitForResponseCoordinator.WaitForCoordinationAsync(cancellation);
+    //private readonly AsyncCoordinator _waitForResponseCoordinator = new();
 
-    public void ReleaseResponseWaiter()
-    {
-        // This is only used by OffThreadRunEventStream (LegacyStreaming mode)
-        this._legacyCoordinator?.MarkCoordinationPoint();
-    }
+    //public ValueTask<bool> WaitForNextInputAsync(CancellationToken cancellation = default)
+    //    => this._waitForResponseCoordinator.WaitForCoordinationAsync(cancellation);
 
     public string RunId => this._stepRunner.RunId;
 
@@ -68,8 +56,9 @@ internal sealed class AsyncRunHandle : ICheckpointingHandle, IAsyncDisposable, I
     public ValueTask<RunStatus> GetStatusAsync(CancellationToken cancellation = default)
         => this._eventStream.GetStatusAsync(cancellation);
 
-    public async IAsyncEnumerable<WorkflowEvent> TakeEventStreamAsync(bool breakOnHalt, [EnumeratorCancellation] CancellationToken cancellation = default)
+    public async IAsyncEnumerable<WorkflowEvent> TakeEventStreamAsync(bool blockOnPendingRequest, [EnumeratorCancellation] CancellationToken cancellation = default)
     {
+        //Debug.Assert(breakOnHalt);
         // Enforce single active enumerator (this runs when enumeration begins)
         if (Interlocked.CompareExchange(ref this._isEventStreamTaken, 1, 0) != 0)
         {
@@ -83,16 +72,17 @@ internal sealed class AsyncRunHandle : ICheckpointingHandle, IAsyncDisposable, I
             var token = linked.Token;
 
             // Build the inner stream before the loop so synchronous exceptions still release the gate
-            var inner = this._eventStream.TakeEventStreamAsync(token);
+            var inner = this._eventStream.TakeEventStreamAsync(blockOnPendingRequest, token);
 
             await foreach (var ev in inner.WithCancellation(token).ConfigureAwait(false))
             {
-                yield return ev;
-
-                if (breakOnHalt && ev is RequestHaltEvent)
+                // Filter out the RequestHaltEvent, since it is an internal signalling event.
+                if (ev is RequestHaltEvent)
                 {
-                    yield break; // or break the loop according to your semantics
+                    yield break;
                 }
+
+                yield return ev;
             }
         }
         finally
@@ -168,24 +158,14 @@ internal sealed class AsyncRunHandle : ICheckpointingHandle, IAsyncDisposable, I
 
     private void SignalInputToRunLoop()
     {
-        // Signal the appropriate coordinator based on which implementation is in use
-        if (this._eventStream is StreamingRunEventStream streaming)
-        {
-            // New channel-based implementation
-            streaming.SignalInput();
-        }
-        else if (this._legacyCoordinator is not null)
-        {
-            // Legacy OffThreadRunEventStream implementation
-            this._legacyCoordinator.MarkCoordinationPoint();
-        }
-        // Lockstep mode doesn't need signaling
+        this._eventStream.SignalInput();
     }
 
-    public ValueTask RequestEndRunAsync()
+    public async ValueTask RequestEndRunAsync()
     {
         this._endRunSource.Cancel();
-        return this._stepRunner.RequestEndRunAsync();
+        await this._eventStream.StopAsync().ConfigureAwait(false);
+        await this._stepRunner.RequestEndRunAsync().ConfigureAwait(false);
     }
 
     public async ValueTask DisposeAsync()
@@ -200,7 +180,7 @@ internal sealed class AsyncRunHandle : ICheckpointingHandle, IAsyncDisposable, I
         }
     }
 
-    public async ValueTask RestoreCheckpointAsync(CheckpointInfo checkpointInfo, CancellationToken cancellation = default)
+    public async ValueTask RestoreCheckpointAsync(CheckpointInfo checkpointInfo, CancellationToken cancellationToken = default)
     {
         // Clear buffered events from the channel BEFORE restoring to discard stale events from supersteps
         // that occurred after the checkpoint we're restoring to
@@ -211,7 +191,7 @@ internal sealed class AsyncRunHandle : ICheckpointingHandle, IAsyncDisposable, I
         }
 
         // Restore the workflow state - this will republish unserviced requests as new events
-        await this._checkpointingHandle.RestoreCheckpointAsync(checkpointInfo, cancellation).ConfigureAwait(false);
+        await this._checkpointingHandle.RestoreCheckpointAsync(checkpointInfo, cancellationToken).ConfigureAwait(false);
 
         // After restore, signal the run loop to process any restored messages
         // This is necessary because ClearBufferedEvents() doesn't signal, and the restored

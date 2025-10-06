@@ -114,8 +114,9 @@ internal class WorkflowHostExecutor : Executor, IResettableExecutor
                     throw new InvalidOperationException("No checkpoints available to resume from.");
                 }
 
-                runHandle = await activeRunner.ResumeStreamAsync(InProcessExecution.DefaultMode, lastCheckpoint!, cancellation)
-                                                             .ConfigureAwait(false);
+                runHandle = await activeRunner.ResumeStreamAsync(ExecutionMode.Subworkflow, lastCheckpoint!, cancellation)
+                                              .ConfigureAwait(false);
+
                 if (incomingMessage != null)
                 {
                     await runHandle.EnqueueUntypedAndRunAsync(incomingMessage, cancellation).ConfigureAwait(false);
@@ -123,8 +124,8 @@ internal class WorkflowHostExecutor : Executor, IResettableExecutor
             }
             else if (incomingMessage != null)
             {
-                runHandle = await activeRunner.BeginStreamAsync(InProcessExecution.DefaultMode, cancellation)
-                                                             .ConfigureAwait(false);
+                runHandle = await activeRunner.BeginStreamAsync(ExecutionMode.Subworkflow, cancellation)
+                                              .ConfigureAwait(false);
 
                 await runHandle.EnqueueUntypedAndRunAsync(incomingMessage, cancellation).ConfigureAwait(false);
             }
@@ -135,7 +136,7 @@ internal class WorkflowHostExecutor : Executor, IResettableExecutor
         }
         else
         {
-            runHandle = await activeRunner.BeginStreamAsync(InProcessExecution.DefaultMode, cancellation).ConfigureAwait(false);
+            runHandle = await activeRunner.BeginStreamAsync(ExecutionMode.Subworkflow, cancellation).ConfigureAwait(false);
 
             await runHandle.EnqueueMessageUntypedAsync(Throw.IfNull(incomingMessage), cancellation: cancellation).ConfigureAwait(false);
         }

@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -24,8 +23,8 @@ public sealed class StreamingRun
         this._runHandle = Throw.IfNull(runHandle);
     }
 
-    private ValueTask<bool> WaitOnInputAsync(CancellationToken cancellation = default)
-        => this._runHandle.WaitForNextInputAsync(cancellation);
+    //private ValueTask<bool> WaitOnInputAsync(CancellationToken cancellation = default)
+    //    => this._runHandle.WaitForNextInputAsync(cancellation);
 
     /// <summary>
     /// A unique identifier for the run. Can be provided at the start of the run, or auto-generated.
@@ -78,45 +77,10 @@ public sealed class StreamingRun
         CancellationToken cancellationToken = default)
         => this.WatchStreamAsync(blockOnPendingRequest: true, cancellationToken);
 
-    internal async IAsyncEnumerable<WorkflowEvent> WatchStreamAsync(
+    internal IAsyncEnumerable<WorkflowEvent> WatchStreamAsync(
         bool blockOnPendingRequest,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
-    {
-        RunStatus runStatus;
-
-        do
-        {
-            await foreach (WorkflowEvent @event in this._runHandle.TakeEventStreamAsync(breakOnHalt: true, cancellationToken)
-                                                                  .WithCancellation(cancellationToken)
-                                                                  .ConfigureAwait(false))
-            {
-                yield return @event;
-            }
-
-            if (cancellationToken.IsCancellationRequested)
-            {
-                yield break; // We are done.
-            }
-
-            runStatus = await this._runHandle.GetStatusAsync(cancellationToken).ConfigureAwait(false);
-            if (runStatus == RunStatus.Idle)
-            {
-                yield break; // We are done.
-            }
-
-            if (blockOnPendingRequest && runStatus == RunStatus.PendingRequests)
-            {
-                // In LegacyStreaming mode, we need to explicitly wait for coordination
-                // In Normal mode, the run loop automatically waits via channel signaling
-
-                //await this.WaitOnInputAsync(cancellation).ConfigureAwait(false);
-
-                // In Normal mode, just break - consumer will call SendResponseAsync which signals run loop
-                // Unless cancellation was requested, in which case preserve that by breaking via cancellation check above
-                yield break;
-            }
-        } while (runStatus == RunStatus.Running);
-    }
+        CancellationToken cancellationToken = default)
+        => this._runHandle.TakeEventStreamAsync(blockOnPendingRequest, cancellationToken);
 
     /// <summary>
     /// Signals the end of the current run and initiates any necessary cleanup operations asynchronously.

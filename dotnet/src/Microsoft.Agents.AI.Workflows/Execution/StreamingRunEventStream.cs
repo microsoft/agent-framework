@@ -7,7 +7,7 @@ using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 
-namespace Microsoft.Agents.Workflows.Execution;
+namespace Microsoft.Agents.AI.Workflows.Execution;
 
 /// <summary>
 /// A modern implementation of IRunEventStream that streams events as they are created,
@@ -17,17 +17,19 @@ internal sealed class StreamingRunEventStream : IRunEventStream
 {
     private readonly Channel<WorkflowEvent> _eventChannel;
     private readonly ISuperStepRunner _stepRunner;
-    private readonly SemaphoreSlim _inputSignal;
+    private readonly InputWaiter _inputWaiter;
     private readonly CancellationTokenSource _runLoopCancellation;
+    private readonly bool _disableRunLoop;
     private Task? _runLoopTask;
     private RunStatus _runStatus = RunStatus.NotStarted;
     private int _completionEpoch; // Tracks which completion signal belongs to which consumer iteration
 
-    public StreamingRunEventStream(ISuperStepRunner stepRunner, IInputCoordinator inputCoordinator)
+    public StreamingRunEventStream(ISuperStepRunner stepRunner, bool disableRunLoop = false)
     {
         this._stepRunner = stepRunner;
         this._runLoopCancellation = new CancellationTokenSource();
-        this._inputSignal = new SemaphoreSlim(0, 1); // Binary semaphore for input signaling
+        this._inputWaiter = new();
+        this._disableRunLoop = disableRunLoop;
 
         // Unbounded channel - events never block the producer
         // This allows events to flow freely during superstep execution
@@ -42,7 +44,10 @@ internal sealed class StreamingRunEventStream : IRunEventStream
     public void Start()
     {
         // Start the background run loop that drives superstep execution
-        this._runLoopTask = Task.Run(() => this.RunLoopAsync(this._runLoopCancellation.Token));
+        if (!this._disableRunLoop)
+        {
+            this._runLoopTask = Task.Run(() => this.RunLoopAsync(this._runLoopCancellation.Token));
+        }
     }
 
     private async Task RunLoopAsync(CancellationToken cancellation)
@@ -54,7 +59,7 @@ internal sealed class StreamingRunEventStream : IRunEventStream
         {
             // Wait for the first input before starting
             // The consumer will call EnqueueMessageAsync which signals the run loop
-            await this._inputSignal.WaitAsync(cancellation).ConfigureAwait(false);
+            await this._inputWaiter.WaitForInputAsync(cancellation).ConfigureAwait(false);
 
             this._runStatus = RunStatus.Running;
 
@@ -77,11 +82,11 @@ internal sealed class StreamingRunEventStream : IRunEventStream
                 // Capture the status at this moment to avoid race conditions with event reading
                 int currentEpoch = Interlocked.Increment(ref this._completionEpoch);
                 RunStatus capturedStatus = this._runStatus;
-                await this._eventChannel.Writer.WriteAsync(new InternalCompletionSignal(currentEpoch, capturedStatus), cancellation).ConfigureAwait(false);
+                await this._eventChannel.Writer.WriteAsync(new InternalHaltSignal(currentEpoch, capturedStatus), cancellation).ConfigureAwait(false);
 
                 // Wait for next input from the consumer
                 // Works for both Idle (no work) and PendingRequests (waiting for responses)
-                await this._inputSignal.WaitAsync(cancellation).ConfigureAwait(false);
+                await this._inputWaiter.WaitForInputAsync(cancellation).ConfigureAwait(false);
 
                 // When signaled, resume running
                 this._runStatus = RunStatus.Running;
@@ -113,21 +118,10 @@ internal sealed class StreamingRunEventStream : IRunEventStream
     /// Signals that new input has been provided and the run loop should continue processing.
     /// Called by AsyncRunHandle when the user enqueues a message or response.
     /// </summary>
-    public void SignalInput()
-    {
-        // Release the run loop to process more work
-        // Only release if not already signaled (binary semaphore behavior)
-        try
-        {
-            this._inputSignal.Release();
-        }
-        catch (SemaphoreFullException)
-        {
-            // Swallow for now
-        }
-    }
+    public void SignalInput() => this._inputWaiter.SignalInput();
 
     public async IAsyncEnumerable<WorkflowEvent> TakeEventStreamAsync(
+        bool blockOnPendingRequest,
         [EnumeratorCancellation] CancellationToken cancellation = default)
     {
         // Get the current epoch - we'll only respond to completion signals from this epoch or later
@@ -140,7 +134,7 @@ internal sealed class StreamingRunEventStream : IRunEventStream
         await foreach (WorkflowEvent evt in this._eventChannel.Reader.ReadAllAsync(cancellation).ConfigureAwait(false))
         {
             // Filter out internal signals used for run loop coordination
-            if (evt is InternalCompletionSignal completionSignal)
+            if (evt is InternalHaltSignal completionSignal)
             {
                 // Ignore completion signals from previous iterations
                 if (completionSignal.Epoch < myEpoch)
@@ -161,6 +155,11 @@ internal sealed class StreamingRunEventStream : IRunEventStream
                 // - Ended: Run loop disposed/cancelled
                 // Note: PendingRequests is handled by WatchStreamAsync's do-while loop
                 if (completionSignal.Status is RunStatus.Idle or RunStatus.Ended)
+                {
+                    yield break;
+                }
+
+                if (!blockOnPendingRequest && completionSignal.Status is RunStatus.PendingRequests)
                 {
                     yield break;
                 }
@@ -208,7 +207,7 @@ internal sealed class StreamingRunEventStream : IRunEventStream
         this.SignalInput();
     }
 
-    public async ValueTask DisposeAsync()
+    public async ValueTask StopAsync()
     {
         // Cancel the run loop
         this._runLoopCancellation.Cancel();
@@ -225,17 +224,22 @@ internal sealed class StreamingRunEventStream : IRunEventStream
                 // Expected during cancellation
             }
         }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await this.StopAsync().ConfigureAwait(false);
 
         // Dispose resources
         this._runLoopCancellation.Dispose();
-        this._inputSignal.Dispose();
+        this._inputWaiter.Dispose();
     }
 
     /// <summary>
     /// Internal signal used to mark completion of a work batch and allow status checking.
     /// This is never exposed to consumers.
     /// </summary>
-    private sealed class InternalCompletionSignal(int epoch, RunStatus status) : WorkflowEvent
+    private sealed class InternalHaltSignal(int epoch, RunStatus status) : WorkflowEvent
     {
         public int Epoch => epoch;
         public RunStatus Status => status;

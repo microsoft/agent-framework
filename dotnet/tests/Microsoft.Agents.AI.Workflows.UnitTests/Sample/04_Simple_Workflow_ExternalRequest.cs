@@ -4,6 +4,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.InProc;
+using Microsoft.Agents.AI.Workflows.UnitTests;
 
 namespace Microsoft.Agents.AI.Workflows.Sample;
 
@@ -37,13 +39,14 @@ internal static class Step4EntryPoint
         }
     }
 
-    public static async ValueTask<string> RunAsync(TextWriter writer, Func<string, int> userGuessCallback)
+    public static async ValueTask<string> RunAsync(TextWriter writer, Func<string, int> userGuessCallback, ExecutionMode executionMode)
     {
         NumberSignal signal = NumberSignal.Init;
         string? prompt = UpdatePrompt(null, signal);
 
         Workflow workflow = WorkflowInstance;
-        StreamingRun handle = await InProcessExecution.StreamAsync(workflow, NumberSignal.Init).ConfigureAwait(false);
+        InProcessExecutionEnvironment env = executionMode.GetEnvironment();
+        StreamingRun handle = await env.StreamAsync(workflow, NumberSignal.Init).ConfigureAwait(false);
 
         List<ExternalRequest> requests = [];
         await foreach (WorkflowEvent evt in handle.WatchStreamAsync().ConfigureAwait(false))
