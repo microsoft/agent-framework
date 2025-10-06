@@ -5,7 +5,7 @@
     "ghcr.io/va-h/devcontainers-features/uv:1": {}
   },
   "postCreateCommand": "bash ./devsetup.sh",
-  "workspaceFolder": "/workspaces/agent-framework-1/python/",
+  "workspaceFolder": "/workspaces/agent-framework/python/",
   "customizations": {
     "vscode": {
       "extensions": [
