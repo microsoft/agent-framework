@@ -14,7 +14,7 @@ public class CopyConversationMessagesTemplateTest(ITestOutputHelper output) : Wo
     {
         // Act, Assert
         this.ExecuteTest(
-            nameof(CopyConversationMessages),
+            nameof(CopyConversationMessagesLiteral),
             StringExpression.Literal("#conv_dm99"),
             ValueExpression.Variable(PropertyPath.TopicVariable("MyMessages")));
     }
@@ -24,7 +24,7 @@ public class CopyConversationMessagesTemplateTest(ITestOutputHelper output) : Wo
     {
         // Act, Assert
         this.ExecuteTest(
-            nameof(CopyConversationMessages),
+            nameof(CopyConversationMessagesVariable),
             StringExpression.Variable(PropertyPath.TopicVariable("TestConversation")),
             ValueExpression.Variable(PropertyPath.TopicVariable("MyMessages")));
     }
