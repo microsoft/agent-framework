@@ -15,7 +15,7 @@ public sealed class ChatClientExtensionsTests
     public void CreateAIAgent_WithBasicParameters_CreatesAgent()
     {
         // Arrange
-        var chatClientMock = new Mock<IChatClient>(MockBehavior.Strict);
+        var chatClientMock = new Mock<IChatClient>();
 
         // Act
         var agent = chatClientMock.Object.CreateAIAgent(
@@ -29,14 +29,13 @@ public sealed class ChatClientExtensionsTests
         Assert.Equal("TestAgent", agent.Name);
         Assert.Equal("Test description", agent.Description);
         Assert.Equal("Test instructions", agent.Instructions);
-        Assert.Same(chatClientMock.Object, agent.ChatClient);
     }
 
     [Fact]
     public void CreateAIAgent_WithTools_SetsToolsInOptions()
     {
         // Arrange
-        var chatClientMock = new Mock<IChatClient>(MockBehavior.Strict);
+        var chatClientMock = new Mock<IChatClient>();
         var tools = new List<AITool> { new Mock<AITool>().Object };
 
         // Act
@@ -52,12 +51,13 @@ public sealed class ChatClientExtensionsTests
     public void CreateAIAgent_WithOptions_CreatesAgentWithOptions()
     {
         // Arrange
-        var chatClientMock = new Mock<IChatClient>(MockBehavior.Strict);
+        var chatClientMock = new Mock<IChatClient>();
         var options = new ChatClientAgentOptions
         {
             Name = "AgentWithOptions",
             Description = "Desc",
-            Instructions = "Instr"
+            Instructions = "Instr",
+            UseProvidedChatClientAsIs = true
         };
 
         // Act
@@ -68,5 +68,6 @@ public sealed class ChatClientExtensionsTests
         Assert.Equal("AgentWithOptions", agent.Name);
         Assert.Equal("Desc", agent.Description);
         Assert.Equal("Instr", agent.Instructions);
+        Assert.Same(chatClientMock.Object, agent.ChatClient);
     }
 }
