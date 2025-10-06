@@ -66,7 +66,7 @@ public sealed class A2AHostAgent
     /// </summary>
     /// <param name="messageSend">The <see cref="MessageSendParams"/> to handle.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    public async Task<Message> OnMessageReceivedAsync(MessageSendParams messageSend, CancellationToken cancellationToken = default)
+    public async Task<A2AResponse> OnMessageReceivedAsync(MessageSendParams messageSend, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(messageSend);
         Throw.IfNull(this.Agent);
@@ -80,7 +80,7 @@ public sealed class A2AHostAgent
         var userMessage = messageSend.Message.ToChatMessage();
 
         // Get the response from the agent
-        var message = new Message();
+        var message = new AgentMessage();
         var agentResponse = await this.Agent.RunAsync(userMessage, cancellationToken: cancellationToken).ConfigureAwait(false);
         foreach (var chatMessage in agentResponse.Messages)
         {

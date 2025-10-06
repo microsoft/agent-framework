@@ -266,7 +266,7 @@ public static class AgentRunResponseExtensions
 
         if (isNewMessage)
         {
-            message = new ChatMessage(ChatRole.Assistant, []);
+            message = new(ChatRole.Assistant, []);
             response.Messages.Add(message);
         }
         else
@@ -281,6 +281,11 @@ public static class AgentRunResponseExtensions
         if (update.AuthorName is not null)
         {
             message.AuthorName = update.AuthorName;
+        }
+
+        if (message.CreatedAt is null || (update.CreatedAt is not null && update.CreatedAt > message.CreatedAt))
+        {
+            message.CreatedAt = update.CreatedAt;
         }
 
         if (update.Role is ChatRole role)
@@ -323,7 +328,7 @@ public static class AgentRunResponseExtensions
             response.ResponseId = update.ResponseId;
         }
 
-        if (update.CreatedAt is not null)
+        if (response.CreatedAt is null || (update.CreatedAt is not null && update.CreatedAt > response.CreatedAt))
         {
             response.CreatedAt = update.CreatedAt;
         }

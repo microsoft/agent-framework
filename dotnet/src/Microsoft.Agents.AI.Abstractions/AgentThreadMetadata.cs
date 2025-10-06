@@ -1,10 +1,13 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Diagnostics;
+
 namespace Microsoft.Agents.AI;
 
 /// <summary>
 /// Provides metadata information about an <see cref="AgentThread"/> instance.
 /// </summary>
+[DebuggerDisplay("ConversationId = {ConversationId}")]
 public class AgentThreadMetadata
 {
     /// <summary>

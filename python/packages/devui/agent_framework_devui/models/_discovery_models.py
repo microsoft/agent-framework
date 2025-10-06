@@ -37,6 +37,13 @@ class EntityInfo(BaseModel):
     # Environment variable requirements
     required_env_vars: list[EnvVarRequirement] | None = None
 
+    # Agent-specific fields (optional, populated when available)
+    instructions: str | None = None
+    model: str | None = None
+    chat_client_type: str | None = None
+    context_providers: list[str] | None = None
+    middleware: list[str] | None = None
+
     # Workflow-specific fields (populated only for detailed info requests)
     executors: list[str] | None = None
     workflow_dump: dict[str, Any] | None = None

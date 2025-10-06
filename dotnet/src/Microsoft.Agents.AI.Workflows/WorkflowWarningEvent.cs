@@ -6,4 +6,4 @@ namespace Microsoft.Agents.AI.Workflows;
 /// Event triggered when a workflow encounters a warning-condition.
 /// </summary>
 /// <param name="message">The warning message.</param>
-public sealed class WorkflowWarningEvent(string message) : WorkflowEvent(message);
+public class WorkflowWarningEvent(string message) : WorkflowEvent(message);

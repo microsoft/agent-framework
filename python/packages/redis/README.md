@@ -3,7 +3,7 @@
 Please install this package via pip:
 
 ```bash
-pip install agent-framework-redis
+pip install agent-framework-redis --pre
 ```
 
 ## Components

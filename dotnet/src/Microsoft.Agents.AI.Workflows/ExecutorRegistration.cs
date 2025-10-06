@@ -4,7 +4,7 @@ using System;
 using System.Threading.Tasks;
 using Microsoft.Shared.Diagnostics;
 
-using ExecutorFactoryF = System.Func<System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.Workflows.Executor>>;
+using ExecutorFactoryF = System.Func<string, System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.Workflows.Executor>>;
 
 namespace Microsoft.Agents.AI.Workflows;
 
@@ -12,7 +12,7 @@ internal sealed class ExecutorRegistration(string id, Type executorType, Executo
 {
     public string Id { get; } = Throw.IfNullOrEmpty(id);
     public Type ExecutorType { get; } = Throw.IfNull(executorType);
-    public ExecutorFactoryF ProviderAsync { get; } = Throw.IfNull(provider);
+    private ExecutorFactoryF ProviderAsync { get; } = Throw.IfNull(provider);
     public bool IsNotExecutorInstance { get; } = rawData is not Executor;
     public bool IsUnresettableSharedInstance { get; } = rawData is Executor && rawData is not IResettableExecutor;
 
@@ -58,5 +58,5 @@ internal sealed class ExecutorRegistration(string id, Type executorType, Executo
         return executor;
     }
 
-    public async ValueTask<Executor> CreateInstanceAsync() => this.CheckId(await this.ProviderAsync().ConfigureAwait(false));
+    public async ValueTask<Executor> CreateInstanceAsync(string runId) => this.CheckId(await this.ProviderAsync(runId).ConfigureAwait(false));
 }

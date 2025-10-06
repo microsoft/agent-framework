@@ -114,4 +114,10 @@ public sealed class EdgeConnection : IEquatable<EdgeConnection>
     /// The unique identifiers of the sinks connected by this edge.
     /// </summary>
     public List<string> SinkIds { get; }
+
+    /// <inheritdoc />
+    public override string ToString()
+    {
+        return $"[{string.Join(",", this.SourceIds)}] => [{string.Join(",", this.SinkIds)}]";
+    }
 }
