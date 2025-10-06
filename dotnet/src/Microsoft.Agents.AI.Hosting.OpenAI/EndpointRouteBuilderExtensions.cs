@@ -9,9 +9,7 @@ using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Internal;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
-using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using OpenAI.Responses;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI;
@@ -37,12 +35,11 @@ public static class EndpointRouteBuilderExtensions
         ArgumentNullException.ThrowIfNull(endpoints);
         ArgumentNullException.ThrowIfNull(agentName);
 
-        var loggerFactory = endpoints.ServiceProvider.GetService<ILoggerFactory>();
         var agent = endpoints.ServiceProvider.GetRequiredKeyedService<AIAgent>(agentName);
 
         responsesPath ??= $"/{agentName}/v1/responses";
         var responsesRouteGroup = endpoints.MapGroup(responsesPath);
-        MapResponses(responsesRouteGroup, agent, loggerFactory);
+        MapResponses(responsesRouteGroup, agent);
 
         // Will be included once we obtain the API to operate with thread (conversation).
 
@@ -51,10 +48,10 @@ public static class EndpointRouteBuilderExtensions
         // MapConversations(conversationsRouteGroup, agent, loggerFactory);
     }
 
-    private static void MapResponses(IEndpointRouteBuilder routeGroup, AIAgent agent, ILoggerFactory? loggerFactory)
+    private static void MapResponses(IEndpointRouteBuilder routeGroup, AIAgent agent)
     {
         var endpointAgentName = agent.DisplayName;
-        var responsesProcessor = new AIAgentResponsesProcessor(agent, loggerFactory);
+        var responsesProcessor = new AIAgentResponsesProcessor(agent);
 
         routeGroup.MapPost("/", async (HttpContext requestContext, CancellationToken cancellationToken) =>
         {
@@ -75,11 +72,11 @@ public static class EndpointRouteBuilderExtensions
     }
 
 #pragma warning disable IDE0051 // Remove unused private members
-    private static void MapConversations(IEndpointRouteBuilder routeGroup, AIAgent agent, ILoggerFactory? loggerFactory)
+    private static void MapConversations(IEndpointRouteBuilder routeGroup, AIAgent agent)
 #pragma warning restore IDE0051 // Remove unused private members
     {
         var endpointAgentName = agent.DisplayName;
-        var conversationsProcessor = new AIAgentConversationsProcessor(agent, loggerFactory);
+        var conversationsProcessor = new AIAgentConversationsProcessor(agent);
 
         routeGroup.MapGet("/{conversation_id}", (string conversationId, CancellationToken cancellationToken)
             => conversationsProcessor.GetConversationAsync(conversationId, cancellationToken)

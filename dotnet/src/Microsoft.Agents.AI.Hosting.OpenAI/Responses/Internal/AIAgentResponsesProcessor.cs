@@ -17,8 +17,6 @@ using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Utils;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 using OpenAI.Responses;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses.Internal;
@@ -28,21 +26,17 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses.Internal;
 /// </summary>
 internal sealed class AIAgentResponsesProcessor
 {
-#pragma warning disable IDE0052 // Remove unread private members
-    private readonly ILogger _logger;
-#pragma warning restore IDE0052 // Remove unread private members
     private readonly AIAgent _agent;
 
-    public AIAgentResponsesProcessor(AIAgent agent, ILoggerFactory? loggerFactory = null)
+    public AIAgentResponsesProcessor(AIAgent agent)
     {
-        this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<AIAgentResponsesProcessor>();
         this._agent = agent ?? throw new ArgumentNullException(nameof(agent));
     }
 
     public async Task<IResult> CreateModelResponseAsync(ResponseCreationOptions responseCreationOptions, CancellationToken cancellationToken)
     {
         var options = new OpenAIResponsesRunOptions();
-        AgentThread? agentThread = null!; // not supported to resolve from conversationId
+        AgentThread? agentThread = null; // not supported to resolve from conversationId
 
         var inputItems = responseCreationOptions.GetInput();
         var chatMessages = inputItems.AsChatMessages();
@@ -58,7 +52,6 @@ internal sealed class AIAgentResponsesProcessor
 
     private sealed class OpenAIResponseResult(AgentRunResponse agentResponse) : IResult
     {
-        [System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA2007:Consider calling ConfigureAwait on the awaited task", Justification = "Otherwise reports on await using var writer.")]
         public async Task ExecuteAsync(HttpContext httpContext)
         {
             // note: OpenAI SDK types provide their own serialization implementation
@@ -73,7 +66,7 @@ internal sealed class AIAgentResponsesProcessor
             var openAIResponseJsonModel = openAIResponse as IJsonModel<OpenAIResponse>;
             Debug.Assert(openAIResponseJsonModel is not null);
 
-            await using var writer = new Utf8JsonWriter(response.BodyWriter, new JsonWriterOptions { SkipValidation = false });
+            var writer = new Utf8JsonWriter(response.BodyWriter, new JsonWriterOptions { SkipValidation = false });
             openAIResponseJsonModel.Write(writer, ModelReaderWriterOptions.Json);
             await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
         }
@@ -118,7 +111,7 @@ internal sealed class AIAgentResponsesProcessor
             {
                 if (string.IsNullOrEmpty(update.ResponseId)
                     && string.IsNullOrEmpty(update.MessageId)
-                    && (update.Contents is null || update.Contents.Count == 0))
+                    && update.Contents is not { Count: > 0 })
                 {
                     continue;
                 }
@@ -134,7 +127,7 @@ internal sealed class AIAgentResponsesProcessor
                     yield return new(responseCreated, responseCreated.Type);
                 }
 
-                if (update.Contents is null || update.Contents.Count == 0)
+                if (update.Contents is not { Count: > 0 })
                 {
                     continue;
                 }
@@ -147,15 +140,18 @@ internal sealed class AIAgentResponsesProcessor
                     CreatedAt = update.CreatedAt,
                     RawRepresentation = update.RawRepresentation
                 };
-                var openAIResponseItem = MicrosoftExtensionsAIResponsesExtensions.AsOpenAIResponseItems([chatMessage]).FirstOrDefault();
-                lastResponseItem ??= openAIResponseItem;
 
-                var responseOutputItemAdded = new StreamingOutputItemAddedResponse(sequenceNumber++)
+                foreach (var openAIResponseItem in MicrosoftExtensionsAIResponsesExtensions.AsOpenAIResponseItems([chatMessage]))
                 {
-                    OutputIndex = outputIndex++,
-                    Item = openAIResponseItem
-                };
-                yield return new(responseOutputItemAdded, responseOutputItemAdded.Type);
+                    lastResponseItem ??= openAIResponseItem;
+
+                    var responseOutputItemAdded = new StreamingOutputItemAddedResponse(sequenceNumber++)
+                    {
+                        OutputIndex = outputIndex++,
+                        Item = openAIResponseItem
+                    };
+                    yield return new(responseOutputItemAdded, responseOutputItemAdded.Type);
+                }
             }
 
             if (lastResponseItem is not null)

@@ -4,21 +4,17 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses.Internal;
 
 internal sealed class AIAgentConversationsProcessor
 {
 #pragma warning disable IDE0052 // Remove unread private members
-    private readonly ILogger _logger;
     private readonly AIAgent _aiAgent;
 #pragma warning restore IDE0052 // Remove unread private members
 
-    public AIAgentConversationsProcessor(AIAgent aiAgent, ILoggerFactory? loggerFactory = null)
+    public AIAgentConversationsProcessor(AIAgent aiAgent)
     {
-        this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<AIAgentConversationsProcessor>();
         this._aiAgent = aiAgent ?? throw new ArgumentNullException(nameof(aiAgent));
     }
 

@@ -10,6 +10,9 @@ using OpenAI.Responses;
 
 namespace AgentWebChat.Web;
 
+/// <summary>
+/// Is a simple frontend client which exercises the ability of exposed agent to communicate via OpenAI Responses protocol.
+/// </summary>
 internal sealed class OpenAIResponsesAgentClient : IAgentClient
 {
     private readonly Uri _baseUri;
@@ -25,22 +28,18 @@ internal sealed class OpenAIResponsesAgentClient : IAgentClient
         string? threadId = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        // this is a "root" of the OpenAI Responses surface for the agent
-        var relativeUri = "/" + agentName + "/v1/";
-
         OpenAIClientOptions options = new()
         {
-            Endpoint = new Uri(this._baseUri, relativeUri)
+            Endpoint = new Uri(this._baseUri, $"/{agentName}/v1/")
         };
 
-        OpenAIResponseClient openAiClient = new(model: "myModel!", credential: new ApiKeyCredential("dummy-key"), options: options);
-        var chatClient = openAiClient.AsIChatClient();
+        var openAiClient = new OpenAIResponseClient(model: "myModel!", credential: new ApiKeyCredential("dummy-key"), options: options).AsIChatClient();
         var chatOptions = new ChatOptions()
         {
             ConversationId = threadId
         };
 
-        await foreach (var update in chatClient.GetStreamingResponseAsync(messages, chatOptions, cancellationToken: cancellationToken))
+        await foreach (var update in openAiClient.GetStreamingResponseAsync(messages, chatOptions, cancellationToken: cancellationToken))
         {
             yield return new AgentRunResponseUpdate(update);
         }

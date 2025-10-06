@@ -86,6 +86,7 @@ jobs:
         run: docker pull mcr.microsoft.com/dotnet/sdk:${{ matrix.dotnet }}
 
       # This step will run dotnet format on each of the unique csproj files and fail if any changes are made
+      # exclude-diagnostics should be removed after fixes for IL2026 and IL3050 are out: https://github.com/dotnet/sdk/issues/51136
       - name: Run dotnet format
         if: steps.find-csproj.outputs.csproj_files != ''
         run: |
