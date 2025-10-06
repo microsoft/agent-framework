@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from copy import copy
 from typing import Any, ClassVar, Union
 
+import openai
 from openai import (
     AsyncOpenAI,
     AsyncStream,
@@ -17,6 +18,7 @@ from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from openai.types.images_response import ImagesResponse
 from openai.types.responses.response import Response
 from openai.types.responses.response_stream_event import ResponseStreamEvent
+from packaging import version
 from pydantic import SecretStr
 
 from .._logging import get_logger
@@ -48,6 +50,29 @@ OPTION_TYPE = Union[ChatOptions, dict[str, Any]]
 __all__ = [
     "OpenAISettings",
 ]
+
+
+def _check_openai_version_for_callable_api_key() -> None:
+    """Check if OpenAI version supports callable API keys.
+
+    Callable API keys require OpenAI >= 1.106.0.
+    If the version is too old, raise a ServiceInitializationError with helpful message.
+    """
+    try:
+        current_version = version.parse(openai.__version__)
+        min_required_version = version.parse("1.106.0")
+
+        if current_version < min_required_version:
+            raise ServiceInitializationError(
+                f"Callable API keys require OpenAI SDK >= 1.106.0, but you have {openai.__version__}. "
+                f"Please upgrade with 'pip install openai>=1.106.0' or provide a string API key instead. "
+                f"Note: If you're using mem0ai, you may need to upgrade to mem0ai>=0.1.118 "
+                f"to allow newer OpenAI versions."
+            )
+    except ServiceInitializationError:
+        raise  # Re-raise our own exception
+    except Exception as e:
+        logger.warning(f"Could not check OpenAI version for callable API key support: {e}")
 
 
 def _prepare_function_call_results_as_dumpable(content: Contents | Any | list[Contents | Any]) -> Any:
@@ -161,6 +186,11 @@ class OpenAIBase(SerializationMixin):
         """
         if isinstance(api_key, SecretStr):
             return api_key.get_secret_value()
+
+        # Check version compatibility for callable API keys
+        if callable(api_key):
+            _check_openai_version_for_callable_api_key()
+
         return api_key  # Pass callable, string, or None directly to OpenAI SDK
 
 
