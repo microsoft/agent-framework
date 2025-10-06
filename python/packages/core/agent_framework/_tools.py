@@ -476,6 +476,7 @@ class HostedFileSearchTool(BaseTool):
 
     def __init__(
         self,
+        *,
         inputs: "Contents | dict[str, Any] | str | list[Contents | dict[str, Any] | str] | None" = None,
         max_results: int | None = None,
         description: str | None = None,
@@ -484,7 +485,7 @@ class HostedFileSearchTool(BaseTool):
     ):
         """Initialize a FileSearchTool.
 
-        Args:
+        Keyword Args:
             inputs: A list of contents that the tool can accept as input. Defaults to None.
                 This should be one or more HostedVectorStoreContents.
                 When supplying a list, it can contain:
