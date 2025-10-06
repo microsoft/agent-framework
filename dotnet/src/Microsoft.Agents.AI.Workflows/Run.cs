@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -13,7 +14,7 @@ namespace Microsoft.Agents.AI.Workflows;
 /// Represents a workflow run that tracks execution status and emitted workflow events, supporting resumption
 /// with responses to <see cref="RequestInfoEvent"/>.
 /// </summary>
-public sealed class Run
+public sealed class Run : IAsyncDisposable
 {
     private readonly List<WorkflowEvent> _eventSink = [];
     private readonly AsyncRunHandle _runHandle;
@@ -126,6 +127,9 @@ public sealed class Run
         return await this.RunToNextHaltAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    /// <inheritdoc cref="StreamingRun.EndRunAsync"/>
-    public ValueTask EndRunAsync() => this._runHandle.RequestEndRunAsync();
+    /// <inheritdoc/>
+    public ValueTask DisposeAsync()
+    {
+        return this._runHandle.DisposeAsync();
+    }
 }

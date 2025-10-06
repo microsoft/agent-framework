@@ -175,7 +175,7 @@ internal sealed class Program
                     }
                     else
                     {
-                        await run.Run.EndRunAsync().ConfigureAwait(false);
+                        await run.Run.DisposeAsync().ConfigureAwait(false);
                         return requestInfo.Request;
                     }
                     break;

@@ -33,5 +33,8 @@ internal sealed class InputWaiter : IDisposable
         }
     }
 
-    public Task WaitForInputAsync(CancellationToken cancellation) => this._inputSignal.WaitAsync(cancellation);
+    public async Task WaitForInputAsync(CancellationToken cancellation)
+    {
+        await this._inputSignal.WaitAsync(cancellation).ConfigureAwait(false);
+    }
 }

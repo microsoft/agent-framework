@@ -25,8 +25,6 @@ public enum RunStatus
     /// <summary>
     /// The user has ended the run. No further events will be emitted, and no messages can be sent to it.
     /// </summary>
-    /// <seealso cref="StreamingRun.EndRunAsync"/>
-    /// <seealso cref="Run.EndRunAsync"/>
     Ended,
 
     /// <summary>

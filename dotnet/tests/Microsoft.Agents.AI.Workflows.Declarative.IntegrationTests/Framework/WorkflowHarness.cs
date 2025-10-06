@@ -93,7 +93,7 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
                     }
                     else
                     {
-                        await run.Run.EndRunAsync().ConfigureAwait(false);
+                        await run.Run.DisposeAsync().ConfigureAwait(false);
                         exitLoop = true;
                     }
                     break;

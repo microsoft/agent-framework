@@ -44,7 +44,7 @@ internal static class Step5EntryPoint
         Console.WriteLine($"Restoring to checkpoint {targetCheckpoint} from run {targetCheckpoint.RunId}");
         if (rehydrateToRestore)
         {
-            await handle.EndRunAsync().ConfigureAwait(false);
+            await handle.DisposeAsync().ConfigureAwait(false);
 
             checkpointed = await env.ResumeStreamAsync(workflow, targetCheckpoint, checkpointManager, runId: handle.RunId, cancellationToken: CancellationToken.None)
                                     .ConfigureAwait(false);

@@ -52,8 +52,11 @@ internal sealed class StreamingRunEventStream : IRunEventStream
 
     private async Task RunLoopAsync(CancellationToken cancellation)
     {
+        using CancellationTokenSource errorSource = new();
+        CancellationTokenSource linkedSource = CancellationTokenSource.CreateLinkedTokenSource(errorSource.Token, cancellation);
+
         // Subscribe to events - they will flow directly to the channel as they're raised
-        this._stepRunner.OutgoingEvents.EventRaised += this.OnEventRaisedAsync;
+        this._stepRunner.OutgoingEvents.EventRaised += OnEventRaisedAsync;
 
         try
         {
@@ -63,13 +66,13 @@ internal sealed class StreamingRunEventStream : IRunEventStream
 
             this._runStatus = RunStatus.Running;
 
-            while (!cancellation.IsCancellationRequested)
+            while (!linkedSource.Token.IsCancellationRequested)
             {
                 // Run all available supersteps continuously
                 // Events are streamed out in real-time as they happen via the event handler
-                while (this._stepRunner.HasUnprocessedMessages && !cancellation.IsCancellationRequested)
+                while (this._stepRunner.HasUnprocessedMessages && !linkedSource.Token.IsCancellationRequested)
                 {
-                    await this._stepRunner.RunSuperStepAsync(cancellation).ConfigureAwait(false);
+                    await this._stepRunner.RunSuperStepAsync(linkedSource.Token).ConfigureAwait(false);
                 }
 
                 // Update status based on what's waiting
@@ -82,11 +85,11 @@ internal sealed class StreamingRunEventStream : IRunEventStream
                 // Capture the status at this moment to avoid race conditions with event reading
                 int currentEpoch = Interlocked.Increment(ref this._completionEpoch);
                 RunStatus capturedStatus = this._runStatus;
-                await this._eventChannel.Writer.WriteAsync(new InternalHaltSignal(currentEpoch, capturedStatus), cancellation).ConfigureAwait(false);
+                await this._eventChannel.Writer.WriteAsync(new InternalHaltSignal(currentEpoch, capturedStatus), linkedSource.Token).ConfigureAwait(false);
 
                 // Wait for next input from the consumer
                 // Works for both Idle (no work) and PendingRequests (waiting for responses)
-                await this._inputWaiter.WaitForInputAsync(cancellation).ConfigureAwait(false);
+                await this._inputWaiter.WaitForInputAsync(linkedSource.Token).ConfigureAwait(false);
 
                 // When signaled, resume running
                 this._runStatus = RunStatus.Running;
@@ -96,22 +99,31 @@ internal sealed class StreamingRunEventStream : IRunEventStream
         {
             // Expected during shutdown
         }
+        catch (Exception e)
+        {
+            await this._eventChannel.Writer.WriteAsync(new WorkflowErrorEvent(e), linkedSource.Token).ConfigureAwait(false);
+        }
         finally
         {
-            this._stepRunner.OutgoingEvents.EventRaised -= this.OnEventRaisedAsync;
+            this._stepRunner.OutgoingEvents.EventRaised -= OnEventRaisedAsync;
             this._eventChannel.Writer.Complete();
 
             // Mark as ended when run loop exits
             this._runStatus = RunStatus.Ended;
         }
-    }
 
-    private ValueTask OnEventRaisedAsync(object? sender, WorkflowEvent e)
-    {
-        // Write event directly to channel - it's thread-safe and non-blocking
-        // The channel handles all synchronization internally using lock-free algorithms
-        // Events flow immediately to consumers rather than being batched
-        return this._eventChannel.Writer.WriteAsync(e);
+        async ValueTask OnEventRaisedAsync(object? sender, WorkflowEvent e)
+        {
+            // Write event directly to channel - it's thread-safe and non-blocking
+            // The channel handles all synchronization internally using lock-free algorithms
+            // Events flow immediately to consumers rather than being batched
+            await this._eventChannel.Writer.WriteAsync(e, linkedSource.Token).ConfigureAwait(false);
+
+            if (e is WorkflowErrorEvent error)
+            {
+                errorSource.Cancel();
+            }
+        }
     }
 
     /// <summary>

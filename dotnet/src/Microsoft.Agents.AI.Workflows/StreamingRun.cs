@@ -14,7 +14,7 @@ namespace Microsoft.Agents.AI.Workflows;
 /// A <see cref="Workflow"/> run instance supporting a streaming form of receiving workflow events, and providing
 /// a mechanism to send responses back to the workflow.
 /// </summary>
-public sealed class StreamingRun
+public sealed class StreamingRun : IAsyncDisposable
 {
     private readonly AsyncRunHandle _runHandle;
 
@@ -22,9 +22,6 @@ public sealed class StreamingRun
     {
         this._runHandle = Throw.IfNull(runHandle);
     }
-
-    //private ValueTask<bool> WaitOnInputAsync(CancellationToken cancellation = default)
-    //    => this._runHandle.WaitForNextInputAsync(cancellation);
 
     /// <summary>
     /// A unique identifier for the run. Can be provided at the start of the run, or auto-generated.
@@ -82,15 +79,10 @@ public sealed class StreamingRun
         CancellationToken cancellationToken = default)
         => this._runHandle.TakeEventStreamAsync(blockOnPendingRequest, cancellationToken);
 
-    /// <summary>
-    /// Signals the end of the current run and initiates any necessary cleanup operations asynchronously.
-    /// Enables the underlying Workflow instance to be reused in subsequent runs.
-    /// </summary>
-    /// <returns>A ValueTask that represents the asynchronous operation. The task is complete when the run has
-    /// ended and cleanup is finished.</returns>
-    public async ValueTask EndRunAsync()
+    /// <inheritdoc/>
+    public ValueTask DisposeAsync()
     {
-        await this._runHandle.DisposeAsync().ConfigureAwait(false);
+        return this._runHandle.DisposeAsync();
     }
 }
 
