@@ -1442,9 +1442,9 @@ def use_chat_middleware(chat_client_class: type[TChatClient]) -> type[TChatClien
 
     # Replace methods
     chat_client_class.get_response = update_wrapper(middleware_enabled_get_response, original_get_response)  # type: ignore
-    chat_client_class.get_streaming_response = update_wrapper(
+    chat_client_class.get_streaming_response = update_wrapper(  # type: ignore
         middleware_enabled_get_streaming_response, original_get_streaming_response
-    )  # type: ignore
+    )
 
     return chat_client_class
 
