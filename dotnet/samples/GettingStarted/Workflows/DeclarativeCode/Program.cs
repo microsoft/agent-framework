@@ -44,7 +44,7 @@ internal sealed class Program
 
         // Run the workflow, just like any other workflow
         string input = this.GetWorkflowInput();
-        StreamingRun run = await InProcessExecution.StreamAsync(workflow, input);
+        await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, input);
         await this.MonitorWorkflowRunAsync(run);
 
         Notify("\nWORKFLOW: Done!");

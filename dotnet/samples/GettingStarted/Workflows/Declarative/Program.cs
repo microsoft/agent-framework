@@ -60,37 +60,46 @@ internal sealed class Program
         CheckpointManager checkpointManager = CheckpointManager.CreateInMemory();
         Checkpointed<StreamingRun> run = await InProcessExecution.StreamAsync(workflow, input, checkpointManager);
 
-        bool isComplete = false;
-        InputResponse? response = null;
-        do
+        try
         {
-            ExternalRequest? inputRequest = await this.MonitorWorkflowRunAsync(run, response);
-            if (inputRequest is not null)
+            bool isComplete = false;
+            InputResponse? response = null;
+            do
             {
-                Notify("\nWORKFLOW: Yield");
-
-                if (this.LastCheckpoint is null)
+                ExternalRequest? inputRequest = await this.MonitorWorkflowRunAsync(run, response);
+                if (inputRequest is not null)
                 {
-                    throw new InvalidOperationException("Checkpoint information missing after external request.");
+                    Notify("\nWORKFLOW: Yield");
+
+                    if (this.LastCheckpoint is null)
+                    {
+                        throw new InvalidOperationException("Checkpoint information missing after external request.");
+                    }
+
+                    // Process the external request.
+                    response = HandleExternalRequest(inputRequest);
+
+                    // Let's resume on an entirely new workflow instance to demonstrate checkpoint portability.
+                    workflow = this.CreateWorkflow();
+
+                    // Restore the latest checkpoint.
+                    Debug.WriteLine($"RESTORE #{this.LastCheckpoint.CheckpointId}");
+                    Notify("\nWORKFLOW: Restore");
+
+                    await run.DisposeAsync();
+                    run = await InProcessExecution.ResumeStreamAsync(workflow, this.LastCheckpoint, checkpointManager, run.Run.RunId);
                 }
-
-                // Process the external request.
-                response = HandleExternalRequest(inputRequest);
-
-                // Let's resume on an entirely new workflow instance to demonstrate checkpoint portability.
-                workflow = this.CreateWorkflow();
-
-                // Restore the latest checkpoint.
-                Debug.WriteLine($"RESTORE #{this.LastCheckpoint.CheckpointId}");
-                Notify("\nWORKFLOW: Restore");
-                run = await InProcessExecution.ResumeStreamAsync(workflow, this.LastCheckpoint, checkpointManager, run.Run.RunId);
+                else
+                {
+                    isComplete = true;
+                }
             }
-            else
-            {
-                isComplete = true;
-            }
+            while (!isComplete);
         }
-        while (!isComplete);
+        finally
+        {
+            await run.DisposeAsync().ConfigureAwait(false);
+        }
 
         Notify("\nWORKFLOW: Done!\n");
     }
