@@ -20,6 +20,10 @@ from .models._discovery_models import EntityInfo
 
 logger = logging.getLogger(__name__)
 
+# Constants for remote entity fetching
+REMOTE_FETCH_TIMEOUT_SECONDS = 30.0
+REMOTE_FETCH_MAX_SIZE_MB = 10
+
 
 class EntityDiscovery:
     """Discovery for Agent Framework entities - agents and workflows."""
@@ -116,16 +120,9 @@ class EntityDiscovery:
         # Extract metadata with improved fallback naming
         name = getattr(entity_object, "name", None)
         if not name:
-            # In-memory entities: use ID with entity type prefix since no directory name available
-            entity_id_raw = getattr(entity_object, "id", None)
-            if entity_id_raw:
-                # Truncate UUID to first 8 characters for readability
-                short_id = str(entity_id_raw)[:8] if len(str(entity_id_raw)) > 8 else str(entity_id_raw)
-                name = f"{entity_type.title()} {short_id}"
-            else:
-                # Fallback to class name with entity type
-                class_name = entity_object.__class__.__name__
-                name = f"{entity_type.title()} {class_name}"
+            # In-memory entities: use class name as it's more readable than UUID
+            class_name = entity_object.__class__.__name__
+            name = f"{entity_type.title()} {class_name}"
         description = getattr(entity_object, "description", "")
 
         # Generate entity ID using Agent Framework specific naming
@@ -142,43 +139,27 @@ class EntityDiscovery:
         middleware_list = None
 
         if entity_type == "agent":
-            # Try to get instructions
-            if hasattr(entity_object, "chat_options") and hasattr(entity_object.chat_options, "instructions"):
-                instructions = entity_object.chat_options.instructions
+            from ._utils import extract_agent_metadata
 
-            # Try to get model - check both chat_options and chat_client
-            if (
-                hasattr(entity_object, "chat_options")
-                and hasattr(entity_object.chat_options, "model_id")
-                and entity_object.chat_options.model_id
-            ):
-                model = entity_object.chat_options.model_id
-            elif hasattr(entity_object, "chat_client") and hasattr(entity_object.chat_client, "model_id"):
-                model = entity_object.chat_client.model_id
+            agent_meta = extract_agent_metadata(entity_object)
+            instructions = agent_meta["instructions"]
+            model = agent_meta["model"]
+            chat_client_type = agent_meta["chat_client_type"]
+            context_providers_list = agent_meta["context_providers"]
+            middleware_list = agent_meta["middleware"]
 
-            # Try to get chat client type
-            if hasattr(entity_object, "chat_client"):
-                chat_client_type = entity_object.chat_client.__class__.__name__
+        # Log helpful info about agent capabilities (before creating EntityInfo)
+        if entity_type == "agent":
+            has_run_stream = hasattr(entity_object, "run_stream")
+            has_run = hasattr(entity_object, "run")
 
-            # Try to get context providers
-            if (
-                hasattr(entity_object, "context_provider")
-                and entity_object.context_provider
-                and hasattr(entity_object.context_provider, "__class__")
-            ):
-                context_providers_list = [entity_object.context_provider.__class__.__name__]
-
-            # Try to get middleware
-            if hasattr(entity_object, "middleware") and entity_object.middleware:
-                middleware_list = []
-                for m in entity_object.middleware:
-                    # Try multiple ways to get a good name for middleware
-                    if hasattr(m, "__name__"):  # Function or callable
-                        middleware_list.append(m.__name__)
-                    elif hasattr(m, "__class__"):  # Class instance
-                        middleware_list.append(m.__class__.__name__)
-                    else:
-                        middleware_list.append(str(m))
+            if not has_run_stream and has_run:
+                logger.info(
+                    f"Agent '{entity_id}' only has run() (non-streaming). "
+                    "DevUI will automatically convert to streaming."
+                )
+            elif not has_run_stream and not has_run:
+                logger.warning(f"Agent '{entity_id}' lacks both run() and run_stream() methods. May not work.")
 
         # Create EntityInfo with Agent Framework specifics
         return EntityInfo(
@@ -444,7 +425,9 @@ class EntityDiscovery:
                 pass
 
             # Fallback to duck typing for agent protocol
-            if hasattr(obj, "run_stream") and hasattr(obj, "id") and hasattr(obj, "name"):
+            # Agent must have either run_stream() or run() method, plus id and name
+            has_execution_method = hasattr(obj, "run_stream") or hasattr(obj, "run")
+            if has_execution_method and hasattr(obj, "id") and hasattr(obj, "name"):
                 return True
 
         except (TypeError, AttributeError):
@@ -482,13 +465,9 @@ class EntityDiscovery:
             # Extract metadata from the live object with improved fallback naming
             name = getattr(obj, "name", None)
             if not name:
-                entity_id_raw = getattr(obj, "id", None)
-                if entity_id_raw:
-                    # Truncate UUID to first 8 characters for readability
-                    short_id = str(entity_id_raw)[:8] if len(str(entity_id_raw)) > 8 else str(entity_id_raw)
-                    name = f"{obj_type.title()} {short_id}"
-                else:
-                    name = f"{obj_type.title()} {obj.__class__.__name__}"
+                # Use class name as it's more readable than UUID
+                class_name = obj.__class__.__name__
+                name = f"{obj_type.title()} {class_name}"
             description = getattr(obj, "description", None)
             tools = await self._extract_tools_from_object(obj, obj_type)
 
@@ -505,39 +484,14 @@ class EntityDiscovery:
             middleware_list = None
 
             if obj_type == "agent":
-                # Try to get instructions
-                if hasattr(obj, "chat_options") and hasattr(obj.chat_options, "instructions"):
-                    instructions = obj.chat_options.instructions
+                from ._utils import extract_agent_metadata
 
-                # Try to get model - check both chat_options and chat_client
-                if hasattr(obj, "chat_options") and hasattr(obj.chat_options, "model_id") and obj.chat_options.model_id:
-                    model = obj.chat_options.model_id
-                elif hasattr(obj, "chat_client") and hasattr(obj.chat_client, "model_id"):
-                    model = obj.chat_client.model_id
-
-                # Try to get chat client type
-                if hasattr(obj, "chat_client"):
-                    chat_client_type = obj.chat_client.__class__.__name__
-
-                # Try to get context providers
-                if (
-                    hasattr(obj, "context_provider")
-                    and obj.context_provider
-                    and hasattr(obj.context_provider, "__class__")
-                ):
-                    context_providers_list = [obj.context_provider.__class__.__name__]
-
-                # Try to get middleware
-                if hasattr(obj, "middleware") and obj.middleware:
-                    middleware_list = []
-                    for m in obj.middleware:
-                        # Try multiple ways to get a good name for middleware
-                        if hasattr(m, "__name__"):  # Function or callable
-                            middleware_list.append(m.__name__)
-                        elif hasattr(m, "__class__"):  # Class instance
-                            middleware_list.append(m.__class__.__name__)
-                        else:
-                            middleware_list.append(str(m))
+                agent_meta = extract_agent_metadata(obj)
+                instructions = agent_meta["instructions"]
+                model = agent_meta["model"]
+                chat_client_type = agent_meta["chat_client_type"]
+                context_providers_list = agent_meta["context_providers"]
+                middleware_list = agent_meta["middleware"]
 
             entity_info = EntityInfo(
                 id=entity_id,
@@ -628,7 +582,7 @@ class EntityDiscovery:
             source: Source of entity (directory, in_memory, remote)
 
         Returns:
-            Unique entity ID with format: {type}_{source}_{name}_{uuid8}
+            Unique entity ID with format: {type}_{source}_{name}_{uuid}
         """
         import re
 
@@ -644,10 +598,10 @@ class EntityDiscovery:
         else:
             base_name = "entity"
 
-        # Generate short UUID (8 chars = 4 billion combinations)
-        short_uuid = uuid.uuid4().hex[:8]
+        # Generate full UUID for guaranteed uniqueness
+        full_uuid = uuid.uuid4().hex
 
-        return f"{entity_type}_{source}_{base_name}_{short_uuid}"
+        return f"{entity_type}_{source}_{base_name}_{full_uuid}"
 
     async def fetch_remote_entity(
         self, url: str, metadata: dict[str, Any] | None = None
@@ -722,12 +676,10 @@ class EntityDiscovery:
 
         return url
 
-    async def _fetch_url_content(self, url: str, max_size_mb: int = 10) -> str | None:
+    async def _fetch_url_content(self, url: str, max_size_mb: int = REMOTE_FETCH_MAX_SIZE_MB) -> str | None:
         """Fetch content from URL with size and timeout limits."""
         try:
-            timeout = 30.0  # 30 second timeout
-
-            async with httpx.AsyncClient(timeout=timeout) as client:
+            async with httpx.AsyncClient(timeout=REMOTE_FETCH_TIMEOUT_SECONDS) as client:
                 response = await client.get(url)
 
                 if response.status_code != 200:

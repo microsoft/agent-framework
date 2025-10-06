@@ -110,7 +110,6 @@ class AgentFrameworkExtraBody(BaseModel):
     """Agent Framework specific routing fields for OpenAI requests."""
 
     entity_id: str
-    thread_id: str | None = None
     input_data: dict[str, Any] | None = None
 
     model_config = ConfigDict(extra="allow")
@@ -118,16 +117,20 @@ class AgentFrameworkExtraBody(BaseModel):
 
 # Agent Framework Request Model - Extending real OpenAI types
 class AgentFrameworkRequest(BaseModel):
-    """OpenAI ResponseCreateParams with Agent Framework extensions.
+    """OpenAI ResponseCreateParams with Agent Framework routing.
 
-    This properly extends the real OpenAI API request format while adding
-    our custom routing fields in extra_body.
+    This properly extends the real OpenAI API request format.
+    - Uses 'model' field as entity_id (agent/workflow name)
+    - Uses 'conversation' field for conversation context (OpenAI standard)
     """
 
     # All OpenAI fields from ResponseCreateParams
-    model: str
+    model: str  # Used as entity_id in DevUI!
     input: str | list[Any]  # ResponseInputParam
     stream: bool | None = False
+
+    # OpenAI conversation parameter (standard!)
+    conversation: str | dict[str, Any] | None = None  # Union[str, {"id": str}]
 
     # Common OpenAI optional fields
     instructions: str | None = None
@@ -136,32 +139,35 @@ class AgentFrameworkRequest(BaseModel):
     max_output_tokens: int | None = None
     tools: list[dict[str, Any]] | None = None
 
-    # Agent Framework extension - strongly typed
-    extra_body: AgentFrameworkExtraBody | None = None
-
-    entity_id: str | None = None  # Allow entity_id as top-level field
+    # Optional extra_body for advanced use cases
+    extra_body: dict[str, Any] | None = None
 
     model_config = ConfigDict(extra="allow")
 
-    def get_entity_id(self) -> str | None:
-        """Get entity_id from either top-level field or extra_body."""
-        # Priority 1: Top-level entity_id field
-        if self.entity_id:
-            return self.entity_id
+    def get_entity_id(self) -> str:
+        """Get entity_id from model field.
 
-        # Priority 2: entity_id in extra_body
-        if self.extra_body and hasattr(self.extra_body, "entity_id"):
-            return self.extra_body.entity_id
+        In DevUI, model IS the entity_id (agent/workflow name).
+        Simple and clean!
+        """
+        return self.model
 
+    def get_conversation_id(self) -> str | None:
+        """Extract conversation_id from conversation parameter.
+
+        Supports both string and object forms:
+        - conversation: "conv_123"
+        - conversation: {"id": "conv_123"}
+        """
+        if isinstance(self.conversation, str):
+            return self.conversation
+        if isinstance(self.conversation, dict):
+            return self.conversation.get("id")
         return None
 
     def to_openai_params(self) -> dict[str, Any]:
         """Convert to dict for OpenAI client compatibility."""
-        data = self.model_dump(exclude={"extra_body", "entity_id"}, exclude_none=True)
-        if self.extra_body:
-            # Don't merge extra_body into main params to keep them separate
-            data["extra_body"] = self.extra_body
-        return data
+        return self.model_dump(exclude_none=True)
 
 
 # Error handling

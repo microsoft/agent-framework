@@ -51,7 +51,6 @@ export type ResponseInputParam = ResponseInputItem[];
 // Agent Framework extension fields (matches backend AgentFrameworkExtraBody)
 export interface AgentFrameworkExtraBody {
   entity_id: string;
-  thread_id?: string;
   input_data?: Record<string, unknown>;
 }
 
@@ -60,6 +59,9 @@ export interface AgentFrameworkRequest {
   model: string;
   input: string | ResponseInputParam; // Union type matching OpenAI
   stream?: boolean;
+
+  // OpenAI conversation parameter (standard!)
+  conversation?: string | { id: string };
 
   // Common OpenAI optional fields
   instructions?: string;
@@ -230,7 +232,9 @@ export interface ChatResponseUpdate {
   raw_representation?: unknown;
 }
 
-// Agent thread
+// Agent thread (internal AgentFramework type - not exposed via DevUI API)
+// Note: DevUI uses OpenAI Conversations API. This type represents the internal
+// AgentThread used by the framework for execution, wrapped by ConversationStore.
 export interface AgentThread {
   service_thread_id?: string;
   message_store?: unknown; // ChatMessageStore - could be typed further if needed

@@ -103,6 +103,24 @@ export interface ResponseFunctionCallArgumentsDelta {
   sequence_number?: number;
 }
 
+// OpenAI Responses API - Function Tool Call Item
+export interface ResponseFunctionToolCall {
+  id: string; // Item ID
+  call_id: string; // Call ID for pairing with results
+  name: string; // Function name
+  arguments: string; // JSON arguments
+  type: "function_call";
+  status?: "in_progress" | "completed" | "incomplete";
+}
+
+// OpenAI Responses API - Output Item Added Event
+export interface ResponseOutputItemAddedEvent {
+  type: "response.output_item.added";
+  item: ResponseFunctionToolCall; // Can be union of different output item types
+  output_index: number;
+  sequence_number: number;
+}
+
 // Trace event - matching actual backend output
 export interface ResponseTraceEventComplete {
   type: "response.trace_event.complete";
@@ -157,6 +175,7 @@ export type StructuredEvent =
   | ResponseTraceEventComplete
   | ResponseTraceComplete
   | ResponseUsageEventComplete
+  | ResponseOutputItemAddedEvent
   | ResponseFunctionCallComplete
   | ResponseFunctionCallDelta
   | ResponseFunctionCallArgumentsDelta
@@ -225,4 +244,80 @@ export interface OpenAIError {
     type: string;
     code?: string;
   };
+}
+
+// ============================================================================
+// OpenAI Conversations API Types - for conversation history
+// ============================================================================
+
+// Message content types (what goes inside Message.content[])
+export interface MessageTextContent {
+  type: "text";
+  text: string;
+}
+
+export interface MessageInputImage {
+  type: "input_image";
+  image_url: string;
+  detail?: "low" | "high" | "auto";
+  file_id?: string;
+}
+
+export interface MessageInputFile {
+  type: "input_file";
+  file_url?: string;
+  file_data?: string;
+  file_id?: string;
+  filename?: string;
+}
+
+export type MessageContent = MessageTextContent | MessageInputImage | MessageInputFile;
+
+// Message item (user/assistant messages with content)
+export interface ConversationMessage {
+  id: string;
+  type: "message";
+  role: "user" | "assistant" | "system" | "tool";
+  content: MessageContent[];
+  status: "in_progress" | "completed" | "incomplete";
+}
+
+// Function call item (separate from message)
+export interface ConversationFunctionCall {
+  id: string;
+  type: "function_call";
+  call_id: string;
+  name: string;
+  arguments: string;
+  status: "in_progress" | "completed" | "incomplete";
+}
+
+// Function call output item
+export interface ConversationFunctionCallOutput {
+  id: string;
+  type: "function_call_output";
+  call_id: string;
+  output: string;
+  status?: "in_progress" | "completed" | "incomplete";
+}
+
+// Union of all conversation item types
+export type ConversationItem =
+  | ConversationMessage
+  | ConversationFunctionCall
+  | ConversationFunctionCallOutput;
+
+// Conversation metadata
+export interface Conversation {
+  id: string;
+  object: "conversation";
+  created_at: number;
+  metadata?: Record<string, string>;
+}
+
+// List response
+export interface ConversationItemsListResponse {
+  object: "list";
+  data: ConversationItem[];
+  has_more: boolean;
 }

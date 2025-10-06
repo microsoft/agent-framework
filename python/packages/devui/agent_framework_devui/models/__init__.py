@@ -4,11 +4,15 @@
 
 # Import discovery models
 # Import all OpenAI types directly from the openai package
+from openai.types.conversations import Conversation, ConversationDeletedResource
+from openai.types.conversations.conversation_item import ConversationItem
 from openai.types.responses import (
     Response,
     ResponseErrorEvent,
     ResponseFunctionCallArgumentsDeltaEvent,
+    ResponseFunctionToolCall,
     ResponseInputParam,
+    ResponseOutputItemAddedEvent,
     ResponseOutputMessage,
     ResponseOutputText,
     ResponseReasoningTextDeltaEvent,
@@ -41,6 +45,9 @@ OpenAIResponse = Response
 # Export all types for easy importing
 __all__ = [
     "AgentFrameworkRequest",
+    "Conversation",
+    "ConversationDeletedResource",
+    "ConversationItem",
     "DiscoveryResponse",
     "EntityInfo",
     "InputTokensDetails",
@@ -53,7 +60,9 @@ __all__ = [
     "ResponseFunctionCallArgumentsDeltaEvent",
     "ResponseFunctionResultComplete",
     "ResponseFunctionResultDelta",
+    "ResponseFunctionToolCall",
     "ResponseInputParam",
+    "ResponseOutputItemAddedEvent",
     "ResponseOutputMessage",
     "ResponseOutputText",
     "ResponseReasoningTextDeltaEvent",

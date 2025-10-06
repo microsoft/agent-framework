@@ -48,11 +48,11 @@ def mapper() -> MessageMapper:
 
 @pytest.fixture
 def test_request() -> AgentFrameworkRequest:
+    # Use simplified routing: model = entity_id
     return AgentFrameworkRequest(
-        model="agent-framework",
+        model="test_agent",  # Model IS the entity_id
         input="Test input",
         stream=True,
-        extra_body=AgentFrameworkExtraBody(entity_id="test_agent"),
     )
 
 
@@ -97,11 +97,14 @@ async def test_function_call_mapping(mapper: MessageMapper, test_request: AgentF
 
     events = await mapper.convert_event(update, test_request)
 
-    assert len(events) >= 1
-    assert all(event.type == "response.function_call_arguments.delta" for event in events)
+    # Should generate: response.output_item.added + response.function_call_arguments.delta
+    assert len(events) >= 2
+    assert events[0].type == "response.output_item.added"
+    assert events[1].type == "response.function_call_arguments.delta"
 
-    # Check JSON is chunked
-    full_json = "".join(event.delta for event in events)
+    # Check JSON is in delta event
+    delta_events = [e for e in events if e.type == "response.function_call_arguments.delta"]
+    full_json = "".join(event.delta for event in delta_events)
     assert "TestCity" in full_json
 
 
@@ -156,6 +159,27 @@ async def test_unknown_content_fallback(mapper: MessageMapper, test_request: Age
     assert event.type == "response.output_text.delta"
     assert "Unknown content type" in event.delta
     assert "WeirdUnknownContent" in event.delta
+
+
+async def test_agent_run_response_mapping(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
+    """Test that mapper handles complete AgentRunResponse (non-streaming)."""
+    from agent_framework import AgentRunResponse, ChatMessage, Role, TextContent
+
+    # Create a complete response like agent.run() would return
+    message = ChatMessage(
+        role=Role.ASSISTANT,
+        contents=[TextContent(text="Complete response from run()")],
+    )
+    response = AgentRunResponse(messages=[message], response_id="test_resp_123")
+
+    # Mapper should convert it to streaming events
+    events = await mapper.convert_event(response, test_request)
+
+    assert len(events) > 0
+    # Should produce text delta events
+    text_events = [e for e in events if e.type == "response.output_text.delta"]
+    assert len(text_events) > 0
+    assert text_events[0].delta == "Complete response from run()"
 
 
 if __name__ == "__main__":

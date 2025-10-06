@@ -72,28 +72,22 @@ export interface WorkflowInfo extends Omit<AgentInfo, "tools"> {
   start_executor_id: string; // Entry point executor ID
 }
 
-export interface ThreadInfo {
+// OpenAI Conversations API (standard)
+export interface Conversation {
   id: string;
-  agent_id: string;
-  created_at: string;
-  message_count: number;
-}
-
-export interface SessionInfo {
-  thread_id: string;
-  agent_id: string;
-  created_at: string;
-  messages: Array<Record<string, unknown>>;
-  metadata: Record<string, unknown>;
+  object: "conversation";
+  created_at: number;
+  metadata?: Record<string, string>;
 }
 
 export interface RunAgentRequest {
   input: import("./agent-framework").ResponseInputParam;
-  thread_id?: string;
+  conversation_id?: string; // OpenAI standard conversation parameter
 }
 
 export interface RunWorkflowRequest {
   input_data: Record<string, unknown>;
+  conversation_id?: string;
 }
 
 // Legacy types - DEPRECATED - use new structured events from openai.ts instead
@@ -149,7 +143,7 @@ export interface ChatMessage {
 // UI State types
 export interface AppState {
   selectedAgent?: AgentInfo | WorkflowInfo;
-  currentThread?: ThreadInfo;
+  currentConversation?: Conversation;
   agents: AgentInfo[];
   workflows: WorkflowInfo[];
   isLoading: boolean;

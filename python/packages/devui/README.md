@@ -78,20 +78,66 @@ devui ./agents --tracing framework
 
 ## OpenAI-Compatible API
 
-For convenience, you can interact with the agents/workflows using the standard OpenAI API format. Just specify the `entity_id` in the `extra_body` field. This can be an `agent_id` or `workflow_id`.
+DevUI provides a clean OpenAI-compatible API. Simply use your **agent/workflow name as the model**!
 
 ```bash
-# Standard OpenAI format
+# Simple - use your entity name as the model
 curl -X POST http://localhost:8080/v1/responses \
   -H "Content-Type: application/json" \
   -d @- << 'EOF'
 {
-  "model": "agent-framework",
-  "input": "Hello world",
-  "extra_body": {"entity_id": "weather_agent"}
+  "model": "weather_agent",
+  "input": "Hello world"
 }
 
 ```
+
+Or use the OpenAI Python SDK:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:8080/v1",
+    api_key="not-needed"  # API key not required for local DevUI
+)
+
+# Simple - just use your agent/workflow name as the model!
+response = client.responses.create(
+    model="weather_agent",  # Your agent/workflow name
+    input="What's the weather in Seattle?"
+)
+
+# Extract text from response
+print(response.output[0].content[0].text)
+# Supports streaming with stream=True
+```
+
+### Multi-turn Conversations
+
+Use the standard OpenAI `conversation` parameter for multi-turn conversations:
+
+```python
+# Create a conversation
+conversation = client.conversations.create(
+    metadata={"agent_id": "weather_agent"}
+)
+
+# Use it across multiple turns
+response1 = client.responses.create(
+    model="weather_agent",
+    input="What's the weather in Seattle?",
+    conversation=conversation.id
+)
+
+response2 = client.responses.create(
+    model="weather_agent",
+    input="How about tomorrow?",
+    conversation=conversation.id  # Continues the conversation!
+)
+```
+
+**How it works:** OpenAI automatically prepends previous conversation items to each request and appends new items after completion. You don't need to manually pass message history.
 
 ## CLI Options
 
@@ -109,30 +155,40 @@ Options:
 
 ## Key Endpoints
 
+### Entity Management
 - `GET /v1/entities` - List discovered agents/workflows
 - `GET /v1/entities/{entity_id}/info` - Get detailed entity information
 - `POST /v1/entities/add` - Add entity from URL (for gallery samples)
 - `DELETE /v1/entities/{entity_id}` - Remove remote entity
+
+### Execution (OpenAI Responses API)
 - `POST /v1/responses` - Execute agent/workflow (streaming or sync)
+
+### Conversations (OpenAI Standard)
+- `POST /v1/conversations` - Create conversation
+- `GET /v1/conversations/{id}` - Get conversation
+- `POST /v1/conversations/{id}` - Update conversation metadata
+- `DELETE /v1/conversations/{id}` - Delete conversation
+- `GET /v1/conversations?agent_id={id}` - List conversations *(DevUI extension)*
+- `POST /v1/conversations/{id}/items` - Add items to conversation
+- `GET /v1/conversations/{id}/items` - List conversation items
+- `GET /v1/conversations/{id}/items/{item_id}` - Get conversation item
+
+### Health
 - `GET /health` - Health check
-- `POST /v1/threads` - Create thread for agent (optional)
-- `GET /v1/threads?agent_id={id}` - List threads for agent
-- `GET /v1/threads/{thread_id}` - Get thread info
-- `DELETE /v1/threads/{thread_id}` - Delete thread
-- `GET /v1/threads/{thread_id}/messages` - Get thread messages
 
 ## Implementation
 
 - **Discovery**: `agent_framework_devui/_discovery.py`
 - **Execution**: `agent_framework_devui/_executor.py`
 - **Message Mapping**: `agent_framework_devui/_mapper.py`
-- **Session Management**: `agent_framework_devui/_session.py`
+- **Conversations**: `agent_framework_devui/_conversations.py`
 - **API Server**: `agent_framework_devui/_server.py`
 - **CLI**: `agent_framework_devui/_cli.py`
 
 ## Examples
 
-See `samples/` for working agent and workflow implementations.
+See working implementations in `python/samples/getting_started/devui/`
 
 ## License
 
