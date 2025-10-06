@@ -28,8 +28,7 @@ async Task SKConcurrentOrchestration()
 {
     ConcurrentOrchestration orchestration = new([
         GetSKTranslationAgent("French"),
-        GetSKTranslationAgent("Spanish"),
-        GetSKTranslationAgent("English")])
+        GetSKTranslationAgent("Spanish")])
     {
         StreamingResponseCallback = StreamingResultCallback,
     };
@@ -52,6 +51,8 @@ ChatCompletionAgent GetSKTranslationAgent(string targetLanguage)
     {
         Kernel = kernel,
         Instructions = string.Format(agentInstructions, targetLanguage),
+        Description = $"Agent that translates texts to {targetLanguage}",
+        Name = $"SKTranslationAgent_{targetLanguage}"
     };
 }
 
@@ -76,8 +77,7 @@ async Task AFConcurrentAgentWorkflow()
     var concurrentAgentWorkflow = AgentWorkflowBuilder.BuildConcurrent(
         from lang in (string[])["French", "Spanish"] select GetAFTranslationAgent(lang, client));
 
-    var inputMessages = new[] { new ChatMessage(ChatRole.User, "Hello, world!") };
-    StreamingRun run = await InProcessExecution.StreamAsync(concurrentAgentWorkflow, inputMessages);
+    StreamingRun run = await InProcessExecution.StreamAsync(concurrentAgentWorkflow, "Hello, world!");
     await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
 
     string? lastExecutorId = null;
@@ -85,11 +85,16 @@ async Task AFConcurrentAgentWorkflow()
     {
         if (evt is AgentRunUpdateEvent e)
         {
+            if (string.IsNullOrEmpty(e.Update.Text))
+            {
+                continue;
+            }
+
             if (e.ExecutorId != lastExecutorId)
             {
                 lastExecutorId = e.ExecutorId;
                 Console.WriteLine();
-                Console.WriteLine(e.ExecutorId);
+                Console.Write($"{e.Update.AuthorName}: ");
             }
 
             Console.Write(e.Update.Text);
@@ -97,5 +102,6 @@ async Task AFConcurrentAgentWorkflow()
     }
 }
 
-ChatClientAgent GetAFTranslationAgent(string targetLanguage, IChatClient chatClient) => new(chatClient, string.Format(agentInstructions, targetLanguage));
+ChatClientAgent GetAFTranslationAgent(string targetLanguage, IChatClient chatClient) =>
+    new(chatClient, string.Format(agentInstructions, targetLanguage), name: $"AFTranslationAgent_{targetLanguage}");
 # endregion
