@@ -10,8 +10,8 @@
     "conversation_count": 2,
     "min_action_count": 25,
     "max_action_count": -1,
-    "min_message_count": 1,
-    "min_response_count": 8,
+    "min_response_count": 1,
+    "max_response_count": -1,
     "actions": {
       "start": [
         "setVariable_aASlmF",
