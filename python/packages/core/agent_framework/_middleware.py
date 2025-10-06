@@ -4,6 +4,7 @@ import inspect
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, Awaitable, Callable, MutableSequence
 from enum import Enum
+from functools import update_wrapper
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeAlias, TypeVar
 
 from ._serialization import SerializationMixin
@@ -1290,8 +1291,8 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
         # No middleware, execute directly
         return original_run_stream(self, normalized_messages, thread=thread, **kwargs)  # type: ignore
 
-    agent_class.run = middleware_enabled_run  # type: ignore
-    agent_class.run_stream = middleware_enabled_run_stream  # type: ignore
+    agent_class.run = update_wrapper(middleware_enabled_run, original_run)  # type: ignore
+    agent_class.run_stream = update_wrapper(middleware_enabled_run_stream, original_run_stream)  # type: ignore
 
     return agent_class
 
@@ -1440,8 +1441,10 @@ def use_chat_middleware(chat_client_class: type[TChatClient]) -> type[TChatClien
         return _stream_generator()
 
     # Replace methods
-    chat_client_class.get_response = middleware_enabled_get_response  # type: ignore
-    chat_client_class.get_streaming_response = middleware_enabled_get_streaming_response  # type: ignore
+    chat_client_class.get_response = update_wrapper(middleware_enabled_get_response, original_get_response)  # type: ignore
+    chat_client_class.get_streaming_response = update_wrapper(  # type: ignore
+        middleware_enabled_get_streaming_response, original_get_streaming_response
+    )
 
     return chat_client_class
 
@@ -1525,12 +1528,14 @@ def _merge_and_filter_chat_middleware(
     return middleware["chat"]  # type: ignore[return-value]
 
 
-def extract_and_merge_function_middleware(chat_client: Any, kwargs: dict[str, Any]) -> None:
+def extract_and_merge_function_middleware(chat_client: Any, **kwargs: Any) -> None:
     """Extract function middleware from chat client and merge with existing pipeline in kwargs.
 
     Args:
         chat_client: The chat client instance to extract middleware from.
-        kwargs: Dictionary containing middleware and pipeline information.
+
+    Keyword Args:
+        **kwargs: Dictionary containing middleware and pipeline information.
     """
     # Get middleware sources
     client_middleware = getattr(chat_client, "middleware", None) if hasattr(chat_client, "middleware") else None
