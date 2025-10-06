@@ -22,7 +22,7 @@ async def generate_af_docs(root_path: Path):
             {
                 "package_info": {
                     "name": "agent-framework-core",
-                    "version": "1.0.0b251006",
+                    "version": "1.0.0b251001",
                     "install_type": "pypi",
                     "extras": ["all"]
                 },
