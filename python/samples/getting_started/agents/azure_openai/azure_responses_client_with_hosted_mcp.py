@@ -13,7 +13,8 @@ servers.
 """
 
 
-# --- Microsoft Learn MCP server over Streamable HTTP ---
+# --- Below code uses Microsoft Learn MCP server over Streamable HTTP ---
+# --- Users can set these environment variables, or just edit the values below to the desired MCP server
 MCP_NAME = os.environ.get("MCP_NAME", "Microsoft Learn MCP")  # example name
 MCP_URL = os.environ.get("MCP_URL", "https://learn.microsoft.com/api/mcp")   # example endpoint
 # MCP_BEARER = os.environ.get("MCP_AUTH_BEARER")  # optional: pass a token if your server requires auth
@@ -37,7 +38,7 @@ async def main():
     agent: ChatAgent = responses_client.create_agent(
         name="DocsAgent",
         instructions=(
-            "You are a helpful assistant that can help with microsoft documentation questions."
+            "You are a helpful assistant that can help with Microsoft documentation questions."
         ),
     )
 
