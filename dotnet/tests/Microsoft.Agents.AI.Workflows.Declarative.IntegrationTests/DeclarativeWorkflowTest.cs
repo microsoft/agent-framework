@@ -29,7 +29,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     [InlineData("Marketing.yaml", "Marketing.json", true)]
     [InlineData("MathChat.yaml", "MathChat.json", true)]
     [InlineData("DeepResearch.yaml", "DeepResearch.json", Skip = "Long running")]
-    [InlineData("HumanInLoop.yaml", "HumanInLoop.json", Skip = "Needs test support")]
+    [InlineData("HumanInLoop.yaml", "HumanInLoop.json")]
     public Task ValidateScenarioAsync(string workflowFileName, string testcaseFileName, bool externalConveration = false) =>
         this.RunWorkflowAsync(Path.Combine(GetRepoFolder(), "workflow-samples", workflowFileName), testcaseFileName, externalConveration);
 
@@ -37,17 +37,14 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     {
         Workflow workflow = DeclarativeWorkflowBuilder.Build<TInput>(workflowPath, workflowOptions);
 
-        WorkflowEvents workflowEvents = await WorkflowHarness.RunAsync(workflow, (TInput)GetInput<TInput>(testcase));
-        foreach (DeclarativeActionInvokedEvent actionInvokeEvent in workflowEvents.ActionInvokeEvents)
-        {
-            this.Output.WriteLine($"ACTION: {actionInvokeEvent.ActionId} [{actionInvokeEvent.ActionType}]");
-        }
+        WorkflowHarness harness = new(workflow, runId: Path.GetFileNameWithoutExtension(workflowPath));
+        WorkflowEvents workflowEvents = await harness.RunTestcaseAsync(testcase, (TInput)GetInput<TInput>(testcase)).ConfigureAwait(false);
 
         Assert.NotEmpty(workflowEvents.ExecutorInvokeEvents);
         Assert.NotEmpty(workflowEvents.ExecutorCompleteEvents);
         AssertWorkflow.Conversation(workflowOptions.ConversationId, testcase.Validation.ConversationCount, workflowEvents.ConversationEvents);
         AssertWorkflow.EventCounts(workflowEvents.ActionInvokeEvents.Count, testcase);
-        AssertWorkflow.EventCounts(workflowEvents.ActionCompleteEvents.Count, testcase);
+        AssertWorkflow.EventCounts(workflowEvents.ActionCompleteEvents.Count, testcase, isCompletion: true);
         AssertWorkflow.EventSequence(workflowEvents.ActionInvokeEvents.Select(e => e.ActionId), testcase);
     }
 }

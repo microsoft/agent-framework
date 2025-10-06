@@ -4,7 +4,6 @@
  */
 
 import { useState, useEffect, useCallback } from "react";
-import { Button } from "@/components/ui/button";
 import { AppHeader } from "@/components/shared/app-header";
 import { DebugPanel } from "@/components/shared/debug-panel";
 import { SettingsModal } from "@/components/shared/settings-modal";
@@ -12,8 +11,9 @@ import { GalleryView } from "@/components/gallery";
 import { AgentView } from "@/components/agent/agent-view";
 import { WorkflowView } from "@/components/workflow/workflow-view";
 import { LoadingState } from "@/components/ui/loading-state";
+import { Toast } from "@/components/ui/toast";
 import { apiClient } from "@/services/api";
-import { ChevronLeft, ChevronDown, ServerOff } from "lucide-react";
+import { PanelRightOpen, ChevronDown, ServerOff } from "lucide-react";
 import type { SampleEntity } from "@/data/gallery";
 import type {
   AgentInfo,
@@ -21,6 +21,7 @@ import type {
   AppState,
   ExtendedResponseStreamEvent,
 } from "@/types";
+import { Button } from "./components/ui/button";
 
 export default function App() {
   const [appState, setAppState] = useState<AppState>({
@@ -29,8 +30,13 @@ export default function App() {
     isLoading: true,
   });
 
-  const [debugEvents, setDebugEvents] = useState<ExtendedResponseStreamEvent[]>([]);
-  const [debugPanelOpen, setDebugPanelOpen] = useState(true);
+  const [debugEvents, setDebugEvents] = useState<ExtendedResponseStreamEvent[]>(
+    []
+  );
+  const [showDebugPanel, setShowDebugPanel] = useState(() => {
+    const saved = localStorage.getItem("showDebugPanel");
+    return saved !== null ? saved === "true" : true;
+  });
   const [debugPanelWidth, setDebugPanelWidth] = useState(() => {
     const savedWidth = localStorage.getItem("debugPanelWidth");
     return savedWidth ? parseInt(savedWidth, 10) : 320;
@@ -41,6 +47,7 @@ export default function App() {
   const [addingEntityId, setAddingEntityId] = useState<string | null>(null);
   const [errorEntityId, setErrorEntityId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [showEntityNotFoundToast, setShowEntityNotFoundToast] = useState(false);
 
   // Initialize app - load agents and workflows
   useEffect(() => {
@@ -51,16 +58,51 @@ export default function App() {
           apiClient.getWorkflows(),
         ]);
 
-        setAppState((prev) => ({
-          ...prev,
-          agents,
-          workflows,
-          selectedAgent:
+        // Check if there's an entity_id in the URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const entityId = urlParams.get("entity_id");
+
+        let selectedAgent: AgentInfo | WorkflowInfo | undefined;
+
+        // Try to find entity from URL parameter first
+        if (entityId) {
+          selectedAgent =
+            agents.find((a) => a.id === entityId) ||
+            workflows.find((w) => w.id === entityId);
+
+          // If entity not found but was requested, show notification
+          if (!selectedAgent) {
+            setShowEntityNotFoundToast(true);
+          }
+        }
+
+        // Fallback to first available entity if URL entity not found
+        if (!selectedAgent) {
+          selectedAgent =
             agents.length > 0
               ? agents[0]
               : workflows.length > 0
               ? workflows[0]
-              : undefined,
+              : undefined;
+
+          // Update URL to match actual selected entity (or clear if none)
+          if (selectedAgent) {
+            const url = new URL(window.location.href);
+            url.searchParams.set("entity_id", selectedAgent.id);
+            window.history.replaceState({}, "", url);
+          } else {
+            // Clear entity_id if no entities available
+            const url = new URL(window.location.href);
+            url.searchParams.delete("entity_id");
+            window.history.replaceState({}, "", url);
+          }
+        }
+
+        setAppState((prev) => ({
+          ...prev,
+          agents,
+          workflows,
+          selectedAgent,
           isLoading: false,
         }));
       } catch (error) {
@@ -76,7 +118,11 @@ export default function App() {
     loadData();
   }, []);
 
-  // Save debug panel width to localStorage
+  // Save debug panel state to localStorage
+  useEffect(() => {
+    localStorage.setItem("showDebugPanel", showDebugPanel.toString());
+  }, [showDebugPanel]);
+
   useEffect(() => {
     localStorage.setItem("debugPanelWidth", debugPanelWidth.toString());
   }, [debugPanelWidth]);
@@ -111,11 +157,6 @@ export default function App() {
     [debugPanelWidth]
   );
 
-  // Handle double-click to collapse
-  const handleDoubleClick = useCallback(() => {
-    setDebugPanelOpen(false);
-  }, []);
-
   // Handle entity selection
   const handleEntitySelect = useCallback((item: AgentInfo | WorkflowInfo) => {
     setAppState((prev) => ({
@@ -124,18 +165,26 @@ export default function App() {
       currentThread: undefined,
     }));
 
+    // Update URL with selected entity ID
+    const url = new URL(window.location.href);
+    url.searchParams.set("entity_id", item.id);
+    window.history.pushState({}, "", url);
+
     // Clear debug events when switching entities
     setDebugEvents([]);
   }, []);
 
   // Handle debug events from active view
-  const handleDebugEvent = useCallback((event: ExtendedResponseStreamEvent | 'clear') => {
-    if (event === 'clear') {
-      setDebugEvents([]);
-    } else {
-      setDebugEvents((prev) => [...prev, event]);
-    }
-  }, []);
+  const handleDebugEvent = useCallback(
+    (event: ExtendedResponseStreamEvent | "clear") => {
+      if (event === "clear") {
+        setDebugEvents([]);
+      } else {
+        setDebugEvents((prev) => [...prev, event]);
+      }
+    },
+    []
+  );
 
   // Handle adding sample entity
   const handleAddSample = useCallback(async (sample: SampleEntity) => {
@@ -146,9 +195,9 @@ export default function App() {
     try {
       // Call backend to fetch and add entity
       const newEntity = await apiClient.addEntity(sample.url, {
-        source: 'remote_gallery',
+        source: "remote_gallery",
         originalUrl: sample.url,
-        sampleId: sample.id
+        sampleId: sample.id,
       });
 
       // Convert backend entity to frontend format
@@ -157,52 +206,67 @@ export default function App() {
         name: newEntity.name,
         description: newEntity.description,
         type: newEntity.type,
-        source: (newEntity.source as "directory" | "in_memory" | "remote_gallery") || 'remote_gallery',
+        source:
+          (newEntity.source as "directory" | "in_memory" | "remote_gallery") ||
+          "remote_gallery",
         has_env: false,
-        module_path: undefined
+        module_path: undefined,
       };
 
       // Update app state
-      if (newEntity.type === 'agent') {
+      if (newEntity.type === "agent") {
         const agentEntity = {
           ...convertedEntity,
-          tools: (newEntity.tools || []).map(tool =>
-            typeof tool === 'string' ? tool : JSON.stringify(tool)
-          )
+          tools: (newEntity.tools || []).map((tool) =>
+            typeof tool === "string" ? tool : JSON.stringify(tool)
+          ),
         } as AgentInfo;
 
-        setAppState(prev => ({
+        setAppState((prev) => ({
           ...prev,
           agents: [...prev.agents, agentEntity],
-          selectedAgent: agentEntity
+          selectedAgent: agentEntity,
         }));
+
+        // Update URL with new entity
+        const url = new URL(window.location.href);
+        url.searchParams.set("entity_id", agentEntity.id);
+        window.history.pushState({}, "", url);
       } else {
         const workflowEntity = {
           ...convertedEntity,
-          executors: (newEntity.tools || []).map(tool =>
-            typeof tool === 'string' ? tool : JSON.stringify(tool)
+          executors: (newEntity.tools || []).map((tool) =>
+            typeof tool === "string" ? tool : JSON.stringify(tool)
           ),
           input_schema: { type: "string" },
           input_type_name: "Input",
-          start_executor_id: (newEntity.tools && newEntity.tools.length > 0)
-            ? (typeof newEntity.tools[0] === 'string' ? newEntity.tools[0] : JSON.stringify(newEntity.tools[0]))
-            : "unknown"
+          start_executor_id:
+            newEntity.tools && newEntity.tools.length > 0
+              ? typeof newEntity.tools[0] === "string"
+                ? newEntity.tools[0]
+                : JSON.stringify(newEntity.tools[0])
+              : "unknown",
         } as WorkflowInfo;
 
-        setAppState(prev => ({
+        setAppState((prev) => ({
           ...prev,
           workflows: [...prev.workflows, workflowEntity],
-          selectedAgent: workflowEntity
+          selectedAgent: workflowEntity,
         }));
+
+        // Update URL with new entity
+        const url = new URL(window.location.href);
+        url.searchParams.set("entity_id", workflowEntity.id);
+        window.history.pushState({}, "", url);
       }
 
       // Close gallery and clear debug events
       setShowGallery(false);
       setDebugEvents([]);
-
     } catch (error) {
-      const errMsg = error instanceof Error ? error.message : 'Failed to add sample entity';
-      console.error('Failed to add sample entity:', errMsg);
+      const errMsg =
+        error instanceof Error ? error.message : "Failed to add sample entity";
+      console.error("Failed to add sample entity:", errMsg);
       setErrorEntityId(sample.id);
       setErrorMessage(errMsg);
     } finally {
@@ -216,29 +280,35 @@ export default function App() {
   }, []);
 
   // Handle removing entity
-  const handleRemoveEntity = useCallback(async (entityId: string) => {
-    try {
-      await apiClient.removeEntity(entityId);
+  const handleRemoveEntity = useCallback(
+    async (entityId: string) => {
+      try {
+        await apiClient.removeEntity(entityId);
 
-      // Update app state
-      setAppState(prev => ({
-        ...prev,
-        agents: prev.agents.filter(a => a.id !== entityId),
-        workflows: prev.workflows.filter(w => w.id !== entityId),
-        selectedAgent: prev.selectedAgent?.id === entityId
-          ? undefined
-          : prev.selectedAgent
-      }));
+        // Update app state
+        setAppState((prev) => ({
+          ...prev,
+          agents: prev.agents.filter((a) => a.id !== entityId),
+          workflows: prev.workflows.filter((w) => w.id !== entityId),
+          selectedAgent:
+            prev.selectedAgent?.id === entityId
+              ? undefined
+              : prev.selectedAgent,
+        }));
 
-      // Clear debug events if we removed the selected entity
-      if (appState.selectedAgent?.id === entityId) {
-        setDebugEvents([]);
+        // Update URL - clear entity_id if we removed the selected entity
+        if (appState.selectedAgent?.id === entityId) {
+          const url = new URL(window.location.href);
+          url.searchParams.delete("entity_id");
+          window.history.pushState({}, "", url);
+          setDebugEvents([]);
+        }
+      } catch (error) {
+        console.error("Failed to remove entity:", error);
       }
-
-    } catch (error) {
-      console.error('Failed to remove entity:', error);
-    }
-  }, [appState.selectedAgent?.id]);
+    },
+    [appState.selectedAgent?.id]
+  );
 
   // Show loading state while initializing
   if (appState.isLoading) {
@@ -293,24 +363,29 @@ export default function App() {
                 Can't Connect to Backend
               </h2>
               <p className="text-muted-foreground text-base">
-                No worries! Just start the DevUI backend server and you'll be good to go.
+                No worries! Just start the DevUI backend server and you'll be
+                good to go.
               </p>
             </div>
 
             {/* Command Instructions */}
             <div className="space-y-3">
               <div className="text-left bg-muted/50 rounded-lg p-4 space-y-3">
-                <p className="text-sm font-medium text-foreground">Start the backend:</p>
+                <p className="text-sm font-medium text-foreground">
+                  Start the backend:
+                </p>
                 <code className="block bg-background px-3 py-2 rounded border text-sm font-mono text-foreground">
                   devui ./agents --port 8080
                 </code>
                 <p className="text-xs text-muted-foreground">
-                  Or launch programmatically with <code className="text-xs">serve(entities=[agent])</code>
+                  Or launch programmatically with{" "}
+                  <code className="text-xs">serve(entities=[agent])</code>
                 </p>
               </div>
 
               <p className="text-xs text-muted-foreground">
-                Default: <span className="font-mono">http://localhost:8080</span>
+                Default:{" "}
+                <span className="font-mono">http://localhost:8080</span>
               </p>
             </div>
 
@@ -339,10 +414,7 @@ export default function App() {
         </div>
 
         {/* Settings Modal */}
-        <SettingsModal
-          open={showAboutModal}
-          onOpenChange={setShowAboutModal}
-        />
+        <SettingsModal open={showAboutModal} onOpenChange={setShowAboutModal} />
       </div>
     );
   }
@@ -373,7 +445,9 @@ export default function App() {
               errorMessage={errorMessage}
               onClearError={handleClearError}
               onClose={() => setShowGallery(false)}
-              hasExistingEntities={appState.agents.length > 0 || appState.workflows.length > 0}
+              hasExistingEntities={
+                appState.agents.length > 0 || appState.workflows.length > 0
+              }
             />
           </div>
         ) : appState.agents.length === 0 && appState.workflows.length === 0 ? (
@@ -409,51 +483,50 @@ export default function App() {
               )}
             </div>
 
-            {/* Resize Handle */}
-            {debugPanelOpen && (
-          <div
-            className={`w-1 cursor-col-resize flex-shrink-0 relative group transition-colors duration-200 ease-in-out ${
-              isResizing ? "bg-primary/40" : "bg-border hover:bg-primary/20"
-            }`}
-            onMouseDown={handleMouseDown}
-            onDoubleClick={handleDoubleClick}
-          >
-            <div className="absolute inset-y-0 -left-2 -right-2 flex items-center justify-center">
-              <div
-                className={`h-12 w-1 rounded-full transition-all duration-200 ease-in-out ${
-                  isResizing
-                    ? "bg-primary shadow-lg shadow-primary/25"
-                    : "bg-primary/30 group-hover:bg-primary group-hover:shadow-md group-hover:shadow-primary/20"
-                }`}
-              ></div>
-            </div>
-          </div>
-        )}
+            {showDebugPanel ? (
+              <>
+                {/* Resize Handle */}
+                <div
+                  className={`w-1 cursor-col-resize flex-shrink-0 relative group transition-colors duration-200 ease-in-out ${
+                    isResizing ? "bg-primary/40" : "bg-border hover:bg-primary/20"
+                  }`}
+                  onMouseDown={handleMouseDown}
+                >
+                  <div className="absolute inset-y-0 -left-2 -right-2 flex items-center justify-center">
+                    <div
+                      className={`h-12 w-1 rounded-full transition-all duration-200 ease-in-out ${
+                        isResizing
+                          ? "bg-primary shadow-lg shadow-primary/25"
+                          : "bg-primary/30 group-hover:bg-primary group-hover:shadow-md group-hover:shadow-primary/20"
+                      }`}
+                    ></div>
+                  </div>
+                </div>
 
-        {/* Button to reopen when closed */}
-        {!debugPanelOpen && (
-          <div className="flex-shrink-0">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setDebugPanelOpen(true)}
-              className="h-full w-8 rounded-none border-l"
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-          </div>
-        )}
-
-            {/* Right Panel - Debug */}
-            {debugPanelOpen && (
-              <div
-                className="flex-shrink-0"
-                style={{ width: `${debugPanelWidth}px` }}
-              >
-                <DebugPanel
-                  events={debugEvents}
-                  isStreaming={false} // Each view manages its own streaming state
-                />
+                {/* Right Panel - Debug */}
+                <div
+                  className="flex-shrink-0"
+                  style={{ width: `${debugPanelWidth}px` }}
+                >
+                  <DebugPanel
+                    events={debugEvents}
+                    isStreaming={false} // Each view manages its own streaming state
+                    onClose={() => setShowDebugPanel(false)}
+                  />
+                </div>
+              </>
+            ) : (
+              /* Button to reopen when closed */
+              <div className="flex-shrink-0">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowDebugPanel(true)}
+                  className="h-full w-10 rounded-none border-l"
+                  title="Show debug panel"
+                >
+                  <PanelRightOpen className="h-4 w-4" />
+                </Button>
               </div>
             )}
           </>
@@ -461,10 +534,16 @@ export default function App() {
       </div>
 
       {/* Settings Modal */}
-      <SettingsModal
-        open={showAboutModal}
-        onOpenChange={setShowAboutModal}
-      />
+      <SettingsModal open={showAboutModal} onOpenChange={setShowAboutModal} />
+
+      {/* Toast Notification */}
+      {showEntityNotFoundToast && (
+        <Toast
+          message="Entity not found. Showing first available entity instead."
+          type="info"
+          onClose={() => setShowEntityNotFoundToast(false)}
+        />
+      )}
     </div>
   );
 }

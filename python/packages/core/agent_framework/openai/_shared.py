@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import json
 import logging
 from collections.abc import Awaitable, Callable, Mapping
 from copy import copy
@@ -25,7 +24,7 @@ from .._logging import get_logger
 from .._pydantic import AFBaseSettings
 from .._serialization import SerializationMixin
 from .._telemetry import APP_INFO, USER_AGENT_KEY, prepend_agent_framework_to_user_agent
-from .._types import ChatOptions, Contents
+from .._types import ChatOptions
 from ..exceptions import ServiceInitializationError
 
 logger: logging.Logger = get_logger("agent_framework.openai")
@@ -107,19 +106,35 @@ class OpenAISettings(AFBaseSettings):
     encoding 'utf-8'. If the settings are not found in the .env file, the settings are ignored;
     however, validation will fail alerting that the settings are missing.
 
-    Args:
-        api_key: OpenAI API key, see https://platform.openai.com/account/api-keys
-            (Env var OPENAI_API_KEY)
+    Keyword Args:
+        api_key: OpenAI API key, see https://platform.openai.com/account/api-keys.
+            Can be set via environment variable OPENAI_API_KEY.
         base_url: The base URL for the OpenAI API.
-            (Env var OPENAI_BASE_URL)
+            Can be set via environment variable OPENAI_BASE_URL.
         org_id: This is usually optional unless your account belongs to multiple organizations.
-            (Env var OPENAI_ORG_ID)
+            Can be set via environment variable OPENAI_ORG_ID.
         chat_model_id: The OpenAI chat model ID to use, for example, gpt-3.5-turbo or gpt-4.
-            (Env var OPENAI_CHAT_MODEL_ID)
+            Can be set via environment variable OPENAI_CHAT_MODEL_ID.
         responses_model_id: The OpenAI responses model ID to use, for example, gpt-4o or o1.
-            (Env var OPENAI_RESPONSES_MODEL_ID)
+            Can be set via environment variable OPENAI_RESPONSES_MODEL_ID.
         env_file_path: The path to the .env file to load settings from.
         env_file_encoding: The encoding of the .env file, defaults to 'utf-8'.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework.openai import OpenAISettings
+
+            # Using environment variables
+            # Set OPENAI_API_KEY=sk-...
+            # Set OPENAI_CHAT_MODEL_ID=gpt-4
+            settings = OpenAISettings()
+
+            # Or passing parameters directly
+            settings = OpenAISettings(api_key="sk-...", chat_model_id="gpt-4")
+
+            # Or loading from a .env file
+            settings = OpenAISettings(env_file_path="path/to/.env")
     """
 
     env_prefix: ClassVar[str] = "OPENAI_"
@@ -139,7 +154,7 @@ class OpenAIBase(SerializationMixin):
     def __init__(self, *, client: AsyncOpenAI, model_id: str, **kwargs: Any) -> None:
         """Initialize OpenAIBase.
 
-        Args:
+        Keyword Args:
             client: The AsyncOpenAI client instance.
             model_id: The AI model ID to use (non-empty, whitespace stripped).
             **kwargs: Additional keyword arguments.

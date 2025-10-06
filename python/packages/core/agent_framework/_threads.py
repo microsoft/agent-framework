@@ -81,6 +81,8 @@ class ChatMessageStoreProtocol(Protocol):
 
         Args:
             serialized_store_state: The previously serialized state data containing messages.
+
+        Keyword Args:
             **kwargs: Additional arguments for deserialization.
 
         Returns:
@@ -93,7 +95,9 @@ class ChatMessageStoreProtocol(Protocol):
 
         Args:
             serialized_store_state: Previously serialized state data containing messages.
-            **kwargs: Additional arguments for deserialization.
+
+        Keyword Args:
+            kwargs: Additional arguments for deserialization.
         """
         ...
 
@@ -103,8 +107,8 @@ class ChatMessageStoreProtocol(Protocol):
         This method, together with ``deserialize()`` can be used to save and load messages from a persistent store
         if this store only has messages in memory.
 
-        Args:
-            **kwargs: Additional arguments for serialization.
+        Keyword Args:
+            kwargs: Additional arguments for serialization.
 
         Returns:
             The serialized state data that can be used with ``deserialize()``.
@@ -161,9 +165,6 @@ class ChatMessageStore:
     The store maintains messages in memory and provides methods to serialize
     and deserialize the state for persistence purposes.
 
-    Args:
-        messages: The optional initial list of ChatMessage objects to populate the store.
-
     Examples:
         .. code-block:: python
 
@@ -218,6 +219,8 @@ class ChatMessageStore:
 
         Args:
             serialized_store_state: Previously serialized state data containing messages.
+
+        Keyword Args:
             **kwargs: Additional arguments for deserialization.
 
         Returns:
@@ -233,6 +236,8 @@ class ChatMessageStore:
 
         Args:
             serialized_store_state: Previously serialized state data containing messages.
+
+        Keyword Args:
             **kwargs: Additional arguments for deserialization.
         """
         if not serialized_store_state:
@@ -244,7 +249,7 @@ class ChatMessageStore:
     async def serialize(self, **kwargs: Any) -> Any:
         """Serialize the current store state for persistence.
 
-        Args:
+        Keyword Args:
             **kwargs: Additional arguments for serialization.
 
         Returns:
@@ -388,7 +393,7 @@ class AgentThread:
     async def serialize(self, **kwargs: Any) -> dict[str, Any]:
         """Serializes the current object's state.
 
-        Args:
+        Keyword Args:
             **kwargs: Arguments for serialization.
         """
         chat_message_store_state = None
@@ -412,6 +417,8 @@ class AgentThread:
 
         Args:
             serialized_thread_state: The serialized thread state as a dictionary.
+
+        Keyword Args:
             message_store: Optional ChatMessageStoreProtocol to use for managing messages.
                 If not provided, a new ChatMessageStore will be created if needed.
             **kwargs: Additional arguments for deserialization.
@@ -445,7 +452,14 @@ class AgentThread:
         serialized_thread_state: dict[str, Any],
         **kwargs: Any,
     ) -> None:
-        """Deserializes the state from a dictionary into the thread properties."""
+        """Deserializes the state from a dictionary into the thread properties.
+
+        Args:
+            serialized_thread_state: The serialized thread state as a dictionary.
+
+        Keyword Args:
+            **kwargs: Additional arguments for deserialization.
+        """
         state = AgentThreadState.model_validate(serialized_thread_state)
 
         if state.service_thread_id is not None:

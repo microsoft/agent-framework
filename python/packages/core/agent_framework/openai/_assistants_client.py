@@ -37,6 +37,7 @@ from .._types import (
     UriContent,
     UsageContent,
     UsageDetails,
+    prepare_function_call_results,
 )
 from ..exceptions import ServiceInitializationError
 from ..observability import use_observability
@@ -59,6 +60,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
 
     def __init__(
         self,
+        *,
         model_id: str | None = None,
         assistant_id: str | None = None,
         assistant_name: str | None = None,
@@ -74,27 +76,44 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
     ) -> None:
         """Initialize an OpenAI Assistants client.
 
-        Args:
-            model_id: OpenAI model name, see
-                https://platform.openai.com/docs/models
+        Keyword Args:
+            model_id: OpenAI model name, see https://platform.openai.com/docs/models.
+                Can also be set via environment variable OPENAI_CHAT_MODEL_ID.
             assistant_id: The ID of an OpenAI assistant to use.
                 If not provided, a new assistant will be created (and deleted after the request).
             assistant_name: The name to use when creating new assistants.
             thread_id: Default thread ID to use for conversations. Can be overridden by
-                conversation_id property, when making a request.
+                conversation_id property when making a request.
                 If not provided, a new thread will be created (and deleted after the request).
-            api_key: The optional API key to use. If provided will override,
-                the env vars or .env file value.
-            org_id: The optional org ID to use. If provided will override,
-                the env vars or .env file value.
-            base_url: The optional base URL to use. If provided will override,
+            api_key: The API key to use. If provided will override the env vars or .env file value.
+                Can also be set via environment variable OPENAI_API_KEY.
+            org_id: The org ID to use. If provided will override the env vars or .env file value.
+                Can also be set via environment variable OPENAI_ORG_ID.
+            base_url: The base URL to use. If provided will override the standard value.
+                Can also be set via environment variable OPENAI_BASE_URL.
             default_headers: The default headers mapping of string keys to
-                string values for HTTP requests. (Optional)
-            async_client: An existing client to use. (Optional)
+                string values for HTTP requests.
+            async_client: An existing client to use.
             env_file_path: Use the environment settings file as a fallback
-                to environment variables. (Optional)
-            env_file_encoding: The encoding of the environment settings file. (Optional)
+                to environment variables.
+            env_file_encoding: The encoding of the environment settings file.
             kwargs: Other keyword parameters.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.openai import OpenAIAssistantsClient
+
+                # Using environment variables
+                # Set OPENAI_API_KEY=sk-...
+                # Set OPENAI_CHAT_MODEL_ID=gpt-4
+                client = OpenAIAssistantsClient()
+
+                # Or passing parameters directly
+                client = OpenAIAssistantsClient(model_id="gpt-4", api_key="sk-...")
+
+                # Or loading from a .env file
+                client = OpenAIAssistantsClient(env_file_path="path/to/.env")
         """
         try:
             openai_settings = OpenAISettings(
@@ -481,7 +500,13 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
 
                 if tool_outputs is None:
                     tool_outputs = []
-                tool_outputs.append(ToolOutput(tool_call_id=call_id, output=str(function_result_content.result)))
+                if function_result_content.result:
+                    output = prepare_function_call_results(function_result_content.result)
+                elif function_result_content.exception:
+                    output = "Error: " + str(function_result_content.exception)
+                else:
+                    output = "No output received."
+                tool_outputs.append(ToolOutput(tool_call_id=call_id, output=output))
 
         return run_id, tool_outputs
 

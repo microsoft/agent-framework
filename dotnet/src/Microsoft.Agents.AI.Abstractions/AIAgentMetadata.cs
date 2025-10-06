@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Diagnostics;
+
 namespace Microsoft.Agents.AI;
 
 /// <summary>
@@ -9,6 +11,7 @@ namespace Microsoft.Agents.AI;
 /// This class contains descriptive information about an agent that can be used for identification,
 /// telemetry, and logging purposes.
 /// </remarks>
+[DebuggerDisplay("ProviderName = {ProviderName}")]
 public class AIAgentMetadata
 {
     /// <summary>

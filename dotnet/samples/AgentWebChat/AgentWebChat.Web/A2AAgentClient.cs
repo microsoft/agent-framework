@@ -43,7 +43,7 @@ internal sealed class A2AAgentClient : IAgentClient
         {
             // Convert all messages to A2A parts and create a single message
             var parts = messages.ToParts();
-            var a2aMessage = new Message
+            var a2aMessage = new AgentMessage
             {
                 MessageId = Guid.NewGuid().ToString("N"),
                 ContextId = contextId,
@@ -55,9 +55,9 @@ internal sealed class A2AAgentClient : IAgentClient
             var a2aResponse = await a2aClient.SendMessageAsync(messageSendParams, cancellationToken);
 
             // Handle different response types
-            if (a2aResponse is Message message)
+            if (a2aResponse is AgentMessage message)
             {
-                var responseMessage = MessageConverter.ToChatMessage(message);
+                var responseMessage = message.ToChatMessage();
                 if (responseMessage is not null)
                 {
                     results.Add(new AgentRunResponseUpdate(responseMessage.Role, responseMessage.Contents)
@@ -188,17 +188,17 @@ internal sealed class A2AAgentClient : IAgentClient
 // Extension method to convert multiple chat messages to A2A messages
 internal static class ChatMessageExtensions
 {
-    public static List<Message> ToA2AMessages(this IList<ChatMessage> chatMessages)
+    public static List<AgentMessage> ToA2AMessages(this IList<ChatMessage> chatMessages)
     {
         if (chatMessages is null || chatMessages.Count == 0)
         {
             return [];
         }
 
-        var result = new List<Message>();
+        var result = new List<AgentMessage>();
         foreach (var chatMessage in chatMessages)
         {
-            result.Add(MessageConverter.ToA2AMessage(chatMessage));
+            result.Add(chatMessage.ToA2AMessage());
         }
         return result;
     }

@@ -17,7 +17,7 @@ internal static class Step1EntryPoint
             ReverseTextExecutor reverse = new();
 
             WorkflowBuilder builder = new(uppercase);
-            builder.AddEdge(uppercase, reverse);
+            builder.AddEdge(uppercase, reverse).WithOutputFrom(reverse);
 
             return builder.Build();
         }
@@ -49,7 +49,7 @@ internal sealed class ReverseTextExecutor() : ReflectingExecutor<ReverseTextExec
     {
         string result = string.Concat(message.Reverse());
 
-        await context.AddEventAsync(new RequestHaltEvent(result)).ConfigureAwait(false);
+        await context.YieldOutputAsync(result).ConfigureAwait(false);
         return result;
     }
 }

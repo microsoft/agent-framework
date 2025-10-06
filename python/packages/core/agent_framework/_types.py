@@ -58,6 +58,7 @@ __all__ = [
     "UriContent",
     "UsageContent",
     "UsageDetails",
+    "prepare_function_call_results",
 ]
 
 logger = get_logger("agent_framework")
@@ -245,6 +246,8 @@ class UsageDetails(SerializationMixin):
             input_token_count: The number of tokens in the input.
             output_token_count: The number of tokens in the output.
             total_token_count: The total number of tokens used to produce the response.
+
+        Keyword Args:
             **kwargs: Additional token counts, can be set by passing keyword arguments.
                 They can be retrieved through the `additional_counts` property.
         """
@@ -262,7 +265,7 @@ class UsageDetails(SerializationMixin):
     def to_dict(self, *, exclude_none: bool = True, exclude: set[str] | None = None) -> dict[str, Any]:
         """Convert the UsageDetails instance to a dictionary.
 
-        Args:
+        Keyword Args:
             exclude_none: Whether to exclude None values from the output.
             exclude: Set of field names to exclude from the output.
 
@@ -381,7 +384,7 @@ class TextSpanRegion(SerializationMixin):
     ) -> None:
         """Initialize TextSpanRegion.
 
-        Args:
+        Keyword Args:
             start_index: The start index of the text span.
             end_index: The end index of the text span.
             **kwargs: Additional keyword arguments.
@@ -400,13 +403,7 @@ AnnotatedRegions = TextSpanRegion
 
 
 class BaseAnnotation(SerializationMixin):
-    """Base class for all AI Annotation types.
-
-    Args:
-        additional_properties: Optional additional properties associated with the content.
-        raw_representation: Optional raw representation of the content from an underlying implementation.
-
-    """
+    """Base class for all AI Annotation types."""
 
     DEFAULT_EXCLUDE: ClassVar[set[str]] = {"raw_representation", "additional_properties"}
 
@@ -420,7 +417,7 @@ class BaseAnnotation(SerializationMixin):
     ) -> None:
         """Initialize BaseAnnotation.
 
-        Args:
+        Keyword Args:
             annotated_regions: A list of regions that have been annotated. Can be region objects or dicts.
             additional_properties: Optional additional properties associated with the content.
             raw_representation: Optional raw representation of the content from an underlying implementation.
@@ -452,7 +449,7 @@ class BaseAnnotation(SerializationMixin):
 
         Extracts additional_properties fields to the root level.
 
-        Args:
+        Keyword Args:
             exclude: Set of field names to exclude from serialization.
             exclude_none: Whether to exclude None values from the output. Defaults to True.
 
@@ -513,7 +510,7 @@ class CitationAnnotation(BaseAnnotation):
     ) -> None:
         """Initialize CitationAnnotation.
 
-        Args:
+        Keyword Args:
             title: The title of the cited content.
             url: The URL of the cited content.
             file_id: The file identifier of the cited content, if applicable.
@@ -568,7 +565,7 @@ class BaseContent(SerializationMixin):
     ) -> None:
         """Initialize BaseContent.
 
-        Args:
+        Keyword Args:
             annotations: Optional annotations associated with the content. Can be annotation objects or dicts.
             additional_properties: Optional additional properties associated with the content.
             raw_representation: Optional raw representation of the content from an underlying implementation.
@@ -602,7 +599,7 @@ class BaseContent(SerializationMixin):
 
         Extracts additional_properties fields to the root level.
 
-        Args:
+        Keyword Args:
             exclude: Set of field names to exclude from serialization.
             exclude_none: Whether to exclude None values from the output. Defaults to True.
 
@@ -658,6 +655,8 @@ class TextContent(BaseContent):
 
         Args:
             text: The text content represented by this instance.
+
+        Keyword Args:
             additional_properties: Optional additional properties associated with the content.
             raw_representation: Optional raw representation of the content.
             annotations: Optional annotations associated with the content.
@@ -798,6 +797,8 @@ class TextReasoningContent(BaseContent):
 
         Args:
             text: The text content represented by this instance.
+
+        Keyword Args:
             additional_properties: Optional additional properties associated with the content.
             raw_representation: Optional raw representation of the content.
             annotations: Optional annotations associated with the content.
@@ -896,6 +897,10 @@ class TextReasoningContent(BaseContent):
 class DataContent(BaseContent):
     """Represents binary data content with an associated media type (also known as a MIME type).
 
+    Important:
+        This is for binary data that is represented as a data URI, not for online resources.
+        Use ``UriContent`` for online resources.
+
     Attributes:
         uri: The URI of the data represented by this instance, typically in the form of a data URI.
             Should be in the form: "data:{media_type};base64,{base64_data}".
@@ -935,11 +940,11 @@ class DataContent(BaseContent):
     ) -> None:
         """Initializes a DataContent instance with a URI.
 
-        Remarks:
+        Important:
             This is for binary data that is represented as a data URI, not for online resources.
-            Use `UriContent` for online resources.
+            Use ``UriContent`` for online resources.
 
-        Args:
+        Keyword Args:
             uri: The URI of the data represented by this instance.
                 Should be in the form: "data:{media_type};base64,{base64_data}".
             annotations: Optional annotations associated with the content.
@@ -961,11 +966,11 @@ class DataContent(BaseContent):
     ) -> None:
         """Initializes a DataContent instance with binary data.
 
-        Remarks:
+        Important:
             This is for binary data that is represented as a data URI, not for online resources.
-            Use `UriContent` for online resources.
+            Use ``UriContent`` for online resources.
 
-        Args:
+        Keyword Args:
             data: The binary data represented by this instance.
                 The data is transformed into a base64-encoded data URI.
             media_type: The media type of the data.
@@ -988,11 +993,11 @@ class DataContent(BaseContent):
     ) -> None:
         """Initializes a DataContent instance.
 
-        Remarks:
+        Important:
             This is for binary data that is represented as a data URI, not for online resources.
-            Use `UriContent` for online resources.
+            Use ``UriContent`` for online resources.
 
-        Args:
+        Keyword Args:
             uri: The URI of the data represented by this instance.
                 Should be in the form: "data:{media_type};base64,{base64_data}".
             data: The binary data represented by this instance.
@@ -1046,9 +1051,9 @@ class DataContent(BaseContent):
 class UriContent(BaseContent):
     """Represents a URI content.
 
-    Remarks:
+    Important:
         This is used for content that is identified by a URI, such as an image or a file.
-        For (binary) data URIs, use `DataContent` instead.
+        For (binary) data URIs, use ``DataContent`` instead.
 
     Attributes:
         uri: The URI of the content, e.g., 'https://example.com/image.png'.
@@ -1099,6 +1104,8 @@ class UriContent(BaseContent):
         Args:
             uri: The URI of the content.
             media_type: The media type of the content.
+
+        Keyword Args:
             annotations: Optional annotations associated with the content.
             additional_properties: Optional additional properties associated with the content.
             raw_representation: Optional raw representation of the content.
@@ -1115,6 +1122,13 @@ class UriContent(BaseContent):
         self.type: Literal["uri"] = "uri"
 
     def has_top_level_media_type(self, top_level_media_type: Literal["application", "audio", "image", "text"]) -> bool:
+        """Returns a boolean indicating if the media type has the specified top-level media type.
+
+        Args:
+            top_level_media_type: The top-level media type to check for, allowed values:
+                "image", "text", "application", "audio".
+
+        """
         return _has_top_level_media_type(self.media_type, top_level_media_type)
 
 
@@ -1177,7 +1191,7 @@ class ErrorContent(BaseContent):
     ) -> None:
         """Initializes an ErrorContent instance.
 
-        Args:
+        Keyword Args:
             message: The error message.
             error_code: The error code associated with the error.
             details: Additional details about the error.
@@ -1229,14 +1243,22 @@ class FunctionCallContent(BaseContent):
 
             # Parse arguments
             args = func_call.parse_arguments()
-            print(args)  # {"location": "Seattle", "unit": "celsius"}
+            print(args["location"])  # "Seattle"
 
             # Create with string arguments (gradual completion)
-            func_call_partial = FunctionCallContent(
+            func_call_partial_1 = FunctionCallContent(
                 call_id="call_124",
                 name="search",
-                arguments='{"query": "weather"}',
+                arguments='{"query": ',
             )
+            func_call_partial_2 = FunctionCallContent(
+                call_id="call_124",
+                name="search",
+                arguments='"latest news"}',
+            )
+            full_call = func_call_partial_1 + func_call_partial_2
+            args = full_call.parse_arguments()
+            print(args["query"])  # "latest news"
     """
 
     def __init__(
@@ -1253,7 +1275,7 @@ class FunctionCallContent(BaseContent):
     ) -> None:
         """Initializes a FunctionCallContent instance.
 
-        Args:
+        Keyword Args:
             call_id: The function call identifier.
             name: The name of the function requested.
             arguments: The arguments requested to be provided to the function,
@@ -1277,6 +1299,11 @@ class FunctionCallContent(BaseContent):
         self.type: Literal["function_call"] = "function_call"
 
     def parse_arguments(self) -> dict[str, Any | None] | None:
+        """Parse the arguments into a dictionary.
+
+        If they cannot be parsed as json or if the resulting json is not a dict,
+        they are returned as a dictionary with a single key "raw".
+        """
         if isinstance(self.arguments, str):
             # If arguments are a string, try to parse it as JSON
             try:
@@ -1357,7 +1384,7 @@ class FunctionResultContent(BaseContent):
     ) -> None:
         """Initializes a FunctionResultContent instance.
 
-        Args:
+        Keyword Args:
             call_id: The identifier of the function call for which this is the result.
             result: The result of the function call, or a generic error message if the function call failed.
             exception: An exception that occurred if the function call failed.
@@ -1454,7 +1481,16 @@ class HostedFileContent(BaseContent):
         raw_representation: Any | None = None,
         **kwargs: Any,
     ) -> None:
-        """Initializes a HostedFileContent instance."""
+        """Initializes a HostedFileContent instance.
+
+        Args:
+            file_id: The identifier of the hosted file.
+
+        Keyword Args:
+            additional_properties: Optional additional properties associated with the content.
+            raw_representation: Optional raw representation of the content.
+            **kwargs: Any additional keyword arguments.
+        """
         super().__init__(
             additional_properties=additional_properties,
             raw_representation=raw_representation,
@@ -1491,7 +1527,16 @@ class HostedVectorStoreContent(BaseContent):
         raw_representation: Any | None = None,
         **kwargs: Any,
     ) -> None:
-        """Initializes a HostedVectorStoreContent instance."""
+        """Initializes a HostedVectorStoreContent instance.
+
+        Args:
+            vector_store_id: The identifier of the hosted vector store.
+
+        Keyword Args:
+            additional_properties: Optional additional properties associated with the content.
+            raw_representation: Optional raw representation of the content.
+            **kwargs: Any additional keyword arguments.
+        """
         super().__init__(
             additional_properties=additional_properties,
             raw_representation=raw_representation,
@@ -1515,7 +1560,7 @@ class BaseUserInputRequest(BaseContent):
     ) -> None:
         """Initialize BaseUserInputRequest.
 
-        Args:
+        Keyword Args:
             id: The unique identifier for the request.
             annotations: Optional annotations associated with the content.
             additional_properties: Optional additional properties associated with the content.
@@ -1571,6 +1616,8 @@ class FunctionApprovalResponseContent(BaseContent):
 
         Args:
             approved: Whether the function call was approved.
+
+        Keyword Args:
             id: The unique identifier for the request.
             function_call: The function call content to be approved. Can be a FunctionCallContent object or dict.
             annotations: Optional list of annotations for the request.
@@ -1631,7 +1678,7 @@ class FunctionApprovalRequestContent(BaseContent):
     ) -> None:
         """Initializes a FunctionApprovalRequestContent instance.
 
-        Args:
+        Keyword Args:
             id: The unique identifier for the request.
             function_call: The function call content to be approved. Can be a FunctionCallContent object or dict.
             annotations: Optional list of annotations for the request.
@@ -1680,6 +1727,31 @@ Contents = (
     | FunctionApprovalRequestContent
     | FunctionApprovalResponseContent
 )
+
+
+def _prepare_function_call_results_as_dumpable(content: Contents | Any | list[Contents | Any]) -> Any:
+    if isinstance(content, list):
+        # Particularly deal with lists of Content
+        return [_prepare_function_call_results_as_dumpable(item) for item in content]
+    if isinstance(content, dict):
+        return {k: _prepare_function_call_results_as_dumpable(v) for k, v in content.items()}
+    if hasattr(content, "to_dict"):
+        return content.to_dict(exclude={"raw_representation", "additional_properties"})
+    return content
+
+
+def prepare_function_call_results(content: Contents | Any | list[Contents | Any]) -> str:
+    """Prepare the values of the function call results."""
+    if isinstance(content, Contents):
+        # For BaseContent objects, use to_dict and serialize to JSON
+        return json.dumps(content.to_dict(exclude={"raw_representation", "additional_properties"}))
+
+    dumpable = _prepare_function_call_results_as_dumpable(content)
+    if isinstance(dumpable, str):
+        return dumpable
+    # fallback
+    return json.dumps(dumpable)
+
 
 # region Chat Response constants
 
@@ -1823,7 +1895,7 @@ class FinishReason(SerializationMixin, metaclass=EnumLike):
 
 
 class ChatMessage(SerializationMixin):
-    r"""Represents a chat message.
+    """Represents a chat message.
 
     Attributes:
         role: The role of the author of the message.
@@ -1885,6 +1957,8 @@ class ChatMessage(SerializationMixin):
 
         Args:
             role: The role of the author of the message.
+
+        Keyword Args:
             text: The text content of the message.
             author_name: Optional name of the author of the message.
             message_id: Optional ID of the chat message.
@@ -1909,6 +1983,8 @@ class ChatMessage(SerializationMixin):
 
         Args:
             role: The role of the author of the message.
+
+        Keyword Args:
             contents: Optional list of BaseContent items to include in the message.
             author_name: Optional name of the author of the message.
             message_id: Optional ID of the chat message.
@@ -1933,6 +2009,8 @@ class ChatMessage(SerializationMixin):
 
         Args:
             role: The role of the author of the message (Role, string, or dict).
+
+        Keyword Args:
             text: Optional text content of the message.
             contents: Optional list of BaseContent items or dicts to include in the message.
             author_name: Optional name of the author of the message.
@@ -2154,7 +2232,7 @@ class ChatResponse(SerializationMixin):
     ) -> None:
         """Initializes a ChatResponse with the provided parameters.
 
-        Args:
+        Keyword Args:
             messages: A single ChatMessage or a sequence of ChatMessage objects to include in the response.
             response_id: Optional ID of the chat response.
             conversation_id: Optional identifier for the state of the conversation.
@@ -2189,7 +2267,7 @@ class ChatResponse(SerializationMixin):
     ) -> None:
         """Initializes a ChatResponse with the provided parameters.
 
-        Args:
+        Keyword Args:
             text: The text content to include in the response. If provided, it will be added as a ChatMessage.
             response_id: Optional ID of the chat response.
             conversation_id: Optional identifier for the state of the conversation.
@@ -2222,7 +2300,23 @@ class ChatResponse(SerializationMixin):
         raw_representation: Any | None = None,
         **kwargs: Any,
     ) -> None:
-        """Initializes a ChatResponse with the provided parameters."""
+        """Initializes a ChatResponse with the provided parameters.
+
+        Keyword Args:
+            messages: A single ChatMessage or a sequence of ChatMessage objects to include in the response.
+            text: The text content to include in the response. If provided, it will be added as a ChatMessage.
+            response_id: Optional ID of the chat response.
+            conversation_id: Optional identifier for the state of the conversation.
+            model_id: Optional model ID used in the creation of the chat response.
+            created_at: Optional timestamp for the chat response.
+            finish_reason: Optional reason for the chat response.
+            usage_details: Optional usage details for the chat response.
+            value: Optional value of the structured output.
+            response_format: Optional response format for the chat response.
+            additional_properties: Optional additional properties associated with the chat response.
+            raw_representation: Optional raw representation of the chat response from an underlying implementation.
+            **kwargs: Any additional keyword arguments.
+        """
         # Handle messages conversion
         if messages is None:
             messages = []
@@ -2273,7 +2367,29 @@ class ChatResponse(SerializationMixin):
         *,
         output_format_type: type[BaseModel] | None = None,
     ) -> TChatResponse:
-        """Joins multiple updates into a single ChatResponse."""
+        """Joins multiple updates into a single ChatResponse.
+
+        Example:
+            .. code-block:: python
+
+                from agent_framework import ChatResponse, ChatResponseUpdate
+
+                # Create some response updates
+                updates = [
+                    ChatResponseUpdate(role="assistant", text="Hello"),
+                    ChatResponseUpdate(text=" How can I help you?"),
+                ]
+
+                # Combine updates into a single ChatResponse
+                response = ChatResponse.from_chat_response_updates(updates)
+                print(response.text)  # "Hello How can I help you?"
+
+        Args:
+            updates: A sequence of ChatResponseUpdate objects to combine.
+
+        Keyword Args:
+            output_format_type: Optional Pydantic model type to parse the response text into structured data.
+        """
         msg = cls(messages=[])
         for update in updates:
             _process_update(msg, update)
@@ -2289,7 +2405,25 @@ class ChatResponse(SerializationMixin):
         *,
         output_format_type: type[BaseModel] | None = None,
     ) -> TChatResponse:
-        """Joins multiple updates into a single ChatResponse."""
+        """Joins multiple updates into a single ChatResponse.
+
+        Example:
+            .. code-block:: python
+
+                from agent_framework import ChatResponse, ChatResponseUpdate, ChatClient
+
+                client = ChatClient()  # should be a concrete implementation
+                response = await ChatResponse.from_chat_response_generator(
+                    client.get_streaming_response("Hello, how are you?")
+                )
+                print(response.text)
+
+        Args:
+            updates: An async iterable of ChatResponseUpdate objects to combine.
+
+        Keyword Args:
+            output_format_type: Optional Pydantic model type to parse the response text into structured data.
+        """
         msg = cls(messages=[])
         async for update in updates:
             _process_update(msg, update)
@@ -2386,7 +2520,7 @@ class ChatResponseUpdate(SerializationMixin):
     ) -> None:
         """Initializes a ChatResponseUpdate with the provided parameters.
 
-        Args:
+        Keyword Args:
             contents: Optional list of BaseContent items or dicts to include in the update.
             text: Optional text content to include in the update.
             role: Optional role of the author of the response update (Role, string, or dict
@@ -2441,20 +2575,6 @@ class ChatResponseUpdate(SerializationMixin):
     def __str__(self) -> str:
         return self.text
 
-    def with_(self, contents: list[BaseContent] | None = None, message_id: str | None = None) -> "ChatResponseUpdate":
-        """Returns a new instance with the specified contents and message_id."""
-        if contents is None:
-            contents = []
-
-        # Create a dictionary of current instance data
-        current_data = self.to_dict()
-
-        # Update with new values
-        current_data["contents"] = self.contents + contents
-        current_data["message_id"] = message_id or self.message_id
-
-        return ChatResponseUpdate.from_dict(current_data)
-
 
 # region AgentRunResponse
 
@@ -2502,6 +2622,7 @@ class AgentRunResponse(SerializationMixin):
 
     def __init__(
         self,
+        *,
         messages: ChatMessage
         | list[ChatMessage]
         | MutableMapping[str, Any]
@@ -2517,15 +2638,15 @@ class AgentRunResponse(SerializationMixin):
     ) -> None:
         """Initialize an AgentRunResponse.
 
-        Attributes:
-        messages: The list of chat messages in the response.
-        response_id: The ID of the chat response.
-        created_at: A timestamp for the chat response.
-        usage_details: The usage details for the chat response.
-        value: The structured output of the agent run response, if applicable.
-        additional_properties: Any additional properties associated with the chat response.
-        raw_representation: The raw representation of the chat response from an underlying implementation.
-        **kwargs: Additional properties to set on the response.
+        Keyword Args:
+            messages: The list of chat messages in the response.
+            response_id: The ID of the chat response.
+            created_at: A timestamp for the chat response.
+            usage_details: The usage details for the chat response.
+            value: The structured output of the agent run response, if applicable.
+            additional_properties: Any additional properties associated with the chat response.
+            raw_representation: The raw representation of the chat response from an underlying implementation.
+            **kwargs: Additional properties to set on the response.
         """
         processed_messages: list[ChatMessage] = []
         if messages is not None:
@@ -2577,7 +2698,14 @@ class AgentRunResponse(SerializationMixin):
         *,
         output_format_type: type[BaseModel] | None = None,
     ) -> TAgentRunResponse:
-        """Joins multiple updates into a single AgentRunResponse."""
+        """Joins multiple updates into a single AgentRunResponse.
+
+        Args:
+            updates: A sequence of AgentRunResponseUpdate objects to combine.
+
+        Keyword Args:
+            output_format_type: Optional Pydantic model type to parse the response text into structured data.
+        """
         msg = cls(messages=[])
         for update in updates:
             _process_update(msg, update)
@@ -2593,7 +2721,14 @@ class AgentRunResponse(SerializationMixin):
         *,
         output_format_type: type[BaseModel] | None = None,
     ) -> TAgentRunResponse:
-        """Joins multiple updates into a single AgentRunResponse."""
+        """Joins multiple updates into a single AgentRunResponse.
+
+        Args:
+            updates: An async iterable of AgentRunResponseUpdate objects to combine.
+
+        Keyword Args:
+            output_format_type: Optional Pydantic model type to parse the response text into structured data
+        """
         msg = cls(messages=[])
         async for update in updates:
             _process_update(msg, update)
@@ -2668,7 +2803,7 @@ class AgentRunResponseUpdate(SerializationMixin):
     ) -> None:
         """Initialize an AgentRunResponseUpdate.
 
-        Args:
+        Keyword Args:
             contents: Optional list of BaseContent items or dicts to include in the update.
             text: Optional text content of the update.
             role: The role of the author of the response update (Role, string, or dict
@@ -2760,12 +2895,15 @@ class ToolMode(SerializationMixin, metaclass=EnumLike):
     def __init__(
         self,
         mode: Literal["auto", "required", "none"] = "none",
+        *,
         required_function_name: str | None = None,
     ) -> None:
         """Initialize ToolMode.
 
         Args:
             mode: The tool mode - "auto", "required", or "none".
+
+        Keyword Args:
             required_function_name: Optional function name for required mode.
         """
         self.mode = mode
@@ -2876,7 +3014,7 @@ class ChatOptions(SerializationMixin):
     ):
         """Initialize ChatOptions.
 
-        Args:
+        Keyword Args:
             additional_properties: Provider-specific additional properties.
             model_id: The AI model ID to use.
             allow_multiple_tool_calls: Whether to allow multiple tool calls.
@@ -2995,10 +3133,10 @@ class ChatOptions(SerializationMixin):
             return ToolMode.from_dict(tool_choice)  # type: ignore
         return tool_choice
 
-    def to_provider_settings(self, by_alias: bool = True, exclude: set[str] | None = None) -> dict[str, Any]:
+    def to_provider_settings(self, *, by_alias: bool = True, exclude: set[str] | None = None) -> dict[str, Any]:
         """Convert the ChatOptions to a dictionary suitable for provider requests.
 
-        Args:
+        Keyword Args:
             by_alias: Use alias names for fields if True.
             exclude: Additional keys to exclude from the output.
 

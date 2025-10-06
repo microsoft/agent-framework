@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Generic;
 using A2A;
 
@@ -22,7 +21,11 @@ internal static class A2AAIContentExtensions
 
         foreach (var content in contents)
         {
-            (parts ??= []).Add(content.ToA2APart());
+            var part = content.ToA2APart();
+            if (part is not null)
+            {
+                (parts ??= []).Add(part);
+            }
         }
 
         return parts;
@@ -32,12 +35,13 @@ internal static class A2AAIContentExtensions
     ///  Converts a <see cref="AIContent"/> to a <see cref="Part"/> object."/>
     /// </summary>
     /// <param name="content">AI content to convert.</param>
-    /// <returns>The corresponding A2A <see cref="Part"/> object.</returns>
-    internal static Part ToA2APart(this AIContent content) =>
+    /// <returns>The corresponding A2A <see cref="Part"/> object, or null if the content type is not supported.</returns>
+    internal static Part? ToA2APart(this AIContent content) =>
         content switch
         {
             TextContent textContent => new TextPart { Text = textContent.Text },
             HostedFileContent hostedFileContent => new FilePart { File = new FileWithUri { Uri = hostedFileContent.FileId } },
-            _ => throw new NotSupportedException($"Unsupported content type: {content.GetType().Name}."),
+            // Ignore unknown content types (FunctionCallContent, FunctionResultContent, etc.)
+            _ => null,
         };
 }

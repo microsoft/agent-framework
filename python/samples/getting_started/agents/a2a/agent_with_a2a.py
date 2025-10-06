@@ -8,7 +8,7 @@ from a2a.client import A2ACardResolver
 from agent_framework.a2a import A2AAgent
 
 """
-Agent-to-Agent (A2A) Protocol Integration Sample
+Agent2Agent (A2A) Protocol Integration Sample
 
 This sample demonstrates how to connect to and communicate with external agents using
 the A2A protocol. A2A is a standardized communication protocol that enables interoperability
@@ -53,12 +53,17 @@ async def main():
         resolver = A2ACardResolver(httpx_client=http_client, base_url=a2a_agent_host)
 
         # Get agent card
-        agent_card = await resolver.get_agent_card(relative_card_path="/.well-known/agent.json")
+        agent_card = await resolver.get_agent_card(
+            relative_card_path="/.well-known/agent.json"
+        )
         print(f"Found agent: {agent_card.name} - {agent_card.description}")
 
         # Create A2A agent instance
         agent = A2AAgent(
-            name=agent_card.name, description=agent_card.description, agent_card=agent_card, url=a2a_agent_host
+            name=agent_card.name,
+            description=agent_card.description,
+            agent_card=agent_card,
+            url=a2a_agent_host,
         )
 
         # Invoke the agent and output the result

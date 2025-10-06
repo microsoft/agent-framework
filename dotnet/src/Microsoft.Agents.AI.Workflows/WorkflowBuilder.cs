@@ -32,10 +32,12 @@ public class WorkflowBuilder
     private readonly Dictionary<string, HashSet<Edge>> _edges = [];
     private readonly HashSet<string> _unboundExecutors = [];
     private readonly HashSet<EdgeConnection> _conditionlessConnections = [];
-    private readonly Dictionary<string, InputPort> _inputPorts = [];
+    private readonly Dictionary<string, RequestPort> _inputPorts = [];
     private readonly HashSet<string> _outputExecutors = [];
 
     private readonly string _startExecutorId;
+    private string? _name;
+    private string? _description;
 
     private static readonly string s_namespace = typeof(WorkflowBuilder).Namespace!;
     private static readonly ActivitySource s_activitySource = new(s_namespace);
@@ -88,9 +90,9 @@ public class WorkflowBuilder
             }
         }
 
-        if (executorish.ExecutorType == ExecutorIsh.Type.InputPort)
+        if (executorish.ExecutorType == ExecutorIsh.Type.RequestPort)
         {
-            InputPort port = executorish._inputPortValue!;
+            RequestPort port = executorish._requestPortValue!;
             this._inputPorts[port.Id] = port;
         }
 
@@ -111,6 +113,28 @@ public class WorkflowBuilder
             this._outputExecutors.Add(this.Track(executor).Id);
         }
 
+        return this;
+    }
+
+    /// <summary>
+    /// Sets the human-readable name for the workflow.
+    /// </summary>
+    /// <param name="name">The name of the workflow.</param>
+    /// <returns>The current <see cref="WorkflowBuilder"/> instance, enabling fluent configuration.</returns>
+    public WorkflowBuilder WithName(string name)
+    {
+        this._name = name;
+        return this;
+    }
+
+    /// <summary>
+    /// Sets the description for the workflow.
+    /// </summary>
+    /// <param name="description">The description of what the workflow does.</param>
+    /// <returns>The current <see cref="WorkflowBuilder"/> instance, enabling fluent configuration.</returns>
+    public WorkflowBuilder WithDescription(string description)
+    {
+        this._description = description;
         return this;
     }
 
@@ -151,11 +175,13 @@ public class WorkflowBuilder
     /// </summary>
     /// <param name="source">The executor that acts as the source node of the edge. Cannot be null.</param>
     /// <param name="target">The executor that acts as the target node of the edge. Cannot be null.</param>
+    /// <param name="idempotent">If set to <see langword="true"/>, adding the same edge multiple times will be a NoOp,
+    /// rather than an error.</param>
     /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
     /// <exception cref="InvalidOperationException">Thrown if an unconditional edge between the specified source and target
     /// executors already exists.</exception>
-    public WorkflowBuilder AddEdge(ExecutorIsh source, ExecutorIsh target)
-        => this.AddEdge<object>(source, target, null);
+    public WorkflowBuilder AddEdge(ExecutorIsh source, ExecutorIsh target, bool idempotent = false)
+        => this.AddEdge<object>(source, target, null, idempotent);
 
     internal static Func<object?, bool>? CreateConditionFunc<T>(Func<T?, bool>? condition)
     {
@@ -185,7 +211,13 @@ public class WorkflowBuilder
             {
                 maybeObj = portableValue.AsType(typeof(T));
             }
-            return condition(maybeObj);
+
+            if (maybeObj is T typed)
+            {
+                return condition(typed);
+            }
+
+            return condition(null);
         };
     }
 
@@ -198,11 +230,13 @@ public class WorkflowBuilder
     /// <param name="source">The executor that acts as the source node of the edge. Cannot be null.</param>
     /// <param name="target">The executor that acts as the target node of the edge. Cannot be null.</param>
     /// <param name="condition">An optional predicate that determines whether the edge should be followed based on the input.
+    /// <param name="idempotent">If set to <see langword="true"/>, adding the same edge multiple times will be a NoOp,
+    /// rather than an error.</param>
     /// If null, the edge is always activated when the source sends a message.</param>
     /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
     /// <exception cref="InvalidOperationException">Thrown if an unconditional edge between the specified source and target
     /// executors already exists.</exception>
-    public WorkflowBuilder AddEdge<T>(ExecutorIsh source, ExecutorIsh target, Func<T?, bool>? condition = null)
+    public WorkflowBuilder AddEdge<T>(ExecutorIsh source, ExecutorIsh target, Func<T?, bool>? condition = null, bool idempotent = false)
     {
         // Add an edge from source to target with an optional condition.
         // This is a low-level builder method that does not enforce any specific executor type.
@@ -213,6 +247,11 @@ public class WorkflowBuilder
         EdgeConnection connection = new(source.Id, target.Id);
         if (condition is null && this._conditionlessConnections.Contains(connection))
         {
+            if (idempotent)
+            {
+                return this;
+            }
+
             throw new InvalidOperationException(
                 $"An edge from '{source.Id}' to '{target.Id}' already exists without a condition. " +
                 "You cannot add another edge without a condition for the same source and target.");
@@ -357,7 +396,7 @@ public class WorkflowBuilder
 
         activity?.AddEvent(new ActivityEvent(EventNames.BuildValidationCompleted));
 
-        var workflow = new Workflow(this._startExecutorId)
+        var workflow = new Workflow(this._startExecutorId, this._name, this._description)
         {
             Registrations = this._executors,
             Edges = this._edges,
@@ -367,6 +406,14 @@ public class WorkflowBuilder
 
         // Using the start executor ID as a proxy for the workflow ID
         activity?.SetTag(Tags.WorkflowId, workflow.StartExecutorId);
+        if (workflow.Name is not null)
+        {
+            activity?.SetTag(Tags.WorkflowName, workflow.Name);
+        }
+        if (workflow.Description is not null)
+        {
+            activity?.SetTag(Tags.WorkflowDescription, workflow.Description);
+        }
         if (activity is not null)
         {
             var workflowJsonDefinitionData = new WorkflowJsonDefinitionData

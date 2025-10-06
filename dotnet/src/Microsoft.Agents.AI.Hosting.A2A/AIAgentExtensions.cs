@@ -10,12 +10,12 @@ using Microsoft.Extensions.Logging;
 namespace Microsoft.Agents.AI.Hosting.A2A;
 
 /// <summary>
-/// Provides extension methods for attaching A2A (Agent-to-Agent) messaging capabilities to an <see cref="AIAgent"/>.
+/// Provides extension methods for attaching A2A (Agent2Agent) messaging capabilities to an <see cref="AIAgent"/>.
 /// </summary>
 public static class AIAgentExtensions
 {
     /// <summary>
-    /// Attaches A2A (Agent-to-Agent) messaging capabilities via Message processing to the specified <see cref="AIAgent"/>.
+    /// Attaches A2A (Agent2Agent) messaging capabilities via Message processing to the specified <see cref="AIAgent"/>.
     /// </summary>
     /// <param name="agent">Agent to attach A2A messaging processing capabilities to.</param>
     /// <param name="taskManager">Instance of <see cref="TaskManager"/> to configure for A2A messaging. New instance will be created if not passed.</param>
@@ -35,7 +35,7 @@ public static class AIAgentExtensions
 
         return taskManager;
 
-        async Task<Message> OnMessageReceivedAsync(MessageSendParams messageSendParams, CancellationToken cancellationToken)
+        async Task<A2AResponse> OnMessageReceivedAsync(MessageSendParams messageSendParams, CancellationToken cancellationToken)
         {
             var response = await agent.RunAsync(
                 messageSendParams.ToChatMessages(),
@@ -43,7 +43,7 @@ public static class AIAgentExtensions
             var contextId = messageSendParams.Message.ContextId ?? Guid.NewGuid().ToString("N");
             var parts = response.Messages.ToParts();
 
-            return new Message
+            return new AgentMessage
             {
                 MessageId = response.ResponseId ?? Guid.NewGuid().ToString("N"),
                 ContextId = contextId,
@@ -54,7 +54,7 @@ public static class AIAgentExtensions
     }
 
     /// <summary>
-    /// Attaches A2A (Agent-to-Agent) messaging capabilities via Message processing to the specified <see cref="AIAgent"/>.
+    /// Attaches A2A (Agent2Agent) messaging capabilities via Message processing to the specified <see cref="AIAgent"/>.
     /// </summary>
     /// <param name="agent">Agent to attach A2A messaging processing capabilities to.</param>
     /// <param name="agentCard">The agent card to return on query.</param>

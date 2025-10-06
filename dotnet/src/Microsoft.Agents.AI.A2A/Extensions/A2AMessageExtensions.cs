@@ -6,17 +6,21 @@ using Microsoft.Extensions.AI;
 namespace A2A;
 
 /// <summary>
-/// Extension methods for the <see cref="Message"/> class.
+/// Extension methods for the <see cref="AgentMessage"/> class.
 /// </summary>
 internal static class A2AMessageExtensions
 {
-    internal static ChatMessage ToChatMessage(this Message message)
+    internal static ChatMessage ToChatMessage(this AgentMessage message)
     {
         List<AIContent>? aiContents = null;
 
         foreach (var part in message.Parts)
         {
-            (aiContents ??= []).Add(part.ToAIContent());
+            var content = part.ToAIContent();
+            if (content is not null)
+            {
+                (aiContents ??= []).Add(content);
+            }
         }
 
         return new ChatMessage(ChatRole.Assistant, aiContents)

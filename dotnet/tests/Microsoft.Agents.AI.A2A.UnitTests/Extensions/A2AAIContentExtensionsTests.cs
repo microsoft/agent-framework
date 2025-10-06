@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Generic;
 using A2A;
 using Microsoft.Extensions.AI;
@@ -49,14 +48,16 @@ public sealed class A2AAIContentExtensionsTests
     }
 
     [Fact]
-    public void ToA2APart_WithUnsupportedContentType_ThrowsNotSupportedException()
+    public void ToA2APart_WithUnsupportedContentType_ReturnsNull()
     {
         // Arrange
         var unsupportedContent = new MockAIContent();
 
-        // Act & Assert
-        var exception = Assert.Throws<NotSupportedException>(unsupportedContent.ToA2APart);
-        Assert.Equal("Unsupported content type: MockAIContent.", exception.Message);
+        // Act
+        var result = unsupportedContent.ToA2APart();
+
+        // Assert
+        Assert.Null(result);
     }
 
     [Fact]
@@ -104,6 +105,37 @@ public sealed class A2AAIContentExtensionsTests
         var secondFilePart = Assert.IsType<FilePart>(result[3]);
         var secondFileWithUri = Assert.IsType<FileWithUri>(secondFilePart.File);
         Assert.Equal("https://example.com/file2.txt", secondFileWithUri.Uri);
+    }
+
+    [Fact]
+    public void ToA2AParts_WithMixedSupportedAndUnsupportedContent_IgnoresUnsupportedContent()
+    {
+        // Arrange
+        var contents = new List<AIContent>
+        {
+            new TextContent("First text"),
+            new MockAIContent(), // Unsupported - should be ignored
+            new HostedFileContent("https://example.com/file.txt"),
+            new MockAIContent(), // Unsupported - should be ignored
+            new TextContent("Second text")
+        };
+
+        // Act
+        var result = contents.ToA2AParts();
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(3, result.Count);
+
+        var firstTextPart = Assert.IsType<TextPart>(result[0]);
+        Assert.Equal("First text", firstTextPart.Text);
+
+        var filePart = Assert.IsType<FilePart>(result[1]);
+        var fileWithUri = Assert.IsType<FileWithUri>(filePart.File);
+        Assert.Equal("https://example.com/file.txt", fileWithUri.Uri);
+
+        var secondTextPart = Assert.IsType<TextPart>(result[2]);
+        Assert.Equal("Second text", secondTextPart.Text);
     }
 
     // Mock class for testing unsupported scenarios

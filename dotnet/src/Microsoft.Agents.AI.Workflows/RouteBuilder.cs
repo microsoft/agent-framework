@@ -73,7 +73,7 @@ public class RouteBuilder
         return this;
     }
 
-    internal RouteBuilder AddHandler(Type type, Func<object, IWorkflowContext, ValueTask> handler, bool overwrite = false)
+    internal RouteBuilder AddHandlerUntyped(Type type, Func<object, IWorkflowContext, ValueTask> handler, bool overwrite = false)
     {
         Throw.IfNull(handler);
 
@@ -86,7 +86,7 @@ public class RouteBuilder
         }
     }
 
-    internal RouteBuilder AddHandler<TResult>(Type type, Func<object, IWorkflowContext, ValueTask<TResult>> handler, bool overwrite = false)
+    internal RouteBuilder AddHandlerUntyped<TResult>(Type type, Func<object, IWorkflowContext, ValueTask<TResult>> handler, bool overwrite = false)
     {
         Throw.IfNull(handler);
 
