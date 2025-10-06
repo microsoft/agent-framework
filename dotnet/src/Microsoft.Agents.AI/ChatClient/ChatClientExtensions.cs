@@ -30,18 +30,12 @@ public static class ChatClientExtensions
         IServiceProvider? services = null) =>
         new(
             chatClient,
-            new ChatClientAgentOptions()
-            {
-                Name = name,
-                Description = description,
-                Instructions = instructions,
-                ChatOptions = tools is null ? null : new ChatOptions()
-                {
-                    Tools = tools,
-                }
-            },
-            loggerFactory,
-            services);
+            instructions: instructions,
+            name: name,
+            description: description,
+            tools: tools,
+            loggerFactory: loggerFactory,
+            services: services);
 
     /// <summary>
     /// Creates a new <see cref="ChatClientAgent"/> instance.
