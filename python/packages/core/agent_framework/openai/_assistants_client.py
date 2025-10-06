@@ -2,7 +2,7 @@
 
 import json
 import sys
-from collections.abc import AsyncIterable, Mapping, MutableMapping, MutableSequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, MutableSequence
 from typing import Any
 
 from openai import AsyncOpenAI
@@ -65,7 +65,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
         assistant_id: str | None = None,
         assistant_name: str | None = None,
         thread_id: str | None = None,
-        api_key: str | None = None,
+        api_key: str | Callable[[], str | Awaitable[str]] | None = None,
         org_id: str | None = None,
         base_url: str | None = None,
         default_headers: Mapping[str, str] | None = None,
@@ -139,7 +139,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
 
         super().__init__(
             model_id=openai_settings.chat_model_id,
-            api_key=openai_settings.api_key.get_secret_value() if openai_settings.api_key else None,
+            api_key=self._get_api_key(openai_settings.api_key),
             org_id=openai_settings.org_id,
             default_headers=default_headers,
             client=async_client,

@@ -1258,3 +1258,18 @@ async def test_openai_assistants_client_agent_level_tool_persistence():
         assert second_response.text is not None
         # Should use the agent-level weather tool again
         assert any(term in second_response.text.lower() for term in ["miami", "sunny", "72"])
+
+
+# Callable API Key Tests
+def test_openai_assistants_client_with_callable_api_key() -> None:
+    """Test OpenAIAssistantsClient initialization with callable API key."""
+
+    async def get_api_key() -> str:
+        return "test-api-key-123"
+
+    client = OpenAIAssistantsClient(model_id="gpt-4o", api_key=get_api_key)
+
+    # Verify client was created successfully
+    assert client.model_id == "gpt-4o"
+    # OpenAI SDK now manages callable API keys internally
+    assert client.client is not None

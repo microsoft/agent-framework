@@ -5,8 +5,8 @@ Here are the step-by-step instructions to test the new DevUI feature:
 ## 1. Get the Code
 
 ```bash
-git pull
-git checkout victordibia/devui
+git clone https://github.com/microsoft/agent-framework.git
+cd agent-framework
 ```
 
 (or use the latest main branch if merged)
