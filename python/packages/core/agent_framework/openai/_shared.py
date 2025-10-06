@@ -105,7 +105,7 @@ class OpenAIBase(SerializationMixin):
     def __init__(self, *, client: AsyncOpenAI, model_id: str, **kwargs: Any) -> None:
         """Initialize OpenAIBase.
 
-        Args:
+        Keyword Args:
             client: The AsyncOpenAI client instance.
             model_id: The AI model ID to use (non-empty, whitespace stripped).
             **kwargs: Additional keyword arguments.
