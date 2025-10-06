@@ -161,9 +161,6 @@ class ChatMessageStore:
     The store maintains messages in memory and provides methods to serialize
     and deserialize the state for persistence purposes.
 
-    Args:
-        messages: The optional initial list of ChatMessage objects to populate the store.
-
     Examples:
         .. code-block:: python
 
