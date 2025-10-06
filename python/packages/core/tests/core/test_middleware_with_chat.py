@@ -14,6 +14,7 @@ from agent_framework import (
     Role,
     chat_middleware,
     function_middleware,
+    use_chat_middleware,
     use_function_invocation,
 )
 
@@ -326,6 +327,7 @@ class TestChatMiddleware:
         async def test_function_middleware(
             context: FunctionInvocationContext, next: Callable[[FunctionInvocationContext], Awaitable[None]]
         ) -> None:
+            nonlocal execution_order
             execution_order.append(f"function_middleware_before_{context.function.name}")
             await next(context)
             execution_order.append(f"function_middleware_after_{context.function.name}")
@@ -336,7 +338,7 @@ class TestChatMiddleware:
             return f"Weather in {location}: sunny"
 
         # Create function-invocation enabled chat client
-        chat_client = use_function_invocation(MockBaseChatClient)()
+        chat_client = use_chat_middleware(use_function_invocation(MockBaseChatClient))()
 
         # Set function middleware directly on the chat client
         chat_client.middleware = [test_function_middleware]

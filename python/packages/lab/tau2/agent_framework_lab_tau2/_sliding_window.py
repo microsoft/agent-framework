@@ -58,9 +58,6 @@ class SlidingWindowChatMessageStore(ChatMessageStore):
     def get_token_count(self) -> int:
         """Estimate token count for a list of messages using tiktoken.
 
-        Args:
-            messages: List of ChatMessage objects
-            system_message: Optional system message to include in count
         Returns:
             Estimated token count
         """
