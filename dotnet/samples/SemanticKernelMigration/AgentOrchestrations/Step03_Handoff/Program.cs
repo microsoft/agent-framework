@@ -17,12 +17,16 @@ using Microsoft.SemanticKernel.ChatCompletion;
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
+// Queries to simulate user input during the interactive orchestration
 List<string> Queries = [
     "I'd like to track the status of my first order 123.",
     "I want to return another order of mine whose ID is 456 because it arrived damaged.",
 ];
 
+// This sample compares running handoff orchestrations using
+// Semantic Kernel and the Agent Framework.
 Console.WriteLine("=== Semantic Kernel Handoff Orchestration ===");
+// State to help format the streaming output
 bool newAgentTurn = true;
 string previousFunctionCallId = string.Empty;
 await SKHandoffOrchestration();
@@ -43,6 +47,7 @@ string SKProcessRefund(string orderId, string reason) => $"Refund for order {ord
 #pragma warning disable SKEXP0110 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 async Task SKHandoffOrchestration()
 {
+    // Create agents
     var triageAgent = GetSKAgent(
         instructions: "You are a customer support agent that triages issues.",
         name: "TriageAgent",
@@ -65,6 +70,7 @@ async Task SKHandoffOrchestration()
 
     Queue<string> queries = new(Queries);
 
+    // Create orchestration with handoffs
     HandoffOrchestration orchestration =
         new(OrchestrationHandoffs
                 .StartWith(triageAgent)
@@ -163,6 +169,7 @@ static string AFProcessRefund([Description("The order ID to process the refund f
 
 async Task AFHandoffAgentWorkflow()
 {
+    // Create agents
     var client = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName).AsIChatClient();
 
     ChatClientAgent triageAgent = new(client,
@@ -185,6 +192,7 @@ async Task AFHandoffAgentWorkflow()
         description: "A customer support agent that handles order refund.",
         tools: [AIFunctionFactory.Create(AFProcessRefund)]);
 
+    // Create workflow with handoffs
     var handoffAgentWorkflow = AgentWorkflowBuilder.CreateHandoffBuilderWith(triageAgent)
         .WithHandoffs(triageAgent, [statusAgent, returnAgent, refundAgent])
         .WithHandoff(statusAgent, triageAgent, "Transfer to this agent if the issue is not status related")
@@ -192,21 +200,14 @@ async Task AFHandoffAgentWorkflow()
         .WithHandoff(refundAgent, triageAgent, "Transfer to this agent if the issue is not refund related")
         .Build();
 
+    // Run the workflow
     List<ChatMessage> messages = [];
-    StreamingRun? run = null;
     foreach (var query in Queries)
     {
         Console.WriteLine($"User: {query}");
         messages.Add(new(ChatRole.User, query));
 
-        if (run is null)
-        {
-            run = await InProcessExecution.StreamAsync(handoffAgentWorkflow, messages);
-        }
-        else
-        {
-            await run.TrySendMessageAsync(messages);
-        }
+        var run = await InProcessExecution.StreamAsync(handoffAgentWorkflow, messages);
         await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
 
         string? lastExecutorId = null;
@@ -241,6 +242,9 @@ async Task AFHandoffAgentWorkflow()
                 messages.AddRange(output.As<List<ChatMessage>>()!);
             }
         }
+
+        // Clean up the run
+        await run.EndRunAsync();
     }
 }
 # endregion

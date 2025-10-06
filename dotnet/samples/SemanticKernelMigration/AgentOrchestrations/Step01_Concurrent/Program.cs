@@ -16,6 +16,8 @@ var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT
 
 var agentInstructions = "You are a translation assistant who only responds in {0}. Respond to any input by outputting the name of the input language and then translating the input to {0}.";
 
+// This sample compares running concurrent orchestrations using
+// Semantic Kernel and the Agent Framework.
 Console.WriteLine("=== Semantic Kernel Concurrent Orchestration ===");
 await SKConcurrentOrchestration();
 
@@ -99,6 +101,9 @@ async Task AFConcurrentAgentWorkflow()
             Console.Write(e.Update.Text);
         }
     }
+
+    // Clean up the run
+    await run.EndRunAsync();
 }
 
 ChatClientAgent GetAFTranslationAgent(string targetLanguage, IChatClient chatClient) =>
