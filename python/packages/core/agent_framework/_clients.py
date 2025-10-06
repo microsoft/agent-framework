@@ -123,6 +123,8 @@ class ChatClientProtocol(Protocol):
 
         Args:
             messages: The sequence of input messages to send.
+
+        Keyword Args:
             frequency_penalty: The frequency penalty to use.
             logit_bias: The logit bias to use.
             max_tokens: The maximum number of tokens to generate.
@@ -180,6 +182,8 @@ class ChatClientProtocol(Protocol):
 
         Args:
             messages: The sequence of input messages to send.
+
+        Keyword Args:
             frequency_penalty: The frequency penalty to use.
             logit_bias: The logit bias to use.
             max_tokens: The maximum number of tokens to generate.
@@ -259,7 +263,7 @@ def merge_chat_options(
     parameters take precedence and override the corresponding values in base_chat_options.
     Tools from both sources are combined into a single list.
 
-    Args:
+    Keyword Args:
         base_chat_options: Optional base ChatOptions to merge with direct parameters.
         model: The model to use for the agent.
         frequency_penalty: The frequency penalty to use.
@@ -398,7 +402,7 @@ class BaseChatClient(SerializationMixin, ABC):
     ) -> None:
         """Initialize a BaseChatClient instance.
 
-        Args:
+        Keyword Args:
             middleware: Middleware for the client.
             additional_properties: Additional properties for the client.
             kwargs: Additional keyword arguments (merged into additional_properties).
@@ -414,7 +418,7 @@ class BaseChatClient(SerializationMixin, ABC):
 
         Extracts additional_properties fields to the root level.
 
-        Args:
+        Keyword Args:
             exclude: Set of field names to exclude from serialization.
             exclude_none: Whether to exclude None values from the output. Defaults to True.
 
@@ -452,7 +456,7 @@ class BaseChatClient(SerializationMixin, ABC):
     def _filter_internal_kwargs(self, kwargs: dict[str, Any]) -> dict[str, Any]:
         """Filter out internal framework parameters that shouldn't be passed to chat client implementations.
 
-        Args:
+        Keyword Args:
             kwargs: The original kwargs dictionary.
 
         Returns:
@@ -510,7 +514,7 @@ class BaseChatClient(SerializationMixin, ABC):
     ) -> ChatResponse:
         """Send a chat request to the AI service.
 
-        Args:
+        Keyword Args:
             messages: The chat messages to send.
             chat_options: The options for the request.
             kwargs: Any additional keyword arguments.
@@ -529,7 +533,7 @@ class BaseChatClient(SerializationMixin, ABC):
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Send a streaming chat request to the AI service.
 
-        Args:
+        Keyword Args:
             messages: The chat messages to send.
             chat_options: The chat_options for the request.
             kwargs: Any additional keyword arguments.
@@ -582,6 +586,8 @@ class BaseChatClient(SerializationMixin, ABC):
 
         Args:
             messages: The message or messages to send to the model.
+
+        Keyword Args:
             frequency_penalty: The frequency penalty to use.
             logit_bias: The logit bias to use.
             max_tokens: The maximum number of tokens to generate.
@@ -674,6 +680,8 @@ class BaseChatClient(SerializationMixin, ABC):
 
         Args:
             messages: The message or messages to send to the model.
+
+        Keyword Args:
             frequency_penalty: The frequency penalty to use.
             logit_bias: The logit bias to use.
             max_tokens: The maximum number of tokens to generate.
@@ -802,7 +810,7 @@ class BaseChatClient(SerializationMixin, ABC):
         This is a convenience method that creates a ChatAgent instance with this
         chat client already configured.
 
-        Args:
+        Keyword Args:
             id: The unique identifier for the agent. Will be created automatically if not provided.
             name: The name of the agent.
             description: A brief description of the agent's purpose.

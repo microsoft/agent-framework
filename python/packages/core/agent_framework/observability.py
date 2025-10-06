@@ -809,6 +809,8 @@ def _trace_get_response(
 
     Args:
         func: The function to trace.
+
+    Keyword Args:
         provider_name: The model provider name.
     """
 
@@ -895,6 +897,8 @@ def _trace_get_streaming_response(
 
     Args:
         func: The function to trace.
+
+    Keyword Args:
         provider_name: The model provider name.
     """
 
@@ -1136,7 +1140,6 @@ def _trace_agent_run_stream(
     """Decorator to trace streaming agent run activities.
 
     Args:
-        agent: The agent that is wrapped.
         run_streaming_func: The function to trace.
         provider_name: The system name used for Open Telemetry.
     """

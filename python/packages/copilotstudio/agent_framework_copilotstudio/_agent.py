@@ -102,6 +102,8 @@ class CopilotStudioAgent(BaseAgent):
                 a new client will be created using the other parameters.
             settings: Optional pre-configured ConnectionSettings. If not provided,
                 settings will be created from the other parameters.
+
+        Keyword Args:
             id: id of the CopilotAgent
             name: Name of the CopilotAgent
             description: Description of the CopilotAgent
@@ -224,6 +226,8 @@ class CopilotStudioAgent(BaseAgent):
 
         Args:
             messages: The message(s) to send to the agent.
+
+        Keyword Args:
             thread: The conversation thread associated with the message(s).
             kwargs: Additional keyword arguments.
 
@@ -263,6 +267,8 @@ class CopilotStudioAgent(BaseAgent):
 
         Args:
             messages: The message(s) to send to the agent.
+
+        Keyword Args:
             thread: The conversation thread associated with the message(s).
             kwargs: Additional keyword arguments.
 
