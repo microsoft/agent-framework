@@ -13,7 +13,7 @@ public sealed class ConversationUpdateEvent : WorkflowEvent
     public string ConversationId { get; }
 
     /// <summary>
-    /// The conversation ID associated with the workflow.
+    /// Is the conversation associated with the workflow.
     /// </summary>
     public bool IsWorkflow { get; internal init; }
 
