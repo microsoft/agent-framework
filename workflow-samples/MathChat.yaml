@@ -31,22 +31,11 @@ trigger:
   id: workflow_demo
   actions:
 
-    - kind: SetVariable
-      id: set_project
-      variable: Local.InputTask
-      value: =UserMessage(System.LastMessageText)
-
     - kind: InvokeAzureAgent
       id: question_student
       conversationId: =System.ConversationId
       agent:
         name: =Env.FOUNDRY_AGENT_STUDENT
-      input:
-        messages: =Local.InputTask
-
-    - kind: ResetVariable
-      id: reset_project
-      variable: Local.InputTask
 
     - kind: InvokeAzureAgent
       id: question_teacher
