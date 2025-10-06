@@ -7,14 +7,14 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Agents.AI;
 
 /// <summary>
-/// Represents the response of the specified type <typeparamref name="T"/> to an <see cref="AIAgent"/> run request.
+/// Represents the response of the specified type <typeparamref name="T"/> to an <see cref="ChatClientAgent"/> run request.
 /// </summary>
 /// <typeparam name="T">The type of value expected from the chat response.</typeparam>
 /// <remarks>
 /// Language models are not guaranteed to honor the requested schema. If the model's output is not
 /// parsable as the expected type, you can access the underlying JSON response on the <see cref="AgentRunResponse.Text"/> property.
 /// </remarks>
-public class AgentRunResponse<T> : AgentRunResponse
+public class ChatClientAgentRunResponse<T> : AgentRunResponse<T>
 {
     private readonly ChatResponse<T> _response;
 
@@ -28,7 +28,7 @@ public class AgentRunResponse<T> : AgentRunResponse
     /// metadata and storing the original response in <see cref="ChatResponse.RawRepresentation"/> for access to
     /// the underlying implementation details.
     /// </remarks>
-    public AgentRunResponse(ChatResponse<T> response) : base(response)
+    public ChatClientAgentRunResponse(ChatResponse<T> response) : base(response)
     {
         _ = Throw.IfNull(response);
 
@@ -42,5 +42,5 @@ public class AgentRunResponse<T> : AgentRunResponse
     /// If the response did not contain JSON, or if deserialization fails, this property will throw.
     /// To avoid exceptions, use <see cref="AgentRunResponse.TryDeserialize{T}"/> instead.
     /// </remarks>
-    public T Result => this._response.Result;
+    public override T Result => this._response.Result;
 }

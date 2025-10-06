@@ -34,7 +34,7 @@ public sealed partial class ChatClientAgent
     /// This overload is useful when the agent has sufficient context from previous messages in the thread
     /// or from its initial configuration to generate a meaningful response without additional input.
     /// </remarks>
-    public Task<AgentRunResponse<T>> RunAsync<T>(
+    public Task<ChatClientAgentRunResponse<T>> RunAsync<T>(
         AgentThread? thread = null,
         JsonSerializerOptions? serializerOptions = null,
         AgentRunOptions? options = null,
@@ -63,7 +63,7 @@ public sealed partial class ChatClientAgent
     /// The provided text will be wrapped in a <see cref="ChatMessage"/> with the <see cref="ChatRole.User"/> role
     /// before being sent to the agent. This is a convenience method for simple text-based interactions.
     /// </remarks>
-    public Task<AgentRunResponse<T>> RunAsync<T>(
+    public Task<ChatClientAgentRunResponse<T>> RunAsync<T>(
         string message,
         AgentThread? thread = null,
         JsonSerializerOptions? serializerOptions = null,
@@ -93,7 +93,7 @@ public sealed partial class ChatClientAgent
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentRunResponse"/> with the agent's output.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="message"/> is <see langword="null"/>.</exception>
-    public Task<AgentRunResponse<T>> RunAsync<T>(
+    public Task<ChatClientAgentRunResponse<T>> RunAsync<T>(
         ChatMessage message,
         AgentThread? thread = null,
         JsonSerializerOptions? serializerOptions = null,
@@ -134,7 +134,7 @@ public sealed partial class ChatClientAgent
     /// The agent's response will also be added to <paramref name="thread"/> if one is provided.
     /// </para>
     /// </remarks>
-    public Task<AgentRunResponse<T>> RunAsync<T>(
+    public Task<ChatClientAgentRunResponse<T>> RunAsync<T>(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         JsonSerializerOptions? serializerOptions = null,
@@ -152,9 +152,9 @@ public sealed partial class ChatClientAgent
                 ct).ConfigureAwait(false);
         }
 
-        static AgentRunResponse<T> CreateResponse(ChatResponse<T> chatResponse)
+        static ChatClientAgentRunResponse<T> CreateResponse(ChatResponse<T> chatResponse)
         {
-            return new AgentRunResponse<T>(chatResponse);
+            return new ChatClientAgentRunResponse<T>(chatResponse);
         }
 
         return this.RunCoreAsync(GetResponseAsync, CreateResponse, messages, thread, options, cancellationToken);
