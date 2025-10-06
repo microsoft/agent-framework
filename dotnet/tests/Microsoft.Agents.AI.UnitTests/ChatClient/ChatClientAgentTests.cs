@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.ComponentModel;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
@@ -577,7 +576,7 @@ public partial class ChatClientAgentTests
     /// propagated to the underlying <see cref="IChatClient"/> call and the expected structured output is returned.
     /// </summary>
     [Fact]
-    public async Task RunAsyncWithTypeParameterInvokesChatClientMethodForStructuralOutputAsync()
+    public async Task RunAsyncWithTypeParameterInvokesChatClientMethodForStructuredOutputAsync()
     {
         // Arrange
         Animal expectedSO = new() { Id = 1, FullName = "Tigger", Species = Species.Tiger };
