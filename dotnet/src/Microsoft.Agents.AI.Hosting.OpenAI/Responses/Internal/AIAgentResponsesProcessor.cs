@@ -5,7 +5,6 @@ using System.Buffers;
 using System.ClientModel.Primitives;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Linq;
 using System.Net.ServerSentEvents;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
