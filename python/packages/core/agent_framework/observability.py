@@ -180,6 +180,8 @@ class OtelAttr(str, Enum):
 
     # Workflow attributes
     WORKFLOW_ID = "workflow.id"
+    WORKFLOW_NAME = "workflow.name"
+    WORKFLOW_DESCRIPTION = "workflow.description"
     WORKFLOW_DEFINITION = "workflow.definition"
     WORKFLOW_BUILD_SPAN = "workflow.build"
     WORKFLOW_RUN_SPAN = "workflow.run"

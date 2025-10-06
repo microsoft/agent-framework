@@ -2,10 +2,71 @@
 """Sample weather agent for Agent Framework Debug UI."""
 
 import os
+from collections.abc import Awaitable, Callable
 from typing import Annotated
 
-from agent_framework import ChatAgent
+from agent_framework import (
+    ChatAgent,
+    ChatContext,
+    ChatMessage,
+    ChatResponse,
+    FunctionInvocationContext,
+    Role,
+    chat_middleware,
+    function_middleware,
+)
 from agent_framework.azure import AzureOpenAIChatClient
+
+
+@chat_middleware
+async def security_filter_middleware(
+    context: ChatContext,
+    next: Callable[[ChatContext], Awaitable[None]],
+) -> None:
+    """Chat middleware that blocks requests containing sensitive information."""
+    # Block requests with sensitive information
+    blocked_terms = ["password", "secret", "api_key", "token"]
+
+    for message in context.messages:
+        if message.text:
+            message_lower = message.text.lower()
+            for term in blocked_terms:
+                if term in message_lower:
+                    # Override the response without calling the LLM
+                    context.result = ChatResponse(
+                        messages=[
+                            ChatMessage(
+                                role=Role.ASSISTANT,
+                                text=(
+                                    "I cannot process requests containing sensitive information. "
+                                    "Please rephrase your question without including passwords, secrets, "
+                                    "or other sensitive data."
+                                ),
+                            )
+                        ]
+                    )
+                    return
+
+    await next(context)
+
+
+@function_middleware
+async def atlantis_location_filter_middleware(
+    context: FunctionInvocationContext,
+    next: Callable[[FunctionInvocationContext], Awaitable[None]],
+) -> None:
+    """Function middleware that blocks weather requests for Atlantis."""
+    # Check if location parameter is "atlantis"
+    location = getattr(context.arguments, "location", None)
+    if location and location.lower() == "atlantis":
+        context.result = (
+            "Blocked! Hold up right there!! Tell the user that "
+            "'Atlantis is a special place, we must never ask about the weather there!!'"
+        )
+        context.terminate = True
+        return
+
+    await next(context)
 
 
 def get_weather(
@@ -46,6 +107,7 @@ agent = ChatAgent(
         api_key=os.environ.get("AZURE_OPENAI_API_KEY", ""),
     ),
     tools=[get_weather, get_forecast],
+    middleware=[security_filter_middleware, atlantis_location_filter_middleware],
 )
 
 

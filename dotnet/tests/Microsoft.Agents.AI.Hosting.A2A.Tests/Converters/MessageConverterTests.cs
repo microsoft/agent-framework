@@ -42,7 +42,7 @@ public class MessageConverterTests
     {
         var messageSendParams = new MessageSendParams
         {
-            Message = new Message
+            Message = new AgentMessage
             {
                 MessageId = "test-id",
                 Role = MessageRole.User,
@@ -61,7 +61,7 @@ public class MessageConverterTests
     {
         var messageSendParams = new MessageSendParams
         {
-            Message = new Message
+            Message = new AgentMessage
             {
                 MessageId = "test-id",
                 Role = MessageRole.User,
@@ -89,7 +89,7 @@ public class MessageConverterTests
     [Fact]
     public void ToChatMessages_MessageCollection_Null_ReturnsEmptyCollection()
     {
-        ICollection<Message>? messages = null;
+        ICollection<AgentMessage>? messages = null;
 
         var result = messages!.ToChatMessages();
 
@@ -100,7 +100,7 @@ public class MessageConverterTests
     [Fact]
     public void ToChatMessages_MessageCollection_Empty_ReturnsEmptyCollection()
     {
-        var messages = new List<Message>();
+        var messages = new List<AgentMessage>();
 
         var result = messages.ToChatMessages();
 
@@ -111,7 +111,7 @@ public class MessageConverterTests
     [Fact]
     public void ToChatMessages_MessageCollection_WithValidMessages_ReturnsCorrectChatMessages()
     {
-        var messages = new List<Message>
+        var messages = new List<AgentMessage>
         {
             new()
             {
@@ -146,7 +146,7 @@ public class MessageConverterTests
     [Fact]
     public void ToChatMessages_MessageCollection_SkipsInvalidMessages_ReturnsValidChatMessages()
     {
-        var messages = new List<Message>
+        var messages = new List<AgentMessage>
         {
             new()
             {
@@ -254,14 +254,14 @@ public class MessageConverterTests
     [Fact]
     public void ConvertMessageRoleToChatRole_UserRole_ReturnsUserChatRole()
     {
-        var message = new Message
+        var message = new AgentMessage
         {
             MessageId = "test",
             Role = MessageRole.User,
             Parts = [new TextPart { Text = "Test" }]
         };
 
-        var result = new List<Message> { message }.ToChatMessages();
+        var result = new List<AgentMessage> { message }.ToChatMessages();
 
         var chatMessage = result.First();
         Assert.Equal(ChatRole.User, chatMessage.Role);
@@ -270,14 +270,14 @@ public class MessageConverterTests
     [Fact]
     public void ConvertMessageRoleToChatRole_AgentRole_ReturnsAssistantChatRole()
     {
-        var message = new Message
+        var message = new AgentMessage
         {
             MessageId = "test",
             Role = MessageRole.Agent,
             Parts = [new TextPart { Text = "Test" }]
         };
 
-        var result = new List<Message> { message }.ToChatMessages();
+        var result = new List<AgentMessage> { message }.ToChatMessages();
 
         var chatMessage = result.First();
         Assert.Equal(ChatRole.Assistant, chatMessage.Role);
@@ -286,14 +286,14 @@ public class MessageConverterTests
     [Fact]
     public void ConvertMessageRoleToChatRole_UnknownRole_ReturnsUserChatRole()
     {
-        var message = new Message
+        var message = new AgentMessage
         {
             MessageId = "test",
             Role = (MessageRole)999, // Unknown role
             Parts = [new TextPart { Text = "Test" }]
         };
 
-        var result = new List<Message> { message }.ToChatMessages();
+        var result = new List<AgentMessage> { message }.ToChatMessages();
 
         var chatMessage = result.First();
         Assert.Equal(ChatRole.User, chatMessage.Role);
@@ -343,14 +343,14 @@ public class MessageConverterTests
     public void ConvertPartToAIContent_TextPart_ReturnsTextContent()
     {
         var textPart = new TextPart { Text = "Sample text" };
-        var message = new Message
+        var message = new AgentMessage
         {
             MessageId = "test",
             Role = MessageRole.User,
             Parts = [textPart]
         };
 
-        var result = new List<Message> { message }.ToChatMessages();
+        var result = new List<AgentMessage> { message }.ToChatMessages();
 
         var chatMessage = result.First();
         var textContent = Assert.IsType<TextContent>(chatMessage.Contents.First());
@@ -371,14 +371,14 @@ public class MessageConverterTests
             Text = "Text with metadata",
             Metadata = metadata
         };
-        var message = new Message
+        var message = new AgentMessage
         {
             MessageId = "test",
             Role = MessageRole.User,
             Parts = [textPart]
         };
 
-        var result = new List<Message> { message }.ToChatMessages();
+        var result = new List<AgentMessage> { message }.ToChatMessages();
 
         var chatMessage = result.First();
         var textContent = Assert.IsType<TextContent>(chatMessage.Contents.First());
@@ -392,14 +392,14 @@ public class MessageConverterTests
     public void ConvertPartToAIContent_FilePart_ThrowsNotSupportedException()
     {
         var filePart = new FilePart();
-        var message = new Message
+        var message = new AgentMessage
         {
             MessageId = "test",
             Role = MessageRole.User,
             Parts = [filePart]
         };
 
-        var exception = Assert.Throws<NotSupportedException>(() => new List<Message> { message }.ToChatMessages());
+        var exception = Assert.Throws<NotSupportedException>(() => new List<AgentMessage> { message }.ToChatMessages());
         Assert.Contains("Part type 'FilePart' is not supported", exception.Message);
     }
 
@@ -407,14 +407,14 @@ public class MessageConverterTests
     public void ConvertPartToAIContent_DataPart_ThrowsNotSupportedException()
     {
         var dataPart = new DataPart();
-        var message = new Message
+        var message = new AgentMessage
         {
             MessageId = "test",
             Role = MessageRole.User,
             Parts = [dataPart]
         };
 
-        var exception = Assert.Throws<NotSupportedException>(() => new List<Message> { message }.ToChatMessages());
+        var exception = Assert.Throws<NotSupportedException>(() => new List<AgentMessage> { message }.ToChatMessages());
         Assert.Contains("Part type 'DataPart' is not supported", exception.Message);
     }
 
@@ -426,7 +426,7 @@ public class MessageConverterTests
             ["timestamp"] = JsonDocument.Parse("\"2024-01-01T00:00:00Z\"").RootElement,
             ["priority"] = JsonDocument.Parse("1").RootElement
         };
-        var message = new Message
+        var message = new AgentMessage
         {
             MessageId = "test-id",
             Role = MessageRole.User,
@@ -434,7 +434,7 @@ public class MessageConverterTests
             Metadata = metadata
         };
 
-        var result = new List<Message> { message }.ToChatMessages();
+        var result = new List<AgentMessage> { message }.ToChatMessages();
 
         var chatMessage = result.First();
         Assert.NotNull(chatMessage.AdditionalProperties);
@@ -446,14 +446,14 @@ public class MessageConverterTests
     [Fact]
     public void ConvertMessageToChatMessage_WithRawRepresentation_PreservesOriginalMessage()
     {
-        var message = new Message
+        var message = new AgentMessage
         {
             MessageId = "test-id",
             Role = MessageRole.Agent,
             Parts = [new TextPart { Text = "Test response" }]
         };
 
-        var result = new List<Message> { message }.ToChatMessages();
+        var result = new List<AgentMessage> { message }.ToChatMessages();
 
         var chatMessage = result.First();
         Assert.Equal(message, chatMessage.RawRepresentation);
@@ -462,14 +462,14 @@ public class MessageConverterTests
     [Fact]
     public void ToChatMessages_MessageWithEmptyParts_ReturnsEmptyCollection()
     {
-        var message = new Message
+        var message = new AgentMessage
         {
             MessageId = "test-id",
             Role = MessageRole.User,
             Parts = [] // Empty list
         };
 
-        var result = new List<Message> { message }.ToChatMessages();
+        var result = new List<AgentMessage> { message }.ToChatMessages();
 
         Assert.NotNull(result);
         Assert.Empty(result);
@@ -499,7 +499,7 @@ public class MessageConverterTests
     [Fact]
     public void ToAdditionalPropertiesDictionary_NullMetadata_ReturnsNull()
     {
-        var message = new Message
+        var message = new AgentMessage
         {
             MessageId = "test-id",
             Role = MessageRole.User,
@@ -507,7 +507,7 @@ public class MessageConverterTests
             Metadata = null
         };
 
-        var result = new List<Message> { message }.ToChatMessages();
+        var result = new List<AgentMessage> { message }.ToChatMessages();
 
         var chatMessage = result.First();
         Assert.Null(chatMessage.AdditionalProperties);
@@ -516,7 +516,7 @@ public class MessageConverterTests
     [Fact]
     public void ToAdditionalPropertiesDictionary_EmptyMetadata_ReturnsNull()
     {
-        var message = new Message
+        var message = new AgentMessage
         {
             MessageId = "test-id",
             Role = MessageRole.User,
@@ -524,7 +524,7 @@ public class MessageConverterTests
             Metadata = []
         };
 
-        var result = new List<Message> { message }.ToChatMessages();
+        var result = new List<AgentMessage> { message }.ToChatMessages();
 
         var chatMessage = result.First();
         Assert.Null(chatMessage.AdditionalProperties);

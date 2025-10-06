@@ -12,9 +12,9 @@ internal sealed class EdgeMap
 {
     private readonly Dictionary<EdgeId, EdgeRunner> _edgeRunners = [];
     private readonly Dictionary<EdgeId, IStatefulEdgeRunner> _statefulRunners = [];
-    private readonly Dictionary<string, InputEdgeRunner> _portEdgeRunners;
+    private readonly Dictionary<string, ResponseEdgeRunner> _portEdgeRunners;
 
-    private readonly InputEdgeRunner _inputRunner;
+    private readonly ResponseEdgeRunner _inputRunner;
     private readonly IStepTracer? _stepTracer;
 
     public EdgeMap(IRunnerContext runContext,
@@ -29,7 +29,7 @@ internal sealed class EdgeMap
 
     public EdgeMap(IRunnerContext runContext,
                    Dictionary<string, HashSet<Edge>> workflowEdges,
-                   IEnumerable<InputPort> workflowPorts,
+                   IEnumerable<RequestPort> workflowPorts,
                    string startExecutorId,
                    IStepTracer? stepTracer = null)
     {
@@ -53,10 +53,10 @@ internal sealed class EdgeMap
 
         this._portEdgeRunners = workflowPorts.ToDictionary(
             port => port.Id,
-            port => InputEdgeRunner.ForPort(runContext, port)
+            port => ResponseEdgeRunner.ForPort(runContext, port)
             );
 
-        this._inputRunner = new InputEdgeRunner(runContext, startExecutorId);
+        this._inputRunner = new ResponseEdgeRunner(runContext, startExecutorId);
         this._stepTracer = stepTracer;
     }
 
@@ -78,7 +78,7 @@ internal sealed class EdgeMap
 
     public ValueTask<DeliveryMapping?> PrepareDeliveryForResponseAsync(ExternalResponse response)
     {
-        if (!this._portEdgeRunners.TryGetValue(response.PortInfo.PortId, out InputEdgeRunner? portRunner))
+        if (!this._portEdgeRunners.TryGetValue(response.PortInfo.PortId, out ResponseEdgeRunner? portRunner))
         {
             throw new InvalidOperationException($"Port {response.PortInfo.PortId} not found in the edge map.");
         }

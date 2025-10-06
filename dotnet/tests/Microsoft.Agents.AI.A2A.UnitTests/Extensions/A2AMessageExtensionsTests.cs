@@ -23,7 +23,7 @@ public sealed class A2AMessageExtensionsTests
             ["isUrgent"] = JsonDocument.Parse("true").RootElement
         };
 
-        var message = new Message
+        var message = new AgentMessage
         {
             MessageId = "mixed-parts-id",
             Role = MessageRole.Agent,

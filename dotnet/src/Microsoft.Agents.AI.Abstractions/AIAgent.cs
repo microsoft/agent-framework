@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -18,6 +19,7 @@ namespace Microsoft.Agents.AI;
 /// and process user requests. An agent instance may participate in multiple concurrent conversations, and each conversation
 /// may involve multiple agents working together.
 /// </remarks>
+[DebuggerDisplay("{DisplayName,nq}")]
 public abstract class AIAgent
 {
     /// <summary>Default ID of this agent instance.</summary>

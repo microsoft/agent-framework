@@ -34,6 +34,7 @@ from agent_framework import (
     UsageContent,
     UsageDetails,
     get_logger,
+    prepare_function_call_results,
     use_chat_middleware,
     use_function_invocation,
 )
@@ -84,7 +85,7 @@ from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import ConnectionType
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import HttpResponseError, ResourceNotFoundError
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -897,23 +898,9 @@ class AzureAIAgentClient(BaseChatClient):
                 if isinstance(content, FunctionResultContent):
                     if tool_outputs is None:
                         tool_outputs = []
-                    result_contents: list[Any] = (
-                        content.result if isinstance(content.result, list) else [content.result]
+                    tool_outputs.append(
+                        ToolOutput(tool_call_id=call_id, output=prepare_function_call_results(content.result))
                     )
-                    results: list[Any] = []
-                    for item in result_contents:
-                        if isinstance(item, Contents):
-                            results.append(
-                                json.dumps(item.to_dict(exclude={"raw_representation", "additional_properties"}))
-                            )
-                        elif isinstance(item, BaseModel):
-                            results.append(item.model_dump_json())
-                        else:
-                            results.append(json.dumps(item))
-                    if len(results) == 1:
-                        tool_outputs.append(ToolOutput(tool_call_id=call_id, output=results[0]))
-                    else:
-                        tool_outputs.append(ToolOutput(tool_call_id=call_id, output=json.dumps(results)))
                 elif isinstance(content, FunctionApprovalResponseContent):
                     if tool_approvals is None:
                         tool_approvals = []

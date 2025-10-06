@@ -39,6 +39,15 @@ Check the [uv documentation](https://docs.astral.sh/uv/getting-started/installat
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
+### Alternative for MacOS
+
+For MacOS users, Homebrew provides an easy installation of uv with the [uv Formulae](https://formulae.brew.sh/formula/uv)
+
+```bash
+brew install uv
+```
+
+
 ### After installing uv
 
 You can then run the following commands manually:

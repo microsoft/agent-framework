@@ -7,7 +7,7 @@ import json
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, get_origin
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,6 +21,47 @@ from .models import AgentFrameworkRequest, OpenAIError
 from .models._discovery_models import DiscoveryResponse, EntityInfo
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_executor_message_types(executor: Any) -> list[Any]:
+    """Return declared input types for the given executor."""
+    message_types: list[Any] = []
+
+    try:
+        input_types = getattr(executor, "input_types", None)
+    except Exception as exc:  # pragma: no cover - defensive logging path
+        logger.debug(f"Failed to access executor input_types: {exc}")
+    else:
+        if input_types:
+            message_types = list(input_types)
+
+    if not message_types and hasattr(executor, "_handlers"):
+        try:
+            handlers = executor._handlers
+            if isinstance(handlers, dict):
+                message_types = list(handlers.keys())
+        except Exception as exc:  # pragma: no cover - defensive logging path
+            logger.debug(f"Failed to read executor handlers: {exc}")
+
+    return message_types
+
+
+def _select_primary_input_type(message_types: list[Any]) -> Any | None:
+    """Choose the most user-friendly input type for rendering workflow inputs."""
+    if not message_types:
+        return None
+
+    preferred = (str, dict)
+
+    for candidate in preferred:
+        for message_type in message_types:
+            if message_type is candidate:
+                return candidate
+            origin = get_origin(message_type)
+            if origin is candidate:
+                return candidate
+
+    return message_types[0]
 
 
 class DevServer:
@@ -222,24 +263,30 @@ class DevServer:
                         start_executor_id = ""
 
                         try:
+                            from ._utils import generate_input_schema
+
                             start_executor = entity_obj.get_start_executor()
-                            if start_executor and hasattr(start_executor, "_handlers"):
-                                message_types = list(start_executor._handlers.keys())
-                                if message_types:
-                                    input_type = message_types[0]
-                                    input_type_name = getattr(input_type, "__name__", str(input_type))
-
-                                    # Basic schema generation for common types
-                                    if input_type is str:
-                                        input_schema = {"type": "string"}
-                                    elif input_type is dict:
-                                        input_schema = {"type": "object"}
-                                    elif hasattr(input_type, "model_json_schema"):
-                                        input_schema = input_type.model_json_schema()
-
-                                    start_executor_id = getattr(start_executor, "executor_id", "")
                         except Exception as e:
                             logger.debug(f"Could not extract input info for workflow {entity_id}: {e}")
+                        else:
+                            if start_executor:
+                                start_executor_id = getattr(start_executor, "executor_id", "") or getattr(
+                                    start_executor, "id", ""
+                                )
+
+                                message_types = _extract_executor_message_types(start_executor)
+                                input_type = _select_primary_input_type(message_types)
+
+                                if input_type:
+                                    input_type_name = getattr(input_type, "__name__", str(input_type))
+
+                                    # Generate schema using comprehensive schema generation
+                                    input_schema = generate_input_schema(input_type)
+
+                        if not input_schema:
+                            input_schema = {"type": "string"}
+                            if input_type_name == "Unknown":
+                                input_type_name = "string"
 
                         # Get executor list
                         executor_list = []

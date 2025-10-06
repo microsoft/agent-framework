@@ -91,7 +91,7 @@ public sealed class A2AAgentTests : IDisposable
     public async Task RunAsync_WithValidUserMessage_RunsSuccessfullyAsync()
     {
         // Arrange
-        this._handler.ResponseToReturn = new Message
+        this._handler.ResponseToReturn = new AgentMessage
         {
             MessageId = "response-123",
             Role = MessageRole.Agent,
@@ -122,8 +122,8 @@ public sealed class A2AAgentTests : IDisposable
         Assert.Equal("response-123", result.ResponseId);
 
         Assert.NotNull(result.RawRepresentation);
-        Assert.IsType<Message>(result.RawRepresentation);
-        Assert.Equal("response-123", ((Message)result.RawRepresentation).MessageId);
+        Assert.IsType<AgentMessage>(result.RawRepresentation);
+        Assert.Equal("response-123", ((AgentMessage)result.RawRepresentation).MessageId);
 
         Assert.Single(result.Messages);
         Assert.Equal(ChatRole.Assistant, result.Messages[0].Role);
@@ -134,7 +134,7 @@ public sealed class A2AAgentTests : IDisposable
     public async Task RunAsync_WithNewThread_UpdatesThreadConversationIdAsync()
     {
         // Arrange
-        this._handler.ResponseToReturn = new Message
+        this._handler.ResponseToReturn = new AgentMessage
         {
             MessageId = "response-123",
             Role = MessageRole.Agent,
@@ -192,7 +192,7 @@ public sealed class A2AAgentTests : IDisposable
             new(ChatRole.User, "Test message")
         };
 
-        this._handler.ResponseToReturn = new Message
+        this._handler.ResponseToReturn = new AgentMessage
         {
             MessageId = "response-123",
             Role = MessageRole.Agent,
@@ -220,7 +220,7 @@ public sealed class A2AAgentTests : IDisposable
             new(ChatRole.User, "Hello, streaming!")
         };
 
-        this._handler.StreamingResponseToReturn = new Message()
+        this._handler.StreamingResponseToReturn = new AgentMessage()
         {
             MessageId = "stream-1",
             Role = MessageRole.Agent,
@@ -253,8 +253,8 @@ public sealed class A2AAgentTests : IDisposable
         Assert.Equal("stream-1", updates[0].ResponseId);
 
         Assert.NotNull(updates[0].RawRepresentation);
-        Assert.IsType<Message>(updates[0].RawRepresentation);
-        Assert.Equal("stream-1", ((Message)updates[0].RawRepresentation!).MessageId);
+        Assert.IsType<AgentMessage>(updates[0].RawRepresentation);
+        Assert.Equal("stream-1", ((AgentMessage)updates[0].RawRepresentation!).MessageId);
     }
 
     [Fact]
@@ -266,7 +266,7 @@ public sealed class A2AAgentTests : IDisposable
             new(ChatRole.User, "Test streaming")
         };
 
-        this._handler.StreamingResponseToReturn = new Message()
+        this._handler.StreamingResponseToReturn = new AgentMessage()
         {
             MessageId = "stream-1",
             Role = MessageRole.Agent,
@@ -296,7 +296,7 @@ public sealed class A2AAgentTests : IDisposable
             new(ChatRole.User, "Test streaming")
         };
 
-        this._handler.StreamingResponseToReturn = new Message();
+        this._handler.StreamingResponseToReturn = new AgentMessage();
 
         var thread = this._agent.GetNewThread();
         var a2aThread = (A2AAgentThread)thread;
@@ -327,7 +327,7 @@ public sealed class A2AAgentTests : IDisposable
             new(ChatRole.User, "Test streaming")
         };
 
-        this._handler.StreamingResponseToReturn = new Message()
+        this._handler.StreamingResponseToReturn = new AgentMessage()
         {
             MessageId = "stream-1",
             Role = MessageRole.Agent,
@@ -453,7 +453,7 @@ public sealed class A2AAgentTests : IDisposable
             }
             else
             {
-                var jsonRpcResponse = JsonRpcResponse.CreateJsonRpcResponse<A2AEvent>("response-id", new Message());
+                var jsonRpcResponse = JsonRpcResponse.CreateJsonRpcResponse<A2AEvent>("response-id", new AgentMessage());
 
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 {
