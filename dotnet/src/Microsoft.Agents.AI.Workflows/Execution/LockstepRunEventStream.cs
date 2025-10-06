@@ -125,7 +125,7 @@ internal sealed class LockstepRunEventStream : IRunEventStream
                 {
                     try
                     {
-                        await this._inputWaiter.WaitForInputAsync(linkedSource.Token).ConfigureAwait(false);
+                        await this._inputWaiter.WaitForInputAsync(TimeSpan.FromSeconds(1), linkedSource.Token).ConfigureAwait(false);
                     }
                     catch (OperationCanceledException)
                     { }

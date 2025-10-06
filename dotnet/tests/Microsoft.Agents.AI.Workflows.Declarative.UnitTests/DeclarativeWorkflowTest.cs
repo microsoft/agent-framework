@@ -259,7 +259,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
 
         Workflow workflow = DeclarativeWorkflowBuilder.Build<TInput>(yamlReader, workflowContext);
 
-        StreamingRun run = await InProcessExecution.StreamAsync(workflow, workflowInput);
+        await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, workflowInput);
 
         this.WorkflowEvents = run.WatchStreamAsync().ToEnumerable().ToList();
         foreach (WorkflowEvent workflowEvent in this.WorkflowEvents)

@@ -62,7 +62,7 @@ internal sealed class StreamingRunEventStream : IRunEventStream
         {
             // Wait for the first input before starting
             // The consumer will call EnqueueMessageAsync which signals the run loop
-            await this._inputWaiter.WaitForInputAsync(cancellation).ConfigureAwait(false);
+            await this._inputWaiter.WaitForInputAsync(cancellation: linkedSource.Token).ConfigureAwait(false);
 
             this._runStatus = RunStatus.Running;
 
@@ -89,7 +89,7 @@ internal sealed class StreamingRunEventStream : IRunEventStream
 
                 // Wait for next input from the consumer
                 // Works for both Idle (no work) and PendingRequests (waiting for responses)
-                await this._inputWaiter.WaitForInputAsync(linkedSource.Token).ConfigureAwait(false);
+                await this._inputWaiter.WaitForInputAsync(TimeSpan.FromSeconds(1), linkedSource.Token).ConfigureAwait(false);
 
                 // When signaled, resume running
                 this._runStatus = RunStatus.Running;
