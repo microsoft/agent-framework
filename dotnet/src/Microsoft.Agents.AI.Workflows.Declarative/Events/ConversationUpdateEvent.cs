@@ -21,7 +21,7 @@ public sealed class ConversationUpdateEvent : WorkflowEvent
     /// Initializes a new instance of <see cref="ConversationUpdateEvent"/>.
     /// </summary>
     /// <param name="conversationId">The identifier of the associated conversation.</param>
-    internal ConversationUpdateEvent(string conversationId)
+    public ConversationUpdateEvent(string conversationId)
         : base(conversationId)
     {
         this.ConversationId = conversationId;
