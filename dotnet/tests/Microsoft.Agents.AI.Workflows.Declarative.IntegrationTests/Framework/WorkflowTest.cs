@@ -149,7 +149,7 @@ public abstract class WorkflowTest(ITestOutputHelper output) : IntegrationTest(o
         }
 
         // "isCompletion" adjusts validation logic to account for when condition completion is not experienced due to goto.  Remove this test logic once addressed.
-        public static void EventCounts(int actualCount, Testcase testcase, bool isCompletion = false) // %%% ACTION VS EXECUTOR ???
+        public static void EventCounts(int actualCount, Testcase testcase, bool isCompletion = false)
         {
             Assert.True(actualCount + (isCompletion ? 1 : 0) >= testcase.Validation.MinActionCount, $"Event count less than expected: {testcase.Validation.MinActionCount} (Actual: {actualCount}).");
             if (testcase.Validation.MaxActionCount != -1)
