@@ -19,8 +19,8 @@ public sealed class DeclarativeCodeGenTest(ITestOutputHelper output) : WorkflowT
     [InlineData("SendActivity.yaml", "SendActivity.json")]
     [InlineData("InvokeAgent.yaml", "InvokeAgent.json")]
     [InlineData("InvokeAgent.yaml", "InvokeAgent.json", true)]
-    [InlineData("ConversationMessages.yaml", "ConversationMessages.json", Skip = "Issue #1236")]
-    [InlineData("ConversationMessages.yaml", "ConversationMessages.json", true, Skip = "Issue #1236")]
+    [InlineData("ConversationMessages.yaml", "ConversationMessages.json")]
+    [InlineData("ConversationMessages.yaml", "ConversationMessages.json", true)]
     public Task ValidateCaseAsync(string workflowFileName, string testcaseFileName, bool externalConveration = false) =>
         this.RunWorkflowAsync(Path.Combine(Environment.CurrentDirectory, "Workflows", workflowFileName), testcaseFileName, externalConveration);
 
