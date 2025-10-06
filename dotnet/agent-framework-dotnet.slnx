@@ -173,6 +173,7 @@
   <Folder Name="/Samples/SemanticKernelMigration/AgentOrchestrations/">
     <Project Path="samples/SemanticKernelMigration/AgentOrchestrations/Step01_Concurrent/AgentOrchestrations_Step01_Concurrent.csproj" />
     <Project Path="samples/SemanticKernelMigration/AgentOrchestrations/Step02_Sequential/AgentOrchestrations_Step02_Sequential.csproj" />
+    <Project Path="samples/SemanticKernelMigration/AgentOrchestrations/Step03_Handoff/AgentOrchestrations_Step03_Handoff.csproj" />
   </Folder>
   <Folder Name="/Solution Items/">
     <File Path=".editorconfig" />
