@@ -35,7 +35,7 @@ internal static partial class ValidationExtensions
                          actual.ExecutorType.Equals(prototype.ExecutorType);
     }
 
-    public static Expression<Func<InputPortInfo, bool>> CreatePortInfoValidator(this InputPort prototype)
+    public static Expression<Func<RequestPortInfo, bool>> CreatePortInfoValidator(this RequestPort prototype)
     {
         return actual => actual.PortId == prototype.Id &&
                          // Rely on the TypeId test to probe TypeId serialization - just validate that we got a functional TypeId

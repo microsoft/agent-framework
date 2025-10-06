@@ -20,7 +20,7 @@ import {
   DialogClose,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { Send } from "lucide-react";
+import { Send, ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { JSONSchemaProperty } from "@/types";
 
@@ -29,22 +29,27 @@ interface FormFieldProps {
   schema: JSONSchemaProperty;
   value: unknown;
   onChange: (value: unknown) => void;
+  isRequired?: boolean;
 }
 
-function FormField({ name, schema, value, onChange }: FormFieldProps) {
+function FormField({ name, schema, value, onChange, isRequired = false }: FormFieldProps) {
   const { type, description, enum: enumValues, default: defaultValue } = schema;
 
+  // For text/message/content fields, treat as textarea for better UX
+  const isTextContentField = ['text', 'message', 'content', 'query', 'prompt'].includes(name.toLowerCase());
+
   // Determine if this field should span full width
+  // Only span full if it's a textarea or has very long description
   const shouldSpanFullWidth =
     schema.format === "textarea" ||
-    (description && description.length > 100) ||
-    type === "object" ||
-    type === "array";
+    isTextContentField ||  // text/message fields span full width
+    (description && description.length > 150);
 
   const shouldSpanTwoColumns =
-    type === "object" ||
     schema.format === "textarea" ||
-    (description && description.length > 50);
+    isTextContentField ||
+    (description && description.length > 80) ||
+    type === "array";  // Arrays might need more space for comma-separated values
 
   const fieldContent = (() => {
     // Handle different field types based on JSON Schema
@@ -54,7 +59,10 @@ function FormField({ name, schema, value, onChange }: FormFieldProps) {
           // Enum select
           return (
             <div className="space-y-2">
-              <Label htmlFor={name}>{name}</Label>
+              <Label htmlFor={name}>
+                {name}
+                {isRequired && <span className="text-destructive ml-1">*</span>}
+              </Label>
               <Select
                 value={
                   typeof value === "string" && value
@@ -83,12 +91,16 @@ function FormField({ name, schema, value, onChange }: FormFieldProps) {
           );
         } else if (
           schema.format === "textarea" ||
+          isTextContentField ||
           (description && description.length > 100)
         ) {
-          // Multi-line text
+          // Multi-line text (including text/message/content fields)
           return (
             <div className="space-y-2">
-              <Label htmlFor={name}>{name}</Label>
+              <Label htmlFor={name}>
+                {name}
+                {isRequired && <span className="text-destructive ml-1">*</span>}
+              </Label>
               <Textarea
                 id={name}
                 value={typeof value === "string" ? value : ""}
@@ -98,7 +110,7 @@ function FormField({ name, schema, value, onChange }: FormFieldProps) {
                     ? defaultValue
                     : `Enter ${name}`
                 }
-                rows={2}
+                rows={isTextContentField ? 4 : 2}
               />
               {description && (
                 <p className="text-sm text-muted-foreground">{description}</p>
@@ -109,7 +121,10 @@ function FormField({ name, schema, value, onChange }: FormFieldProps) {
           // Single-line text
           return (
             <div className="space-y-2">
-              <Label htmlFor={name}>{name}</Label>
+              <Label htmlFor={name}>
+                {name}
+                {isRequired && <span className="text-destructive ml-1">*</span>}
+              </Label>
               <Input
                 id={name}
                 type="text"
@@ -131,7 +146,10 @@ function FormField({ name, schema, value, onChange }: FormFieldProps) {
       case "number":
         return (
           <div className="space-y-2">
-            <Label htmlFor={name}>{name}</Label>
+            <Label htmlFor={name}>
+              {name}
+              {isRequired && <span className="text-destructive ml-1">*</span>}
+            </Label>
             <Input
               id={name}
               type="number"
@@ -161,7 +179,10 @@ function FormField({ name, schema, value, onChange }: FormFieldProps) {
                 checked={Boolean(value)}
                 onCheckedChange={(checked) => onChange(checked)}
               />
-              <Label htmlFor={name}>{name}</Label>
+              <Label htmlFor={name}>
+                {name}
+                {isRequired && <span className="text-destructive ml-1">*</span>}
+              </Label>
             </div>
             {description && (
               <p className="text-sm text-muted-foreground">{description}</p>
@@ -172,7 +193,10 @@ function FormField({ name, schema, value, onChange }: FormFieldProps) {
       case "array":
         return (
           <div className="space-y-2">
-            <Label htmlFor={name}>{name}</Label>
+            <Label htmlFor={name}>
+              {name}
+              {isRequired && <span className="text-destructive ml-1">*</span>}
+            </Label>
             <Textarea
               id={name}
               value={
@@ -203,7 +227,10 @@ function FormField({ name, schema, value, onChange }: FormFieldProps) {
         // For complex objects or unknown types, use JSON textarea
         return (
           <div className="space-y-2">
-            <Label htmlFor={name}>{name}</Label>
+            <Label htmlFor={name}>
+              {name}
+              {isRequired && <span className="text-destructive ml-1">*</span>}
+            </Label>
             <Textarea
               id={name}
               value={
@@ -235,7 +262,7 @@ function FormField({ name, schema, value, onChange }: FormFieldProps) {
 
   // Return the field with appropriate grid column spanning
   const getColumnSpan = () => {
-    if (shouldSpanFullWidth) return "md:col-span-3 xl:col-span-4";
+    if (shouldSpanFullWidth) return "md:col-span-2 lg:col-span-3 xl:col-span-4";
     if (shouldSpanTwoColumns) return "xl:col-span-2";
     return "";
   };
@@ -259,6 +286,7 @@ export function WorkflowInputForm({
   className,
 }: WorkflowInputFormProps) {
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [showAdvancedFields, setShowAdvancedFields] = useState(false);
 
   // Check if we're in embedded mode (being used inside another modal)
   const isEmbedded = className?.includes('embedded');
@@ -268,10 +296,55 @@ export function WorkflowInputForm({
   // Determine field info
   const properties = inputSchema.properties || {};
   const fieldNames = Object.keys(properties);
+  const requiredFields = inputSchema.required || [];
   const isSimpleInput = inputSchema.type === "string" && !inputSchema.enum;
-  const primaryField = isSimpleInput ? "value" : fieldNames[0];
-  const canSubmit = primaryField
-    ? formData[primaryField] !== undefined && formData[primaryField] !== ""
+
+  // Plan D: Separate required and optional fields first
+  const allOptionalFieldNames = fieldNames.filter(name => !requiredFields.includes(name));
+
+  // Detect ChatMessage-like pattern
+  const isChatMessageLike =
+    requiredFields.includes('role') &&
+    allOptionalFieldNames.some(f => ['text', 'message', 'content'].includes(f)) &&
+    properties['role']?.type === 'string';
+
+  // For ChatMessage: hide 'role' field (will be auto-filled)
+  const requiredFieldNames = fieldNames.filter(name =>
+    requiredFields.includes(name) && !(isChatMessageLike && name === 'role')
+  );
+  const optionalFieldNames = allOptionalFieldNames;
+
+  // For ChatMessage: prioritize text/message/content field to show first
+  const sortedOptionalFields = isChatMessageLike
+    ? [...optionalFieldNames].sort((a, b) => {
+        const priority = (name: string) =>
+          ['text', 'message', 'content'].includes(name) ? 1 : 0;
+        return priority(b) - priority(a);
+      })
+    : optionalFieldNames;
+
+  // Always show ALL required fields + fill to minimum visible with optional fields
+  // For ChatMessage: show only 1 optional field (text)
+  const MIN_VISIBLE_FIELDS = isChatMessageLike ? 1 : 6;
+  const visibleOptionalCount = Math.max(0, MIN_VISIBLE_FIELDS - requiredFieldNames.length);
+  const visibleOptionalFields = sortedOptionalFields.slice(0, visibleOptionalCount);
+  const collapsedOptionalFields = sortedOptionalFields.slice(visibleOptionalCount);
+
+  const hasCollapsedFields = collapsedOptionalFields.length > 0;
+  const hasRequiredFields = requiredFieldNames.length > 0;
+
+  // Update canSubmit to check required fields properly
+  // For ChatMessage: role is auto-filled, so it's always valid
+  const canSubmit = isSimpleInput
+    ? formData.value !== undefined && formData.value !== ""
+    : requiredFields.length > 0
+    ? requiredFields.every(fieldName => {
+        // Auto-filled fields are always valid
+        if (isChatMessageLike && fieldName === 'role' && formData['role'] === 'user') {
+          return true;
+        }
+        return formData[fieldName] !== undefined && formData[fieldName] !== "";
+      })
     : Object.keys(formData).length > 0;
 
   // Initialize form data
@@ -287,9 +360,15 @@ export function WorkflowInputForm({
           initialData[key] = fieldSchema.enum[0];
         }
       });
+
+      // Auto-fill role="user" for ChatMessage-like inputs
+      if (isChatMessageLike && !initialData['role']) {
+        initialData['role'] = 'user';
+      }
+
       setFormData(initialData);
     }
-  }, [inputSchema]);
+  }, [inputSchema, isChatMessageLike]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -306,7 +385,16 @@ export function WorkflowInputForm({
         const fieldName = fieldNames[0];
         onSubmit({ [fieldName]: formData[fieldName] || "" });
       } else {
-        onSubmit(formData);
+        // Filter out empty optional fields before submission
+        const filteredData: Record<string, unknown> = {};
+        Object.keys(formData).forEach(key => {
+          const value = formData[key];
+          // Include if: 1) required field, OR 2) has non-empty value
+          if (requiredFields.includes(key) || (value !== undefined && value !== "" && value !== null)) {
+            filteredData[key] = value;
+          }
+        });
+        onSubmit(filteredData);
       }
     } else {
       onSubmit(formData);
@@ -330,27 +418,84 @@ export function WorkflowInputForm({
   if (isEmbedded) {
     return (
       <form onSubmit={handleSubmit} className={className}>
-        <div className="grid grid-cols-1 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {/* Simple input */}
-          {isSimpleInput && primaryField && (
+          {isSimpleInput && (
             <FormField
               name="Input"
               schema={inputSchema}
               value={formData.value}
               onChange={(value) => updateField("value", value)}
+              isRequired={false}
             />
           )}
 
-          {/* Complex form fields */}
+          {/* Complex form fields - Plan D: Required + Optional separation */}
           {!isSimpleInput && (
             <>
-              {fieldNames.map((fieldName) => (
+              {/* Required fields section */}
+              {requiredFieldNames.map((fieldName) => (
                 <FormField
                   key={fieldName}
                   name={fieldName}
                   schema={properties[fieldName] as JSONSchemaProperty}
                   value={formData[fieldName]}
                   onChange={(value) => updateField(fieldName, value)}
+                  isRequired={true}
+                />
+              ))}
+
+              {/* Separator between required and optional (only if both exist) */}
+              {hasRequiredFields && optionalFieldNames.length > 0 && (
+                <div className="sm:col-span-2 border-t border-border my-2"></div>
+              )}
+
+              {/* Visible optional fields */}
+              {visibleOptionalFields.map((fieldName) => (
+                <FormField
+                  key={fieldName}
+                  name={fieldName}
+                  schema={properties[fieldName] as JSONSchemaProperty}
+                  value={formData[fieldName]}
+                  onChange={(value) => updateField(fieldName, value)}
+                  isRequired={false}
+                />
+              ))}
+
+              {/* Collapsed optional fields toggle */}
+              {hasCollapsedFields && (
+                <div className="sm:col-span-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setShowAdvancedFields(!showAdvancedFields)}
+                    className="w-full justify-center gap-2"
+                  >
+                  {showAdvancedFields ? (
+                    <>
+                      <ChevronUp className="h-4 w-4" />
+                      Hide {collapsedOptionalFields.length} optional field{collapsedOptionalFields.length !== 1 ? 's' : ''}
+                    </>
+                  ) : (
+                    <>
+                      <ChevronDown className="h-4 w-4" />
+                      Show {collapsedOptionalFields.length} optional field{collapsedOptionalFields.length !== 1 ? 's' : ''}
+                    </>
+                  )}
+                  </Button>
+                </div>
+              )}
+
+              {/* Collapsed optional fields - only show when toggled */}
+              {showAdvancedFields && collapsedOptionalFields.map((fieldName) => (
+                <FormField
+                  key={fieldName}
+                  name={fieldName}
+                  schema={properties[fieldName] as JSONSchemaProperty}
+                  value={formData[fieldName]}
+                  onChange={(value) => updateField(fieldName, value)}
+                  isRequired={false}
                 />
               ))}
             </>
@@ -440,15 +585,16 @@ export function WorkflowInputForm({
           {/* Scrollable Form Content */}
           <div className="px-8 py-6 overflow-y-auto flex-1 min-h-0">
             <form id="workflow-modal-form" onSubmit={handleSubmit}>
-              <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-4 gap-8 max-w-none">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 md:gap-8 max-w-none">
                 {/* Simple input */}
-                {isSimpleInput && primaryField && (
-                  <div className="md:col-span-3 xl:col-span-4">
+                {isSimpleInput && (
+                  <div className="md:col-span-2 lg:col-span-3 xl:col-span-4">
                     <FormField
                       name="Input"
                       schema={inputSchema}
                       value={formData.value}
                       onChange={(value) => updateField("value", value)}
+                      isRequired={false}
                     />
                     {inputSchema.description && (
                       <p className="text-sm text-muted-foreground mt-2">
@@ -458,16 +604,74 @@ export function WorkflowInputForm({
                   </div>
                 )}
 
-                {/* Complex form fields - Show all */}
+                {/* Complex form fields - Plan D: Required + Optional separation */}
                 {!isSimpleInput && (
                   <>
-                    {fieldNames.map((fieldName) => (
+                    {/* Required fields section */}
+                    {requiredFieldNames.map((fieldName) => (
                       <FormField
                         key={fieldName}
                         name={fieldName}
                         schema={properties[fieldName] as JSONSchemaProperty}
                         value={formData[fieldName]}
                         onChange={(value) => updateField(fieldName, value)}
+                        isRequired={true}
+                      />
+                    ))}
+
+                    {/* Separator between required and optional (only if both exist) */}
+                    {hasRequiredFields && optionalFieldNames.length > 0 && (
+                      <div className="md:col-span-2 lg:col-span-3 xl:col-span-4">
+                        <div className="border-t border-border"></div>
+                      </div>
+                    )}
+
+                    {/* Visible optional fields */}
+                    {visibleOptionalFields.map((fieldName) => (
+                      <FormField
+                        key={fieldName}
+                        name={fieldName}
+                        schema={properties[fieldName] as JSONSchemaProperty}
+                        value={formData[fieldName]}
+                        onChange={(value) => updateField(fieldName, value)}
+                        isRequired={false}
+                      />
+                    ))}
+
+                    {/* Collapsed optional fields toggle */}
+                    {hasCollapsedFields && (
+                      <div className="md:col-span-2 lg:col-span-3 xl:col-span-4">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setShowAdvancedFields(!showAdvancedFields)}
+                          className="w-full justify-center gap-2"
+                        >
+                          {showAdvancedFields ? (
+                            <>
+                              <ChevronUp className="h-4 w-4" />
+                              Hide {collapsedOptionalFields.length} optional field{collapsedOptionalFields.length !== 1 ? 's' : ''}
+                            </>
+                          ) : (
+                            <>
+                              <ChevronDown className="h-4 w-4" />
+                              Show {collapsedOptionalFields.length} optional field{collapsedOptionalFields.length !== 1 ? 's' : ''}
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                    )}
+
+                    {/* Collapsed optional fields - only show when toggled */}
+                    {showAdvancedFields && collapsedOptionalFields.map((fieldName) => (
+                      <FormField
+                        key={fieldName}
+                        name={fieldName}
+                        schema={properties[fieldName] as JSONSchemaProperty}
+                        value={formData[fieldName]}
+                        onChange={(value) => updateField(fieldName, value)}
+                        isRequired={false}
                       />
                     ))}
                   </>

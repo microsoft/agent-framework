@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
@@ -8,18 +9,13 @@ namespace Microsoft.Agents.AI.Workflows.Execution;
 
 internal sealed class StepContext
 {
-    public Dictionary<string, List<MessageEnvelope>> QueuedMessages { get; } = [];
+    public ConcurrentDictionary<string, ConcurrentQueue<MessageEnvelope>> QueuedMessages { get; } = [];
 
-    public bool HasMessages => this.QueuedMessages.Values.Any(messageList => messageList.Count > 0);
+    public bool HasMessages => this.QueuedMessages.Values.Any(messageQueue => !messageQueue.IsEmpty);
 
-    public List<MessageEnvelope> MessagesFor(string target)
+    public ConcurrentQueue<MessageEnvelope> MessagesFor(string target)
     {
-        if (!this.QueuedMessages.TryGetValue(target, out var messages))
-        {
-            this.QueuedMessages[target] = messages = [];
-        }
-
-        return messages;
+        return this.QueuedMessages.GetOrAdd(target, _ => new ConcurrentQueue<MessageEnvelope>());
     }
 
     // TODO: Create a MessageEnvelope class that extends from the ExportedState object (with appropriate rename) to avoid
@@ -29,7 +25,8 @@ internal sealed class StepContext
         return this.QueuedMessages.Keys.ToDictionary(
             keySelector: identity => identity,
             elementSelector: identity => this.QueuedMessages[identity]
-                                             .ConvertAll(v => new PortableMessageEnvelope(v))
+                                             .Select(v => new PortableMessageEnvelope(v))
+                                             .ToList()
         );
     }
 
@@ -37,7 +34,7 @@ internal sealed class StepContext
     {
         foreach (string identity in messages.Keys)
         {
-            this.QueuedMessages[identity] = messages[identity].ConvertAll(UnwrapExportedState);
+            this.QueuedMessages[identity] = new(messages[identity].Select(UnwrapExportedState));
         }
 
         static MessageEnvelope UnwrapExportedState(PortableMessageEnvelope es) => es.ToMessageEnvelope();

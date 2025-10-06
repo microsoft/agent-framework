@@ -3,6 +3,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
@@ -26,6 +27,8 @@ namespace Microsoft.Agents.AI;
 /// message reduction strategies or alternative storage implementations.
 /// </para>
 /// </remarks>
+[DebuggerDisplay("Count = {Count}")]
+[DebuggerTypeProxy(typeof(DebugView))]
 public sealed class InMemoryChatMessageStore : ChatMessageStore, IList<ChatMessage>
 {
     private List<ChatMessage> _messages;
@@ -225,5 +228,11 @@ public sealed class InMemoryChatMessageStore : ChatMessageStore, IList<ChatMessa
         /// The reducer will process the messages before they are returned to the caller.
         /// </summary>
         BeforeMessagesRetrieval
+    }
+
+    private sealed class DebugView(InMemoryChatMessageStore store)
+    {
+        [DebuggerBrowsable(DebuggerBrowsableState.RootHidden)]
+        public ChatMessage[] Items => store._messages.ToArray();
     }
 }

@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Shared.Diagnostics;
 
@@ -13,6 +14,7 @@ namespace Microsoft.Agents.AI;
 /// This class is designed for scenarios where conversation state is managed by an external service (such as a cloud-based AI service)
 /// rather than being stored locally. The thread maintains only the service identifier needed to reference the remote conversation state.
 /// </remarks>
+[DebuggerDisplay("ServiceThreadId = {ServiceThreadId}")]
 public abstract class ServiceIdAgentThread : AgentThread
 {
     /// <summary>

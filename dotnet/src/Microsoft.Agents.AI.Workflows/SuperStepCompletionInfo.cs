@@ -8,17 +8,17 @@ namespace Microsoft.Agents.AI.Workflows;
 /// <summary>
 /// Debug information about the SuperStep that finished running.
 /// </summary>
-public sealed class SuperStepCompletionInfo(HashSet<string> activatedExecutors, HashSet<string>? instantiatedExecutors = null)
+public sealed class SuperStepCompletionInfo(IEnumerable<string> activatedExecutors, IEnumerable<string>? instantiatedExecutors = null)
 {
     /// <summary>
     /// The unique identifiers of <see cref="Executor"/> instances that processed messages during this SuperStep
     /// </summary>
-    public HashSet<string> ActivatedExecutors { get; } = Throw.IfNull(activatedExecutors);
+    public HashSet<string> ActivatedExecutors { get; } = [.. Throw.IfNull(activatedExecutors)];
 
     /// <summary>
     /// The unique identifiers of <see cref="Executor"/> instances newly created during this SuperStep
     /// </summary>
-    public HashSet<string> InstantiatedExecutors { get; } = instantiatedExecutors ?? [];
+    public HashSet<string> InstantiatedExecutors { get; } = [.. instantiatedExecutors ?? []];
 
     /// <summary>
     /// A flag indicating whether the managed state was written to during this SuperStep. If the run was started

@@ -5,6 +5,8 @@ namespace Microsoft.Agents.AI.Workflows.Observability;
 internal static class Tags
 {
     public const string WorkflowId = "workflow.id";
+    public const string WorkflowName = "workflow.name";
+    public const string WorkflowDescription = "workflow.description";
     public const string WorkflowDefinition = "workflow.definition";
     public const string BuildErrorMessage = "build.error.message";
     public const string BuildErrorType = "build.error.type";

@@ -180,6 +180,8 @@ class OtelAttr(str, Enum):
 
     # Workflow attributes
     WORKFLOW_ID = "workflow.id"
+    WORKFLOW_NAME = "workflow.name"
+    WORKFLOW_DESCRIPTION = "workflow.description"
     WORKFLOW_DEFINITION = "workflow.definition"
     WORKFLOW_BUILD_SPAN = "workflow.build"
     WORKFLOW_RUN_SPAN = "workflow.run"
@@ -347,18 +349,33 @@ class ObservabilitySettings(AFBaseSettings):
     Warning:
         Sensitive events should only be enabled on test and development environments.
 
-    Args:
+    Keyword Args:
         enable_otel: Enable OpenTelemetry diagnostics. Default is False.
-                    (Env var ENABLE_OTEL)
+            Can be set via environment variable ENABLE_OTEL.
         enable_sensitive_data: Enable OpenTelemetry sensitive events. Default is False.
-                    (Env var ENABLE_SENSITIVE_DATA)
+            Can be set via environment variable ENABLE_SENSITIVE_DATA.
         applicationinsights_connection_string: The Azure Monitor connection string. Default is None.
-                    (Env var APPLICATIONINSIGHTS_CONNECTION_STRING)
-        otlp_endpoint:  The OpenTelemetry Protocol (OTLP) endpoint. Default is None.
-                    (Env var OTLP_ENDPOINT)
-        vs_code_extension_port: The port the AI Toolkit or AzureAI Foundry VS Code extensions are listening on.
-                    Default is None.
-                    (Env var VS_CODE_EXTENSION_PORT)
+            Can be set via environment variable APPLICATIONINSIGHTS_CONNECTION_STRING.
+        otlp_endpoint: The OpenTelemetry Protocol (OTLP) endpoint. Default is None.
+            Can be set via environment variable OTLP_ENDPOINT.
+        vs_code_extension_port: The port the AI Toolkit or Azure AI Foundry VS Code extensions are listening on.
+            Default is None.
+            Can be set via environment variable VS_CODE_EXTENSION_PORT.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import ObservabilitySettings
+
+            # Using environment variables
+            # Set ENABLE_OTEL=true
+            # Set APPLICATIONINSIGHTS_CONNECTION_STRING=InstrumentationKey=...
+            settings = ObservabilitySettings()
+
+            # Or passing parameters directly
+            settings = ObservabilitySettings(
+                enable_otel=True, applicationinsights_connection_string="InstrumentationKey=..."
+            )
     """
 
     env_prefix: ClassVar[str] = ""
@@ -792,6 +809,8 @@ def _trace_get_response(
 
     Args:
         func: The function to trace.
+
+    Keyword Args:
         provider_name: The model provider name.
     """
 
@@ -878,6 +897,8 @@ def _trace_get_streaming_response(
 
     Args:
         func: The function to trace.
+
+    Keyword Args:
         provider_name: The model provider name.
     """
 
@@ -1119,7 +1140,6 @@ def _trace_agent_run_stream(
     """Decorator to trace streaming agent run activities.
 
     Args:
-        agent: The agent that is wrapped.
         run_streaming_func: The function to trace.
         provider_name: The system name used for Open Telemetry.
     """

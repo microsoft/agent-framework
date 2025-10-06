@@ -20,14 +20,14 @@ def _extract_function_name(func: Callable[..., Any]) -> str:
     stable value so that serialized representations remain intelligible when
     they are later rendered in logs or reconstructed during deserialization.
 
-    Example:
-        ```python
-        def threshold(value: float) -> bool:
-            return value > 0.5
+    Examples:
+        .. code-block:: python
+
+            def threshold(value: float) -> bool:
+                return value > 0.5
 
 
-        assert _extract_function_name(threshold) == "threshold"
-        ```
+            assert _extract_function_name(threshold) == "threshold"
     """
     if hasattr(func, "__name__"):
         name = func.__name__
@@ -44,14 +44,14 @@ def _missing_callable(name: str) -> Callable[..., Any]:
     runtime execution, while making it obvious which callable needs to be
     re-registered.
 
-    Example:
-        ```python
-        guard = _missing_callable("transform_price")
-        try:
-            guard()
-        except RuntimeError as exc:
-            assert "transform_price" in str(exc)
-        ```
+    Examples:
+        .. code-block:: python
+
+            guard = _missing_callable("transform_price")
+            try:
+                guard()
+            except RuntimeError as exc:
+                assert "transform_price" in str(exc)
     """
 
     def _raise(*_: Any, **__: Any) -> Any:
@@ -70,12 +70,12 @@ class Edge(DictConvertible):
     serialising the edge down to primitives we can reconstruct the topology of
     a workflow irrespective of the original Python process.
 
-    Example:
-        ```python
-        edge = Edge(source_id="ingest", target_id="score", condition=lambda payload: payload["ready"])
-        assert edge.should_route({"ready": True}) is True
-        assert edge.should_route({"ready": False}) is False
-        ```
+    Examples:
+        .. code-block:: python
+
+            edge = Edge(source_id="ingest", target_id="score", condition=lambda payload: payload["ready"])
+            assert edge.should_route({"ready": True}) is True
+            assert edge.should_route({"ready": False}) is False
     """
 
     ID_SEPARATOR: ClassVar[str] = "->"
@@ -110,12 +110,12 @@ class Edge(DictConvertible):
             when the callable cannot be introspected (for example after
             deserialization).
 
-        Example:
-            ```python
-            edge = Edge("fetch", "parse", condition=lambda data: data.is_valid)
-            assert edge.source_id == "fetch"
-            assert edge.target_id == "parse"
-            ```
+        Examples:
+            .. code-block:: python
+
+                edge = Edge("fetch", "parse", condition=lambda data: data.is_valid)
+                assert edge.source_id == "fetch"
+                assert edge.target_id == "parse"
         """
         if not source_id:
             raise ValueError("Edge source_id must be a non-empty string")
@@ -135,11 +135,11 @@ class Edge(DictConvertible):
         adjacency lists or visualisations to refer to an edge without carrying
         the full object.
 
-        Example:
-            ```python
-            edge = Edge("reader", "writer")
-            assert edge.id == "reader->writer"
-            ```
+        Examples:
+            .. code-block:: python
+
+                edge = Edge("reader", "writer")
+                assert edge.id == "reader->writer"
         """
         return f"{self.source_id}{self.ID_SEPARATOR}{self.target_id}"
 
@@ -152,12 +152,12 @@ class Edge(DictConvertible):
         this edge. Any exception raised by the callable is deliberately allowed
         to surface to the caller to avoid masking logic bugs.
 
-        Example:
-            ```python
-            edge = Edge("stage1", "stage2", condition=lambda payload: payload["score"] > 0.8)
-            assert edge.should_route({"score": 0.9}) is True
-            assert edge.should_route({"score": 0.4}) is False
-            ```
+        Examples:
+            .. code-block:: python
+
+                edge = Edge("stage1", "stage2", condition=lambda payload: payload["score"] > 0.8)
+                assert edge.should_route({"score": 0.9}) is True
+                assert edge.should_route({"score": 0.4}) is False
         """
         if self._condition is None:
             return True
@@ -170,12 +170,12 @@ class Edge(DictConvertible):
         plus the condition name when it is known. Serialisation intentionally
         omits the live callable to keep payloads transport-friendly.
 
-        Example:
-            ```python
-            edge = Edge("reader", "writer", condition=lambda payload: payload["ok"])
-            snapshot = edge.to_dict()
-            assert snapshot == {"source_id": "reader", "target_id": "writer", "condition_name": "<lambda>"}
-            ```
+        Examples:
+            .. code-block:: python
+
+                edge = Edge("reader", "writer", condition=lambda payload: payload["ok"])
+                snapshot = edge.to_dict()
+                assert snapshot == {"source_id": "reader", "target_id": "writer", "condition_name": "<lambda>"}
         """
         payload = {"source_id": self.source_id, "target_id": self.target_id}
         if self.condition_name is not None:
@@ -191,13 +191,13 @@ class Edge(DictConvertible):
         stored `condition_name` is preserved so that downstream consumers can
         detect missing callables and re-register them where appropriate.
 
-        Example:
-            ```python
-            payload = {"source_id": "reader", "target_id": "writer", "condition_name": "is_ready"}
-            edge = Edge.from_dict(payload)
-            assert edge.source_id == "reader"
-            assert edge.condition_name == "is_ready"
-            ```
+        Examples:
+            .. code-block:: python
+
+                payload = {"source_id": "reader", "target_id": "writer", "condition_name": "is_ready"}
+                edge = Edge.from_dict(payload)
+                assert edge.source_id == "reader"
+                assert edge.condition_name == "is_ready"
         """
         return cls(
             source_id=data["source_id"],
@@ -217,17 +217,17 @@ class Case:
     `SwitchCaseEdgeGroupCase` so that execution can operate with live callables
     without polluting persisted state.
 
-    Example:
-        ```python
-        class JsonExecutor(Executor):
-            def __init__(self) -> None:
-                super().__init__(id="json", defer_discovery=True)
+    Examples:
+        .. code-block:: python
+
+            class JsonExecutor(Executor):
+                def __init__(self) -> None:
+                    super().__init__(id="json", defer_discovery=True)
 
 
-        processor = JsonExecutor()
-        case = Case(condition=lambda payload: payload["kind"] == "json", target=processor)
-        assert case.target.id == "json"
-        ```
+            processor = JsonExecutor()
+            case = Case(condition=lambda payload: payload["kind"] == "json", target=processor)
+            assert case.target.id == "json"
     """
 
     condition: Callable[[Any], bool]
@@ -242,16 +242,16 @@ class Default:
     practice it is guaranteed to exist so that routing never produces an empty
     target.
 
-    Example:
-        ```python
-        class DeadLetterExecutor(Executor):
-            def __init__(self) -> None:
-                super().__init__(id="dead_letter", defer_discovery=True)
+    Examples:
+        .. code-block:: python
+
+            class DeadLetterExecutor(Executor):
+                def __init__(self) -> None:
+                    super().__init__(id="dead_letter", defer_discovery=True)
 
 
-        fallback = Default(target=DeadLetterExecutor())
-        assert fallback.target.id == "dead_letter"
-        ```
+            fallback = Default(target=DeadLetterExecutor())
+            assert fallback.target.id == "dead_letter"
     """
 
     target: Executor
@@ -267,11 +267,11 @@ class EdgeGroup(DictConvertible):
     identifying information and handles serialisation duties so specialised
     groups need only maintain their additional state.
 
-    Example:
-        ```python
-        group = EdgeGroup([Edge("source", "sink")])
-        assert group.source_executor_ids == ["source"]
-        ```
+    Examples:
+        .. code-block:: python
+
+            group = EdgeGroup([Edge("source", "sink")])
+            assert group.source_executor_ids == ["source"]
     """
 
     id: str
@@ -303,12 +303,12 @@ class EdgeGroup(DictConvertible):
             Logical discriminator used to recover the appropriate subclass when
             de-serialising.
 
-        Example:
-            ```python
-            edges = [Edge("validate", "persist")]
-            group = EdgeGroup(edges, id="stage", type="Custom")
-            assert group.to_dict()["type"] == "Custom"
-            ```
+        Examples:
+            .. code-block:: python
+
+                edges = [Edge("validate", "persist")]
+                group = EdgeGroup(edges, id="stage", type="Custom")
+                assert group.to_dict()["type"] == "Custom"
         """
         self.id = id or f"{self.__class__.__name__}/{uuid.uuid4()}"
         self.type = type or self.__class__.__name__
@@ -321,11 +321,11 @@ class EdgeGroup(DictConvertible):
         The property preserves order-of-first-appearance so the caller can rely
         on deterministic iteration when reconstructing graph topology.
 
-        Example:
-            ```python
-            group = EdgeGroup([Edge("read", "write"), Edge("read", "archive")])
-            assert group.source_executor_ids == ["read"]
-            ```
+        Examples:
+            .. code-block:: python
+
+                group = EdgeGroup([Edge("read", "write"), Edge("read", "archive")])
+                assert group.source_executor_ids == ["read"]
         """
         return list(dict.fromkeys(edge.source_id for edge in self.edges))
 
@@ -333,11 +333,11 @@ class EdgeGroup(DictConvertible):
     def target_executor_ids(self) -> list[str]:
         """Return the ordered, deduplicated list of downstream executor ids.
 
-        Example:
-            ```python
-            group = EdgeGroup([Edge("read", "write"), Edge("read", "archive")])
-            assert group.target_executor_ids == ["write", "archive"]
-            ```
+        Examples:
+            .. code-block:: python
+
+                group = EdgeGroup([Edge("read", "write"), Edge("read", "archive")])
+                assert group.target_executor_ids == ["write", "archive"]
         """
         return list(dict.fromkeys(edge.target_id for edge in self.edges))
 
@@ -348,12 +348,12 @@ class EdgeGroup(DictConvertible):
         round-tripping through formats such as JSON without leaking Python
         objects.
 
-        Example:
-            ```python
-            group = EdgeGroup([Edge("read", "write")])
-            snapshot = group.to_dict()
-            assert snapshot["edges"][0]["source_id"] == "read"
-            ```
+        Examples:
+            .. code-block:: python
+
+                group = EdgeGroup([Edge("read", "write")])
+                snapshot = group.to_dict()
+                assert snapshot["edges"][0]["source_id"] == "read"
         """
         return {
             "id": self.id,
@@ -370,15 +370,15 @@ class EdgeGroup(DictConvertible):
         `__name__`, which must therefore remain stable across versions when
         persisted workflows are in circulation.
 
-        Example:
-            ```python
-            @EdgeGroup.register
-            class CustomGroup(EdgeGroup):
-                pass
+        Examples:
+            .. code-block:: python
+
+                @EdgeGroup.register
+                class CustomGroup(EdgeGroup):
+                    pass
 
 
-            assert EdgeGroup._TYPE_REGISTRY["CustomGroup"] is CustomGroup
-            ```
+                assert EdgeGroup._TYPE_REGISTRY["CustomGroup"] is CustomGroup
         """
         cls._TYPE_REGISTRY[subclass.__name__] = subclass
         return subclass
@@ -393,12 +393,12 @@ class EdgeGroup(DictConvertible):
         even for complex group types that configure additional runtime
         callables.
 
-        Example:
-            ```python
-            payload = {"type": "EdgeGroup", "edges": [{"source_id": "a", "target_id": "b"}]}
-            group = EdgeGroup.from_dict(payload)
-            assert isinstance(group, EdgeGroup)
-            ```
+        Examples:
+            .. code-block:: python
+
+                payload = {"type": "EdgeGroup", "edges": [{"source_id": "a", "target_id": "b"}]}
+                group = EdgeGroup.from_dict(payload)
+                assert isinstance(group, EdgeGroup)
         """
         group_type = data.get("type", "EdgeGroup")
         target_cls = cls._TYPE_REGISTRY.get(group_type, EdgeGroup)
@@ -448,11 +448,11 @@ class SingleEdgeGroup(EdgeGroup):
     ) -> None:
         """Create a one-to-one edge group between two executors.
 
-        Example:
-            ```python
-            group = SingleEdgeGroup("ingest", "validate")
-            assert group.edges[0].source_id == "ingest"
-            ```
+        Examples:
+            .. code-block:: python
+
+                group = SingleEdgeGroup("ingest", "validate")
+                assert group.edges[0].source_id == "ingest"
         """
         edge = Edge(source_id=source_id, target_id=target_id, condition=condition)
         super().__init__([edge], id=id, type=self.__class__.__name__)
@@ -503,15 +503,15 @@ class FanOutEdgeGroup(EdgeGroup):
         id:
             Stable identifier for the group; defaults to an autogenerated UUID.
 
-        Example:
-            ```python
-            def choose_targets(message: dict[str, Any], available: list[str]) -> list[str]:
-                return [target for target in available if message.get(target)]
+        Examples:
+            .. code-block:: python
+
+                def choose_targets(message: dict[str, Any], available: list[str]) -> list[str]:
+                    return [target for target in available if message.get(target)]
 
 
-            group = FanOutEdgeGroup("sensor", ["db", "cache"], selection_func=choose_targets)
-            assert group.selection_func is choose_targets
-            ```
+                group = FanOutEdgeGroup("sensor", ["db", "cache"], selection_func=choose_targets)
+                assert group.selection_func is choose_targets
         """
         if len(target_ids) <= 1:
             raise ValueError("FanOutEdgeGroup must contain at least two targets.")
@@ -532,11 +532,11 @@ class FanOutEdgeGroup(EdgeGroup):
         The list is defensively copied to prevent callers from mutating the
         internal state while still providing deterministic ordering.
 
-        Example:
-            ```python
-            group = FanOutEdgeGroup("node", ["alpha", "beta"])
-            assert group.target_ids == ["alpha", "beta"]
-            ```
+        Examples:
+            .. code-block:: python
+
+                group = FanOutEdgeGroup("node", ["alpha", "beta"])
+                assert group.target_ids == ["alpha", "beta"]
         """
         return list(self._target_ids)
 
@@ -547,11 +547,11 @@ class FanOutEdgeGroup(EdgeGroup):
         When no selection function was supplied the property returns `None`,
         signalling that all targets must receive the payload.
 
-        Example:
-            ```python
-            group = FanOutEdgeGroup("source", ["x", "y"], selection_func=None)
-            assert group.selection_func is None
-            ```
+        Examples:
+            .. code-block:: python
+
+                group = FanOutEdgeGroup("source", ["x", "y"], selection_func=None)
+                assert group.selection_func is None
         """
         return self._selection_func
 
@@ -561,12 +561,12 @@ class FanOutEdgeGroup(EdgeGroup):
         In addition to the base `EdgeGroup` payload we embed the human-friendly
         name of the selection function. The callable itself is not persisted.
 
-        Example:
-            ```python
-            group = FanOutEdgeGroup("source", ["a", "b"], selection_func=lambda *_: ["a"])
-            snapshot = group.to_dict()
-            assert snapshot["selection_func_name"] == "<lambda>"
-            ```
+        Examples:
+            .. code-block:: python
+
+                group = FanOutEdgeGroup("source", ["a", "b"], selection_func=lambda *_: ["a"])
+                snapshot = group.to_dict()
+                assert snapshot["selection_func_name"] == "<lambda>"
         """
         payload = super().to_dict()
         payload["selection_func_name"] = self.selection_func_name
@@ -595,11 +595,11 @@ class FanInEdgeGroup(EdgeGroup):
         id:
             Optional explicit identifier for the edge group.
 
-        Example:
-            ```python
-            group = FanInEdgeGroup(["parser", "enricher"], target_id="writer")
-            assert group.to_dict()["edges"][0]["target_id"] == "writer"
-            ```
+        Examples:
+            .. code-block:: python
+
+                group = FanInEdgeGroup(["parser", "enricher"], target_id="writer")
+                assert group.to_dict()["edges"][0]["target_id"] == "writer"
         """
         if len(source_ids) <= 1:
             raise ValueError("FanInEdgeGroup must contain at least two sources.")
@@ -645,11 +645,11 @@ class SwitchCaseEdgeGroupCase(DictConvertible):
             Human-friendly label for the predicate used for diagnostics and
             on-disk persistence.
 
-        Example:
-            ```python
-            case = SwitchCaseEdgeGroupCase(lambda payload: payload["type"] == "csv", target_id="csv_handler")
-            assert case.condition_name == "<lambda>"
-            ```
+        Examples:
+            .. code-block:: python
+
+                case = SwitchCaseEdgeGroupCase(lambda payload: payload["type"] == "csv", target_id="csv_handler")
+                assert case.condition_name == "<lambda>"
         """
         if not target_id:
             raise ValueError("SwitchCaseEdgeGroupCase requires a target_id")
@@ -671,26 +671,26 @@ class SwitchCaseEdgeGroupCase(DictConvertible):
         `RuntimeError` when invoked so that workflow authors are forced to
         provide the missing callable explicitly.
 
-        Example:
-            ```python
-            case = SwitchCaseEdgeGroupCase(None, target_id="missing", condition_name="needs_registration")
-            guard = case.condition
-            try:
-                guard({})
-            except RuntimeError:
-                pass
-            ```
+        Examples:
+            .. code-block:: python
+
+                case = SwitchCaseEdgeGroupCase(None, target_id="missing", condition_name="needs_registration")
+                guard = case.condition
+                try:
+                    guard({})
+                except RuntimeError:
+                    pass
         """
         return self._condition
 
     def to_dict(self) -> dict[str, Any]:
         """Serialise the case metadata without the executable predicate.
 
-        Example:
-            ```python
-            case = SwitchCaseEdgeGroupCase(lambda _: True, target_id="handler")
-            assert case.to_dict()["target_id"] == "handler"
-            ```
+        Examples:
+            .. code-block:: python
+
+                case = SwitchCaseEdgeGroupCase(lambda _: True, target_id="handler")
+                assert case.to_dict()["target_id"] == "handler"
         """
         payload = {"target_id": self.target_id, "type": self.type}
         if self.condition_name is not None:
@@ -701,12 +701,12 @@ class SwitchCaseEdgeGroupCase(DictConvertible):
     def from_dict(cls, data: dict[str, Any]) -> "SwitchCaseEdgeGroupCase":
         """Instantiate a case from its serialised dictionary payload.
 
-        Example:
-            ```python
-            payload = {"target_id": "handler", "condition_name": "is_ready"}
-            case = SwitchCaseEdgeGroupCase.from_dict(payload)
-            assert case.target_id == "handler"
-            ```
+        Examples:
+            .. code-block:: python
+
+                payload = {"target_id": "handler", "condition_name": "is_ready"}
+                case = SwitchCaseEdgeGroupCase.from_dict(payload)
+                assert case.target_id == "handler"
         """
         return cls(
             condition=None,
@@ -729,11 +729,11 @@ class SwitchCaseEdgeGroupDefault(DictConvertible):
     def __init__(self, target_id: str) -> None:
         """Point the default branch toward the given executor identifier.
 
-        Example:
-            ```python
-            fallback = SwitchCaseEdgeGroupDefault(target_id="dead_letter")
-            assert fallback.target_id == "dead_letter"
-            ```
+        Examples:
+            .. code-block:: python
+
+                fallback = SwitchCaseEdgeGroupDefault(target_id="dead_letter")
+                assert fallback.target_id == "dead_letter"
         """
         if not target_id:
             raise ValueError("SwitchCaseEdgeGroupDefault requires a target_id")
@@ -743,11 +743,11 @@ class SwitchCaseEdgeGroupDefault(DictConvertible):
     def to_dict(self) -> dict[str, Any]:
         """Serialise the default branch metadata for persistence or logging.
 
-        Example:
-            ```python
-            fallback = SwitchCaseEdgeGroupDefault("dead_letter")
-            assert fallback.to_dict()["type"] == "Default"
-            ```
+        Examples:
+            .. code-block:: python
+
+                fallback = SwitchCaseEdgeGroupDefault("dead_letter")
+                assert fallback.to_dict()["type"] == "Default"
         """
         return {"target_id": self.target_id, "type": self.type}
 
@@ -755,12 +755,12 @@ class SwitchCaseEdgeGroupDefault(DictConvertible):
     def from_dict(cls, data: dict[str, Any]) -> "SwitchCaseEdgeGroupDefault":
         """Recreate the default branch from its persisted form.
 
-        Example:
-            ```python
-            payload = {"target_id": "dead_letter", "type": "Default"}
-            fallback = SwitchCaseEdgeGroupDefault.from_dict(payload)
-            assert fallback.target_id == "dead_letter"
-            ```
+        Examples:
+            .. code-block:: python
+
+                payload = {"target_id": "dead_letter", "type": "Default"}
+                fallback = SwitchCaseEdgeGroupDefault.from_dict(payload)
+                assert fallback.target_id == "dead_letter"
         """
         return cls(target_id=data["target_id"])
 
@@ -797,16 +797,16 @@ class SwitchCaseEdgeGroup(FanOutEdgeGroup):
         id:
             Optional explicit identifier for the edge group.
 
-        Example:
-            ```python
-            cases = [
-                SwitchCaseEdgeGroupCase(lambda payload: payload["kind"] == "csv", target_id="process_csv"),
-                SwitchCaseEdgeGroupDefault(target_id="process_default"),
-            ]
-            group = SwitchCaseEdgeGroup("router", cases)
-            encoded = group.to_dict()
-            assert encoded["cases"][0]["type"] == "Case"
-            ```
+        Examples:
+            .. code-block:: python
+
+                cases = [
+                    SwitchCaseEdgeGroupCase(lambda payload: payload["kind"] == "csv", target_id="process_csv"),
+                    SwitchCaseEdgeGroupDefault(target_id="process_default"),
+                ]
+                group = SwitchCaseEdgeGroup("router", cases)
+                encoded = group.to_dict()
+                assert encoded["cases"][0]["type"] == "Case"
         """
         if len(cases) < 2:
             raise ValueError("SwitchCaseEdgeGroup must contain at least two cases (including the default case).")
@@ -849,18 +849,18 @@ class SwitchCaseEdgeGroup(FanOutEdgeGroup):
         Each case is converted using `encode_value` to respect dataclass
         semantics as well as any nested serialisable structures.
 
-        Example:
-            ```python
-            group = SwitchCaseEdgeGroup(
-                "router",
-                [
-                    SwitchCaseEdgeGroupCase(lambda _: True, target_id="handler"),
-                    SwitchCaseEdgeGroupDefault(target_id="fallback"),
-                ],
-            )
-            snapshot = group.to_dict()
-            assert len(snapshot["cases"]) == 2
-            ```
+        Examples:
+            .. code-block:: python
+
+                group = SwitchCaseEdgeGroup(
+                    "router",
+                    [
+                        SwitchCaseEdgeGroupCase(lambda _: True, target_id="handler"),
+                        SwitchCaseEdgeGroupDefault(target_id="fallback"),
+                    ],
+                )
+                snapshot = group.to_dict()
+                assert len(snapshot["cases"]) == 2
         """
         payload = super().to_dict()
         payload["cases"] = [encode_value(case) for case in self.cases]

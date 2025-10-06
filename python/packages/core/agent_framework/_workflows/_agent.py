@@ -75,6 +75,8 @@ class WorkflowAgent(BaseAgent):
 
         Args:
             workflow: The workflow to wrap as an agent.
+
+        Keyword Args:
             id: Unique identifier for the agent. If None, will be generated.
             name: Optional name for the agent.
             description: Optional description of the agent.
@@ -117,6 +119,8 @@ class WorkflowAgent(BaseAgent):
 
         Args:
             messages: The message(s) to send to the workflow.
+
+        Keyword Args:
             thread: The conversation thread. If None, a new thread will be created.
             **kwargs: Additional keyword arguments.
 
@@ -151,6 +155,8 @@ class WorkflowAgent(BaseAgent):
 
         Args:
             messages: The message(s) to send to the workflow.
+
+        Keyword Args:
             thread: The conversation thread. If None, a new thread will be created.
             **kwargs: Additional keyword arguments.
 

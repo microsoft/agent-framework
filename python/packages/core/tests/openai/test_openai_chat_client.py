@@ -22,11 +22,11 @@ from agent_framework import (
     TextContent,
     ToolProtocol,
     ai_function,
+    prepare_function_call_results,
 )
 from agent_framework.exceptions import ServiceInitializationError, ServiceResponseException
 from agent_framework.openai import OpenAIChatClient
 from agent_framework.openai._exceptions import OpenAIContentFilterException
-from agent_framework.openai._shared import prepare_function_call_results
 
 skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"

@@ -102,6 +102,27 @@ Messages and events from agents/workflows are mapped to OpenAI response types in
 | `FunctionApprovalResponseContent` | Custom event                              | Custom   |
 | `WorkflowEvent`                   | `ResponseWorkflowEventComplete`           | Custom   |
 
+## Frontend Development
+
+To build the frontend:
+
+```bash
+cd frontend
+yarn install
+
+# Create .env.local with backend URL
+echo 'VITE_API_BASE_URL=http://localhost:8000' > .env.local
+
+# Create .env.production (empty for relative URLs)
+echo '' > .env.production
+
+# Development
+yarn dev
+
+# Build (copies to backend)
+yarn build
+```
+
 ## Troubleshooting
 
 - **Missing API key**: Make sure your `.env` file is in the `python/` directory with valid credentials. Or set environment variables directly in your shell before running DevUI.

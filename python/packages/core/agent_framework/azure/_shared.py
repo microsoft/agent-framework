@@ -37,45 +37,64 @@ class AzureOpenAISettings(AFBaseSettings):
     with the encoding 'utf-8'. If the settings are not found in the .env file, the settings
     are ignored; however, validation will fail alerting that the settings are missing.
 
-    Args:
+    Keyword Args:
         endpoint: The endpoint of the Azure deployment. This value
             can be found in the Keys & Endpoint section when examining
             your resource from the Azure portal, the endpoint should end in openai.azure.com.
             If both base_url and endpoint are supplied, base_url will be used.
-            (Env var AZURE_OPENAI_ENDPOINT)
+            Can be set via environment variable AZURE_OPENAI_ENDPOINT.
         chat_deployment_name: The name of the Azure Chat deployment. This value
             will correspond to the custom name you chose for your deployment
             when you deployed a model. This value can be found under
             Resource Management > Deployments in the Azure portal or, alternatively,
             under Management > Deployments in Azure AI Foundry.
-            (Env var AZURE_OPENAI_CHAT_DEPLOYMENT_NAME)
+            Can be set via environment variable AZURE_OPENAI_CHAT_DEPLOYMENT_NAME.
         responses_deployment_name: The name of the Azure Responses deployment. This value
             will correspond to the custom name you chose for your deployment
             when you deployed a model. This value can be found under
             Resource Management > Deployments in the Azure portal or, alternatively,
             under Management > Deployments in Azure AI Foundry.
-            (Env var AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME)
+            Can be set via environment variable AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME.
         api_key: The API key for the Azure deployment. This value can be
             found in the Keys & Endpoint section when examining your resource in
             the Azure portal. You can use either KEY1 or KEY2.
-            (Env var AZURE_OPENAI_API_KEY)
+            Can be set via environment variable AZURE_OPENAI_API_KEY.
         api_version: The API version to use. The default value is `default_api_version`.
-            (Env var AZURE_OPENAI_API_VERSION)
+            Can be set via environment variable AZURE_OPENAI_API_VERSION.
         base_url: The url of the Azure deployment. This value
             can be found in the Keys & Endpoint section when examining
             your resource from the Azure portal, the base_url consists of the endpoint,
             followed by /openai/deployments/{deployment_name}/,
             use endpoint if you only want to supply the endpoint.
-            (Env var AZURE_OPENAI_BASE_URL)
+            Can be set via environment variable AZURE_OPENAI_BASE_URL.
         token_endpoint: The token endpoint to use to retrieve the authentication token.
             The default value is `default_token_endpoint`.
-            (Env var AZURE_OPENAI_TOKEN_ENDPOINT)
+            Can be set via environment variable AZURE_OPENAI_TOKEN_ENDPOINT.
         default_api_version: The default API version to use if not specified.
             The default value is "2024-10-21".
         default_token_endpoint: The default token endpoint to use if not specified.
             The default value is "https://cognitiveservices.azure.com/.default".
         env_file_path: The path to the .env file to load settings from.
         env_file_encoding: The encoding of the .env file, defaults to 'utf-8'.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework.azure import AzureOpenAISettings
+
+            # Using environment variables
+            # Set AZURE_OPENAI_ENDPOINT=https://your-endpoint.openai.azure.com
+            # Set AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=gpt-4
+            # Set AZURE_OPENAI_API_KEY=your-key
+            settings = AzureOpenAISettings()
+
+            # Or passing parameters directly
+            settings = AzureOpenAISettings(
+                endpoint="https://your-endpoint.openai.azure.com", chat_deployment_name="gpt-4", api_key="your-key"
+            )
+
+            # Or loading from a .env file
+            settings = AzureOpenAISettings(env_file_path="path/to/.env")
     """
 
     env_prefix: ClassVar[str] = "AZURE_OPENAI_"
@@ -103,6 +122,8 @@ class AzureOpenAISettings(AFBaseSettings):
         Args:
             credential: The Azure AD credential to use.
             token_endpoint: The token endpoint to use. Defaults to `https://cognitiveservices.azure.com/.default`.
+
+        Keyword Args:
             **kwargs: Additional keyword arguments to pass to the token retrieval method.
 
         Returns:

@@ -51,7 +51,7 @@ public abstract class ActionExecutor(string id, FormulaSession session) : Action
 /// Base class for an action executor that receives the initial trigger message.
 /// </summary>
 /// <typeparam name="TMessage">The type of message being handled</typeparam>
-public abstract class ActionExecutor<TMessage> : Executor<TMessage> where TMessage : notnull
+public abstract class ActionExecutor<TMessage> : Executor<TMessage>, IResettableExecutor where TMessage : notnull
 {
     private readonly FormulaSession _session;
 
@@ -64,6 +64,12 @@ public abstract class ActionExecutor<TMessage> : Executor<TMessage> where TMessa
         : base(id)
     {
         this._session = session;
+    }
+
+    /// <inheritdoc/>
+    public ValueTask ResetAsync()
+    {
+        return default;
     }
 
     /// <inheritdoc/>
