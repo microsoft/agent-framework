@@ -195,11 +195,6 @@ class BaseTool(SerializationMixin):
 
     This class provides the foundation for creating custom tools with serialization support.
 
-    Args:
-        name: The name of the tool.
-        description: A description of the tool.
-        additional_properties: Additional properties associated with the tool.
-
     Examples:
         .. code-block:: python
 
@@ -545,25 +540,16 @@ def _default_histogram() -> Histogram:
 
 
 class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
-    """A AITool that is callable as code.
+    """A tool that wraps a Python function to make it callable by AI models.
 
     This class wraps a Python function to make it callable by AI models with automatic
     parameter validation and JSON schema generation.
-
-    Args:
-        name: The name of the function.
-        description: A description of the function.
-        approval_mode: Whether or not approval is required to run this tool.
-            Default is that approval is not needed.
-        additional_properties: Additional properties to set on the function.
-        func: The function to wrap.
-        input_model: The Pydantic model that defines the input parameters for the function.
 
     Examples:
         .. code-block:: python
 
             from typing import Annotated
-            from pydantic import BaseModel
+            from pydantic import BaseModel, Field
             from agent_framework import AIFunction, ai_function
 
 

@@ -178,14 +178,13 @@ class Executor(DictConvertible):
 
         @executor
         async def process_text(text: str, ctx: WorkflowContext[str]) -> None:
-        await ctx.send_message(text.upper())
+            await ctx.send_message(text.upper())
 
 
-    # Or with custom ID:
-    @executor(id="text_processor")
-    def sync_process(text: str, ctx: WorkflowContext[str]) -> None:
-        ctx.send_message(text.lower())  # Sync functions run in thread pool
-    ```
+        # Or with custom ID:
+        @executor(id="text_processor")
+        def sync_process(text: str, ctx: WorkflowContext[str]) -> None:
+            ctx.send_message(text.lower())  # Sync functions run in thread pool
 
     ## Sub-workflow Composition
     Executors can contain sub-workflows using WorkflowExecutor. Sub-workflows can make requests

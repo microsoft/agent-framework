@@ -401,13 +401,7 @@ AnnotatedRegions = TextSpanRegion
 
 
 class BaseAnnotation(SerializationMixin):
-    """Base class for all AI Annotation types.
-
-    Args:
-        additional_properties: Optional additional properties associated with the content.
-        raw_representation: Optional raw representation of the content from an underlying implementation.
-
-    """
+    """Base class for all AI Annotation types."""
 
     DEFAULT_EXCLUDE: ClassVar[set[str]] = {"raw_representation", "additional_properties"}
 
