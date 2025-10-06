@@ -43,9 +43,9 @@ https://developer.nvidia.com/blog/accelerated-ai-inference-with-nvidia-nim-on-az
 
 Set the following environment variables before running this example:
 
-- AZURE_AI_ENDPOINT: Your Azure AI Foundry endpoint URL (e.g., 'https://<endpoint>.<region>.inference.ml.azure.com/v1')
-- AZURE_AI_API_KEY: Your Azure AI Foundry API key
-- NVIDIA_NIM_MODEL: The NVIDIA NIM model to use (e.g., 'meta/llama-3.1-8b-instruct')
+- OPENAI_BASE_URL: Your Azure AI Foundry endpoint URL (e.g., 'https://<endpoint>.<region>.inference.ml.azure.com/v1')
+- OPENAI_API_KEY: Your Azure AI Foundry API key
+- OPENAI_CHAT_MODEL_ID: The NVIDIA NIM model to use (e.g., 'meta/llama-3.1-8b-instruct')
 
 ## API Compatibility
 
@@ -88,9 +88,9 @@ async def non_streaming_example() -> None:
     print("=== Non-streaming Response Example ===")
 
     agent = OpenAIChatClient(
-        api_key=os.environ["AZURE_AI_API_KEY"],
-        base_url=os.environ["AZURE_AI_ENDPOINT"],
-        model_id=os.environ["NVIDIA_NIM_MODEL"],
+        api_key=os.environ["OPENAI_API_KEY"],
+        base_url=os.environ["OPENAI_BASE_URL"],
+        model_id=os.environ["OPENAI_CHAT_MODEL_ID"],
     ).create_agent(
         name="NVIDIAAIAgent",
         instructions="You are a helpful AI assistant powered by NVIDIA NIM models. You can provide weather information and AI insights.",
@@ -108,9 +108,9 @@ async def streaming_example() -> None:
     print("=== Streaming Response Example ===")
 
     agent = OpenAIChatClient(
-        api_key=os.environ["AZURE_AI_API_KEY"],
-        base_url=os.environ["AZURE_AI_ENDPOINT"],
-        model_id=os.environ["NVIDIA_NIM_MODEL"],
+        api_key=os.environ["OPENAI_API_KEY"],
+        base_url=os.environ["OPENAI_BASE_URL"],
+        model_id=os.environ["OPENAI_CHAT_MODEL_ID"],
     ).create_agent(
         name="NVIDIAAIAgent",
         instructions="You are a helpful AI assistant powered by NVIDIA NIM models. You can provide weather information and AI insights.",
