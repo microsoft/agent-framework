@@ -2997,6 +2997,7 @@ class ChatOptions(SerializationMixin):
         max_tokens: int | None = None,
         metadata: MutableMapping[str, str] | None = None,
         presence_penalty: float | None = None,
+        reasoning: dict | None = None,
         response_format: type[BaseModel] | None = None,
         seed: int | None = None,
         stop: str | Sequence[str] | None = None,
@@ -3025,6 +3026,7 @@ class ChatOptions(SerializationMixin):
             max_tokens: The maximum number of tokens (must be > 0).
             metadata: Metadata mapping.
             presence_penalty: The presence penalty (must be between -2.0 and 2.0).
+            reasoning: Reasoning configuration for reasoning models (e.g., {"effort": "medium", "summary": "auto"}).
             response_format: Structured output response format schema. Must be a valid Pydantic model.
             seed: Random seed for reproducibility.
             stop: Stop sequences.
@@ -3065,6 +3067,7 @@ class ChatOptions(SerializationMixin):
         self.max_tokens = max_tokens
         self.metadata = metadata
         self.presence_penalty = presence_penalty
+        self.reasoning = reasoning
         self.response_format = response_format
         self.seed = seed
         self.stop = stop

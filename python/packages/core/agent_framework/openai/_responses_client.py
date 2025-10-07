@@ -314,6 +314,9 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         if chat_options.user is not None:
             options_dict["user"] = chat_options.user
 
+        if getattr(chat_options, "reasoning", None) is not None:
+            options_dict["reasoning"] = chat_options.reasoning
+
         # messages
         if instructions := options_dict.pop("instructions", None):
             messages = [ChatMessage(role="system", text=instructions), *messages]

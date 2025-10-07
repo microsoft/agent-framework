@@ -533,6 +533,7 @@ class ChatAgent(BaseAgent):
         metadata: dict[str, Any] | None = None,
         model: str | None = None,
         presence_penalty: float | None = None,
+        reasoning: dict | None = None,
         response_format: type[BaseModel] | None = None,
         seed: int | None = None,
         stop: str | Sequence[str] | None = None,
@@ -577,6 +578,7 @@ class ChatAgent(BaseAgent):
             metadata: Additional metadata to include in the request.
             model: The model to use for the agent.
             presence_penalty: The presence penalty to use.
+            reasoning: Reasoning configuration for reasoning models (e.g., {"effort": "medium", "summary": "auto"}).
             response_format: The format of the response.
             seed: The random seed to use.
             stop: The stop sequence(s) for the request.
@@ -700,6 +702,7 @@ class ChatAgent(BaseAgent):
         metadata: dict[str, Any] | None = None,
         model: str | None = None,
         presence_penalty: float | None = None,
+        reasoning: dict | None = None,
         response_format: type[BaseModel] | None = None,
         seed: int | None = None,
         stop: str | Sequence[str] | None = None,
@@ -735,6 +738,7 @@ class ChatAgent(BaseAgent):
             metadata: Additional metadata to include in the request.
             model: The model to use for the agent.
             presence_penalty: The presence penalty to use.
+            reasoning: Reasoning configuration for reasoning models (e.g., {"effort": "medium", "summary": "auto"}).
             response_format: The format of the response.
             seed: The random seed to use.
             stop: The stop sequence(s) for the request.
@@ -775,10 +779,7 @@ class ChatAgent(BaseAgent):
             if not mcp_server.is_connected:
                 await self._async_exit_stack.enter_async_context(mcp_server)
             final_tools.extend(mcp_server.functions)
-        response = await self.chat_client.get_response(
-            messages=thread_messages,
-            chat_options=run_chat_options
-            & ChatOptions(
+        new_options = ChatOptions(
                 model_id=model,
                 conversation_id=thread.service_thread_id,
                 frequency_penalty=frequency_penalty,
@@ -786,6 +787,7 @@ class ChatAgent(BaseAgent):
                 max_tokens=max_tokens,
                 metadata=metadata,
                 presence_penalty=presence_penalty,
+                reasoning=reasoning,
                 response_format=response_format,
                 seed=seed,
                 stop=stop,
@@ -796,7 +798,11 @@ class ChatAgent(BaseAgent):
                 top_p=top_p,
                 user=user,
                 additional_properties=additional_properties or {},
-            ),
+            )
+        merged_options = run_chat_options & new_options
+        response = await self.chat_client.get_response(
+            messages=thread_messages,
+            chat_options=merged_options,
             **kwargs,
         )
 
@@ -831,6 +837,7 @@ class ChatAgent(BaseAgent):
         metadata: dict[str, Any] | None = None,
         model: str | None = None,
         presence_penalty: float | None = None,
+        reasoning: dict | None = None,
         response_format: type[BaseModel] | None = None,
         seed: int | None = None,
         stop: str | Sequence[str] | None = None,
@@ -866,6 +873,7 @@ class ChatAgent(BaseAgent):
             metadata: Additional metadata to include in the request.
             model: The model to use for the agent.
             presence_penalty: The presence penalty to use.
+            reasoning: Reasoning configuration for reasoning models (e.g., {"effort": "medium", "summary": "auto"}).
             response_format: The format of the response.
             seed: The random seed to use.
             stop: The stop sequence(s) for the request.
@@ -919,6 +927,7 @@ class ChatAgent(BaseAgent):
                 metadata=metadata,
                 model_id=model,
                 presence_penalty=presence_penalty,
+                reasoning=reasoning,
                 response_format=response_format,
                 seed=seed,
                 stop=stop,

@@ -2102,3 +2102,21 @@ def test_openai_responses_client_with_callable_api_key() -> None:
     assert client.model_id == "gpt-4o"
     # OpenAI SDK now manages callable API keys internally
     assert client.client is not None
+
+
+def test_prepare_options_reasoning_parameter() -> None:
+    """Test that _prepare_options includes reasoning parameter when set in ChatOptions."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    messages = [ChatMessage(role="user", text="Test message")]
+
+    # Test with reasoning parameter set
+    reasoning_config = {"effort": "medium", "summary": "auto"}
+    chat_options = ChatOptions(reasoning=reasoning_config)
+    options = client._prepare_options(messages, chat_options)  # type: ignore
+    assert "reasoning" in options
+    assert options["reasoning"] == reasoning_config
+
+    # Test without reasoning parameter
+    chat_options_no_reasoning = ChatOptions()
+    options_no_reasoning = client._prepare_options(messages, chat_options_no_reasoning)  # type: ignore
+    assert "reasoning" not in options_no_reasoning
