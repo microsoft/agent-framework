@@ -177,14 +177,10 @@ internal static class ChatMessageExtensions
         }
     }
 
-    private static AIContent GetImageContent(string uriText)
-    {
-        Uri imageUri = new(uriText);
-        return
-            imageUri.Scheme is "data" ?
-                new DataContent(imageUri, "image/*") :
-                new UriContent(imageUri, "image/*");
-    }
+    private static AIContent GetImageContent(string uriText) =>
+        uriText.StartsWith("data:", StringComparison.OrdinalIgnoreCase) ?
+            new DataContent(uriText, "image/*") :
+            new UriContent(uriText, "image/*");
 
     private static TValue? GetProperty<TValue>(this RecordDataValue record, string name)
         where TValue : DataValue
