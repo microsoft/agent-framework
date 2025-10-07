@@ -342,7 +342,8 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
             for key, value in additional_properties.items():
                 if value is not None:
                     options_dict[key] = value
-
+        if "store" not in options_dict:
+            options_dict["store"] = False
         return options_dict
 
     def _prepare_chat_messages_for_request(self, chat_messages: Sequence[ChatMessage]) -> list[dict[str, Any]]:

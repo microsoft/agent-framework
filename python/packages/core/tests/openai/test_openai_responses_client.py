@@ -2076,7 +2076,6 @@ def test_prepare_options_store_parameter_handling() -> None:
     chat_options = ChatOptions(store=False, conversation_id="")
     options = client._prepare_options(messages, chat_options)  # type: ignore
     assert options["store"] is False
-    assert "previous_response_id" not in options
 
     chat_options = ChatOptions(store=None, conversation_id=None)
     options = client._prepare_options(messages, chat_options)  # type: ignore

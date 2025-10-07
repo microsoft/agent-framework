@@ -579,6 +579,7 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_with_run_options(
         "tools": [{"type": "function", "function": {"name": "test_tool"}}],
         "instructions": "Test instructions",
         "response_format": {"type": "json_object"},
+        "model_id": azure_ai_settings.model_deployment_name,
     }
 
     agent_id = await chat_client._get_agent_id_or_create(run_options)  # type: ignore
