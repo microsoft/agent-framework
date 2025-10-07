@@ -52,6 +52,7 @@
     <Project Path="samples/GettingStarted/Agents/Agent_Step13_Memory/Agent_Step13_Memory.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step14_Middleware/Agent_Step14_Middleware.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step15_Plugins/Agent_Step15_Plugins.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agent_Step16_ChatReduction/Agent_Step16_ChatReduction.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/AgentWithOpenAI/">
     <File Path="samples/GettingStarted/AgentWithOpenAI/README.md" />
@@ -79,9 +80,10 @@
     <Project Path="samples/GettingStarted/Workflows/ConditionalEdges/03_MultiSelection/03_MultiSelection.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflows/Declarative/">
-    <Project Path="samples/GettingStarted/Workflows/Declarative/DeclarativeWorkflow.csproj" />
-    <Project Path="samples/GettingStarted/Workflows/DeclarativeCode/DeclarativeCode.csproj" />
-    <Project Path="samples/GettingStarted/Workflows/DeclarativeEject/DeclarativeEject.csproj" />
+    <File Path="samples/GettingStarted/Workflows/Declarative/README.md" />
+    <Project Path="samples/GettingStarted/Workflows/Declarative/ExecuteCode/ExecuteCode.csproj" />
+    <Project Path="samples/GettingStarted/Workflows/Declarative/ExecuteWorkflow/ExecuteWorkflow.csproj" />
+    <Project Path="samples/GettingStarted/Workflows/Declarative/GenerateCode/GenerateCode.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflows/Declarative/Examples/">
     <File Path="../workflow-samples/DeepResearch.yaml" />
@@ -169,6 +171,11 @@
     <Project Path="samples/SemanticKernelMigration/AzureOpenAIResponses/Step02_ReasoningModel/AzureOpenAIResponses_Step02_ReasoningModel.csproj" />
     <Project Path="samples/SemanticKernelMigration/AzureOpenAIResponses/Step03_ToolCall/AzureOpenAIResponses_Step03_ToolCall.csproj" />
     <Project Path="samples/SemanticKernelMigration/AzureOpenAIResponses/Step04_DependencyInjection/AzureOpenAIResponses_Step04_DependencyInjection.csproj" />
+  </Folder>
+  <Folder Name="/Samples/SemanticKernelMigration/AgentOrchestrations/">
+    <Project Path="samples/SemanticKernelMigration/AgentOrchestrations/Step01_Concurrent/AgentOrchestrations_Step01_Concurrent.csproj" />
+    <Project Path="samples/SemanticKernelMigration/AgentOrchestrations/Step02_Sequential/AgentOrchestrations_Step02_Sequential.csproj" />
+    <Project Path="samples/SemanticKernelMigration/AgentOrchestrations/Step03_Handoff/AgentOrchestrations_Step03_Handoff.csproj" />
   </Folder>
   <Folder Name="/Solution Items/">
     <File Path=".editorconfig" />
@@ -289,6 +296,7 @@
     <Project Path="src/Microsoft.Agents.AI.CopilotStudio/Microsoft.Agents.AI.CopilotStudio.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hosting.A2A.AspNetCore/Microsoft.Agents.AI.Hosting.A2A.AspNetCore.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hosting.A2A/Microsoft.Agents.AI.Hosting.A2A.csproj" />
+    <Project Path="src/Microsoft.Agents.AI.Hosting.OpenAI/Microsoft.Agents.AI.Hosting.OpenAI.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hosting/Microsoft.Agents.AI.Hosting.csproj" />
     <Project Path="src/Microsoft.Agents.AI.OpenAI/Microsoft.Agents.AI.OpenAI.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Workflows.Declarative/Microsoft.Agents.AI.Workflows.Declarative.csproj" />

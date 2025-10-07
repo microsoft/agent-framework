@@ -10,6 +10,8 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.InProc;
+using Microsoft.Agents.AI.Workflows.UnitTests;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.Sample;
@@ -22,12 +24,13 @@ internal static class Step6EntryPoint
             .AddParticipants(new HelloAgent(), new EchoAgent())
             .Build();
 
-    public static async ValueTask RunAsync(TextWriter writer, int maxSteps = 2)
+    public static async ValueTask RunAsync(TextWriter writer, ExecutionMode executionMode, int maxSteps = 2)
     {
         Workflow workflow = CreateWorkflow(maxSteps);
 
-        StreamingRun run = await InProcessExecution.StreamAsync(workflow, Array.Empty<ChatMessage>())
-                                                   .ConfigureAwait(false);
+        InProcessExecutionEnvironment env = executionMode.GetEnvironment();
+        StreamingRun run = await env.StreamAsync(workflow, Array.Empty<ChatMessage>())
+                                    .ConfigureAwait(false);
         await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
 
         await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))

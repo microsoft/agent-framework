@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
@@ -26,7 +25,6 @@ internal static class Step7EntryPoint
                                    ?? update.AgentId
                                    ?? update.Role.ToString()
                                    ?? ChatRole.Assistant.ToString()}: {update.Text}";
-            Console.WriteLine(updateText);
             writer.WriteLine(updateText);
         }
     }

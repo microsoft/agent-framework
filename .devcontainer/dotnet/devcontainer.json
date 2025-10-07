@@ -3,7 +3,8 @@
   "image": "mcr.microsoft.com/devcontainers/dotnet:9.0",
   "features": {
     "ghcr.io/devcontainers/features/dotnet:2.4.0": {},
-    "ghcr.io/devcontainers/features/powershell:1.5.1": {}
+    "ghcr.io/devcontainers/features/powershell:1.5.1": {},
+    "ghcr.io/devcontainers/features/azure-cli:1.2.8": {}
   },
   "workspaceFolder": "/workspaces/agent-framework/dotnet/",
   "customizations": {
