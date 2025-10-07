@@ -16,7 +16,7 @@ public abstract class AgentRunResponse<T> : AgentRunResponse
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="AgentRunResponse{T}"/> class from an existing <see cref="AgentRunResponse"/>.
+    /// Initializes a new instance of the <see cref="AgentRunResponse{T}"/> class from an existing <see cref="ChatResponse"/>.
     /// </summary>
     /// <param name="response">The <see cref="ChatResponse"/> from which to populate this <see cref="AgentRunResponse{T}"/>.</param>
     protected AgentRunResponse(ChatResponse response) : base(response)
