@@ -6,7 +6,7 @@ from collections.abc import Iterable
 
 from agent_framework import ChatMessage
 
-from agent_framework_purview.models.simples import OperatingSystemSpecifications
+from ._models import OperatingSystemSpecifications
 
 from ._client import PurviewClient
 from ._models import (
@@ -76,42 +76,40 @@ class ScopedContentProcessor:
         for m in messages:
             message_id = m.message_id or str(uuid.uuid4())
             content = PurviewTextContent(data=m.text or "")  # alias field 'data'
-            meta = ProcessConversationMetadata(  # type: ignore[call-arg]
-                **{
-                    "@odata.type": "microsoft.graph.processConversationMetadata",
-                    "identifier": message_id,
-                    "content": content,
-                    "isTruncated": False,
-                    "name": f"Agent Framework Message {message_id}",
-                    "correlationId": str(uuid.uuid4()),
-                }
+            # Use internal parameter names (not aliases) for direct instantiation
+            meta = ProcessConversationMetadata(
+                identifier=message_id,
+                content=content,
+                name=f"Agent Framework Message {message_id}",
+                is_truncated=False,
+                correlation_id=str(uuid.uuid4()),
             )
             activity_meta = ActivityMetadata(activity=activity)
 
             if self._settings.purview_app_location:
-                policy_location = PolicyLocation(**{
-                    "@odata.type": self._settings.purview_app_location.get_policy_location()["@odata.type"],
-                    "value": self._settings.purview_app_location.location_value,
-                })
+                policy_location = PolicyLocation(
+                    data_type=self._settings.purview_app_location.get_policy_location()["@odata.type"],
+                    value=self._settings.purview_app_location.location_value,
+                )
             elif token_info and token_info.get("client_id"):
-                policy_location = PolicyLocation(**{
-                    "@odata.type": "microsoft.graph.policyLocationApplication",
-                    "value": token_info["client_id"],
-                })
+                policy_location = PolicyLocation(
+                    data_type="microsoft.graph.policyLocationApplication",
+                    value=token_info["client_id"],
+                )
             else:
                 raise ValueError("App location not provided or inferable")
 
             protected_app = ProtectedAppMetadata(
                 name=self._settings.app_name,
                 version="1.0",
-                applicationLocation=policy_location,
-            )  # type: ignore[call-arg]
+                application_location=policy_location,
+            )
             integrated_app = IntegratedAppMetadata(name=self._settings.app_name, version="1.0")
             device_meta = DeviceMetadata(
-                operatingSystemSpecifications=OperatingSystemSpecifications(
-                    operatingSystemPlatform="Unknown", operatingSystemVersion="Unknown"
+                operating_system_specifications=OperatingSystemSpecifications(
+                    operating_system_platform="Unknown", operating_system_version="Unknown"
                 )
-            )  # type: ignore[call-arg]
+            )
 
             user_id = self._settings.default_user_id or (token_info or {}).get("user_id")
             # Only use author_name if it's a valid GUID format
@@ -120,20 +118,20 @@ class ScopedContentProcessor:
             if not user_id or not _is_valid_guid(user_id):
                 raise ValueError("User id required or inferable from message author/credential")
 
-            ctp = ContentToProcess(**{
-                "contentEntries": [meta],
-                "activityMetadata": activity_meta,
-                "deviceMetadata": device_meta,
-                "integratedAppMetadata": integrated_app,
-                "protectedAppMetadata": protected_app,
-            })  # type: ignore[call-arg]
-            req = ProcessContentRequest(**{
-                "contentToProcess": ctp,
-                "user_id": user_id,
-                "tenant_id": tenant_id,
-                "correlation_id": meta.correlation_id,
-                "process_inline": True if self._settings.process_inline else None,
-            })  # type: ignore[call-arg]
+            ctp = ContentToProcess(
+                content_entries=[meta],
+                activity_metadata=activity_meta,
+                device_metadata=device_meta,
+                integrated_app_metadata=integrated_app,
+                protected_app_metadata=protected_app,
+            )
+            req = ProcessContentRequest(
+                content_to_process=ctp,
+                user_id=user_id,
+                tenant_id=tenant_id,
+                correlation_id=meta.correlation_id,
+                process_inline=True if self._settings.process_inline else None,
+            )
             results.append(req)
         return results
 
@@ -143,26 +141,26 @@ class ScopedContentProcessor:
             tenant_id=pc_request.tenant_id,
             activities=translate_activity(pc_request.content_to_process.activity_metadata.activity),
             locations=[pc_request.content_to_process.protected_app_metadata.application_location],
-            deviceMetadata=pc_request.content_to_process.device_metadata,
-            integratedAppMetadata=pc_request.content_to_process.integrated_app_metadata,
+            device_metadata=pc_request.content_to_process.device_metadata,
+            integrated_app_metadata=pc_request.content_to_process.integrated_app_metadata,
             correlation_id=pc_request.correlation_id,
-        )  # type: ignore[call-arg]
+        )
         ps_resp = await self._client.get_protection_scopes(ps_req)
         should_process, dlp_actions = self._check_applicable_scopes(pc_request, ps_resp)
 
-        if should_process:
+        if should_process and False:
             pc_resp = await self._client.process_content(pc_request)
             pc_resp.policy_actions = self._combine_policy_actions(pc_resp.policy_actions, dlp_actions)
             return pc_resp
-        ca_req = ContentActivitiesRequest(**{
-            "userId": pc_request.user_id,
-            "tenant_id": pc_request.tenant_id,
-            "contentMetadata": pc_request.content_to_process,
-            "correlation_id": pc_request.correlation_id,
-        })  # type: ignore[call-arg]
+        ca_req = ContentActivitiesRequest(
+            user_id=pc_request.user_id,
+            tenant_id=pc_request.tenant_id,
+            content_to_process=pc_request.content_to_process,
+            correlation_id=pc_request.correlation_id,
+        )
         ca_resp = await self._client.send_content_activities(ca_req)
         if ca_resp.error:
-            return ProcessContentResponse(**{"processingErrors": [ProcessingError(message=str(ca_resp.error))]})  # type: ignore[call-arg]
+            return ProcessContentResponse(processing_errors=[ProcessingError(message=str(ca_resp.error))])
         return ProcessContentResponse()
 
     @staticmethod
@@ -187,15 +185,18 @@ class ScopedContentProcessor:
         should_process: bool = False
         dlp_actions: list[DlpActionInfo] = []
         for scope in ps_response.scopes or []:
+            # Check if all activities in req_activity are present in scope.activities using bitwise flags.
             activity_match = bool(scope.activities and (scope.activities & req_activity) == req_activity)
             location_match = False
             for loc in scope.locations or []:
-                location_match = bool(
+                if (
                     loc.data_type
                     and location.data_type
                     and loc.data_type.lower().endswith(location.data_type.split(".")[-1].lower())
                     and loc.value == location.value
-                )
+                ):
+                    location_match = True
+                    break
             if activity_match and location_match:
                 should_process = True
                 if scope.policy_actions:

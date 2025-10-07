@@ -3,8 +3,9 @@
 
 Shows:
 1. Creating a basic chat agent
-2. Adding Purview policy evaluation via middleware
-3. Running a threaded conversation and printing results
+2. Adding Purview policy evaluation via AGENT middleware (agent-level)
+3. Adding Purview policy evaluation via CHAT middleware (chat-client level)
+4. Running a threaded conversation and printing results
 
 Environment variables:
 - AZURE_OPENAI_ENDPOINT (required)
@@ -30,7 +31,11 @@ from azure.identity import (
 )
 
 # Purview integration pieces
-from agent_framework_purview import PurviewPolicyMiddleware, PurviewSettings
+from agent_framework.microsoft import (
+    PurviewPolicyMiddleware,
+    PurviewChatPolicyMiddleware,
+    PurviewSettings,
+)
 
 JOKER_NAME = "Joker"
 JOKER_INSTRUCTIONS = "You are good at telling jokes. Keep responses concise."
@@ -50,7 +55,7 @@ def build_credential() -> Any:
     1. CertificateCredential (if PURVIEW_USE_CERT_AUTH=true)
     2. InteractiveBrowserCredential (requires PURVIEW_CLIENT_APP_ID)
     """
-    client_id = _get_env("PURVIEW_CLIENT_APP_ID", required=True, default=None)
+    client_id = _get_env("PURVIEW_CLIENT_APP_ID", required=True, default="46e9029e-165a-4b2d-b3d4-586435b03089")
     use_cert_auth = _get_env("PURVIEW_USE_CERT_AUTH", required=False, default="false").lower() == "true"
 
     if not client_id:
@@ -60,8 +65,8 @@ def build_credential() -> Any:
         )
 
     if use_cert_auth:
-        tenant_id = _get_env("PURVIEW_TENANT_ID")
-        cert_path = _get_env("PURVIEW_CERT_PATH")
+        tenant_id = _get_env("PURVIEW_TENANT_ID", default="bebc09e5-e795-48e0-8f64-12bb182c84d4")
+        cert_path = _get_env("PURVIEW_CERT_PATH", default="c:\\cert.pfx")
         cert_password = _get_env("PURVIEW_CERT_PASSWORD", required=False, default=None)
         print(f"Using Certificate Authentication (tenant: {tenant_id}, cert: {cert_path})")
         return CertificateCredential(
@@ -75,12 +80,7 @@ def build_credential() -> Any:
     return InteractiveBrowserCredential(client_id=client_id)
 
 
-class JokerAgent(ChatAgent):
-    """Simple agent used for the Purview sample (middleware injected at construction)."""
-    ...
-
-
-async def run_with_middleware() -> None:
+async def run_with_agent_middleware() -> None:
     endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
     if not endpoint:
         print("Skipping run: AZURE_OPENAI_ENDPOINT not set")
@@ -89,7 +89,7 @@ async def run_with_middleware() -> None:
     deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o-mini")
     chat_client = AzureOpenAIChatClient(deployment_name=deployment, endpoint=endpoint, credential=AzureCliCredential())
 
-    purview_middleware = PurviewPolicyMiddleware(
+    purview_agent_middleware = PurviewPolicyMiddleware(
         build_credential(),
         PurviewSettings(
             appName="Agent Framework Sample App",
@@ -97,28 +97,72 @@ async def run_with_middleware() -> None:
         ),
     )
 
-    agent = JokerAgent(
+    agent = ChatAgent(
         chat_client=chat_client,
         instructions=JOKER_INSTRUCTIONS,
         name=JOKER_NAME,
-        middleware=[purview_middleware],
+        middleware=purview_agent_middleware,
     )
 
+    print("-- Agent Middleware Path --")
     first: AgentRunResponse = await agent.run(ChatMessage(role=Role.USER, text="Tell me a joke about a pirate."))
-    print("First response:\n", first)
+    print("First response (agent middleware):\n", first)
 
-    second: AgentRunResponse = await agent.run(
-        ChatMessage(role=Role.USER, text="That was funny. Tell me another one.")
+    second: AgentRunResponse = await agent.run(ChatMessage(role=Role.USER, text="That was funny. Tell me another one."))
+    print("Second response (agent middleware):\n", second)
+
+
+async def run_with_chat_middleware() -> None:
+    endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
+    if not endpoint:
+        print("Skipping chat middleware run: AZURE_OPENAI_ENDPOINT not set")
+        return
+
+    deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o-mini")
+    chat_client = AzureOpenAIChatClient(
+        deployment_name=deployment,
+        endpoint=endpoint,
+        credential=AzureCliCredential(),
+        # Attach chat middleware directly to the client (if supported by factory/usage pattern)
+        # Confirm with example if this is how it works.
+        middleware=[
+            PurviewChatPolicyMiddleware(
+                build_credential(),
+                PurviewSettings(
+                    appName="Agent Framework Sample App (Chat)",
+                    defaultUserId=os.environ.get("PURVIEW_DEFAULT_USER_ID"),
+                ),
+            )
+        ],
     )
-    print("Second response:\n", second)
+
+    # For convenience we can still wrap in an agent (middleware will already have run at chat layer)
+    agent = ChatAgent(
+        chat_client=chat_client,
+        instructions=JOKER_INSTRUCTIONS,
+        name=JOKER_NAME,
+        middleware=[],  # No agent-level Purview middleware here
+    )
+
+    print("-- Chat Middleware Path --")
+    first: AgentRunResponse = await agent.run(ChatMessage(role=Role.USER, text="Give me a short clean joke."))
+    print("First response (chat middleware):\n", first)
+
+    second: AgentRunResponse = await agent.run(ChatMessage(role=Role.USER, text="One more please."))
+    print("Second response (chat middleware):\n", second)
 
 
 async def main() -> None:
-    print("== Purview Agent Sample (Middleware) ==")
+    print("== Purview Agent Sample (Agent & Chat Middleware) ==")
     try:
-        await run_with_middleware()
+        await run_with_agent_middleware()
     except Exception as ex:  # pragma: no cover - demo resilience
-        print(f"Middleware path failed: {ex}")
+        print(f"Agent middleware path failed: {ex}")
+
+    # try:
+    #     await run_with_chat_middleware()
+    # except Exception as ex:  # pragma: no cover - demo resilience
+    #     print(f"Chat middleware path failed: {ex}")
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import inspect
 import json
 from typing import Any, cast
 
@@ -11,6 +12,7 @@ from agent_framework.observability import get_tracer
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
 from pydantic import BaseModel
+from collections.abc import AsyncIterable, Awaitable
 
 from ._exceptions import (
     PurviewAuthenticationError,
@@ -57,23 +59,12 @@ class PurviewClient:
         """Acquire an access token using either async or sync credential."""
         scopes = self._settings.get_scopes()
         cred = self._credential
-        # Async credential path
-        if isinstance(cred, AsyncTokenCredential):  # type: ignore[arg-type]
-            token = await cred.get_token(*scopes, tenant_id=tenant_id)
-        else:
-            # Sync credential path executed in a thread executor
-            import asyncio
-
-            loop = asyncio.get_running_loop()
-            token = await loop.run_in_executor(
-                None,
-                lambda: cred.get_token(*scopes, tenant_id=tenant_id),  # type: ignore[misc]
-            )
+        token = cred.get_token(*scopes, tenant_id=tenant_id)
+        token = await token if inspect.isawaitable(token) else token
         return token.token
-
+        
     @staticmethod
     def _extract_token_info(token: str) -> dict[str, Any]:
-        # JWT second segment
         parts = token.split(".")
         if len(parts) < 2:
             raise ValueError("Invalid JWT token format")
@@ -83,7 +74,6 @@ class PurviewClient:
             payload += "=" * (4 - rem)
         decoded = base64.urlsafe_b64decode(payload)
         data = json.loads(decoded.decode("utf-8"))
-        # Map to similar structure used in .NET
         return {
             "user_id": data.get("oid") if data.get("idtyp") == "user" else None,
             "tenant_id": data.get("tid"),
@@ -95,22 +85,19 @@ class PurviewClient:
         return self._extract_token_info(token)
 
     async def process_content(self, request: ProcessContentRequest) -> ProcessContentResponse:
-        tracer = get_tracer()
-        with tracer.start_as_current_span("purview.process_content"):
+        with get_tracer().start_as_current_span("purview.process_content"):
             token = await self._get_token(tenant_id=request.tenant_id)
             url = f"{self._graph_uri}/users/{request.user_id}/dataSecurityAndGovernance/processContent"
             return cast(ProcessContentResponse, await self._post(url, request, ProcessContentResponse, token))
 
     async def get_protection_scopes(self, request: ProtectionScopesRequest) -> ProtectionScopesResponse:
-        tracer = get_tracer()
-        with tracer.start_as_current_span("purview.get_protection_scopes"):
+        with get_tracer().start_as_current_span("purview.get_protection_scopes"):
             token = await self._get_token()
             url = f"{self._graph_uri}/users/{request.user_id}/dataSecurityAndGovernance/protectionScopes/compute"
             return cast(ProtectionScopesResponse, await self._post(url, request, ProtectionScopesResponse, token))
 
     async def send_content_activities(self, request: ContentActivitiesRequest) -> ContentActivitiesResponse:
-        tracer = get_tracer()
-        with tracer.start_as_current_span("purview.send_content_activities"):
+        with get_tracer().start_as_current_span("purview.send_content_activities"):
             token = await self._get_token()
             url = f"{self._graph_uri}/users/{request.user_id}/dataSecurityAndGovernance/activities/contentActivities"
             return cast(ContentActivitiesResponse, await self._post(url, request, ContentActivitiesResponse, token))
