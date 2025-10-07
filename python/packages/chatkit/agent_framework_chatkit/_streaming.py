@@ -43,11 +43,9 @@ async def stream_agent_response(
         def _default_id_generator(item_type: str) -> str:
             return f"{item_type}_{uuid.uuid4().hex[:8]}"
 
-        id_generator = _default_id_generator
+        message_id = _default_id_generator("msg")
     else:
-        id_generator = generate_id
-
-    message_id = id_generator("msg")
+        message_id = generate_id("msg")
 
     # Track if we've started the message
     message_started = False
