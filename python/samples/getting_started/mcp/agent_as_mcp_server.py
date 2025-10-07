@@ -16,9 +16,9 @@ with the following configuration:
         "agent-framework": {
             "command": "uv",
             "args": [
-                "--directory=<path to project>/agent-framework/python/samples/getting_started/agents/openai",
+                "--directory=<path to project>/agent-framework/python/samples/getting_started/mcp",
                 "run",
-                "openai_responses_client_as_mcp_server.py"
+                "agent_as_mcp_server.py"
             ],
             "env": {
                 "OPENAI_API_KEY": "<OpenAI API key>",
@@ -47,8 +47,10 @@ def get_item_price(
 
 async def run() -> None:
     # Define an agent
+    # Agent's name and description provide better context for AI model
     agent = OpenAIResponsesClient().create_agent(
-        instructions="Answer questions about the menu.",
+        name="RestaurantAgent",
+        description="Answer questions about the menu.",
         tools=[get_specials, get_item_price],
     )
 
