@@ -9,11 +9,14 @@ from itertools import chain
 from typing import Any, ClassVar, Literal, Protocol, TypeVar, cast, runtime_checkable
 from uuid import uuid4
 
+from mcp import types
+from mcp.server.lowlevel import Server
+from mcp.shared.exceptions import McpError
 from pydantic import BaseModel, Field, create_model
 
 from ._clients import BaseChatClient, ChatClientProtocol
 from ._logging import get_logger
-from ._mcp import MCPTool
+from ._mcp import LOG_LEVEL_MAPPING, MCPTool
 from ._memory import AggregateContextProvider, Context, ContextProvider
 from ._middleware import Middleware, use_agent_middleware
 from ._serialization import SerializationMixin
@@ -431,7 +434,7 @@ class BaseAgent(SerializationMixin):
             name=tool_name,
             description=tool_description,
             func=agent_wrapper,
-            input_model=input_model,
+            input_model=input_model,  # type: ignore
         )
 
     def _normalize_messages(
@@ -998,6 +1001,141 @@ class ChatAgent(BaseAgent):
                 context_provider=self.context_provider,
             )
         return AgentThread(context_provider=self.context_provider)
+
+    def as_mcp_server(
+        self,
+        *,
+        server_name: str = "Agent",
+        version: str | None = None,
+        instructions: str | None = None,
+        lifespan: Callable[["Server[Any]"], AbstractAsyncContextManager[Any]] | None = None,
+        excluded_functions: str | Sequence[str] | None = None,
+        **kwargs: Any,
+    ) -> "Server[Any]":
+        """Create an MCP server from an agent instance.
+
+        This function automatically creates a MCP server from an agent instance, it uses the provided arguments to
+        configure the server and expose the agent's tools as individual MCP tools.
+
+        By default, all agent tools are exposed as MCP Tools, you can control this by using the
+        `excluded_functions` argument. These need to be set to the function name.
+
+        Args:
+            agent: The agent instance to use.
+            server_name: The name of the server.
+            version: The version of the server.
+            instructions: The instructions to use for the server.
+            lifespan: The lifespan of the server.
+            excluded_functions: The list of function names to exclude from the server.
+                if None, no functions will be excluded.
+            kwargs: Any extra arguments to pass to the server creation.
+
+        Returns:
+            The MCP server instance.
+        """
+        server_args: dict[str, Any] = {
+            "name": server_name,
+            "version": version,
+            "instructions": instructions,
+        }
+        if lifespan:
+            server_args["lifespan"] = lifespan
+        if kwargs:
+            server_args.update(kwargs)
+
+        if excluded_functions is not None and not isinstance(excluded_functions, list):
+            excluded_functions = [excluded_functions]  # type: ignore
+
+        server: "Server[Any]" = Server(**server_args)  # type: ignore[call-arg]
+
+        # Get the agent's tools
+        tools_to_expose: list[AIFunction[Any, Any]] = []
+
+        for tool in self.chat_options.tools or []:
+            if isinstance(tool, AIFunction) and (excluded_functions is None or tool.name not in excluded_functions):
+                tools_to_expose.append(tool)  # type: ignore
+
+        if len(tools_to_expose) > 0:
+
+            async def _log(level: types.LoggingLevel, data: Any) -> None:
+                """Log a message to the server and logger."""
+                # Log to the local logger
+                logger.log(LOG_LEVEL_MAPPING[level], data)
+                if server and server.request_context and server.request_context.session:
+                    try:
+                        await server.request_context.session.send_log_message(level=level, data=data)
+                    except Exception as e:
+                        logger.error("Failed to send log message to server: %s", e)
+
+            @server.list_tools()  # type: ignore
+            async def _list_tools() -> list[types.Tool]:  # type: ignore
+                """List all tools in the agent."""
+                tools: list[types.Tool] = []
+                for func in tools_to_expose:
+                    # Get the JSON schema from the Pydantic model
+                    schema = func.input_model.model_json_schema()
+
+                    tool = types.Tool(
+                        name=func.name,
+                        description=func.description,
+                        inputSchema={
+                            "type": "object",
+                            "properties": schema.get("properties", {}),
+                            "required": schema.get("required", []),
+                        },
+                    )
+                    tools.append(tool)
+
+                await _log(level="debug", data=f"List of tools: {tools}")
+                return tools
+
+            @server.call_tool()  # type: ignore
+            async def _call_tool(  # type: ignore
+                name: str, arguments: dict[str, Any]
+            ) -> Sequence[types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource]:
+                """Call a tool in the agent."""
+                await _log(level="debug", data=f"Calling tool with args: {arguments}")
+
+                tool_func = None
+                for func in tools_to_expose:
+                    if func.name == name:
+                        tool_func = func
+                        break
+
+                if tool_func is None:
+                    raise McpError(
+                        error=types.ErrorData(
+                            code=types.INTERNAL_ERROR,
+                            message=f"Tool {name} not found",
+                        ),
+                    )
+
+                # Create an instance of the input model with the arguments
+                try:
+                    args_instance = tool_func.input_model(**arguments)
+                    result = await tool_func.invoke(arguments=args_instance)
+                except Exception as e:
+                    raise McpError(
+                        error=types.ErrorData(
+                            code=types.INTERNAL_ERROR,
+                            message=f"Error calling tool {name}: {e}",
+                        ),
+                    ) from e
+
+                # Convert result to MCP content
+                if isinstance(result, str):
+                    return [types.TextContent(type="text", text=result)]
+
+                return [types.TextContent(type="text", text=str(result))]
+
+            @server.set_logging_level()  # type: ignore
+            async def _set_logging_level(level: types.LoggingLevel) -> None:  # type: ignore
+                """Set the logging level for the server."""
+                logger.setLevel(LOG_LEVEL_MAPPING[level])
+                # emit this log with the new minimum level
+                await _log(level=level, data=f"Log level set to {level}")
+
+        return server
 
     async def _update_thread_with_type_and_conversation_id(
         self, thread: AgentThread, response_conversation_id: str | None
