@@ -40,7 +40,7 @@ from chatkit.server import ChatKitServer
 from chatkit.types import ThreadMetadata, UserMessageItem, ThreadStreamEvent
 
 # You'll need to implement a Store - see the sample for a SQLiteStore implementation
-from your_store import YourStore  # Replace with your Store implementation
+from your_store import YourStore  # type: ignore[import-not-found]  # Replace with your Store implementation
 
 # Define your agent with tools
 agent = ChatAgent(
@@ -72,7 +72,7 @@ class MyChatKitServer(ChatKitServer[dict[str, Any]]):
 
 # Set up FastAPI endpoint
 app = FastAPI()
-chatkit_server = MyChatKitServer(YourStore())
+chatkit_server = MyChatKitServer(YourStore())  # type: ignore[misc]
 
 @app.post("/chatkit")
 async def chatkit_endpoint(request: Request):
