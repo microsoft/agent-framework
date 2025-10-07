@@ -533,7 +533,7 @@ async def _collect_agent_responses_setup(participant_obj: object):
     captured: list[ChatMessage] = []
 
     async def sink(event) -> None:  # type: ignore[no-untyped-def]
-        from agent_framework._workflows._magentic import MagenticAgentMessageEvent
+        from agent_framework._workflows._specialized_builders._magentic import MagenticAgentMessageEvent
 
         if isinstance(event, MagenticAgentMessageEvent) and event.message is not None:
             captured.append(event.message)
