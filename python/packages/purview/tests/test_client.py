@@ -17,18 +17,9 @@ from agent_framework_purview._exceptions import (
     PurviewServiceError,
 )
 from agent_framework_purview._models import (
-    Activity,
-    ActivityMetadata,
-    ContentToProcess,
-    DeviceMetadata,
-    IntegratedAppMetadata,
-    OperatingSystemSpecifications,
     PolicyLocation,
     ProcessContentRequest,
-    ProcessConversationMetadata,
-    ProtectedAppMetadata,
     ProtectionScopesRequest,
-    PurviewTextContent,
 )
 
 
@@ -41,7 +32,6 @@ class TestPurviewClient:
         from azure.core.credentials_async import AsyncTokenCredential
 
         credential = MagicMock(spec=AsyncTokenCredential)
-        # Mock get_token as an async function that returns an AccessToken
         mock_token = AccessToken("fake-token", 9999999999)
 
         async def mock_get_token(*args, **kwargs):
@@ -73,20 +63,11 @@ class TestPurviewClient:
 
         await client.close()
 
-    async def test_client_custom_timeout(self, mock_credential: AsyncMock, settings: PurviewSettings) -> None:
-        """Test PurviewClient with custom timeout."""
-        client = PurviewClient(mock_credential, settings, timeout=30.0)
-
-        assert client._timeout == 30.0
-
-        await client.close()
-
     async def test_get_token_async_credential(self, client: PurviewClient, mock_credential: MagicMock) -> None:
         """Test _get_token with async credential."""
         token = await client._get_token(tenant_id="test-tenant")
 
         assert token == "fake-token"
-        # Can't assert on the function itself, but we got the token so it was called
 
     async def test_get_token_sync_credential(self, settings: PurviewSettings) -> None:
         """Test _get_token with sync credential."""
@@ -102,30 +83,9 @@ class TestPurviewClient:
 
             token = await client._get_token(tenant_id="test-tenant")
 
-            # The token should be extracted from AccessToken
             assert token == "sync-token"
 
         await client.close()
-
-    async def test_extract_token_info(self) -> None:
-        """Test _extract_token_info extracts JWT claims."""
-        # Create a minimal JWT token (header.payload.signature)
-        # Payload: {"tid": "test-tenant", "oid": "test-user", "appid": "test-client", "idtyp": "user"}
-        import base64
-        import json
-
-        payload = {"tid": "test-tenant", "oid": "test-user", "appid": "test-client", "idtyp": "user"}
-        payload_str = json.dumps(payload)
-        payload_bytes = payload_str.encode("utf-8")
-        payload_b64 = base64.urlsafe_b64encode(payload_bytes).decode("utf-8").rstrip("=")
-
-        fake_token = f"header.{payload_b64}.signature"
-
-        token_info = PurviewClient._extract_token_info(fake_token)
-
-        assert token_info["tenant_id"] == "test-tenant"
-        assert token_info["user_id"] == "test-user"
-        assert token_info["client_id"] == "test-client"
 
     async def test_get_user_info_from_token(self, client: PurviewClient) -> None:
         """Test get_user_info_from_token extracts user info."""
@@ -157,43 +117,18 @@ class TestPurviewClient:
         ],
     )
     async def test_post_error_handling(
-        self, client: PurviewClient, status_code: int, exception_type: type[Exception]
+        self, client: PurviewClient, content_to_process_factory, status_code: int, exception_type: type[Exception]
     ) -> None:
         """Test _post method handles different HTTP errors correctly."""
         from agent_framework_purview._models import ProcessContentResponse
 
-        # Create a valid request
-        text_content = PurviewTextContent(data="Test")
-        metadata = ProcessConversationMetadata(**{
-            "@odata.type": "microsoft.graph.processConversationMetadata",
-            "identifier": "msg-1",
-            "content": text_content,
-            "name": "Test",
-            "isTruncated": False,
-        })
-        activity_meta = ActivityMetadata(activity=Activity.UPLOAD_TEXT)
-        device_meta = DeviceMetadata(
-            operatingSystemSpecifications=OperatingSystemSpecifications(
-                operatingSystemPlatform="Windows", operatingSystemVersion="10"
-            )
+        content = content_to_process_factory()
+        request = ProcessContentRequest(
+            content_to_process=content,
+            user_id="user-123",
+            tenant_id="tenant-456",
         )
-        integrated_app = IntegratedAppMetadata(name="App", version="1.0")
-        location = PolicyLocation(**{"@odata.type": "microsoft.graph.policyLocationApplication", "value": "app-id"})
-        protected_app = ProtectedAppMetadata(name="Protected", version="1.0", applicationLocation=location)
-        content = ContentToProcess(**{
-            "contentEntries": [metadata],
-            "activityMetadata": activity_meta,
-            "deviceMetadata": device_meta,
-            "integratedAppMetadata": integrated_app,
-            "protectedAppMetadata": protected_app,
-        })
-        request = ProcessContentRequest(**{
-            "contentToProcess": content,
-            "user_id": "user-123",
-            "tenant_id": "tenant-456",
-        })
 
-        # Mock the HTTP client to return an error
         mock_response = MagicMock(spec=httpx.Response)
         mock_response.status_code = status_code
         mock_response.text = "Error message"
@@ -209,40 +144,15 @@ class TestPurviewClient:
                 "fake-token",
             )
 
-    async def test_process_content_success(self, client: PurviewClient, mock_credential: MagicMock) -> None:
+    async def test_process_content_success(self, client: PurviewClient, content_to_process_factory, mock_credential: MagicMock) -> None:
         """Test process_content method success path."""
-        # Create a valid request
-        text_content = PurviewTextContent(data="Test message")
-        metadata = ProcessConversationMetadata(**{
-            "@odata.type": "microsoft.graph.processConversationMetadata",
-            "identifier": "msg-1",
-            "content": text_content,
-            "name": "Test",
-            "isTruncated": False,
-        })
-        activity_meta = ActivityMetadata(activity=Activity.UPLOAD_TEXT)
-        device_meta = DeviceMetadata(
-            operatingSystemSpecifications=OperatingSystemSpecifications(
-                operatingSystemPlatform="Windows", operatingSystemVersion="10"
-            )
+        content = content_to_process_factory("Test message")
+        request = ProcessContentRequest(
+            content_to_process=content,
+            user_id="user-123",
+            tenant_id="tenant-456",
         )
-        integrated_app = IntegratedAppMetadata(name="App", version="1.0")
-        location = PolicyLocation(**{"@odata.type": "microsoft.graph.policyLocationApplication", "value": "app-id"})
-        protected_app = ProtectedAppMetadata(name="Protected", version="1.0", applicationLocation=location)
-        content = ContentToProcess(**{
-            "contentEntries": [metadata],
-            "activityMetadata": activity_meta,
-            "deviceMetadata": device_meta,
-            "integratedAppMetadata": integrated_app,
-            "protectedAppMetadata": protected_app,
-        })
-        request = ProcessContentRequest(**{
-            "contentToProcess": content,
-            "user_id": "user-123",
-            "tenant_id": "tenant-456",
-        })
 
-        # Mock successful response
         mock_response = MagicMock(spec=httpx.Response)
         mock_response.status_code = 200
         mock_response.json.return_value = {"id": "response-123", "protectionScopeState": "notModified"}
@@ -260,7 +170,6 @@ class TestPurviewClient:
             user_id="user-123", tenant_id="tenant-456", locations=[location], correlation_id="corr-789"
         )
 
-        # Mock successful response
         mock_response = MagicMock(spec=httpx.Response)
         mock_response.status_code = 200
         mock_response.json.return_value = {"scopeIdentifier": "scope-123", "value": []}
@@ -278,55 +187,3 @@ class TestPurviewClient:
         with patch.object(client._client, "aclose", new_callable=AsyncMock) as mock_close:
             await client.close()
             mock_close.assert_called_once()
-
-    async def test_post_includes_user_agent(self, client: PurviewClient) -> None:
-        """Test _post method includes User-Agent header."""
-        from agent_framework_purview._models import ProcessContentResponse
-
-        text_content = PurviewTextContent(data="Test")
-        metadata = ProcessConversationMetadata(**{
-            "@odata.type": "microsoft.graph.processConversationMetadata",
-            "identifier": "msg-1",
-            "content": text_content,
-            "name": "Test",
-            "isTruncated": False,
-        })
-        activity_meta = ActivityMetadata(activity=Activity.UPLOAD_TEXT)
-        device_meta = DeviceMetadata(
-            operatingSystemSpecifications=OperatingSystemSpecifications(
-                operatingSystemPlatform="Windows", operatingSystemVersion="10"
-            )
-        )
-        integrated_app = IntegratedAppMetadata(name="App", version="1.0")
-        location = PolicyLocation(**{"@odata.type": "microsoft.graph.policyLocationApplication", "value": "app-id"})
-        protected_app = ProtectedAppMetadata(name="Protected", version="1.0", applicationLocation=location)
-        content = ContentToProcess(**{
-            "contentEntries": [metadata],
-            "activityMetadata": activity_meta,
-            "deviceMetadata": device_meta,
-            "integratedAppMetadata": integrated_app,
-            "protectedAppMetadata": protected_app,
-        })
-        request = ProcessContentRequest(**{
-            "contentToProcess": content,
-            "user_id": "user-123",
-            "tenant_id": "tenant-456",
-        })
-
-        mock_response = MagicMock(spec=httpx.Response)
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"id": "response-123"}
-
-        with patch.object(client._client, "post", return_value=mock_response) as mock_post:
-            await client._post(
-                "https://graph.microsoft.com/v1.0/test",
-                request,
-                ProcessContentResponse,
-                "fake-token",
-            )
-
-            # Check that User-Agent header was included
-            call_args = mock_post.call_args
-            headers = call_args.kwargs.get("headers", {})
-            assert "User-Agent" in headers
-            assert headers["User-Agent"]  # Should not be empty

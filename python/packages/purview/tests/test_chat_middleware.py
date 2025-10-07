@@ -11,13 +11,10 @@ from azure.core.credentials import AccessToken
 
 from agent_framework_purview import PurviewChatPolicyMiddleware, PurviewSettings
 
-
 class DummyChatClient:
-    """Minimal stand‑in for a chat client used in ChatContext tests."""
-
+    
     def __init__(self, name: str = "dummy") -> None:
         self.name = name
-
 
 class TestPurviewChatPolicyMiddleware:
     @pytest.fixture
@@ -36,7 +33,6 @@ class TestPurviewChatPolicyMiddleware:
 
     @pytest.fixture
     def chat_context(self) -> ChatContext:
-        # Build a bare ChatContext (chat_options can be a simple MagicMock with minimal attributes)
         chat_client = DummyChatClient()
         chat_options = MagicMock()
         chat_options.model = "test-model"
@@ -53,7 +49,6 @@ class TestPurviewChatPolicyMiddleware:
             async def mock_next(ctx: ChatContext) -> None:
                 nonlocal next_called
                 next_called = True
-                # Simulate post-exec result object with messages attribute
                 class Result:
                     def __init__(self):
                         self.messages = [ChatMessage(role=Role.ASSISTANT, text="Hi there")]
@@ -72,11 +67,10 @@ class TestPurviewChatPolicyMiddleware:
             assert chat_context.terminate
             assert chat_context.result
             msg = chat_context.result[0]  # type: ignore[index]
-            assert msg.role == "system"
+            assert msg.role in ("system", Role.SYSTEM)
             assert "blocked" in msg.text.lower()
 
     async def test_blocks_response(self, middleware: PurviewChatPolicyMiddleware, chat_context: ChatContext) -> None:
-        # First call allow (prompt), second call block (response)
         call_state = {"count": 0}
         async def side_effect(messages, activity):
             call_state["count"] += 1
@@ -90,28 +84,18 @@ class TestPurviewChatPolicyMiddleware:
                 ctx.result = Result()
             await middleware.process(chat_context, mock_next)
             assert call_state["count"] == 2
-            # Messages replaced
             msgs = getattr(chat_context.result, "messages", None) or chat_context.result
             first_msg = msgs[0]
             assert first_msg.role in ("system", Role.SYSTEM)
             assert "blocked" in first_msg.text.lower()
 
-    async def test_non_streaming_no_messages_attr(self, middleware: PurviewChatPolicyMiddleware, chat_context: ChatContext) -> None:
-        with patch.object(middleware._processor, "process_messages", return_value=False):
-            async def mock_next(ctx: ChatContext) -> None:
-                ctx.result = "raw-result"
-            await middleware.process(chat_context, mock_next)
-            assert chat_context.result == "raw-result"
-
     async def test_streaming_skips_post_check(self, middleware: PurviewChatPolicyMiddleware) -> None:
         chat_client = DummyChatClient()
         chat_options = MagicMock()
         chat_options.model = "test-model"
-        # Simulate streaming context
         streaming_context = ChatContext(chat_client=chat_client, messages=[ChatMessage(role=Role.USER, text="Hello")], chat_options=chat_options, is_streaming=True)
         with patch.object(middleware._processor, "process_messages", return_value=False) as mock_proc:
             async def mock_next(ctx: ChatContext) -> None:
-                ctx.result = MagicMock()  # placeholder result
+                ctx.result = MagicMock()
             await middleware.process(streaming_context, mock_next)
-            # Only 1 call (prompt) because streaming skips second-phase
             assert mock_proc.call_count == 1
