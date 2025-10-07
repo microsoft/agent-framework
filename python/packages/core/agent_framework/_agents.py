@@ -1014,15 +1014,13 @@ class ChatAgent(BaseAgent):
         """Create an MCP server from an agent instance.
 
         This function automatically creates a MCP server from an agent instance, it uses the provided arguments to
-        configure the server and expose the agent's tools as individual MCP tools.
+        configure the server and exposes the agent as a single MCP tool.
 
         Keyword Args:
             server_name: The name of the server.
             version: The version of the server.
             instructions: The instructions to use for the server.
             lifespan: The lifespan of the server.
-            excluded_functions: The list of function names to exclude from the server.
-                if None, no functions will be excluded.
             **kwargs: Any extra arguments to pass to the server creation.
 
         Returns:
