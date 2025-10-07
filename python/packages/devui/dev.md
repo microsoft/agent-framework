@@ -5,8 +5,8 @@ Here are the step-by-step instructions to test the new DevUI feature:
 ## 1. Get the Code
 
 ```bash
-git pull
-git checkout victordibia/devui
+git clone https://github.com/microsoft/agent-framework.git
+cd agent-framework
 ```
 
 (or use the latest main branch if merged)
@@ -101,6 +101,27 @@ Messages and events from agents/workflows are mapped to OpenAI response types in
 | `FunctionApprovalRequestContent`  | Custom event                              | Custom   |
 | `FunctionApprovalResponseContent` | Custom event                              | Custom   |
 | `WorkflowEvent`                   | `ResponseWorkflowEventComplete`           | Custom   |
+
+## Frontend Development
+
+To build the frontend:
+
+```bash
+cd frontend
+yarn install
+
+# Create .env.local with backend URL
+echo 'VITE_API_BASE_URL=http://localhost:8000' > .env.local
+
+# Create .env.production (empty for relative URLs)
+echo '' > .env.production
+
+# Development
+yarn dev
+
+# Build (copies to backend)
+yarn build
+```
 
 ## Troubleshooting
 

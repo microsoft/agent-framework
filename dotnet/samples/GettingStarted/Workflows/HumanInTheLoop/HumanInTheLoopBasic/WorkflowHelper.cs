@@ -14,13 +14,13 @@ internal static class WorkflowHelper
     internal static ValueTask<Workflow<NumberSignal>> GetWorkflowAsync()
     {
         // Create the executors
-        InputPort numberInputPort = InputPort.Create<NumberSignal, int>("GuessNumber");
+        RequestPort numberRequestPort = RequestPort.Create<NumberSignal, int>("GuessNumber");
         JudgeExecutor judgeExecutor = new(42);
 
         // Build the workflow by connecting executors in a loop
-        return new WorkflowBuilder(numberInputPort)
-            .AddEdge(numberInputPort, judgeExecutor)
-            .AddEdge(judgeExecutor, numberInputPort)
+        return new WorkflowBuilder(numberRequestPort)
+            .AddEdge(numberRequestPort, judgeExecutor)
+            .AddEdge(judgeExecutor, numberRequestPort)
             .WithOutputFrom(judgeExecutor)
             .BuildAsync<NumberSignal>();
     }

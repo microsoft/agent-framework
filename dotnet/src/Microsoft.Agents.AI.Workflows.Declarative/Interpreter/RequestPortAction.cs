@@ -2,8 +2,8 @@
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 
-internal sealed class InputPortAction(InputPort port) : IModeledAction
+internal sealed class RequestPortAction(RequestPort port) : IModeledAction
 {
     public string Id => port.Id;
-    public InputPort InputPort => port;
+    public RequestPort RequestPort => port;
 }

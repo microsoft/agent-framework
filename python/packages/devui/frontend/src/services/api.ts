@@ -10,12 +10,14 @@ import type {
   RunAgentRequest,
   RunWorkflowRequest,
   ThreadInfo,
+  WorkflowInfo,
 } from "@/types";
 import type { AgentFrameworkRequest } from "@/types/agent-framework";
 import type { ExtendedResponseStreamEvent } from "@/types/openai";
 
-// Backend API response types to match Python Pydantic models
-interface EntityInfo {
+// Backend API response type - polymorphic entity that can be agent or workflow
+// This matches the Python Pydantic EntityInfo model which has all fields optional
+interface BackendEntityInfo {
   id: string;
   type: "agent" | "workflow";
   name: string;
@@ -25,6 +27,13 @@ interface EntityInfo {
   metadata: Record<string, unknown>;
   source?: string;
   original_url?: string;
+  // Agent-specific fields (present when type === "agent")
+  instructions?: string;
+  model?: string;
+  chat_client_type?: string;
+  context_providers?: string[];
+  middleware?: string[];
+  // Workflow-specific fields (present when type === "workflow")
   executors?: string[];
   workflow_dump?: Record<string, unknown>;
   input_schema?: Record<string, unknown>;
@@ -33,7 +42,7 @@ interface EntityInfo {
 }
 
 interface DiscoveryResponse {
-  entities: EntityInfo[];
+  entities: BackendEntityInfo[];
 }
 
 interface ThreadApiResponse {
@@ -119,15 +128,15 @@ class ApiClient {
 
   // Entity discovery using new unified endpoint
   async getEntities(): Promise<{
-    entities: (AgentInfo | import("@/types").WorkflowInfo)[];
+    entities: (AgentInfo | WorkflowInfo)[];
     agents: AgentInfo[];
-    workflows: import("@/types").WorkflowInfo[];
+    workflows: WorkflowInfo[];
   }> {
     const response = await this.request<DiscoveryResponse>("/v1/entities");
 
     // Separate agents and workflows
     const agents: AgentInfo[] = [];
-    const workflows: import("@/types").WorkflowInfo[] = [];
+    const workflows: WorkflowInfo[] = [];
 
     response.entities.forEach((entity) => {
       if (entity.type === "agent") {
@@ -145,6 +154,12 @@ class ApiClient {
             typeof entity.metadata?.module_path === "string"
               ? entity.metadata.module_path
               : undefined,
+          // Agent-specific fields
+          instructions: entity.instructions,
+          model: entity.model,
+          chat_client_type: entity.chat_client_type,
+          context_providers: entity.context_providers,
+          middleware: entity.middleware,
         });
       } else if (entity.type === "workflow") {
         const firstTool = entity.tools?.[0];
@@ -183,7 +198,7 @@ class ApiClient {
     return agents;
   }
 
-  async getWorkflows(): Promise<import("@/types").WorkflowInfo[]> {
+  async getWorkflows(): Promise<WorkflowInfo[]> {
     const { workflows } = await this.getEntities();
     return workflows;
   }
@@ -467,8 +482,8 @@ class ApiClient {
   }
 
   // Add entity from URL
-  async addEntity(url: string, metadata?: Record<string, unknown>): Promise<EntityInfo> {
-    const response = await this.request<{ success: boolean; entity: EntityInfo }>("/v1/entities/add", {
+  async addEntity(url: string, metadata?: Record<string, unknown>): Promise<BackendEntityInfo> {
+    const response = await this.request<{ success: boolean; entity: BackendEntityInfo }>("/v1/entities/add", {
       method: "POST",
       body: JSON.stringify({ url, metadata }),
     });

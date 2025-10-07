@@ -22,7 +22,8 @@ internal sealed class AddConversationMessageExecutor(AddConversationMessage mode
 
         ChatMessage newMessage = new(this.Model.Role.Value.ToChatRole(), [.. this.GetContent()]) { AdditionalProperties = this.GetMetadata() };
 
-        await agentProvider.CreateMessageAsync(conversationId, newMessage, cancellationToken).ConfigureAwait(false);
+        // Capture the created message, which includes the assigned ID.
+        newMessage = await agentProvider.CreateMessageAsync(conversationId, newMessage, cancellationToken).ConfigureAwait(false);
 
         await this.AssignAsync(this.Model.Message?.Path, newMessage.ToRecord(), context).ConfigureAwait(false);
 

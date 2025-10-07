@@ -16,7 +16,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Kit;
 /// Base class for an entry-point workflow executor that receives the initial trigger message.
 /// </summary>
 /// <typeparam name="TInput">The type of the initial message that starts the workflow.</typeparam>
-public abstract class RootExecutor<TInput> : Executor<TInput> where TInput : notnull
+public abstract class RootExecutor<TInput> : Executor<TInput>, IResettableExecutor where TInput : notnull
 {
     private readonly IConfiguration? _configuration;
     private readonly WorkflowAgentProvider _agentProvider;
@@ -49,6 +49,12 @@ public abstract class RootExecutor<TInput> : Executor<TInput> where TInput : not
     }
 
     /// <inheritdoc/>
+    public ValueTask ResetAsync()
+    {
+        return default;
+    }
+
+    /// <inheritdoc/>
     public override async ValueTask HandleAsync(TInput message, IWorkflowContext context)
     {
         DeclarativeWorkflowContext declarativeContext = new(context, this._state);
@@ -60,7 +66,7 @@ public abstract class RootExecutor<TInput> : Executor<TInput> where TInput : not
         {
             this._conversationId = await this._agentProvider.CreateConversationAsync(cancellationToken: default).ConfigureAwait(false);
         }
-        await declarativeContext.QueueConversationUpdateAsync(this._conversationId).ConfigureAwait(false);
+        await declarativeContext.QueueConversationUpdateAsync(this._conversationId, isExternal: true).ConfigureAwait(false);
 
         await this._agentProvider.CreateMessageAsync(this._conversationId, input, cancellationToken: default).ConfigureAwait(false);
         await declarativeContext.SetLastMessageAsync(input).ConfigureAwait(false);

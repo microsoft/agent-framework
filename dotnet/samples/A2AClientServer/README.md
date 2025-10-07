@@ -145,7 +145,7 @@ Sample output from the request to send a message to the agent via A2A protocol:
 
 ### Testing the Agents using the A2A Inspector
 
-The A2A Inspector is a web-based tool designed to help developers inspect, debug, and validate servers that implement the Google A2A (Agent-to-Agent) protocol. It provides a user-friendly interface to interact with an A2A agent, view communication, and ensure specification compliance.
+The A2A Inspector is a web-based tool designed to help developers inspect, debug, and validate servers that implement the Google A2A (Agent2Agent) protocol. It provides a user-friendly interface to interact with an A2A agent, view communication, and ensure specification compliance.
 
 For more information go [here](https://github.com/a2aproject/a2a-inspector).
 
@@ -224,7 +224,7 @@ Agent: The transaction details for **TICKET-XYZ987** are as follows:
   - **Hats:** 200 units at $15.00 each
   - **Glasses:** 300 units at $5.00 each
 
-To proceed with the dispute regarding the quantity of t-shirts delivered, please specify the exact quantity issue – how many t-shirts were actually received compared to the ordered amount.
+To proceed with the dispute regarding the quantity of t-shirts delivered, please specify the exact quantity issue ï¿½ how many t-shirts were actually received compared to the ordered amount.
 
 ### Customer Service Policy for Handling Disputes
 **Short Shipment Dispute Handling Policy V2.1**

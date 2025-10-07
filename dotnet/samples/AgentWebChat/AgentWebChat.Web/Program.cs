@@ -23,6 +23,7 @@ Uri a2aAddress = new("http://localhost:5390/a2a");
 
 builder.Services.AddHttpClient<AgentDiscoveryClient>(client => client.BaseAddress = baseAddress);
 builder.Services.AddSingleton(sp => new A2AAgentClient(sp.GetRequiredService<ILogger<A2AAgentClient>>(), a2aAddress));
+builder.Services.AddSingleton(sp => new OpenAIResponsesAgentClient("http://localhost:5390"));
 
 var app = builder.Build();
 
