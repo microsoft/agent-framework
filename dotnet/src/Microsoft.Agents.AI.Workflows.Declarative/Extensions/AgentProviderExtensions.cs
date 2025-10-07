@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -12,6 +11,14 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 
 internal static class AgentProviderExtensions
 {
+    private static readonly HashSet<Azure.AI.Agents.Persistent.RunStatus> s_failureStatus =
+        [
+            Azure.AI.Agents.Persistent.RunStatus.Failed,
+            Azure.AI.Agents.Persistent.RunStatus.Cancelled,
+            Azure.AI.Agents.Persistent.RunStatus.Cancelling,
+            Azure.AI.Agents.Persistent.RunStatus.Expired,
+        ];
+
     public static async ValueTask<AgentRunResponse> InvokeAgentAsync(
         this WorkflowAgentProvider agentProvider,
         string executorId,
@@ -55,9 +62,9 @@ internal static class AgentProviderExtensions
 
             if (update.RawRepresentation is ChatResponseUpdate chatUpdate &&
                 chatUpdate.RawRepresentation is RunUpdate runUpdate &&
-                runUpdate.Value.Status == Azure.AI.Agents.Persistent.RunStatus.Failed) // %%% TODO - Cancelled/Cancelling/Expired && AF ISSUE
+                s_failureStatus.Contains(runUpdate.Value.Status))
             {
-                throw new DeclarativeActionException($"Unexpected failured invoking agent: {agent.Name ?? agent.Id} [{runUpdate.Value.Id}/{conversationId}]");
+                throw new DeclarativeActionException($"Unexpected failure invoking agent, run {runUpdate.Value.Status}: {agent.Name ?? agent.Id} [{runUpdate.Value.Id}/{conversationId}]");
             }
 
             if (autoSend)
@@ -65,8 +72,6 @@ internal static class AgentProviderExtensions
                 await context.AddEventAsync(new AgentRunUpdateEvent(executorId, update)).ConfigureAwait(false);
             }
         }
-
-        // %%% FAILURE STATUS
 
         AgentRunResponse response = updates.ToAgentRunResponse();
 

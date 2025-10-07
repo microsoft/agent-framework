@@ -16,27 +16,9 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
     private readonly CheckpointManager _checkpointManager = CheckpointManager.CreateInMemory();
     private CheckpointInfo? LastCheckpoint { get; set; }
 
-    public async Task<WorkflowEvents> RunWorkflowAsync<TInput>(TInput input) where TInput : notnull
-    {
-        WorkflowEvents workflowEvents = await this.RunAsync(input);
-        int requestCount = (workflowEvents.InputEvents.Count + 1) / 2;
-        int responseCount = 0;
-        while (requestCount > responseCount)
-        {
-            Console.WriteLine($"INPUT: {input}");
-            InputResponse response = new($"{input}"); // %%% HAXX
-            ++responseCount;
-            WorkflowEvents runEvents = await this.ResumeAsync(response).ConfigureAwait(false);
-            workflowEvents = new WorkflowEvents([.. workflowEvents.Events, .. runEvents.Events]);
-            requestCount = (workflowEvents.InputEvents.Count + 1) / 2;
-        }
-
-        return workflowEvents;
-    }
-
     public async Task<WorkflowEvents> RunTestcaseAsync<TInput>(Testcase testcase, TInput input) where TInput : notnull
     {
-        WorkflowEvents workflowEvents = await this.RunAsync(input);
+        WorkflowEvents workflowEvents = await this.RunWorkflowAsync(input);
         int requestCount = (workflowEvents.InputEvents.Count + 1) / 2;
         int responseCount = 0;
         while (requestCount > responseCount)
@@ -55,7 +37,7 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
         return workflowEvents;
     }
 
-    private async Task<WorkflowEvents> RunAsync<TInput>(TInput input) where TInput : notnull
+    public async Task<WorkflowEvents> RunWorkflowAsync<TInput>(TInput input) where TInput : notnull
     {
         Console.WriteLine("RUNNING WORKFLOW...");
         Checkpointed<StreamingRun> run = await InProcessExecution.StreamAsync(workflow, input, this._checkpointManager, runId);
@@ -118,11 +100,11 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
                     }
                     break;
 
-                case ExecutorFailedEvent failureEvent: // %%% TODO: EVERYWHERE
+                case ExecutorFailedEvent failureEvent:
                     Console.WriteLine($"Executor failed [{failureEvent.ExecutorId}]: {failureEvent.Data?.Message ?? "Unknown"}");
                     break;
 
-                case WorkflowErrorEvent errorEvent: // %%% TODO: EVERYWHERE
+                case WorkflowErrorEvent errorEvent:
                     throw errorEvent.Data as Exception ?? new XunitException("Unexpected failure...");
 
                 case DeclarativeActionInvokedEvent actionInvokeEvent:
