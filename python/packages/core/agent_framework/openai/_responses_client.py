@@ -300,7 +300,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
 
     def _prepare_options(self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions) -> dict[str, Any]:
         """Take ChatOptions and create the specific options for Responses API."""
-        options_dict: dict[str, Any] = {}
+        options_dict: dict[str, Any] = chat_options.to_dict(exclude={"type", "metadata"})
 
         if chat_options.max_tokens is not None:
             options_dict["max_output_tokens"] = chat_options.max_tokens
@@ -333,8 +333,15 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
 
         if chat_options.conversation_id:
             options_dict["previous_response_id"] = chat_options.conversation_id
-        if "model" not in options_dict:
+        if "model_id" not in options_dict:
             options_dict["model"] = self.model_id
+        else:
+            options_dict["model"] = options_dict.pop("model_id")
+        if additional_properties := options_dict.pop("additional_properties", None):
+            for key, value in additional_properties.items():
+                if value is not None:
+                    options_dict[key] = value
+
         return options_dict
 
     def _prepare_chat_messages_for_request(self, chat_messages: Sequence[ChatMessage]) -> list[dict[str, Any]]:
@@ -629,6 +636,11 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                                     raw_representation=reasoning_content,
                                     additional_properties=additional_properties,
                                 )
+                            )
+                    if hasattr(item, "summary") and item.summary:
+                        for summary in item.summary:
+                            contents.append(
+                                TextReasoningContent(text=summary.text, raw_representation=summary)  # type: ignore[arg-type]
                             )
                 case "code_interpreter_call":  # ResponseOutputCodeInterpreterCall
                     if hasattr(item, "outputs") and item.outputs:

@@ -357,7 +357,7 @@ class AzureAIAgentClient(BaseChatClient):
                 raise ServiceInitializationError("Model deployment name is required for agent creation.")
 
             agent_name: str = self.agent_name or "UnnamedAgent"
-            args: dict[str, Any] = {"model": self.model_id, "name": agent_name}
+            args: dict[str, Any] = {"model_id": self.model_id, "name": agent_name}
             if run_options:
                 if "tools" in run_options:
                     args["tools"] = run_options["tools"]
@@ -673,7 +673,7 @@ class AzureAIAgentClient(BaseChatClient):
 
         if chat_options is not None:
             run_options["max_completion_tokens"] = chat_options.max_tokens
-            run_options["model"] = chat_options.model_id
+            run_options["model_id"] = chat_options.model_id
             run_options["top_p"] = chat_options.top_p
             run_options["temperature"] = chat_options.temperature
             run_options["parallel_tool_calls"] = chat_options.allow_multiple_tool_calls
