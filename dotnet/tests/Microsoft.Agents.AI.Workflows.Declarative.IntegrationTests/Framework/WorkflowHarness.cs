@@ -7,6 +7,7 @@ using System.Reflection;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Events;
 using Shared.Code;
+using Xunit.Sdk;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Framework;
 
@@ -14,6 +15,24 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
 {
     private readonly CheckpointManager _checkpointManager = CheckpointManager.CreateInMemory();
     private CheckpointInfo? LastCheckpoint { get; set; }
+
+    public async Task<WorkflowEvents> RunWorkflowAsync<TInput>(TInput input) where TInput : notnull
+    {
+        WorkflowEvents workflowEvents = await this.RunAsync(input);
+        int requestCount = (workflowEvents.InputEvents.Count + 1) / 2;
+        int responseCount = 0;
+        while (requestCount > responseCount)
+        {
+            Console.WriteLine($"INPUT: {input}");
+            InputResponse response = new($"{input}"); // %%% HAXX
+            ++responseCount;
+            WorkflowEvents runEvents = await this.ResumeAsync(response).ConfigureAwait(false);
+            workflowEvents = new WorkflowEvents([.. workflowEvents.Events, .. runEvents.Events]);
+            requestCount = (workflowEvents.InputEvents.Count + 1) / 2;
+        }
+
+        return workflowEvents;
+    }
 
     public async Task<WorkflowEvents> RunTestcaseAsync<TInput>(Testcase testcase, TInput input) where TInput : notnull
     {
@@ -98,6 +117,14 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
                         exitLoop = true;
                     }
                     break;
+
+                case ExecutorFailedEvent failureEvent: // %%% TODO: EVERYWHERE
+                    Console.WriteLine($"Executor failed [{failureEvent.ExecutorId}]: {failureEvent.Data?.Message ?? "Unknown"}");
+                    break;
+
+                case WorkflowErrorEvent errorEvent: // %%% TODO: EVERYWHERE
+                    throw errorEvent.Data as Exception ?? new XunitException("Unexpected failure...");
+
                 case DeclarativeActionInvokedEvent actionInvokeEvent:
                     Console.WriteLine($"ACTION: {actionInvokeEvent.ActionId} [{actionInvokeEvent.ActionType}]");
                     break;

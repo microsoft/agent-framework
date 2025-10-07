@@ -1,9 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Azure.AI.Agents.Persistent;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.Extensions;
@@ -51,11 +53,20 @@ internal static class AgentProviderExtensions
 
             updates.Add(update);
 
+            if (update.RawRepresentation is ChatResponseUpdate chatUpdate &&
+                chatUpdate.RawRepresentation is RunUpdate runUpdate &&
+                runUpdate.Value.Status == Azure.AI.Agents.Persistent.RunStatus.Failed) // %%% TODO - Cancelled/Cancelling/Expired && AF ISSUE
+            {
+                throw new DeclarativeActionException($"Unexpected failured invoking agent: {agent.Name ?? agent.Id} [{runUpdate.Value.Id}/{conversationId}]");
+            }
+
             if (autoSend)
             {
                 await context.AddEventAsync(new AgentRunUpdateEvent(executorId, update)).ConfigureAwait(false);
             }
         }
+
+        // %%% FAILURE STATUS
 
         AgentRunResponse response = updates.ToAgentRunResponse();
 
