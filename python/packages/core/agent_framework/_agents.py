@@ -1021,7 +1021,6 @@ class ChatAgent(BaseAgent):
         `excluded_functions` argument. These need to be set to the function name.
 
         Args:
-            agent: The agent instance to use.
             server_name: The name of the server.
             version: The version of the server.
             instructions: The instructions to use for the server.
