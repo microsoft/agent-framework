@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from openai import BadRequestError
+from openai.types.responses.response_reasoning_item import Summary
 from openai.types.responses.response_reasoning_summary_text_delta_event import ResponseReasoningSummaryTextDeltaEvent
 from openai.types.responses.response_reasoning_summary_text_done_event import ResponseReasoningSummaryTextDoneEvent
 from openai.types.responses.response_reasoning_text_delta_event import ResponseReasoningTextDeltaEvent
@@ -535,13 +536,13 @@ def test_response_content_creation_with_reasoning() -> None:
     mock_reasoning_item = MagicMock()
     mock_reasoning_item.type = "reasoning"
     mock_reasoning_item.content = [mock_reasoning_content]
-    mock_reasoning_item.summary = ["Summary"]
+    mock_reasoning_item.summary = [Summary(text="Summary", type="summary_text")]
 
     mock_response.output = [mock_reasoning_item]
 
     response = client._create_response_content(mock_response, chat_options=ChatOptions())  # type: ignore
 
-    assert len(response.messages[0].contents) == 1
+    assert len(response.messages[0].contents) == 2
     assert isinstance(response.messages[0].contents[0], TextReasoningContent)
     assert response.messages[0].contents[0].text == "Reasoning step"
 

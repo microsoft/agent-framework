@@ -585,13 +585,9 @@ class BaseChatClient(SerializationMixin, ABC):
         in ``chat_options``. Tools from both sources are combined into a single list.
 
         Args:
-        <<<<<<< HEAD
             messages: The message or messages to send to the model.
 
         Keyword Args:
-        =======
-            messages: The message or messages to send to the model_id.
-        >>>>>>> 71fdbf5e (parameter naming and other fixes)
             frequency_penalty: The frequency penalty to use.
             logit_bias: The logit bias to use.
             max_tokens: The maximum number of tokens to generate.
