@@ -142,7 +142,7 @@ internal sealed class AIAgentResponsesProcessor
 
                 foreach (var openAIResponseItem in MicrosoftExtensionsAIResponsesExtensions.AsOpenAIResponseItems([chatMessage]))
                 {
-                    lastResponseItem ??= openAIResponseItem;
+                    lastResponseItem = openAIResponseItem;
 
                     var responseOutputItemAdded = new StreamingOutputItemAddedResponse(sequenceNumber++)
                     {
@@ -157,12 +157,12 @@ internal sealed class AIAgentResponsesProcessor
             {
                 // we were streaming "response.output_item.added" before
                 // so we should complete it now via "response.output_item.done"
-                var responseOutputItemAdded = new StreamingOutputItemDoneResponse(sequenceNumber++)
+                var responseOutputDoneAdded = new StreamingOutputItemDoneResponse(sequenceNumber++)
                 {
                     OutputIndex = outputIndex++,
                     Item = lastResponseItem
                 };
-                yield return new(responseOutputItemAdded, responseOutputItemAdded.Type);
+                yield return new(responseOutputDoneAdded, responseOutputDoneAdded.Type);
             }
 
             if (lastOpenAIResponse is not null)
