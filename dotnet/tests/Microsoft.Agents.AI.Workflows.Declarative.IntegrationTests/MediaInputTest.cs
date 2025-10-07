@@ -27,7 +27,7 @@ public sealed class MediaInputTest(ITestOutputHelper output) : IntegrationTest(o
         await this.ValidateImageAsync(new UriContent(ImageReference, "image/jpeg"));
     }
 
-    [Fact]
+    [Fact(Skip = "Enable after github action update")]
     public async Task ValidateImageDataAsync()
     {
         byte[] imageData = await DownloadImageAsync();
@@ -37,7 +37,7 @@ public sealed class MediaInputTest(ITestOutputHelper output) : IntegrationTest(o
         await this.ValidateImageAsync(new DataContent(imageUrl));
     }
 
-    [Fact]
+    [Fact(Skip = "Enable after github action update")]
     public async Task ValidateImageUploadAsync()
     {
         byte[] imageData = await DownloadImageAsync();
