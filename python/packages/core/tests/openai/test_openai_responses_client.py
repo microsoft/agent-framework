@@ -2090,6 +2090,53 @@ def test_prepare_options_store_parameter_handling() -> None:
     assert "previous_response_id" not in options
 
 
+def test_prepare_options_additional_properties_handling() -> None:
+    """Test that additional_properties are included in _prepare_options."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    messages = [ChatMessage(role="user", text="Test message")]
+
+    # Test with reasoning control properties as specified in the issue
+    additional_properties = {
+        "reasoning": {
+            "effort": "medium",
+            "summary": "auto",
+        },
+        "include": ["reasoning.encrypted_content"],
+        "store": False,
+    }
+    chat_options = ChatOptions(additional_properties=additional_properties)
+    options = client._prepare_options(messages, chat_options)  # type: ignore
+    
+    # Verify additional_properties are included in the options
+    assert "reasoning" in options
+    assert options["reasoning"]["effort"] == "medium"
+    assert options["reasoning"]["summary"] == "auto"
+    assert "include" in options
+    assert options["include"] == ["reasoning.encrypted_content"]
+    # Note: store from additional_properties should override the default
+    assert options["store"] is False
+
+    # Test with custom additional properties
+    custom_props = {
+        "custom_param1": "value1",
+        "custom_param2": 42,
+        "nested": {"key": "value"},
+    }
+    chat_options = ChatOptions(additional_properties=custom_props)
+    options = client._prepare_options(messages, chat_options)  # type: ignore
+    
+    assert options["custom_param1"] == "value1"
+    assert options["custom_param2"] == 42
+    assert options["nested"]["key"] == "value"
+
+    # Test with empty additional_properties
+    chat_options = ChatOptions(additional_properties={})
+    options = client._prepare_options(messages, chat_options)  # type: ignore
+    # Should still work, just with no additional properties
+    assert "model" in options
+    assert "input" in options
+
+
 def test_openai_responses_client_with_callable_api_key() -> None:
     """Test OpenAIResponsesClient initialization with callable API key."""
 
