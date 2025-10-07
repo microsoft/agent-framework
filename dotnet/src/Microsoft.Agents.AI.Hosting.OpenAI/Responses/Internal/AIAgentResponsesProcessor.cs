@@ -101,7 +101,7 @@ internal sealed class AIAgentResponsesProcessor
         {
             var sequenceNumber = 1;
             var outputIndex = 1;
-            AgentThread? agentThread = null!;
+            AgentThread? agentThread = null;
 
             ResponseItem? lastResponseItem = null;
             OpenAIResponse? lastOpenAIResponse = null;
@@ -142,6 +142,11 @@ internal sealed class AIAgentResponsesProcessor
 
                 foreach (var openAIResponseItem in MicrosoftExtensionsAIResponsesExtensions.AsOpenAIResponseItems([chatMessage]))
                 {
+                    if (chatMessage.MessageId is not null)
+                    {
+                        openAIResponseItem.SetId(chatMessage.MessageId);
+                    }
+
                     lastResponseItem = openAIResponseItem;
 
                     var responseOutputItemAdded = new StreamingOutputItemAddedResponse(sequenceNumber++)
