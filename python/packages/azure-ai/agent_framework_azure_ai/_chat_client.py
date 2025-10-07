@@ -354,7 +354,7 @@ class AzureAIAgentClient(BaseChatClient):
         run_options = run_options or {}
         # If no agent_id is provided, create a temporary agent
         if self.agent_id is None:
-            if "model_id" not in run_options or not run_options["model_id"]:
+            if "model" not in run_options or not run_options["model"]:
                 raise ServiceInitializationError(
                     "Model deployment name is required for agent creation, "
                     "can also be passed to the get_response methods."
@@ -362,7 +362,7 @@ class AzureAIAgentClient(BaseChatClient):
 
             agent_name: str = self.agent_name or "UnnamedAgent"
             args: dict[str, Any] = {
-                "model": run_options["model_id"],
+                "model": run_options["model"],
                 "name": agent_name,
             }
             if "tools" in run_options:
@@ -680,9 +680,9 @@ class AzureAIAgentClient(BaseChatClient):
         if chat_options is not None:
             run_options["max_completion_tokens"] = chat_options.max_tokens
             if chat_options.model_id is not None:
-                run_options["model_id"] = chat_options.model_id
+                run_options["model"] = chat_options.model_id
             else:
-                run_options["model_id"] = self.model_id
+                run_options["model"] = self.model_id
             run_options["top_p"] = chat_options.top_p
             run_options["temperature"] = chat_options.temperature
             run_options["parallel_tool_calls"] = chat_options.allow_multiple_tool_calls
