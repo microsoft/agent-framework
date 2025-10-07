@@ -44,8 +44,8 @@ internal sealed class Program
 
         // Run the workflow, just like any other workflow
         string input = this.GetWorkflowInput();
-        await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, input);
-        await this.MonitorWorkflowRunAsync(run);
+        StreamingRun run = await InProcessExecution.StreamAsync(workflow, input);
+        await this.MonitorAndDisposeWorkflowRunAsync(run);
 
         Notify("\nWORKFLOW: Done!");
     }
@@ -70,8 +70,10 @@ internal sealed class Program
         this.FoundryClient = new PersistentAgentsClient(this.FoundryEndpoint, new AzureCliCredential());
     }
 
-    private async Task MonitorWorkflowRunAsync(StreamingRun run)
+    private async Task MonitorAndDisposeWorkflowRunAsync(StreamingRun run)
     {
+        await using IAsyncDisposable disposeRun = run;
+
         string? messageId = null;
 
         await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))

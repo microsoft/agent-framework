@@ -60,46 +60,38 @@ internal sealed class Program
         CheckpointManager checkpointManager = CheckpointManager.CreateInMemory();
         Checkpointed<StreamingRun> run = await InProcessExecution.StreamAsync(workflow, input, checkpointManager);
 
-        try
+        bool isComplete = false;
+        InputResponse? response = null;
+        do
         {
-            bool isComplete = false;
-            InputResponse? response = null;
-            do
+            ExternalRequest? inputRequest = await this.MonitorAndDisposeWorkflowRunAsync(run, response);
+            if (inputRequest is not null)
             {
-                ExternalRequest? inputRequest = await this.MonitorWorkflowRunAsync(run, response);
-                if (inputRequest is not null)
+                Notify("\nWORKFLOW: Yield");
+
+                if (this.LastCheckpoint is null)
                 {
-                    Notify("\nWORKFLOW: Yield");
-
-                    if (this.LastCheckpoint is null)
-                    {
-                        throw new InvalidOperationException("Checkpoint information missing after external request.");
-                    }
-
-                    // Process the external request.
-                    response = HandleExternalRequest(inputRequest);
-
-                    // Let's resume on an entirely new workflow instance to demonstrate checkpoint portability.
-                    workflow = this.CreateWorkflow();
-
-                    // Restore the latest checkpoint.
-                    Debug.WriteLine($"RESTORE #{this.LastCheckpoint.CheckpointId}");
-                    Notify("\nWORKFLOW: Restore");
-
-                    await run.DisposeAsync();
-                    run = await InProcessExecution.ResumeStreamAsync(workflow, this.LastCheckpoint, checkpointManager, run.Run.RunId);
+                    throw new InvalidOperationException("Checkpoint information missing after external request.");
                 }
-                else
-                {
-                    isComplete = true;
-                }
+
+                // Process the external request.
+                response = HandleExternalRequest(inputRequest);
+
+                // Let's resume on an entirely new workflow instance to demonstrate checkpoint portability.
+                workflow = this.CreateWorkflow();
+
+                // Restore the latest checkpoint.
+                Debug.WriteLine($"RESTORE #{this.LastCheckpoint.CheckpointId}");
+                Notify("\nWORKFLOW: Restore");
+
+                run = await InProcessExecution.ResumeStreamAsync(workflow, this.LastCheckpoint, checkpointManager, run.Run.RunId);
             }
-            while (!isComplete);
+            else
+            {
+                isComplete = true;
+            }
         }
-        finally
-        {
-            await run.DisposeAsync().ConfigureAwait(false);
-        }
+        while (!isComplete);
 
         Notify("\nWORKFLOW: Done!\n");
     }
@@ -141,8 +133,10 @@ internal sealed class Program
         this.FoundryClient = new PersistentAgentsClient(this.FoundryEndpoint, new AzureCliCredential());
     }
 
-    private async Task<ExternalRequest?> MonitorWorkflowRunAsync(Checkpointed<StreamingRun> run, InputResponse? response = null)
+    private async Task<ExternalRequest?> MonitorAndDisposeWorkflowRunAsync(Checkpointed<StreamingRun> run, InputResponse? response = null)
     {
+        await using IAsyncDisposable disposeRun = run;
+
         string? messageId = null;
 
         await foreach (WorkflowEvent workflowEvent in run.Run.WatchStreamAsync().ConfigureAwait(false))

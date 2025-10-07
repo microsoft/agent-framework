@@ -40,7 +40,7 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
     {
         Console.WriteLine("RUNNING WORKFLOW...");
         Checkpointed<StreamingRun> run = await InProcessExecution.StreamAsync(workflow, input, this._checkpointManager, runId);
-        IReadOnlyList<WorkflowEvent> workflowEvents = await MonitorWorkflowRunAsync(run).ToArrayAsync();
+        IReadOnlyList<WorkflowEvent> workflowEvents = await MonitorAndDisposeWorkflowRunAsync(run).ToArrayAsync();
         this.LastCheckpoint = workflowEvents.OfType<SuperStepCompletedEvent>().LastOrDefault()?.CompletionInfo?.Checkpoint;
         return new WorkflowEvents(workflowEvents);
     }
@@ -50,7 +50,7 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
         Console.WriteLine("RESUMING WORKFLOW...");
         Assert.NotNull(this.LastCheckpoint);
         Checkpointed<StreamingRun> run = await InProcessExecution.ResumeStreamAsync(workflow, this.LastCheckpoint, this._checkpointManager, runId);
-        IReadOnlyList<WorkflowEvent> workflowEvents = await MonitorWorkflowRunAsync(run, response).ToArrayAsync();
+        IReadOnlyList<WorkflowEvent> workflowEvents = await MonitorAndDisposeWorkflowRunAsync(run, response).ToArrayAsync();
         return new WorkflowEvents(workflowEvents);
     }
 
@@ -75,8 +75,10 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
         return new WorkflowHarness(workflow, runId);
     }
 
-    private static async IAsyncEnumerable<WorkflowEvent> MonitorWorkflowRunAsync(Checkpointed<StreamingRun> run, InputResponse? response = null)
+    private static async IAsyncEnumerable<WorkflowEvent> MonitorAndDisposeWorkflowRunAsync(Checkpointed<StreamingRun> run, InputResponse? response = null)
     {
+        await using IAsyncDisposable disposeRun = run;
+
         await foreach (WorkflowEvent workflowEvent in run.Run.WatchStreamAsync().ConfigureAwait(false))
         {
             bool exitLoop = false;
@@ -93,7 +95,6 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
                     }
                     else
                     {
-                        await run.Run.DisposeAsync().ConfigureAwait(false);
                         exitLoop = true;
                     }
                     break;
