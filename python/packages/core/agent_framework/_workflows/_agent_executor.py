@@ -4,7 +4,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from .._agents import AgentProtocol
+from .._agents import AgentProtocol, ChatAgent
 from .._threads import AgentThread
 from .._types import AgentRunResponse, AgentRunResponseUpdate, ChatMessage
 from ._events import (
@@ -75,14 +75,9 @@ class AgentExecutor(Executor):
             id: A unique identifier for the executor. If None, the agent's name will be used if available.
         """
         # Prefer provided id; else use agent.name if present; else generate deterministic prefix
-        if id is not None:
-            exec_id = id
-        else:
-            agent_name = agent.name
-            if agent_name:
-                exec_id = str(agent_name)
-            else:
-                raise ValueError("Agent must have a name or an explicit id must be provided.")
+        exec_id = id or agent.name
+        if not exec_id:
+            raise ValueError("Agent must have a name or an explicit id must be provided.")
         super().__init__(exec_id)
         self._agent = agent
         self._agent_thread = agent_thread or self._agent.get_new_thread()
@@ -124,7 +119,15 @@ class AgentExecutor(Executor):
                     continue
                 updates.append(update)
                 await ctx.add_event(AgentRunUpdateEvent(self.id, update))
-            response = AgentRunResponse.from_agent_run_response_updates(updates)
+
+            if isinstance(self._agent, ChatAgent):
+                response_format = self._agent.chat_options.response_format
+                response = AgentRunResponse.from_agent_run_response_updates(
+                    updates,
+                    output_format_type=response_format,
+                )
+            else:
+                response = AgentRunResponse.from_agent_run_response_updates(updates)
         else:
             # Non-streaming mode: use run() and emit single event
             response = await self._agent.run(
