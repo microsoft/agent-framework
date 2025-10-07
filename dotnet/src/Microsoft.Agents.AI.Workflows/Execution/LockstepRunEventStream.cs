@@ -16,29 +16,45 @@ internal sealed class LockstepRunEventStream : IRunEventStream
     private static readonly string s_namespace = typeof(LockstepRunEventStream).Namespace!;
     private static readonly ActivitySource s_activitySource = new(s_namespace);
 
+    private readonly CancellationTokenSource _stopCancellation = new();
+    private readonly InputWaiter _inputWaiter = new();
+    private int _isDisposed;
+
+    private readonly ISuperStepRunner _stepRunner;
+
     public ValueTask<RunStatus> GetStatusAsync(CancellationToken cancellation = default) => new(this.RunStatus);
 
     public LockstepRunEventStream(ISuperStepRunner stepRunner)
     {
-        this.StepRunner = stepRunner;
+        this._stepRunner = stepRunner;
     }
 
     private RunStatus RunStatus { get; set; } = RunStatus.NotStarted;
-    private ISuperStepRunner StepRunner { get; }
 
     public void Start()
     {
         // No-op for lockstep execution
     }
 
-    public async IAsyncEnumerable<WorkflowEvent> TakeEventStreamAsync([EnumeratorCancellation] CancellationToken cancellation = default)
+    public async IAsyncEnumerable<WorkflowEvent> TakeEventStreamAsync(bool blockOnPendingRequest, [EnumeratorCancellation] CancellationToken cancellation = default)
     {
+#if NET
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref this._isDisposed) == 1, this);
+#else
+        if (Volatile.Read(ref this._isDisposed) == 1)
+        {
+            throw new ObjectDisposedException(nameof(LockstepRunEventStream));
+        }
+#endif
+
+        CancellationTokenSource linkedSource = CancellationTokenSource.CreateLinkedTokenSource(this._stopCancellation.Token, cancellation);
+
         ConcurrentQueue<WorkflowEvent> eventSink = [];
 
-        this.StepRunner.OutgoingEvents.EventRaised += OnWorkflowEventAsync;
+        this._stepRunner.OutgoingEvents.EventRaised += OnWorkflowEventAsync;
 
         using Activity? activity = s_activitySource.StartActivity(ActivityNames.WorkflowRun);
-        activity?.SetTag(Tags.WorkflowId, this.StepRunner.StartExecutorId).SetTag(Tags.RunId, this.StepRunner.RunId);
+        activity?.SetTag(Tags.WorkflowId, this._stepRunner.StartExecutorId).SetTag(Tags.RunId, this._stepRunner.RunId);
 
         try
         {
@@ -47,63 +63,81 @@ internal sealed class LockstepRunEventStream : IRunEventStream
 
             do
             {
-                // Because we may be yielding out of this function, we need to ensure that the Activity.Current
-                // is set to our activity for the duration of this loop iteration.
-                Activity.Current = activity;
+                while (this._stepRunner.HasUnprocessedMessages &&
+                       !linkedSource.Token.IsCancellationRequested)
+                {
+                    // Because we may be yielding out of this function, we need to ensure that the Activity.Current
+                    // is set to our activity for the duration of this loop iteration.
+                    Activity.Current = activity;
 
-                // Drain SuperSteps while there are steps to run
-                try
-                {
-                    await this.StepRunner.RunSuperStepAsync(cancellation).ConfigureAwait(false);
-                }
-                catch (Exception ex) when (activity is not null)
-                {
-                    activity.AddEvent(new ActivityEvent(EventNames.WorkflowError, tags: new() {
-                         { Tags.ErrorType, ex.GetType().FullName },
-                         { Tags.BuildErrorMessage, ex.Message },
-                    }));
-                    activity.CaptureException(ex);
-                    throw;
-                }
+                    // Drain SuperSteps while there are steps to run
+                    try
+                    {
+                        await this._stepRunner.RunSuperStepAsync(linkedSource.Token).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                    }
+                    catch (Exception ex) when (activity is not null)
+                    {
+                        activity.AddEvent(new ActivityEvent(EventNames.WorkflowError, tags: new() {
+                             { Tags.ErrorType, ex.GetType().FullName },
+                             { Tags.BuildErrorMessage, ex.Message },
+                        }));
+                        activity.CaptureException(ex);
+                        throw;
+                    }
 
-                if (cancellation.IsCancellationRequested)
-                {
-                    yield break; // Exit if cancellation is requested
-                }
-
-                bool hadRequestHaltEvent = false;
-                foreach (WorkflowEvent raisedEvent in Interlocked.Exchange(ref eventSink, []))
-                {
-                    if (cancellation.IsCancellationRequested)
+                    if (linkedSource.Token.IsCancellationRequested)
                     {
                         yield break; // Exit if cancellation is requested
                     }
 
-                    // TODO: Do we actually want to interpret this as a termination request?
-                    if (raisedEvent is RequestHaltEvent)
+                    bool hadRequestHaltEvent = false;
+                    foreach (WorkflowEvent raisedEvent in Interlocked.Exchange(ref eventSink, []))
                     {
-                        hadRequestHaltEvent = true;
+                        if (linkedSource.Token.IsCancellationRequested)
+                        {
+                            yield break; // Exit if cancellation is requested
+                        }
+
+                        // TODO: Do we actually want to interpret this as a termination request?
+                        if (raisedEvent is RequestHaltEvent)
+                        {
+                            hadRequestHaltEvent = true;
+                        }
+                        else
+                        {
+                            yield return raisedEvent;
+                        }
                     }
-                    else
+
+                    if (hadRequestHaltEvent || linkedSource.Token.IsCancellationRequested)
                     {
-                        yield return raisedEvent;
+                        // If we had a completion event, we are done.
+                        yield break;
                     }
+
+                    this.RunStatus = this._stepRunner.HasUnservicedRequests ? RunStatus.PendingRequests : RunStatus.Idle;
                 }
 
-                if (hadRequestHaltEvent)
+                if (blockOnPendingRequest && this.RunStatus == RunStatus.PendingRequests)
                 {
-                    // If we had a completion event, we are done.
-                    yield break;
+                    try
+                    {
+                        await this._inputWaiter.WaitForInputAsync(TimeSpan.FromSeconds(1), linkedSource.Token).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    { }
                 }
-            } while (this.StepRunner.HasUnprocessedMessages &&
-                     !cancellation.IsCancellationRequested);
+            } while (!ShouldBreak());
 
             activity?.AddEvent(new ActivityEvent(EventNames.WorkflowCompleted));
         }
         finally
         {
-            this.RunStatus = this.StepRunner.HasUnservicedRequests ? RunStatus.PendingRequests : RunStatus.Idle;
-            this.StepRunner.OutgoingEvents.EventRaised -= OnWorkflowEventAsync;
+            this.RunStatus = this._stepRunner.HasUnservicedRequests ? RunStatus.PendingRequests : RunStatus.Idle;
+            this._stepRunner.OutgoingEvents.EventRaised -= OnWorkflowEventAsync;
         }
 
         ValueTask OnWorkflowEventAsync(object? sender, WorkflowEvent e)
@@ -111,7 +145,40 @@ internal sealed class LockstepRunEventStream : IRunEventStream
             eventSink.Enqueue(e);
             return default;
         }
+
+        // If we are Idle or Ended, we should break out of the loop
+        // If we are PendingRequests and not blocking on pending requests, we should break out of the loop
+        // If cancellation is requested, we should break out of the loop
+        bool ShouldBreak() => this.RunStatus is RunStatus.Idle or RunStatus.Ended ||
+                              (this.RunStatus == RunStatus.PendingRequests && !blockOnPendingRequest) ||
+                              linkedSource.Token.IsCancellationRequested;
     }
 
-    public ValueTask DisposeAsync() => default;
+    /// <summary>
+    /// Signals that new input has been provided and the run loop should continue processing.
+    /// Called by AsyncRunHandle when the user enqueues a message or response.
+    /// </summary>
+    public void SignalInput()
+    {
+        this._inputWaiter?.SignalInput();
+    }
+
+    public ValueTask StopAsync()
+    {
+        this._stopCancellation.Cancel();
+        return default;
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        if (Interlocked.Exchange(ref this._isDisposed, 1) == 0)
+        {
+            this._stopCancellation.Cancel();
+
+            this._stopCancellation.Dispose();
+            this._inputWaiter.Dispose();
+        }
+
+        return default;
+    }
 }

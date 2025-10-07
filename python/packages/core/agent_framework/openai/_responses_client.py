@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import AsyncIterable, Mapping, MutableMapping, MutableSequence, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
 from datetime import datetime
 from itertools import chain
 from typing import Any, TypeVar
@@ -945,8 +945,9 @@ class OpenAIResponsesClient(OpenAIConfigMixin, OpenAIBaseResponsesClient):
 
     def __init__(
         self,
+        *,
         model_id: str | None = None,
-        api_key: str | None = None,
+        api_key: str | Callable[[], str | Awaitable[str]] | None = None,
         org_id: str | None = None,
         base_url: str | None = None,
         default_headers: Mapping[str, str] | None = None,
@@ -956,25 +957,42 @@ class OpenAIResponsesClient(OpenAIConfigMixin, OpenAIBaseResponsesClient):
         env_file_encoding: str | None = None,
         **kwargs: Any,
     ) -> None:
-        """Initialize an OpenAIChatCompletion service.
+        """Initialize an OpenAI Responses client.
 
-        Args:
-            model_id: OpenAI model name, see
-                https://platform.openai.com/docs/models
-            api_key: The optional API key to use. If provided will override,
-                the env vars or .env file value.
-            org_id: The optional org ID to use. If provided will override,
-                the env vars or .env file value.
-            base_url: The optional base URL to use. If provided will override,
+        Keyword Args:
+            model_id: OpenAI model name, see https://platform.openai.com/docs/models.
+                Can also be set via environment variable OPENAI_RESPONSES_MODEL_ID.
+            api_key: The API key to use. If provided will override the env vars or .env file value.
+                Can also be set via environment variable OPENAI_API_KEY.
+            org_id: The org ID to use. If provided will override the env vars or .env file value.
+                Can also be set via environment variable OPENAI_ORG_ID.
+            base_url: The base URL to use. If provided will override the standard value.
+                Can also be set via environment variable OPENAI_BASE_URL.
             default_headers: The default headers mapping of string keys to
-                string values for HTTP requests. (Optional)
-            async_client: An existing client to use. (Optional)
+                string values for HTTP requests.
+            async_client: An existing client to use.
             instruction_role: The role to use for 'instruction' messages, for example,
                 "system" or "developer". If not provided, the default is "system".
             env_file_path: Use the environment settings file as a fallback
-                to environment variables. (Optional)
-            env_file_encoding: The encoding of the environment settings file. (Optional)
+                to environment variables.
+            env_file_encoding: The encoding of the environment settings file.
             kwargs: Other keyword parameters.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.openai import OpenAIResponsesClient
+
+                # Using environment variables
+                # Set OPENAI_API_KEY=sk-...
+                # Set OPENAI_RESPONSES_MODEL_ID=gpt-4o
+                client = OpenAIResponsesClient()
+
+                # Or passing parameters directly
+                client = OpenAIResponsesClient(model_id="gpt-4o", api_key="sk-...")
+
+                # Or loading from a .env file
+                client = OpenAIResponsesClient(env_file_path="path/to/.env")
         """
         try:
             openai_settings = OpenAISettings(
@@ -1000,7 +1018,7 @@ class OpenAIResponsesClient(OpenAIConfigMixin, OpenAIBaseResponsesClient):
 
         super().__init__(
             model_id=openai_settings.responses_model_id,
-            api_key=openai_settings.api_key.get_secret_value() if openai_settings.api_key else None,
+            api_key=self._get_api_key(openai_settings.api_key),
             org_id=openai_settings.org_id,
             default_headers=default_headers,
             client=async_client,

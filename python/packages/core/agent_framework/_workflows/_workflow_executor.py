@@ -210,6 +210,8 @@ class WorkflowExecutor(Executor):
         Args:
             workflow: The workflow to execute as a sub-workflow.
             id: Unique identifier for this executor.
+
+        Keyword Args:
             **kwargs: Additional keyword arguments passed to the parent constructor.
         """
         super().__init__(id, **kwargs)

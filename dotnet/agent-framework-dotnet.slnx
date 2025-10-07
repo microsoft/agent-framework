@@ -52,6 +52,7 @@
     <Project Path="samples/GettingStarted/Agents/Agent_Step13_Memory/Agent_Step13_Memory.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step14_Middleware/Agent_Step14_Middleware.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step15_Plugins/Agent_Step15_Plugins.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agent_Step16_ChatReduction/Agent_Step16_ChatReduction.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/AgentWithOpenAI/">
     <File Path="samples/GettingStarted/AgentWithOpenAI/README.md" />
