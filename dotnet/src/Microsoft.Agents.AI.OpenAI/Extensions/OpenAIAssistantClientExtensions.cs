@@ -22,14 +22,14 @@ namespace OpenAI;
 public static class OpenAIAssistantClientExtensions
 {
     /// <summary>
-    /// Converts a <see cref="ClientResult{Assistant}"/> to a <see cref="ChatClientAgent"/>.
+    /// Gets a <see cref="ChatClientAgent"/> from a <see cref="ClientResult{Assistant}"/>.
     /// </summary>
     /// <param name="assistantClient">The assistant client.</param>
     /// <param name="assistantClientResult">The client result containing the assistant.</param>
     /// <param name="chatOptions">Optional chat options.</param>
     /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the assistant.</returns>
-    public static ChatClientAgent AsAIAgent(
+    public static ChatClientAgent GetAIAgent(
         this AssistantClient assistantClient,
         ClientResult<Assistant> assistantClientResult,
         ChatOptions? chatOptions = null,
@@ -40,18 +40,18 @@ public static class OpenAIAssistantClientExtensions
             throw new ArgumentNullException(nameof(assistantClientResult));
         }
 
-        return assistantClient.AsAIAgent(assistantClientResult.Value, chatOptions, clientFactory);
+        return assistantClient.GetAIAgent(assistantClientResult.Value, chatOptions, clientFactory);
     }
 
     /// <summary>
-    /// Converts an <see cref="Assistant"/> to a <see cref="ChatClientAgent"/>.
+    /// Gets a <see cref="ChatClientAgent"/> from an <see cref="Assistant"/>.
     /// </summary>
     /// <param name="assistantClient">The assistant client.</param>
     /// <param name="assistantMetadata">The assistant metadata.</param>
     /// <param name="chatOptions">Optional chat options.</param>
     /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the assistant.</returns>
-    public static ChatClientAgent AsAIAgent(
+    public static ChatClientAgent GetAIAgent(
         this AssistantClient assistantClient,
         Assistant assistantMetadata,
         ChatOptions? chatOptions = null,
@@ -110,7 +110,7 @@ public static class OpenAIAssistantClientExtensions
         }
 
         var assistant = assistantClient.GetAssistant(agentId, cancellationToken);
-        return assistantClient.AsAIAgent(assistant, chatOptions, clientFactory);
+        return assistantClient.GetAIAgent(assistant, chatOptions, clientFactory);
     }
 
     /// <summary>
@@ -140,7 +140,7 @@ public static class OpenAIAssistantClientExtensions
         }
 
         var assistantResponse = await assistantClient.GetAssistantAsync(agentId, cancellationToken).ConfigureAwait(false);
-        return assistantClient.AsAIAgent(assistantResponse, chatOptions, clientFactory);
+        return assistantClient.GetAIAgent(assistantResponse, chatOptions, clientFactory);
     }
 
     /// <summary>

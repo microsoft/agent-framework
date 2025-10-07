@@ -11,6 +11,61 @@ namespace Azure.AI.Agents.Persistent;
 public static class PersistentAgentsClientExtensions
 {
     /// <summary>
+    /// Gets a runnable agent instance from the provided response containing persistent agent metadata.
+    /// </summary>
+    /// <param name="persistentAgentsClient">The client used to interact with persistent agents. Cannot be <see langword="null"/>.</param>
+    /// <param name="persistentAgentResponse">The response containing the persistent agent to be converted. Cannot be <see langword="null"/>.</param>
+    /// <param name="chatOptions">The default <see cref="ChatOptions"/> to use when interacting with the agent.</param>
+    /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
+    /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the persistent agent.</returns>
+    public static ChatClientAgent GetAIAgent(this PersistentAgentsClient persistentAgentsClient, Response<PersistentAgent> persistentAgentResponse, ChatOptions? chatOptions = null, Func<IChatClient, IChatClient>? clientFactory = null)
+    {
+        if (persistentAgentResponse is null)
+        {
+            throw new ArgumentNullException(nameof(persistentAgentResponse));
+        }
+
+        return GetAIAgent(persistentAgentsClient, persistentAgentResponse.Value, chatOptions, clientFactory);
+    }
+
+    /// <summary>
+    /// Gets a runnable agent instance from a <see cref="PersistentAgent"/> containing metadata about a persistent agent.
+    /// </summary>
+    /// <param name="persistentAgentsClient">The client used to interact with persistent agents. Cannot be <see langword="null"/>.</param>
+    /// <param name="persistentAgentMetadata">The persistent agent metadata to be converted. Cannot be <see langword="null"/>.</param>
+    /// <param name="chatOptions">The default <see cref="ChatOptions"/> to use when interacting with the agent.</param>
+    /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
+    /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the persistent agent.</returns>
+    public static ChatClientAgent GetAIAgent(this PersistentAgentsClient persistentAgentsClient, PersistentAgent persistentAgentMetadata, ChatOptions? chatOptions = null, Func<IChatClient, IChatClient>? clientFactory = null)
+    {
+        if (persistentAgentMetadata is null)
+        {
+            throw new ArgumentNullException(nameof(persistentAgentMetadata));
+        }
+
+        if (persistentAgentsClient is null)
+        {
+            throw new ArgumentNullException(nameof(persistentAgentsClient));
+        }
+
+        var chatClient = persistentAgentsClient.AsIChatClient(persistentAgentMetadata.Id);
+
+        if (clientFactory is not null)
+        {
+            chatClient = clientFactory(chatClient);
+        }
+
+        return new ChatClientAgent(chatClient, options: new()
+        {
+            Id = persistentAgentMetadata.Id,
+            Name = persistentAgentMetadata.Name,
+            Description = persistentAgentMetadata.Description,
+            Instructions = persistentAgentMetadata.Instructions,
+            ChatOptions = chatOptions
+        });
+    }
+
+    /// <summary>
     /// Retrieves an existing server side agent, wrapped as a <see cref="ChatClientAgent"/> using the provided <see cref="PersistentAgentsClient"/>.
     /// </summary>
     /// <param name="persistentAgentsClient">The <see cref="PersistentAgentsClient"/> to create the <see cref="ChatClientAgent"/> with.</param>
@@ -38,7 +93,7 @@ public static class PersistentAgentsClientExtensions
         }
 
         var persistentAgentResponse = persistentAgentsClient.Administration.GetAgent(agentId, cancellationToken);
-        return persistentAgentResponse.AsAIAgent(persistentAgentsClient, chatOptions, clientFactory);
+        return persistentAgentsClient.GetAIAgent(persistentAgentResponse, chatOptions, clientFactory);
     }
 
     /// <summary>
@@ -69,7 +124,7 @@ public static class PersistentAgentsClientExtensions
         }
 
         var persistentAgentResponse = await persistentAgentsClient.Administration.GetAgentAsync(agentId, cancellationToken).ConfigureAwait(false);
-        return persistentAgentResponse.AsAIAgent(persistentAgentsClient, chatOptions, clientFactory);
+        return persistentAgentsClient.GetAIAgent(persistentAgentResponse, chatOptions, clientFactory);
     }
 
     /// <summary>
