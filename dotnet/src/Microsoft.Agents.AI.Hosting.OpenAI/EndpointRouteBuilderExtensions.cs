@@ -34,6 +34,10 @@ public static class EndpointRouteBuilderExtensions
     {
         ArgumentNullException.ThrowIfNull(endpoints);
         ArgumentNullException.ThrowIfNull(agentName);
+        if (responsesPath is null || conversationsPath is null)
+        {
+            ValidateAgentName(agentName);
+        }
 
         var agent = endpoints.ServiceProvider.GetRequiredKeyedService<AIAgent>(agentName);
 
@@ -81,5 +85,14 @@ public static class EndpointRouteBuilderExtensions
         routeGroup.MapGet("/{conversation_id}", (string conversationId, CancellationToken cancellationToken)
             => conversationsProcessor.GetConversationAsync(conversationId, cancellationToken)
         ).WithName(endpointAgentName + "/RetrieveConversation");
+    }
+
+    private static void ValidateAgentName([NotNull] string agentName)
+    {
+        var escaped = Uri.EscapeDataString(agentName);
+        if (!string.Equals(escaped, agentName, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException($"Agent name '{agentName}' contains characters invalid for URL routes.", nameof(agentName));
+        }
     }
 }

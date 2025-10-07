@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Generic;
 using System.Reflection;
 using Microsoft.Shared.Diagnostics;
 using OpenAI.Responses;
