@@ -69,7 +69,7 @@ internal static class AgentProviderExtensions
 
             if (autoSend)
             {
-                await context.AddEventAsync(new AgentRunUpdateEvent(executorId, update)).ConfigureAwait(false);
+                await context.AddEventAsync(new AgentRunUpdateEvent(executorId, update), cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -77,7 +77,7 @@ internal static class AgentProviderExtensions
 
         if (autoSend)
         {
-            await context.AddEventAsync(new AgentRunResponseEvent(executorId, response)).ConfigureAwait(false);
+            await context.AddEventAsync(new AgentRunResponseEvent(executorId, response), cancellationToken).ConfigureAwait(false);
         }
 
         if (autoSend && !isWorkflowConversation && workflowConversationId is not null)
@@ -103,7 +103,7 @@ internal static class AgentProviderExtensions
             {
                 conversationId = assignValue;
 
-                await context.QueueConversationUpdateAsync(conversationId).ConfigureAwait(false);
+                await context.QueueConversationUpdateAsync(conversationId, cancellationToken: cancellationToken).ConfigureAwait(false);
             }
         }
     }

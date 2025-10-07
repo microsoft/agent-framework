@@ -14,33 +14,33 @@ internal static class AsyncRunHandleExtensions
         return new Checkpointed<TRunType>(run, runHandle);
     }
 
-    public static async ValueTask<StreamingRun> EnqueueAndStreamAsync<TInput>(this AsyncRunHandle runHandle, TInput input, CancellationToken cancellation = default)
+    public static async ValueTask<StreamingRun> EnqueueAndStreamAsync<TInput>(this AsyncRunHandle runHandle, TInput input, CancellationToken cancellationToken = default)
     {
-        await runHandle.EnqueueMessageAsync(input, cancellation).ConfigureAwait(false);
+        await runHandle.EnqueueMessageAsync(input, cancellationToken).ConfigureAwait(false);
         return new(runHandle);
     }
 
-    public static async ValueTask<StreamingRun> EnqueueUntypedAndStreamAsync(this AsyncRunHandle runHandle, object input, CancellationToken cancellation = default)
+    public static async ValueTask<StreamingRun> EnqueueUntypedAndStreamAsync(this AsyncRunHandle runHandle, object input, CancellationToken cancellationToken = default)
     {
-        await runHandle.EnqueueMessageUntypedAsync(input, cancellation: cancellation).ConfigureAwait(false);
+        await runHandle.EnqueueMessageUntypedAsync(input, cancellationToken: cancellationToken).ConfigureAwait(false);
         return new(runHandle);
     }
 
-    public static async ValueTask<Run> EnqueueAndRunAsync<TInput>(this AsyncRunHandle runHandle, TInput input, CancellationToken cancellation = default)
+    public static async ValueTask<Run> EnqueueAndRunAsync<TInput>(this AsyncRunHandle runHandle, TInput input, CancellationToken cancellationToken = default)
     {
-        await runHandle.EnqueueMessageAsync(input, cancellation).ConfigureAwait(false);
+        await runHandle.EnqueueMessageAsync(input, cancellationToken).ConfigureAwait(false);
         Run run = new(runHandle);
 
-        await run.RunToNextHaltAsync(cancellation).ConfigureAwait(false);
+        await run.RunToNextHaltAsync(cancellationToken).ConfigureAwait(false);
         return run;
     }
 
-    public static async ValueTask<Run> EnqueueUntypedAndRunAsync(this AsyncRunHandle runHandle, object input, CancellationToken cancellation = default)
+    public static async ValueTask<Run> EnqueueUntypedAndRunAsync(this AsyncRunHandle runHandle, object input, CancellationToken cancellationToken = default)
     {
-        await runHandle.EnqueueMessageUntypedAsync(input, cancellation: cancellation).ConfigureAwait(false);
+        await runHandle.EnqueueMessageUntypedAsync(input, cancellationToken: cancellationToken).ConfigureAwait(false);
         Run run = new(runHandle);
 
-        await run.RunToNextHaltAsync(cancellation).ConfigureAwait(false);
+        await run.RunToNextHaltAsync(cancellationToken).ConfigureAwait(false);
         return run;
     }
 }

@@ -29,7 +29,7 @@ public class FunctionExecutor<TInput>(string id,
     }
 
     /// <inheritdoc/>
-    public override ValueTask HandleAsync(TInput message, IWorkflowContext context) => handlerAsync(message, context, default);
+    public override ValueTask HandleAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken) => handlerAsync(message, context, cancellationToken);
 
     /// <summary>
     /// Creates a new instance of the <see cref="FunctionExecutor{TInput}"/> class.
@@ -65,7 +65,7 @@ public class FunctionExecutor<TInput, TOutput>(string id,
     }
 
     /// <inheritdoc/>
-    public override ValueTask<TOutput> HandleAsync(TInput message, IWorkflowContext context) => handlerAsync(message, context, default);
+    public override ValueTask<TOutput> HandleAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken) => handlerAsync(message, context, cancellationToken);
 
     /// <summary>
     /// Creates a new instance of the <see cref="FunctionExecutor{TInput,TOutput}"/> class.
