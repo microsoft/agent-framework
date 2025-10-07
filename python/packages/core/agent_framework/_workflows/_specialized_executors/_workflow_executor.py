@@ -9,23 +9,25 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from ._workflow import Workflow
+    from .._workflow import Workflow
 
-from ._events import (
+from .._events import (
     RequestInfoEvent,
     WorkflowErrorEvent,
     WorkflowFailedEvent,
     WorkflowRunState,
 )
-from ._executor import (
+from .._executor import (
     Executor,
+    handler,
+)
+from .._specialized_executors._request_info_executor import (
     RequestInfoExecutor,
     RequestInfoMessage,
     RequestResponse,
-    handler,
 )
-from ._typing_utils import is_instance_of
-from ._workflow_context import WorkflowContext
+from .._typing_utils import is_instance_of
+from .._workflow_context import WorkflowContext
 
 logger = logging.getLogger(__name__)
 

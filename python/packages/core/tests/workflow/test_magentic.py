@@ -34,7 +34,7 @@ from agent_framework import (
     handler,
 )
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
-from agent_framework._workflows._magentic import (
+from agent_framework._workflows._specialized_builders._magentic import (
     MagenticAgentExecutor,
     MagenticContext,
     MagenticOrchestratorExecutor,

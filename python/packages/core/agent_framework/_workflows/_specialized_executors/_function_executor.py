@@ -14,8 +14,8 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any, overload
 
-from ._executor import Executor
-from ._workflow_context import WorkflowContext, validate_function_signature
+from .._executor import Executor
+from .._workflow_context import WorkflowContext, validate_function_signature
 
 
 class FunctionExecutor(Executor):
