@@ -601,7 +601,7 @@ public sealed partial class ChatClientAgent : AIAgent
         {
             throw new InvalidOperationException(
                 $"""
-                The {nameof(chatOptions.ConversationId)} provided via {nameof(Extensions.AI.ChatOptions)} is different to the id of the provided {nameof(AgentThread)}.
+                The {nameof(chatOptions.ConversationId)} provided via {nameof(this.ChatOptions)} is different to the id of the provided {nameof(AgentThread)}.
                 Only one id can be used for a run.
                 """);
         }
