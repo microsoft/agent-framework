@@ -163,7 +163,7 @@ class SerializationMixin:
         combined_exclude.update(self.INJECTABLE)
 
         # Get all instance attributes
-        result: dict[str, Any] = {"type": self._get_type_identifier()}
+        result: dict[str, Any] = {} if "type" in combined_exclude else {"type": self._get_type_identifier()}
         for key, value in self.__dict__.items():
             if key not in combined_exclude and not key.startswith("_"):
                 if exclude_none and value is None:
