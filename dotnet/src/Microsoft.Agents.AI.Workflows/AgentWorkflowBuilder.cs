@@ -18,55 +18,125 @@ namespace Microsoft.Agents.AI.Workflows;
 /// <summary>
 /// Provides utility methods for constructing common patterns of workflows composed of agents.
 /// </summary>
+/// <remarks>
+/// <see cref="AgentWorkflowBuilder" /> encapsulates frequently employed patterns for composing <see cref="AIAgent"/>,
+/// such as into a sequential pipeline or a group chat. It is a convenience layer on top of <see cref="WorkflowBuilder"/>,
+/// and does not expose all the customization options available there. For more complex scenarios or where
+/// further customization is required, use <see cref="WorkflowBuilder"/> directly.
+/// </remarks>
 public static partial class AgentWorkflowBuilder
 {
     /// <summary>
-    /// Builds a <see cref="Workflow{T}"/> composed of a pipeline of agents where the output of one agent is the input to the next.
+    /// Builds a <see cref="Workflow"/> composed of a pipeline of agents where the output of one agent is the input to the next.
     /// </summary>
     /// <param name="agents">The sequence of agents to compose into a sequential workflow.</param>
     /// <returns>The built workflow composed of the supplied <paramref name="agents"/>, in the order in which they were yielded from the source.</returns>
+    /// <remarks>
+    /// Each agent in the sequence receives the full conversation history as input, with each agent outputting to the next its input and output messages.
+    /// If more customized behavior is desired, such as to only forward the output messages of an agent to the next, use <see cref="CreateSequentialBuilder"/>.
+    /// Each agent is added to the builder individually with <see cref="SequentialWorkflowBuilder.Append"/>, which accepts an optional output filter function
+    /// for controlling exactly what messages are propagated.
+    /// </remarks>
     public static Workflow BuildSequential(params IEnumerable<AIAgent> agents)
     {
         Throw.IfNull(agents);
 
-        // Create a builder that chains the agents together in sequence. The workflow simply begins
-        // with the first agent in the sequence.
-        WorkflowBuilder? builder = null;
-        ExecutorIsh? previous = null;
+        SequentialWorkflowBuilder builder = new();
         foreach (var agent in agents)
         {
-            AgentRunStreamingExecutor agentExecutor = new(agent, includeInputInOutput: true);
-
-            if (builder is null)
-            {
-                builder = new WorkflowBuilder(agentExecutor);
-            }
-            else
-            {
-                Debug.Assert(previous is not null);
-                builder.AddEdge(previous, agentExecutor);
-            }
-
-            previous = agentExecutor;
+            builder.Append(agent);
         }
 
-        if (previous is null)
+        return builder.Build();
+    }
+
+    /// <summary>Creates a new <see cref="SequentialWorkflowBuilder"/>.</summary>
+    /// <returns>The builder for creating a workflow based on a linear sequence of agents.</returns>
+    public static SequentialWorkflowBuilder CreateSequentialBuilder() => new();
+
+    /// <summary>
+    /// Provides a builder for specifying the handoff relationships between agents and building the resulting workflow.
+    /// </summary>
+    public sealed class SequentialWorkflowBuilder
+    {
+        private readonly List<(
+            AIAgent Agent,
+            Func<IList<ChatMessage>, IList<ChatMessage>, IList<ChatMessage>>?)> _agents = [];
+
+        /// <summary>Initializes a new instance of the <see cref="SequentialWorkflowBuilder"/> class with no agents.</summary>
+        internal SequentialWorkflowBuilder()
         {
-            Throw.ArgumentException(nameof(agents), "At least one agent must be provided to build a sequential workflow.");
         }
 
-        // Add an ending executor that batches up all messages from the last agent
-        // so that it's published as a single list result.
-        Debug.Assert(builder is not null);
+        /// <summary>
+        /// Appends the specified agent as the next step in the sequential workflow sequence.
+        /// </summary>
+        /// <param name="agent">The agent to be executed in the next step of the workflow.</param>
+        /// <param name="outputFilter">
+        /// An optional callback that will be invoked to determine the output messages to forward to the next step in the workflow.
+        /// The function accepts the list of messages provided as input to this step and the list of messages produced by the agent,
+        /// and returns the list of messages to forward. If <see langword="null"/>, the default behavior is to forward the concatenation
+        /// of all input and output messages.
+        /// </param>
+        /// <returns>The current <see cref="SequentialWorkflowBuilder"/> instance.</returns>
+        /// <exception cref="ArgumentNullException"><paramref name="agent"/> is <see langword="null"/>.</exception>
+        public SequentialWorkflowBuilder Append(
+            AIAgent agent,
+            Func<IList<ChatMessage>, IList<ChatMessage>, IList<ChatMessage>>? outputFilter = null)
+        {
+            Throw.IfNull(agent);
 
-        OutputMessagesExecutor end = new();
-        return builder.AddEdge(previous, end)
-                      .WithOutputFrom(end)
-                      .Build();
+            this._agents.Add((agent, outputFilter));
+            return this;
+        }
+
+        /// <summary>
+        /// Builds a <see cref="Workflow"/> composed of agents that operate in a sequential pipeline, with the
+        /// messages from one agent propagated to the next.
+        /// </summary>
+        /// <returns>The workflow built based on the sequence of agents appended to the builder.</returns>
+        /// <exception cref="InvalidOperationException">No agents have been appended to the builder.</exception>
+        public Workflow Build()
+        {
+            // Create a builder that chains the agents together in sequence. The workflow simply begins
+            // with the first agent in the sequence.
+            WorkflowBuilder? builder = null;
+            ExecutorIsh? previous = null;
+            foreach (var (agent, outputFilter) in this._agents)
+            {
+                AgentRunExecutor agentExecutor = new(agent, outputFilter);
+
+                if (builder is null)
+                {
+                    builder = new WorkflowBuilder(agentExecutor);
+                }
+                else
+                {
+                    Debug.Assert(previous is not null);
+                    builder.AddEdge(previous, agentExecutor);
+                }
+
+                previous = agentExecutor;
+            }
+
+            if (previous is null)
+            {
+                throw new InvalidOperationException("At least one agent must be provided to build a sequential workflow.");
+            }
+
+            // Add an ending executor that batches up all messages from the last agent
+            // so that it's published as a single list result.
+            Debug.Assert(builder is not null);
+
+            OutputMessagesExecutor end = new();
+            return builder.AddEdge(previous, end)
+                          .WithOutputFrom(end)
+                          .Build();
+        }
     }
 
     /// <summary>
-    /// Builds a <see cref="Workflow{T}"/> composed of agents that operate concurrently on the same input,
+    /// Builds a <see cref="Workflow"/> composed of agents that operate concurrently on the same input,
     /// aggregating their outputs into a single collection.
     /// </summary>
     /// <param name="agents">The set of agents to compose into a concurrent workflow.</param>
@@ -90,7 +160,7 @@ public static partial class AgentWorkflowBuilder
         // so that the final accumulator receives a single list of messages from each agent. Otherwise, the
         // accumulator would not be able to determine what came from what agent, as there's currently no
         // provenance tracking exposed in the workflow context passed to a handler.
-        ExecutorIsh[] agentExecutors = (from agent in agents select (ExecutorIsh)new AgentRunStreamingExecutor(agent, includeInputInOutput: false)).ToArray();
+        ExecutorIsh[] agentExecutors = (from agent in agents select (ExecutorIsh)new AgentRunExecutor(agent)).ToArray();
         ExecutorIsh[] accumulators = [.. from agent in agentExecutors select (ExecutorIsh)new BatchChatMessagesToListExecutor($"Batcher/{agent.Id}")];
         builder.AddFanOutEdge(start, targets: agentExecutors);
         for (int i = 0; i < agentExecutors.Length; i++)
@@ -142,9 +212,12 @@ public static partial class AgentWorkflowBuilder
     }
 
     /// <summary>
-    /// Executor that runs the agent and forwards all messages, input and output, to the next executor.
+    /// Executor that runs the agent and forwards filtered messages to the next executor.
     /// </summary>
-    private sealed class AgentRunStreamingExecutor(AIAgent agent, bool includeInputInOutput) : Executor(GetDescriptiveIdFromAgent(agent)), IResettableExecutor
+    private sealed class AgentRunExecutor(
+        AIAgent agent,
+        Func<IList<ChatMessage>, IList<ChatMessage>, IList<ChatMessage>>? outputFilter = null)
+        : Executor(GetDescriptiveIdFromAgent(agent)), IResettableExecutor
     {
         private readonly List<ChatMessage> _pendingMessages = [];
 
@@ -162,24 +235,35 @@ public static partial class AgentWorkflowBuilder
 
                     List<ChatMessage>? roleChanged = ChangeAssistantToUserForOtherParticipants(agent.DisplayName, messages);
 
-                    List<AgentRunResponseUpdate> updates = [];
-                    await foreach (var update in agent.RunStreamingAsync(messages).ConfigureAwait(false))
+                    IList<ChatMessage> outputMessages;
+                    if (token.EmitEvents is true)
                     {
-                        updates.Add(update);
-                        if (token.EmitEvents is true)
+                        List<AgentRunResponseUpdate> updates = [];
+                        await foreach (var update in agent.RunStreamingAsync(messages).ConfigureAwait(false))
                         {
+                            updates.Add(update);
                             await context.AddEventAsync(new AgentRunUpdateEvent(this.Id, update)).ConfigureAwait(false);
                         }
+
+                        outputMessages = updates.ToAgentRunResponse().Messages;
+                    }
+                    else
+                    {
+                        var response = await agent.RunAsync(messages).ConfigureAwait(false);
+                        outputMessages = response.Messages;
                     }
 
                     ResetUserToAssistantForChangedRoles(roleChanged);
 
-                    if (!includeInputInOutput)
+                    if (outputFilter is null)
                     {
-                        messages.Clear();
+                        messages.AddRange(outputMessages);
                     }
-
-                    messages.AddRange(updates.ToAgentRunResponse().Messages);
+                    else
+                    {
+                        var output = outputFilter(messages, outputMessages);
+                        messages = output as List<ChatMessage> ?? output.ToList();
+                    }
 
                     await context.SendMessageAsync(messages).ConfigureAwait(false);
                     await context.SendMessageAsync(token).ConfigureAwait(false);
@@ -209,10 +293,10 @@ public static partial class AgentWorkflowBuilder
     {
         protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
             routeBuilder
-                    .AddHandler<string>((message, context) => context.SendMessageAsync(new ChatMessage(ChatRole.User, message)))
-                    .AddHandler<ChatMessage>((message, context) => context.SendMessageAsync(message))
-                    .AddHandler<List<ChatMessage>>((messages, context) => context.SendMessageAsync(messages))
-                    .AddHandler<TurnToken>((turnToken, context) => context.SendMessageAsync(turnToken));
+                .AddHandler<string>((message, context) => context.SendMessageAsync(new ChatMessage(ChatRole.User, message)))
+                .AddHandler<ChatMessage>((message, context) => context.SendMessageAsync(message))
+                .AddHandler<List<ChatMessage>>((messages, context) => context.SendMessageAsync(messages))
+                .AddHandler<TurnToken>((turnToken, context) => context.SendMessageAsync(turnToken));
 
         public ValueTask ResetAsync() => default;
     }
@@ -258,16 +342,8 @@ public static partial class AgentWorkflowBuilder
         protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
             routeBuilder.AddHandler<List<ChatMessage>>(async (messages, context) =>
             {
-                // TODO: https://github.com/microsoft/agent-framework/issues/784
-                // This locking should not be necessary.
-                bool done;
-                lock (this._allResults)
-                {
-                    this._allResults.Add(messages);
-                    done = --this._remaining == 0;
-                }
-
-                if (done)
+                this._allResults.Add(messages);
+                if (--this._remaining == 0)
                 {
                     this._remaining = this._expectedInputs;
 
@@ -416,7 +492,7 @@ public static partial class AgentWorkflowBuilder
         }
 
         /// <summary>
-        /// Builds a <see cref="Workflow{T}"/> composed of agents that operate via handoffs, with the next
+        /// Builds a <see cref="Workflow"/> composed of agents that operate via handoffs, with the next
         /// agent to process messages selected by the current agent.
         /// </summary>
         /// <returns>The workflow built based on the handoffs in the builder.</returns>
@@ -763,7 +839,7 @@ public static partial class AgentWorkflowBuilder
         public Workflow Build()
         {
             AIAgent[] agents = this._participants.ToArray();
-            Dictionary<AIAgent, ExecutorIsh> agentMap = agents.ToDictionary(a => a, a => (ExecutorIsh)new AgentRunStreamingExecutor(a, includeInputInOutput: true));
+            Dictionary<AIAgent, ExecutorIsh> agentMap = agents.ToDictionary(a => a, a => (ExecutorIsh)new AgentRunExecutor(a));
 
             GroupChatHost host = new(agents, agentMap, this._managerFactory);
 
@@ -852,7 +928,7 @@ public static partial class AgentWorkflowBuilder
     }
 
     /// <summary>
-    /// Undoes changes made by <see cref="ChangeAssistantToUserForOtherParticipants(string, List{ChatMessage})"/>
+    /// Undoes changes made by <see cref="ChangeAssistantToUserForOtherParticipants"/>
     /// when passed the list of changes made by that method.
     /// </summary>
     private static void ResetUserToAssistantForChangedRoles(List<ChatMessage>? roleChanged)

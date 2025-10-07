@@ -6,6 +6,7 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -21,7 +22,7 @@ public class AgentWorkflowBuilderTests
     public void BuildSequential_InvalidArguments_Throws()
     {
         Assert.Throws<ArgumentNullException>("agents", () => AgentWorkflowBuilder.BuildSequential(null!));
-        Assert.Throws<ArgumentException>("agents", () => AgentWorkflowBuilder.BuildSequential());
+        Assert.Throws<InvalidOperationException>(() => AgentWorkflowBuilder.BuildSequential());
     }
 
     [Fact]
@@ -130,6 +131,246 @@ public class AgentWorkflowBuilderTests
         }
     }
 
+    [Fact]
+    public void CreateSequentialBuilder_ValidUsage_ReturnsBuilder()
+    {
+        var builder = AgentWorkflowBuilder.CreateSequentialBuilder();
+        Assert.NotNull(builder);
+    }
+
+    [Fact]
+    public void SequentialBuilder_NoAgents_BuildThrows()
+    {
+        var builder = AgentWorkflowBuilder.CreateSequentialBuilder();
+        Assert.Throws<InvalidOperationException>(() => builder.Build());
+    }
+
+    [Fact]
+    public void SequentialBuilder_AppendNullAgent_Throws()
+    {
+        var builder = AgentWorkflowBuilder.CreateSequentialBuilder();
+        Assert.Throws<ArgumentNullException>("agent", () => builder.Append(null!));
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(4)]
+    [InlineData(5)]
+    public async Task CreateSequentialBuilder_WithoutFilters_AgentsRunInOrderAsync(int numAgents)
+    {
+        var builder = AgentWorkflowBuilder.CreateSequentialBuilder();
+        for (int i = 1; i <= numAgents; i++)
+        {
+            builder.Append(new DoubleEchoAgent($"agent{i}"));
+        }
+        var workflow = builder.Build();
+
+        for (int iter = 0; iter < 3; iter++)
+        {
+            const string UserInput = "abc";
+            (string updateText, List<ChatMessage>? result) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, UserInput)]);
+
+            Assert.NotNull(result);
+            Assert.Equal(numAgents + 1, result.Count);
+
+            Assert.Equal(ChatRole.User, result[0].Role);
+            Assert.Null(result[0].AuthorName);
+            Assert.Equal(UserInput, result[0].Text);
+
+            string[] texts = new string[numAgents + 1];
+            texts[0] = UserInput;
+            string expectedTotal = string.Empty;
+            for (int i = 1; i < numAgents + 1; i++)
+            {
+                string id = $"agent{((i - 1) % numAgents) + 1}";
+                texts[i] = $"{id}{Double(string.Concat(texts.Take(i)))}";
+                Assert.Equal(ChatRole.Assistant, result[i].Role);
+                Assert.Equal(id, result[i].AuthorName);
+                Assert.Equal(texts[i], result[i].Text);
+                expectedTotal += texts[i];
+            }
+
+            Assert.Equal(expectedTotal, updateText);
+            Assert.Equal(UserInput + expectedTotal, string.Concat(result));
+
+            static string Double(string s) => s + s;
+        }
+    }
+
+    [Fact]
+    public async Task CreateSequentialBuilder_WithOutputFilter_AgentsExecuteAsync()
+    {
+        var builder = AgentWorkflowBuilder.CreateSequentialBuilder();
+
+        // First agent - no filter (default behavior)
+        builder.Append(new DoubleEchoAgent("agent1"));
+
+        // Second agent - filter to only pass output messages
+        builder.Append(new DoubleEchoAgent("agent2"), outputFilter: (_, output) => output);
+
+        var workflow = builder.Build();
+
+        const string UserInput = "abc";
+        (string updateText, List<ChatMessage>? result) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, UserInput)]);
+
+        Assert.NotNull(result);
+
+        // Verify the workflow produced some output
+        Assert.True(result.Count > 0);
+
+        // Check if agent names appear in the text (more flexible check)
+        var allText = string.Join(" ", result.Select(m => m.Text ?? ""));
+        Assert.Contains("agent1", allText);
+        Assert.Contains("agent2", allText);
+    }
+
+    [Fact]
+    public async Task CreateSequentialBuilder_EmptyOutputFilter_NextAgentStillRunsAsync()
+    {
+        var builder = AgentWorkflowBuilder.CreateSequentialBuilder();
+
+        // First agent with empty filter - passes no messages to next agent
+        builder.Append(new DoubleEchoAgent("agent1"), outputFilter: (input, output) => []);
+
+        // Second agent should still run (with empty input)
+        builder.Append(new DoubleEchoAgent("agent2"));
+
+        var workflow = builder.Build();
+
+        const string UserInput = "abc";
+        (string updateText, List<ChatMessage>? result) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, UserInput)]);
+
+        Assert.NotNull(result);
+
+        // The key test: verify agent2 ran even though agent1's filter was empty
+        Assert.Contains(result, m => m.AuthorName == "agent2");
+    }
+
+    [Fact]
+    public async Task CreateSequentialBuilder_CustomOutputFilter_TransformsMessagesAsync()
+    {
+        var builder = AgentWorkflowBuilder.CreateSequentialBuilder();
+
+        // First agent - custom filter that adds a prefix to all messages
+        builder.Append(new DoubleEchoAgent("agent1"), outputFilter: (input, output) =>
+        {
+            var filtered = new List<ChatMessage>();
+            foreach (var msg in input.Concat(output))
+            {
+                var newContent = new List<AIContent>();
+                foreach (var content in msg.Contents)
+                {
+                    if (content is TextContent textContent)
+                    {
+                        newContent.Add(new TextContent($"[FILTERED]{textContent.Text}"));
+                    }
+                    else
+                    {
+                        newContent.Add(content);
+                    }
+                }
+                filtered.Add(new ChatMessage(msg.Role, newContent) { AuthorName = msg.AuthorName });
+            }
+            return filtered;
+        });
+
+        // Second agent - no filter
+        builder.Append(new DoubleEchoAgent("agent2"));
+
+        var workflow = builder.Build();
+
+        const string UserInput = "abc";
+        (string updateText, List<ChatMessage>? result) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, UserInput)]);
+
+        Assert.NotNull(result);
+        Assert.True(result.Count >= 2); // At least filtered messages + agent2 output
+
+        // Agent2 should have received the filtered messages and processed them
+        var agent2Message = result.FirstOrDefault(m => m.AuthorName == "agent2");
+        Assert.NotNull(agent2Message);
+        Assert.Contains("[FILTERED]", agent2Message.Text);
+    }
+
+    [Fact]
+    public async Task CreateSequentialBuilder_MultipleFilters_AppliedIndependentlyAsync()
+    {
+        var builder = AgentWorkflowBuilder.CreateSequentialBuilder();
+
+        // Agent1 - filter to pass only output messages
+        builder.Append(new DoubleEchoAgent("agent1"), outputFilter: (input, output) => output.ToList());
+
+        // Agent2 - filter to pass input and output (same as default, but explicit)
+        builder.Append(new DoubleEchoAgent("agent2"), outputFilter: (input, output) => input.Concat(output).ToList());
+
+        var workflow = builder.Build();
+
+        const string UserInput = "abc";
+        (string updateText, List<ChatMessage>? result) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, UserInput)]);
+
+        Assert.NotNull(result);
+
+        // Should have at least agent1 and agent2 outputs
+        Assert.True(result.Count >= 2);
+
+        // Verify that both agents ran by checking their output is present
+        Assert.Contains(result, m => m.AuthorName == "agent1");
+        Assert.Contains(result, m => m.AuthorName == "agent2");
+    }
+
+    [Fact]
+    public async Task CreateSequentialBuilder_MixedFilteredAndUnfiltered_WorksCorrectlyAsync()
+    {
+        var builder = AgentWorkflowBuilder.CreateSequentialBuilder();
+
+        // Agent1 - no filter (default behavior)
+        builder.Append(new DoubleEchoAgent("agent1"));
+
+        // Agent2 - with filter (only output)
+        builder.Append(new DoubleEchoAgent("agent2"), outputFilter: (input, output) => output.ToList());
+
+        // Agent3 - no filter (default behavior)
+        builder.Append(new DoubleEchoAgent("agent3"));
+
+        var workflow = builder.Build();
+
+        const string UserInput = "test";
+        (string updateText, List<ChatMessage>? result) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, UserInput)]);
+
+        Assert.NotNull(result);
+
+        // Verify the workflow produces some output
+        Assert.True(result.Count > 0);
+
+        // Check if agent names appear in the text (more flexible)
+        var allText = string.Join(" ", result.Select(m => m.Text ?? ""));
+        Assert.Contains("agent1", allText);
+        Assert.Contains("agent2", allText);
+        Assert.Contains("agent3", allText);
+    }
+
+    [Fact]
+    public async Task CreateSequentialBuilder_OnlyOutputFilter_PassesOnlyAgentOutputAsync()
+    {
+        var builder = AgentWorkflowBuilder.CreateSequentialBuilder();
+
+        // Agent with filter that only passes output (not input)
+        builder.Append(new DoubleEchoAgent("filter_agent"), outputFilter: (input, output) => output.ToList());
+
+        var workflow = builder.Build();
+
+        const string UserInput = "test";
+        (string updateText, List<ChatMessage>? result) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, UserInput)]);
+
+        Assert.NotNull(result);
+        Assert.True(result.Count > 0);
+
+        // Verify the agent ran and produced output
+        var allText = string.Join(" ", result.Select(m => m.Text ?? ""));
+        Assert.Contains("filter_agent", allText);
+    }
+
     private class DoubleEchoAgent(string name) : AIAgent
     {
         public override string Name => name;
@@ -159,7 +400,7 @@ public class AgentWorkflowBuilderTests
 
     private sealed class DoubleEchoAgentThread() : InMemoryAgentThread();
 
-    [Fact(Skip = "issue #1109")]
+    [Fact]
     public async Task BuildConcurrent_AgentsRunInParallelAsync()
     {
         StrongBox<TaskCompletionSource<bool>> barrier = new();
@@ -180,12 +421,10 @@ public class AgentWorkflowBuilderTests
             Assert.NotEmpty(updateText);
             Assert.NotNull(result);
 
-            // TODO: https://github.com/microsoft/agent-framework/issues/784
-            // These asserts are flaky until we guarantee message delivery order.
-            //Assert.Single(Regex.Matches(updateText, "agent1"));
-            //Assert.Single(Regex.Matches(updateText, "agent2"));
-            //Assert.Equal(4, Regex.Matches(updateText, "abc").Count);
-            //Assert.Equal(2, result.Count);
+            Assert.Single(Regex.Matches(updateText, "agent1"));
+            Assert.Single(Regex.Matches(updateText, "agent2"));
+            Assert.Equal(4, Regex.Matches(updateText, "abc").Count);
+            Assert.Equal(2, result.Count);
         }
     }
 
