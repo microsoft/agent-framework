@@ -1,7 +1,7 @@
 ﻿<#@ template language="C#" inherits="ActionTemplate" visibility="internal" linePragmas="false" #>
 <#@ output extension=".cs" #>
 <#@ assembly name="System.Core" #>
-<#@ include file="Snippets/Index.tt" once="true" #>f
+<#@ include file="Snippets/Index.tt" once="true" #>
 /// <summary>
 /// Retrieves a specific message from an agent conversation.
 /// </summary>
@@ -15,14 +15,19 @@ internal sealed class <#= this.Name #>Executor(FormulaSession session, WorkflowA
         EvaluateStringExpression(this.Model.MessageAfter, "after", isNullable: true);
         EvaluateStringExpression(this.Model.MessageBefore, "before", isNullable: true);
         EvaluateEnumExpression<AgentMessageSortOrderWrapper, bool>(this.Model.SortOrder, "newestFirst", SortMap, defaultValue: DefaultSort); #>
-        ChatMessage messages = 
-            await agentProvider.GetMessageAsync(
-                converationId, 
+        IAsyncEnumerable<ChatMessage> messagesResult = 
+            agentProvider.GetMessagesAsync(
+                conversationId, 
                 limit, 
                 after,
                 before,
                 newestFirst,
-                cancellationToken).ConfigureAwait(false);<#
+                cancellationToken);
+        List<ChatMessage> messages = [];
+        await foreach (ChatMessage message in messagesResult.ConfigureAwait(false))
+        {
+            messages.Add(message);
+        }<#
         AssignVariable(this.Model.Messages, "messages");
         #>
         return default;

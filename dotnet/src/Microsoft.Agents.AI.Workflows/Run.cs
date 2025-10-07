@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -9,43 +11,10 @@ using Microsoft.Agents.AI.Workflows.Execution;
 namespace Microsoft.Agents.AI.Workflows;
 
 /// <summary>
-/// Specifies the current operational state of a workflow run.
-/// </summary>
-public enum RunStatus
-{
-    /// <summary>
-    /// The run has not yet started. This only occurs when running in "lockstep" mode.
-    /// </summary>
-    NotStarted,
-
-    /// <summary>
-    /// The run has halted, has no outstanding requets, but has not received a <see cref="RequestHaltEvent"/>.
-    /// </summary>
-    Idle,
-
-    /// <summary>
-    /// The run has halted, and has at least one outstanding <see cref="ExternalRequest"/>.
-    /// </summary>
-    PendingRequests,
-
-    /// <summary>
-    /// The user has ended the run. No further events will be emitted, and no messages can be sent to it.
-    /// </summary>
-    /// <seealso cref="StreamingRun.EndRunAsync"/>
-    /// <seealso cref="Run.EndRunAsync"/>
-    Ended,
-
-    /// <summary>
-    /// The workflow is currently running, and may receive events or requests.
-    /// </summary>
-    Running
-}
-
-/// <summary>
 /// Represents a workflow run that tracks execution status and emitted workflow events, supporting resumption
 /// with responses to <see cref="RequestInfoEvent"/>.
 /// </summary>
-public sealed class Run
+public sealed class Run : IAsyncDisposable
 {
     private readonly List<WorkflowEvent> _eventSink = [];
     private readonly AsyncRunHandle _runHandle;
@@ -57,7 +26,7 @@ public sealed class Run
     internal async ValueTask<bool> RunToNextHaltAsync(CancellationToken cancellationToken = default)
     {
         bool hadEvents = false;
-        await foreach (WorkflowEvent evt in this._runHandle.TakeEventStreamAsync(breakOnHalt: true, cancellationToken).ConfigureAwait(false))
+        await foreach (WorkflowEvent evt in this._runHandle.TakeEventStreamAsync(blockOnPendingRequest: false, cancellationToken).ConfigureAwait(false))
         {
             hadEvents = true;
             this._eventSink.Add(evt);
@@ -85,8 +54,14 @@ public sealed class Run
     private int _lastBookmark;
 
     /// <summary>
+    /// The number of events emitted by the workflow since the last access to <see cref="NewEvents"/>
+    /// </summary>
+    public int NewEventCount => this._eventSink.Count - this._lastBookmark;
+
+    /// <summary>
     /// Gets all events emitted by the workflow since the last access to <see cref="NewEvents" />.
     /// </summary>
+    [DebuggerDisplay("NewEvents[{NewEventCount}]")]
     public IEnumerable<WorkflowEvent> NewEvents
     {
         get
@@ -152,6 +127,9 @@ public sealed class Run
         return await this.RunToNextHaltAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    /// <inheritdoc cref="StreamingRun.EndRunAsync"/>
-    public ValueTask EndRunAsync() => this._runHandle.RequestEndRunAsync();
+    /// <inheritdoc/>
+    public ValueTask DisposeAsync()
+    {
+        return this._runHandle.DisposeAsync();
+    }
 }

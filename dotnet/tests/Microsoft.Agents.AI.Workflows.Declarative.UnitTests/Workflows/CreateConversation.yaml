@@ -1,0 +1,10 @@
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: workflow_test
+  actions:
+
+    - kind: CreateConversation
+      id: conversation_create
+      conversationId: Local.PrivateConversationId
