@@ -1042,7 +1042,7 @@ class ChatAgent(BaseAgent):
         if kwargs:
             server_args.update(kwargs)
 
-        if excluded_functions is not None and not isinstance(excluded_functions, list):
+        if excluded_functions is not None and isinstance(excluded_functions, str):
             excluded_functions = [excluded_functions]  # type: ignore
 
         server: "Server[Any]" = Server(**server_args)  # type: ignore[call-arg]
