@@ -104,18 +104,8 @@ class AgentExecutor(Executor):
                 self._cache,
                 thread=self._agent_thread,
             ):
-                # Skip empty updates (no textual or structural content)
-                if not update:
-                    continue
-                contents = getattr(update, "contents", None)
-                text_val = getattr(update, "text", "")
-                has_text_content = False
-                if contents:
-                    for content in contents:
-                        if getattr(content, "text", None):
-                            has_text_content = True
-                            break
-                if not (text_val or has_text_content):
+                if not update.text:
+                    # Skip empty updates (no textual or structural content)
                     continue
                 updates.append(update)
                 await ctx.add_event(AgentRunUpdateEvent(self.id, update))
