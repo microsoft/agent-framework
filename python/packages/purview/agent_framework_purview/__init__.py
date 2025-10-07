@@ -6,7 +6,7 @@ from ._exceptions import (
     PurviewRequestError,
     PurviewServiceError,
 )
-from ._middleware import PurviewPolicyMiddleware
+from ._middleware import PurviewPolicyMiddleware, PurviewChatPolicyMiddleware
 from ._settings import PurviewAppLocation, PurviewLocationType, PurviewSettings
 
 __all__ = [
@@ -14,6 +14,7 @@ __all__ = [
     "PurviewAuthenticationError",
     "PurviewLocationType",
     "PurviewPolicyMiddleware",
+    "PurviewChatPolicyMiddleware",
     "PurviewRateLimitError",
     "PurviewRequestError",
     "PurviewServiceError",

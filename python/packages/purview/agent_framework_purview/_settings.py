@@ -5,6 +5,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any
 
+from agent_framework._pydantic import AFBaseSettings
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -22,7 +23,7 @@ class PurviewAppLocation(BaseModel):
     location_type: PurviewLocationType = Field(..., description="The location type.")
     location_value: str = Field(..., description="The location value.")
 
-    def get_policy_location(self) -> dict[str, Any]:
+    def get_policy_location(self) -> dict[str, str]:
         ns = "microsoft.graph"
         if self.location_type == PurviewLocationType.APPLICATION:
             dt = f"{ns}.policyLocationApplication"
@@ -32,10 +33,10 @@ class PurviewAppLocation(BaseModel):
             dt = f"{ns}.policyLocationDomain"
         else:  # pragma: no cover - defensive
             raise ValueError("Invalid Purview location type")
-        return {"@odata.type": dt, "value": self.location_value, "dataType": dt}
+        return {"@odata.type": dt, "value": self.location_value}
 
 
-class PurviewSettings(BaseModel):
+class PurviewSettings(AFBaseSettings):
     """Settings for Purview integration mirroring .NET PurviewSettings.
 
     Attributes:

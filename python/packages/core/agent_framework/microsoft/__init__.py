@@ -3,12 +3,20 @@
 import importlib
 from typing import Any
 
-PACKAGE_NAME = "agent_framework_copilotstudio"
-PACKAGE_EXTRA = ["microsoft-copilotstudio", "copilotstudio"]
 _IMPORTS: dict[str, tuple[str, list[str]]] = {
     "CopilotStudioAgent": ("agent_framework_copilotstudio", ["microsoft-copilotstudio", "copilotstudio"]),
     "__version__": ("agent_framework_copilotstudio", ["microsoft-copilotstudio", "copilotstudio"]),
     "acquire_token": ("agent_framework_copilotstudio", ["microsoft-copilotstudio", "copilotstudio"]),
+    # Purview (Graph Data Security & Governance) integration exports
+    "PurviewPolicyMiddleware": ("agent_framework_purview", ["microsoft-purview", "purview"]),
+    "PurviewChatPolicyMiddleware": ("agent_framework_purview", ["microsoft-purview", "purview"]),
+    "PurviewSettings": ("agent_framework_purview", ["microsoft-purview", "purview"]),
+    "PurviewAppLocation": ("agent_framework_purview", ["microsoft-purview", "purview"]),
+    "PurviewLocationType": ("agent_framework_purview", ["microsoft-purview", "purview"]),
+    "PurviewAuthenticationError": ("agent_framework_purview", ["microsoft-purview", "purview"]),
+    "PurviewRateLimitError": ("agent_framework_purview", ["microsoft-purview", "purview"]),
+    "PurviewRequestError": ("agent_framework_purview", ["microsoft-purview", "purview"]),
+    "PurviewServiceError": ("agent_framework_purview", ["microsoft-purview", "purview"]),
 }
 
 
@@ -23,7 +31,7 @@ def __getattr__(name: str) -> Any:
                 f"please use `pip install agent-framework-{package_extra[0]}`, "
                 "or update your requirements.txt or pyproject.toml file."
             ) from exc
-    raise AttributeError(f"Module `azure` has no attribute {name}.")
+    raise AttributeError(f"Module `microsoft` has no attribute {name}.")
 
 
 def __dir__() -> list[str]:
