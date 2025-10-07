@@ -163,9 +163,25 @@ public class InProcessStateTests
                 .AddFanOutEdge(forward, targets: [testExecutor, testExecutor2])
                 .Build();
 
-        var act = async () => await InProcessExecution.RunAsync(workflow, new TurnToken());
+        Run runWithFailure = await InProcessExecution.RunAsync(workflow, new TurnToken());
 
-        var result = await act.Should()
-                              .ThrowAsync("multiple writers to the same shared scope key");
+        bool hadFailure = false;
+        foreach (WorkflowEvent evt in runWithFailure.NewEvents)
+        {
+            if (evt is WorkflowErrorEvent errorEvent)
+            {
+                hadFailure.Should().BeFalse("There can be only one!");
+                hadFailure = true;
+
+                errorEvent.Data.Should().BeOfType<InvalidOperationException>()
+                                        .Subject.Message.Should().Contain("TestKey");
+            }
+        }
+
+        hadFailure.Should().BeTrue();
+
+        //var act = async () => await InProcessExecution.RunAsync(workflow, new TurnToken());
+        //var result = await act.Should()
+        //                      .ThrowAsync("multiple writers to the same shared scope key");
     }
 }
