@@ -38,25 +38,39 @@ internal static class IWorkflowContextExtensions
     public static FormulaValue ReadState(this IWorkflowContext context, string key, string? scopeName = null) =>
         DeclarativeContext(context).State.Get(key, scopeName);
 
-    public static async ValueTask QueueConversationUpdateAsync(this IWorkflowContext context, string conversationId)
+    public static async ValueTask QueueConversationUpdateAsync(this IWorkflowContext context, string conversationId, bool isExternal = false)
     {
         RecordValue conversation = (RecordValue)context.ReadState(SystemScope.Names.Conversation, VariableScopeNames.System);
-        conversation.UpdateField("Id", FormulaValue.New(conversationId));
-        await context.QueueSystemUpdateAsync(SystemScope.Names.Conversation, conversation).ConfigureAwait(false);
-        await context.QueueSystemUpdateAsync(SystemScope.Names.ConversationId, FormulaValue.New(conversationId)).ConfigureAwait(false);
 
-        await context.AddEventAsync(new ConversationUpdateEvent(conversationId)).ConfigureAwait(false);
-    }
-
-    public static bool IsWorkflowConversation(this IWorkflowContext context, string? conversationId)
-    {
-        if (string.IsNullOrWhiteSpace(conversationId))
+        if (isExternal)
         {
-            return false;
+            conversation.UpdateField("Id", FormulaValue.New(conversationId));
+            await context.QueueSystemUpdateAsync(SystemScope.Names.Conversation, conversation).ConfigureAwait(false);
+            await context.QueueSystemUpdateAsync(SystemScope.Names.ConversationId, FormulaValue.New(conversationId)).ConfigureAwait(false);
         }
 
-        StringValue workflowId = (StringValue)context.ReadState(SystemScope.Names.ConversationId, VariableScopeNames.System);
-        return workflowId.Value.Equals(conversationId, StringComparison.Ordinal);
+        await context.AddEventAsync(new ConversationUpdateEvent(conversationId) { IsWorkflow = isExternal }).ConfigureAwait(false);
+    }
+
+    public static bool IsWorkflowConversation(
+        this IWorkflowContext context,
+        string? conversationId,
+        out string? workflowConversationId)
+    {
+        FormulaValue idValue = context.ReadState(SystemScope.Names.ConversationId, VariableScopeNames.System);
+        switch (idValue)
+        {
+            case BlankValue:
+            case ErrorValue:
+                workflowConversationId = null;
+                return false;
+            case StringValue stringValue when stringValue.Value.Length > 0:
+                workflowConversationId = stringValue.Value;
+                return workflowConversationId.Equals(conversationId, StringComparison.Ordinal);
+            default:
+                // Something has gone terribly wrong.
+                throw new DeclarativeActionException($"Invalid '{SystemScope.Names.ConversationId}' value type: {idValue.GetType().Name}.");
+        }
     }
 
     private static DeclarativeWorkflowContext DeclarativeContext(IWorkflowContext context)

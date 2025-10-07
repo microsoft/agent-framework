@@ -193,7 +193,6 @@ public class Workflow
         await this.TryResetExecutorRegistrationsAsync().ConfigureAwait(false);
 
         Interlocked.CompareExchange(ref this._ownerToken, null, ownerToken);
-        this._ownerToken = null;
     }
 }
 
