@@ -1,12 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-import base64
-import struct
 from pathlib import Path
 
 from agent_framework import ChatMessage, DataContent, Role, TextContent
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.azure import AzureOpenAIResponsesClient
+from azure.identity import AzureCliCredential
 
 ASSETS_DIR = Path(__file__).resolve().parent.parent / "sample_assets"
 
@@ -24,25 +23,14 @@ def create_sample_image() -> str:
     return f"data:image/png;base64,{png_data}"
 
 
-def create_sample_audio() -> str:
-    """Create a minimal WAV file for testing (0.1 seconds of silence)."""
-    wav_header = (
-        b"RIFF"
-        + struct.pack("<I", 44)  # file size
-        + b"WAVEfmt "
-        + struct.pack("<I", 16)  # fmt chunk
-        + struct.pack("<HHIIHH", 1, 1, 8000, 16000, 2, 16)  # PCM, mono, 8kHz
-        + b"data"
-        + struct.pack("<I", 1600)  # data chunk
-        + b"\x00" * 1600  # 0.1 sec silence
-    )
-    audio_b64 = base64.b64encode(wav_header).decode()
-    return f"data:audio/wav;base64,{audio_b64}"
-
-
 async def test_image() -> None:
-    """Test image analysis with OpenAI."""
-    client = OpenAIChatClient(model_id="gpt-4o")
+    """Test image analysis with Azure OpenAI Responses API."""
+    # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
+    # authentication option. Requires AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME
+    # environment variables to be set.
+    # Alternatively, you can pass deployment_name explicitly:
+    # client = AzureOpenAIResponsesClient(credential=AzureCliCredential(), deployment_name="your-deployment-name")
+    client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
 
     image_uri = create_sample_image()
     message = ChatMessage(
@@ -54,26 +42,9 @@ async def test_image() -> None:
     print(f"Image Response: {response}")
 
 
-async def test_audio() -> None:
-    """Test audio analysis with OpenAI."""
-    client = OpenAIChatClient(model_id="gpt-4o-audio-preview")
-
-    audio_uri = create_sample_audio()
-    message = ChatMessage(
-        role=Role.USER,
-        contents=[
-            TextContent(text="What do you hear in this audio?"),
-            DataContent(uri=audio_uri, media_type="audio/wav"),
-        ],
-    )
-
-    response = await client.get_response(message)
-    print(f"Audio Response: {response}")
-
-
 async def test_pdf() -> None:
-    """Test PDF document analysis with OpenAI."""
-    client = OpenAIChatClient(model_id="gpt-4o")
+    """Test PDF document analysis with Azure OpenAI Responses API."""
+    client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
 
     pdf_bytes = load_sample_pdf()
     message = ChatMessage(
@@ -81,7 +52,9 @@ async def test_pdf() -> None:
         contents=[
             TextContent(text="What information can you extract from this document?"),
             DataContent(
-                data=pdf_bytes, media_type="application/pdf", additional_properties={"filename": "employee_report.pdf"}
+                data=pdf_bytes,
+                media_type="application/pdf",
+                additional_properties={"filename": "sample.pdf"},
             ),
         ],
     )
@@ -91,9 +64,9 @@ async def test_pdf() -> None:
 
 
 async def main() -> None:
-    print("=== Testing OpenAI Multimodal ===")
+    print("=== Testing Azure OpenAI Responses API Multimodal ===")
+    print("The Responses API supports both images AND PDFs")
     await test_image()
-    await test_audio()
     await test_pdf()
 
 
