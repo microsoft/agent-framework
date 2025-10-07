@@ -107,7 +107,7 @@ async Task AFSequentialAgentWorkflow()
     }
 
     // Clean up the run
-    await run.EndRunAsync();
+    await run.DisposeAsync();
 }
 
 ChatClientAgent GetAFTranslationAgent(string targetLanguage, IChatClient chatClient) =>

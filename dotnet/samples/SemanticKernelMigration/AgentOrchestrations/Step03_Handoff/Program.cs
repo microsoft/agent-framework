@@ -244,7 +244,7 @@ async Task AFHandoffAgentWorkflow()
         }
 
         // Clean up the run
-        await run.EndRunAsync();
+        await run.DisposeAsync();
     }
 }
 # endregion
