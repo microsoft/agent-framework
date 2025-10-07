@@ -4,6 +4,7 @@
 @inject IJSRuntime JSRuntime
 @inject ILogger<Home> Logger
 @inject A2AAgentClient A2AActorClient
+@inject OpenAIResponsesAgentClient OpenAIResponsesAgentClient
 @rendermode InteractiveServer
 @using System.Text
 @using System.Text.Json
@@ -51,18 +52,18 @@
         <label for="protocol-select" class="protocol-select-label">Choose communication protocol:</label>
         <div class="protocol-select-wrapper">
             <select id="protocol-select" class="protocol-select" @bind="selectedProtocol" disabled="@(isStreaming)">
-                <option value="AgenticFramework">Agentic Framework</option>
-                <option value="A2A">A2A (Agent2Agent)</option>
+                <option value="OpenAIResponses">OpenAI Responses</option>
+                <option value="A2A">A2A (Agent-to-Agent)</option>
             </select>
             <div class="protocol-info">
                 @switch (selectedProtocol)
                 {
-                    case Protocol.A2A:
-                        <span class="protocol-description">🔗 A2A protocol supports long-running agentic processes</span>
+					case Protocol.OpenAIResponses:
+                        <span class="protocol-description">֎ OpenAI Responses</span>
                         break;
-                    case Protocol.AgenticFramework:
-                    default:
-                        <span class="protocol-description">⚡ Direct agentic framework communication</span>
+					case Protocol.A2A:
+					default:
+                        <span class="protocol-description">🔗 A2A protocol supports long-running agentic processes</span>
                         break;
                 }
             </div>
@@ -881,208 +882,212 @@
 
 @code {
 
-    private string currentMessage = "";
-    private bool isStreaming = false;
-    private bool isLoadingAgents = true;
-    private string currentStreamedMessage = "";
-    private string selectedAgentName = "";
-    private List<AgentDiscoveryClient.AgentDiscoveryCard> availableAgents = new();
-    private List<Conversation> conversations = new();
-    private Conversation? currentConversation;
+	private string currentMessage = "";
+	private bool isStreaming = false;
+	private bool isLoadingAgents = true;
+	private string currentStreamedMessage = "";
+	private string selectedAgentName = "";
+	private List<AgentDiscoveryClient.AgentDiscoveryCard> availableAgents = new();
+	private List<Conversation> conversations = new();
+	private Conversation? currentConversation;
 
-    // protocol
-    private Protocol selectedProtocol;
+	// protocol
+	private Protocol selectedProtocol;
 
-    // a2a agent card
-    private bool isA2AExpanded = false;
-    private bool isDiscoveringCard = false;
-    private string? discoveredAgentCardJson = null;
-    private string? discoveryError = null;
+	// a2a agent card
+	private bool isA2AExpanded = false;
+	private bool isDiscoveringCard = false;
+	private string? discoveredAgentCardJson = null;
+	private string? discoveryError = null;
 
-    private enum Protocol
-    {
-        AgenticFramework,
-        A2A // Agent2Agent protocol
-    }
+	private enum Protocol
+	{
+		A2A, // Agent-to-Agent protocol
+		OpenAIResponses
+	}
 
-    private sealed class Conversation
-    {
-        public string SessionId { get; set; } = Guid.NewGuid().ToString("N");
-        public string AgentName { get; set; } = "";
-        public List<ChatMessage> Messages { get; set; } = new();
-    }
+	private sealed class Conversation
+	{
+		public string SessionId { get; set; } = Guid.NewGuid().ToString("N");
+		public string AgentName { get; set; } = "";
+		public List<ChatMessage> Messages { get; set; } = new();
+	}
 
-    protected override async Task OnInitializedAsync()
-    {
-        Logger.LogDebug("Initializing Agent Chat component");
+	protected override async Task OnInitializedAsync()
+	{
+		Logger.LogDebug("Initializing Agent Chat component");
 
-        // Load agents
-        try
-        {
-            availableAgents = await AgentClient.GetAgentsAsync();
-            Logger.LogInformation("Loaded {AgentCount} agents", availableAgents.Count);
-            Logger.LogInformation("Loaded Agents info: {AgentData}", JsonSerializer.Serialize(availableAgents, new JsonSerializerOptions() { WriteIndented = true }));
+		// Load agents
+		try
+		{
+			availableAgents = await AgentClient.GetAgentsAsync();
+			Logger.LogInformation("Loaded {AgentCount} agents", availableAgents.Count);
+			Logger.LogInformation("Loaded Agents info: {AgentData}", JsonSerializer.Serialize(availableAgents, new JsonSerializerOptions() { WriteIndented = true }));
 
-            // Default to first agent and start a conversation
-            if (availableAgents.Any())
-            {
-                selectedAgentName = availableAgents.First().Name!;
-                StartNewConversation();
-            }
-        }
-        catch (Exception ex)
-        {
-            Logger.LogError(ex, "Failed to load agents");
-        }
-        finally
-        {
-            isLoadingAgents = false;
-        }
+			// Default to first agent and start a conversation
+			if (availableAgents.Any())
+			{
+				selectedAgentName = availableAgents.First().Name!;
+				StartNewConversation();
+			}
+		}
+		catch (Exception ex)
+		{
+			Logger.LogError(ex, "Failed to load agents");
+		}
+		finally
+		{
+			isLoadingAgents = false;
+		}
 
-        // Conversations start fresh on page load
-    }
+		// Conversations start fresh on page load
+	}
 
-    private string GetAgentIcon(string agentName) => agentName?.ToLower() switch
-    {
-        "pirate" => "🏴‍☠️",
-        "knights-and-knaves" => "⚔️",
-        _ => "🤖"
-    };
+	private string GetAgentIcon(string agentName) => agentName?.ToLower() switch
+	{
+		"pirate" => "🏴‍☠️",
+		"knights-and-knaves" => "⚔️",
+		_ => "🤖"
+	};
 
-    private string GetAgentDisplayName(string agentName) => agentName?.ToLower() switch
-    {
-        "pirate" => "Pirate",
-        "knights-and-knaves" => "Knights & Knaves",
-        _ => agentName ?? "Agent"
-    };
+	private string GetAgentDisplayName(string agentName) => agentName?.ToLower() switch
+	{
+		"pirate" => "Pirate",
+		"knights-and-knaves" => "Knights & Knaves",
+		_ => agentName ?? "Agent"
+	};
 
-    private void ToggleA2AExpanded() => isA2AExpanded = !isA2AExpanded;
+	private void ToggleA2AExpanded() => isA2AExpanded = !isA2AExpanded;
 
-    private async Task DiscoverAgentCard()
-    {
-        if (string.IsNullOrEmpty(selectedAgentName) || isDiscoveringCard)
-            return;
+	private async Task DiscoverAgentCard()
+	{
+		if (string.IsNullOrEmpty(selectedAgentName) || isDiscoveringCard)
+			return;
 
-        isDiscoveringCard = true;
-        discoveryError = null;
-        discoveredAgentCardJson = null;
-        StateHasChanged();
+		isDiscoveringCard = true;
+		discoveryError = null;
+		discoveredAgentCardJson = null;
+		StateHasChanged();
 
-        try
-        {
-            Logger.LogInformation("Discovering agent card for agent: {AgentName}", selectedAgentName);
-            var agentCard = await A2AActorClient.GetAgentCardAsync(selectedAgentName);
-            if (agentCard is not null)
-            {
-                discoveredAgentCardJson = JsonSerializer.Serialize(agentCard, new JsonSerializerOptions() { WriteIndented = true });
-                Logger.LogInformation("Successfully discovered agent card for {AgentName}: {CardData}", selectedAgentName, discoveredAgentCardJson);
-            }
-            else
-            {
-                discoveryError = "No agent card found for this agent.";
-            }
-        }
-        catch (Exception ex)
-        {
-            Logger.LogError(ex, "Failed to discover agent card for {AgentName}", selectedAgentName);
-            discoveryError = $"Failed to discover agent card: {ex.Message}";
-        }
-        finally
-        {
-            isDiscoveringCard = false;
-            StateHasChanged();
-        }
-    }
+		try
+		{
+			Logger.LogInformation("Discovering agent card for agent: {AgentName}", selectedAgentName);
+			var agentCard = await A2AActorClient.GetAgentCardAsync(selectedAgentName);
+			if (agentCard is not null)
+			{
+				discoveredAgentCardJson = JsonSerializer.Serialize(agentCard, new JsonSerializerOptions() { WriteIndented = true });
+				Logger.LogInformation("Successfully discovered agent card for {AgentName}: {CardData}", selectedAgentName, discoveredAgentCardJson);
+			}
+			else
+			{
+				discoveryError = "No agent card found for this agent.";
+			}
+		}
+		catch (Exception ex)
+		{
+			Logger.LogError(ex, "Failed to discover agent card for {AgentName}", selectedAgentName);
+			discoveryError = $"Failed to discover agent card: {ex.Message}";
+		}
+		finally
+		{
+			isDiscoveringCard = false;
+			StateHasChanged();
+		}
+	}
 
-    private void StartNewConversation()
-    {
-        if (string.IsNullOrEmpty(selectedAgentName))
-            return;
+	private void StartNewConversation()
+	{
+		if (string.IsNullOrEmpty(selectedAgentName))
+			return;
 
-        var newConversation = new Conversation
+		var newConversation = new Conversation
         {
             AgentName = selectedAgentName
         };
 
-        conversations.Add(newConversation);
-        currentConversation = newConversation;
+		conversations.Add(newConversation);
+		currentConversation = newConversation;
 
-        Logger.LogInformation("Started new conversation with agent: {AgentName}, session: {SessionId}", 
-            newConversation.AgentName, newConversation.SessionId);
+		Logger.LogInformation("Started new conversation with agent: {AgentName}, session: {SessionId}", 
+			newConversation.AgentName, newConversation.SessionId);
 
-        StateHasChanged();
-    }
+		StateHasChanged();
+	}
 
-    private void SelectConversation(string sessionId)
-    {
-        currentConversation = conversations.FirstOrDefault(c => c.SessionId == sessionId);
-        if (currentConversation is not null)
-        {
-            selectedAgentName = currentConversation.AgentName;
-            Logger.LogDebug("Selected conversation with session: {SessionId}", sessionId);
-        }
-        StateHasChanged();
-    }
+	private void SelectConversation(string sessionId)
+	{
+		currentConversation = conversations.FirstOrDefault(c => c.SessionId == sessionId);
+		if (currentConversation is not null)
+		{
+			selectedAgentName = currentConversation.AgentName;
+			Logger.LogDebug("Selected conversation with session: {SessionId}", sessionId);
+		}
+		StateHasChanged();
+	}
 
-    private void CloseConversation(string sessionId)
-    {
-        var conversationToRemove = conversations.FirstOrDefault(c => c.SessionId == sessionId);
-        if (conversationToRemove is not null)
-        {
-            conversations.Remove(conversationToRemove);
+	private void CloseConversation(string sessionId)
+	{
+		var conversationToRemove = conversations.FirstOrDefault(c => c.SessionId == sessionId);
+		if (conversationToRemove is not null)
+		{
+			conversations.Remove(conversationToRemove);
 
-            if (currentConversation?.SessionId == sessionId)
-            {
-                currentConversation = conversations.FirstOrDefault();
-                if (currentConversation is not null)
-                {
-                    selectedAgentName = currentConversation.AgentName;
-                }
-            }
+			if (currentConversation?.SessionId == sessionId)
+			{
+				currentConversation = conversations.FirstOrDefault();
+				if (currentConversation is not null)
+				{
+					selectedAgentName = currentConversation.AgentName;
+				}
+			}
 
-            Logger.LogInformation("Closed conversation with session: {SessionId}", sessionId);
-        }
-        StateHasChanged();
-    }
+			Logger.LogInformation("Closed conversation with session: {SessionId}", sessionId);
+		}
+		StateHasChanged();
+	}
 
-    private async Task SendMessage()
-    {
-        if (string.IsNullOrWhiteSpace(currentMessage) || isStreaming || currentConversation is null)
-            return;
+	private async Task SendMessage()
+	{
+		if (string.IsNullOrWhiteSpace(currentMessage) || isStreaming || currentConversation is null)
+			return;
 
-        var userMessage = currentMessage.Trim();
-        currentMessage = "";
+		var userMessage = currentMessage.Trim();
+		currentMessage = "";
 
-        Logger.LogInformation("User sending message: '{UserMessage}' to agent {AgentName} in session {SessionId}",
-            userMessage, currentConversation.AgentName, currentConversation.SessionId);
+		Logger.LogInformation("User sending message: '{UserMessage}' to agent {AgentName} in session {SessionId}",
+			userMessage, currentConversation.AgentName, currentConversation.SessionId);
 
-        // Add user message to chat
-        currentConversation.Messages.Add(new ChatMessage(ChatRole.User, userMessage));
-        StateHasChanged();
-        await ScrollToBottom();
+		// Add user message to chat
+		currentConversation.Messages.Add(new ChatMessage(ChatRole.User, userMessage));
+		StateHasChanged();
+		await ScrollToBottom();
 
-        // Start streaming response
-        isStreaming = true;
-        currentStreamedMessage = "";
-        StateHasChanged();
+		// Start streaming response
+		isStreaming = true;
+		currentStreamedMessage = "";
+		StateHasChanged();
 
-        StringBuilder responseContent = new();
-        var hasReceivedContent = false;
+		StringBuilder responseContent = new();
+		var hasReceivedContent = false;
 
-        using var timeoutCts = new CancellationTokenSource(
+		using var timeoutCts = new CancellationTokenSource(
 #if DEBUG
             TimeSpan.FromSeconds(120)
 #else
-            TimeSpan.FromSeconds(20)
+			TimeSpan.FromSeconds(20)
 #endif
-        );
+		);
 
-        try
-        {
+		try
+		{
 
-            // Select the appropriate client based on protocol
+			// Select the appropriate client based on protocol
+			IAgentClient agentClient = selectedProtocol switch
+			{
+				Protocol.OpenAIResponses => OpenAIResponsesAgentClient,
+				Protocol.A2A or _ => A2AActorClient
+			};
 
-            var agentClient = A2AActorClient;
             var messages = new List<ChatMessage> { new(ChatRole.User, userMessage) };
 
             await foreach (var update in agentClient.RunStreamingAsync(

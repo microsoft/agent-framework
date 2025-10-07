@@ -10,8 +10,9 @@ from typing_extensions import Never
 
 from agent_framework import AgentProtocol, ChatMessage, Role
 
+from ._agent_executor import AgentExecutorRequest, AgentExecutorResponse
 from ._checkpoint import CheckpointStorage
-from ._executor import AgentExecutorRequest, AgentExecutorResponse, Executor, handler
+from ._executor import Executor, handler
 from ._workflow import Workflow, WorkflowBuilder
 from ._workflow_context import WorkflowContext
 
