@@ -195,11 +195,6 @@ class BaseTool(SerializationMixin):
 
     This class provides the foundation for creating custom tools with serialization support.
 
-    Args:
-        name: The name of the tool.
-        description: A description of the tool.
-        additional_properties: Additional properties associated with the tool.
-
     Examples:
         .. code-block:: python
 
@@ -228,7 +223,7 @@ class BaseTool(SerializationMixin):
     ) -> None:
         """Initialize the BaseTool.
 
-        Args:
+        Keyword Args:
             name: The name of the tool.
             description: A description of the tool.
             additional_properties: Additional properties associated with the tool.
@@ -275,7 +270,7 @@ class HostedCodeInterpreterTool(BaseTool):
     ) -> None:
         """Initialize the HostedCodeInterpreterTool.
 
-        Args:
+        Keyword Args:
             inputs: A list of contents that the tool can accept as input. Defaults to None.
                 This should mostly be HostedFileContent or HostedVectorStoreContent.
                 Can also be DataContent, depending on the service used.
@@ -327,7 +322,7 @@ class HostedWebSearchTool(BaseTool):
     ):
         """Initialize a HostedWebSearchTool.
 
-        Args:
+        Keyword Args:
             description: A description of the tool.
             additional_properties: Additional properties associated with the tool
                 (e.g., {"user_location": {"city": "Seattle", "country": "US"}}).
@@ -410,7 +405,7 @@ class HostedMCPTool(BaseTool):
     ) -> None:
         """Create a hosted MCP tool.
 
-        Args:
+        Keyword Args:
             name: The name of the tool.
             description: A description of the tool.
             url: The URL of the tool.
@@ -481,6 +476,7 @@ class HostedFileSearchTool(BaseTool):
 
     def __init__(
         self,
+        *,
         inputs: "Contents | dict[str, Any] | str | list[Contents | dict[str, Any] | str] | None" = None,
         max_results: int | None = None,
         description: str | None = None,
@@ -489,7 +485,7 @@ class HostedFileSearchTool(BaseTool):
     ):
         """Initialize a FileSearchTool.
 
-        Args:
+        Keyword Args:
             inputs: A list of contents that the tool can accept as input. Defaults to None.
                 This should be one or more HostedVectorStoreContents.
                 When supplying a list, it can contain:
@@ -545,25 +541,16 @@ def _default_histogram() -> Histogram:
 
 
 class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
-    """A AITool that is callable as code.
+    """A tool that wraps a Python function to make it callable by AI models.
 
     This class wraps a Python function to make it callable by AI models with automatic
     parameter validation and JSON schema generation.
-
-    Args:
-        name: The name of the function.
-        description: A description of the function.
-        approval_mode: Whether or not approval is required to run this tool.
-            Default is that approval is not needed.
-        additional_properties: Additional properties to set on the function.
-        func: The function to wrap.
-        input_model: The Pydantic model that defines the input parameters for the function.
 
     Examples:
         .. code-block:: python
 
             from typing import Annotated
-            from pydantic import BaseModel
+            from pydantic import BaseModel, Field
             from agent_framework import AIFunction, ai_function
 
 
@@ -611,7 +598,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
     ) -> None:
         """Initialize the AIFunction.
 
-        Args:
+        Keyword Args:
             name: The name of the function.
             description: A description of the function.
             approval_mode: Whether or not approval is required to run this tool.
@@ -644,7 +631,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
     ) -> ReturnT:
         """Run the AI function with the provided arguments as a Pydantic model.
 
-        Args:
+        Keyword Args:
             arguments: A Pydantic model instance containing the arguments for the function.
             kwargs: Keyword arguments to pass to the function, will not be used if ``arguments`` is provided.
 
@@ -952,6 +939,8 @@ async def _auto_invoke_function(
     Args:
         function_call_content: The function call content from the model.
         custom_args: Additional custom arguments to merge with parsed arguments.
+
+    Keyword Args:
         tool_map: A mapping of tool names to AIFunction instances.
         sequence_index: The index of the function call in the sequence.
         request_index: The index of the request iteration.
@@ -1228,7 +1217,7 @@ def _handle_function_calls_response(
             )
 
             # Extract and merge function middleware from chat client with kwargs pipeline
-            extract_and_merge_function_middleware(self, kwargs)
+            extract_and_merge_function_middleware(self, **kwargs)
 
             # Extract the middleware pipeline before calling the underlying function
             # because the underlying function may not preserve it in kwargs
@@ -1360,7 +1349,7 @@ def _handle_function_calls_streaming_response(
             )
 
             # Extract and merge function middleware from chat client with kwargs pipeline
-            extract_and_merge_function_middleware(self, kwargs)
+            extract_and_merge_function_middleware(self, **kwargs)
 
             # Extract the middleware pipeline before calling the underlying function
             # because the underlying function may not preserve it in kwargs

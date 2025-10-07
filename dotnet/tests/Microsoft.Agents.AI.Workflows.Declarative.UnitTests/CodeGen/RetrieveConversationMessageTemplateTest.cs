@@ -10,14 +10,24 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.CodeGen;
 public class RetrieveConversationMessageTemplateTest(ITestOutputHelper output) : WorkflowActionTemplateTest(output)
 {
     [Fact]
-    public void RetrieveMessageLiteral()
+    public void RetrieveConversationVariable()
     {
         // Act, Assert
         this.ExecuteTest(
-            nameof(RetrieveMessageLiteral),
+            nameof(RetrieveConversationVariable),
+            "TestVariable",
+            StringExpression.Variable(PropertyPath.TopicVariable("TestConversation")),
+            StringExpression.Literal("#mid_43"));
+    }
+    [Fact]
+    public void RetrieveMessageVariable()
+    {
+        // Act, Assert
+        this.ExecuteTest(
+            nameof(RetrieveMessageVariable),
             "TestVariable",
             StringExpression.Literal("#cid_3"),
-            StringExpression.Literal("#mid_43"));
+            StringExpression.Variable(PropertyPath.TopicVariable("TestMessage")));
     }
 
     private void ExecuteTest(

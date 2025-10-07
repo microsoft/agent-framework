@@ -1,10 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from copy import copy
 from typing import Any, ClassVar, Union
 
+import openai
 from openai import (
     AsyncOpenAI,
     AsyncStream,
@@ -16,6 +17,7 @@ from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from openai.types.images_response import ImagesResponse
 from openai.types.responses.response import Response
 from openai.types.responses.response_stream_event import ResponseStreamEvent
+from packaging import version
 from pydantic import SecretStr
 
 from .._logging import get_logger
@@ -49,6 +51,29 @@ __all__ = [
 ]
 
 
+def _check_openai_version_for_callable_api_key() -> None:
+    """Check if OpenAI version supports callable API keys.
+
+    Callable API keys require OpenAI >= 1.106.0.
+    If the version is too old, raise a ServiceInitializationError with helpful message.
+    """
+    try:
+        current_version = version.parse(openai.__version__)
+        min_required_version = version.parse("1.106.0")
+
+        if current_version < min_required_version:
+            raise ServiceInitializationError(
+                f"Callable API keys require OpenAI SDK >= 1.106.0, but you have {openai.__version__}. "
+                f"Please upgrade with 'pip install openai>=1.106.0' or provide a string API key instead. "
+                f"Note: If you're using mem0ai, you may need to upgrade to mem0ai>=0.1.118 "
+                f"to allow newer OpenAI versions."
+            )
+    except ServiceInitializationError:
+        raise  # Re-raise our own exception
+    except Exception as e:
+        logger.warning(f"Could not check OpenAI version for callable API key support: {e}")
+
+
 class OpenAISettings(AFBaseSettings):
     """OpenAI environment settings.
 
@@ -57,24 +82,40 @@ class OpenAISettings(AFBaseSettings):
     encoding 'utf-8'. If the settings are not found in the .env file, the settings are ignored;
     however, validation will fail alerting that the settings are missing.
 
-    Args:
-        api_key: OpenAI API key, see https://platform.openai.com/account/api-keys
-            (Env var OPENAI_API_KEY)
+    Keyword Args:
+        api_key: OpenAI API key, see https://platform.openai.com/account/api-keys.
+            Can be set via environment variable OPENAI_API_KEY.
         base_url: The base URL for the OpenAI API.
-            (Env var OPENAI_BASE_URL)
+            Can be set via environment variable OPENAI_BASE_URL.
         org_id: This is usually optional unless your account belongs to multiple organizations.
-            (Env var OPENAI_ORG_ID)
+            Can be set via environment variable OPENAI_ORG_ID.
         chat_model_id: The OpenAI chat model ID to use, for example, gpt-3.5-turbo or gpt-4.
-            (Env var OPENAI_CHAT_MODEL_ID)
+            Can be set via environment variable OPENAI_CHAT_MODEL_ID.
         responses_model_id: The OpenAI responses model ID to use, for example, gpt-4o or o1.
-            (Env var OPENAI_RESPONSES_MODEL_ID)
+            Can be set via environment variable OPENAI_RESPONSES_MODEL_ID.
         env_file_path: The path to the .env file to load settings from.
         env_file_encoding: The encoding of the .env file, defaults to 'utf-8'.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework.openai import OpenAISettings
+
+            # Using environment variables
+            # Set OPENAI_API_KEY=sk-...
+            # Set OPENAI_CHAT_MODEL_ID=gpt-4
+            settings = OpenAISettings()
+
+            # Or passing parameters directly
+            settings = OpenAISettings(api_key="sk-...", chat_model_id="gpt-4")
+
+            # Or loading from a .env file
+            settings = OpenAISettings(env_file_path="path/to/.env")
     """
 
     env_prefix: ClassVar[str] = "OPENAI_"
 
-    api_key: SecretStr | None = None
+    api_key: SecretStr | Callable[[], str | Awaitable[str]] | None = None
     base_url: str | None = None
     org_id: str | None = None
     chat_model_id: str | None = None
@@ -89,7 +130,7 @@ class OpenAIBase(SerializationMixin):
     def __init__(self, *, client: AsyncOpenAI, model_id: str, **kwargs: Any) -> None:
         """Initialize OpenAIBase.
 
-        Args:
+        Keyword Args:
             client: The AsyncOpenAI client instance.
             model_id: The AI model ID to use (non-empty, whitespace stripped).
             **kwargs: Additional keyword arguments.
@@ -121,6 +162,28 @@ class OpenAIBase(SerializationMixin):
         for key, value in kwargs.items():
             setattr(self, key, value)
 
+    def _get_api_key(
+        self, api_key: str | SecretStr | Callable[[], str | Awaitable[str]] | None
+    ) -> str | Callable[[], str | Awaitable[str]] | None:
+        """Get the appropriate API key value for client initialization.
+
+        Args:
+            api_key: The API key parameter which can be a string, SecretStr, callable, or None.
+
+        Returns:
+            For callable API keys: returns the callable directly.
+            For SecretStr API keys: returns the string value.
+            For string/None API keys: returns as-is.
+        """
+        if isinstance(api_key, SecretStr):
+            return api_key.get_secret_value()
+
+        # Check version compatibility for callable API keys
+        if callable(api_key):
+            _check_openai_version_for_callable_api_key()
+
+        return api_key  # Pass callable, string, or None directly to OpenAI SDK
+
 
 class OpenAIConfigMixin(OpenAIBase):
     """Internal class for configuring a connection to an OpenAI service."""
@@ -130,7 +193,7 @@ class OpenAIConfigMixin(OpenAIBase):
     def __init__(
         self,
         model_id: str,
-        api_key: str | None = None,
+        api_key: str | Callable[[], str | Awaitable[str]] | None = None,
         org_id: str | None = None,
         default_headers: Mapping[str, str] | None = None,
         client: AsyncOpenAI | None = None,
@@ -146,7 +209,7 @@ class OpenAIConfigMixin(OpenAIBase):
         Args:
             model_id: OpenAI model identifier. Must be non-empty.
                 Default to a preset value.
-            api_key: OpenAI API key for authentication.
+            api_key: OpenAI API key for authentication, or a callable that returns an API key.
                 Must be non-empty. (Optional)
             org_id: OpenAI organization ID. This is optional
                 unless the account belongs to multiple organizations.
@@ -166,10 +229,13 @@ class OpenAIConfigMixin(OpenAIBase):
             merged_headers.update(APP_INFO)
             merged_headers = prepend_agent_framework_to_user_agent(merged_headers)
 
+        # Handle callable API key using base class method
+        api_key_value = self._get_api_key(api_key)
+
         if not client:
             if not api_key:
                 raise ServiceInitializationError("Please provide an api_key")
-            args: dict[str, Any] = {"api_key": api_key, "default_headers": merged_headers}
+            args: dict[str, Any] = {"api_key": api_key_value, "default_headers": merged_headers}
             if org_id:
                 args["organization"] = org_id
             if base_url:
