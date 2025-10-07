@@ -79,7 +79,7 @@ async Task AFConcurrentAgentWorkflow()
     var spanishAgent = GetAFTranslationAgent("Spanish", client);
     var concurrentAgentWorkflow = AgentWorkflowBuilder.BuildConcurrent([frenchAgent, spanishAgent]);
 
-    StreamingRun run = await InProcessExecution.StreamAsync(concurrentAgentWorkflow, "Hello, world!");
+    await using StreamingRun run = await InProcessExecution.StreamAsync(concurrentAgentWorkflow, "Hello, world!");
     await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
 
     string? lastExecutorId = null;
@@ -102,9 +102,6 @@ async Task AFConcurrentAgentWorkflow()
             Console.Write(e.Update.Text);
         }
     }
-
-    // Clean up the run
-    await run.DisposeAsync();
 }
 
 ChatClientAgent GetAFTranslationAgent(string targetLanguage, IChatClient chatClient) =>

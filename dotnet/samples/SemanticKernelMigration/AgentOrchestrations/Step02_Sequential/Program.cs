@@ -82,7 +82,7 @@ async Task AFSequentialAgentWorkflow()
     var sequentialAgentWorkflow = AgentWorkflowBuilder.BuildSequential(
         [frenchAgent, spanishAgent, englishAgent]);
 
-    StreamingRun run = await InProcessExecution.StreamAsync(sequentialAgentWorkflow, "Hello, world!");
+    await using StreamingRun run = await InProcessExecution.StreamAsync(sequentialAgentWorkflow, "Hello, world!");
     await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
 
     string? lastExecutorId = null;
@@ -105,9 +105,6 @@ async Task AFSequentialAgentWorkflow()
             Console.Write(e.Update.Text);
         }
     }
-
-    // Clean up the run
-    await run.DisposeAsync();
 }
 
 ChatClientAgent GetAFTranslationAgent(string targetLanguage, IChatClient chatClient) =>

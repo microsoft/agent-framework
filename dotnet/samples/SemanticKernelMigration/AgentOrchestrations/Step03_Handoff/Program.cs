@@ -207,7 +207,7 @@ async Task AFHandoffAgentWorkflow()
         Console.WriteLine($"User: {query}");
         messages.Add(new(ChatRole.User, query));
 
-        var run = await InProcessExecution.StreamAsync(handoffAgentWorkflow, messages);
+        await using var run = await InProcessExecution.StreamAsync(handoffAgentWorkflow, messages);
         await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
 
         string? lastExecutorId = null;
@@ -242,9 +242,6 @@ async Task AFHandoffAgentWorkflow()
                 messages.AddRange(output.As<List<ChatMessage>>()!);
             }
         }
-
-        // Clean up the run
-        await run.DisposeAsync();
     }
 }
 # endregion
