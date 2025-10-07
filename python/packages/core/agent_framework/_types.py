@@ -3177,7 +3177,8 @@ class ChatOptions(SerializationMixin):
         # Preserve response_format from other if it exists, otherwise keep self's
         if other.response_format is not None:
             combined.response_format = other.response_format
-        combined.instructions = "\n".join([combined.instructions or "", other.instructions or ""])
+        if other.instructions:
+            combined.instructions = "\n".join([combined.instructions or "", other.instructions or ""])
 
         combined.logit_bias = (
             {**(combined.logit_bias or {}), **logit_bias} if logit_bias or combined.logit_bias else None

@@ -292,39 +292,10 @@ def merge_chat_options(
     if base_chat_options is not None and not isinstance(base_chat_options, ChatOptions):
         raise TypeError("chat_options must be an instance of ChatOptions")
 
-    if base_chat_options is not None:
-        # Combine tools from both sources
-        base_tools = base_chat_options.tools or []
-        combined_tools = [*base_tools, *(tools or [])] if tools else base_tools
+    if base_chat_options is None:
+        base_chat_options = ChatOptions()
 
-        # Create new chat_options, using direct parameters when provided, otherwise fall back to base
-        return ChatOptions(
-            model_id=model_id if model_id is not None else base_chat_options.model_id,
-            frequency_penalty=(
-                frequency_penalty if frequency_penalty is not None else base_chat_options.frequency_penalty
-            ),
-            logit_bias=logit_bias if logit_bias is not None else base_chat_options.logit_bias,
-            max_tokens=max_tokens if max_tokens is not None else base_chat_options.max_tokens,
-            metadata=metadata if metadata is not None else base_chat_options.metadata,
-            presence_penalty=(presence_penalty if presence_penalty is not None else base_chat_options.presence_penalty),
-            response_format=(response_format if response_format is not None else base_chat_options.response_format),
-            seed=seed if seed is not None else base_chat_options.seed,
-            stop=stop if stop is not None else base_chat_options.stop,
-            store=store if store is not None else base_chat_options.store,
-            temperature=temperature if temperature is not None else base_chat_options.temperature,
-            top_p=top_p if top_p is not None else base_chat_options.top_p,
-            tool_choice=(
-                tool_choice if (tool_choice is not None and tool_choice != "auto") else base_chat_options.tool_choice  # type: ignore[arg-type]
-            ),
-            tools=combined_tools or None,
-            user=user if user is not None else base_chat_options.user,
-            additional_properties=(
-                additional_properties if additional_properties is not None else base_chat_options.additional_properties
-            ),
-            conversation_id=base_chat_options.conversation_id,
-        )
-    # No base options, create from direct parameters only
-    return ChatOptions(
+    return base_chat_options & ChatOptions(
         model_id=model_id,
         frequency_penalty=frequency_penalty,
         logit_bias=logit_bias,

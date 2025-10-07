@@ -1537,11 +1537,9 @@ async def test_openai_responses_client_agent_chat_options_run_level() -> None:
         instructions="You are a helpful assistant.",
     ) as agent:
         response = await agent.run(
-            "Provide a brief, helpful response.",
-            max_tokens=100,
-            temperature=0.7,
-            top_p=0.9,
-            seed=123,
+            "Provide a brief, helpful response about why the sky blue is.",
+            max_tokens=600,
+            model_id="gpt-4o",
             user="comprehensive-test-user",
             tools=[get_weather],
             tool_choice="auto",
