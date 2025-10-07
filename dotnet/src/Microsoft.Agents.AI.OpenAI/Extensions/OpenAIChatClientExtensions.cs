@@ -31,9 +31,9 @@ public static class OpenAIChatClientExtensions
     /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <param name="loggerFactory">Optional logger factory for enabling logging within the agent.</param>
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
-    /// <returns>An <see cref="AIAgent"/> instance backed by the OpenAI Chat Completion service.</returns>
+    /// <returns>An <see cref="ChatClientAgent"/> instance backed by the OpenAI Chat Completion service.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> is <see langword="null"/>.</exception>
-    public static AIAgent CreateAIAgent(
+    public static ChatClientAgent CreateAIAgent(
         this ChatClient client,
         string? instructions = null,
         string? name = null,
@@ -65,9 +65,9 @@ public static class OpenAIChatClientExtensions
     /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <param name="loggerFactory">Optional logger factory for enabling logging within the agent.</param>
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
-    /// <returns>An <see cref="AIAgent"/> instance backed by the OpenAI Chat Completion service.</returns>
+    /// <returns>An <see cref="ChatClientAgent"/> instance backed by the OpenAI Chat Completion service.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> or <paramref name="options"/> is <see langword="null"/>.</exception>
-    public static AIAgent CreateAIAgent(
+    public static ChatClientAgent CreateAIAgent(
         this ChatClient client,
         ChatClientAgentOptions options,
         Func<IChatClient, IChatClient>? clientFactory = null,
