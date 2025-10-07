@@ -78,7 +78,7 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
 
             if (this.EmitResultEvent)
             {
-                await context.SendResultMessageAsync(this.Id, result, cancellationToken: cancellationToken).ConfigureAwait(false);
+                await context.SendResultMessageAsync(this.Id, result, cancellationToken).ConfigureAwait(false);
             }
         }
         catch (DeclarativeActionException exception)

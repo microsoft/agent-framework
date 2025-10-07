@@ -58,7 +58,7 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
             }
             else
             {
-                await this.Source.QueueClearScopeAsync(scopeName, cancellationToken: cancellationToken).ConfigureAwait(false);
+                await this.Source.QueueClearScopeAsync(scopeName, cancellationToken).ConfigureAwait(false);
             }
 
             this.State.Bind();
