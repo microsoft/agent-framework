@@ -14,9 +14,12 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.CodeGen;
 public sealed class DeclarativeEjectionTest(ITestOutputHelper output) : WorkflowTest(output)
 {
     [Theory]
+    [InlineData("AddConversationMessage.yaml")]
     [InlineData("ClearAllVariables.yaml")]
+    [InlineData("CopyConversationMessages.yaml")]
     [InlineData("Condition.yaml")]
     [InlineData("ConditionElse.yaml")]
+    [InlineData("CreateConversation.yaml")]
     [InlineData("EditTable.yaml")]
     [InlineData("EditTableV2.yaml")]
     [InlineData("EndConversation.yaml")]
@@ -28,6 +31,8 @@ public sealed class DeclarativeEjectionTest(ITestOutputHelper output) : Workflow
     [InlineData("LoopEach.yaml")]
     [InlineData("ParseValue.yaml")]
     [InlineData("ResetVariable.yaml")]
+    [InlineData("RetrieveConversationMessage.yaml")]
+    [InlineData("RetrieveConversationMessages.yaml")]
     [InlineData("SendActivity.yaml")]
     [InlineData("SetVariable.yaml")]
     [InlineData("SetTextVariable.yaml")]
