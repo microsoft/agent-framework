@@ -34,7 +34,7 @@ Console.WriteLine($"Age: {response.Result.Age}");
 Console.WriteLine($"Occupation: {response.Result.Occupation}");
 
 // Create the ChatClientAgent with the specified name, instructions, and expected structured output the agent should produce.
-agent = chatClient.CreateAIAgent(new ChatClientAgentOptions(name: "HelpfulAssistant", instructions: "You are a helpful assistant.")
+ChatClientAgent agentWithPersonInfo = chatClient.CreateAIAgent(new ChatClientAgentOptions(name: "HelpfulAssistant", instructions: "You are a helpful assistant.")
 {
     ChatOptions = new()
     {
@@ -43,7 +43,7 @@ agent = chatClient.CreateAIAgent(new ChatClientAgentOptions(name: "HelpfulAssist
 });
 
 // Invoke the agent with some unstructured input while streaming, to extract the structured information from.
-var updates = agent.RunStreamingAsync("Please provide information about John Smith, who is a 35-year-old software engineer.");
+var updates = agentWithPersonInfo.RunStreamingAsync("Please provide information about John Smith, who is a 35-year-old software engineer.");
 
 // Assemble all the parts of the streamed output, since we can only deserialize once we have the full json,
 // then deserialize the response into the PersonInfo class.
