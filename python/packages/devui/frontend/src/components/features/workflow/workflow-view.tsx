@@ -276,7 +276,6 @@ export function WorkflowView({
   const [errorModalOpen, setErrorModalOpen] = useState(false);
   const resultContentRef = useRef<HTMLDivElement>(null);
   const errorContentRef = useRef<HTMLDivElement>(null);
-  const [isResultScrollable, setIsResultScrollable] = useState(false);
   const [isErrorScrollable, setIsErrorScrollable] = useState(false);
 
   // Track per-executor outputs and workflow metadata
@@ -324,14 +323,25 @@ export function WorkflowView({
     localStorage.setItem("workflowLayoutDirection", layoutDirection);
   }, [layoutDirection]);
 
-  // Check if result/error content is scrollable
+  // Auto-scroll output panel when new content arrives (if user is at bottom)
   useEffect(() => {
-    const checkScrollable = () => {
+    const handleAutoScroll = () => {
       if (resultContentRef.current) {
-        const isScrollable =
-          resultContentRef.current.scrollHeight >
-          resultContentRef.current.clientHeight;
-        setIsResultScrollable(isScrollable);
+        const container = resultContentRef.current;
+        const isScrollable = container.scrollHeight > container.clientHeight;
+
+        // Check if user is near the bottom (within 100px threshold)
+        const scrollBottom =
+          container.scrollHeight - container.scrollTop - container.clientHeight;
+        const isNearBottom = scrollBottom < 100;
+
+        // Auto-scroll smoothly if user is near bottom and content is streaming
+        if (isStreaming && isNearBottom && isScrollable) {
+          container.scrollTo({
+            top: container.scrollHeight,
+            behavior: "smooth",
+          });
+        }
       }
       if (errorContentRef.current) {
         const isScrollable =
@@ -341,11 +351,11 @@ export function WorkflowView({
       }
     };
 
-    checkScrollable();
+    handleAutoScroll();
     // Recheck on window resize
-    window.addEventListener("resize", checkScrollable);
-    return () => window.removeEventListener("resize", checkScrollable);
-  }, [workflowResult, workflowError, bottomPanelHeight]);
+    window.addEventListener("resize", handleAutoScroll);
+    return () => window.removeEventListener("resize", handleAutoScroll);
+  }, [workflowResult, workflowError, bottomPanelHeight, isStreaming]);
 
   // View option handlers
   const toggleViewOption = (key: keyof typeof viewOptions) => {
@@ -366,6 +376,7 @@ export function WorkflowView({
         setWorkflowInfo(info);
       } catch (error) {
         setWorkflowInfo(null);
+        console.error("Error loading workflow info:", error);
       } finally {
         setWorkflowLoading(false);
       }
@@ -390,11 +401,11 @@ export function WorkflowView({
 
     // Update result display to show selected executor's output
     if (executorOutputs.current[executorId]) {
+      // Show per-executor output if available
       setWorkflowResult(executorOutputs.current[executorId]);
-    } else {
-      // Clear stale text if selected executor has no output
-      setWorkflowResult("");
     }
+    // Note: For executors without output, we don't clear workflowResult
+    // This preserves the workflow's final output for display
   };
 
   // Extract workflow events from OpenAI events for executor tracking
@@ -536,7 +547,10 @@ export function WorkflowView({
             };
 
             // Track when executor starts (to know which executor is streaming)
-            if (data.event_type === "ExecutorInvokedEvent" && data.executor_id) {
+            if (
+              data.event_type === "ExecutorInvokedEvent" &&
+              data.executor_id
+            ) {
               currentStreamingExecutor.current = data.executor_id;
               // Initialize output for this executor if not exists
               if (!executorOutputs.current[data.executor_id]) {
@@ -557,7 +571,8 @@ export function WorkflowView({
               } else {
                 // Store object data and display as formatted JSON
                 workflowMetadata.current = data.data as Record<string, unknown>;
-                setWorkflowResult(JSON.stringify(data.data, null, 2));
+                const jsonOutput = JSON.stringify(data.data, null, 2);
+                setWorkflowResult(jsonOutput);
               }
               currentStreamingExecutor.current = null;
             }
@@ -582,9 +597,14 @@ export function WorkflowView({
               executorOutputs.current[executorId] += openAIEvent.delta;
 
               // Update display based on what should be shown
-              if (selectedExecutor && executorOutputs.current[selectedExecutor.executorId]) {
+              if (
+                selectedExecutor &&
+                executorOutputs.current[selectedExecutor.executorId]
+              ) {
                 // If user has selected an executor, show that executor's output
-                setWorkflowResult(executorOutputs.current[selectedExecutor.executorId]);
+                setWorkflowResult(
+                  executorOutputs.current[selectedExecutor.executorId]
+                );
               } else {
                 // Otherwise show current streaming executor's output
                 setWorkflowResult(executorOutputs.current[executorId]);
@@ -930,102 +950,102 @@ export function WorkflowView({
                 </div>
               )}
 
-              {/* Enhanced Result Display */}
-              {workflowResult && (() => {
-                // Determine the panel state and styling
-                const isStreamingState = isStreaming && currentStreamingExecutor.current;
-                const isSelectedExecutor = !isStreaming && selectedExecutor;
+              {/* Output Panel - displays workflow execution results and streaming output */}
+              {workflowResult &&
+                (() => {
+                  // Determine the panel state and styling
+                  const isStreamingState =
+                    isStreaming && currentStreamingExecutor.current;
+                  const isSelectedExecutor = !isStreaming && selectedExecutor;
 
-                // Define theme based on state
-                const theme = isStreamingState
-                  ? {
-                      border: "border-blue-300 dark:border-blue-700/50",
-                      bg: "bg-blue-50/50 dark:bg-blue-950/20",
-                      headerBg: "bg-blue-100/70 dark:bg-blue-900/30",
-                      text: "text-blue-700 dark:text-blue-400",
-                      icon: <Loader2 className="w-4 h-4 text-blue-600 dark:text-blue-500 animate-spin" />,
-                      buttonBg: "bg-blue-100 dark:bg-blue-900/50",
-                      buttonBorder: "border-blue-300 dark:border-blue-700",
-                      buttonText: "text-blue-700 dark:text-blue-400",
-                      buttonHover: "hover:bg-blue-200 dark:hover:bg-blue-800/50",
-                      scrollBg: "bg-blue-600/70 dark:bg-blue-500/70",
-                      scrollText: "text-white",
-                    }
-                  : isSelectedExecutor
-                  ? {
-                      border: "border-blue-300 dark:border-blue-600",
-                      bg: "bg-blue-50 dark:bg-blue-950/50",
-                      headerBg: "bg-blue-100 dark:bg-blue-900/50",
-                      text: "text-blue-700 dark:text-blue-300",
-                      icon: <Info className="w-4 h-4 text-blue-600 dark:text-blue-400" />,
-                      buttonBg: "bg-blue-100 dark:bg-blue-900",
-                      buttonBorder: "border-blue-400 dark:border-blue-600",
-                      buttonText: "text-blue-700 dark:text-blue-300",
-                      buttonHover: "hover:bg-blue-200 dark:hover:bg-blue-800",
-                      scrollBg: "bg-blue-600/80 dark:bg-blue-400/80",
-                      scrollText: "text-white dark:text-blue-950",
-                    }
-                  : {
-                      border: "border-emerald-300 dark:border-emerald-600",
-                      bg: "bg-emerald-50 dark:bg-emerald-950/50",
-                      headerBg: "bg-emerald-100 dark:bg-emerald-900/50",
-                      text: "text-emerald-700 dark:text-emerald-300",
-                      icon: <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />,
-                      buttonBg: "bg-emerald-100 dark:bg-emerald-900",
-                      buttonBorder: "border-emerald-400 dark:border-emerald-600",
-                      buttonText: "text-emerald-700 dark:text-emerald-300",
-                      buttonHover: "hover:bg-emerald-200 dark:hover:bg-emerald-800",
-                      scrollBg: "bg-emerald-600/80 dark:bg-emerald-400/80",
-                      scrollText: "text-white dark:text-emerald-950",
-                    };
+                  // Define theme based on state - use colors sparingly (borders/icons only, not text)
+                  const theme = isStreamingState
+                    ? {
+                        // Purple theme when streaming (matches running node color #643FB2)
+                        border: "border-[#643FB2]/40 dark:border-[#8B5CF6]/40",
+                        bg: "bg-[#643FB2]/5 dark:bg-[#8B5CF6]/5",
+                        headerBg: "bg-[#643FB2]/10 dark:bg-[#8B5CF6]/10",
+                        icon: (
+                          <Loader2 className="w-4 h-4 text-[#643FB2] dark:text-[#8B5CF6] animate-spin" />
+                        ),
+                        buttonBg: "bg-background dark:bg-background",
+                        buttonBorder:
+                          "border-[#643FB2]/30 dark:border-[#8B5CF6]/30",
+                        buttonHover:
+                          "hover:bg-[#643FB2]/10 dark:hover:bg-[#8B5CF6]/10",
+                      }
+                    : isSelectedExecutor
+                    ? {
+                        // Blue theme when executor selected (matches selected node ring blue-500)
+                        border: "border-blue-500/40 dark:border-blue-500/40",
+                        bg: "bg-blue-500/5 dark:bg-blue-500/5",
+                        headerBg: "bg-blue-500/10 dark:bg-blue-500/10",
+                        icon: (
+                          <Info className="w-4 h-4 text-blue-500 dark:text-blue-400" />
+                        ),
+                        buttonBg: "bg-background dark:bg-background",
+                        buttonBorder:
+                          "border-blue-500/30 dark:border-blue-500/30",
+                        buttonHover:
+                          "hover:bg-blue-500/10 dark:hover:bg-blue-500/10",
+                      }
+                    : {
+                        // Green theme when workflow complete (matches completed node green-500)
+                        border: "border-green-500/40 dark:border-green-400/40",
+                        bg: "bg-green-500/5 dark:bg-green-400/5",
+                        headerBg: "bg-green-500/10 dark:bg-green-400/10",
+                        icon: (
+                          <CheckCircle className="w-4 h-4 text-green-500 dark:text-green-400" />
+                        ),
+                        buttonBg: "bg-background dark:bg-background",
+                        buttonBorder:
+                          "border-green-500/30 dark:border-green-400/30",
+                        buttonHover:
+                          "hover:bg-green-500/10 dark:hover:bg-green-400/10",
+                      };
 
-                return (
-                  <div className={`border-2 ${theme.border} rounded ${theme.bg} shadow flex-1 flex flex-col min-w-0 relative`}>
-                    <div className={`border-b ${theme.border} px-4 py-3 ${theme.headerBg} rounded-t flex-shrink-0`}>
-                      <div className="flex items-center gap-3">
-                        {theme.icon}
-                        <h4 className={`text-sm font-semibold ${theme.text}`}>
-                          {isStreamingState
-                            ? `Output: ${currentStreamingExecutor.current}`
-                            : isSelectedExecutor
-                            ? `Output: ${selectedExecutor.executorId}`
-                            : "Workflow Complete"}
-                        </h4>
-                      </div>
-                    </div>
+                  return (
                     <div
-                      ref={resultContentRef}
-                      className="p-4 overflow-auto flex-1 min-h-0 relative"
+                      className={`border-2 ${theme.border} rounded ${theme.bg} shadow flex-1 flex flex-col min-w-0 relative`}
                     >
-                      <div className={`${theme.text} whitespace-pre-wrap break-words text-sm pb-12`}>
-                        {workflowResult}
-                      </div>
-                    </div>
-                    {/* Sticky "View Full" button - always visible at bottom-right */}
-                    <div className="absolute bottom-3 right-3 pointer-events-auto">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setResultModalOpen(true)}
-                        className={`h-8 px-3 ${theme.buttonBg} ${theme.buttonBorder} ${theme.buttonText} ${theme.buttonHover} shadow-md`}
-                        title="Expand to full view"
+                      <div
+                        className={`border-b ${theme.border} px-4 py-3 ${theme.headerBg} rounded-t flex-shrink-0`}
                       >
-                        <Maximize2 className="w-3.5 h-3.5 mr-1.5" />
-                        View Full
-                      </Button>
-                    </div>
-                    {/* Scroll indicator - only show when scrollable */}
-                    {isResultScrollable && (
-                      <div className="absolute bottom-14 left-1/2 transform -translate-x-1/2 pointer-events-none">
-                        <div className={`${theme.scrollBg} ${theme.scrollText} px-2 py-1 rounded-full flex items-center gap-1 text-xs animate-bounce`}>
-                          <ChevronsDown className="w-3 h-3" />
-                          <span>Scroll for more</span>
+                        <div className="flex items-center gap-3">
+                          {theme.icon}
+                          <h4 className="text-sm font-semibold text-foreground">
+                            {isStreamingState
+                              ? `Output: ${currentStreamingExecutor.current}`
+                              : isSelectedExecutor
+                              ? `Output: ${selectedExecutor.executorId}`
+                              : "Workflow Complete"}
+                          </h4>
                         </div>
                       </div>
-                    )}
-                  </div>
-                );
-              })()}
+                      <div
+                        ref={resultContentRef}
+                        className="p-4 overflow-auto flex-1 min-h-0 relative"
+                      >
+                        <div className="text-foreground whitespace-pre-wrap break-words text-sm pb-12">
+                          {workflowResult}
+                        </div>
+                      </div>
+                      {/* Sticky "View Full" button - always visible at bottom-right */}
+                      <div className="absolute bottom-3 right-3 pointer-events-auto">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setResultModalOpen(true)}
+                          className={`h-8 px-3 ${theme.buttonBg} ${theme.buttonBorder} ${theme.buttonHover} shadow-md`}
+                          title="Expand to full view"
+                        >
+                          <Maximize2 className="w-3.5 h-3.5 mr-1.5" />
+                          View Full
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })()}
 
               {/* Enhanced Error Display */}
               {workflowError && (
@@ -1073,7 +1093,7 @@ export function WorkflowView({
             </>
           ) : (
             <div className="h-full flex items-center justify-center text-muted-foreground">
-              <p>Select a workflow to see execution details</p>
+              <p>Select a workflow node (executor) to see execution details</p>
             </div>
           )}
         </div>
@@ -1100,28 +1120,34 @@ export function WorkflowView({
           <div className="px-6 pb-6 overflow-y-auto flex-1">
             <div className="space-y-4">
               {/* Show per-executor outputs if we have multiple executors with output */}
-              {Object.keys(executorOutputs.current).length > 0 ? (
-                Object.entries(executorOutputs.current).map(([executorId, output]) => (
-                  output && (
-                    <div key={executorId} className="border-2 border-emerald-300 dark:border-emerald-600 rounded overflow-hidden">
-                      <div className="bg-emerald-100 dark:bg-emerald-900/50 px-4 py-2 border-b border-emerald-300 dark:border-emerald-600">
-                        <h5 className="text-sm font-semibold text-emerald-800 dark:text-emerald-200">
-                          {executorId}
-                        </h5>
-                      </div>
-                      <div className="bg-emerald-50 dark:bg-emerald-950/50 p-4">
-                        <div className="text-emerald-700 dark:text-emerald-300 whitespace-pre-wrap break-words text-sm font-mono">
-                          {output}
+              {Object.values(executorOutputs.current).some(
+                (output) => output && output.trim().length > 0
+              ) ? (
+                Object.entries(executorOutputs.current).map(
+                  ([executorId, output]) =>
+                    output && (
+                      <div
+                        key={executorId}
+                        className="border-2 border-emerald-300 dark:border-emerald-600 rounded overflow-hidden"
+                      >
+                        <div className="bg-emerald-100 dark:bg-emerald-900/50 px-4 py-2 border-b border-emerald-300 dark:border-emerald-600">
+                          <h5 className="text-sm font-semibold text-emerald-800 dark:text-emerald-200">
+                            {executorId}
+                          </h5>
+                        </div>
+                        <div className="bg-emerald-50 dark:bg-emerald-950/50 p-4">
+                          <div className="text-emerald-700 dark:text-emerald-300 whitespace-pre-wrap break-words text-sm font-mono">
+                            {output}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  )
-                ))
+                    )
+                )
               ) : (
                 /* Show workflow result for simple workflows without per-executor tracking */
                 <div className="bg-emerald-50 dark:bg-emerald-950/50 rounded border-2 border-emerald-300 dark:border-emerald-600 p-6">
                   <div className="text-emerald-700 dark:text-emerald-300 whitespace-pre-wrap break-words text-sm font-mono">
-                    {workflowResult}
+                    {workflowResult || "No output available"}
                   </div>
                 </div>
               )}

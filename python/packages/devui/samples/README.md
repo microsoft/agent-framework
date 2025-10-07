@@ -35,4 +35,4 @@ devui
 
 ## Learn More
 
-See the [DevUI samples README](../../samples/getting_started/devui/README.md) for detailed documentation.
+See the [DevUI samples README](../../../samples/getting_started/devui/README.md) for detailed documentation.

@@ -138,9 +138,9 @@ curl http://localhost:8080/v1/entities
 
 ## Learn More
 
-- [DevUI Documentation](../../packages/devui/README.md)
+- [DevUI Documentation](../../../packages/devui/README.md)
 - [Agent Framework Documentation](https://docs.microsoft.com/agent-framework)
-- [Sample Guidelines](../SAMPLE_GUIDELINES.md)
+- [Sample Guidelines](../../SAMPLE_GUIDELINES.md)
 
 ## Troubleshooting
 
