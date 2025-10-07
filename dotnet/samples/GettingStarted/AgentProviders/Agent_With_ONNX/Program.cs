@@ -4,6 +4,7 @@
 // WARNING: ONNX doesn't support function calling, so any function tools passed to the agent will be ignored.
 
 using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
 using Microsoft.ML.OnnxRuntimeGenAI;
 
 // E.g. C:\repos\Phi-4-mini-instruct-onnx\cpu_and_mobile\cpu-int4-rtn-block-32-acc-level-4
@@ -14,7 +15,7 @@ const string JokerInstructions = "You are good at telling jokes.";
 
 // Get a chat client for ONNX and use it to construct an AIAgent.
 using OnnxRuntimeGenAIChatClient chatClient = new(modelPath);
-AIAgent agent = new ChatClientAgent(chatClient, JokerInstructions, JokerName);
+AIAgent agent = chatClient.CreateAIAgent(JokerInstructions, JokerName);
 
 // Invoke the agent and output the text result.
 Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate."));
