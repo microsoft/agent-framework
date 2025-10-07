@@ -285,7 +285,7 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_create_new(
     azure_ai_settings = AzureAISettings(model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"])
     chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, azure_ai_settings=azure_ai_settings)
 
-    agent_id = await chat_client._get_agent_id_or_create()  # type: ignore
+    agent_id = await chat_client._get_agent_id_or_create(run_options={"model": azure_ai_settings.model_deployment_name})  # type: ignore
 
     assert agent_id == "test-agent-id"
     assert chat_client._should_delete_agent  # type: ignore
@@ -577,6 +577,7 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_with_run_options(
         "tools": [{"type": "function", "function": {"name": "test_tool"}}],
         "instructions": "Test instructions",
         "response_format": {"type": "json_object"},
+        "model": azure_ai_settings.model_deployment_name,
     }
 
     agent_id = await chat_client._get_agent_id_or_create(run_options)  # type: ignore
@@ -1277,7 +1278,7 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_with_agent_name(
     # Ensure agent_name is None to test the default
     chat_client.agent_name = None  # type: ignore
 
-    agent_id = await chat_client._get_agent_id_or_create()  # type: ignore
+    agent_id = await chat_client._get_agent_id_or_create(run_options={"model": azure_ai_settings.model_deployment_name})  # type: ignore
 
     assert agent_id == "test-agent-id"
     # Verify create_agent was called with default "UnnamedAgent"
@@ -1294,7 +1295,7 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_with_response_format(
     chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, azure_ai_settings=azure_ai_settings)
 
     # Test with response_format in run_options
-    run_options = {"response_format": {"type": "json_object"}}
+    run_options = {"response_format": {"type": "json_object"}, "model": azure_ai_settings.model_deployment_name}
 
     agent_id = await chat_client._get_agent_id_or_create(run_options)  # type: ignore
 
@@ -1313,7 +1314,10 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_with_tool_resources(
     chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, azure_ai_settings=azure_ai_settings)
 
     # Test with tool_resources in run_options
-    run_options = {"tool_resources": {"vector_store_ids": ["vs-123"]}}
+    run_options = {
+        "tool_resources": {"vector_store_ids": ["vs-123"]},
+        "model": azure_ai_settings.model_deployment_name,
+    }
 
     agent_id = await chat_client._get_agent_id_or_create(run_options)  # type: ignore
 
