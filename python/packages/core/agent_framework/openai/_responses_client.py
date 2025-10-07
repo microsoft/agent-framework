@@ -335,10 +335,10 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
             options_dict["previous_response_id"] = chat_options.conversation_id
         if "model" not in options_dict:
             options_dict["model"] = self.model_id
-        
+
         # Include additional properties
         options_dict.update(chat_options.additional_properties)
-        
+
         return options_dict
 
     def _prepare_chat_messages_for_request(self, chat_messages: Sequence[ChatMessage]) -> list[dict[str, Any]]:

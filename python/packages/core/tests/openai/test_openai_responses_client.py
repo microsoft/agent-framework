@@ -2106,7 +2106,7 @@ def test_prepare_options_additional_properties_handling() -> None:
     }
     chat_options = ChatOptions(additional_properties=additional_properties)
     options = client._prepare_options(messages, chat_options)  # type: ignore
-    
+
     # Verify additional_properties are included in the options
     assert "reasoning" in options
     assert options["reasoning"]["effort"] == "medium"
@@ -2124,7 +2124,7 @@ def test_prepare_options_additional_properties_handling() -> None:
     }
     chat_options = ChatOptions(additional_properties=custom_props)
     options = client._prepare_options(messages, chat_options)  # type: ignore
-    
+
     assert options["custom_param1"] == "value1"
     assert options["custom_param2"] == 42
     assert options["nested"]["key"] == "value"
