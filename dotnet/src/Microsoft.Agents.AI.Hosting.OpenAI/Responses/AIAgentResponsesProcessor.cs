@@ -18,7 +18,7 @@ using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.AI;
 using OpenAI.Responses;
 
-namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses.Internal;
+namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses;
 
 /// <summary>
 /// OpenAI Responses processor associated with a specific <see cref="AIAgent"/>.

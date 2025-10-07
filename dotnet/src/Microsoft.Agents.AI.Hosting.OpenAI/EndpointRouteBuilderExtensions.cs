@@ -5,7 +5,7 @@ using System.ClientModel.Primitives;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Threading;
-using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Internal;
+using Microsoft.Agents.AI.Hosting.OpenAI.Responses;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;

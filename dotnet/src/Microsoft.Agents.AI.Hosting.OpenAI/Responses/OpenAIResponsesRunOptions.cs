@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses.Internal;
+namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses;
 
 internal sealed class OpenAIResponsesRunOptions : AgentRunOptions
 {

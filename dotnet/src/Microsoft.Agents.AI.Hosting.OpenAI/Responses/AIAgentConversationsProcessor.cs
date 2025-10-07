@@ -5,7 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 
-namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses.Internal;
+namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses;
 
 internal sealed class AIAgentConversationsProcessor
 {
