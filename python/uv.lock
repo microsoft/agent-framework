@@ -281,7 +281,7 @@ provides-extras = ["dev", "all"]
 
 [[package]]
 name = "agent-framework-lab"
-version = "1.0.0b251007"
+version = "1.0.0b251001"
 source = { editable = "packages/lab" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
