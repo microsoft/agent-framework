@@ -3162,14 +3162,13 @@ class ChatOptions(SerializationMixin):
         combined.tools = list(self.tools) if self.tools else None
         combined.logit_bias = dict(self.logit_bias) if self.logit_bias else None
         combined.metadata = dict(self.metadata) if self.metadata else None
-        combined.additional_properties = dict(self.additional_properties)
         combined.response_format = response_format
 
         # Apply scalar and mapping updates from the other options
         updated_data = other.to_dict(exclude_none=True, exclude={"tools"})
         logit_bias = updated_data.pop("logit_bias", {})
         metadata = updated_data.pop("metadata", {})
-        additional_properties = updated_data.pop("additional_properties", {})
+        additional_properties: dict[str, Any] = updated_data.pop("additional_properties", {})
 
         for key, value in updated_data.items():
             setattr(combined, key, value)
@@ -3184,11 +3183,11 @@ class ChatOptions(SerializationMixin):
             {**(combined.logit_bias or {}), **logit_bias} if logit_bias or combined.logit_bias else None
         )
         combined.metadata = {**(combined.metadata or {}), **metadata} if metadata or combined.metadata else None
-        combined.additional_properties = (
-            {**(combined.additional_properties or {}), **additional_properties}
-            if additional_properties or combined.additional_properties
-            else None
-        )
+        if combined.additional_properties and additional_properties:
+            combined.additional_properties.update(additional_properties)
+        else:
+            if additional_properties:
+                combined.additional_properties = additional_properties
         if other_tools:
             if combined.tools is None:
                 combined.tools = list(other_tools)
