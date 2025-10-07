@@ -1,7 +1,7 @@
 # Declarative Workflows
 
 This folder contains sample workflow definitions than be ran using the
-[Declarative Workflow](../dotnet/samples/GettingStarted/Workflows/Declarative) demo.
+[Declarative Workflow](../dotnet/samples/GettingStarted/Workflows/Declarative/ExecuteWorkflow) demo.
 
 Each workflow is defined in a single YAML file and contains 
 comments with additional information specific to that workflow.
