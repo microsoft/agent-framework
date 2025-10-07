@@ -80,9 +80,10 @@
     <Project Path="samples/GettingStarted/Workflows/ConditionalEdges/03_MultiSelection/03_MultiSelection.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflows/Declarative/">
-    <Project Path="samples/GettingStarted/Workflows/Declarative/DeclarativeWorkflow.csproj" />
-    <Project Path="samples/GettingStarted/Workflows/DeclarativeCode/DeclarativeCode.csproj" />
-    <Project Path="samples/GettingStarted/Workflows/DeclarativeEject/DeclarativeEject.csproj" />
+    <File Path="samples/GettingStarted/Workflows/Declarative/README.md" />
+    <Project Path="samples/GettingStarted/Workflows/Declarative/ExecuteCode/ExecuteCode.csproj" />
+    <Project Path="samples/GettingStarted/Workflows/Declarative/ExecuteWorkflow/ExecuteWorkflow.csproj" />
+    <Project Path="samples/GettingStarted/Workflows/Declarative/GenerateCode/GenerateCode.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflows/Declarative/Examples/">
     <File Path="../workflow-samples/DeepResearch.yaml" />
