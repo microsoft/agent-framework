@@ -148,7 +148,7 @@ class ScopedContentProcessor:
         ps_resp = await self._client.get_protection_scopes(ps_req)
         should_process, dlp_actions = self._check_applicable_scopes(pc_request, ps_resp)
 
-        if should_process and False:
+        if should_process:
             pc_resp = await self._client.process_content(pc_request)
             pc_resp.policy_actions = self._combine_policy_actions(pc_resp.policy_actions, dlp_actions)
             return pc_resp

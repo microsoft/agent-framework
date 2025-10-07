@@ -507,10 +507,10 @@ class ProcessConversationMetadata(GraphDataTypeBase):
 
     def __init__(
         self,
-        identifier: str,
-        content: PurviewTextContent | PurviewBinaryContent | ContentBase | MutableMapping[str, Any],
-        name: str,
-        is_truncated: bool,
+        identifier: str | None = None,
+        content: PurviewTextContent | PurviewBinaryContent | ContentBase | MutableMapping[str, Any] | None = None,
+        name: str | None = None,
+        is_truncated: bool | None = None,
         data_type: str = "microsoft.graph.processConversationMetadata",  # emitted via base
         correlation_id: str | None = None,
         sequence_number: int | None = None,
