@@ -27,7 +27,7 @@ To set your secrets with .NET Secret Manager:
 1. From the root of the repository, navigate the console to the project folder:
 
     ```
-    cd dotnet/samples/GettingStarted/Workflows/Declarative/DeclarativeWorkflow
+    cd dotnet/samples/GettingStarted/Workflows/Declarative/ExecuteWorkflow
     ```
 
 2. Examine existing secret definitions:
