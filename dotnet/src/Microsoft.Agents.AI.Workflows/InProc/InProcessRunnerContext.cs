@@ -367,6 +367,19 @@ internal sealed class InProcessRunnerContext : IRunnerContext
     {
         if (Interlocked.Exchange(ref this._runEnded, 1) == 0)
         {
+            foreach (string executorId in this._executors.Keys)
+            {
+                Task<Executor> executor = this._executors[executorId];
+                if (executor is IAsyncDisposable asyncDisposable)
+                {
+                    await asyncDisposable.DisposeAsync().ConfigureAwait(false);
+                }
+                else if (executor is IDisposable disposable)
+                {
+                    disposable.Dispose();
+                }
+            }
+
             await this._workflow.ReleaseOwnershipAsync(this).ConfigureAwait(false);
         }
     }

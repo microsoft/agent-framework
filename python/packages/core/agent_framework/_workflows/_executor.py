@@ -208,6 +208,8 @@ class Executor(DictConvertible):
 
         Args:
             id: A unique identifier for the executor.
+
+        Keyword Args:
             type: The executor type name. If not provided, uses class name.
             type_: Alternative parameter name for executor type.
             defer_discovery: If True, defer handler method discovery until later.

@@ -4,7 +4,9 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.InProc;
 using Microsoft.Agents.AI.Workflows.Reflection;
+using Microsoft.Agents.AI.Workflows.UnitTests;
 
 namespace Microsoft.Agents.AI.Workflows.Sample;
 
@@ -28,9 +30,10 @@ internal static class Step2EntryPoint
         }
     }
 
-    public static async ValueTask<string> RunAsync(TextWriter writer, string input = "This is a spam message.")
+    public static async ValueTask<string> RunAsync(TextWriter writer, ExecutionMode executionMode, string input = "This is a spam message.")
     {
-        StreamingRun handle = await InProcessExecution.StreamAsync(WorkflowInstance, input).ConfigureAwait(false);
+        InProcessExecutionEnvironment env = executionMode.GetEnvironment();
+        StreamingRun handle = await env.StreamAsync(WorkflowInstance, input).ConfigureAwait(false);
         await foreach (WorkflowEvent evt in handle.WatchStreamAsync().ConfigureAwait(false))
         {
             switch (evt)

@@ -64,7 +64,7 @@ internal sealed class Program
         InputResponse? response = null;
         do
         {
-            ExternalRequest? inputRequest = await this.MonitorWorkflowRunAsync(run, response);
+            ExternalRequest? inputRequest = await this.MonitorAndDisposeWorkflowRunAsync(run, response);
             if (inputRequest is not null)
             {
                 Notify("\nWORKFLOW: Yield");
@@ -83,6 +83,7 @@ internal sealed class Program
                 // Restore the latest checkpoint.
                 Debug.WriteLine($"RESTORE #{this.LastCheckpoint.CheckpointId}");
                 Notify("\nWORKFLOW: Restore");
+
                 run = await InProcessExecution.ResumeStreamAsync(workflow, this.LastCheckpoint, checkpointManager, run.Run.RunId);
             }
             else
@@ -132,8 +133,10 @@ internal sealed class Program
         this.FoundryClient = new PersistentAgentsClient(this.FoundryEndpoint, new AzureCliCredential());
     }
 
-    private async Task<ExternalRequest?> MonitorWorkflowRunAsync(Checkpointed<StreamingRun> run, InputResponse? response = null)
+    private async Task<ExternalRequest?> MonitorAndDisposeWorkflowRunAsync(Checkpointed<StreamingRun> run, InputResponse? response = null)
     {
+        await using IAsyncDisposable disposeRun = run;
+
         string? messageId = null;
 
         await foreach (WorkflowEvent workflowEvent in run.Run.WatchStreamAsync().ConfigureAwait(false))
@@ -175,7 +178,7 @@ internal sealed class Program
                     }
                     else
                     {
-                        await run.Run.EndRunAsync().ConfigureAwait(false);
+                        await run.Run.DisposeAsync().ConfigureAwait(false);
                         return requestInfo.Request;
                     }
                     break;
