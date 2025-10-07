@@ -75,8 +75,9 @@ ValueTask StreamingResultCallback(StreamingChatMessageContent streamedResponse, 
 async Task AFConcurrentAgentWorkflow()
 {
     var client = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName).AsIChatClient();
-    var concurrentAgentWorkflow = AgentWorkflowBuilder.BuildConcurrent(
-        from lang in (string[])["French", "Spanish"] select GetAFTranslationAgent(lang, client));
+    var frenchAgent = GetAFTranslationAgent("French", client);
+    var spanishAgent = GetAFTranslationAgent("Spanish", client);
+    var concurrentAgentWorkflow = AgentWorkflowBuilder.BuildConcurrent([frenchAgent, spanishAgent]);
 
     StreamingRun run = await InProcessExecution.StreamAsync(concurrentAgentWorkflow, "Hello, world!");
     await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
