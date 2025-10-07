@@ -783,3 +783,17 @@ def test_openai_content_parser_data_content_image(openai_unit_test_env: dict[str
     # Should use custom filename
     assert result["type"] == "file"
     assert result["file"]["filename"] == "report.pdf"
+
+
+def test_openai_chat_client_with_callable_api_key() -> None:
+    """Test OpenAIChatClient initialization with callable API key."""
+
+    async def get_api_key() -> str:
+        return "test-api-key-123"
+
+    client = OpenAIChatClient(model_id="gpt-4o", api_key=get_api_key)
+
+    # Verify client was created successfully
+    assert client.model_id == "gpt-4o"
+    # OpenAI SDK now manages callable API keys internally
+    assert client.client is not None
