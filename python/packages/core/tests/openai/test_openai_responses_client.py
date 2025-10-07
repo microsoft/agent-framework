@@ -210,7 +210,7 @@ def test_get_response_with_all_parameters() -> None:
                 instructions="You are a helpful assistant",
                 max_tokens=100,
                 parallel_tool_calls=True,
-                model="gpt-4",
+                model_id="gpt-4",
                 previous_response_id="prev-123",
                 reasoning={"chain_of_thought": "enabled"},
                 service_tier="auto",
