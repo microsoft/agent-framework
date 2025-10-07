@@ -20,11 +20,11 @@ public sealed class MediaInputTest(ITestOutputHelper output) : IntegrationTest(o
     private const string WorkflowFileName = "MediaInput.yaml";
     private const string ImageReference = "https://upload.wikimedia.org/wikipedia/commons/5/56/White_shark.jpg";
 
-    [Fact(Skip = "Client issue (#00000)")]
+    [Fact(Skip = "Service issue prevents this simple case")]
     public async Task ValidateImageUrlAsync()
     {
         this.Output.WriteLine($"Image: {ImageReference}");
-        await this.ValidateImageAsync(new UriContent(ImageReference, "image/jpg"));
+        await this.ValidateImageAsync(new UriContent(ImageReference, "image/jpeg"));
     }
 
     [Fact]
