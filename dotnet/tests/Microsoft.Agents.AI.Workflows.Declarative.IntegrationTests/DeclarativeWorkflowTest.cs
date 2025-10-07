@@ -42,7 +42,12 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
 
         Assert.NotEmpty(workflowEvents.ExecutorInvokeEvents);
         Assert.NotEmpty(workflowEvents.ExecutorCompleteEvents);
-        AssertWorkflow.Conversation(workflowOptions.ConversationId, testcase.Validation.ConversationCount, workflowEvents.ConversationEvents);
+        AssertWorkflow.Conversation(workflowOptions.ConversationId, workflowEvents.ConversationEvents, testcase);
+        AssertWorkflow.Responses(workflowEvents.AgentResponseEvents, testcase);
+        await AssertWorkflow.MessagesAsync(
+            GetConversationId(workflowOptions.ConversationId, workflowEvents.ConversationEvents),
+            testcase,
+            workflowOptions.AgentProvider);
         AssertWorkflow.EventCounts(workflowEvents.ActionInvokeEvents.Count, testcase);
         AssertWorkflow.EventCounts(workflowEvents.ActionCompleteEvents.Count, testcase, isCompletion: true);
         AssertWorkflow.EventSequence(workflowEvents.ActionInvokeEvents.Select(e => e.ActionId), testcase);

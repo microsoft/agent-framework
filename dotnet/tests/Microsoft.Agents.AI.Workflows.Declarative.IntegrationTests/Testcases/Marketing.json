@@ -8,10 +8,10 @@
   },
   "validation": {
     "conversation_count": 1,
-    "min_action_count": 4,
+    "min_action_count": 3,
+    "min_response_count": 3,
     "actions": {
       "start": [
-        "add_input_message",
         "invoke_analyst",
         "invoke_writer",
         "invoke_editor"

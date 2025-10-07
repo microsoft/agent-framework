@@ -2,7 +2,7 @@
 
 using System;
 using System.Collections.Generic;
-using System.Text;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -116,16 +116,15 @@ public static class AgentRunResponseExtensions
     {
         _ = Throw.IfNull(updates);
 
-        AgentRunResponse response = new();
+        AgentRunResponseDetails additionalDetails = new();
+        ChatResponse chatResponse =
+            AsChatResponseUpdatesWithAdditionalDetails(updates, additionalDetails)
+            .ToChatResponse();
 
-        foreach (var update in updates)
+        return new AgentRunResponse(chatResponse)
         {
-            ProcessUpdate(update, response);
-        }
-
-        FinalizeResponse(response);
-
-        return response;
+            AgentId = additionalDetails.AgentId,
+        };
     }
 
     /// <summary>
@@ -159,193 +158,52 @@ public static class AgentRunResponseExtensions
             IAsyncEnumerable<AgentRunResponseUpdate> updates,
             CancellationToken cancellationToken)
         {
-            AgentRunResponse response = new();
+            AgentRunResponseDetails additionalDetails = new();
+            ChatResponse chatResponse = await
+                AsChatResponseUpdatesWithAdditionalDetailsAsync(updates, additionalDetails, cancellationToken)
+                .ToChatResponseAsync(cancellationToken)
+                .ConfigureAwait(false);
 
-            await foreach (var update in updates.WithCancellation(cancellationToken).ConfigureAwait(false))
+            return new AgentRunResponse(chatResponse)
             {
-                ProcessUpdate(update, response);
-            }
-
-            FinalizeResponse(response);
-
-            return response;
+                AgentId = additionalDetails.AgentId,
+            };
         }
     }
 
-    /// <summary>Coalesces sequential <see cref="AIContent"/> content elements.</summary>
-    internal static void CoalesceTextContent(List<AIContent> contents)
+    private static IEnumerable<ChatResponseUpdate> AsChatResponseUpdatesWithAdditionalDetails(
+        IEnumerable<AgentRunResponseUpdate> updates,
+        AgentRunResponseDetails additionalDetails)
     {
-        Coalesce<TextContent>(contents, static text => new(text));
-        Coalesce<TextReasoningContent>(contents, static text => new(text));
-
-        // This implementation relies on TContent's ToString returning its exact text.
-        static void Coalesce<TContent>(List<AIContent> contents, Func<string, TContent> fromText)
-            where TContent : AIContent
+        foreach (var update in updates)
         {
-            StringBuilder? coalescedText = null;
-
-            // Iterate through all of the items in the list looking for contiguous items that can be coalesced.
-            int start = 0;
-            while (start < contents.Count - 1)
-            {
-                // We need at least two TextContents in a row to be able to coalesce.
-                if (contents[start] is not TContent firstText)
-                {
-                    start++;
-                    continue;
-                }
-
-                if (contents[start + 1] is not TContent secondText)
-                {
-                    start += 2;
-                    continue;
-                }
-
-                // Append the text from those nodes and continue appending subsequent TextContents until we run out.
-                // We null out nodes as their text is appended so that we can later remove them all in one O(N) operation.
-                coalescedText ??= new();
-                _ = coalescedText.Clear().Append(firstText).Append(secondText);
-                contents[start + 1] = null!;
-                int i = start + 2;
-                for (; i < contents.Count && contents[i] is TContent next; i++)
-                {
-                    _ = coalescedText.Append(next);
-                    contents[i] = null!;
-                }
-
-                // Store the replacement node. We inherit the properties of the first text node. We don't
-                // currently propagate additional properties from the subsequent nodes. If we ever need to,
-                // we can add that here.
-                var newContent = fromText(coalescedText.ToString());
-                contents[start] = newContent;
-                newContent.AdditionalProperties = firstText.AdditionalProperties?.Clone();
-
-                start = i;
-            }
-
-            // Remove all of the null slots left over from the coalescing process.
-            _ = contents.RemoveAll(u => u is null);
+            UpdateAdditionalDetails(update, additionalDetails);
+            yield return update.AsChatResponseUpdate();
         }
     }
 
-    /// <summary>Finalizes the <paramref name="response"/> object.</summary>
-    private static void FinalizeResponse(AgentRunResponse response)
+    private static async IAsyncEnumerable<ChatResponseUpdate> AsChatResponseUpdatesWithAdditionalDetailsAsync(
+        IAsyncEnumerable<AgentRunResponseUpdate> updates,
+        AgentRunResponseDetails additionalDetails,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        int count = response.Messages.Count;
-        for (int i = 0; i < count; i++)
+        await foreach (var update in updates.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
-            CoalesceTextContent((List<AIContent>)response.Messages[i].Contents);
+            UpdateAdditionalDetails(update, additionalDetails);
+            yield return update.AsChatResponseUpdate();
         }
     }
 
-    /// <summary>Processes the <see cref="AgentRunResponseUpdate"/>, incorporating its contents into <paramref name="response"/>.</summary>
-    /// <param name="update">The update to process.</param>
-    /// <param name="response">The <see cref="AgentRunResponse"/> object that should be updated based on <paramref name="update"/>.</param>
-    private static void ProcessUpdate(AgentRunResponseUpdate update, AgentRunResponse response)
+    private static void UpdateAdditionalDetails(AgentRunResponseUpdate update, AgentRunResponseDetails details)
     {
-        // If there is no message created yet, or if the last update we saw had a different
-        // message ID or role than the newest update, create a new message.
-        ChatMessage message;
-        var isNewMessage = false;
-        if (response.Messages.Count == 0)
-        {
-            isNewMessage = true;
-        }
-        else if (update.MessageId is { Length: > 0 } updateMessageId
-            && response.Messages[response.Messages.Count - 1].MessageId is string lastMessageId
-            && updateMessageId != lastMessageId)
-        {
-            isNewMessage = true;
-        }
-        else if (update.Role is { } updateRole
-            && response.Messages[response.Messages.Count - 1].Role is { } lastRole
-            && updateRole != lastRole)
-        {
-            isNewMessage = true;
-        }
-
-        if (isNewMessage)
-        {
-            message = new(ChatRole.Assistant, []);
-            response.Messages.Add(message);
-        }
-        else
-        {
-            message = response.Messages[response.Messages.Count - 1];
-        }
-
-        // Some members on AgentRunResponseUpdate map to members of ChatMessage.
-        // Incorporate those into the latest message; in cases where the message
-        // stores a single value, prefer the latest update's value over anything
-        // stored in the message.
-        if (update.AuthorName is not null)
-        {
-            message.AuthorName = update.AuthorName;
-        }
-
-        if (message.CreatedAt is null || (update.CreatedAt is not null && update.CreatedAt > message.CreatedAt))
-        {
-            message.CreatedAt = update.CreatedAt;
-        }
-
-        if (update.Role is ChatRole role)
-        {
-            message.Role = role;
-        }
-
-        if (update.MessageId is { Length: > 0 })
-        {
-            // Note that this must come after the message checks earlier, as they depend
-            // on this value for change detection.
-            message.MessageId = update.MessageId;
-        }
-
-        foreach (var content in update.Contents)
-        {
-            switch (content)
-            {
-                // Usage content is treated specially and propagated to the response's Usage.
-                case UsageContent usage:
-                    (response.Usage ??= new()).Add(usage.Details);
-                    break;
-
-                default:
-                    message.Contents.Add(content);
-                    break;
-            }
-        }
-
-        // Other members on a AgentRunResponseUpdate map to members of the AgentRunResponse.
-        // Update the response object with those, preferring the values from later updates.
-
         if (update.AgentId is { Length: > 0 })
         {
-            response.AgentId = update.AgentId;
+            details.AgentId = update.AgentId;
         }
+    }
 
-        if (update.ResponseId is { Length: > 0 })
-        {
-            response.ResponseId = update.ResponseId;
-        }
-
-        if (response.CreatedAt is null || (update.CreatedAt is not null && update.CreatedAt > response.CreatedAt))
-        {
-            response.CreatedAt = update.CreatedAt;
-        }
-
-        if (update.AdditionalProperties is not null)
-        {
-            if (response.AdditionalProperties is null)
-            {
-                response.AdditionalProperties = new(update.AdditionalProperties);
-            }
-            else
-            {
-                foreach (var item in update.AdditionalProperties)
-                {
-                    response.AdditionalProperties[item.Key] = item.Value;
-                }
-            }
-        }
+    private sealed class AgentRunResponseDetails
+    {
+        public string? AgentId { get; set; }
     }
 }

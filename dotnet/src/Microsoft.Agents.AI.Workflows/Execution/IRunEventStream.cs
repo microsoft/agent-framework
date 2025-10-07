@@ -10,6 +10,12 @@ namespace Microsoft.Agents.AI.Workflows.Execution;
 internal interface IRunEventStream : IAsyncDisposable
 {
     void Start();
+    void SignalInput();
+
+    // this cannot be cancelled
+    ValueTask StopAsync();
+
     ValueTask<RunStatus> GetStatusAsync(CancellationToken cancellation = default);
-    IAsyncEnumerable<WorkflowEvent> TakeEventStreamAsync(CancellationToken cancellation = default);
+
+    IAsyncEnumerable<WorkflowEvent> TakeEventStreamAsync(bool blockOnPendingRequest, CancellationToken cancellation = default);
 }

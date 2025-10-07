@@ -40,7 +40,7 @@ internal static class AgentProviderExtensions
                 agent.RunStreamingAsync(null, options, cancellationToken);
 
         // Enable "autoSend" behavior if this is the workflow conversation.
-        bool isWorkflowConversation = context.IsWorkflowConversation(conversationId);
+        bool isWorkflowConversation = context.IsWorkflowConversation(conversationId, out string? workflowConversationId);
         autoSend |= isWorkflowConversation;
 
         // Process the agent response updates.
@@ -64,7 +64,7 @@ internal static class AgentProviderExtensions
             await context.AddEventAsync(new AgentRunResponseEvent(executorId, response)).ConfigureAwait(false);
         }
 
-        if (autoSend && !isWorkflowConversation && conversationId is not null)
+        if (autoSend && !isWorkflowConversation && workflowConversationId is not null)
         {
             // Copy messages with content that aren't function calls or results.
             IEnumerable<ChatMessage> messages =
@@ -75,7 +75,7 @@ internal static class AgentProviderExtensions
                         !message.Contents.OfType<FunctionResultContent>().Any());
             foreach (ChatMessage message in messages)
             {
-                await agentProvider.CreateMessageAsync(conversationId, message, cancellationToken).ConfigureAwait(false);
+                await agentProvider.CreateMessageAsync(workflowConversationId, message, cancellationToken).ConfigureAwait(false);
             }
         }
 

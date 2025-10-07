@@ -27,7 +27,7 @@ public static class Program
         var workflow = await WorkflowHelper.GetWorkflowAsync().ConfigureAwait(false);
 
         // Execute the workflow
-        StreamingRun handle = await InProcessExecution.StreamAsync(workflow, NumberSignal.Init).ConfigureAwait(false);
+        await using StreamingRun handle = await InProcessExecution.StreamAsync(workflow, NumberSignal.Init).ConfigureAwait(false);
         await foreach (WorkflowEvent evt in handle.WatchStreamAsync().ConfigureAwait(false))
         {
             switch (evt)

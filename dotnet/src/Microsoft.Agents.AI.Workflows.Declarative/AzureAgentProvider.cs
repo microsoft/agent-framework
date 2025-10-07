@@ -42,20 +42,21 @@ public sealed class AzureAgentProvider(string projectEndpoint, TokenCredential p
     }
 
     /// <inheritdoc/>
-    public override Task CreateMessageAsync(string conversationId, ChatMessage conversationMessage, CancellationToken cancellationToken = default)
+    public override Task<ChatMessage> CreateMessageAsync(string conversationId, ChatMessage conversationMessage, CancellationToken cancellationToken = default)
     {
         // TODO: Switch to asynchronous "CreateMessageAsync", when fix properly applied:
         //  BUG: https://github.com/Azure/azure-sdk-for-net/issues/52571
         //   PR: https://github.com/Azure/azure-sdk-for-net/pull/52653
-        this.GetAgentsClient().Messages.CreateMessage(
-            conversationId,
-            role: s_roleMap[conversationMessage.Role.Value.ToUpperInvariant()],
-            contentBlocks: GetContent(),
-            attachments: null,
-            metadata: GetMetadata(),
-            cancellationToken);
+        PersistentThreadMessage newMessage =
+            this.GetAgentsClient().Messages.CreateMessage(
+                conversationId,
+                role: s_roleMap[conversationMessage.Role.Value.ToUpperInvariant()],
+                contentBlocks: GetContent(),
+                attachments: null,
+                metadata: GetMetadata(),
+                cancellationToken);
 
-        return Task.CompletedTask;
+        return Task.FromResult(ToChatMessage(newMessage));
 
         Dictionary<string, string>? GetMetadata()
         {

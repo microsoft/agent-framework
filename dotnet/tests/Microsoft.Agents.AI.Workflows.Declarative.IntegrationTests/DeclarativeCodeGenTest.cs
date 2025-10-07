@@ -53,7 +53,7 @@ public sealed class DeclarativeCodeGenTest(ITestOutputHelper output) : WorkflowT
 
             Assert.Empty(workflowEvents.ActionInvokeEvents);
             Assert.Empty(workflowEvents.ActionCompleteEvents);
-            AssertWorkflow.Conversation(workflowOptions.ConversationId, testcase.Validation.ConversationCount, workflowEvents.ConversationEvents);
+            AssertWorkflow.Conversation(workflowOptions.ConversationId, workflowEvents.ConversationEvents, testcase);
             AssertWorkflow.EventCounts(workflowEvents.ExecutorInvokeEvents.Count - 2, testcase);
             AssertWorkflow.EventCounts(workflowEvents.ExecutorCompleteEvents.Count - 2, testcase);
             AssertWorkflow.EventSequence(workflowEvents.ExecutorInvokeEvents.Select(e => e.ExecutorId), testcase);

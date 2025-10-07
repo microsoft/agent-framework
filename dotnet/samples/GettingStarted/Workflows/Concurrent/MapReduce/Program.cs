@@ -99,7 +99,7 @@ public static class Program
 
         // Step 2: Run the workflow
         Console.WriteLine("\n=== RUNNING WORKFLOW ===\n");
-        StreamingRun run = await InProcessExecution.StreamAsync(workflow, rawText);
+        await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, rawText);
         await foreach (WorkflowEvent evt in run.WatchStreamAsync())
         {
             Console.WriteLine($"Event: {evt}");

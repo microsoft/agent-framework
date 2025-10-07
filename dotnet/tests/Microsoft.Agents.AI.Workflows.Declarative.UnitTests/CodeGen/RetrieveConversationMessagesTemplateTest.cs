@@ -16,7 +16,7 @@ public class RetrieveConversationMessagesTemplateTest(ITestOutputHelper output) 
         this.ExecuteTest(
             nameof(DefaultQuery),
             "TestVariable",
-            StringExpression.Literal("#cid_3"));
+            StringExpression.Variable(PropertyPath.TopicVariable("TestConversation")));
     }
 
     [Fact]

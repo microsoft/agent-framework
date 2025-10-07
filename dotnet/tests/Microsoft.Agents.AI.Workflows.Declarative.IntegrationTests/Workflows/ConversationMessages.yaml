@@ -7,36 +7,43 @@ trigger:
 
     - kind: CreateConversation
       id: conversation_create1
-      conversationId: Local.FirstConversationId
-
-    - kind: CreateConversation
-      id: conversation_create2
-      conversationId: Local.SecondConversationId
+      conversationId: Local.PrivateConversationId
 
     - kind: SendActivity
       id: sendActivity_conversation
       activity: |-
-        Conversation 1: {Local.FirstConversationId}
-        Conversation 2: {Local.SecondConversationId}
+        Conversation 1: {Local.PrivateConversationId}
+        Conversation 2: {System.ConversationId}
 
     - kind: AddConversationMessage
       id: add_message
       message: Local.MyMessage1
       role: User
-      conversationId: =Local.FirstConversationId
+      conversationId: =Local.PrivateConversationId
       content:
         - type: Text
           value: {System.LastMessage.Text}
 
+    - kind: RetrieveConversationMessage
+      id: get_message_single
+      message: Local.MyMessage1Copy
+      conversationId: =Local.PrivateConversationId
+      messageId: =Local.MyMessage1.Id
+
     - kind: SendActivity
       id: sendActivity_message
       activity: |-
-        Messsage 1: {Local.MyMessage1}
+        Message 1: {Local.MyMessage1}
 
     - kind: CopyConversationMessages
       id: copy_messages
-      conversationId: =Local.SecondConversationId
+      conversationId: =System.ConversationId
       messages: =[Local.MyMessage1]
+  
+    - kind: RetrieveConversationMessages
+      id: get_messages_all
+      messages: Local.AllMessages
+      conversationId: =System.ConversationId
 
     - kind: SendActivity
       id: sendActivity_copy

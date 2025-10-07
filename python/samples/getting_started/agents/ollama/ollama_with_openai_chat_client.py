@@ -44,7 +44,7 @@ async def non_streaming_example() -> None:
     query = "What's the weather like in Seattle?"
     print(f"User: {query}")
     result = await agent.run(query)
-    print(f"Result: {result}\n")
+    print(f"Agent: {result}\n")
 
 
 async def streaming_example() -> None:

@@ -7,16 +7,19 @@
     }
   },
   "validation": {
-    "conversation_count": 3,
-    "min_action_count": 7,
+    "conversation_count": 2,
+    "min_action_count": 8,
+    "min_message_count": 1,
+    "min_response_count": 0,
     "actions": {
       "start": [
         "conversation_create1",
-        "conversation_create2",
         "sendActivity_conversation",
         "add_message",
+        "get_message_single",
         "sendActivity_message",
         "copy_messages",
+        "get_messages_all",
         "sendActivity_copy"
       ],
       "final": [

@@ -57,7 +57,7 @@ public static class Program
             .Build();
 
         // Execute the workflow with input data
-        Run run = await InProcessExecution.RunAsync(workflow, "Hello, World!");
+        await using Run run = await InProcessExecution.RunAsync(workflow, "Hello, World!");
         foreach (WorkflowEvent evt in run.NewEvents)
         {
             if (evt is ExecutorCompletedEvent executorComplete)

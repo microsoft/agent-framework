@@ -1,0 +1,12 @@
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: workflow_test
+  actions:
+
+    - kind: RetrieveConversationMessage
+      id: get_message_single
+      message: Local.MyMessage1Copy
+      conversationId: =Local.PrivateConversationId
+      messageId: =Local.MyMessageId

@@ -1,6 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from ._agent import WorkflowAgent
+from ._agent_executor import (
+    AgentExecutor,
+    AgentExecutorRequest,
+    AgentExecutorResponse,
+)
 from ._checkpoint import (
     CheckpointStorage,
     FileCheckpointStorage,
@@ -40,9 +45,6 @@ from ._events import (
     WorkflowStatusEvent,
 )
 from ._executor import (
-    AgentExecutor,
-    AgentExecutorRequest,
-    AgentExecutorResponse,
     Executor,
     RequestInfoExecutor,
     RequestInfoMessage,

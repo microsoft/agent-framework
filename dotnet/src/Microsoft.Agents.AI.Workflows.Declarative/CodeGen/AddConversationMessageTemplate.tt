@@ -17,7 +17,7 @@ internal sealed class <#= this.Name #>Executor(FormulaSession session, WorkflowA
             throw new DeclarativeActionException($"Conversation identifier must be defined: {this.Id}");
         }
         ChatMessage newMessage = new(ChatRole.<#= FormatEnum(this.Model.Role, RoleMap) #>, await this.GetContentAsync(context).ConfigureAwait(false)) { AdditionalProperties = this.GetMetadata() };
-        await agentProvider.CreateMessageAsync(conversationId, newMessage, cancellationToken).ConfigureAwait(false);<#
+        newMessage = await agentProvider.CreateMessageAsync(conversationId, newMessage, cancellationToken).ConfigureAwait(false);<#
         AssignVariable(this.Message, "newMessage");
         #>
         return default;

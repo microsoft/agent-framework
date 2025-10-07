@@ -148,7 +148,17 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
             this.RunContext.HasQueuedExternalDeliveries ||
             this.RunContext.JoinedRunnersHaveActions)
         {
-            await this.RunSuperstepAsync(currentStep).ConfigureAwait(false);
+            try
+            {
+                await this.RunSuperstepAsync(currentStep).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            { }
+            catch (Exception e)
+            {
+                await this.RaiseWorkflowEventAsync(new WorkflowErrorEvent(e)).ConfigureAwait(false);
+            }
+
             return true;
         }
 

@@ -898,6 +898,8 @@ class AzureAIAgentClient(BaseChatClient):
                                 filter=additional_props.get("filter", ""),
                             )
                             tool_definitions.extend(ai_search.definitions)
+                case ToolDefinition():
+                    tool_definitions.append(tool)
                 case dict():
                     tool_definitions.append(tool)
                 case _:

@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
 from ._edge import EdgeGroup
 from ._edge_runner import EdgeRunner, create_edge_runner
-from ._events import WorkflowEvent, WorkflowOutputEvent, _framework_event_origin
+from ._events import WorkflowEvent
 from ._executor import Executor
 from ._runner_context import (
     _DATACLASS_MARKER,  # type: ignore
@@ -183,54 +183,7 @@ class Runner:
                 _normalize_message_payload(message)
                 # Deliver a message through all edge runners associated with the source executor concurrently.
                 tasks = [_deliver_message_inner(edge_runner, message) for edge_runner in associated_edge_runners]
-                if not tasks:
-                    # No outgoing edges. If this is an AgentExecutorResponse, treat it as an
-                    # intentional terminal emission and emit a WorkflowOutputEvent here.
-                    # (Previously this relied on the executor to emit, but AgentExecutor only
-                    # sends an AgentExecutorResponse message; centralized completion keeps the
-                    # contract consistent with other executors.)
-                    try:  # Local import to avoid circular dependencies at module import time.
-                        from ._executor import AgentExecutorResponse  # type: ignore
-
-                        if isinstance(message.data, AgentExecutorResponse):
-                            final_messages = message.data.agent_run_response.messages
-                            final_text = final_messages[-1].text if final_messages else "(no content)"
-                            with _framework_event_origin():
-                                # TODO(moonbox3): does user expect this event to contain the final text?
-                                output_event = WorkflowOutputEvent(data=final_text, source_executor_id="<Runner>")
-                            await self._ctx.add_event(output_event)
-                            continue  # Terminal handled
-                    except Exception as exc:  # pragma: no cover - defensive
-                        logger.debug("Suppressed exception during terminal message type check: %s", exc)
-                    # Otherwise keep prior behavior (emit warning for unexpected undelivered message).
-                    logger.warning(
-                        f"Message {message} could not be delivered (no outgoing edges). "
-                        "Add a downstream executor or remove the send if this is unexpected."
-                    )
-                    continue
-                results = await asyncio.gather(*tasks)
-                if not any(results):
-                    # Outgoing edges exist but none accepted the message. If this is an
-                    # AgentExecutorResponse, treat as natural terminal and emit completion.
-                    try:
-                        from ._executor import AgentExecutorResponse  # type: ignore
-
-                        if isinstance(message.data, AgentExecutorResponse):
-                            # Emit a single completion event with final text (best-effort extraction)
-                            final_messages = message.data.agent_run_response.messages
-                            final_text = final_messages[-1].text if final_messages else "(no content)"
-                            with _framework_event_origin():
-                                # TODO(moonbox3): does user expect this event to contain the final text?
-                                output_event = WorkflowOutputEvent(data=final_text, source_executor_id="<Runner>")
-                            await self._ctx.add_event(output_event)
-                            continue
-                    except Exception as exc:  # pragma: no cover
-                        logger.debug("Terminal completion emission failed: %s", exc)
-
-                    logger.warning(
-                        f"Message {message} could not be delivered. "
-                        "This may be due to type incompatibility or no matching targets."
-                    )
+                await asyncio.gather(*tasks)
 
         messages = await self._ctx.drain_messages()
         tasks = [_deliver_messages(source_executor_id, messages) for source_executor_id, messages in messages.items()]

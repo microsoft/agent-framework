@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -15,7 +14,7 @@ namespace Microsoft.Agents.AI.Workflows;
 /// A <see cref="Workflow"/> run instance supporting a streaming form of receiving workflow events, and providing
 /// a mechanism to send responses back to the workflow.
 /// </summary>
-public sealed class StreamingRun
+public sealed class StreamingRun : IAsyncDisposable
 {
     private readonly AsyncRunHandle _runHandle;
 
@@ -23,9 +22,6 @@ public sealed class StreamingRun
     {
         this._runHandle = Throw.IfNull(runHandle);
     }
-
-    private ValueTask<bool> WaitOnInputAsync(CancellationToken cancellation = default)
-        => this._runHandle.WaitForNextInputAsync(cancellation);
 
     /// <summary>
     /// A unique identifier for the run. Can be provided at the start of the run, or auto-generated.
@@ -78,50 +74,15 @@ public sealed class StreamingRun
         CancellationToken cancellationToken = default)
         => this.WatchStreamAsync(blockOnPendingRequest: true, cancellationToken);
 
-    internal async IAsyncEnumerable<WorkflowEvent> WatchStreamAsync(
+    internal IAsyncEnumerable<WorkflowEvent> WatchStreamAsync(
         bool blockOnPendingRequest,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default)
+        => this._runHandle.TakeEventStreamAsync(blockOnPendingRequest, cancellationToken);
+
+    /// <inheritdoc/>
+    public ValueTask DisposeAsync()
     {
-        RunStatus runStatus;
-
-        do
-        {
-            await foreach (WorkflowEvent @event in this._runHandle.TakeEventStreamAsync(breakOnHalt: true, cancellationToken)
-                                                                  .WithCancellation(cancellationToken)
-                                                                  .ConfigureAwait(false))
-            {
-                yield return @event;
-            }
-
-            if (cancellationToken.IsCancellationRequested)
-            {
-                yield break; // We are done.
-            }
-
-            runStatus = await this._runHandle.GetStatusAsync(cancellationToken).ConfigureAwait(false);
-            if (runStatus == RunStatus.Idle)
-            {
-                yield break; // We are done.
-            }
-
-            if (blockOnPendingRequest && runStatus == RunStatus.PendingRequests)
-            {
-                // Although we are only doing this while there are pending requests, any input allows us to continue
-                // running, so we should not wait until the input is specifically an ExternalResponse.
-                await this.WaitOnInputAsync(cancellationToken).ConfigureAwait(false);
-            }
-        } while (runStatus == RunStatus.Running);
-    }
-
-    /// <summary>
-    /// Signals the end of the current run and initiates any necessary cleanup operations asynchronously.
-    /// Enables the underlying Workflow instance to be reused in subsequent runs.
-    /// </summary>
-    /// <returns>A ValueTask that represents the asynchronous operation. The task is complete when the run has
-    /// ended and cleanup is finished.</returns>
-    public async ValueTask EndRunAsync()
-    {
-        await this._runHandle.DisposeAsync().ConfigureAwait(false);
+        return this._runHandle.DisposeAsync();
     }
 }
 

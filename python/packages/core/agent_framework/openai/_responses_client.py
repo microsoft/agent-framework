@@ -454,6 +454,19 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                             "format": format,
                         },
                     }
+                if content.has_top_level_media_type("application"):
+                    filename = getattr(content, "filename", None) or (
+                        content.additional_properties.get("filename")
+                        if hasattr(content, "additional_properties") and content.additional_properties
+                        else None
+                    )
+                    file_obj = {
+                        "type": "input_file",
+                        "file_data": content.uri,
+                    }
+                    if filename:
+                        file_obj["filename"] = filename
+                    return file_obj
                 return {}
             case FunctionCallContent():
                 return {

@@ -32,7 +32,7 @@ public static class Program
         var checkpoints = new List<CheckpointInfo>();
 
         // Execute the workflow and save checkpoints
-        Checkpointed<StreamingRun> checkpointedRun = await InProcessExecution
+        await using Checkpointed<StreamingRun> checkpointedRun = await InProcessExecution
             .StreamAsync(workflow, NumberSignal.Init, checkpointManager)
             .ConfigureAwait(false);
         await foreach (WorkflowEvent evt in checkpointedRun.Run.WatchStreamAsync().ConfigureAwait(false))
@@ -72,7 +72,7 @@ public static class Program
         Console.WriteLine($"\n\nHydrating a new workflow instance from the {CheckpointIndex + 1}th checkpoint.");
         CheckpointInfo savedCheckpoint = checkpoints[CheckpointIndex];
 
-        Checkpointed<StreamingRun> newCheckpointedRun =
+        await using Checkpointed<StreamingRun> newCheckpointedRun =
             await InProcessExecution.ResumeStreamAsync(newWorkflow, savedCheckpoint, checkpointManager, checkpointedRun.Run.RunId)
                                     .ConfigureAwait(false);
 

@@ -604,6 +604,129 @@ async def test_local_mcp_server_prompt_execution():
         assert result[0].contents[0].text == "Test message"
 
 
+@pytest.mark.parametrize(
+    "approval_mode,expected_approvals",
+    [
+        ("always_require", {"tool_one": "always_require", "tool_two": "always_require"}),
+        ("never_require", {"tool_one": "never_require", "tool_two": "never_require"}),
+        (
+            {"always_require_approval": ["tool_one"], "never_require_approval": ["tool_two"]},
+            {"tool_one": "always_require", "tool_two": "never_require"},
+        ),
+    ],
+)
+async def test_mcp_tool_approval_mode(approval_mode, expected_approvals):
+    """Test MCPTool approval_mode parameter with various configurations.
+
+    The approval_mode parameter controls whether tools require approval before execution.
+    It can be set globally ("always_require" or "never_require") or per-tool using a dict.
+    """
+
+    class TestServer(MCPTool):
+        async def connect(self):
+            self.session = Mock(spec=ClientSession)
+            self.session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(
+                    tools=[
+                        types.Tool(
+                            name="tool_one",
+                            description="First tool",
+                            inputSchema={
+                                "type": "object",
+                                "properties": {"param": {"type": "string"}},
+                            },
+                        ),
+                        types.Tool(
+                            name="tool_two",
+                            description="Second tool",
+                            inputSchema={
+                                "type": "object",
+                                "properties": {"param": {"type": "string"}},
+                            },
+                        ),
+                    ]
+                )
+            )
+
+        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+            return None
+
+    server = TestServer(name="test_server", approval_mode=approval_mode)
+    async with server:
+        await server.load_tools()
+        assert len(server.functions) == 2
+
+        # Verify each tool has the expected approval mode
+        for func in server.functions:
+            assert func.approval_mode == expected_approvals[func.name]
+
+
+@pytest.mark.parametrize(
+    "allowed_tools,expected_count,expected_names",
+    [
+        (None, 3, ["tool_one", "tool_two", "tool_three"]),  # None means all tools are allowed
+        (["tool_one"], 1, ["tool_one"]),  # Only tool_one is allowed
+        (["tool_one", "tool_three"], 2, ["tool_one", "tool_three"]),  # Two tools allowed
+        (["nonexistent_tool"], 0, []),  # No matching tools
+    ],
+)
+async def test_mcp_tool_allowed_tools(allowed_tools, expected_count, expected_names):
+    """Test MCPTool allowed_tools parameter with various configurations.
+
+    The allowed_tools parameter filters which tools are exposed via the functions property.
+    When None, all loaded tools are available. When set to a list, only tools whose names
+    are in that list are exposed.
+    """
+
+    class TestServer(MCPTool):
+        async def connect(self):
+            self.session = Mock(spec=ClientSession)
+            self.session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(
+                    tools=[
+                        types.Tool(
+                            name="tool_one",
+                            description="First tool",
+                            inputSchema={
+                                "type": "object",
+                                "properties": {"param": {"type": "string"}},
+                            },
+                        ),
+                        types.Tool(
+                            name="tool_two",
+                            description="Second tool",
+                            inputSchema={
+                                "type": "object",
+                                "properties": {"param": {"type": "string"}},
+                            },
+                        ),
+                        types.Tool(
+                            name="tool_three",
+                            description="Third tool",
+                            inputSchema={
+                                "type": "object",
+                                "properties": {"param": {"type": "string"}},
+                            },
+                        ),
+                    ]
+                )
+            )
+
+        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+            return None
+
+    server = TestServer(name="test_server", allowed_tools=allowed_tools)
+    async with server:
+        await server.load_tools()
+        # _functions should contain all tools
+        assert len(server._functions) == 3
+
+        # functions property should filter based on allowed_tools
+        assert len(server.functions) == expected_count
+        actual_names = [func.name for func in server.functions]
+        assert sorted(actual_names) == sorted(expected_names)
+
+
 # Server implementation tests
 def test_local_mcp_stdio_tool_init():
     """Test MCPStdioTool initialization."""

@@ -4,6 +4,7 @@ using System;
 using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
@@ -85,6 +86,21 @@ public abstract class WorkflowTest(ITestOutputHelper output) : IntegrationTest(o
         await this.RunAndVerifyAsync<TInput>(testcase, workflowPath, workflowOptions);
     }
 
+    protected static string? GetConversationId(string? conversationId, IReadOnlyList<ConversationUpdateEvent> conversationEvents)
+    {
+        if (!string.IsNullOrEmpty(conversationId))
+        {
+            return conversationId;
+        }
+
+        if (conversationEvents.Count > 0)
+        {
+            return conversationEvents.SingleOrDefault(conversationEvent => conversationEvent.IsWorkflow)?.ConversationId;
+        }
+
+        return null;
+    }
+
     protected static object GetInput<TInput>(Testcase testcase) where TInput : notnull =>
         testcase.Setup.Input.Type switch
         {
@@ -120,23 +136,56 @@ public abstract class WorkflowTest(ITestOutputHelper output) : IntegrationTest(o
 
     protected static class AssertWorkflow
     {
-        public static void Conversation(string? conversationId, int expectedCount, IReadOnlyList<ConversationUpdateEvent> conversationEvents)
+        public static void Conversation(string? conversationId, IReadOnlyList<ConversationUpdateEvent> conversationEvents, Testcase testcase)
         {
             if (string.IsNullOrEmpty(conversationId))
             {
-                Assert.Equal(expectedCount, conversationEvents.Count);
+                Assert.Equal(testcase.Validation.ConversationCount, conversationEvents.Count);
             }
             else
             {
-                Assert.Equal(expectedCount - 1, conversationEvents.Count);
+                Assert.Equal(testcase.Validation.ConversationCount - 1, conversationEvents.Count);
             }
         }
 
         // "isCompletion" adjusts validation logic to account for when condition completion is not experienced due to goto.  Remove this test logic once addressed.
         public static void EventCounts(int actualCount, Testcase testcase, bool isCompletion = false)
         {
-            Assert.True(actualCount + (isCompletion ? 1 : 0) >= testcase.Validation.MinActionCount, $"Event count less than expected: {testcase.Validation.MinActionCount} ({actualCount}).");
-            Assert.True(actualCount <= (testcase.Validation.MaxActionCount ?? testcase.Validation.MinActionCount), $"Event count greater than expected: {testcase.Validation.MaxActionCount ?? testcase.Validation.MinActionCount} ({actualCount}).");
+            Assert.True(actualCount + (isCompletion ? 1 : 0) >= testcase.Validation.MinActionCount, $"Event count less than expected: {testcase.Validation.MinActionCount} (Actual: {actualCount}).");
+            if (testcase.Validation.MaxActionCount != -1)
+            {
+                int maxExpectedCount = testcase.Validation.MaxActionCount ?? testcase.Validation.MinActionCount;
+                Assert.True(actualCount <= maxExpectedCount, $"Event count greater than expected: {maxExpectedCount} (Actual: {actualCount}).");
+            }
+        }
+
+        public static void Responses(IReadOnlyList<AgentRunResponseEvent> responseEvents, Testcase testcase)
+        {
+            Assert.True(responseEvents.Count >= testcase.Validation.MinResponseCount, $"Response count less than expected: {testcase.Validation.MinResponseCount} (Actual: {responseEvents.Count})");
+            if (testcase.Validation.MaxResponseCount != -1)
+            {
+                int maxExpectedCount = testcase.Validation.MaxResponseCount ?? testcase.Validation.MinResponseCount;
+                Assert.True(responseEvents.Count <= maxExpectedCount, $"Response count greater than expected: {maxExpectedCount} (Actual: {responseEvents.Count}).");
+            }
+        }
+
+        public static async ValueTask MessagesAsync(string? conversationId, Testcase testcase, WorkflowAgentProvider agentProvider)
+        {
+            int minExpectedCount = testcase.Validation.MinMessageCount ?? testcase.Validation.MinResponseCount;
+            int maxExpectedCount = testcase.Validation.MaxMessageCount ?? testcase.Validation.MaxResponseCount ?? minExpectedCount;
+            int messageCount = 0;
+            if (!string.IsNullOrEmpty(conversationId))
+            {
+                messageCount = await agentProvider.GetMessagesAsync(conversationId).CountAsync();
+            }
+
+            ++minExpectedCount;
+            Assert.True(messageCount >= minExpectedCount, $"Workflow message count less than expected: {minExpectedCount} (Actual: {messageCount}).");
+            if (maxExpectedCount != -1)
+            {
+                ++maxExpectedCount;
+                Assert.True(messageCount <= maxExpectedCount, $"Workflow message count greater than expected: {maxExpectedCount} (Actual: {messageCount}).");
+            }
         }
 
         internal static void EventSequence(IEnumerable<string> sourceIds, Testcase testcase)
@@ -148,7 +197,7 @@ public abstract class WorkflowTest(ITestOutputHelper output) : IntegrationTest(o
             bool validateRepeat = false;
             foreach (string sourceId in sourceIds)
             {
-                if (!validateStart)
+                if (!validateStart && testcase.Validation.Actions.Start.Count > 0)
                 {
                     if (testcase.Validation.Actions.Start.Count > 0 &&
                         startIds.Count == 0 &&

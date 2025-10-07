@@ -110,9 +110,10 @@ public static class PersistentAgentsClientExtensions
         }
 
         var createPersistentAgentResponse = await persistentAgentsClient.Administration.CreateAgentAsync(
-            model,
-            name,
-            instructions,
+            model: model,
+            name: name,
+            description: description,
+            instructions: instructions,
             tools: tools,
             toolResources: toolResources,
             temperature: temperature,
@@ -163,9 +164,10 @@ public static class PersistentAgentsClientExtensions
         }
 
         var createPersistentAgentResponse = persistentAgentsClient.Administration.CreateAgent(
-            model,
-            name,
-            instructions,
+            model: model,
+            name: name,
+            description: description,
+            instructions: instructions,
             tools: tools,
             toolResources: toolResources,
             temperature: temperature,

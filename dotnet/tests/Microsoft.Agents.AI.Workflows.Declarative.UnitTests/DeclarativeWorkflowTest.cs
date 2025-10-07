@@ -259,7 +259,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
 
         Workflow workflow = DeclarativeWorkflowBuilder.Build<TInput>(yamlReader, workflowContext);
 
-        StreamingRun run = await InProcessExecution.StreamAsync(workflow, workflowInput);
+        await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, workflowInput);
 
         this.WorkflowEvents = run.WatchStreamAsync().ToEnumerable().ToList();
         foreach (WorkflowEvent workflowEvent in this.WorkflowEvents)
@@ -293,7 +293,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     {
         Mock<WorkflowAgentProvider> mockAgentProvider = new(MockBehavior.Strict);
         mockAgentProvider.Setup(provider => provider.CreateConversationAsync(It.IsAny<CancellationToken>())).Returns(() => Task.FromResult(Guid.NewGuid().ToString("N")));
-        mockAgentProvider.Setup(provider => provider.CreateMessageAsync(It.IsAny<string>(), It.IsAny<ChatMessage>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        mockAgentProvider.Setup(provider => provider.CreateMessageAsync(It.IsAny<string>(), It.IsAny<ChatMessage>(), It.IsAny<CancellationToken>())).Returns(Task.FromResult(new ChatMessage(ChatRole.Assistant, "Hi!")));
         return mockAgentProvider;
     }
 }

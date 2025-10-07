@@ -33,7 +33,7 @@ public abstract class WorkflowAgentProvider
     /// <param name="conversationId">The identifier of the target conversation.</param>
     /// <param name="conversationMessage">The message being added.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    public abstract Task CreateMessageAsync(string conversationId, ChatMessage conversationMessage, CancellationToken cancellationToken = default);
+    public abstract Task<ChatMessage> CreateMessageAsync(string conversationId, ChatMessage conversationMessage, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Retrieves a specific message from a conversation.

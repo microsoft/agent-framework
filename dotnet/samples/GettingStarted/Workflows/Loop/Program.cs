@@ -33,7 +33,7 @@ public static class Program
             .BuildAsync<NumberSignal>();
 
         // Execute the workflow
-        StreamingRun run = await InProcessExecution.StreamAsync(workflow, NumberSignal.Init).ConfigureAwait(false);
+        await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, NumberSignal.Init).ConfigureAwait(false);
         await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
         {
             if (evt is WorkflowOutputEvent outputEvent)

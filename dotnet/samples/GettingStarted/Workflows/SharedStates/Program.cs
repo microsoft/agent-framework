@@ -33,7 +33,7 @@ public static class Program
             .Build();
 
         // Execute the workflow with input data
-        Run run = await InProcessExecution.RunAsync(workflow, "Lorem_Ipsum.txt");
+        await using Run run = await InProcessExecution.RunAsync(workflow, "Lorem_Ipsum.txt");
         foreach (WorkflowEvent evt in run.NewEvents)
         {
             if (evt is WorkflowOutputEvent outputEvent)

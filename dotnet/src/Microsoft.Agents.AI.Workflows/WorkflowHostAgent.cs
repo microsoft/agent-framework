@@ -65,7 +65,7 @@ internal sealed class WorkflowHostAgent : AIAgent
             if (!this._runningWorkflows.TryGetValue(runId, out StreamingRun? run))
             {
                 run = await InProcessExecution.StreamAsync(this._workflow, messages, cancellationToken: cancellationToken)
-                                                       .ConfigureAwait(false);
+                                              .ConfigureAwait(false);
                 this._runningWorkflows[runId] = run;
             }
             else

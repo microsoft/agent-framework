@@ -7,14 +7,17 @@
     }
   },
   "validation": {
-    "conversation_count": 2,
-    "min_action_count": 1,
+    "conversation_count": 3,
+    "min_action_count": 3,
+    "min_response_count": 2,
     "actions": {
       "start": [
-        "invoke_agent"
+        "invoke_inner1",
+        "invoke_inner2",
+        "invoke_external"
       ],
       "final": [
-        "invoke_agent"
+        "invoke_external"
       ]
     }
   }

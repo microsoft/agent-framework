@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace AgentWebChat.Web;
 
@@ -20,7 +21,10 @@ public class AgentDiscoveryClient(HttpClient httpClient, ILogger<AgentDiscoveryC
 
     public class AgentDiscoveryCard
     {
-        public string? Name { get; set; }
+        [JsonPropertyName("name")]
+        public required string Name { get; set; }
+
+        [JsonPropertyName("description")]
         public string? Description { get; set; }
     }
 }

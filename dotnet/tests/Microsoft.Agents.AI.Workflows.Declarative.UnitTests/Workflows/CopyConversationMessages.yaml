@@ -1,0 +1,12 @@
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: workflow_test
+  actions:
+
+    - kind: CopyConversationMessages
+      id: copy_messages
+      conversationId: =System.ConversationId
+      messages: =[UserMessage("Hello, how can I assist you today?")]
+

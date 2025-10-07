@@ -9,14 +9,14 @@
   "validation": {
     "conversation_count": 1,
     "min_action_count": 6,
-    "max_action_count": 56,
+    "max_action_count": -1,
+    "min_response_count": 2,
+    "max_response_count": 8,
     "actions": {
       "start": [
-        "set_project"
       ],
       "repeat": [
         "question_student",
-        "reset_project",
         "question_teacher",
         "set_count_increment",
         "check_completion"

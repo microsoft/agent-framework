@@ -8,22 +8,22 @@ from typing_extensions import Never
 
 from agent_framework import (
     AgentExecutor,
+    AgentExecutorResponse,
     AgentRunResponse,
     AgentRunResponseUpdate,
     AgentThread,
     BaseAgent,
     ChatMessage,
+    Executor,
     Role,
     SequentialBuilder,
     TextContent,
     WorkflowBuilder,
-    WorkflowOutputEvent,
+    WorkflowContext,
     WorkflowRunState,
     WorkflowStatusEvent,
     handler,
 )
-from agent_framework._workflows._executor import AgentExecutorResponse, Executor
-from agent_framework._workflows._workflow_context import WorkflowContext
 
 
 class _SimpleAgent(BaseAgent):
@@ -71,28 +71,22 @@ class _CaptureFullConversation(Executor):
 
 
 async def test_agent_executor_populates_full_conversation_non_streaming() -> None:
-    # Arrange: non-streaming AgentExecutor for deterministic response composition
+    # Arrange: AgentExecutor will be non-streaming when using workflow.run()
     agent = _SimpleAgent(id="agent1", name="A", reply_text="agent-reply")
-    agent_exec = AgentExecutor(agent, streaming=False, id="agent1-exec")
+    agent_exec = AgentExecutor(agent, id="agent1-exec")
     capturer = _CaptureFullConversation(id="capture")
 
     wf = WorkflowBuilder().set_start_executor(agent_exec).add_edge(agent_exec, capturer).build()
 
-    # Act: run with a simple user prompt
-    completed = False
-    output: dict | None = None
-    async for ev in wf.run_stream("hello world"):
-        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
-            completed = True
-        elif isinstance(ev, WorkflowOutputEvent):
-            output = ev.data  # type: ignore[assignment]
-        if completed and output is not None:
-            break
+    # Act: use run() instead of run_stream() to test non-streaming mode
+    result = await wf.run("hello world")
+
+    # Extract output from run result
+    outputs = result.get_outputs()
+    assert len(outputs) == 1
+    payload = outputs[0]
 
     # Assert: full_conversation contains [user("hello world"), assistant("agent-reply")]
-    assert completed
-    assert output is not None
-    payload = output
     assert isinstance(payload, dict)
     assert payload["length"] == 2
     assert payload["roles"][0] == Role.USER and "hello world" in (payload["texts"][0] or "")

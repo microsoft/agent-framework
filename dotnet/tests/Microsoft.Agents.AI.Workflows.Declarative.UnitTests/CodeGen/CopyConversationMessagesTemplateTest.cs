@@ -10,12 +10,22 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.CodeGen;
 public class CopyConversationMessagesTemplateTest(ITestOutputHelper output) : WorkflowActionTemplateTest(output)
 {
     [Fact]
-    public void CopyConversationMessages()
+    public void CopyConversationMessagesLiteral()
     {
         // Act, Assert
         this.ExecuteTest(
-            nameof(CopyConversationMessages),
+            nameof(CopyConversationMessagesLiteral),
             StringExpression.Literal("#conv_dm99"),
+            ValueExpression.Variable(PropertyPath.TopicVariable("MyMessages")));
+    }
+
+    [Fact]
+    public void CopyConversationMessagesVariable()
+    {
+        // Act, Assert
+        this.ExecuteTest(
+            nameof(CopyConversationMessagesVariable),
+            StringExpression.Variable(PropertyPath.TopicVariable("TestConversation")),
             ValueExpression.Variable(PropertyPath.TopicVariable("MyMessages")));
     }
 

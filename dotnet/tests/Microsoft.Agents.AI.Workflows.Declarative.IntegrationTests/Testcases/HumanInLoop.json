@@ -19,6 +19,7 @@
   "validation": {
     "conversation_count": 1,
     "min_action_count": 8,
+    "min_response_count": 0,
     "actions": {
       "start": [
         "set_project"

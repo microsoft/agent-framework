@@ -60,8 +60,8 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.CodeGen
                     "is.Id}\");\n        }\n        ChatMessage newMessage = new(ChatRole.");
             this.Write(this.ToStringHelper.ToStringWithCulture(FormatEnum(this.Model.Role, RoleMap)));
             this.Write(", await this.GetContentAsync(context).ConfigureAwait(false)) { AdditionalProperti" +
-                    "es = this.GetMetadata() };\n        await agentProvider.CreateMessageAsync(conver" +
-                    "sationId, newMessage, cancellationToken).ConfigureAwait(false);");
+                    "es = this.GetMetadata() };\n        newMessage = await agentProvider.CreateMessag" +
+                    "eAsync(conversationId, newMessage, cancellationToken).ConfigureAwait(false);");
 
         AssignVariable(this.Message, "newMessage");
         

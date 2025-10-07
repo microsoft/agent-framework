@@ -1,0 +1,15 @@
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: workflow_test
+  actions:
+
+    - kind: AddConversationMessage
+      id: add_message
+      message: Local.MyMessage1
+      role: User
+      conversationId: =System.ConversationId
+      content:
+        - type: Text
+          value: {Local.TestInput}

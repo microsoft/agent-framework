@@ -419,27 +419,24 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
                         "format": audio_format,
                     },
                 }
-            case DataContent() | UriContent() if content.media_type and content.media_type.startswith("application/"):
-                if content.media_type == "application/pdf":
-                    if content.uri.startswith("data:"):
-                        filename = (
-                            getattr(content, "filename", None)
-                            or content.additional_properties.get("filename", "document.pdf")
-                            if hasattr(content, "additional_properties") and content.additional_properties
-                            else "document.pdf"
-                        )
-                        return {
-                            "type": "file",
-                            "file": {
-                                "file_data": content.uri,  # Send full data URI
-                                "filename": filename,
-                            },
-                        }
-
-                    return content.to_dict(exclude_none=True)
-
-                return content.to_dict(exclude_none=True)
+            case DataContent() | UriContent() if content.has_top_level_media_type(
+                "application"
+            ) and content.uri.startswith("data:"):
+                # All application/* media types should be treated as files for OpenAI
+                filename = getattr(content, "filename", None) or (
+                    content.additional_properties.get("filename")
+                    if hasattr(content, "additional_properties") and content.additional_properties
+                    else None
+                )
+                file_obj = {"file_data": content.uri}
+                if filename:
+                    file_obj["filename"] = filename
+                return {
+                    "type": "file",
+                    "file": file_obj,
+                }
             case _:
+                # Default fallback for all other content types
                 return content.to_dict(exclude_none=True)
 
     @override
