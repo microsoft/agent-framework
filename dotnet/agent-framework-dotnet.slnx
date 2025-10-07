@@ -113,6 +113,7 @@
     <Project Path="samples/GettingStarted/Workflows/HumanInTheLoop/HumanInTheLoopBasic/HumanInTheLoopBasic.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflows/Observability/">
+    <Project Path="samples/GettingStarted/Workflows/Observability/ApplicationInsights/ApplicationInsights.csproj" />
     <Project Path="samples/GettingStarted/Workflows/Observability/AspireDashboard/AspireDashboard.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflows/Visualization/">
