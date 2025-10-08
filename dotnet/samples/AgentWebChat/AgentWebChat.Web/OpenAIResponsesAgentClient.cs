@@ -50,5 +50,5 @@ internal sealed class OpenAIResponsesAgentClient : IAgentClient
     }
 
     public Task<AgentCard?> GetAgentCardAsync(string agentName, CancellationToken cancellationToken = default)
-        => Task.FromResult<AgentCard?>(null!);
+        => Task.FromResult<AgentCard?>(null);
 }
