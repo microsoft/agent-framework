@@ -53,7 +53,7 @@ async def streaming_example() -> None:
     print("=== Streaming Response Example ===")
 
     agent = OpenAIChatClient(
-        api_key=os.getenv("OLLAMA_API_KEY"),
+        api_key="ollama", # Just a placeholder, Ollama doesn't require API key
         base_url=os.getenv("OLLAMA_ENDPOINT"),
         model_id=os.getenv("OLLAMA_MODEL"),
     ).create_agent(
