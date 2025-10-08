@@ -1,7 +1,14 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Linq;
+using System.Text.Json;
 using FluentAssertions;
+using Microsoft.Agents.AI.Workflows.Checkpointing;
+using Microsoft.Agents.AI.Workflows.Observability;
+using OpenTelemetry.Trace;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
@@ -111,5 +118,61 @@ public partial class WorkflowBuilderSmokeTests
 
         workflow3.Name.Should().Be("Named Only");
         workflow3.Description.Should().BeNull();
+    }
+
+    [Fact]
+    public void Test_WorkflowDefinition_Tag_IsSet()
+    {
+        // Arrange
+        var sourceName = typeof(WorkflowBuilder).Namespace!;
+        var activities = new List<Activity>();
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        // Act
+        Workflow workflow = new WorkflowBuilder("complex")
+            .WithName("Complex Workflow")
+            .WithDescription("Complex Workflow for Tests")
+            .AddEdge(new NoOpExecutor("complex"), new SomeOtherNoOpExecutor("target"))
+            .WithOutputFrom(new NoOpExecutor("output"))
+            .Build();
+
+        // Assert
+        Activity? buildActivity = activities.SingleOrDefault(a => a.OperationName == ActivityNames.WorkflowBuild);
+        buildActivity.Should().NotBeNull();
+
+        object? workflowDefinition = buildActivity!.GetTagItem(Tags.WorkflowDefinition);
+        workflowDefinition.Should().NotBeNull();
+
+        string definitionJson = workflowDefinition!.ToString()!;
+        definitionJson.Should().NotBeEmpty();
+
+        WorkflowInfo workflowInfo = JsonSerializer.Deserialize<WorkflowInfo>(
+            definitionJson,
+            WorkflowsJsonUtilities.JsonContext.Default.WorkflowInfo)!;
+
+        workflowInfo.Executors.Should().HaveCount(3);
+        workflowInfo.Executors.Should().ContainKey("complex");
+        workflowInfo.Executors.Should().ContainKey("target");
+        workflowInfo.Executors.Should().ContainKey("output");
+
+        workflowInfo.Executors["complex"].ExecutorType.IsMatch<NoOpExecutor>().Should().BeTrue();
+        workflowInfo.Executors["target"].ExecutorType.IsMatch<SomeOtherNoOpExecutor>().Should().BeTrue();
+        workflowInfo.Executors["output"].ExecutorType.IsMatch<NoOpExecutor>().Should().BeTrue();
+
+        workflowInfo.StartExecutorId.Should().Be("complex");
+        workflowInfo.OutputExecutorIds.Should().HaveCount(1);
+        workflowInfo.OutputExecutorIds.Should().Contain("output");
+
+        workflowInfo.Edges.Should().HaveCount(1);
+        workflowInfo.Edges.Should().ContainKey("complex");
+
+        workflowInfo.Edges["complex"].Should().HaveCount(1);
+        workflowInfo.Edges["complex"][0].Kind.Should().Be(EdgeKind.Direct);
+
+        workflowInfo.RequestPorts.Should().BeEmpty();
+        workflowInfo.InputType.Should().BeNull();
     }
 }
