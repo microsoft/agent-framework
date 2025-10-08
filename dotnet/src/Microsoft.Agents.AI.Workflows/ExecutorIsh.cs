@@ -14,6 +14,43 @@ namespace Microsoft.Agents.AI.Workflows;
 public static class ExecutorIshConfigurationExtensions
 {
     /// <summary>
+    /// Configures a factory method for creating an <see cref="Executor"/> of type <typeparamref name="TExecutor"/>, using the
+    /// type name as the id.
+    /// </summary>
+    /// <remarks>
+    /// Note that Executor Ids must be unique within a workflow.
+    ///
+    /// Although this will generally result in a delay-instantiated <see cref="Executor"/> once messages are available
+    /// for it, if this is used as a start node of a typed <see cref="Workflow{TInput}"/> via <see cref="Workflow.TryPromoteAsync{TInput}"/>,
+    /// it will be instantiated as part of the workflow's construction, to validate that its input type matches the
+    /// demanded <c>TInput</c>.
+    /// </remarks>
+    /// <typeparam name="TExecutor">The type of the resulting executor</typeparam>
+    /// <param name="factoryAsync">The factory method.</param>
+    /// <returns>An ExecutorIsh instance that resolves to the result of the factory call when messages get sent to it.</returns>
+    public static ExecutorIsh ConfigureFactory<TExecutor>(this Func<string, string, ValueTask<TExecutor>> factoryAsync)
+        where TExecutor : Executor
+        => ConfigureFactory<TExecutor, ExecutorOptions>((config, runId) => factoryAsync(config.Id, runId), typeof(TExecutor).Name, options: null);
+
+    /// <summary>
+    /// Configures a factory method for creating an <see cref="Executor"/> of type <typeparamref name="TExecutor"/>, with
+    /// the specified id.
+    /// </summary>
+    /// <remarks>
+    /// Although this will generally result in a delay-instantiated <see cref="Executor"/> once messages are available
+    /// for it, if this is used as a start node of a typed <see cref="Workflow{TInput}"/> via <see cref="Workflow.TryPromoteAsync{TInput}"/>,
+    /// it will be instantiated as part of the workflow's construction, to validate that its input type matches the
+    /// demanded <c>TInput</c>.
+    /// </remarks>
+    /// <typeparam name="TExecutor">The type of the resulting executor</typeparam>
+    /// <param name="factoryAsync">The factory method.</param>
+    /// <param name="id">An id for the executor to be instantiated.</param>
+    /// <returns>An ExecutorIsh instance that resolves to the result of the factory call when messages get sent to it.</returns>
+    public static ExecutorIsh ConfigureFactory<TExecutor>(this Func<string, string, ValueTask<TExecutor>> factoryAsync, string id)
+        where TExecutor : Executor
+        => ConfigureFactory<TExecutor, ExecutorOptions>((_, runId) => factoryAsync(id, runId), id, options: null);
+
+    /// <summary>
     /// Configures a factory method for creating an <see cref="Executor"/> of type <typeparamref name="TExecutor"/>, with
     /// the specified id and options.
     /// </summary>
@@ -77,9 +114,10 @@ public static class ExecutorIshConfigurationExtensions
     /// <param name="messageHandlerAsync">A delegate that defines the asynchronous function to execute for each input message.</param>
     /// <param name="id">A optional unique identifier for the executor. If <c>null</c>, will use the function argument as an id.</param>
     /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
+    /// <param name="threadsafe">Declare that the message handler may be used simultaneously by multiple runs concurrently.</param>
     /// <returns>An ExecutorIsh instance that wraps the provided asynchronous message handler and configuration.</returns>
-    public static ExecutorIsh AsExecutor<TInput>(this Func<TInput, IWorkflowContext, CancellationToken, ValueTask> messageHandlerAsync, string id, ExecutorOptions? options = null)
-        => new FunctionExecutor<TInput>(id, messageHandlerAsync, options).ToExecutorIsh(messageHandlerAsync);
+    public static ExecutorIsh AsExecutor<TInput>(this Func<TInput, IWorkflowContext, CancellationToken, ValueTask> messageHandlerAsync, string id, ExecutorOptions? options = null, bool threadsafe = false)
+        => new FunctionExecutor<TInput>(id, messageHandlerAsync, options, declareCrossRunShareable: threadsafe).ToExecutorIsh(messageHandlerAsync);
 
     /// <summary>
     /// Configures a function-based asynchronous message handler as an executor with the specified identifier and
@@ -90,9 +128,10 @@ public static class ExecutorIshConfigurationExtensions
     /// <param name="messageHandlerAsync">A delegate that defines the asynchronous function to execute for each input message.</param>
     /// <param name="id">A unique identifier for the executor.</param>
     /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
+    /// <param name="threadsafe">Declare that the message handler may be used simultaneously by multiple runs concurrently.</param>
     /// <returns>An ExecutorIsh instance that wraps the provided asynchronous message handler and configuration.</returns>
-    public static ExecutorIsh AsExecutor<TInput, TOutput>(this Func<TInput, IWorkflowContext, CancellationToken, ValueTask<TOutput>> messageHandlerAsync, string id, ExecutorOptions? options = null)
-        => new FunctionExecutor<TInput, TOutput>(Throw.IfNull(id), messageHandlerAsync, options).ToExecutorIsh(messageHandlerAsync);
+    public static ExecutorIsh AsExecutor<TInput, TOutput>(this Func<TInput, IWorkflowContext, CancellationToken, ValueTask<TOutput>> messageHandlerAsync, string id, ExecutorOptions? options = null, bool threadsafe = false)
+        => new FunctionExecutor<TInput, TOutput>(Throw.IfNull(id), messageHandlerAsync, options, declareCrossRunShareable: threadsafe).ToExecutorIsh(messageHandlerAsync);
 
     /// <summary>
     /// Configures a function-based aggregating executor with the specified identifier and options.
@@ -102,9 +141,10 @@ public static class ExecutorIshConfigurationExtensions
     /// <param name="aggregatorFunc">A delegate the defines the aggregation procedure</param>
     /// <param name="id">A unique identifier for the executor.</param>
     /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
+    /// <param name="threadsafe">Declare that the message handler may be used simultaneously by multiple runs concurrently.</param>
     /// <returns>An ExecutorIsh instance that wraps the provided asynchronous message handler and configuration.</returns>
-    public static ExecutorIsh AsExecutor<TInput, TAccumulate>(this Func<TAccumulate?, TInput, TAccumulate?> aggregatorFunc, string id, ExecutorOptions? options = null)
-        => new AggregatingExecutor<TInput, TAccumulate>(id, aggregatorFunc, options);
+    public static ExecutorIsh AsExecutor<TInput, TAccumulate>(this Func<TAccumulate?, TInput, TAccumulate?> aggregatorFunc, string id, ExecutorOptions? options = null, bool threadsafe = false)
+        => new AggregatingExecutor<TInput, TAccumulate>(id, aggregatorFunc, options, declareCrossRunShareable: threadsafe);
 }
 
 /// <summary>

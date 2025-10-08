@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Linq;
@@ -31,6 +32,9 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
     private IWorkflowContext Source { get; }
     public WorkflowFormulaState State { get; }
     public IReadOnlyDictionary<string, string>? TraceContext => this.Source.TraceContext;
+
+    /// <inheritdoc/>
+    public bool ConcurrentRunsEnabled => this.Source.ConcurrentRunsEnabled;
 
     /// <inheritdoc/>
     public ValueTask AddEventAsync(WorkflowEvent workflowEvent, CancellationToken cancellationToken = default)
@@ -169,5 +173,10 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
 
             return this.Source.QueueStateUpdateAsync(key, formulaValue.AsPortable(), scopeName, cancellationToken);
         }
+    }
+
+    public ValueTask<T> ReadOrInitStateAsync<T>(string key, Func<T> initialStateFactory, string? scopeName = null, CancellationToken cancellationToken = default)
+    {
+        return this.Source.ReadOrInitStateAsync(key, initialStateFactory, scopeName, cancellationToken);
     }
 }
