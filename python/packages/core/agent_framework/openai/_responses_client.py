@@ -300,27 +300,26 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
 
     def _prepare_options(self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions) -> dict[str, Any]:
         """Take ChatOptions and create the specific options for Responses API."""
-        options_dict: dict[str, Any] = {}
-
-        if chat_options.max_tokens is not None:
-            options_dict["max_output_tokens"] = chat_options.max_tokens
-
-        if chat_options.temperature is not None:
-            options_dict["temperature"] = chat_options.temperature
-
-        if chat_options.top_p is not None:
-            options_dict["top_p"] = chat_options.top_p
-
-        if chat_options.user is not None:
-            options_dict["user"] = chat_options.user
-
-        # messages
-        if instructions := options_dict.pop("instructions", None):
-            messages = [ChatMessage(role="system", text=instructions), *messages]
-        request_input = self._prepare_chat_messages_for_request(messages)
-        if not request_input:
-            raise ServiceInvalidRequestError("Messages are required for chat completions")
-        options_dict["input"] = request_input
+        options_dict: dict[str, Any] = chat_options.to_dict(
+            exclude={
+                "type",
+                "response_format",  # handled in inner get methods
+                "presence_penalty",  # not supported
+                "frequency_penalty",  # not supported
+                "logit_bias",  # not supported
+                "seed",  # not supported
+                "stop",  # not supported
+            }
+        )
+        translations = {
+            "model_id": "model",
+            "allow_multiple_tool_calls": "parallel_tool_calls",
+            "conversation_id": "previous_response_id",
+            "max_tokens": "max_output_tokens",
+        }
+        for old_key, new_key in translations.items():
+            if old_key in options_dict and old_key != new_key:
+                options_dict[new_key] = options_dict.pop(old_key)
 
         # tools
         if chat_options.tools is None:
@@ -328,13 +327,23 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         else:
             options_dict["tools"] = self._tools_to_response_tools(chat_options.tools)
 
-        # other settings
-        options_dict["store"] = chat_options.store is True
-
-        if chat_options.conversation_id:
-            options_dict["previous_response_id"] = chat_options.conversation_id
-        if "model" not in options_dict:
+        # model id
+        if not options_dict.get("model"):
             options_dict["model"] = self.model_id
+
+        # messages
+        request_input = self._prepare_chat_messages_for_request(messages)
+        if not request_input:
+            raise ServiceInvalidRequestError("Messages are required for chat completions")
+        options_dict["input"] = request_input
+
+        # additional provider specific settings
+        if additional_properties := options_dict.pop("additional_properties", None):
+            for key, value in additional_properties.items():
+                if value is not None:
+                    options_dict[key] = value
+        if "store" not in options_dict:
+            options_dict["store"] = False
         return options_dict
 
     def _prepare_chat_messages_for_request(self, chat_messages: Sequence[ChatMessage]) -> list[dict[str, Any]]:
@@ -629,6 +638,11 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                                     raw_representation=reasoning_content,
                                     additional_properties=additional_properties,
                                 )
+                            )
+                    if hasattr(item, "summary") and item.summary:
+                        for summary in item.summary:
+                            contents.append(
+                                TextReasoningContent(text=summary.text, raw_representation=summary)  # type: ignore[arg-type]
                             )
                 case "code_interpreter_call":  # ResponseOutputCodeInterpreterCall
                     if hasattr(item, "outputs") and item.outputs:
