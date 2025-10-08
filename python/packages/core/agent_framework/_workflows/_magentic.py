@@ -27,8 +27,9 @@ from agent_framework._agents import BaseAgent
 
 from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
 from ._events import WorkflowEvent
-from ._executor import Executor, RequestInfoMessage, RequestResponse, handler
+from ._executor import Executor, handler
 from ._model_utils import DictConvertible, encode_value
+from ._request_info_executor import RequestInfoMessage, RequestResponse
 from ._workflow import Workflow, WorkflowBuilder, WorkflowRunResult
 from ._workflow_context import WorkflowContext
 
@@ -1939,7 +1940,7 @@ class MagenticBuilder:
         workflow_builder = WorkflowBuilder().set_start_executor(orchestrator_executor)
 
         if self._enable_plan_review:
-            from ._executor import RequestInfoExecutor
+            from ._request_info_executor import RequestInfoExecutor
 
             request_info = RequestInfoExecutor(id="magentic_plan_review")
             workflow_builder = (

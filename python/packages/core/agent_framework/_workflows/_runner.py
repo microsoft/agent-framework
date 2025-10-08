@@ -22,7 +22,7 @@ from ._runner_context import (
 from ._shared_state import SharedState
 
 if TYPE_CHECKING:
-    from ._executor import RequestInfoExecutor
+    from ._request_info_executor import RequestInfoExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -372,7 +372,7 @@ class Runner:
         Returns:
             The RequestInfoExecutor instance if found, None otherwise.
         """
-        from ._executor import RequestInfoExecutor
+        from ._request_info_executor import RequestInfoExecutor
 
         for executor in self._executors.values():
             if isinstance(executor, RequestInfoExecutor):
@@ -388,7 +388,7 @@ class Runner:
         Returns:
             True if the message targets a RequestInfoExecutor, False otherwise.
         """
-        from ._executor import RequestInfoExecutor
+        from ._request_info_executor import RequestInfoExecutor
 
         if not msg.target_id:
             return False
