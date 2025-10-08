@@ -605,6 +605,6 @@ class SerializationMixin:
         # for both when defined on class.
         if (type_ := getattr(cls, "TYPE", None)) and isinstance(type_, str):
             return type_  # type:ignore[no-any-return]
-        # fallback and default
+        # Fallback and default
         # Convert class name to snake_case
         return _CAMEL_TO_SNAKE_PATTERN.sub("_", cls.__name__).lower()
