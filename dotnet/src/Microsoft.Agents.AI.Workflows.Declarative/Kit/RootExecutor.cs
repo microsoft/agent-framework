@@ -71,7 +71,7 @@ public abstract class RootExecutor<TInput> : Executor<TInput>, IResettableExecut
         await this._agentProvider.CreateMessageAsync(this._conversationId, input, cancellationToken).ConfigureAwait(false);
         await declarativeContext.SetLastMessageAsync(input).ConfigureAwait(false);
 
-        await declarativeContext.SendMessageAsync(new ActionExecutorResult(this.Id), cancellationToken: cancellationToken).ConfigureAwait(false);
+        await declarativeContext.SendResultMessageAsync(this.Id, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
