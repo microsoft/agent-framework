@@ -637,12 +637,10 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
         if input_model:
             if inspect.isclass(input_model) and issubclass(input_model, BaseModel):
                 return input_model
-            elif isinstance(input_model, Mapping):
+            if isinstance(input_model, Mapping):
                 return cast(type[ArgsT], _create_model_from_json_schema(self.name, input_model))
-            else:
-                raise TypeError("input_model must be a Pydantic BaseModel subclass or a JSON schema dict.")
-        else:
-            return cast(type[ArgsT], _create_input_model_from_func(self.func, self.name))
+            raise TypeError("input_model must be a Pydantic BaseModel subclass or a JSON schema dict.")
+        return cast(type[ArgsT], _create_input_model_from_func(self.func, self.name))
 
     def __call__(self, *args: Any, **kwargs: Any) -> ReturnT | Awaitable[ReturnT]:
         """Call the wrapped function with the provided arguments."""
