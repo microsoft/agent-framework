@@ -100,7 +100,7 @@ class DraftFeedbackCoordinator(Executor):
     async def on_writer_response(
         self,
         draft: AgentExecutorResponse,
-        ctx: WorkflowContext[DraftFeedbackRequest, str],
+        ctx: WorkflowContext[DraftFeedbackRequest],
     ) -> None:
         # Preserve the full conversation so the final editor can see tool traces and the initial prompt.
         conversation: list[ChatMessage]
@@ -117,15 +117,13 @@ class DraftFeedbackCoordinator(Executor):
             "(tone tweaks, must-have detail, target audience, etc.). "
             "Keep it under 30 words."
         )
-        await ctx.send_message(
-            DraftFeedbackRequest(prompt=prompt, draft_text=draft_text, conversation=conversation)
-        )
+        await ctx.send_message(DraftFeedbackRequest(prompt=prompt, draft_text=draft_text, conversation=conversation))
 
     @handler
     async def on_human_feedback(
         self,
         feedback: RequestResponse[DraftFeedbackRequest, str],
-        ctx: WorkflowContext[AgentExecutorRequest, str],
+        ctx: WorkflowContext[AgentExecutorRequest],
     ) -> None:
         note = (feedback.data or "").strip()
         request = feedback.original_request
@@ -207,7 +205,7 @@ async def main() -> None:
                 update = event.data
                 # Extract and print any new tool calls or results from the update.
                 function_calls = [c for c in update.contents if isinstance(c, FunctionCallContent)]  # type: ignore[union-attr]
-                function_results = [c for c in update.contents if isinstance(c, FunctionResultContent)] # type: ignore[union-attr]
+                function_results = [c for c in update.contents if isinstance(c, FunctionResultContent)]  # type: ignore[union-attr]
                 if executor_id != last_executor:
                     if last_executor is not None:
                         print()
