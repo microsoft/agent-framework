@@ -140,13 +140,16 @@ public partial class WorkflowBuilderSmokeTests
             .Build();
 
         // Assert
-        Activity? buildActivity = activities.SingleOrDefault(a => a.OperationName == ActivityNames.WorkflowBuild);
-        buildActivity.Should().NotBeNull();
+        IEnumerable<Activity> buildActivities = activities.Where(a => a.OperationName == ActivityNames.WorkflowBuild);
+        buildActivities.Should().NotBeEmpty();
 
-        object? workflowDefinition = buildActivity!.GetTagItem(Tags.WorkflowDefinition);
-        workflowDefinition.Should().NotBeNull();
+        IEnumerable<object?> tags = buildActivities.Select(a => a.GetTagItem(Tags.WorkflowDefinition));
+        tags.Should().NotBeEmpty();
 
-        string definitionJson = workflowDefinition!.ToString()!;
+        IEnumerable<string?> definitionJsons = tags.Select(t => t?.ToString()).Where(ts => ts?.Contains("complex") == true);
+        definitionJsons.Should().ContainSingle();
+
+        string definitionJson = definitionJsons.Single()!;
         definitionJson.Should().NotBeEmpty();
 
         WorkflowInfo workflowInfo = JsonSerializer.Deserialize<WorkflowInfo>(
