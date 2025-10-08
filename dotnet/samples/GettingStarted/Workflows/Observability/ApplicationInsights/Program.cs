@@ -1,14 +1,19 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Diagnostics;
+using Azure.Monitor.OpenTelemetry.Exporter;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Agents.AI.Workflows.Reflection;
+using OpenTelemetry;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 
-namespace WorkflowExecutorsAndEdgesSample;
+namespace WorkflowObservabilitySample;
 
 /// <summary>
-/// This sample introduces the concepts of executors and edges in a workflow.
+/// This sample shows how to enable observability in a workflow and send the traces
+/// to be visualized in Application Insights.
 ///
-/// Workflows are built from executors (processing units) connected by edges (data flow paths).
 /// In this example, we create a simple text processing pipeline that:
 /// 1. Takes input text and converts it to uppercase using an UppercaseExecutor
 /// 2. Takes the uppercase text and reverses it using a ReverseTextExecutor
@@ -18,19 +23,39 @@ namespace WorkflowExecutorsAndEdgesSample;
 /// </summary>
 public static class Program
 {
+    private const string SourceName = "Workflow.ApplicationInsightsSample";
+    private static readonly ActivitySource s_activitySource = new(SourceName);
+
     private static async Task Main()
     {
+        var applicationInsightsConnectionString = Environment.GetEnvironmentVariable("APPLICATIONINSIGHTS_CONNECTION_STRING") ?? throw new InvalidOperationException("APPLICATIONINSIGHTS_CONNECTION_STRING is not set.");
+
+        var resourceBuilder = ResourceBuilder
+            .CreateDefault()
+            .AddService("WorkflowSample");
+
+        using var traceProvider = Sdk.CreateTracerProviderBuilder()
+            .SetResourceBuilder(resourceBuilder)
+            .AddSource("Microsoft.Agents.AI.Workflows*")
+            .AddSource(SourceName)
+            .AddAzureMonitorTraceExporter(options => options.ConnectionString = applicationInsightsConnectionString)
+            .Build();
+
+        // Start a root activity for the application
+        using var activity = s_activitySource.StartActivity("main");
+        Console.WriteLine($"Operation/Trace ID: {Activity.Current?.TraceId}");
+
         // Create the executors
         UppercaseExecutor uppercase = new();
         ReverseTextExecutor reverse = new();
 
         // Build the workflow by connecting executors sequentially
-        WorkflowBuilder builder = new(uppercase);
-        builder.AddEdge(uppercase, reverse).WithOutputFrom(reverse);
-        var workflow = builder.Build();
+        var workflow = new WorkflowBuilder(uppercase)
+            .AddEdge(uppercase, reverse)
+            .Build();
 
         // Execute the workflow with input data
-        await using Run run = await InProcessExecution.RunAsync(workflow, "Hello, World!");
+        Run run = await InProcessExecution.RunAsync(workflow, "Hello, World!");
         foreach (WorkflowEvent evt in run.NewEvents)
         {
             if (evt is ExecutorCompletedEvent executorComplete)
@@ -72,8 +97,5 @@ internal sealed class ReverseTextExecutor() : ReflectingExecutor<ReverseTextExec
     /// The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>The input text reversed</returns>
     public async ValueTask<string> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
-    {
-        // Because we do not suppress it, the returned result will be yielded as an output from this executor.
-        return string.Concat(message.Reverse());
-    }
+        => new(message.Reverse().ToArray());
 }

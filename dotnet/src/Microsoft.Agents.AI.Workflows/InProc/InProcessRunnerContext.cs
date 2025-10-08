@@ -57,7 +57,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         this.OutgoingEvents = outgoingEvents;
     }
 
-    public async ValueTask<Executor> EnsureExecutorAsync(string executorId, IStepTracer? tracer)
+    public async ValueTask<Executor> EnsureExecutorAsync(string executorId, IStepTracer? tracer, CancellationToken cancellationToken = default)
     {
         this.CheckEnded();
         Task<Executor> executorTask = this._executors.GetOrAdd(executorId, CreateExecutorAsync);
@@ -88,9 +88,9 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         return await executorTask.ConfigureAwait(false);
     }
 
-    public async ValueTask<IEnumerable<Type>> GetStartingExecutorInputTypesAsync(CancellationToken cancellation = default)
+    public async ValueTask<IEnumerable<Type>> GetStartingExecutorInputTypesAsync(CancellationToken cancellationToken = default)
     {
-        Executor startingExecutor = await this.EnsureExecutorAsync(this._workflow.StartExecutorId, tracer: null)
+        Executor startingExecutor = await this.EnsureExecutorAsync(this._workflow.StartExecutorId, tracer: null, cancellationToken)
                                               .ConfigureAwait(false);
 
         return startingExecutor.InputTypes;
@@ -145,7 +145,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
     public bool HasUnservicedRequests => !this._externalRequests.IsEmpty ||
                                       this._joinedSubworkflowRunners.Any(joinedRunner => joinedRunner.HasUnservicedRequests);
 
-    public async ValueTask<StepContext> AdvanceAsync()
+    public async ValueTask<StepContext> AdvanceAsync(CancellationToken cancellationToken = default)
     {
         this.CheckEnded();
 
@@ -159,7 +159,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         return Interlocked.Exchange(ref this._nextStep, new StepContext());
     }
 
-    public ValueTask AddEventAsync(WorkflowEvent workflowEvent)
+    public ValueTask AddEventAsync(WorkflowEvent workflowEvent, CancellationToken cancellationToken = default)
     {
         this.CheckEnded();
         return this.OutgoingEvents.EnqueueAsync(workflowEvent);
@@ -168,7 +168,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
     private static readonly string s_namespace = typeof(IWorkflowContext).Namespace!;
     private static readonly ActivitySource s_activitySource = new(s_namespace);
 
-    public async ValueTask SendMessageAsync(string sourceId, object message, string? targetId = null)
+    public async ValueTask SendMessageAsync(string sourceId, object message, string? targetId = null, CancellationToken cancellationToken = default)
     {
         using Activity? activity = s_activitySource.StartActivity(ActivityNames.MessageSend, ActivityKind.Producer);
         // Create a carrier for trace context propagation
@@ -231,19 +231,19 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         OutputFilter outputFilter,
         Dictionary<string, string>? traceContext) : IWorkflowContext
     {
-        public ValueTask AddEventAsync(WorkflowEvent workflowEvent) => RunnerContext.AddEventAsync(workflowEvent);
+        public ValueTask AddEventAsync(WorkflowEvent workflowEvent, CancellationToken cancellationToken = default) => RunnerContext.AddEventAsync(workflowEvent, cancellationToken);
 
-        public ValueTask SendMessageAsync(object message, string? targetId = null)
+        public ValueTask SendMessageAsync(object message, string? targetId = null, CancellationToken cancellationToken = default)
         {
-            return RunnerContext.SendMessageAsync(ExecutorId, message, targetId);
+            return RunnerContext.SendMessageAsync(ExecutorId, message, targetId, cancellationToken);
         }
 
-        public async ValueTask YieldOutputAsync(object output)
+        public async ValueTask YieldOutputAsync(object output, CancellationToken cancellationToken = default)
         {
             RunnerContext.CheckEnded();
             Throw.IfNull(output);
 
-            Executor sourceExecutor = await RunnerContext.EnsureExecutorAsync(ExecutorId, tracer: null).ConfigureAwait(false);
+            Executor sourceExecutor = await RunnerContext.EnsureExecutorAsync(ExecutorId, tracer: null, cancellationToken).ConfigureAwait(false);
             if (!sourceExecutor.CanOutput(output.GetType()))
             {
                 throw new InvalidOperationException($"Cannot output object of type {output.GetType().Name}. Expecting one of [{string.Join(", ", sourceExecutor.OutputTypes)}].");
@@ -251,22 +251,22 @@ internal sealed class InProcessRunnerContext : IRunnerContext
 
             if (outputFilter.CanOutput(ExecutorId, output))
             {
-                await this.AddEventAsync(new WorkflowOutputEvent(output, ExecutorId)).ConfigureAwait(false);
+                await this.AddEventAsync(new WorkflowOutputEvent(output, ExecutorId), cancellationToken).ConfigureAwait(false);
             }
         }
 
         public ValueTask RequestHaltAsync() => this.AddEventAsync(new RequestHaltEvent());
 
-        public ValueTask<T?> ReadStateAsync<T>(string key, string? scopeName = null)
+        public ValueTask<T?> ReadStateAsync<T>(string key, string? scopeName = null, CancellationToken cancellationToken = default)
             => RunnerContext.StateManager.ReadStateAsync<T>(ExecutorId, scopeName, key);
 
-        public ValueTask<HashSet<string>> ReadStateKeysAsync(string? scopeName = null)
+        public ValueTask<HashSet<string>> ReadStateKeysAsync(string? scopeName = null, CancellationToken cancellationToken = default)
             => RunnerContext.StateManager.ReadKeysAsync(ExecutorId, scopeName);
 
-        public ValueTask QueueStateUpdateAsync<T>(string key, T? value, string? scopeName = null)
+        public ValueTask QueueStateUpdateAsync<T>(string key, T? value, string? scopeName = null, CancellationToken cancellationToken = default)
             => RunnerContext.StateManager.WriteStateAsync(ExecutorId, scopeName, key, value);
 
-        public ValueTask QueueClearScopeAsync(string? scopeName = null)
+        public ValueTask QueueClearScopeAsync(string? scopeName = null, CancellationToken cancellationToken = default)
             => RunnerContext.StateManager.ClearStateAsync(ExecutorId, scopeName);
 
         public IReadOnlyDictionary<string, string>? TraceContext => traceContext;
@@ -274,7 +274,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
 
     public bool WithCheckpointing { get; }
 
-    internal Task PrepareForCheckpointAsync(CancellationToken cancellation = default)
+    internal Task PrepareForCheckpointAsync(CancellationToken cancellationToken = default)
     {
         this.CheckEnded();
 
@@ -283,7 +283,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         async Task InvokeCheckpointingAsync(Task<Executor> executorTask)
         {
             Executor executor = await executorTask.ConfigureAwait(false);
-            await executor.OnCheckpointingAsync(this.Bind(executor.Id), cancellation).ConfigureAwait(false);
+            await executor.OnCheckpointingAsync(this.Bind(executor.Id), cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -320,7 +320,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         {
             foreach (string requestId in this._externalRequests.Keys)
             {
-                await this.AddEventAsync(new RequestInfoEvent(this._externalRequests[requestId]))
+                await this.AddEventAsync(new RequestInfoEvent(this._externalRequests[requestId]), cancellationToken)
                           .ConfigureAwait(false);
             }
         }
@@ -386,7 +386,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
 
     public IEnumerable<ISuperStepRunner> JoinedSubworkflowRunners => this._joinedSubworkflowRunners;
 
-    public ValueTask AttachSuperstepAsync(ISuperStepRunner superStepRunner, CancellationToken cancellation = default)
+    public ValueTask AttachSuperstepAsync(ISuperStepRunner superStepRunner, CancellationToken cancellationToken = default)
     {
         // This needs to be a thread-safe ordered collection because we can potentially instantiate executors
         // in parallel, which means multiple sub-workflows could be attaching at the same time.
@@ -394,9 +394,9 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         return default;
     }
 
-    ValueTask ISuperStepJoinContext.ForwardWorkflowEventAsync(WorkflowEvent workflowEvent, CancellationToken cancellation)
-        => this.AddEventAsync(workflowEvent);
+    ValueTask ISuperStepJoinContext.ForwardWorkflowEventAsync(WorkflowEvent workflowEvent, CancellationToken cancellationToken)
+        => this.AddEventAsync(workflowEvent, cancellationToken);
 
-    ValueTask ISuperStepJoinContext.SendMessageAsync<TMessage>(string senderId, [DisallowNull] TMessage message, CancellationToken cancellation)
-        => this.SendMessageAsync(senderId, Throw.IfNull(message));
+    ValueTask ISuperStepJoinContext.SendMessageAsync<TMessage>(string senderId, [DisallowNull] TMessage message, CancellationToken cancellationToken)
+        => this.SendMessageAsync(senderId, Throw.IfNull(message), cancellationToken: cancellationToken);
 }

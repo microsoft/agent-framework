@@ -1,0 +1,16 @@
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: workflow_test
+  actions:
+
+    - kind: InvokeAzureAgent
+      id: invoke_vision
+      conversationId: =System.ConversationId
+      agent:
+        name: =Env.FOUNDRY_AGENT_TEST
+      input:
+        additionalInstructions: |-
+          Describe the image contained in the user request, if any;
+          otherwise, suggest that the user provide an image.

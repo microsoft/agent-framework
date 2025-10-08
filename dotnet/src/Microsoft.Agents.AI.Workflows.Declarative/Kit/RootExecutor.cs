@@ -55,23 +55,23 @@ public abstract class RootExecutor<TInput> : Executor<TInput>, IResettableExecut
     }
 
     /// <inheritdoc/>
-    public override async ValueTask HandleAsync(TInput message, IWorkflowContext context)
+    public override async ValueTask HandleAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken)
     {
         DeclarativeWorkflowContext declarativeContext = new(context, this._state);
-        await this.ExecuteAsync(message, declarativeContext, cancellationToken: default).ConfigureAwait(false);
+        await this.ExecuteAsync(message, declarativeContext, cancellationToken).ConfigureAwait(false);
 
         ChatMessage input = (this._inputTransform ?? DefaultInputTransform).Invoke(message);
 
         if (string.IsNullOrWhiteSpace(this._conversationId))
         {
-            this._conversationId = await this._agentProvider.CreateConversationAsync(cancellationToken: default).ConfigureAwait(false);
+            this._conversationId = await this._agentProvider.CreateConversationAsync(cancellationToken).ConfigureAwait(false);
         }
-        await declarativeContext.QueueConversationUpdateAsync(this._conversationId, isExternal: true).ConfigureAwait(false);
+        await declarativeContext.QueueConversationUpdateAsync(this._conversationId, isExternal: true, cancellationToken).ConfigureAwait(false);
 
-        await this._agentProvider.CreateMessageAsync(this._conversationId, input, cancellationToken: default).ConfigureAwait(false);
+        await this._agentProvider.CreateMessageAsync(this._conversationId, input, cancellationToken).ConfigureAwait(false);
         await declarativeContext.SetLastMessageAsync(input).ConfigureAwait(false);
 
-        await declarativeContext.SendMessageAsync(new ActionExecutorResult(this.Id)).ConfigureAwait(false);
+        await declarativeContext.SendMessageAsync(new ActionExecutorResult(this.Id), cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
