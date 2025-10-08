@@ -1763,7 +1763,8 @@ def test_openai_content_parser_text_reasoning_comprehensive() -> None:
     )
     result = client._openai_content_parser(Role.ASSISTANT, comprehensive_reasoning, {})  # type: ignore
     assert result["type"] == "reasoning"
-    assert result["summary"]["text"] == "Comprehensive reasoning summary"
+    assert len(result["summary"]) == 1
+    assert result["summary"][0]["text"] == "Comprehensive reasoning summary"
     assert result["status"] == "in_progress"
     assert result["content"]["type"] == "reasoning_text"
     assert result["content"]["text"] == "Step-by-step analysis"
@@ -1864,12 +1865,8 @@ def test_streaming_reasoning_summary_text_done_event() -> None:
     with patch.object(client, "_get_metadata_from_response", return_value={"custom": "meta"}) as mock_metadata:
         response = client._create_streaming_response_content(event, chat_options, function_call_ids)  # type: ignore
 
-        assert len(response.contents) == 1
-        assert isinstance(response.contents[0], TextReasoningContent)
-        assert response.contents[0].text == "complete summary"
-        assert response.contents[0].raw_representation == event
-        mock_metadata.assert_called_once_with(event)
-        assert response.additional_properties == {"custom": "meta"}
+        # Event should be ignored - no content added
+        assert len(response.contents) == 0
 
 
 def test_streaming_reasoning_events_preserve_metadata() -> None:
