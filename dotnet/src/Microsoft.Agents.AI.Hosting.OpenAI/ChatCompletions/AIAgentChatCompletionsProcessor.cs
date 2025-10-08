@@ -1,0 +1,73 @@
+﻿// Copyright (c) Microsoft. All rights reserved.
+
+using System.ClientModel.Primitives;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions.Utils;
+using Microsoft.AspNetCore.Http;
+using OpenAI.Chat;
+using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
+
+namespace Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions;
+
+internal sealed class AIAgentChatCompletionsProcessor
+{
+    private readonly AIAgent _agent;
+
+    public AIAgentChatCompletionsProcessor(AIAgent agent)
+    {
+        this._agent = agent;
+    }
+
+    public async Task<IResult> CreateChatCompletionAsync(ChatCompletionOptions chatCompletionOptions, CancellationToken cancellationToken)
+    {
+        var options = new OpenAIChatCompletionsRunOptions();
+        AgentThread? agentThread = null; // not supported to resolve from conversationId
+
+        var inputItems = chatCompletionOptions.GetMessages();
+        var chatMessages = inputItems.AsChatMessages();
+
+        if (chatCompletionOptions.GetStream())
+        {
+            return new OpenAIStreamingChatCompletionResult(this._agent, chatMessages);
+        }
+
+        var agentResponse = await this._agent.RunAsync(chatMessages, agentThread, options, cancellationToken).ConfigureAwait(false);
+        return new OpenAIChatCompletionResult(agentResponse);
+    }
+
+    private sealed class OpenAIChatCompletionResult(AgentRunResponse agentRunResponse) : IResult
+    {
+        public async Task ExecuteAsync(HttpContext httpContext)
+        {
+            // note: OpenAI SDK types provide their own serialization implementation
+            // so we cant simply return IResult wrap for the typed-object.
+            // instead writing to the response body can be done.
+
+            var cancellationToken = httpContext.RequestAborted;
+            var response = httpContext.Response;
+
+            var chatResponse = agentRunResponse.AsChatResponse();
+            var openAIChatCompletion = chatResponse.AsOpenAIChatCompletion();
+            var openAIChatCompletionJsonModel = openAIChatCompletion as IJsonModel<ChatCompletion>;
+            Debug.Assert(openAIChatCompletionJsonModel is not null);
+
+            var writer = new Utf8JsonWriter(response.BodyWriter, new JsonWriterOptions { SkipValidation = false });
+            openAIChatCompletionJsonModel.Write(writer, ModelReaderWriterOptions.Json);
+            await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+#pragma warning disable CS9113 // Parameter is unread.
+    private sealed class OpenAIStreamingChatCompletionResult(AIAgent agent, IEnumerable<ChatMessage> chatMessages) : IResult
+#pragma warning restore CS9113 // Parameter is unread.
+    {
+        public Task ExecuteAsync(HttpContext httpContext)
+        {
+            throw new System.NotImplementedException();
+        }
+    }
+}
