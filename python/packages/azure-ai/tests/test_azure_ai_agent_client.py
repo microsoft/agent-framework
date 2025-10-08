@@ -81,11 +81,12 @@ def create_test_azure_ai_chat_client(
     client.project_client = mock_ai_project_client
     client.credential = None
     client.agent_id = agent_id
-    client.agent_name = None
+    client.agent_name = agent_name
     client.model_id = azure_ai_settings.model_deployment_name
     client.thread_id = thread_id
-    client._should_delete_agent = should_delete_agent
-    client._should_close_client = False
+    client._should_delete_agent = should_delete_agent  # type: ignore
+    client._should_close_client = False  # type: ignore
+    client._agent_definition = None  # type: ignore
     client.additional_properties = {}
     client.middleware = None
 
@@ -297,6 +298,9 @@ async def test_azure_ai_chat_client_tool_results_without_thread_error_via_public
     """Test that tool results without thread ID raise error through public API."""
     chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, agent_id="test-agent")
 
+    # Mock get_agent
+    mock_ai_project_client.agents.get_agent = AsyncMock(return_value=None)
+
     # Create messages with tool results but no thread/conversation ID
     messages = [
         ChatMessage(role=Role.USER, text="Hello"),
@@ -314,6 +318,9 @@ async def test_azure_ai_chat_client_tool_results_without_thread_error_via_public
 async def test_azure_ai_chat_client_thread_management_through_public_api(mock_ai_project_client: MagicMock) -> None:
     """Test thread creation and management through public API."""
     chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, agent_id="test-agent")
+
+    # Mock get_agent to avoid the async error
+    mock_ai_project_client.agents.get_agent = AsyncMock(return_value=None)
 
     mock_thread = MagicMock()
     mock_thread.id = "new-thread-456"
@@ -450,6 +457,9 @@ async def test_azure_ai_chat_client_create_run_options_with_image_content(mock_a
     """Test _create_run_options with image content."""
 
     chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, agent_id="test-agent")
+
+    # Mock get_agent
+    mock_ai_project_client.agents.get_agent = AsyncMock(return_value=None)
 
     image_content = UriContent(uri="https://example.com/image.jpg", media_type="image/jpeg")
     messages = [ChatMessage(role=Role.USER, contents=[image_content])]
