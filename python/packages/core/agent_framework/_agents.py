@@ -9,11 +9,14 @@ from itertools import chain
 from typing import Any, ClassVar, Literal, Protocol, TypeVar, cast, runtime_checkable
 from uuid import uuid4
 
+from mcp import types
+from mcp.server.lowlevel import Server
+from mcp.shared.exceptions import McpError
 from pydantic import BaseModel, Field, create_model
 
 from ._clients import BaseChatClient, ChatClientProtocol
 from ._logging import get_logger
-from ._mcp import MCPTool
+from ._mcp import LOG_LEVEL_MAPPING, MCPTool
 from ._memory import AggregateContextProvider, Context, ContextProvider
 from ._middleware import Middleware, use_agent_middleware
 from ._serialization import SerializationMixin
@@ -431,7 +434,7 @@ class BaseAgent(SerializationMixin):
             name=tool_name,
             description=tool_description,
             func=agent_wrapper,
-            input_model=input_model,
+            input_model=input_model,  # type: ignore
         )
 
     def _normalize_messages(
@@ -483,7 +486,7 @@ class ChatAgent(BaseAgent):
             from agent_framework.clients import OpenAIChatClient
 
             # Create a basic chat agent
-            client = OpenAIChatClient(model="gpt-4")
+            client = OpenAIChatClient(model_id="gpt-4")
             agent = ChatAgent(chat_client=client, name="assistant", description="A helpful assistant")
 
             # Run the agent with a simple message
@@ -511,6 +514,26 @@ class ChatAgent(BaseAgent):
             # Use streaming responses
             async for update in agent.run_stream("What's the weather in Paris?"):
                 print(update.text, end="")
+
+        With additional provider specific options:
+
+        .. code-block:: python
+
+            agent = ChatAgent(
+                chat_client=client,
+                name="reasoning-agent",
+                instructions="You are a reasoning assistant.",
+                model_id="gpt-5",
+                temperature=0.7,
+                max_tokens=500,
+                additional_chat_options={
+                    "reasoning": {"effort": "high", "summary": "concise"}
+                },  # OpenAI Responses specific.
+            )
+
+            # Use streaming responses
+            async for update in agent.run_stream("How do you prove the pythagorean theorem?"):
+                print(update.text, end="")
     """
 
     AGENT_SYSTEM_NAME: ClassVar[str] = "microsoft.agent_framework"
@@ -531,7 +554,7 @@ class ChatAgent(BaseAgent):
         logit_bias: dict[str | int, float] | None = None,
         max_tokens: int | None = None,
         metadata: dict[str, Any] | None = None,
-        model: str | None = None,
+        model_id: str | None = None,
         presence_penalty: float | None = None,
         response_format: type[BaseModel] | None = None,
         seed: int | None = None,
@@ -546,7 +569,7 @@ class ChatAgent(BaseAgent):
         | None = None,
         top_p: float | None = None,
         user: str | None = None,
-        request_kwargs: dict[str, Any] | None = None,
+        additional_chat_options: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize a ChatAgent instance.
@@ -575,7 +598,7 @@ class ChatAgent(BaseAgent):
             logit_bias: The logit bias to use.
             max_tokens: The maximum number of tokens to generate.
             metadata: Additional metadata to include in the request.
-            model: The model to use for the agent.
+            model_id: The model_id to use for the agent.
             presence_penalty: The presence penalty to use.
             response_format: The format of the response.
             seed: The random seed to use.
@@ -586,8 +609,9 @@ class ChatAgent(BaseAgent):
             tools: The tools to use for the request.
             top_p: The nucleus sampling probability to use.
             user: The user to associate with the request.
-            request_kwargs: A dictionary of other values that will be passed through
+            additional_chat_options: A dictionary of other values that will be passed through
                 to the chat_client ``get_response`` and ``get_streaming_response`` methods.
+                This can be used to pass provider specific parameters.
             kwargs: Any additional keyword arguments. Will be stored as ``additional_properties``.
 
         Raises:
@@ -623,7 +647,7 @@ class ChatAgent(BaseAgent):
         self._local_mcp_tools = [tool for tool in normalized_tools if isinstance(tool, MCPTool)]
         agent_tools = [tool for tool in normalized_tools if not isinstance(tool, MCPTool)]
         self.chat_options = ChatOptions(
-            model_id=model,
+            model_id=model_id,
             conversation_id=conversation_id,
             frequency_penalty=frequency_penalty,
             instructions=instructions,
@@ -640,7 +664,7 @@ class ChatAgent(BaseAgent):
             tools=agent_tools,
             top_p=top_p,
             user=user,
-            additional_properties=request_kwargs or {},  # type: ignore
+            additional_properties=additional_chat_options or {},  # type: ignore
         )
         self._async_exit_stack = AsyncExitStack()
         self._update_agent_name()
@@ -698,7 +722,7 @@ class ChatAgent(BaseAgent):
         logit_bias: dict[str | int, float] | None = None,
         max_tokens: int | None = None,
         metadata: dict[str, Any] | None = None,
-        model: str | None = None,
+        model_id: str | None = None,
         presence_penalty: float | None = None,
         response_format: type[BaseModel] | None = None,
         seed: int | None = None,
@@ -713,7 +737,7 @@ class ChatAgent(BaseAgent):
         | None = None,
         top_p: float | None = None,
         user: str | None = None,
-        additional_properties: dict[str, Any] | None = None,
+        additional_chat_options: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> AgentRunResponse:
         """Run the agent with the given messages and options.
@@ -733,7 +757,7 @@ class ChatAgent(BaseAgent):
             logit_bias: The logit bias to use.
             max_tokens: The maximum number of tokens to generate.
             metadata: Additional metadata to include in the request.
-            model: The model to use for the agent.
+            model_id: The model_id to use for the agent.
             presence_penalty: The presence penalty to use.
             response_format: The format of the response.
             seed: The random seed to use.
@@ -744,7 +768,8 @@ class ChatAgent(BaseAgent):
             tools: The tools to use for the request.
             top_p: The nucleus sampling probability to use.
             user: The user to associate with the request.
-            additional_properties: Additional properties to include in the request.
+            additional_chat_options: Additional properties to include in the request.
+                Use this field for provider-specific parameters.
             kwargs: Additional keyword arguments for the agent.
                 Will only be passed to functions that are called.
 
@@ -775,30 +800,27 @@ class ChatAgent(BaseAgent):
             if not mcp_server.is_connected:
                 await self._async_exit_stack.enter_async_context(mcp_server)
             final_tools.extend(mcp_server.functions)
-        response = await self.chat_client.get_response(
-            messages=thread_messages,
-            chat_options=run_chat_options
-            & ChatOptions(
-                model_id=model,
-                conversation_id=thread.service_thread_id,
-                frequency_penalty=frequency_penalty,
-                logit_bias=logit_bias,
-                max_tokens=max_tokens,
-                metadata=metadata,
-                presence_penalty=presence_penalty,
-                response_format=response_format,
-                seed=seed,
-                stop=stop,
-                store=store,
-                temperature=temperature,
-                tool_choice=tool_choice,
-                tools=final_tools,
-                top_p=top_p,
-                user=user,
-                additional_properties=additional_properties or {},
-            ),
-            **kwargs,
+
+        co = run_chat_options & ChatOptions(
+            model_id=model_id,
+            conversation_id=thread.service_thread_id,
+            frequency_penalty=frequency_penalty,
+            logit_bias=logit_bias,
+            max_tokens=max_tokens,
+            metadata=metadata,
+            presence_penalty=presence_penalty,
+            response_format=response_format,
+            seed=seed,
+            stop=stop,
+            store=store,
+            temperature=temperature,
+            tool_choice=tool_choice,
+            tools=final_tools,
+            top_p=top_p,
+            user=user,
+            **(additional_chat_options or {}),
         )
+        response = await self.chat_client.get_response(messages=thread_messages, chat_options=co, **kwargs)
 
         await self._update_thread_with_type_and_conversation_id(thread, response.conversation_id)
 
@@ -829,7 +851,7 @@ class ChatAgent(BaseAgent):
         logit_bias: dict[str | int, float] | None = None,
         max_tokens: int | None = None,
         metadata: dict[str, Any] | None = None,
-        model: str | None = None,
+        model_id: str | None = None,
         presence_penalty: float | None = None,
         response_format: type[BaseModel] | None = None,
         seed: int | None = None,
@@ -844,7 +866,7 @@ class ChatAgent(BaseAgent):
         | None = None,
         top_p: float | None = None,
         user: str | None = None,
-        additional_properties: dict[str, Any] | None = None,
+        additional_chat_options: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentRunResponseUpdate]:
         """Stream the agent with the given messages and options.
@@ -864,7 +886,7 @@ class ChatAgent(BaseAgent):
             logit_bias: The logit bias to use.
             max_tokens: The maximum number of tokens to generate.
             metadata: Additional metadata to include in the request.
-            model: The model to use for the agent.
+            model_id: The model_id to use for the agent.
             presence_penalty: The presence penalty to use.
             response_format: The format of the response.
             seed: The random seed to use.
@@ -875,7 +897,8 @@ class ChatAgent(BaseAgent):
             tools: The tools to use for the request.
             top_p: The nucleus sampling probability to use.
             user: The user to associate with the request.
-            additional_properties: Additional properties to include in the request.
+            additional_chat_options: Additional properties to include in the request.
+                Use this field for provider-specific parameters.
             kwargs: Any additional keyword arguments.
                 Will only be passed to functions that are called.
 
@@ -887,8 +910,6 @@ class ChatAgent(BaseAgent):
             thread=thread, input_messages=input_messages
         )
         agent_name = self._get_agent_name()
-        response_updates: list[ChatResponseUpdate] = []
-
         # Resolve final tool list (runtime provided tools + local MCP server tools)
         final_tools: list[ToolProtocol | MutableMapping[str, Any] | Callable[..., Any]] = []
         normalized_tools: list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] = (  # type: ignore[reportUnknownVariableType]
@@ -908,29 +929,29 @@ class ChatAgent(BaseAgent):
                 await self._async_exit_stack.enter_async_context(mcp_server)
             final_tools.extend(mcp_server.functions)
 
+        co = run_chat_options & ChatOptions(
+            conversation_id=thread.service_thread_id,
+            frequency_penalty=frequency_penalty,
+            logit_bias=logit_bias,
+            max_tokens=max_tokens,
+            metadata=metadata,
+            model_id=model_id,
+            presence_penalty=presence_penalty,
+            response_format=response_format,
+            seed=seed,
+            stop=stop,
+            store=store,
+            temperature=temperature,
+            tool_choice=tool_choice,
+            tools=final_tools,
+            top_p=top_p,
+            user=user,
+            **(additional_chat_options or {}),
+        )
+
+        response_updates: list[ChatResponseUpdate] = []
         async for update in self.chat_client.get_streaming_response(
-            messages=thread_messages,
-            chat_options=run_chat_options
-            & ChatOptions(
-                conversation_id=thread.service_thread_id,
-                frequency_penalty=frequency_penalty,
-                logit_bias=logit_bias,
-                max_tokens=max_tokens,
-                metadata=metadata,
-                model_id=model,
-                presence_penalty=presence_penalty,
-                response_format=response_format,
-                seed=seed,
-                stop=stop,
-                store=store,
-                temperature=temperature,
-                tool_choice=tool_choice,
-                tools=final_tools,
-                top_p=top_p,
-                user=user,
-                additional_properties=additional_properties or {},
-            ),
-            **kwargs,
+            messages=thread_messages, chat_options=co, **kwargs
         ):
             response_updates.append(update)
 
@@ -948,7 +969,7 @@ class ChatAgent(BaseAgent):
                 raw_representation=update,
             )
 
-        response = ChatResponse.from_chat_response_updates(response_updates)
+        response = ChatResponse.from_chat_response_updates(response_updates, output_format_type=co.response_format)
         await self._update_thread_with_type_and_conversation_id(thread, response.conversation_id)
         await self._notify_thread_of_new_messages(thread, input_messages, response.messages)
 
@@ -998,6 +1019,115 @@ class ChatAgent(BaseAgent):
                 context_provider=self.context_provider,
             )
         return AgentThread(context_provider=self.context_provider)
+
+    def as_mcp_server(
+        self,
+        *,
+        server_name: str = "Agent",
+        version: str | None = None,
+        instructions: str | None = None,
+        lifespan: Callable[["Server[Any]"], AbstractAsyncContextManager[Any]] | None = None,
+        **kwargs: Any,
+    ) -> "Server[Any]":
+        """Create an MCP server from an agent instance.
+
+        This function automatically creates a MCP server from an agent instance, it uses the provided arguments to
+        configure the server and exposes the agent as a single MCP tool.
+
+        Keyword Args:
+            server_name: The name of the server.
+            version: The version of the server.
+            instructions: The instructions to use for the server.
+            lifespan: The lifespan of the server.
+            **kwargs: Any extra arguments to pass to the server creation.
+
+        Returns:
+            The MCP server instance.
+        """
+        server_args: dict[str, Any] = {
+            "name": server_name,
+            "version": version,
+            "instructions": instructions,
+        }
+        if lifespan:
+            server_args["lifespan"] = lifespan
+        if kwargs:
+            server_args.update(kwargs)
+
+        server: "Server[Any]" = Server(**server_args)  # type: ignore[call-arg]
+
+        agent_tool = self.as_tool(name=self._get_agent_name())
+
+        async def _log(level: types.LoggingLevel, data: Any) -> None:
+            """Log a message to the server and logger."""
+            # Log to the local logger
+            logger.log(LOG_LEVEL_MAPPING[level], data)
+            if server and server.request_context and server.request_context.session:
+                try:
+                    await server.request_context.session.send_log_message(level=level, data=data)
+                except Exception as e:
+                    logger.error("Failed to send log message to server: %s", e)
+
+        @server.list_tools()  # type: ignore
+        async def _list_tools() -> list[types.Tool]:  # type: ignore
+            """List all tools in the agent."""
+            # Get the JSON schema from the Pydantic model
+            schema = agent_tool.input_model.model_json_schema()
+
+            tool = types.Tool(
+                name=agent_tool.name,
+                description=agent_tool.description,
+                inputSchema={
+                    "type": "object",
+                    "properties": schema.get("properties", {}),
+                    "required": schema.get("required", []),
+                },
+            )
+
+            await _log(level="debug", data=f"Agent tool: {agent_tool}")
+            return [tool]
+
+        @server.call_tool()  # type: ignore
+        async def _call_tool(  # type: ignore
+            name: str, arguments: dict[str, Any]
+        ) -> Sequence[types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource]:
+            """Call a tool in the agent."""
+            await _log(level="debug", data=f"Calling tool with args: {arguments}")
+
+            if name != agent_tool.name:
+                raise McpError(
+                    error=types.ErrorData(
+                        code=types.INTERNAL_ERROR,
+                        message=f"Tool {name} not found",
+                    ),
+                )
+
+            # Create an instance of the input model with the arguments
+            try:
+                args_instance = agent_tool.input_model(**arguments)
+                result = await agent_tool.invoke(arguments=args_instance)
+            except Exception as e:
+                raise McpError(
+                    error=types.ErrorData(
+                        code=types.INTERNAL_ERROR,
+                        message=f"Error calling tool {name}: {e}",
+                    ),
+                ) from e
+
+            # Convert result to MCP content
+            if isinstance(result, str):
+                return [types.TextContent(type="text", text=result)]
+
+            return [types.TextContent(type="text", text=str(result))]
+
+        @server.set_logging_level()  # type: ignore
+        async def _set_logging_level(level: types.LoggingLevel) -> None:  # type: ignore
+            """Set the logging level for the server."""
+            logger.setLevel(LOG_LEVEL_MAPPING[level])
+            # emit this log with the new minimum level
+            await _log(level=level, data=f"Log level set to {level}")
+
+        return server
 
     async def _update_thread_with_type_and_conversation_id(
         self, thread: AgentThread, response_conversation_id: str | None

@@ -351,22 +351,28 @@ class AzureAIAgentClient(BaseChatClient):
         Returns:
             str: The agent_id to use
         """
+        run_options = run_options or {}
         # If no agent_id is provided, create a temporary agent
         if self.agent_id is None:
-            if not self.model_id:
-                raise ServiceInitializationError("Model deployment name is required for agent creation.")
+            if "model" not in run_options or not run_options["model"]:
+                raise ServiceInitializationError(
+                    "Model deployment name is required for agent creation, "
+                    "can also be passed to the get_response methods."
+                )
 
             agent_name: str = self.agent_name or "UnnamedAgent"
-            args: dict[str, Any] = {"model": self.model_id, "name": agent_name}
-            if run_options:
-                if "tools" in run_options:
-                    args["tools"] = run_options["tools"]
-                if "tool_resources" in run_options:
-                    args["tool_resources"] = run_options["tool_resources"]
-                if "instructions" in run_options:
-                    args["instructions"] = run_options["instructions"]
-                if "response_format" in run_options:
-                    args["response_format"] = run_options["response_format"]
+            args: dict[str, Any] = {
+                "model": run_options["model"],
+                "name": agent_name,
+            }
+            if "tools" in run_options:
+                args["tools"] = run_options["tools"]
+            if "tool_resources" in run_options:
+                args["tool_resources"] = run_options["tool_resources"]
+            if "instructions" in run_options:
+                args["instructions"] = run_options["instructions"]
+            if "response_format" in run_options:
+                args["response_format"] = run_options["response_format"]
             created_agent = await self.project_client.agents.create_agent(**args)
             self.agent_id = str(created_agent.id)
             self._should_delete_agent = True
@@ -673,7 +679,10 @@ class AzureAIAgentClient(BaseChatClient):
 
         if chat_options is not None:
             run_options["max_completion_tokens"] = chat_options.max_tokens
-            run_options["model"] = chat_options.model_id
+            if chat_options.model_id is not None:
+                run_options["model"] = chat_options.model_id
+            else:
+                run_options["model"] = self.model_id
             run_options["top_p"] = chat_options.top_p
             run_options["temperature"] = chat_options.temperature
             run_options["parallel_tool_calls"] = chat_options.allow_multiple_tool_calls

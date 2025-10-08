@@ -825,7 +825,7 @@ def _trace_get_response(
         ) -> "ChatResponse":
             global OBSERVABILITY_SETTINGS
             if not OBSERVABILITY_SETTINGS.ENABLED:
-                # If model diagnostics are not enabled, just return the completion
+                # If model_id diagnostics are not enabled, just return the completion
                 return await func(
                     self,
                     messages=messages,
@@ -836,7 +836,7 @@ def _trace_get_response(
             if "operation_duration_histogram" not in self.additional_properties:
                 self.additional_properties["operation_duration_histogram"] = _get_duration_histogram()
             model_id = (
-                kwargs.get("model")
+                kwargs.get("model_id")
                 or (chat_options.model_id if (chat_options := kwargs.get("chat_options")) else None)
                 or getattr(self, "model_id", None)
             )
@@ -848,7 +848,7 @@ def _trace_get_response(
             attributes = _get_span_attributes(
                 operation_name=OtelAttr.CHAT_COMPLETION_OPERATION,
                 provider_name=provider_name,
-                model_id=model_id,
+                model=model_id,
                 service_url=service_url,
                 **kwargs,
             )
@@ -923,7 +923,7 @@ def _trace_get_streaming_response(
                 self.additional_properties["operation_duration_histogram"] = _get_duration_histogram()
 
             model_id = (
-                kwargs.get("model")
+                kwargs.get("model_id")
                 or (chat_options.model_id if (chat_options := kwargs.get("chat_options")) else None)
                 or getattr(self, "model_id", None)
             )
@@ -935,7 +935,7 @@ def _trace_get_streaming_response(
             attributes = _get_span_attributes(
                 operation_name=OtelAttr.CHAT_COMPLETION_OPERATION,
                 provider_name=provider_name,
-                model_id=model_id,
+                model=model_id,
                 service_url=service_url,
                 **kwargs,
             )
@@ -1346,7 +1346,7 @@ def _get_span_attributes(**kwargs: Any) -> dict[str, Any]:
         attributes[SpanAttributes.LLM_SYSTEM] = system_name
     if provider_name := kwargs.get("provider_name"):
         attributes[OtelAttr.PROVIDER_NAME] = provider_name
-    attributes[SpanAttributes.LLM_REQUEST_MODEL] = kwargs.get("model_id", "unknown")
+    attributes[SpanAttributes.LLM_REQUEST_MODEL] = kwargs.get("model", "unknown")
     if service_url := kwargs.get("service_url"):
         attributes[OtelAttr.ADDRESS] = service_url
     if conversation_id := kwargs.get("conversation_id", chat_options.conversation_id):

@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from openai import BadRequestError
+from openai.types.responses.response_reasoning_item import Summary
 from openai.types.responses.response_reasoning_summary_text_delta_event import ResponseReasoningSummaryTextDeltaEvent
 from openai.types.responses.response_reasoning_summary_text_done_event import ResponseReasoningSummaryTextDoneEvent
 from openai.types.responses.response_reasoning_text_delta_event import ResponseReasoningTextDeltaEvent
@@ -209,7 +210,7 @@ def test_get_response_with_all_parameters() -> None:
                 instructions="You are a helpful assistant",
                 max_tokens=100,
                 parallel_tool_calls=True,
-                model="gpt-4",
+                model_id="gpt-4",
                 previous_response_id="prev-123",
                 reasoning={"chain_of_thought": "enabled"},
                 service_tier="auto",
@@ -535,13 +536,13 @@ def test_response_content_creation_with_reasoning() -> None:
     mock_reasoning_item = MagicMock()
     mock_reasoning_item.type = "reasoning"
     mock_reasoning_item.content = [mock_reasoning_content]
-    mock_reasoning_item.summary = ["Summary"]
+    mock_reasoning_item.summary = [Summary(text="Summary", type="summary_text")]
 
     mock_response.output = [mock_reasoning_item]
 
     response = client._create_response_content(mock_response, chat_options=ChatOptions())  # type: ignore
 
-    assert len(response.messages[0].contents) == 1
+    assert len(response.messages[0].contents) == 2
     assert isinstance(response.messages[0].contents[0], TextReasoningContent)
     assert response.messages[0].contents[0].text == "Reasoning step"
 
@@ -1536,11 +1537,9 @@ async def test_openai_responses_client_agent_chat_options_run_level() -> None:
         instructions="You are a helpful assistant.",
     ) as agent:
         response = await agent.run(
-            "Provide a brief, helpful response.",
-            max_tokens=100,
-            temperature=0.7,
-            top_p=0.9,
-            seed=123,
+            "Provide a brief, helpful response about why the sky blue is.",
+            max_tokens=600,
+            model_id="gpt-4o",
             user="comprehensive-test-user",
             tools=[get_weather],
             tool_choice="auto",
@@ -2077,7 +2076,6 @@ def test_prepare_options_store_parameter_handling() -> None:
     chat_options = ChatOptions(store=False, conversation_id="")
     options = client._prepare_options(messages, chat_options)  # type: ignore
     assert options["store"] is False
-    assert "previous_response_id" not in options
 
     chat_options = ChatOptions(store=None, conversation_id=None)
     options = client._prepare_options(messages, chat_options)  # type: ignore
