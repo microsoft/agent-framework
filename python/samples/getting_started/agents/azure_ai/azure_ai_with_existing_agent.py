@@ -42,7 +42,7 @@ async def main() -> None:
                 query = "How are you?"
                 print(f"User: {query}")
                 result = await agent.run(query)
-                print(f"Agent: {result}\n")  # Hello World [END]
+                print(f"Agent: {result}\n")
         finally:
             # Clean up the agent manually
             await client.agents.delete_agent(azure_ai_agent.id)
