@@ -3,7 +3,7 @@
 """Custom OpenAI-compatible event types for Agent Framework extensions.
 
 These are custom event types that extend beyond the standard OpenAI Responses API
-to support Agent Framework specific features like workflows, traces, and function results.
+to support Agent Framework specific features like workflows and traces.
 """
 
 from __future__ import annotations
@@ -15,59 +15,12 @@ from pydantic import BaseModel, ConfigDict
 # Custom Agent Framework OpenAI event types for structured data
 
 
-class ResponseWorkflowEventDelta(BaseModel):
-    """Structured workflow event with completion tracking."""
-
-    type: Literal["response.workflow_event.delta"] = "response.workflow_event.delta"
-    delta: dict[str, Any]
-    executor_id: str | None = None
-    is_complete: bool = False  # Track if this is the final part
-    item_id: str
-    output_index: int = 0
-    sequence_number: int
-
-
 class ResponseWorkflowEventComplete(BaseModel):
     """Complete workflow event data."""
 
     type: Literal["response.workflow_event.complete"] = "response.workflow_event.complete"
     data: dict[str, Any]  # Complete event data, not delta
     executor_id: str | None = None
-    item_id: str
-    output_index: int = 0
-    sequence_number: int
-
-
-class ResponseFunctionResultDelta(BaseModel):
-    """Structured function result with completion tracking."""
-
-    type: Literal["response.function_result.delta"] = "response.function_result.delta"
-    delta: dict[str, Any]
-    call_id: str
-    is_complete: bool = False
-    item_id: str
-    output_index: int = 0
-    sequence_number: int
-
-
-class ResponseFunctionResultComplete(BaseModel):
-    """Complete function result data."""
-
-    type: Literal["response.function_result.complete"] = "response.function_result.complete"
-    data: dict[str, Any]  # Complete function result data, not delta
-    call_id: str
-    item_id: str
-    output_index: int = 0
-    sequence_number: int
-
-
-class ResponseTraceEventDelta(BaseModel):
-    """Structured trace event with completion tracking."""
-
-    type: Literal["response.trace.delta"] = "response.trace.delta"
-    delta: dict[str, Any]
-    span_id: str | None = None
-    is_complete: bool = False
     item_id: str
     output_index: int = 0
     sequence_number: int
@@ -84,22 +37,18 @@ class ResponseTraceEventComplete(BaseModel):
     sequence_number: int
 
 
-class ResponseUsageEventDelta(BaseModel):
-    """Structured usage event with completion tracking."""
+class ResponseFunctionResultComplete(BaseModel):
+    """Custom DevUI event for function execution results.
 
-    type: Literal["response.usage.delta"] = "response.usage.delta"
-    delta: dict[str, Any]
-    is_complete: bool = False
-    item_id: str
-    output_index: int = 0
-    sequence_number: int
+    This is a DevUI extension - OpenAI doesn't stream function execution results
+    because in their model, the application executes functions, not the API.
+    Agent Framework executes functions, so we emit this event for debugging visibility.
+    """
 
-
-class ResponseUsageEventComplete(BaseModel):
-    """Complete usage event data."""
-
-    type: Literal["response.usage.complete"] = "response.usage.complete"
-    data: dict[str, Any]  # Complete usage data, not delta
+    type: Literal["response.function_result.complete"] = "response.function_result.complete"
+    call_id: str
+    output: str
+    status: Literal["in_progress", "completed", "incomplete"]
     item_id: str
     output_index: int = 0
     sequence_number: int
@@ -204,12 +153,7 @@ __all__ = [
     "AgentFrameworkRequest",
     "OpenAIError",
     "ResponseFunctionResultComplete",
-    "ResponseFunctionResultDelta",
     "ResponseTraceEvent",
     "ResponseTraceEventComplete",
-    "ResponseTraceEventDelta",
-    "ResponseUsageEventComplete",
-    "ResponseUsageEventDelta",
     "ResponseWorkflowEventComplete",
-    "ResponseWorkflowEventDelta",
 ]

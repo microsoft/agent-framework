@@ -36,32 +36,13 @@ export interface ResponseWorkflowEventComplete {
   sequence_number: number;
 }
 
+// Custom DevUI: Function result event
+// This is a DevUI extension - OpenAI doesn't stream function execution results
 export interface ResponseFunctionResultComplete {
   type: "response.function_result.complete";
-  data: {
-    call_id: string;
-    result: unknown;
-    status: "completed" | "failed";
-    exception?: string;
-    timestamp: string;
-  };
   call_id: string;
-  item_id: string;
-  output_index: number;
-  sequence_number: number;
-}
-
-// Removed - using ResponseTraceEventComplete defined below
-
-export interface ResponseUsageEventComplete {
-  type: "response.usage.complete";
-  data: {
-    usage_data: Record<string, unknown>;
-    total_tokens: number;
-    completion_tokens: number;
-    prompt_tokens: number;
-    timestamp: string;
-  };
+  output: string;
+  status: "in_progress" | "completed" | "incomplete";
   item_id: string;
   output_index: number;
   sequence_number: number;
@@ -114,9 +95,10 @@ export interface ResponseFunctionToolCall {
 }
 
 // OpenAI Responses API - Output Item Added Event
+// OpenAI standard: Output item added event
 export interface ResponseOutputItemAddedEvent {
   type: "response.output_item.added";
-  item: ResponseFunctionToolCall; // Can be union of different output item types
+  item: ResponseFunctionToolCall;
   output_index: number;
   sequence_number: number;
 }
@@ -168,18 +150,43 @@ export interface ResponseErrorEvent extends ResponseStreamEvent {
   sequence_number: number;
 }
 
+// DevUI Extension: Function Approval Events
+export interface ResponseFunctionApprovalRequestedEvent {
+  type: "response.function_approval.requested";
+  request_id: string;
+  function_call: {
+    id: string;
+    name: string;
+    arguments: Record<string, unknown>;
+  };
+  item_id: string;
+  output_index: number;
+  sequence_number: number;
+}
+
+export interface ResponseFunctionApprovalRespondedEvent {
+  type: "response.function_approval.responded";
+  request_id: string;
+  approved: boolean;
+  item_id: string;
+  output_index: number;
+  sequence_number: number;
+}
+
 // Union type for all structured events
 export type StructuredEvent =
+  | ResponseCompletedEvent
   | ResponseWorkflowEventComplete
-  | ResponseFunctionResultComplete
   | ResponseTraceEventComplete
   | ResponseTraceComplete
-  | ResponseUsageEventComplete
   | ResponseOutputItemAddedEvent
+  | ResponseFunctionResultComplete
   | ResponseFunctionCallComplete
   | ResponseFunctionCallDelta
   | ResponseFunctionCallArgumentsDelta
-  | ResponseErrorEvent;
+  | ResponseErrorEvent
+  | ResponseFunctionApprovalRequestedEvent
+  | ResponseFunctionApprovalRespondedEvent;
 
 // Extended stream event that includes our structured events
 export type ExtendedResponseStreamEvent = ResponseStreamEvent | StructuredEvent;
@@ -234,6 +241,13 @@ export interface ResponseUsage {
   };
 }
 
+// OpenAI standard: response.completed event
+export interface ResponseCompletedEvent {
+  type: "response.completed";
+  response: OpenAIResponse;
+  sequence_number: number;
+}
+
 // Request format for Agent Framework
 // AgentFrameworkRequest moved to agent-framework.ts to avoid conflicts
 
@@ -271,7 +285,23 @@ export interface MessageInputFile {
   filename?: string;
 }
 
-export type MessageContent = MessageTextContent | MessageInputImage | MessageInputFile;
+// DevUI Extension: Function approval response content
+export interface MessageFunctionApprovalResponseContent {
+  type: "function_approval_response";
+  request_id: string;
+  approved: boolean;
+  function_call: {
+    id: string;
+    name: string;
+    arguments: Record<string, unknown>;
+  };
+}
+
+export type MessageContent =
+  | MessageTextContent
+  | MessageInputImage
+  | MessageInputFile
+  | MessageFunctionApprovalResponseContent;
 
 // Message item (user/assistant messages with content)
 export interface ConversationMessage {
@@ -280,6 +310,11 @@ export interface ConversationMessage {
   role: "user" | "assistant" | "system" | "tool";
   content: MessageContent[];
   status: "in_progress" | "completed" | "incomplete";
+  usage?: {
+    input_tokens: number;
+    output_tokens: number;
+    total_tokens: number;
+  };
 }
 
 // Function call item (separate from message)

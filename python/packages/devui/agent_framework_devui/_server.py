@@ -532,8 +532,13 @@ class DevServer:
     ) -> AsyncGenerator[str, None]:
         """Stream execution directly through executor."""
         try:
-            # Direct call to executor - simple and clean
+            # Collect events for final response.completed event
+            events = []
+
+            # Stream all events
             async for event in executor.execute_streaming(request):
+                events.append(event)
+
                 # IMPORTANT: Check model_dump_json FIRST because to_json() can have newlines (pretty-printing)
                 # which breaks SSE format. model_dump_json() returns single-line JSON.
                 if hasattr(event, "model_dump_json"):
@@ -550,6 +555,17 @@ class DevServer:
                 else:
                     payload = json.dumps(str(event))
                 yield f"data: {payload}\n\n"
+
+            # Aggregate to final response and emit response.completed event (OpenAI standard)
+            from .models import ResponseCompletedEvent
+
+            final_response = await executor.message_mapper.aggregate_to_response(events, request)
+            completed_event = ResponseCompletedEvent(
+                type="response.completed",
+                response=final_response,
+                sequence_number=len(events),
+            )
+            yield f"data: {completed_event.model_dump_json()}\n\n"
 
             # Send final done event
             yield "data: [DONE]\n\n"

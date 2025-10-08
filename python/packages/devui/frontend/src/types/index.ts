@@ -101,9 +101,10 @@ export type {
   // New structured event types
   ExtendedResponseStreamEvent,
   ResponseWorkflowEventComplete,
-  ResponseFunctionResultComplete,
   ResponseTraceEventComplete,
-  ResponseUsageEventComplete,
+  ResponseOutputItemAddedEvent,
+  ResponseFunctionResultComplete,
+  ResponseCompletedEvent,
   StructuredEvent,
 } from "./openai";
 
@@ -154,4 +155,14 @@ export interface ChatState {
   messages: ChatMessage[];
   isStreaming: boolean;
   // streamEvents removed - use OpenAI events directly instead
+}
+
+// DevUI-specific: Pending approval state
+export interface PendingApproval {
+  request_id: string;
+  function_call: {
+    id: string;
+    name: string;
+    arguments: Record<string, unknown>;
+  };
 }

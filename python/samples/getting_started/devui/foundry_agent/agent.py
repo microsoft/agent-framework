@@ -8,12 +8,14 @@ Make sure to run 'az login' before starting devui.
 import os
 from typing import Annotated
 
+from agent_framework import ChatAgent
 from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
+from pydantic import Field
 
 
 def get_weather(
-    location: Annotated[str, "The location to get the weather for."],
+    location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
     """Get the weather for a given location."""
     conditions = ["sunny", "cloudy", "rainy", "stormy"]
@@ -22,8 +24,8 @@ def get_weather(
 
 
 def get_forecast(
-    location: Annotated[str, "The location to get the forecast for."],
-    days: Annotated[int, "Number of days for forecast"] = 3,
+    location: Annotated[str, Field(description="The location to get the forecast for.")],
+    days: Annotated[int, Field(description="Number of days for forecast")] = 3,
 ) -> str:
     """Get weather forecast for multiple days."""
     conditions = ["sunny", "cloudy", "rainy", "stormy"]
@@ -37,18 +39,14 @@ def get_forecast(
     return f"Weather forecast for {location}:\n" + "\n".join(forecast)
 
 
-credential = AzureCliCredential()
-# Cleanup will happen when Python process exits
-client = AzureAIAgentClient(
-    async_credential=credential,
-    project_endpoint=os.environ.get("AZURE_AI_PROJECT_ENDPOINT"),
-    model_deployment_name=os.environ.get("FOUNDRY_MODEL_DEPLOYMENT_NAME"),
-)
-
 # Agent instance following Agent Framework conventions
-agent = client.create_agent(
+agent = ChatAgent(
     name="FoundryWeatherAgent",
-    description="A helpful agent using Azure AI Foundry that provides weather information",
+    chat_client=AzureAIAgentClient(
+        project_endpoint=os.environ.get("AZURE_AI_PROJECT_ENDPOINT"),
+        model_deployment_name=os.environ.get("FOUNDRY_MODEL_DEPLOYMENT_NAME"),
+        async_credential=AzureCliCredential(),
+    ),
     instructions="""
     You are a weather assistant using Azure AI Foundry models. You can provide
     current weather information and forecasts for any location. Always be helpful

@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "main"))
 from agent_framework._types import AgentRunResponseUpdate, ErrorContent, FunctionCallContent, Role, TextContent
 
 from agent_framework_devui._mapper import MessageMapper
-from agent_framework_devui.models._openai_custom import AgentFrameworkExtraBody, AgentFrameworkRequest
+from agent_framework_devui.models._openai_custom import AgentFrameworkRequest
 
 
 def create_test_content(content_type: str, **kwargs: Any) -> Any:
@@ -187,7 +187,9 @@ if __name__ == "__main__":
     async def run_all_tests() -> None:
         mapper = MessageMapper()
         test_request = AgentFrameworkRequest(
-            model="agent-framework", input="Test", stream=True, extra_body=AgentFrameworkExtraBody(entity_id="test")
+            model="test",
+            input="Test",
+            stream=True,
         )
 
         tests = [

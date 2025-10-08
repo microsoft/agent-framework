@@ -34,10 +34,27 @@ export interface ResponseInputFileParam {
   filename: string;
 }
 
+// DevUI Extension: Function Approval Response Input
+export interface ResponseInputFunctionApprovalParam {
+  /** The type of the input item. Always `function_approval_response`. */
+  type: "function_approval_response";
+  /** The ID of the approval request being responded to. */
+  request_id: string;
+  /** Whether the function call is approved. */
+  approved: boolean;
+  /** The function call being approved/rejected. */
+  function_call: {
+    id: string;
+    name: string;
+    arguments: Record<string, unknown>;
+  };
+}
+
 export type ResponseInputContent =
   | ResponseInputTextParam
   | ResponseInputImageParam
-  | ResponseInputFileParam;
+  | ResponseInputFileParam
+  | ResponseInputFunctionApprovalParam;
 
 export interface EasyInputMessage {
   type?: "message";

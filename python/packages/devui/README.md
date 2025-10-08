@@ -78,7 +78,7 @@ devui ./agents --tracing framework
 
 ## OpenAI-Compatible API
 
-DevUI provides a clean OpenAI-compatible API. Simply use your **agent/workflow name as the model**!
+For convenience, DevUI provides an OpenAI Responses backend API. This means you can run the backend and also use the OpenAI client sdk to connect to it. Use **agent/workflow name as the model**, and set streaming to `True` as needed.
 
 ```bash
 # Simple - use your entity name as the model
@@ -89,7 +89,6 @@ curl -X POST http://localhost:8080/v1/responses \
   "model": "weather_agent",
   "input": "Hello world"
 }
-
 ```
 
 Or use the OpenAI Python SDK:
@@ -102,7 +101,6 @@ client = OpenAI(
     api_key="not-needed"  # API key not required for local DevUI
 )
 
-# Simple - just use your agent/workflow name as the model!
 response = client.responses.create(
     model="weather_agent",  # Your agent/workflow name
     input="What's the weather in Seattle?"
@@ -137,7 +135,7 @@ response2 = client.responses.create(
 )
 ```
 
-**How it works:** OpenAI automatically prepends previous conversation items to each request and appends new items after completion. You don't need to manually pass message history.
+**How it works:** DevUI automatically retrieves the conversation's message history from the stored thread and passes it to the agent. You don't need to manually manage message history - just provide the same `conversation` ID for follow-up requests.
 
 ## CLI Options
 
@@ -155,26 +153,65 @@ Options:
 
 ## Key Endpoints
 
+## API Mapping
+
+Given that DevUI offers an OpenAI Responses API, it internally maps messages and events from Agent Framework to OpenAI Responses API events (in `_mapper.py`). For transparency, this mapping is shown below:
+
+| Agent Framework Content         | OpenAI Event/Type                        | Status   |
+| ------------------------------- | ---------------------------------------- | -------- |
+| `TextContent`                   | `response.output_text.delta`             | Standard |
+| `TextReasoningContent`          | `response.reasoning.delta`               | Standard |
+| `FunctionCallContent` (initial) | `response.output_item.added`             | Standard |
+| `FunctionCallContent` (args)    | `response.function_call_arguments.delta` | Standard |
+| `FunctionResultContent`         | `response.function_result.complete`      | DevUI    |
+| `ErrorContent`                  | `response.error`                         | Standard |
+| `UsageContent`                  | Final `Response.usage` field (not streamed) | Standard |
+| `WorkflowEvent`                 | `response.workflow_event.complete`       | DevUI    |
+| `DataContent`, `UriContent`     | `response.trace.complete`                | DevUI    |
+
+- **Standard** = OpenAI Responses API spec
+- **DevUI** = Custom extensions for Agent Framework features (workflows, traces, function results)
+
+### OpenAI Responses API Compliance
+
+DevUI follows the OpenAI Responses API specification for maximum compatibility:
+
+**Standard OpenAI Types Used:**
+- `ResponseOutputItemAddedEvent` - Output item notifications (function calls)
+- `Response.usage` - Token usage (in final response, not streamed)
+- All standard text, reasoning, and function call events
+
+**Custom DevUI Extensions:**
+- `response.function_result.complete` - Function execution results (DevUI executes functions, OpenAI doesn't)
+- `response.workflow_event.complete` - Agent Framework workflow events
+- `response.trace.complete` - Execution traces for debugging
+
+These custom extensions are clearly namespaced and can be safely ignored by standard OpenAI clients.
+
 ### Entity Management
+
 - `GET /v1/entities` - List discovered agents/workflows
 - `GET /v1/entities/{entity_id}/info` - Get detailed entity information
 - `POST /v1/entities/add` - Add entity from URL (for gallery samples)
 - `DELETE /v1/entities/{entity_id}` - Remove remote entity
 
 ### Execution (OpenAI Responses API)
+
 - `POST /v1/responses` - Execute agent/workflow (streaming or sync)
 
 ### Conversations (OpenAI Standard)
+
 - `POST /v1/conversations` - Create conversation
 - `GET /v1/conversations/{id}` - Get conversation
 - `POST /v1/conversations/{id}` - Update conversation metadata
 - `DELETE /v1/conversations/{id}` - Delete conversation
-- `GET /v1/conversations?agent_id={id}` - List conversations *(DevUI extension)*
+- `GET /v1/conversations?agent_id={id}` - List conversations _(DevUI extension)_
 - `POST /v1/conversations/{id}/items` - Add items to conversation
 - `GET /v1/conversations/{id}/items` - List conversation items
 - `GET /v1/conversations/{id}/items/{item_id}` - Get conversation item
 
 ### Health
+
 - `GET /health` - Health check
 
 ## Implementation

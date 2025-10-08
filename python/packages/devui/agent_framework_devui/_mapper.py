@@ -27,7 +27,6 @@ from .models import (
     ResponseTextDeltaEvent,
     ResponseTraceEventComplete,
     ResponseUsage,
-    ResponseUsageEventComplete,
     ResponseWorkflowEventComplete,
 )
 
@@ -37,9 +36,8 @@ logger = logging.getLogger(__name__)
 EventType = Union[
     ResponseStreamEvent,
     ResponseWorkflowEventComplete,
-    ResponseFunctionResultComplete,
+    ResponseOutputItemAddedEvent,
     ResponseTraceEventComplete,
-    ResponseUsageEventComplete,
 ]
 
 
@@ -55,6 +53,9 @@ class MessageMapper:
         self.sequence_counter = 0
         self._conversion_contexts: OrderedDict[int, dict[str, Any]] = OrderedDict()
         self._max_contexts = max_contexts
+
+        # Track usage per request for final Response.usage (OpenAI standard)
+        self._usage_accumulator: dict[str, dict[str, int]] = {}
 
         # Register content type mappers for all 12 Agent Framework content types
         self.content_mappers = {
@@ -171,17 +172,31 @@ class MessageMapper:
                 status="completed",
             )
 
-            # Create usage object
-            input_token_count = len(str(request.input)) // 4 if request.input else 0
-            output_token_count = len(full_content) // 4
+            # Get usage from accumulator (OpenAI standard)
+            request_id = str(id(request))
+            usage_data = self._usage_accumulator.get(request_id)
 
-            usage = ResponseUsage(
-                input_tokens=input_token_count,
-                output_tokens=output_token_count,
-                total_tokens=input_token_count + output_token_count,
-                input_tokens_details=InputTokensDetails(cached_tokens=0),
-                output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
-            )
+            if usage_data:
+                usage = ResponseUsage(
+                    input_tokens=usage_data["input_tokens"],
+                    output_tokens=usage_data["output_tokens"],
+                    total_tokens=usage_data["total_tokens"],
+                    input_tokens_details=InputTokensDetails(cached_tokens=0),
+                    output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
+                )
+                # Cleanup accumulator
+                del self._usage_accumulator[request_id]
+            else:
+                # Fallback: estimate if no usage was tracked
+                input_token_count = len(str(request.input)) // 4 if request.input else 0
+                output_token_count = len(full_content) // 4
+                usage = ResponseUsage(
+                    input_tokens=input_token_count,
+                    output_tokens=output_token_count,
+                    total_tokens=input_token_count + output_token_count,
+                    input_tokens_details=InputTokensDetails(cached_tokens=0),
+                    output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
+                )
 
             return OpenAIResponse(
                 id=f"resp_{uuid.uuid4().hex[:12]}",
@@ -229,6 +244,7 @@ class MessageMapper:
                 "item_id": f"msg_{uuid.uuid4().hex[:8]}",
                 "content_index": 0,
                 "output_index": 0,
+                "request_id": str(request_key),  # For usage accumulation
                 # Track active function calls: {call_id: {name, item_id, args_chunks}}
                 "active_function_calls": {},
             }
@@ -272,10 +288,11 @@ class MessageMapper:
 
                 if content_type in self.content_mappers:
                     mapped_events = await self.content_mappers[content_type](content, context)
-                    if isinstance(mapped_events, list):
-                        events.extend(mapped_events)
-                    else:
-                        events.append(mapped_events)
+                    if mapped_events is not None:  # Handle None returns (e.g., UsageContent)
+                        if isinstance(mapped_events, list):
+                            events.extend(mapped_events)
+                        else:
+                            events.append(mapped_events)
                 else:
                     # Graceful fallback for unknown content types
                     events.append(await self._create_unknown_content_event(content, context))
@@ -315,10 +332,11 @@ class MessageMapper:
 
                         if content_type in self.content_mappers:
                             mapped_events = await self.content_mappers[content_type](content, context)
-                            if isinstance(mapped_events, list):
-                                events.extend(mapped_events)
-                            else:
-                                events.append(mapped_events)
+                            if mapped_events is not None:  # Handle None returns (e.g., UsageContent)
+                                if isinstance(mapped_events, list):
+                                    events.extend(mapped_events)
+                                else:
+                                    events.append(mapped_events)
                         else:
                             # Graceful fallback for unknown content types
                             events.append(await self._create_unknown_content_event(content, context))
@@ -331,8 +349,8 @@ class MessageMapper:
                 from agent_framework import UsageContent
 
                 usage_content = UsageContent(details=usage_details)
-                usage_event = await self._map_usage_content(usage_content, context)
-                events.append(usage_event)
+                await self._map_usage_content(usage_content, context)
+                # Note: _map_usage_content returns None - it accumulates usage for final Response.usage
 
         except Exception as e:
             logger.warning(f"Error converting agent response: {e}")
@@ -506,7 +524,11 @@ class MessageMapper:
     async def _map_function_result_content(
         self, content: Any, context: dict[str, Any]
     ) -> ResponseFunctionResultComplete:
-        """Map FunctionResultContent to structured event.
+        """Map FunctionResultContent to custom DevUI event.
+
+        This is a DevUI extension - OpenAI doesn't stream function execution results
+        because in their model, applications execute functions, not the API.
+        Agent Framework executes functions, so we emit this event for debugging visibility.
 
         IMPORTANT: Always use Agent Framework's call_id from the content.
         Do NOT generate a new call_id - it must match the one from the function call event.
@@ -518,16 +540,22 @@ class MessageMapper:
             logger.warning("FunctionResultContent missing call_id - this will break call/result pairing")
             call_id = f"call_{uuid.uuid4().hex[:8]}"  # Fallback only if truly missing
 
+        # Extract result
+        result = getattr(content, "result", None)
+        exception = getattr(content, "exception", None)
+
+        # Convert result to string
+        output = result if isinstance(result, str) else json.dumps(result) if result is not None else ""
+
+        # Determine status
+        status = "incomplete" if exception else "completed"
+
+        # Return custom DevUI event
         return ResponseFunctionResultComplete(
             type="response.function_result.complete",
-            data={
-                "call_id": call_id,
-                "result": getattr(content, "result", None),
-                "status": "completed" if not getattr(content, "exception", None) else "failed",
-                "exception": str(getattr(content, "exception", None)) if getattr(content, "exception", None) else None,
-                "timestamp": datetime.now().isoformat(),
-            },
             call_id=call_id,
+            output=output,
+            status=status,
             item_id=context["item_id"],
             output_index=context["output_index"],
             sequence_number=self._next_sequence(context),
@@ -543,37 +571,34 @@ class MessageMapper:
             sequence_number=self._next_sequence(context),
         )
 
-    async def _map_usage_content(self, content: Any, context: dict[str, Any]) -> ResponseUsageEventComplete:
-        """Map UsageContent to structured usage event."""
-        # Store usage data in context for aggregation
-        if "usage_data" not in context:
-            context["usage_data"] = []
-        context["usage_data"].append(content)
+    async def _map_usage_content(self, content: Any, context: dict[str, Any]) -> None:
+        """Accumulate usage data for final Response.usage field.
 
+        OpenAI does NOT stream usage events. Usage appears only in final Response.
+        This method accumulates usage data per request for later inclusion in Response.usage.
+
+        Returns:
+            None - no event emitted (usage goes in final Response.usage)
+        """
         # Extract usage from UsageContent.details (UsageDetails object)
         details = getattr(content, "details", None)
-        total_tokens = 0
-        prompt_tokens = 0
-        completion_tokens = 0
+        total_tokens = getattr(details, "total_token_count", 0) or 0
+        prompt_tokens = getattr(details, "input_token_count", 0) or 0
+        completion_tokens = getattr(details, "output_token_count", 0) or 0
 
-        if details:
-            total_tokens = getattr(details, "total_token_count", 0) or 0
-            prompt_tokens = getattr(details, "input_token_count", 0) or 0
-            completion_tokens = getattr(details, "output_token_count", 0) or 0
+        # Accumulate for final Response.usage
+        request_id = context.get("request_id", "default")
+        if request_id not in self._usage_accumulator:
+            self._usage_accumulator[request_id] = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
 
-        return ResponseUsageEventComplete(
-            type="response.usage.complete",
-            data={
-                "usage_data": details.to_dict() if details and hasattr(details, "to_dict") else {},
-                "total_tokens": total_tokens,
-                "completion_tokens": completion_tokens,
-                "prompt_tokens": prompt_tokens,
-                "timestamp": datetime.now().isoformat(),
-            },
-            item_id=context["item_id"],
-            output_index=context["output_index"],
-            sequence_number=self._next_sequence(context),
-        )
+        self._usage_accumulator[request_id]["input_tokens"] += prompt_tokens
+        self._usage_accumulator[request_id]["output_tokens"] += completion_tokens
+        self._usage_accumulator[request_id]["total_tokens"] += total_tokens
+
+        logger.debug(f"Accumulated usage for {request_id}: {self._usage_accumulator[request_id]}")
+
+        # NO EVENT RETURNED - usage goes in final Response only
+        return
 
     async def _map_data_content(self, content: Any, context: dict[str, Any]) -> ResponseTraceEventComplete:
         """Map DataContent to structured trace event."""

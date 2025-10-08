@@ -10,7 +10,7 @@ import pytest
 
 from agent_framework_devui import DevServer
 from agent_framework_devui._utils import extract_executor_message_types, select_primary_input_type
-from agent_framework_devui.models._openai_custom import AgentFrameworkExtraBody, AgentFrameworkRequest
+from agent_framework_devui.models._openai_custom import AgentFrameworkRequest
 
 
 class _StubExecutor:
@@ -167,10 +167,9 @@ class WeatherAgent:
 
             if entities:
                 request = AgentFrameworkRequest(
-                    model="agent-framework",
+                    model=entities[0].id,  # model IS the entity_id now!
                     input="test location",
                     stream=False,
-                    extra_body=AgentFrameworkExtraBody(entity_id=entities[0].id),
                 )
 
                 await executor.execute_sync(request)

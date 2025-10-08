@@ -2,7 +2,10 @@
 
 """Tests for conversation store implementation."""
 
+from typing import cast
+
 import pytest
+from openai.types.conversations import InputFileContent, InputImageContent, InputTextContent
 
 from agent_framework_devui._conversations import InMemoryConversationStore
 
@@ -119,7 +122,7 @@ async def test_list_conversations_by_metadata():
     results = store.list_conversations_by_metadata({"agent_id": "agent1"})
 
     assert len(results) == 2
-    assert all(c.metadata["agent_id"] == "agent1" for c in results)
+    assert all(cast(dict[str, str], c.metadata).get("agent_id") == "agent1" for c in results if c.metadata)
 
     # Filter by agent_id and session_id
     results = store.list_conversations_by_metadata({"agent_id": "agent1", "session_id": "sess_1"})
@@ -148,7 +151,8 @@ async def test_add_items():
     assert conv_items[0].status == "completed"
     assert len(conv_items[0].content) == 1
     assert conv_items[0].content[0].type == "text"
-    assert conv_items[0].content[0].text == "Hello"
+    text_content = cast(InputTextContent, conv_items[0].content[0])
+    assert text_content.text == "Hello"
 
 
 @pytest.mark.asyncio
@@ -251,7 +255,8 @@ async def test_list_items_converts_function_calls():
     assert items[0].type == "message", "First item should be a message"
     assert items[0].role == "user"
     assert len(items[0].content) == 1
-    assert items[0].content[0].text == "What's the weather in SF?"
+    text_content_0 = cast(InputTextContent, items[0].content[0])
+    assert text_content_0.text == "What's the weather in SF?"
 
     assert items[1].type == "function_call", "Second item should be a function_call"
     assert items[1].call_id == "call_test123"
@@ -267,7 +272,8 @@ async def test_list_items_converts_function_calls():
     assert items[3].type == "message", "Fourth item should be a message"
     assert items[3].role == "assistant"
     assert len(items[3].content) == 1
-    assert items[3].content[0].text == "The weather is sunny, 65°F"
+    text_content_3 = cast(InputTextContent, items[3].content[0])
+    assert text_content_3.text == "The weather is sunny, 65°F"
 
     # CRITICAL: Ensure no empty message items
     for item in items:
@@ -316,11 +322,14 @@ async def test_list_items_handles_images_and_files():
 
     # Check content types
     assert items[0].content[0].type == "text"
-    assert items[0].content[0].text == "Check this image and PDF"
+    text_content = cast(InputTextContent, items[0].content[0])
+    assert text_content.text == "Check this image and PDF"
 
     assert items[0].content[1].type == "input_image"
-    assert items[0].content[1].image_url == "data:image/png;base64,iVBORw0KGgo="
-    assert items[0].content[1].detail == "auto"
+    image_content = cast(InputImageContent, items[0].content[1])
+    assert image_content.image_url == "data:image/png;base64,iVBORw0KGgo="
+    assert image_content.detail == "auto"
 
     assert items[0].content[2].type == "input_file"
-    assert items[0].content[2].file_url == "data:application/pdf;base64,JVBERi0="
+    file_content = cast(InputFileContent, items[0].content[2])
+    assert file_content.file_url == "data:application/pdf;base64,JVBERi0="

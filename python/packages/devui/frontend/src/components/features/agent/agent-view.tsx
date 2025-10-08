@@ -32,6 +32,8 @@ import {
   Info,
   Trash2,
   FileText,
+  Check,
+  X,
 } from "lucide-react";
 import { apiClient } from "@/services/api";
 import type {
@@ -39,6 +41,7 @@ import type {
   RunAgentRequest,
   Conversation,
   ExtendedResponseStreamEvent,
+  PendingApproval,
 } from "@/types";
 
 interface ChatState {
@@ -107,6 +110,20 @@ function ConversationItemBubble({ item }: ConversationItemBubbleProps) {
 
           <div className="flex items-center gap-2 text-xs text-muted-foreground font-mono">
             <span>{new Date().toLocaleTimeString()}</span>
+            {!isUser && item.usage && (
+              <>
+                <span>•</span>
+                <span className="flex items-center gap-1">
+                  <span className="text-blue-600 dark:text-blue-400">
+                    ↓{item.usage.input_tokens}
+                  </span>
+                  <span className="text-green-600 dark:text-green-400">
+                    ↑{item.usage.output_tokens}
+                  </span>
+                  <span>({item.usage.total_tokens} tokens)</span>
+                </span>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -153,6 +170,9 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
     total_tokens: number;
     message_count: number;
   }>({ total_tokens: 0, message_count: 0 });
+  const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>(
+    []
+  );
 
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -160,14 +180,21 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const currentMessageUsage = useRef<{
     total_tokens: number;
-    prompt_tokens: number;
-    completion_tokens: number;
+    input_tokens: number;
+    output_tokens: number;
   } | null>(null);
 
   // Auto-scroll to bottom when new items arrive
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatState.items, chatState.isStreaming]);
+
+  // Return focus to input after streaming completes
+  useEffect(() => {
+    if (!chatState.isStreaming && !isSubmitting) {
+      textareaRef.current?.focus();
+    }
+  }, [chatState.isStreaming, isSubmitting]);
 
   // Load conversations when agent changes
   useEffect(() => {
@@ -621,6 +648,43 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
     [availableConversations, onDebugEvent]
   );
 
+  // Handle function approval responses
+  const handleApproval = async (request_id: string, approved: boolean) => {
+    const approval = pendingApprovals.find((a) => a.request_id === request_id);
+    if (!approval) return;
+
+    // Create approval response in OpenAI-compatible format
+    const approvalInput: import("@/types/agent-framework").ResponseInputParam = [
+      {
+        type: "message",  // CRITICAL: Must set type for backend to recognize it
+        role: "user",
+        content: [
+          {
+            type: "function_approval_response",
+            request_id: request_id,
+            approved: approved,
+            function_call: approval.function_call,
+          } as import("@/types/openai").MessageFunctionApprovalResponseContent,
+        ],
+      },
+    ];
+
+    // Send approval response through the conversation
+    // We'll call handleSendMessage directly when invoked (it's defined below)
+    const request: RunAgentRequest = {
+      input: approvalInput,
+      conversation_id: currentConversation?.id,
+    };
+
+    // Remove from pending immediately (will be confirmed by backend event)
+    setPendingApprovals((prev) =>
+      prev.filter((a) => a.request_id !== request_id)
+    );
+
+    // Trigger send (we'll call this from the UI button handler)
+    return request;
+  };
+
   // Handle message sending
   const handleSendMessage = useCallback(
     async (request: RunAgentRequest) => {
@@ -721,17 +785,45 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
           // Pass all events to debug panel
           onDebugEvent(openAIEvent);
 
-          // Handle usage events
-          if (openAIEvent.type === "response.usage.complete") {
-            const usageEvent =
-              openAIEvent as import("@/types").ResponseUsageEventComplete;
-            if (usageEvent.data) {
+          // Handle response.completed event (OpenAI standard)
+          if (openAIEvent.type === "response.completed") {
+            const completedEvent = openAIEvent as import("@/types/openai").ResponseCompletedEvent;
+            const usage = completedEvent.response?.usage;
+
+            if (usage) {
               currentMessageUsage.current = {
-                total_tokens: usageEvent.data.total_tokens || 0,
-                prompt_tokens: usageEvent.data.prompt_tokens || 0,
-                completion_tokens: usageEvent.data.completion_tokens || 0,
+                input_tokens: usage.input_tokens,
+                output_tokens: usage.output_tokens,
+                total_tokens: usage.total_tokens,
               };
             }
+            continue; // Continue processing other events
+          }
+
+          // Handle function approval request events
+          if (openAIEvent.type === "response.function_approval.requested") {
+            const approvalEvent = openAIEvent as import("@/types/openai").ResponseFunctionApprovalRequestedEvent;
+
+            // Add to pending approvals
+            setPendingApprovals((prev) => [
+              ...prev,
+              {
+                request_id: approvalEvent.request_id,
+                function_call: approvalEvent.function_call,
+              },
+            ]);
+            continue; // Don't add approval requests to chat UI
+          }
+
+          // Handle function approval response events
+          if (openAIEvent.type === "response.function_approval.responded") {
+            const responseEvent = openAIEvent as import("@/types/openai").ResponseFunctionApprovalRespondedEvent;
+
+            // Remove from pending approvals
+            setPendingApprovals((prev) =>
+              prev.filter((a) => a.request_id !== responseEvent.request_id)
+            );
+            continue;
           }
 
           // Handle error events from the stream
@@ -796,6 +888,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
         }
 
         // Stream ended - mark as complete
+        // Usage is provided via response.completed event (OpenAI standard)
         const finalUsage = currentMessageUsage.current;
 
         setChatState((prev) => ({
@@ -806,6 +899,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
               ? {
                   ...item,
                   status: "completed" as const,
+                  usage: finalUsage || undefined,
                 }
               : item
           ),
@@ -1108,6 +1202,73 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
           <div ref={messagesEndRef} />
         </div>
       </ScrollArea>
+
+      {/* Function Approval Prompt */}
+      {pendingApprovals.length > 0 && (
+        <div className="border-t bg-amber-50 dark:bg-amber-950/20 p-4 flex-shrink-0">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="h-5 w-5 text-amber-600 dark:text-amber-500 mt-0.5 flex-shrink-0" />
+            <div className="flex-1 min-w-0">
+              <h4 className="font-medium text-sm mb-2">Approval Required</h4>
+              <div className="space-y-2">
+                {pendingApprovals.map((approval) => (
+                  <div
+                    key={approval.request_id}
+                    className="bg-white dark:bg-gray-900 rounded-lg p-3 border border-amber-200 dark:border-amber-900"
+                  >
+                    <div className="font-mono text-xs mb-3 break-all">
+                      <span className="text-blue-600 dark:text-blue-400 font-semibold">
+                        {approval.function_call.name}
+                      </span>
+                      <span className="text-gray-500">(</span>
+                      <span className="text-gray-700 dark:text-gray-300">
+                        {JSON.stringify(approval.function_call.arguments)}
+                      </span>
+                      <span className="text-gray-500">)</span>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        onClick={async () => {
+                          const request = await handleApproval(
+                            approval.request_id,
+                            true
+                          );
+                          if (request) {
+                            await handleSendMessage(request);
+                          }
+                        }}
+                        variant="default"
+                        className="flex-1 sm:flex-none"
+                      >
+                        <Check className="h-4 w-4 mr-1" />
+                        Approve
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={async () => {
+                          const request = await handleApproval(
+                            approval.request_id,
+                            false
+                          );
+                          if (request) {
+                            await handleSendMessage(request);
+                          }
+                        }}
+                        variant="outline"
+                        className="flex-1 sm:flex-none"
+                      >
+                        <X className="h-4 w-4 mr-1" />
+                        Reject
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Input */}
       <div className="border-t flex-shrink-0">

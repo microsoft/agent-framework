@@ -32,12 +32,6 @@ interface EventDataBase {
   [key: string]: unknown;
 }
 
-interface FunctionResultData extends EventDataBase {
-  result?: unknown;
-  status?: "completed" | "failed";
-  exception?: string;
-}
-
 interface FunctionCallData extends EventDataBase {
   name?: string;
   arguments?: string | object;
@@ -70,6 +64,24 @@ interface DebugPanelProps {
   onClose?: () => void;
 }
 
+// Helper: Extract function result from DevUI custom format
+function getFunctionResultFromEvent(event: ExtendedResponseStreamEvent): {
+  call_id: string;
+  output: string;
+  status: string;
+} | null {
+  if (event.type === "response.function_result.complete") {
+    const resultEvent =
+      event as import("@/types").ResponseFunctionResultComplete;
+    return {
+      call_id: resultEvent.call_id,
+      output: resultEvent.output,
+      status: resultEvent.status,
+    };
+  }
+  return null;
+}
+
 // Helper function to accumulate OpenAI events into meaningful units
 function processEventsForDisplay(
   events: ExtendedResponseStreamEvent[]
@@ -91,25 +103,24 @@ function processEventsForDisplay(
   for (const event of events) {
     // Handle response.output_item.added - NEW! Extract function call metadata
     if (event.type === "response.output_item.added") {
-      if ("item" in event && event.item) {
-        const item = event.item as any;
+      const outputEvent = event as import("@/types").ResponseOutputItemAddedEvent;
+      const item = outputEvent.item;
 
-        // If it's a function call item, extract metadata
-        if (item.type === "function_call" && item.call_id && item.name) {
-          const callId = item.call_id;
+      // If it's a function call item, extract metadata
+      if (item.type === "function_call" && item.call_id && item.name) {
+        const callId = item.call_id;
 
-          // Initialize function call tracking with REAL function name from backend!
-          functionCalls.set(callId, {
-            name: item.name, // ← REAL NAME! (not "unknown")
-            arguments: "",
-            callId: callId,
-            itemId: item.id, // Track item_id for delta matching
-            timestamp: new Date().toISOString(),
-          });
+        // Initialize function call tracking with REAL function name from backend!
+        functionCalls.set(callId, {
+          name: item.name, // ← REAL NAME! (not "unknown")
+          arguments: "",
+          callId: callId,
+          itemId: item.id, // Track item_id for delta matching
+          timestamp: new Date().toISOString(),
+        });
 
-          // Also track in callIdToName map for result pairing
-          callIdToName.set(callId, item.name);
-        }
+        // Also track in callIdToName map for result pairing
+        callIdToName.set(callId, item.name);
       }
 
       // Pass through the event for display
@@ -117,14 +128,18 @@ function processEventsForDisplay(
       continue;
     }
 
+    // Check if this is a function result (OpenAI standard format)
+    const isFunctionResult = getFunctionResultFromEvent(event) !== null;
+
     // Always show completion, error, workflow events, and function results
     if (
+      event.type === "response.completed" ||
       event.type === "response.done" ||
       event.type === "error" ||
       event.type === "response.workflow_event.complete" ||
       event.type === "response.trace_event.complete" ||
       event.type === "response.trace.complete" ||
-      event.type === "response.function_result.complete"
+      isFunctionResult
     ) {
       // Flush any accumulated text before showing these events
       if (accumulatedText.trim()) {
@@ -168,12 +183,9 @@ function processEventsForDisplay(
       }
 
       // For function results, ensure we have the corresponding function call
-      if (
-        event.type === "response.function_result.complete" &&
-        "data" in event
-      ) {
-        const resultData = event.data as FunctionResultData;
-        const callId = resultData.call_id;
+      const functionResult = getFunctionResultFromEvent(event);
+      if (functionResult) {
+        const callId = functionResult.call_id;
 
         // Only create function call event if we have actual argument data
         if (callId && functionCalls.has(callId)) {
@@ -376,20 +388,22 @@ function getEventSummary(event: ExtendedResponseStreamEvent): string {
       }
       return "Function arguments...";
 
-    case "response.function_result.complete":
-      if ("data" in event && event.data) {
-        const data = event.data as FunctionResultData;
-        const resultStr = data.result
-          ? typeof data.result === "string"
-            ? data.result
-            : JSON.stringify(data.result)
-          : "no result";
-        const truncated = resultStr.slice(0, 40);
+    case "response.output_item.added": {
+      const result = getFunctionResultFromEvent(event);
+      if (result) {
+        const truncated = result.output.slice(0, 40);
         return `Tool result: ${truncated}${
           truncated.length >= 40 ? "..." : ""
         }`;
       }
-      return "Function result";
+      // Could also be a function call
+      const addedEvent =
+        event as import("@/types").ResponseOutputItemAddedEvent;
+      if (addedEvent.item.type === "function_call") {
+        return `Tool call: ${addedEvent.item.name}`;
+      }
+      return "Output item added";
+    }
 
     case "response.workflow_event.complete":
       if ("data" in event && event.data) {
@@ -405,6 +419,16 @@ function getEventSummary(event: ExtendedResponseStreamEvent): string {
         return `Trace: ${data.operation_name || "unknown"}`;
       }
       return "Trace event";
+
+    case "response.completed":
+      if ("response" in event && event.response && "usage" in event.response) {
+        const completedEvent = event as import("@/types").ResponseCompletedEvent;
+        const usage = completedEvent.response.usage;
+        if (usage) {
+          return `Response complete (${usage.total_tokens} tokens)`;
+        }
+      }
+      return "Response complete";
 
     case "response.done":
       return "Response complete";
@@ -429,13 +453,15 @@ function getEventIcon(type: string) {
     case "response.function_call.delta":
     case "response.function_call_arguments.delta":
       return Wrench;
-    case "response.function_result.complete":
+    case "response.output_item.added":
       return CheckCircle2;
     case "response.workflow_event.complete":
       return Activity;
     case "response.trace_event.complete":
     case "response.trace.complete":
       return Search;
+    case "response.completed":
+      return CheckCircle2;
     case "response.done":
       return CheckCircle2;
     case "error":
@@ -453,13 +479,15 @@ function getEventColor(type: string) {
     case "response.function_call.delta":
     case "response.function_call_arguments.delta":
       return "text-blue-600 dark:text-blue-400";
-    case "response.function_result.complete":
+    case "response.output_item.added":
       return "text-green-600 dark:text-green-400";
     case "response.workflow_event.complete":
       return "text-purple-600 dark:text-purple-400";
     case "response.trace_event.complete":
     case "response.trace.complete":
       return "text-orange-600 dark:text-orange-400";
+    case "response.completed":
+      return "text-green-600 dark:text-green-400";
     case "response.done":
       return "text-green-600 dark:text-green-400";
     case "error":
@@ -481,9 +509,8 @@ function EventItem({ event }: EventItemProps) {
     (event.type === "response.function_call.complete" &&
       "data" in event &&
       event.data) ||
-    (event.type === "response.function_result.complete" &&
-      "data" in event &&
-      event.data) ||
+    (event.type === "response.output_item.added" &&
+      getFunctionResultFromEvent(event) !== null) ||
     (event.type === "response.workflow_event.complete" &&
       "data" in event &&
       event.data) ||
@@ -497,6 +524,9 @@ function EventItem({ event }: EventItemProps) {
       "delta" in event &&
       event.delta &&
       event.delta.length > 100) ||
+    (event.type === "response.completed" &&
+      "response" in event &&
+      event.response) ||
     // Make error events expandable to show full error details
     event.type === "error";
 
@@ -651,9 +681,9 @@ function EventExpandedContent({
       }
       break;
 
-    case "response.function_result.complete":
-      if ("data" in event && event.data) {
-        const data = event.data as FunctionResultData;
+    case "response.output_item.added": {
+      const result = getFunctionResultFromEvent(event);
+      if (result) {
         return (
           <div className="space-y-2">
             <div className="flex items-center gap-2">
@@ -661,57 +691,42 @@ function EventExpandedContent({
               <span className="font-semibold text-sm">Function Result</span>
             </div>
             <div className="grid grid-cols-1 gap-2 text-xs">
-              {data.call_id && (
-                <div>
-                  <span className="font-medium text-muted-foreground">
-                    Call ID:
-                  </span>
-                  <span className="ml-2 font-mono text-xs">{data.call_id}</span>
-                </div>
-              )}
+              <div>
+                <span className="font-medium text-muted-foreground">
+                  Call ID:
+                </span>
+                <span className="ml-2 font-mono text-xs">{result.call_id}</span>
+              </div>
               <div>
                 <span className="font-medium text-muted-foreground">
                   Status:
                 </span>
                 <span
                   className={`ml-2 px-2 py-1 rounded text-xs font-medium ${
-                    data.status === "completed"
+                    result.status === "completed"
                       ? "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200"
                       : "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200"
                   }`}
                 >
-                  {data.status || "unknown"}
+                  {result.status}
                 </span>
               </div>
-              {data.result !== undefined && (
-                <div>
-                  <span className="font-medium text-muted-foreground">
-                    Result:
-                  </span>
-                  <div className="mt-1 max-h-32 overflow-auto">
-                    <pre className="text-xs bg-background border rounded p-2 whitespace-pre-wrap max-w-full break-all">
-                      {typeof data.result === "string"
-                        ? data.result
-                        : JSON.stringify(data.result, null, 1)}
-                    </pre>
-                  </div>
+              <div>
+                <span className="font-medium text-muted-foreground">
+                  Output:
+                </span>
+                <div className="mt-1 max-h-32 overflow-auto">
+                  <pre className="text-xs bg-background border rounded p-2 whitespace-pre-wrap max-w-full break-all">
+                    {result.output}
+                  </pre>
                 </div>
-              )}
-              {data.exception !== null && data.exception !== undefined && (
-                <div>
-                  <span className="font-medium text-destructive">Error:</span>
-                  <div className="mt-1">
-                    <pre className="text-xs bg-destructive/10 border border-destructive/30 rounded p-2 text-destructive whitespace-pre-wrap break-all">
-                      {data.exception}
-                    </pre>
-                  </div>
-                </div>
-              )}
+              </div>
             </div>
           </div>
         );
       }
       break;
+    }
 
     case "response.workflow_event.complete":
       if ("data" in event && event.data) {
@@ -898,6 +913,74 @@ function EventExpandedContent({
       }
       break;
 
+    case "response.completed":
+      if ("response" in event && event.response) {
+        const completedEvent = event as import("@/types").ResponseCompletedEvent;
+        const response = completedEvent.response;
+        return (
+          <div className="space-y-2">
+            <div className="grid grid-cols-1 gap-2 text-xs">
+              {response.usage && (
+                <>
+                  <div>
+                    <span className="font-medium text-muted-foreground">
+                      Usage:
+                    </span>
+                  </div>
+                  <div className="ml-4 space-y-1">
+                    <div>
+                      <span className="font-medium text-muted-foreground">
+                        Input tokens:
+                      </span>
+                      <span className="ml-2 font-mono">
+                        {response.usage.input_tokens}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="font-medium text-muted-foreground">
+                        Output tokens:
+                      </span>
+                      <span className="ml-2 font-mono">
+                        {response.usage.output_tokens}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="font-medium text-muted-foreground">
+                        Total tokens:
+                      </span>
+                      <span className="ml-2 font-mono bg-green-100 dark:bg-green-900 px-2 py-1 rounded">
+                        {response.usage.total_tokens}
+                      </span>
+                    </div>
+                  </div>
+                </>
+              )}
+              {response.id && (
+                <div>
+                  <span className="font-medium text-muted-foreground">
+                    Response ID:
+                  </span>
+                  <span className="ml-2 font-mono text-xs break-all">
+                    {response.id}
+                  </span>
+                </div>
+              )}
+              {response.model && (
+                <div>
+                  <span className="font-medium text-muted-foreground">
+                    Model:
+                  </span>
+                  <span className="ml-2 font-mono text-xs break-all">
+                    {response.model}
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      }
+      break;
+
     default:
       return (
         <div className="text-xs text-muted-foreground">
@@ -1003,7 +1086,7 @@ function TracesTab({ events }: { events: ExtendedResponseStreamEvent[] }) {
                   </span>{" "}
                   or restart devui with the tracing flag{" "}
                   <div className="font-mono bg-accent/10 px-1 rounded">
-                    devui --enable-tracing
+                    devui --tracing
                   </div>
                   to enable tracing.
                 </div>
@@ -1223,21 +1306,15 @@ function ToolsTab({ events }: { events: ExtendedResponseStreamEvent[] }) {
     (event) => event.type === "response.function_call.complete"
   );
   const functionResults = events.filter(
-    (event) => event.type === "response.function_result.complete"
+    (event) => getFunctionResultFromEvent(event) !== null
   );
 
   // Create a map of call_id to results for easy lookup
   const resultsByCallId = new Map();
   functionResults.forEach((result) => {
-    if (
-      "data" in result &&
-      result.data &&
-      (result.data as EventDataBase).call_id
-    ) {
-      resultsByCallId.set(
-        String((result.data as EventDataBase).call_id),
-        result
-      );
+    const resultData = getFunctionResultFromEvent(result);
+    if (resultData) {
+      resultsByCallId.set(resultData.call_id, result);
     }
   });
 
@@ -1302,7 +1379,7 @@ function ToolEventItem({ event }: { event: ExtendedResponseStreamEvent }) {
 
   // Check if this is a function call event
   const isFunctionCall = event.type === "response.function_call.complete";
-  const isFunctionResult = event.type === "response.function_result.complete";
+  const isFunctionResult = getFunctionResultFromEvent(event) !== null;
 
   if (!isFunctionCall && !isFunctionResult) {
     return null;

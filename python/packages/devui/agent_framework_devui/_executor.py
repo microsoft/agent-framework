@@ -232,7 +232,6 @@ class AgentFrameworkExecutor:
                 logger.debug(f"Executing agent with text input: {user_message[:100]}...")
             else:
                 logger.debug(f"Executing agent with multimodal ChatMessage: {type(user_message)}")
-
             # Check if agent supports streaming
             if hasattr(agent, "run_stream") and callable(agent.run_stream):
                 # Use Agent Framework's native streaming with optional thread
@@ -432,6 +431,40 @@ class AgentFrameworkExecutor:
                                         contents.append(DataContent(uri=data_uri, media_type=media_type))
                                     elif file_url:
                                         contents.append(DataContent(uri=file_url, media_type=media_type))
+
+                                elif content_type == "function_approval_response":
+                                    # Handle function approval response (DevUI extension)
+                                    try:
+                                        from agent_framework import FunctionApprovalResponseContent, FunctionCallContent
+
+                                        request_id = content_item.get("request_id", "")
+                                        approved = content_item.get("approved", False)
+                                        function_call_data = content_item.get("function_call", {})
+
+                                        # Create FunctionCallContent from the function_call data
+                                        function_call = FunctionCallContent(
+                                            call_id=function_call_data.get("id", ""),
+                                            name=function_call_data.get("name", ""),
+                                            arguments=function_call_data.get("arguments", {}),
+                                        )
+
+                                        # Create FunctionApprovalResponseContent with correct signature
+                                        approval_response = FunctionApprovalResponseContent(
+                                            approved,  # positional argument
+                                            id=request_id,  # keyword argument 'id', NOT 'request_id'
+                                            function_call=function_call,  # FunctionCallContent object
+                                        )
+                                        contents.append(approval_response)
+                                        logger.info(
+                                            f"Added FunctionApprovalResponseContent: id={request_id}, "
+                                            f"approved={approved}, call_id={function_call.call_id}"
+                                        )
+                                    except ImportError:
+                                        logger.warning(
+                                            "FunctionApprovalResponseContent not available in agent_framework"
+                                        )
+                                    except Exception as e:
+                                        logger.error(f"Failed to create FunctionApprovalResponseContent: {e}")
 
             # Handle other OpenAI input item types as needed
             # (tool calls, function results, etc.)
