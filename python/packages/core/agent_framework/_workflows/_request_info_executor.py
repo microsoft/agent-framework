@@ -10,13 +10,13 @@ from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from textwrap import shorten
 from typing import Any, ClassVar, Generic, TypeVar, cast
 
-from .._checkpoint import WorkflowCheckpoint
-from .._events import (
+from ._checkpoint import WorkflowCheckpoint
+from ._events import (
     RequestInfoEvent,  # type: ignore[reportPrivateUsage]
 )
-from .._executor import Executor, handler
-from .._runner_context import _decode_checkpoint_value  # type: ignore
-from .._workflow_context import WorkflowContext
+from ._executor import Executor, handler
+from ._runner_context import _decode_checkpoint_value  # type: ignore
+from ._workflow_context import WorkflowContext
 
 logger = logging.getLogger(__name__)
 

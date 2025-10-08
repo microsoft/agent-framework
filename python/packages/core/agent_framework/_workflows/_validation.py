@@ -10,7 +10,7 @@ from typing import Any, Union, get_args, get_origin
 
 from ._edge import Edge, EdgeGroup, FanInEdgeGroup
 from ._executor import Executor
-from ._specialized_executors._request_info_executor import RequestInfoExecutor
+from ._request_info_executor import RequestInfoExecutor
 
 logger = logging.getLogger(__name__)
 

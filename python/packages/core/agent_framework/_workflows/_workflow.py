@@ -12,6 +12,7 @@ from typing import Any
 from .._agents import AgentProtocol
 from ..observability import OtelAttr, capture_exception, create_workflow_span
 from ._agent import WorkflowAgent
+from ._agent_executor import AgentExecutor
 from ._checkpoint import CheckpointStorage
 from ._const import DEFAULT_MAX_ITERATIONS
 from ._edge import (
@@ -38,11 +39,10 @@ from ._events import (
 )
 from ._executor import Executor
 from ._model_utils import DictConvertible
+from ._request_info_executor import RequestInfoExecutor
 from ._runner import Runner
 from ._runner_context import InProcRunnerContext, RunnerContext
 from ._shared_state import SharedState
-from ._specialized_executors._agent_executor import AgentExecutor
-from ._specialized_executors._request_info_executor import RequestInfoExecutor
 from ._validation import validate_workflow_graph
 from ._workflow_context import WorkflowContext
 
@@ -259,7 +259,7 @@ class Workflow(DictConvertible):
             ):
                 original_executor = self.executors.get(executor_id)
                 if original_executor and hasattr(original_executor, "workflow"):
-                    from ._specialized_executors._workflow_executor import WorkflowExecutor
+                    from ._workflow_executor import WorkflowExecutor
 
                     if isinstance(original_executor, WorkflowExecutor):
                         executor_payload["workflow"] = original_executor.workflow.to_dict()
@@ -743,7 +743,7 @@ class Workflow(DictConvertible):
         Returns:
             The RequestInfoExecutor instance if found, None otherwise.
         """
-        from ._specialized_executors._request_info_executor import RequestInfoExecutor
+        from ._request_info_executor import RequestInfoExecutor
 
         for executor in self.executors.values():
             if isinstance(executor, RequestInfoExecutor):
