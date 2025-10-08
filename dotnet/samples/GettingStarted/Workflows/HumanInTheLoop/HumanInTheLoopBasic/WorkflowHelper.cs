@@ -53,21 +53,21 @@ internal sealed class JudgeExecutor() : ReflectingExecutor<JudgeExecutor>("Judge
         this._targetNumber = targetNumber;
     }
 
-    public async ValueTask HandleAsync(int message, IWorkflowContext context)
+    public async ValueTask HandleAsync(int message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         this._tries++;
         if (message == this._targetNumber)
         {
-            await context.YieldOutputAsync($"{this._targetNumber} found in {this._tries} tries!")
+            await context.YieldOutputAsync($"{this._targetNumber} found in {this._tries} tries!", cancellationToken)
                          .ConfigureAwait(false);
         }
         else if (message < this._targetNumber)
         {
-            await context.SendMessageAsync(NumberSignal.Below).ConfigureAwait(false);
+            await context.SendMessageAsync(NumberSignal.Below, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
         else
         {
-            await context.SendMessageAsync(NumberSignal.Above).ConfigureAwait(false);
+            await context.SendMessageAsync(NumberSignal.Above, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
     }
 }

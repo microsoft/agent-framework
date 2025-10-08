@@ -50,10 +50,10 @@ internal sealed class StreamingRunEventStream : IRunEventStream
         }
     }
 
-    private async Task RunLoopAsync(CancellationToken cancellation)
+    private async Task RunLoopAsync(CancellationToken cancellationToken)
     {
         using CancellationTokenSource errorSource = new();
-        CancellationTokenSource linkedSource = CancellationTokenSource.CreateLinkedTokenSource(errorSource.Token, cancellation);
+        CancellationTokenSource linkedSource = CancellationTokenSource.CreateLinkedTokenSource(errorSource.Token, cancellationToken);
 
         // Subscribe to events - they will flow directly to the channel as they're raised
         this._stepRunner.OutgoingEvents.EventRaised += OnEventRaisedAsync;
@@ -62,7 +62,7 @@ internal sealed class StreamingRunEventStream : IRunEventStream
         {
             // Wait for the first input before starting
             // The consumer will call EnqueueMessageAsync which signals the run loop
-            await this._inputWaiter.WaitForInputAsync(cancellation: linkedSource.Token).ConfigureAwait(false);
+            await this._inputWaiter.WaitForInputAsync(cancellationToken: linkedSource.Token).ConfigureAwait(false);
 
             this._runStatus = RunStatus.Running;
 
@@ -134,7 +134,7 @@ internal sealed class StreamingRunEventStream : IRunEventStream
 
     public async IAsyncEnumerable<WorkflowEvent> TakeEventStreamAsync(
         bool blockOnPendingRequest,
-        [EnumeratorCancellation] CancellationToken cancellation = default)
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // Get the current epoch - we'll only respond to completion signals from this epoch or later
         int myEpoch = Volatile.Read(ref this._completionEpoch) + 1;
@@ -143,7 +143,7 @@ internal sealed class StreamingRunEventStream : IRunEventStream
         // Note: When cancellation is requested, ReadAllAsync may throw OperationCanceledException
         // or may complete the enumeration. We check IsCancellationRequested explicitly at superstep
         // boundaries to ensure clean cancellation.
-        await foreach (WorkflowEvent evt in this._eventChannel.Reader.ReadAllAsync(cancellation).ConfigureAwait(false))
+        await foreach (WorkflowEvent evt in this._eventChannel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
         {
             // Filter out internal signals used for run loop coordination
             if (evt is InternalHaltSignal completionSignal)
@@ -156,7 +156,7 @@ internal sealed class StreamingRunEventStream : IRunEventStream
 
                 // Check for cancellation at superstep boundaries (before processing completion signal)
                 // This allows consumers to stop reading events cleanly between supersteps
-                if (cancellation.IsCancellationRequested)
+                if (cancellationToken.IsCancellationRequested)
                 {
                     yield break;
                 }
@@ -186,7 +186,7 @@ internal sealed class StreamingRunEventStream : IRunEventStream
                 yield break;
             }
 
-            if (cancellation.IsCancellationRequested)
+            if (cancellationToken.IsCancellationRequested)
             {
                 yield break;
             }
@@ -195,7 +195,7 @@ internal sealed class StreamingRunEventStream : IRunEventStream
         }
     }
 
-    public ValueTask<RunStatus> GetStatusAsync(CancellationToken cancellation = default)
+    public ValueTask<RunStatus> GetStatusAsync(CancellationToken cancellationToken = default)
     {
         // Thread-safe read of status (enum is read atomically on most platforms)
         return new ValueTask<RunStatus>(this._runStatus);

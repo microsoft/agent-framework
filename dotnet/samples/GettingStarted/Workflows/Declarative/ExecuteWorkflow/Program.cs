@@ -163,6 +163,9 @@ internal sealed class Program
                     Debug.WriteLine($"STEP ERROR #{executorFailure.ExecutorId}: {executorFailure.Data?.Message ?? "Unknown"}");
                     break;
 
+                case WorkflowErrorEvent workflowError:
+                    throw workflowError.Data as Exception ?? new InvalidOperationException("Unexpected failure...");
+
                 case SuperStepCompletedEvent checkpointCompleted:
                     this.LastCheckpoint = checkpointCompleted.CompletionInfo?.Checkpoint;
                     Debug.WriteLine($"CHECKPOINT x{checkpointCompleted.StepNumber} [{this.LastCheckpoint?.CheckpointId ?? "(none)"}]");

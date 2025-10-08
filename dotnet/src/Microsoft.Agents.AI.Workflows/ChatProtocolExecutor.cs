@@ -30,19 +30,19 @@ internal abstract class ChatProtocolExecutor(string id, ChatProtocolExecutorOpti
     {
         if (this._stringMessageChatRole.HasValue)
         {
-            routeBuilder = routeBuilder.AddHandler<string>((message, _) => this._pendingMessages.Add(new(this._stringMessageChatRole.Value, message)));
+            routeBuilder = routeBuilder.AddHandler<string>((message, _, __) => this._pendingMessages.Add(new(this._stringMessageChatRole.Value, message)));
         }
 
-        return routeBuilder.AddHandler<ChatMessage>((message, _) => this._pendingMessages.Add(message))
-                           .AddHandler<List<ChatMessage>>((messages, _) => this._pendingMessages.AddRange(messages))
+        return routeBuilder.AddHandler<ChatMessage>((message, _, __) => this._pendingMessages.Add(message))
+                           .AddHandler<List<ChatMessage>>((messages, _, __) => this._pendingMessages.AddRange(messages))
                            .AddHandler<TurnToken>(this.TakeTurnAsync);
     }
 
-    public async ValueTask TakeTurnAsync(TurnToken token, IWorkflowContext context)
+    public async ValueTask TakeTurnAsync(TurnToken token, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        await this.TakeTurnAsync(this._pendingMessages, context, token.EmitEvents).ConfigureAwait(false);
+        await this.TakeTurnAsync(this._pendingMessages, context, token.EmitEvents, cancellationToken).ConfigureAwait(false);
         this._pendingMessages = [];
-        await context.SendMessageAsync(token).ConfigureAwait(false);
+        await context.SendMessageAsync(token, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     protected abstract ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellationToken = default);
@@ -54,7 +54,7 @@ internal abstract class ChatProtocolExecutor(string id, ChatProtocolExecutorOpti
         if (this._pendingMessages.Count > 0)
         {
             JsonElement messagesValue = this._pendingMessages.Serialize();
-            messagesTask = context.QueueStateUpdateAsync(PendingMessagesStateKey, messagesValue).AsTask();
+            messagesTask = context.QueueStateUpdateAsync(PendingMessagesStateKey, messagesValue, cancellationToken: cancellationToken).AsTask();
         }
 
         await messagesTask.ConfigureAwait(false);
@@ -62,7 +62,7 @@ internal abstract class ChatProtocolExecutor(string id, ChatProtocolExecutorOpti
 
     protected internal override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        JsonElement? messagesValue = await context.ReadStateAsync<JsonElement?>(PendingMessagesStateKey).ConfigureAwait(false);
+        JsonElement? messagesValue = await context.ReadStateAsync<JsonElement?>(PendingMessagesStateKey, cancellationToken: cancellationToken).ConfigureAwait(false);
         if (messagesValue.HasValue)
         {
             List<ChatMessage> messages = messagesValue.Value.DeserializeMessages();

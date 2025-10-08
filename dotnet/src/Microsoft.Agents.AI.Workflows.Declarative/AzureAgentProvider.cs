@@ -78,6 +78,7 @@ public sealed class AzureAgentProvider(string projectEndpoint, TokenCredential p
                         TextContent textContent => new MessageInputTextBlock(textContent.Text),
                         HostedFileContent fileContent => new MessageInputImageFileBlock(new MessageImageFileParam(fileContent.FileId)),
                         UriContent uriContent when uriContent.Uri is not null => new MessageInputImageUriBlock(new MessageImageUriParam(uriContent.Uri.ToString())),
+                        DataContent dataContent when dataContent.Uri is not null => new MessageInputImageUriBlock(new MessageImageUriParam(dataContent.Uri)),
                         _ => null // Unsupported content type
                     };
 

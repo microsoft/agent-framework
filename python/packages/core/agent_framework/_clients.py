@@ -101,7 +101,7 @@ class ChatClientProtocol(Protocol):
         logit_bias: dict[str | int, float] | None = None,
         max_tokens: int | None = None,
         metadata: dict[str, Any] | None = None,
-        model: str | None = None,
+        model_id: str | None = None,
         presence_penalty: float | None = None,
         response_format: type[BaseModel] | None = None,
         seed: int | None = None,
@@ -129,7 +129,7 @@ class ChatClientProtocol(Protocol):
             logit_bias: The logit bias to use.
             max_tokens: The maximum number of tokens to generate.
             metadata: Additional metadata to include in the request.
-            model: The model to use for the agent.
+            model_id: The model_id to use for the agent.
             presence_penalty: The presence penalty to use.
             response_format: The format of the response.
             seed: The random seed to use.
@@ -160,7 +160,7 @@ class ChatClientProtocol(Protocol):
         logit_bias: dict[str | int, float] | None = None,
         max_tokens: int | None = None,
         metadata: dict[str, Any] | None = None,
-        model: str | None = None,
+        model_id: str | None = None,
         presence_penalty: float | None = None,
         response_format: type[BaseModel] | None = None,
         seed: int | None = None,
@@ -188,7 +188,7 @@ class ChatClientProtocol(Protocol):
             logit_bias: The logit bias to use.
             max_tokens: The maximum number of tokens to generate.
             metadata: Additional metadata to include in the request.
-            model: The model to use for the agent.
+            model_id: The model_id to use for the agent.
             presence_penalty: The presence penalty to use.
             response_format: The format of the response.
             seed: The random seed to use.
@@ -240,7 +240,7 @@ def prepare_messages(messages: str | ChatMessage | list[str] | list[ChatMessage]
 def merge_chat_options(
     *,
     base_chat_options: ChatOptions | Any | None,
-    model: str | None = None,
+    model_id: str | None = None,
     frequency_penalty: float | None = None,
     logit_bias: dict[str | int, float] | None = None,
     max_tokens: int | None = None,
@@ -265,7 +265,7 @@ def merge_chat_options(
 
     Keyword Args:
         base_chat_options: Optional base ChatOptions to merge with direct parameters.
-        model: The model to use for the agent.
+        model_id: The model_id to use for the agent.
         frequency_penalty: The frequency penalty to use.
         logit_bias: The logit bias to use.
         max_tokens: The maximum number of tokens to generate.
@@ -292,40 +292,11 @@ def merge_chat_options(
     if base_chat_options is not None and not isinstance(base_chat_options, ChatOptions):
         raise TypeError("chat_options must be an instance of ChatOptions")
 
-    if base_chat_options is not None:
-        # Combine tools from both sources
-        base_tools = base_chat_options.tools or []
-        combined_tools = [*base_tools, *(tools or [])] if tools else base_tools
+    if base_chat_options is None:
+        base_chat_options = ChatOptions()
 
-        # Create new chat_options, using direct parameters when provided, otherwise fall back to base
-        return ChatOptions(
-            model_id=model if model is not None else base_chat_options.model_id,
-            frequency_penalty=(
-                frequency_penalty if frequency_penalty is not None else base_chat_options.frequency_penalty
-            ),
-            logit_bias=logit_bias if logit_bias is not None else base_chat_options.logit_bias,
-            max_tokens=max_tokens if max_tokens is not None else base_chat_options.max_tokens,
-            metadata=metadata if metadata is not None else base_chat_options.metadata,
-            presence_penalty=(presence_penalty if presence_penalty is not None else base_chat_options.presence_penalty),
-            response_format=(response_format if response_format is not None else base_chat_options.response_format),
-            seed=seed if seed is not None else base_chat_options.seed,
-            stop=stop if stop is not None else base_chat_options.stop,
-            store=store if store is not None else base_chat_options.store,
-            temperature=temperature if temperature is not None else base_chat_options.temperature,
-            top_p=top_p if top_p is not None else base_chat_options.top_p,
-            tool_choice=(
-                tool_choice if (tool_choice is not None and tool_choice != "auto") else base_chat_options.tool_choice  # type: ignore[arg-type]
-            ),
-            tools=combined_tools or None,
-            user=user if user is not None else base_chat_options.user,
-            additional_properties=(
-                additional_properties if additional_properties is not None else base_chat_options.additional_properties
-            ),
-            conversation_id=base_chat_options.conversation_id,
-        )
-    # No base options, create from direct parameters only
-    return ChatOptions(
-        model_id=model,
+    return base_chat_options & ChatOptions(
+        model_id=model_id,
         frequency_penalty=frequency_penalty,
         logit_bias=logit_bias,
         max_tokens=max_tokens,
@@ -340,7 +311,7 @@ def merge_chat_options(
         tool_choice=tool_choice,
         tools=tools,
         user=user,
-        additional_properties=additional_properties or {},
+        additional_properties=additional_properties,
     )
 
 
@@ -560,7 +531,7 @@ class BaseChatClient(SerializationMixin, ABC):
         logit_bias: dict[str | int, float] | None = None,
         max_tokens: int | None = None,
         metadata: dict[str, Any] | None = None,
-        model: str | None = None,
+        model_id: str | None = None,
         presence_penalty: float | None = None,
         response_format: type[BaseModel] | None = None,
         seed: int | None = None,
@@ -592,7 +563,7 @@ class BaseChatClient(SerializationMixin, ABC):
             logit_bias: The logit bias to use.
             max_tokens: The maximum number of tokens to generate.
             metadata: Additional metadata to include in the request.
-            model: The model to use for the agent.
+            model_id: The model_id to use for the agent.
             presence_penalty: The presence penalty to use.
             response_format: The format of the response.
             seed: The random seed to use.
@@ -604,17 +575,18 @@ class BaseChatClient(SerializationMixin, ABC):
             top_p: The nucleus sampling probability to use.
             user: The user to associate with the request.
             additional_properties: Additional properties to include in the request.
+                Can be used for provider-specific parameters.
             kwargs: Any additional keyword arguments.
                 May include ``chat_options`` which provides base values that can be overridden by direct parameters.
 
         Returns:
-            A chat response from the model.
+            A chat response from the model_id.
         """
         # Normalize tools and merge with base chat_options
         normalized_tools = await self._normalize_tools(tools)
         chat_options = merge_chat_options(
             base_chat_options=kwargs.pop("chat_options", None),
-            model=model,
+            model_id=model_id,
             frequency_penalty=frequency_penalty,
             logit_bias=logit_bias,
             max_tokens=max_tokens,
@@ -654,7 +626,7 @@ class BaseChatClient(SerializationMixin, ABC):
         logit_bias: dict[str | int, float] | None = None,
         max_tokens: int | None = None,
         metadata: dict[str, Any] | None = None,
-        model: str | None = None,
+        model_id: str | None = None,
         presence_penalty: float | None = None,
         response_format: type[BaseModel] | None = None,
         seed: int | None = None,
@@ -686,7 +658,7 @@ class BaseChatClient(SerializationMixin, ABC):
             logit_bias: The logit bias to use.
             max_tokens: The maximum number of tokens to generate.
             metadata: Additional metadata to include in the request.
-            model: The model to use for the agent.
+            model_id: The model_id to use for the agent.
             presence_penalty: The presence penalty to use.
             response_format: The format of the response.
             seed: The random seed to use.
@@ -698,6 +670,7 @@ class BaseChatClient(SerializationMixin, ABC):
             top_p: The nucleus sampling probability to use.
             user: The user to associate with the request.
             additional_properties: Additional properties to include in the request.
+                Can be used for provider-specific parameters.
             kwargs: Any additional keyword arguments.
                 May include ``chat_options`` which provides base values that can be overridden by direct parameters.
 
@@ -708,7 +681,7 @@ class BaseChatClient(SerializationMixin, ABC):
         normalized_tools = await self._normalize_tools(tools)
         chat_options = merge_chat_options(
             base_chat_options=kwargs.pop("chat_options", None),
-            model=model,
+            model_id=model_id,
             frequency_penalty=frequency_penalty,
             logit_bias=logit_bias,
             max_tokens=max_tokens,
@@ -787,7 +760,7 @@ class BaseChatClient(SerializationMixin, ABC):
         logit_bias: dict[str | int, float] | None = None,
         max_tokens: int | None = None,
         metadata: dict[str, Any] | None = None,
-        model: str | None = None,
+        model_id: str | None = None,
         presence_penalty: float | None = None,
         response_format: type[BaseModel] | None = None,
         seed: int | None = None,
@@ -802,7 +775,7 @@ class BaseChatClient(SerializationMixin, ABC):
         | None = None,
         top_p: float | None = None,
         user: str | None = None,
-        request_kwargs: dict[str, Any] | None = None,
+        additional_chat_options: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> "ChatAgent":
         """Create a ChatAgent with this client.
@@ -824,7 +797,7 @@ class BaseChatClient(SerializationMixin, ABC):
             logit_bias: The logit bias to use.
             max_tokens: The maximum number of tokens to generate.
             metadata: Additional metadata to include in the request.
-            model: The model to use for the agent.
+            model_id: The model_id to use for the agent.
             presence_penalty: The presence penalty to use.
             response_format: The format of the response.
             seed: The random seed to use.
@@ -835,8 +808,9 @@ class BaseChatClient(SerializationMixin, ABC):
             tools: The tools to use for the request.
             top_p: The nucleus sampling probability to use.
             user: The user to associate with the request.
-            request_kwargs: A dictionary of other values that will be passed through
+            additional_chat_options: A dictionary of other values that will be passed through
                 to the chat_client ``get_response`` and ``get_streaming_response`` methods.
+                This can be used to pass provider specific parameters.
             kwargs: Any additional keyword arguments. Will be stored as ``additional_properties``.
 
         Returns:
@@ -848,7 +822,7 @@ class BaseChatClient(SerializationMixin, ABC):
                 from agent_framework.clients import OpenAIChatClient
 
                 # Create a client
-                client = OpenAIChatClient(model="gpt-4")
+                client = OpenAIChatClient(model_id="gpt-4")
 
                 # Create an agent using the convenience method
                 agent = client.create_agent(
@@ -873,7 +847,7 @@ class BaseChatClient(SerializationMixin, ABC):
             logit_bias=logit_bias,
             max_tokens=max_tokens,
             metadata=metadata,
-            model=model,
+            model_id=model_id,
             presence_penalty=presence_penalty,
             response_format=response_format,
             seed=seed,
@@ -884,6 +858,6 @@ class BaseChatClient(SerializationMixin, ABC):
             tools=tools,
             top_p=top_p,
             user=user,
-            request_kwargs=request_kwargs,
+            additional_chat_options=additional_chat_options,
             **kwargs,
         )

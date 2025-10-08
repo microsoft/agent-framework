@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Microsoft.Agents.AI.Workflows.Reflection;
@@ -15,8 +16,10 @@ public interface IMessageHandler<TMessage>
     /// </summary>
     /// <param name="message">The message to handle.</param>
     /// <param name="context">The execution context.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
+    /// The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A task that represents the asynchronous operation.</returns>
-    ValueTask HandleAsync(TMessage message, IWorkflowContext context);
+    ValueTask HandleAsync(TMessage message, IWorkflowContext context, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -32,6 +35,8 @@ public interface IMessageHandler<TMessage, TResult>
     /// </summary>
     /// <param name="message">The message to handle.</param>
     /// <param name="context">The execution context.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
+    /// The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A task that represents the asynchronous operation.</returns>
-    ValueTask<TResult> HandleAsync(TMessage message, IWorkflowContext context);
+    ValueTask<TResult> HandleAsync(TMessage message, IWorkflowContext context, CancellationToken cancellationToken = default);
 }
