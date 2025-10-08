@@ -1,13 +1,17 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Buffers;
 using System.ClientModel.Primitives;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Net.ServerSentEvents;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions.Utils;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 using OpenAI.Chat;
 using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
@@ -67,7 +71,38 @@ internal sealed class AIAgentChatCompletionsProcessor
     {
         public Task ExecuteAsync(HttpContext httpContext)
         {
-            throw new System.NotImplementedException();
+            var cancellationToken = httpContext.RequestAborted;
+            var response = httpContext.Response;
+
+            // Set SSE headers
+            response.Headers.ContentType = "text/event-stream";
+            response.Headers.CacheControl = "no-cache,no-store";
+            response.Headers.Connection = "keep-alive";
+            response.Headers.ContentEncoding = "identity";
+            httpContext.Features.GetRequiredFeature<IHttpResponseBodyFeature>().DisableBuffering();
+
+            return SseFormatter.WriteAsync(
+                source: this.GetStreamingResponsesAsync(cancellationToken),
+                destination: response.Body,
+                itemFormatter: (sseItem, bufferWriter) =>
+                {
+                    var sseDataJsonModel = (IJsonModel<StreamingChatCompletionUpdate>)sseItem.Data;
+                    var json = sseDataJsonModel.Write(ModelReaderWriterOptions.Json);
+                    bufferWriter.Write(json);
+                },
+                cancellationToken);
+        }
+
+        private async IAsyncEnumerable<SseItem<StreamingChatCompletionUpdate>> GetStreamingResponsesAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            AgentThread? agentThread = null;
+
+            var agentRunResponseUpdates = agent.RunStreamingAsync(chatMessages, thread: agentThread, cancellationToken: cancellationToken);
+            var chatResponseUpdates = agentRunResponseUpdates.AsChatResponseUpdatesAsync();
+            await foreach (var streamingChatCompletionUpdate in chatResponseUpdates.AsOpenAIStreamingChatCompletionUpdatesAsync(cancellationToken).ConfigureAwait(false))
+            {
+                yield return new SseItem<StreamingChatCompletionUpdate>(streamingChatCompletionUpdate);
+            }
         }
     }
 }
