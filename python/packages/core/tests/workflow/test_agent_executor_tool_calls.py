@@ -99,20 +99,24 @@ async def test_agent_executor_emits_tool_calls_in_streaming_mode() -> None:
     assert len(events) == 4, f"Expected 4 events, got {len(events)}"
 
     # First event: text update
+    assert events[0].data is not None
     assert isinstance(events[0].data.contents[0], TextContent)
     assert "Let me search" in events[0].data.contents[0].text
 
     # Second event: function call
+    assert events[1].data is not None
     assert isinstance(events[1].data.contents[0], FunctionCallContent)
     func_call = events[1].data.contents[0]
     assert func_call.call_id == "call_123"
     assert func_call.name == "search"
 
     # Third event: function result
+    assert events[2].data is not None
     assert isinstance(events[2].data.contents[0], FunctionResultContent)
     func_result = events[2].data.contents[0]
     assert func_result.call_id == "call_123"
 
     # Fourth event: final text
+    assert events[3].data is not None
     assert isinstance(events[3].data.contents[0], TextContent)
     assert "sunny" in events[3].data.contents[0].text

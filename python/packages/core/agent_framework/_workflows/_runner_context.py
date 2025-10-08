@@ -12,7 +12,7 @@ from typing import Any, Protocol, TypedDict, TypeVar, cast, runtime_checkable
 
 from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
 from ._const import DEFAULT_MAX_ITERATIONS
-from ._events import AgentRunUpdateEvent, WorkflowEvent
+from ._events import WorkflowEvent
 from ._shared_state import SharedState
 
 logger = logging.getLogger(__name__)

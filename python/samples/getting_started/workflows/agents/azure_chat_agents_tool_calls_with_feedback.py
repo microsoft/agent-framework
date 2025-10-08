@@ -87,7 +87,7 @@ class DraftFeedbackRequest(RequestInfoMessage):
 
     prompt: str = ""
     draft_text: str = ""
-    conversation: list[ChatMessage] = field(default_factory=list)
+    conversation: list[ChatMessage] = field(default_factory=list)  # type: ignore[reportUnknownVariableType]
 
 
 class DraftFeedbackCoordinator(Executor):
@@ -103,7 +103,11 @@ class DraftFeedbackCoordinator(Executor):
         ctx: WorkflowContext[DraftFeedbackRequest, str],
     ) -> None:
         # Preserve the full conversation so the final editor can see tool traces and the initial prompt.
-        conversation = list(draft.full_conversation or draft.agent_run_response.messages)
+        conversation: list[ChatMessage]
+        if draft.full_conversation is not None:
+            conversation = list(draft.full_conversation)
+        else:
+            conversation = list(draft.agent_run_response.messages)
         draft_text = draft.agent_run_response.text.strip()
         if not draft_text:
             draft_text = "No draft text was produced."
@@ -126,7 +130,7 @@ class DraftFeedbackCoordinator(Executor):
         note = (feedback.data or "").strip()
         request = feedback.original_request
 
-        conversation = list(request.conversation)
+        conversation: list[ChatMessage] = list(request.conversation)
         instruction = (
             "A human reviewer shared the following guidance:\n"
             f"{note or 'No specific guidance provided.'}\n\n"
