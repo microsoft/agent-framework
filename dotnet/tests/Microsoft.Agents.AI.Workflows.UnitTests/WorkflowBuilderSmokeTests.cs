@@ -152,7 +152,7 @@ public partial class WorkflowBuilderSmokeTests
         string definitionJson = definitionJsons.Single()!;
         definitionJson.Should().NotBeEmpty();
 
-        WorkflowInfo workflowInfo = JsonSerializer.Deserialize<WorkflowInfo>(
+        WorkflowInfo workflowInfo = JsonSerializer.Deserialize(
             definitionJson,
             WorkflowsJsonUtilities.JsonContext.Default.WorkflowInfo)!;
 
