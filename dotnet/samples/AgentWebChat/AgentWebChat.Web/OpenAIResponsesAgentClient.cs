@@ -3,7 +3,6 @@
 using System.ClientModel;
 using System.ClientModel.Primitives;
 using System.Runtime.CompilerServices;
-using A2A;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using OpenAI;

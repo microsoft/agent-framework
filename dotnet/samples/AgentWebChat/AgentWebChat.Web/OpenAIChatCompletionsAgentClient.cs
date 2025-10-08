@@ -3,7 +3,6 @@
 using System.ClientModel;
 using System.ClientModel.Primitives;
 using System.Runtime.CompilerServices;
-using A2A;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using OpenAI;
@@ -32,12 +31,7 @@ internal sealed class OpenAIChatCompletionsAgentClient(HttpClient httpClient) : 
         };
 
         var openAiClient = new ChatClient(model: "myModel!", credential: new ApiKeyCredential("dummy-key"), options: options).AsIChatClient();
-        var chatOptions = new ChatOptions()
-        {
-            ConversationId = threadId
-        };
-
-        await foreach (var update in openAiClient.GetStreamingResponseAsync(messages, chatOptions, cancellationToken: cancellationToken))
+        await foreach (var update in openAiClient.GetStreamingResponseAsync(messages, cancellationToken: cancellationToken))
         {
             yield return new AgentRunResponseUpdate(update);
         }
