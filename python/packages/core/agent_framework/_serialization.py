@@ -212,17 +212,18 @@ class SerializationMixin:
 
         return result
 
-    def to_json(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> str:
+    def to_json(self, *, exclude: set[str] | None = None, exclude_none: bool = True, **kwargs: Any) -> str:
         """Convert the instance to a JSON string.
 
         Keyword Args:
             exclude: The set of field names to exclude from serialization.
             exclude_none: Whether to exclude None values from the output. Defaults to True.
+            **kwargs: passed through to the json.dumps method.
 
         Returns:
             JSON string representation of the instance.
         """
-        return json.dumps(self.to_dict(exclude=exclude, exclude_none=exclude_none))
+        return json.dumps(self.to_dict(exclude=exclude, exclude_none=exclude_none), **kwargs)
 
     @classmethod
     def from_dict(
