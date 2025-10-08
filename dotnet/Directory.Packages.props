@@ -95,8 +95,8 @@
     <!-- Identity -->
     <PackageVersion Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.77.1" />
     <!-- Workflows -->
-    <PackageVersion Include="Microsoft.Bot.ObjectModel" Version="1.2025.1003.2" />
-    <PackageVersion Include="Microsoft.Bot.ObjectModel.Json" Version="1.2025.1003.2" />
+    <PackageVersion Include="Microsoft.Bot.ObjectModel" Version="1.2025.1006-3-preview" />
+    <PackageVersion Include="Microsoft.Bot.ObjectModel.Json" Version="1.2025.1006-3-preview" />
     <PackageVersion Include="Microsoft.Bot.ObjectModel.PowerFx" Version="1.2025.1003.2" />
     <PackageVersion Include="Microsoft.PowerFx.Interpreter" Version="1.4.0" />
     <!-- Test -->
