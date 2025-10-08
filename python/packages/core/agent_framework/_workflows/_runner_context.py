@@ -494,16 +494,9 @@ class InProcRunnerContext:
                 # Skip if no update payload
                 if not update:
                     return
-                # Robust emptiness check: allow either top-level text or any text-bearing content
-                text_val = getattr(update, "text", None)
+                # Skip only if there are no contents at all
                 contents = getattr(update, "contents", None)
-                has_text_content = False
-                if contents:
-                    for c in contents:
-                        if getattr(c, "text", None):
-                            has_text_content = True
-                            break
-                if not (text_val or has_text_content):
+                if not contents:
                     return
         except Exception as exc:  # pragma: no cover - defensive logging path
             # Best-effort filtering only; never block event delivery on filtering errors
