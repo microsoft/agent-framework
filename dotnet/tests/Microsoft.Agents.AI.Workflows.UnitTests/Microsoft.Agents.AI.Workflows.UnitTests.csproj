@@ -12,7 +12,6 @@
   <ItemGroup>
     <PackageReference Include="FluentAssertions" />
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" />
-    <PackageReference Include="OpenTelemetry.Exporter.InMemory" />
     <PackageReference Include="System.Linq.Async" />
   </ItemGroup>
 
