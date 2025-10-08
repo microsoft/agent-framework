@@ -322,6 +322,7 @@ def merge_chat_options(
                 additional_properties if additional_properties is not None else base_chat_options.additional_properties
             ),
             conversation_id=base_chat_options.conversation_id,
+            instructions=base_chat_options.instructions,
         )
     # No base options, create from direct parameters only
     return ChatOptions(

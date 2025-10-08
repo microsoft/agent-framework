@@ -42,6 +42,7 @@ from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceInitializationError, ServiceResponseException
 from agent_framework.observability import use_observability
 from azure.ai.agents.models import (
+    Agent,
     AgentsNamedToolChoice,
     AgentsNamedToolChoiceType,
     AgentsToolChoiceOptionMode,
@@ -251,6 +252,7 @@ class AzureAIAgentClient(BaseChatClient):
         self.thread_id = thread_id
         self._should_delete_agent = False  # Track whether we should delete the agent
         self._should_close_client = should_close_client  # Track whether we should close client connection
+        self._agent_definition: Agent | None = None  # Cached definition for existing agent
 
     async def setup_azure_ai_observability(self, enable_sensitive_data: bool | None = None) -> None:
         """Use this method to setup tracing in your Azure AI Project.
@@ -369,6 +371,7 @@ class AzureAIAgentClient(BaseChatClient):
                     args["response_format"] = run_options["response_format"]
             created_agent = await self.project_client.agents.create_agent(**args)
             self.agent_id = str(created_agent.id)
+            self._agent_definition = created_agent
             self._should_delete_agent = True
 
         return self.agent_id
@@ -663,6 +666,12 @@ class AzureAIAgentClient(BaseChatClient):
             self.agent_id = None
             self._should_delete_agent = False
 
+    async def _load_agent_definition_if_needed(self) -> Agent | None:
+        """Load and cache agent details if not already loaded."""
+        if self._agent_definition is None and self.agent_id is not None:
+            self._agent_definition = await self.project_client.agents.get_agent(self.agent_id)
+        return self._agent_definition
+
     async def _create_run_options(
         self,
         messages: MutableSequence[ChatMessage],
@@ -670,6 +679,8 @@ class AzureAIAgentClient(BaseChatClient):
         **kwargs: Any,
     ) -> tuple[dict[str, Any], list[FunctionResultContent | FunctionApprovalResponseContent] | None]:
         run_options: dict[str, Any] = {**kwargs}
+
+        agent_definition = await self._load_agent_definition_if_needed()
 
         if chat_options is not None:
             run_options["max_completion_tokens"] = chat_options.max_tokens
@@ -739,7 +750,7 @@ class AzureAIAgentClient(BaseChatClient):
                     )
                 )
 
-        instructions: list[str] = [chat_options.instructions] if chat_options and chat_options.instructions else []
+        instructions: list[str] = []
         required_action_results: list[FunctionResultContent | FunctionApprovalResponseContent] | None = None
 
         additional_messages: list[ThreadMessageOptions] | None = None
@@ -780,6 +791,10 @@ class AzureAIAgentClient(BaseChatClient):
 
         if additional_messages is not None:
             run_options["additional_messages"] = additional_messages
+
+        # Add instruction from existing agent at the beginning
+        if agent_definition is not None and agent_definition.instructions:
+            instructions.insert(0, agent_definition.instructions)
 
         if len(instructions) > 0:
             run_options["instructions"] = "".join(instructions)
