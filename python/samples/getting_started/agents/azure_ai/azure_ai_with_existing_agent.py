@@ -37,11 +37,16 @@ async def main() -> None:
             async with ChatAgent(
                 chat_client=chat_client,
                 # Instructions here are applicable only to this ChatAgent instance
+                # These instructions will be combined with instructions on existing remote agent.
+                # The final instructions during the execution will look like:
+                # "'End each response with [END]. Respond with 'Hello World' only'"
                 instructions="Respond with 'Hello World' only",
             ) as agent:
                 query = "How are you?"
                 print(f"User: {query}")
                 result = await agent.run(query)
+                # Based on local and remote instructions, the result will be
+                # 'Hello World [END]'.
                 print(f"Agent: {result}\n")
         finally:
             # Clean up the agent manually
