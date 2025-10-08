@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Declarative\Microsoft.Agents.AI.Declarative.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Bot.ObjectModel" VersionOverride="1.2025.1006-3-preview" />
+    <PackageReference Include="Microsoft.Bot.ObjectModel.Json" VersionOverride="1.2025.1006-3-preview" />
+  </ItemGroup>
+
+</Project>
