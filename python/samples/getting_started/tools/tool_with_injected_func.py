@@ -30,7 +30,7 @@ async def main() -> None:
 
     # Create the tool with the injected function
     # a side benefit is that I can now have untyped functions
-    tool = AIFunction.from_dict(definition, dependencies={"ai_function[name:add_numbers].func": func})
+    tool = AIFunction.from_dict(definition, dependencies={"ai_function": {"name:add_numbers": {"func": func}}})
 
     agent = OpenAIResponsesClient().create_agent(
         name="FunctionToolAgent", instructions="You are a helpful assistant.", tools=tool

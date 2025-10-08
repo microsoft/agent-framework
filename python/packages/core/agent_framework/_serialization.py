@@ -14,9 +14,6 @@ TProtocol = TypeVar("TProtocol", bound="SerializationProtocol")
 
 # Regex pattern for converting CamelCase to snake_case
 _CAMEL_TO_SNAKE_PATTERN = re.compile(r"(?<!^)(?=[A-Z])")
-DEPENDENCY_INJECTION_PATTERN = re.compile(
-    r"^(?P<type>[^.\[]+)(?:\[(?P<field>[^:]+):(?P<name>[^\]]+)\])?\.(?P<path>.+)$"
-)
 
 
 @runtime_checkable
@@ -135,15 +132,12 @@ class SerializationMixin:
                 INJECTABLE = {"client"}
 
     During serialization, the field listed as INJECTABLE (and also DEFAULT_EXCLUDE) will be excluded from the output.
-    Then in deserialization,
-    the dependencies dict is checked for any keys matching the formats:
-    - "<type>.<parameter>"
-    - "<type>.<dict-parameter>.<key>"
-    where <type> is the type identifier for the class (either the value of the 'type' class variable or
-    the snake_cased class name if 'type' is not present),
-    <parameter> is the name of the parameter in the __init__ method,
-    <dict-parameter> is the name of a parameter that is a dict,
-    and <key> is a key in that dict parameter.
+    Then in deserialization, the dependencies dict uses a nested structure:
+    ``{"<type>": {"<parameter>": value}}`` where ``<type>`` is the type identifier for the class
+    (either the value of the 'type' class variable or the snake_cased class name if 'type' is not present),
+    and ``<parameter>`` is the name of the injectable parameter in the __init__ method.
+    For dict parameters, the structure is ``{"<type>": {"<dict-parameter>": {"<key>": value}}}``.
+    For instance-specific dependencies, use ``{"<type>": {"<field>:<name>": {"<parameter>": value}}}``.
     """
 
     DEFAULT_EXCLUDE: ClassVar[set[str]] = set()
@@ -237,14 +231,62 @@ class SerializationMixin:
             value: The dictionary containing the instance data (positional-only).
 
         Keyword Args:
-            dependencies: The dictionary mapping dependency keys to values.
-                Keys should be in format:
-                - ``"<type>.<parameter>"``
-                - ``"<type>.<dict-parameter>.<key>"``
-                - ``"<type>[<field>:<name>].<parameter>"``.
+            dependencies: A nested dictionary mapping type identifiers to their injectable dependencies.
+                Structure: ``{"<type>": {"<parameter>": value, ...}}`` for simple parameters,
+                ``{"<type>": {"<dict-parameter>": {"<key>": value}}}`` for dict parameters,
+                or ``{"<type>": {"<instance-key>": {"<parameter>": value}}}`` for instance-specific dependencies.
 
         Returns:
             New instance of the class.
+
+        Examples:
+            Simple parameter injection:
+
+            .. code-block:: python
+
+                class MyClass(SerializationMixin):
+                    INJECTABLE = {"client"}
+
+                    def __init__(self, value: str, client=None):
+                        self.value = value
+                        self.client = client
+
+
+                data = {"type": "my_class", "value": "test"}
+                dependencies = {"my_class": {"client": client_instance}}
+                obj = MyClass.from_dict(data, dependencies=dependencies)
+
+            Dict parameter injection:
+
+            .. code-block:: python
+
+                class ConfigClass(SerializationMixin):
+                    INJECTABLE = {"config"}
+
+                    def __init__(self, name: str, config: dict | None = None):
+                        self.name = name
+                        self.config = config or {}
+
+
+                data = {"type": "config_class", "name": "app"}
+                dependencies = {"config_class": {"config": {"api_key": "secret", "timeout": 30}}}
+                obj = ConfigClass.from_dict(data, dependencies=dependencies)
+
+            Instance-specific injection (when multiple instances of same type need different dependencies):
+
+            .. code-block:: python
+
+                class Worker(SerializationMixin):
+                    INJECTABLE = {"func"}
+
+                    def __init__(self, name: str, func=None):
+                        self.name = name
+                        self.func = func
+
+
+                data = {"type": "worker", "name": "worker1"}
+                dependencies = {"worker": {"name:worker1": {"func": my_function}}}
+                obj = Worker.from_dict(data, dependencies=dependencies)
         """
         if dependencies is None:
             dependencies = {}
@@ -258,43 +300,42 @@ class SerializationMixin:
         # Create a copy of the value dict to work with, filtering out the 'type' key
         kwargs = {k: v for k, v in value.items() if k != "type"}
 
-        # Process dependencies
-        for dep_key, dep_value in dependencies.items():
-            match = DEPENDENCY_INJECTION_PATTERN.match(dep_key)
-            if not match:
-                continue
-
-            dep_type = match.group("type")
-            field_to_check = match.group("field")
-            instance_name = match.group("name")
-            remaining_path = match.group("path")
-
-            if dep_type != type_id:
-                continue
-
-            # Parse the remaining path (parameter or dict-parameter.key)
-            path_parts = remaining_path.split(".", 1)
-            param_name = path_parts[0]
-
-            # Log debug message if dependency is not in INJECTABLE
-            if param_name not in cls.INJECTABLE:
-                logger.debug(
-                    f"Dependency '{param_name}' for type '{type_id}' is not in INJECTABLE set. "
-                    f"Available injectable parameters: {cls.INJECTABLE}"
-                )
-
-            if len(path_parts) == 1:
-                if instance_name and kwargs.get(field_to_check) != instance_name:
-                    # Not the right instance name, skip
-                    continue
-                # Simple parameter: <type>.<parameter> or <type>[<field>:<name>].<parameter>
-                kwargs[param_name] = dep_value
+        # Process dependencies using dict-based structure
+        type_deps = dependencies.get(type_id, {})
+        for dep_key, dep_value in type_deps.items():
+            # Check if this is an instance-specific dependency (field:name format)
+            if ":" in dep_key:
+                field, name = dep_key.split(":", 1)
+                # Only apply if the instance matches
+                if kwargs.get(field) == name and isinstance(dep_value, dict):
+                    # Apply instance-specific dependencies
+                    for param_name, param_value in dep_value.items():
+                        if param_name not in cls.INJECTABLE:
+                            logger.debug(
+                                f"Dependency '{param_name}' for type '{type_id}' is not in INJECTABLE set. "
+                                f"Available injectable parameters: {cls.INJECTABLE}"
+                            )
+                        # Handle nested dict parameters
+                        if (
+                            isinstance(param_value, dict)
+                            and param_name in kwargs
+                            and isinstance(kwargs[param_name], dict)
+                        ):
+                            kwargs[param_name].update(param_value)
+                        else:
+                            kwargs[param_name] = param_value
             else:
-                # Dict parameter: <type>.<dict-parameter>.<key> or <type>[<field>:<name>].<dict-parameter>.<key>
-                key = path_parts[1]
-                if param_name not in kwargs:
-                    kwargs[param_name] = {}
-                kwargs[param_name][key] = dep_value
+                # Regular parameter dependency
+                if dep_key not in cls.INJECTABLE:
+                    logger.debug(
+                        f"Dependency '{dep_key}' for type '{type_id}' is not in INJECTABLE set. "
+                        f"Available injectable parameters: {cls.INJECTABLE}"
+                    )
+                # Handle dict parameters - merge if both are dicts
+                if isinstance(dep_value, dict) and dep_key in kwargs and isinstance(kwargs[dep_key], dict):
+                    kwargs[dep_key].update(dep_value)
+                else:
+                    kwargs[dep_key] = dep_value
 
         return cls(**kwargs)
 
@@ -306,8 +347,8 @@ class SerializationMixin:
             value: The JSON string containing the instance data (positional-only).
 
         Keyword Args:
-            dependencies: The dictionary mapping dependency keys to values.
-                Keys should be in format ``"<type>.<parameter>"`` or ``"<type>.<dict-parameter>.<key>"``.
+            dependencies: A nested dictionary mapping type identifiers to their injectable dependencies.
+                See :meth:`from_dict` for structure and examples.
 
         Returns:
             New instance of the class.

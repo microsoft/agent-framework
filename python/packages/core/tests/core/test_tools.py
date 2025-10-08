@@ -323,7 +323,7 @@ def test_ai_function_serialization():
     }
 
     # Deserialize from dict
-    restored_tool = AIFunction.from_dict(tool_dict, dependencies={"ai_function.func": serialize_test})
+    restored_tool = AIFunction.from_dict(tool_dict, dependencies={"ai_function": {"func": serialize_test}})
     assert isinstance(restored_tool, AIFunction)
     assert restored_tool.name == "serialize_test"
     assert restored_tool.description == "A test tool for serialization"
@@ -332,7 +332,7 @@ def test_ai_function_serialization():
 
     # Deserialize from dict with instance name
     restored_tool_2 = AIFunction.from_dict(
-        tool_dict, dependencies={"ai_function[name:serialize_test].func": serialize_test}
+        tool_dict, dependencies={"ai_function": {"name:serialize_test": {"func": serialize_test}}}
     )
     assert isinstance(restored_tool_2, AIFunction)
     assert restored_tool_2.name == "serialize_test"
