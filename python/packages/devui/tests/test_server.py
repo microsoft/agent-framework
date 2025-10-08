@@ -9,8 +9,8 @@ from pathlib import Path
 import pytest
 
 from agent_framework_devui import DevServer
-from agent_framework_devui._server import _extract_executor_message_types, _select_primary_input_type
-from agent_framework_devui.models._openai_custom import AgentFrameworkExtraBody, AgentFrameworkRequest
+from agent_framework_devui._utils import extract_executor_message_types, select_primary_input_type
+from agent_framework_devui.models._openai_custom import AgentFrameworkRequest
 
 
 class _StubExecutor:
@@ -26,8 +26,10 @@ class _StubExecutor:
 @pytest.fixture
 def test_entities_dir():
     """Use the samples directory which has proper entity structure."""
+    # Get the samples directory from the main python samples folder
     current_dir = Path(__file__).parent
-    samples_dir = current_dir.parent / "samples"
+    # Navigate to python/samples/getting_started/devui
+    samples_dir = current_dir.parent.parent.parent / "samples" / "getting_started" / "devui"
     return str(samples_dir.resolve())
 
 
@@ -65,15 +67,15 @@ async def test_server_execution_sync(test_entities_dir):
     entities = await executor.discover_entities()
     agent_id = entities[0].id
 
+    # Use model as entity_id (new simplified routing)
     request = AgentFrameworkRequest(
-        model="agent-framework",
+        model=agent_id,  # model IS the entity_id now!
         input="San Francisco",
         stream=False,
-        extra_body=AgentFrameworkExtraBody(entity_id=agent_id),
     )
 
     response = await executor.execute_sync(request)
-    assert response.model == "agent-framework"
+    assert response.model == agent_id  # Should echo back the model (entity_id)
     assert len(response.output) > 0
 
 
@@ -85,8 +87,11 @@ async def test_server_execution_streaming(test_entities_dir):
     entities = await executor.discover_entities()
     agent_id = entities[0].id
 
+    # Use model as entity_id (new simplified routing)
     request = AgentFrameworkRequest(
-        model="agent-framework", input="New York", stream=True, extra_body=AgentFrameworkExtraBody(entity_id=agent_id)
+        model=agent_id,  # model IS the entity_id now!
+        input="New York",
+        stream=True,
     )
 
     event_count = 0
@@ -112,7 +117,7 @@ def test_extract_executor_message_types_prefers_input_types():
     """Input types property is used when available."""
     stub = _StubExecutor(input_types=[str, dict])
 
-    types = _extract_executor_message_types(stub)
+    types = extract_executor_message_types(stub)
 
     assert types == [str, dict]
 
@@ -121,7 +126,7 @@ def test_extract_executor_message_types_falls_back_to_handlers():
     """Handlers provide message metadata when input_types missing."""
     stub = _StubExecutor(handlers={str: object(), int: object()})
 
-    types = _extract_executor_message_types(stub)
+    types = extract_executor_message_types(stub)
 
     assert str in types
     assert int in types
@@ -129,9 +134,9 @@ def test_extract_executor_message_types_falls_back_to_handlers():
 
 def test_select_primary_input_type_prefers_string_and_dict():
     """Primary type selection prefers user-friendly primitives."""
-    string_first = _select_primary_input_type([dict[str, str], str])
-    dict_first = _select_primary_input_type([dict[str, str]])
-    fallback = _select_primary_input_type([int, float])
+    string_first = select_primary_input_type([dict[str, str], str])
+    dict_first = select_primary_input_type([dict[str, str]])
+    fallback = select_primary_input_type([int, float])
 
     assert string_first is str
     assert dict_first is dict
@@ -162,10 +167,9 @@ class WeatherAgent:
 
             if entities:
                 request = AgentFrameworkRequest(
-                    model="agent-framework",
+                    model=entities[0].id,  # model IS the entity_id now!
                     input="test location",
                     stream=False,
-                    extra_body=AgentFrameworkExtraBody(entity_id=entities[0].id),
                 )
 
                 await executor.execute_sync(request)
