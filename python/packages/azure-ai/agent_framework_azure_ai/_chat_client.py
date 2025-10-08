@@ -900,8 +900,7 @@ class AzureAIAgentClient(BaseChatClient):
                             tool_definitions.extend(ai_search.definitions)
                             # Add tool resources for Azure AI Search
                             if run_options is not None:
-                                if "tool_resources" not in run_options:
-                                    run_options["tool_resources"] = {}
+                                run_options.setdefault("tool_resources", {})
                                 run_options["tool_resources"].update(ai_search.resources)
                 case ToolDefinition():
                     tool_definitions.append(tool)

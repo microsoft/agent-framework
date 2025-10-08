@@ -48,7 +48,7 @@ async def main() -> None:
         ChatAgent(
             chat_client=client,
             name="HotelSearchAgent",
-            instructions=("You are a helpful travel assistant that searches hotel information. "),
+            instructions=("You are a helpful travel assistant that searches hotel information."),
             tools=azure_ai_search_tool,
         ) as agent,
     ):
