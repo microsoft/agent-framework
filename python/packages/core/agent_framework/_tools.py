@@ -868,6 +868,12 @@ def _create_model_from_json_schema(tool_name: str, schema_json: Mapping[str, Any
     Returns:
       The dynamically created Pydantic model class.
     """
+    # Validate that 'properties' exists and is a dict
+    if "properties" not in schema_json or not isinstance(schema_json["properties"], dict):
+        raise ValueError(
+            f"JSON schema for tool '{tool_name}' must contain a 'properties' key of type dict. "
+            f"Got: {schema_json.get('properties', None)}"
+        )
     # Extract field definitions with type annotations
     field_definitions: dict[str, tuple[type, FieldInfo]] = {}
     for field_name, field_schema in schema_json["properties"].items():
