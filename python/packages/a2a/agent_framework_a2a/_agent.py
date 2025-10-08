@@ -126,8 +126,8 @@ class A2AAgent(BaseAgent):
             supported_transports=[TransportProtocol.jsonrpc],
         )
         factory = ClientFactory(config)
-        interceptors = [auth_interceptor] if auth_interceptor is not None else None
-        self.client = factory.create(agent_card, interceptors=interceptors)  # type: ignore[arg-type]
+        interceptors: list[AuthInterceptor] = [auth_interceptor] if auth_interceptor is not None else []
+        self.client = factory.create(agent_card, interceptors=interceptors)
 
     async def __aenter__(self) -> "A2AAgent":
         """Async context manager entry."""
