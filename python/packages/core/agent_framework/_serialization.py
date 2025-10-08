@@ -2,7 +2,7 @@
 
 import json
 import re
-from collections.abc import MutableMapping
+from collections.abc import Mapping, MutableMapping
 from typing import Any, ClassVar, Protocol, TypeVar, runtime_checkable
 
 from ._logging import get_logger
@@ -14,6 +14,9 @@ TProtocol = TypeVar("TProtocol", bound="SerializationProtocol")
 
 # Regex pattern for converting CamelCase to snake_case
 _CAMEL_TO_SNAKE_PATTERN = re.compile(r"(?<!^)(?=[A-Z])")
+DEPENDENCY_INJECTION_PATTERN = re.compile(
+    r"^(?P<type>[^.\[]+)(?:\[(?P<field>[^:]+):(?P<name>[^\]]+)\])?\.(?P<path>.+)$"
+)
 
 
 @runtime_checkable
@@ -235,7 +238,10 @@ class SerializationMixin:
 
         Keyword Args:
             dependencies: The dictionary mapping dependency keys to values.
-                Keys should be in format ``"<type>.<parameter>"`` or ``"<type>.<dict-parameter>.<key>"``.
+                Keys should be in format:
+                - ``"<type>.<parameter>"``
+                - ``"<type>.<dict-parameter>.<key>"``
+                - ``"<type>[<field>:<name>].<parameter>"``.
 
         Returns:
             New instance of the class.
@@ -244,22 +250,31 @@ class SerializationMixin:
             dependencies = {}
 
         # Get the type identifier
-        type_id = cls._get_type_identifier()
+        type_id = cls._get_type_identifier(value)
+
+        if (supplied_type := value.get("type")) and supplied_type != type_id:
+            raise ValueError(f"Type mismatch: expected '{type_id}', got '{supplied_type}'")
 
         # Create a copy of the value dict to work with, filtering out the 'type' key
         kwargs = {k: v for k, v in value.items() if k != "type"}
 
         # Process dependencies
         for dep_key, dep_value in dependencies.items():
-            parts = dep_key.split(".")
-            if len(parts) < 2:
+            match = DEPENDENCY_INJECTION_PATTERN.match(dep_key)
+            if not match:
                 continue
 
-            dep_type = parts[0]
+            dep_type = match.group("type")
+            field_to_check = match.group("field")
+            instance_name = match.group("name")
+            remaining_path = match.group("path")
+
             if dep_type != type_id:
                 continue
 
-            param_name = parts[1]
+            # Parse the remaining path (parameter or dict-parameter.key)
+            path_parts = remaining_path.split(".", 1)
+            param_name = path_parts[0]
 
             # Log debug message if dependency is not in INJECTABLE
             if param_name not in cls.INJECTABLE:
@@ -268,16 +283,18 @@ class SerializationMixin:
                     f"Available injectable parameters: {cls.INJECTABLE}"
                 )
 
-            if len(parts) == 2:
-                # Simple parameter: <type>.<parameter>
+            if len(path_parts) == 1:
+                if instance_name and kwargs.get(field_to_check) != instance_name:
+                    # Not the right instance name, skip
+                    continue
+                # Simple parameter: <type>.<parameter> or <type>[<field>:<name>].<parameter>
                 kwargs[param_name] = dep_value
-            elif len(parts) == 3:
-                # Dict parameter: <type>.<dict-parameter>.<key>
-                dict_param_name = parts[1]
-                key = parts[2]
-                if dict_param_name not in kwargs:
-                    kwargs[dict_param_name] = {}
-                kwargs[dict_param_name][key] = dep_value
+            else:
+                # Dict parameter: <type>.<dict-parameter>.<key> or <type>[<field>:<name>].<dict-parameter>.<key>
+                key = path_parts[1]
+                if param_name not in kwargs:
+                    kwargs[param_name] = {}
+                kwargs[param_name][key] = dep_value
 
         return cls(**kwargs)
 
@@ -299,7 +316,7 @@ class SerializationMixin:
         return cls.from_dict(data, dependencies=dependencies)
 
     @classmethod
-    def _get_type_identifier(cls) -> str:
+    def _get_type_identifier(cls, value: Mapping[str, Any] | None = None) -> str:
         """Get the type identifier for this class.
 
         Returns the value of the ``type`` class variable if present,
@@ -308,8 +325,15 @@ class SerializationMixin:
         Returns:
             Type identifier string.
         """
+        # for from_dict
+        if value and (type_ := value.get("type")) and isinstance(type_, str):
+            return type_  # type:ignore[no-any-return]
+        # for todict when defined per instance
         if (type_ := getattr(cls, "type", None)) and isinstance(type_, str):
             return type_  # type:ignore[no-any-return]
-
+        # for both when defined on class.
+        if (type_ := getattr(cls, "TYPE", None)) and isinstance(type_, str):
+            return type_  # type:ignore[no-any-return]
+        # fallback and default
         # Convert class name to snake_case
         return _CAMEL_TO_SNAKE_PATTERN.sub("_", cls.__name__).lower()
