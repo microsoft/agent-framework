@@ -27,7 +27,7 @@ class _ToolCallingAgent(BaseAgent):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
 
-    async def run(  # type: ignore[override]
+    async def run(
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
@@ -37,7 +37,7 @@ class _ToolCallingAgent(BaseAgent):
         """Non-streaming run - not used in this test."""
         return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="done")])
 
-    async def run_stream(  # type: ignore[override]
+    async def run_stream(
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
