@@ -907,6 +907,10 @@ class AzureAIAgentClient(BaseChatClient):
                                 filter=additional_props.get("filter", ""),
                             )
                             tool_definitions.extend(ai_search.definitions)
+                            # Add tool resources for Azure AI Search
+                            if run_options is not None:
+                                run_options.setdefault("tool_resources", {})
+                                run_options["tool_resources"].update(ai_search.resources)
                 case ToolDefinition():
                     tool_definitions.append(tool)
                 case dict():
