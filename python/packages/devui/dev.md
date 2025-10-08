@@ -9,8 +9,6 @@ git clone https://github.com/microsoft/agent-framework.git
 cd agent-framework
 ```
 
-(or use the latest main branch if merged)
-
 ## 2. Setup Environment
 
 Navigate to the Python directory and install dependencies:
@@ -47,7 +45,7 @@ AZURE_OPENAI_CHAT_DEPLOYMENT_NAME="your-deployment-name"
 **Option A: In-Memory Mode (Recommended for quick testing)**
 
 ```bash
-cd packages/devui/samples
+cd samples/getting_started/devui
 python in_memory_mode.py
 ```
 
@@ -56,7 +54,7 @@ This runs a simple example with predefined agents and opens your browser automat
 **Option B: Directory-Based Discovery**
 
 ```bash
-cd packages/devui/samples
+cd samples/getting_started/devui
 devui
 ```
 
@@ -72,55 +70,89 @@ This launches the UI with all example agents/workflows at http://localhost:8080
 
 You can also test via API calls:
 
+### Single Request
+
 ```bash
 curl -X POST http://localhost:8080/v1/responses \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "agent-framework",
+    "model": "weather_agent",
+    "input": "What is the weather in Seattle?"
+  }'
+```
+
+### Multi-turn Conversations
+
+```bash
+# Create a conversation
+curl -X POST http://localhost:8080/v1/conversations \
+  -H "Content-Type: application/json" \
+  -d '{"metadata": {"agent_id": "weather_agent"}}'
+
+# Returns: {"id": "conv_abc123", ...}
+
+# Use conversation ID in requests
+curl -X POST http://localhost:8080/v1/responses \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "weather_agent",
     "input": "What is the weather in Seattle?",
-    "extra_body": {"entity_id": "weather_agent"}
+    "conversation": "conv_abc123"
+  }'
+
+# Continue the conversation
+curl -X POST http://localhost:8080/v1/responses \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "weather_agent",
+    "input": "How about tomorrow?",
+    "conversation": "conv_abc123"
   }'
 ```
 
 ## API Mapping
 
-Messages and events from agents/workflows are mapped to OpenAI response types in `agent_framework_devui/_mapper.py`. See the mapping table below:
+Agent Framework content types → OpenAI Responses API events (in `_mapper.py`):
 
-| Agent Framework Content           | OpenAI Event                              | Type     |
-| --------------------------------- | ----------------------------------------- | -------- |
-| `TextContent`                     | `ResponseTextDeltaEvent`                  | Official |
-| `TextReasoningContent`            | `ResponseReasoningTextDeltaEvent`         | Official |
-| `FunctionCallContent`             | `ResponseFunctionCallArgumentsDeltaEvent` | Official |
-| `FunctionResultContent`           | `ResponseFunctionResultComplete`          | Custom   |
-| `ErrorContent`                    | `ResponseErrorEvent`                      | Official |
-| `UsageContent`                    | `ResponseUsageEventComplete`              | Custom   |
-| `DataContent`                     | `ResponseTraceEventComplete`              | Custom   |
-| `UriContent`                      | `ResponseTraceEventComplete`              | Custom   |
-| `HostedFileContent`               | `ResponseTraceEventComplete`              | Custom   |
-| `HostedVectorStoreContent`        | `ResponseTraceEventComplete`              | Custom   |
-| `FunctionApprovalRequestContent`  | Custom event                              | Custom   |
-| `FunctionApprovalResponseContent` | Custom event                              | Custom   |
-| `WorkflowEvent`                   | `ResponseWorkflowEventComplete`           | Custom   |
+| Agent Framework Content         | OpenAI Event                             | Status   |
+| ------------------------------- | ---------------------------------------- | -------- |
+| `TextContent`                   | `response.output_text.delta`             | Standard |
+| `TextReasoningContent`          | `response.reasoning.delta`               | Standard |
+| `FunctionCallContent` (initial) | `response.output_item.added`             | Standard |
+| `FunctionCallContent` (args)    | `response.function_call_arguments.delta` | Standard |
+| `FunctionResultContent`         | `response.function_result.complete`      | Standard |
+| `ErrorContent`                  | `response.error`                         | Standard |
+| `UsageContent`                  | `response.usage.complete`                | Extended |
+| `WorkflowEvent`                 | `response.workflow.event`                | DevUI    |
+| `DataContent`, `UriContent`     | `response.trace.complete`                | DevUI    |
+
+- **Standard** = OpenAI spec, **Extended** = OpenAI + extra fields, **DevUI** = DevUI-specific
 
 ## Frontend Development
 
-To build the frontend:
-
 ```bash
-cd frontend
+cd python/packages/devui/frontend
 yarn install
 
-# Create .env.local with backend URL
-echo 'VITE_API_BASE_URL=http://localhost:8000' > .env.local
-
-# Create .env.production (empty for relative URLs)
-echo '' > .env.production
-
-# Development
+# Development (hot reload)
 yarn dev
 
-# Build (copies to backend)
+# Build (copies to backend ui/)
 yarn build
+```
+
+## Running Tests
+
+```bash
+cd python/packages/devui
+
+# All tests
+pytest tests/ -v
+
+# Specific suites
+pytest tests/test_conversations.py -v  # Conversation store
+pytest tests/test_server.py -v         # API endpoints
+pytest tests/test_mapper.py -v         # Event mapping
 ```
 
 ## Troubleshooting

@@ -1,11 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import Sequence
+from collections.abc import MutableMapping, Sequence
 from typing import Any, Protocol, TypeVar
 
-from pydantic import BaseModel, ConfigDict, model_validator
-
 from ._memory import AggregateContextProvider
+from ._serialization import SerializationMixin
 from ._types import ChatMessage
 from .exceptions import AgentThreadException
 
@@ -73,7 +72,9 @@ class ChatMessageStoreProtocol(Protocol):
         ...
 
     @classmethod
-    async def deserialize(cls, serialized_store_state: Any, **kwargs: Any) -> "ChatMessageStoreProtocol":
+    async def deserialize(
+        cls, serialized_store_state: MutableMapping[str, Any], **kwargs: Any
+    ) -> "ChatMessageStoreProtocol":
         """Creates a new instance of the store from previously serialized state.
 
         This method, together with ``serialize()`` can be used to save and load messages from a persistent store
@@ -90,7 +91,7 @@ class ChatMessageStoreProtocol(Protocol):
         """
         ...
 
-    async def update_from_state(self, serialized_store_state: Any, **kwargs: Any) -> None:
+    async def update_from_state(self, serialized_store_state: MutableMapping[str, Any], **kwargs: Any) -> None:
         """Update the current ChatMessageStore instance from serialized state data.
 
         Args:
@@ -101,7 +102,7 @@ class ChatMessageStoreProtocol(Protocol):
         """
         ...
 
-    async def serialize(self, **kwargs: Any) -> Any:
+    async def serialize(self, **kwargs: Any) -> dict[str, Any]:
         """Serializes the current object's state.
 
         This method, together with ``deserialize()`` can be used to save and load messages from a persistent store
@@ -116,40 +117,66 @@ class ChatMessageStoreProtocol(Protocol):
         ...
 
 
-class ChatMessageStoreState(BaseModel):
+class ChatMessageStoreState(SerializationMixin):
     """State model for serializing and deserializing chat message store data.
 
     Attributes:
         messages: List of chat messages stored in the message store.
     """
 
-    messages: list[ChatMessage]
+    def __init__(
+        self,
+        messages: Sequence[ChatMessage] | Sequence[MutableMapping[str, Any]] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Create the store state.
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+        Args:
+            messages: a list of messages or a list of the dict representation of messages.
+
+        Keyword Args:
+            **kwargs: not used for this, but might be used by subclasses.
+
+        """
+        if not messages:
+            self.messages: list[ChatMessage] = []
+        if not isinstance(messages, list):
+            raise TypeError("Messages should be a list")
+        new_messages: list[ChatMessage] = []
+        for msg in messages:
+            if isinstance(msg, ChatMessage):
+                new_messages.append(msg)
+            else:
+                new_messages.append(ChatMessage.from_dict(msg))
+        self.messages = new_messages
 
 
-class AgentThreadState(BaseModel):
-    """State model for serializing and deserializing thread information.
+class AgentThreadState(SerializationMixin):
+    """State model for serializing and deserializing thread information."""
 
-    Attributes:
-        service_thread_id: Optional ID of the thread managed by the agent service.
-        chat_message_store_state: Optional serialized state of the chat message store.
-    """
+    def __init__(
+        self,
+        *,
+        service_thread_id: str | None = None,
+        chat_message_store_state: ChatMessageStoreState | MutableMapping[str, Any] | None = None,
+    ) -> None:
+        """Create a AgentThread state.
 
-    service_thread_id: str | None = None
-    chat_message_store_state: ChatMessageStoreState | None = None
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    @model_validator(mode="before")
-    def validate_only_one(cls, values: dict[str, Any]) -> dict[str, Any]:
-        if (
-            isinstance(values, dict)
-            and values.get("service_thread_id") is not None
-            and values.get("chat_message_store_state") is not None
-        ):
-            raise AgentThreadException("Only one of service_thread_id or chat_message_store_state may be set.")
-        return values
+        Keyword Args:
+            service_thread_id: Optional ID of the thread managed by the agent service.
+            chat_message_store_state: Optional serialized state of the chat message store.
+        """
+        if service_thread_id is not None and chat_message_store_state is not None:
+            raise AgentThreadException("A thread cannot have both a service_thread_id and a chat_message_store.")
+        self.service_thread_id = service_thread_id
+        self.chat_message_store_state: ChatMessageStoreState | None = None
+        if chat_message_store_state is not None:
+            if isinstance(chat_message_store_state, dict):
+                self.chat_message_store_state = ChatMessageStoreState.from_dict(chat_message_store_state)
+            elif isinstance(chat_message_store_state, ChatMessageStoreState):
+                self.chat_message_store_state = chat_message_store_state
+            else:
+                raise TypeError("Could not parse ChatMessageStoreState.")
 
 
 TChatMessageStore = TypeVar("TChatMessageStore", bound="ChatMessageStore")
@@ -213,7 +240,7 @@ class ChatMessageStore:
 
     @classmethod
     async def deserialize(
-        cls: type[TChatMessageStore], serialized_store_state: Any, **kwargs: Any
+        cls: type[TChatMessageStore], serialized_store_state: MutableMapping[str, Any], **kwargs: Any
     ) -> TChatMessageStore:
         """Create a new ChatMessageStore instance from serialized state data.
 
@@ -226,12 +253,12 @@ class ChatMessageStore:
         Returns:
             A new ChatMessageStore instance populated with messages from the serialized state.
         """
-        state = ChatMessageStoreState.model_validate(serialized_store_state, **kwargs)
+        state = ChatMessageStoreState.from_dict(serialized_store_state, **kwargs)
         if state.messages:
             return cls(messages=state.messages)
         return cls()
 
-    async def update_from_state(self, serialized_store_state: Any, **kwargs: Any) -> None:
+    async def update_from_state(self, serialized_store_state: MutableMapping[str, Any], **kwargs: Any) -> None:
         """Update the current ChatMessageStore instance from serialized state data.
 
         Args:
@@ -242,11 +269,11 @@ class ChatMessageStore:
         """
         if not serialized_store_state:
             return
-        state = ChatMessageStoreState.model_validate(serialized_store_state, **kwargs)
+        state = ChatMessageStoreState.from_dict(serialized_store_state, **kwargs)
         if state.messages:
             self.messages = state.messages
 
-    async def serialize(self, **kwargs: Any) -> Any:
+    async def serialize(self, **kwargs: Any) -> dict[str, Any]:
         """Serialize the current store state for persistence.
 
         Keyword Args:
@@ -256,7 +283,7 @@ class ChatMessageStore:
             Serialized state data that can be used with deserialize_state.
         """
         state = ChatMessageStoreState(messages=self.messages)
-        return state.model_dump(**kwargs)
+        return state.to_dict()
 
 
 TAgentThread = TypeVar("TAgentThread", bound="AgentThread")
@@ -403,12 +430,12 @@ class AgentThread:
         state = AgentThreadState(
             service_thread_id=self._service_thread_id, chat_message_store_state=chat_message_store_state
         )
-        return state.model_dump()
+        return state.to_dict(exclude_none=False)
 
     @classmethod
     async def deserialize(
         cls: type[TAgentThread],
-        serialized_thread_state: dict[str, Any],
+        serialized_thread_state: MutableMapping[str, Any],
         *,
         message_store: ChatMessageStoreProtocol | None = None,
         **kwargs: Any,
@@ -426,7 +453,7 @@ class AgentThread:
         Returns:
             A new AgentThread instance with properties set from the serialized state.
         """
-        state = AgentThreadState.model_validate(serialized_thread_state)
+        state = AgentThreadState.from_dict(serialized_thread_state)
 
         if state.service_thread_id is not None:
             return cls(service_thread_id=state.service_thread_id)
@@ -437,19 +464,19 @@ class AgentThread:
 
         if message_store is not None:
             try:
-                await message_store.update_from_state(state.chat_message_store_state, **kwargs)
+                await message_store.add_messages(state.chat_message_store_state.messages, **kwargs)
             except Exception as ex:
                 raise AgentThreadException("Failed to deserialize the provided message store.") from ex
             return cls(message_store=message_store)
         try:
-            message_store = await ChatMessageStore.deserialize(state.chat_message_store_state, **kwargs)
+            message_store = ChatMessageStore(messages=state.chat_message_store_state.messages, **kwargs)
         except Exception as ex:
             raise AgentThreadException("Failed to deserialize the message store.") from ex
         return cls(message_store=message_store)
 
     async def update_from_thread_state(
         self,
-        serialized_thread_state: dict[str, Any],
+        serialized_thread_state: MutableMapping[str, Any],
         **kwargs: Any,
     ) -> None:
         """Deserializes the state from a dictionary into the thread properties.
@@ -460,7 +487,7 @@ class AgentThread:
         Keyword Args:
             **kwargs: Additional arguments for deserialization.
         """
-        state = AgentThreadState.model_validate(serialized_thread_state)
+        state = AgentThreadState.from_dict(serialized_thread_state)
 
         if state.service_thread_id is not None:
             self.service_thread_id = state.service_thread_id
@@ -470,8 +497,8 @@ class AgentThread:
         if state.chat_message_store_state is None:
             return
         if self.message_store is not None:
-            await self.message_store.update_from_state(state.chat_message_store_state, **kwargs)
+            await self.message_store.add_messages(state.chat_message_store_state.messages, **kwargs)
             # If we don't have a chat message store yet, create an in-memory one.
             return
         # Create the message store from the default.
-        self.message_store = await ChatMessageStore.deserialize(state.chat_message_store_state, **kwargs)  # type: ignore
+        self.message_store = ChatMessageStore(messages=state.chat_message_store_state.messages, **kwargs)
