@@ -871,12 +871,17 @@ def _create_model_from_json_schema(tool_name: str, schema_json: Mapping[str, Any
     field_definitions: dict[str, tuple[type, FieldInfo]] = {}
     for field_name, field_schema in schema_json["properties"].items():
         field_args: dict[str, Any] = {}
-        if field_description := field_schema.get("description"):
+        if (field_description := field_schema.get("description", None)) is not None:
             field_args["description"] = field_description
-        if field_default := field_schema.get("default"):
+        if (field_default := field_schema.get("default", None)) is not None:
             field_args["default"] = field_default
-        if (field_type := field_schema.get("type")) and (python_type := TYPE_MAPPING.get(field_type)):
+        if (field_type := field_schema.get("type", None)) is not None and (python_type := TYPE_MAPPING.get(field_type)):
             field_definitions[field_name] = (python_type, Field(**field_args))
+            continue
+        raise ValueError(
+            f"Unsupported or missing type for field '{field_name}' in JSON schema."
+            f" Got: {field_schema}, Supported types: {list(TYPE_MAPPING.keys())}"
+        )
 
     return create_model(f"{tool_name}_input", **field_definitions)  # type: ignore[call-overload]
 
