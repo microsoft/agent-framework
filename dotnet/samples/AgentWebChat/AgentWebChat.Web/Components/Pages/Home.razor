@@ -1087,7 +1087,7 @@
 		try
 		{
 			// Select the appropriate client based on protocol
-			IAgentClient agentClient = selectedProtocol switch
+			AgentClientBase agentClient = selectedProtocol switch
 			{
 				Protocol.OpenAIResponses => OpenAIResponsesAgentClient,
 				Protocol.OpenAIChatCompletions => OpenAIChatCompletionsAgentClient,

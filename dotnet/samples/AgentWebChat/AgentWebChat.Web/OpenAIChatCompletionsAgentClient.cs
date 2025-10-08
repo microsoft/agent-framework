@@ -16,17 +16,10 @@ namespace AgentWebChat.Web;
 /// Is a simple frontend client which exercises the ability of exposed agent to communicate via OpenAI ChatCompletions protocol.
 /// </summary>
 #pragma warning disable CA1812 // created via DI
-internal sealed class OpenAIChatCompletionsAgentClient : IAgentClient
+internal sealed class OpenAIChatCompletionsAgentClient(HttpClient httpClient) : AgentClientBase
 #pragma warning restore CA1812 // created via DI
 {
-    private readonly HttpClient _httpClient;
-
-    public OpenAIChatCompletionsAgentClient(HttpClient httpClient)
-    {
-        this._httpClient = httpClient;
-    }
-
-    public async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    public async override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
         string agentName,
         IList<ChatMessage> messages,
         string? threadId = null,
@@ -34,8 +27,8 @@ internal sealed class OpenAIChatCompletionsAgentClient : IAgentClient
     {
         OpenAIClientOptions options = new()
         {
-            Endpoint = new Uri(this._httpClient.BaseAddress!, $"/{agentName}/v1/"),
-            Transport = new HttpClientPipelineTransport(this._httpClient)
+            Endpoint = new Uri(httpClient.BaseAddress!, $"/{agentName}/v1/"),
+            Transport = new HttpClientPipelineTransport(httpClient)
         };
 
         var openAiClient = new ChatClient(model: "myModel!", credential: new ApiKeyCredential("dummy-key"), options: options).AsIChatClient();
@@ -49,7 +42,4 @@ internal sealed class OpenAIChatCompletionsAgentClient : IAgentClient
             yield return new AgentRunResponseUpdate(update);
         }
     }
-
-    public Task<AgentCard?> GetAgentCardAsync(string agentName, CancellationToken cancellationToken = default)
-        => Task.FromResult<AgentCard?>(null);
 }
