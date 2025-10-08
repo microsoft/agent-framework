@@ -94,7 +94,7 @@ public abstract class RootExecutor<TInput> : Executor<TInput>, IResettableExecut
     {
         foreach (string variableName in variableNames)
         {
-            await context.QueueStateUpdateAsync(variableName, GetEnvironmentVariable(variableName), VariableScopeNames.Environment).ConfigureAwait(false);
+            await context.QueueEnvironmentUpdateAsync(variableName, GetEnvironmentVariable(variableName)).ConfigureAwait(false);
         }
 
         string GetEnvironmentVariable(string name)

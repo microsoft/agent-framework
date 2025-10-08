@@ -72,12 +72,6 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
         this.State.Bind();
     }
 
-    public async ValueTask QueueSystemUpdateAsync<TValue>(string key, TValue? value, CancellationToken cancellationToken = default)
-    {
-        await this.UpdateStateAsync(key, value, VariableScopeNames.System, allowSystem: true, cancellationToken).ConfigureAwait(false);
-        this.State.Bind();
-    }
-
     /// <inheritdoc/>
     public async ValueTask<TValue?> ReadStateAsync<TValue>(string key, string? scopeName = null, CancellationToken cancellationToken = default)
     {
@@ -105,7 +99,7 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
     public ValueTask SendMessageAsync(object message, string? targetId = null, CancellationToken cancellationToken = default)
         => this.Source.SendMessageAsync(message, targetId, cancellationToken);
 
-    private ValueTask UpdateStateAsync<T>(string key, T? value, string? scopeName, bool allowSystem, CancellationToken cancellationToken = default)
+    public ValueTask UpdateStateAsync<T>(string key, T? value, string? scopeName, bool allowSystem, CancellationToken cancellationToken = default)
     {
         bool isManagedScope =
             scopeName is not null && // null scope cannot be managed
