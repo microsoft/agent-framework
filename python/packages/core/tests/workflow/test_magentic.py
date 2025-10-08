@@ -344,9 +344,10 @@ async def test_magentic_checkpoint_resume_round_trip():
 
     assert orchestrator._context is not None  # type: ignore[reportPrivateUsage]
     assert orchestrator._context.chat_history  # type: ignore[reportPrivateUsage]
-    assert orchestrator._context.chat_history[0].text == task_text  # type: ignore[reportPrivateUsage]
     assert orchestrator._task_ledger is not None  # type: ignore[reportPrivateUsage]
     assert manager2.task_ledger is not None
+    # Initial message should be the task ledger plan
+    assert orchestrator._context.chat_history[0].text == orchestrator._task_ledger.text  # type: ignore[reportPrivateUsage]
 
 
 class _DummyExec(Executor):
