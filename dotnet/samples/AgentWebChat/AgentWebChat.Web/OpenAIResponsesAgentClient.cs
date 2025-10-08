@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.ClientModel;
+using System.ClientModel.Primitives;
 using System.Runtime.CompilerServices;
 using A2A;
 using Microsoft.Agents.AI;
@@ -13,13 +14,15 @@ namespace AgentWebChat.Web;
 /// <summary>
 /// Is a simple frontend client which exercises the ability of exposed agent to communicate via OpenAI Responses protocol.
 /// </summary>
+#pragma warning disable CA1812 // created via DI
 internal sealed class OpenAIResponsesAgentClient : IAgentClient
+#pragma warning restore CA1812 // created via DI
 {
-    private readonly Uri _baseUri;
+    private readonly HttpClient _httpClient;
 
-    public OpenAIResponsesAgentClient(string baseUri)
+    public OpenAIResponsesAgentClient(HttpClient httpClient)
     {
-        this._baseUri = new Uri(baseUri.TrimEnd('/'));
+        this._httpClient = httpClient;
     }
 
     public async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
@@ -30,7 +33,8 @@ internal sealed class OpenAIResponsesAgentClient : IAgentClient
     {
         OpenAIClientOptions options = new()
         {
-            Endpoint = new Uri(this._baseUri, $"/{agentName}/v1/")
+            Endpoint = new Uri(this._httpClient.BaseAddress!, $"/{agentName}/v1/"),
+            Transport = new HttpClientPipelineTransport(this._httpClient)
         };
 
         var openAiClient = new OpenAIResponseClient(model: "myModel!", credential: new ApiKeyCredential("dummy-key"), options: options).AsIChatClient();

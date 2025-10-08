@@ -21,7 +21,7 @@ public static partial class EndpointRouteBuilderExtensions
     /// </summary>
     /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the OpenAI ChatCompletions endpoints to.</param>
     /// <param name="agentName">The name of the AI agent service registered in the dependency injection container. This name is used to resolve the <see cref="AIAgent"/> instance from the keyed services.</param>
-    /// <param name="path"></param>
+    /// <param name="path">Custom route path for the chat completions endpoint.</param>
     public static void MapOpenAIChatCompletions(
         this IEndpointRouteBuilder endpoints,
         string agentName,

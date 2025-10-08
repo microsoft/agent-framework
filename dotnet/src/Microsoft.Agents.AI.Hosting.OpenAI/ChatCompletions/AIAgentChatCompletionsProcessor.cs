@@ -65,9 +65,7 @@ internal sealed class AIAgentChatCompletionsProcessor
         }
     }
 
-#pragma warning disable CS9113 // Parameter is unread.
     private sealed class OpenAIStreamingChatCompletionResult(AIAgent agent, IEnumerable<ChatMessage> chatMessages) : IResult
-#pragma warning restore CS9113 // Parameter is unread.
     {
         public Task ExecuteAsync(HttpContext httpContext)
         {
