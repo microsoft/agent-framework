@@ -43,12 +43,12 @@ public class InProcessStateTests
                 return
                     async (turn, context, cancellation) =>
                     {
-                        TState? state = await context.ReadStateAsync<TState>(stateKey.Key, stateKey.ScopeId.ScopeName)
+                        TState? state = await context.ReadStateAsync<TState>(stateKey.Key, stateKey.ScopeId.ScopeName, cancellation)
                                                      .ConfigureAwait(false);
 
                         state = action(state);
 
-                        await context.QueueStateUpdateAsync(stateKey.Key, state, stateKey.ScopeId.ScopeName);
+                        await context.QueueStateUpdateAsync(stateKey.Key, state, stateKey.ScopeId.ScopeName, cancellation);
 
                         return turn.Next;
                     };

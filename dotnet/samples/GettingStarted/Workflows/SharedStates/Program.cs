@@ -54,13 +54,13 @@ internal static class FileContentStateConstants
 
 internal sealed class FileReadExecutor() : ReflectingExecutor<FileReadExecutor>("FileReadExecutor"), IMessageHandler<string, string>
 {
-    public async ValueTask<string> HandleAsync(string message, IWorkflowContext context)
+    public async ValueTask<string> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         // Read file content from embedded resource
         string fileContent = Resources.Read(message);
         // Store file content in a shared state for access by other executors
         string fileID = Guid.NewGuid().ToString("N");
-        await context.QueueStateUpdateAsync(fileID, fileContent, scopeName: FileContentStateConstants.FileContentStateScope);
+        await context.QueueStateUpdateAsync(fileID, fileContent, scopeName: FileContentStateConstants.FileContentStateScope, cancellationToken);
 
         return fileID;
     }
@@ -74,10 +74,10 @@ internal sealed class FileStats
 
 internal sealed class WordCountingExecutor() : ReflectingExecutor<WordCountingExecutor>("WordCountingExecutor"), IMessageHandler<string, FileStats>
 {
-    public async ValueTask<FileStats> HandleAsync(string message, IWorkflowContext context)
+    public async ValueTask<FileStats> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         // Retrieve the file content from the shared state
-        var fileContent = await context.ReadStateAsync<string>(message, scopeName: FileContentStateConstants.FileContentStateScope)
+        var fileContent = await context.ReadStateAsync<string>(message, scopeName: FileContentStateConstants.FileContentStateScope, cancellationToken)
             ?? throw new InvalidOperationException("File content state not found");
 
         int wordCount = fileContent.Split([' ', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries).Length;
@@ -86,12 +86,13 @@ internal sealed class WordCountingExecutor() : ReflectingExecutor<WordCountingEx
     }
 }
 
-internal sealed class ParagraphCountingExecutor() : ReflectingExecutor<ParagraphCountingExecutor>("ParagraphCountingExecutor"), IMessageHandler<string, FileStats>
+internal sealed class ParagraphCountingExecutor() : ReflectingExecutor<ParagraphCountingExecutor>("ParagraphCountingExecutor"),
+                                                    IMessageHandler<string, FileStats>
 {
-    public async ValueTask<FileStats> HandleAsync(string message, IWorkflowContext context)
+    public async ValueTask<FileStats> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         // Retrieve the file content from the shared state
-        var fileContent = await context.ReadStateAsync<string>(message, scopeName: FileContentStateConstants.FileContentStateScope)
+        var fileContent = await context.ReadStateAsync<string>(message, scopeName: FileContentStateConstants.FileContentStateScope, cancellationToken)
             ?? throw new InvalidOperationException("File content state not found");
 
         int paragraphCount = fileContent.Split(['\n', '\r'], StringSplitOptions.RemoveEmptyEntries).Length;
@@ -104,7 +105,7 @@ internal sealed class AggregationExecutor() : ReflectingExecutor<AggregationExec
 {
     private readonly List<FileStats> _messages = [];
 
-    public async ValueTask HandleAsync(FileStats message, IWorkflowContext context)
+    public async ValueTask HandleAsync(FileStats message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         this._messages.Add(message);
 
@@ -113,7 +114,7 @@ internal sealed class AggregationExecutor() : ReflectingExecutor<AggregationExec
             // Aggregate the results from both executors
             var totalParagraphCount = this._messages.Sum(m => m.ParagraphCount);
             var totalWordCount = this._messages.Sum(m => m.WordCount);
-            await context.YieldOutputAsync($"Total Paragraphs: {totalParagraphCount}, Total Words: {totalWordCount}");
+            await context.YieldOutputAsync($"Total Paragraphs: {totalParagraphCount}, Total Words: {totalWordCount}", cancellationToken);
         }
     }
 }

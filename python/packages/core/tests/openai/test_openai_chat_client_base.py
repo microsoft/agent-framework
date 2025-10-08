@@ -71,9 +71,7 @@ async def test_cmc(
     chat_history.append(ChatMessage(role="user", text="hello world"))
 
     openai_chat_completion = OpenAIChatClient()
-    await openai_chat_completion.get_response(
-        messages=chat_history,
-    )
+    await openai_chat_completion.get_response(messages=chat_history)
     mock_create.assert_awaited_once_with(
         model=openai_unit_test_env["OPENAI_CHAT_MODEL_ID"],
         stream=False,
@@ -187,6 +185,26 @@ async def test_cmc_general_exception(
         await openai_chat_completion.get_response(
             messages=chat_history,
         )
+
+
+@patch.object(AsyncChatCompletions, "create", new_callable=AsyncMock)
+async def test_cmc_additional_properties(
+    mock_create: AsyncMock,
+    chat_history: list[ChatMessage],
+    mock_chat_completion_response: ChatCompletion,
+    openai_unit_test_env: dict[str, str],
+):
+    mock_create.return_value = mock_chat_completion_response
+    chat_history.append(ChatMessage(role="user", text="hello world"))
+
+    openai_chat_completion = OpenAIChatClient()
+    await openai_chat_completion.get_response(messages=chat_history, additional_properties={"reasoning_effort": "low"})
+    mock_create.assert_awaited_once_with(
+        model=openai_unit_test_env["OPENAI_CHAT_MODEL_ID"],
+        stream=False,
+        messages=openai_chat_completion._prepare_chat_history_for_request(chat_history),  # type: ignore
+        reasoning_effort="low",
+    )
 
 
 # region Streaming

@@ -7,6 +7,7 @@ using System.Reflection;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Events;
 using Shared.Code;
+using Xunit.Sdk;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Framework;
 
@@ -17,7 +18,7 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
 
     public async Task<WorkflowEvents> RunTestcaseAsync<TInput>(Testcase testcase, TInput input) where TInput : notnull
     {
-        WorkflowEvents workflowEvents = await this.RunAsync(input);
+        WorkflowEvents workflowEvents = await this.RunWorkflowAsync(input);
         int requestCount = (workflowEvents.InputEvents.Count + 1) / 2;
         int responseCount = 0;
         while (requestCount > responseCount)
@@ -36,7 +37,7 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
         return workflowEvents;
     }
 
-    private async Task<WorkflowEvents> RunAsync<TInput>(TInput input) where TInput : notnull
+    public async Task<WorkflowEvents> RunWorkflowAsync<TInput>(TInput input) where TInput : notnull
     {
         Console.WriteLine("RUNNING WORKFLOW...");
         Checkpointed<StreamingRun> run = await InProcessExecution.StreamAsync(workflow, input, this._checkpointManager, runId);
@@ -98,6 +99,14 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
                         exitLoop = true;
                     }
                     break;
+
+                case ExecutorFailedEvent failureEvent:
+                    Console.WriteLine($"Executor failed [{failureEvent.ExecutorId}]: {failureEvent.Data?.Message ?? "Unknown"}");
+                    break;
+
+                case WorkflowErrorEvent errorEvent:
+                    throw errorEvent.Data as Exception ?? new XunitException("Unexpected failure...");
+
                 case DeclarativeActionInvokedEvent actionInvokeEvent:
                     Console.WriteLine($"ACTION: {actionInvokeEvent.ActionId} [{actionInvokeEvent.ActionType}]");
                     break;

@@ -33,10 +33,10 @@ internal sealed class InputWaiter : IDisposable
         }
     }
 
-    public Task WaitForInputAsync(CancellationToken cancellation = default) => this.WaitForInputAsync(null, cancellation);
+    public Task WaitForInputAsync(CancellationToken cancellationToken = default) => this.WaitForInputAsync(null, cancellationToken);
 
-    public async Task WaitForInputAsync(TimeSpan? timeout = null, CancellationToken cancellation = default)
+    public async Task WaitForInputAsync(TimeSpan? timeout = null, CancellationToken cancellationToken = default)
     {
-        await this._inputSignal.WaitAsync(timeout ?? TimeSpan.FromMilliseconds(-1), cancellation).ConfigureAwait(false);
+        await this._inputSignal.WaitAsync(timeout ?? TimeSpan.FromMilliseconds(-1), cancellationToken).ConfigureAwait(false);
     }
 }

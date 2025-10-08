@@ -171,7 +171,6 @@ class AzureOpenAIConfigMixin(OpenAIBase):
 
         Args:
             deployment_name: Name of the deployment.
-            ai_model_type: The type of OpenAI model to deploy.
             endpoint: The specific endpoint URL for the deployment.
             base_url: The base URL for Azure services.
             api_version: Azure API version. Defaults to the defined DEFAULT_AZURE_API_VERSION.

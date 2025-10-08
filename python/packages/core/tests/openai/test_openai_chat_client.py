@@ -756,7 +756,12 @@ def test_openai_content_parser_data_content_image(openai_unit_test_env: dict[str
     assert result["input_audio"]["data"] == "//uQAAAAWGluZwAAAA8AAAACAAACcQ=="
     assert result["input_audio"]["format"] == "mp3"
 
-    # Test DataContent with PDF file
+
+def test_openai_content_parser_document_file_mapping(openai_unit_test_env: dict[str, str]) -> None:
+    """Test _openai_content_parser converts document files (PDF, DOCX, etc.) to OpenAI file format."""
+    client = OpenAIChatClient()
+
+    # Test PDF without filename - should omit filename in OpenAI payload
     pdf_data_content = DataContent(
         uri="data:application/pdf;base64,JVBERi0xLjQKJcfsj6IKNSAwIG9iago8PC9UeXBlL0NhdGFsb2cvUGFnZXMgMiAwIFI+PgplbmRvYmoKMiAwIG9iago8PC9UeXBlL1BhZ2VzL0tpZHNbMyAwIFJdL0NvdW50IDE+PgplbmRvYmoKMyAwIG9iago8PC9UeXBlL1BhZ2UvTWVkaWFCb3ggWzAgMCA2MTIgNzkyXS9QYXJlbnQgMiAwIFIvUmVzb3VyY2VzPDwvRm9udDw8L0YxIDQgMCBSPj4+Pi9Db250ZW50cyA1IDAgUj4+CmVuZG9iago0IDAgb2JqCjw8L1R5cGUvRm9udC9TdWJ0eXBlL1R5cGUxL0Jhc2VGb250L0hlbHZldGljYT4+CmVuZG9iago1IDAgb2JqCjw8L0xlbmd0aCA0ND4+CnN0cmVhbQpCVApxCjcwIDUwIFRECi9GMSA4IFRmCihIZWxsbyBXb3JsZCEpIFRqCkVUCmVuZHN0cmVhbQplbmRvYmoKeHJlZgowIDYKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwNTggMDAwMDAgbiAKMDAwMDAwMDExNSAwMDAwMCBuIAowMDAwMDAwMjQ1IDAwMDAwIG4gCjAwMDAwMDAzMDcgMDAwMDAgbiAKdHJhaWxlcgo8PC9TaXplIDYvUm9vdCAxIDAgUj4+CnN0YXJ0eHJlZgo0MDUKJSVFT0Y=",
         media_type="application/pdf",
@@ -764,14 +769,15 @@ def test_openai_content_parser_data_content_image(openai_unit_test_env: dict[str
 
     result = client._openai_content_parser(pdf_data_content)  # type: ignore
 
-    # Should convert to OpenAI file format
+    # Should convert to OpenAI file format without filename
     assert result["type"] == "file"
-    assert result["file"]["filename"] == "document.pdf"
+    assert "filename" not in result["file"]  # No filename provided, so none should be set
     assert "file_data" in result["file"]
     # Base64 data should be the full data URI (OpenAI requirement)
     assert result["file"]["file_data"].startswith("data:application/pdf;base64,")
+    assert result["file"]["file_data"] == pdf_data_content.uri
 
-    # Test DataContent with PDF and custom filename
+    # Test PDF with custom filename via additional_properties
     pdf_with_filename = DataContent(
         uri="data:application/pdf;base64,JVBERi0xLjQ=",
         media_type="application/pdf",
@@ -783,17 +789,75 @@ def test_openai_content_parser_data_content_image(openai_unit_test_env: dict[str
     # Should use custom filename
     assert result["type"] == "file"
     assert result["file"]["filename"] == "report.pdf"
+    assert result["file"]["file_data"] == "data:application/pdf;base64,JVBERi0xLjQ="
 
+    # Test different application/* media types - all should now be mapped to file format
+    test_cases = [
+        {
+            "media_type": "application/json",
+            "filename": "data.json",
+            "base64": "eyJrZXkiOiJ2YWx1ZSJ9",
+        },
+        {
+            "media_type": "application/xml",
+            "filename": "config.xml",
+            "base64": "PD94bWwgdmVyc2lvbj0iMS4wIj8+",
+        },
+        {
+            "media_type": "application/octet-stream",
+            "filename": "binary.bin",
+            "base64": "AQIDBAUGBwgJCg==",
+        },
+    ]
 
-def test_openai_chat_client_with_callable_api_key() -> None:
-    """Test OpenAIChatClient initialization with callable API key."""
+    for case in test_cases:
+        # Test without filename
+        doc_content = DataContent(
+            uri=f"data:{case['media_type']};base64,{case['base64']}",
+            media_type=case["media_type"],
+        )
 
-    async def get_api_key() -> str:
-        return "test-api-key-123"
+        result = client._openai_content_parser(doc_content)  # type: ignore
 
-    client = OpenAIChatClient(model_id="gpt-4o", api_key=get_api_key)
+        # All application/* types should now be mapped to file format
+        assert result["type"] == "file"
+        assert "filename" not in result["file"]  # Should omit filename when not provided
+        assert result["file"]["file_data"] == doc_content.uri
 
-    # Verify client was created successfully
-    assert client.model_id == "gpt-4o"
-    # OpenAI SDK now manages callable API keys internally
-    assert client.client is not None
+        # Test with filename - should now use file format with filename
+        doc_with_filename = DataContent(
+            uri=f"data:{case['media_type']};base64,{case['base64']}",
+            media_type=case["media_type"],
+            additional_properties={"filename": case["filename"]},
+        )
+
+        result = client._openai_content_parser(doc_with_filename)  # type: ignore
+
+        # Should now use file format with filename
+        assert result["type"] == "file"
+        assert result["file"]["filename"] == case["filename"]
+        assert result["file"]["file_data"] == doc_with_filename.uri
+
+    # Test edge case: empty additional_properties dict
+    pdf_empty_props = DataContent(
+        uri="data:application/pdf;base64,JVBERi0xLjQ=",
+        media_type="application/pdf",
+        additional_properties={},
+    )
+
+    result = client._openai_content_parser(pdf_empty_props)  # type: ignore
+
+    assert result["type"] == "file"
+    assert "filename" not in result["file"]
+
+    # Test edge case: None filename in additional_properties
+    pdf_none_filename = DataContent(
+        uri="data:application/pdf;base64,JVBERi0xLjQ=",
+        media_type="application/pdf",
+        additional_properties={"filename": None},
+    )
+
+    result = client._openai_content_parser(pdf_none_filename)  # type: ignore
+
+    assert result["type"] == "file"
+    assert "filename" not in result["file"]  # None filename should be omitted

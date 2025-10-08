@@ -1,6 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from ._agent import WorkflowAgent
+from ._agent_executor import (
+    AgentExecutor,
+    AgentExecutorRequest,
+    AgentExecutorResponse,
+)
 from ._checkpoint import (
     CheckpointStorage,
     FileCheckpointStorage,
@@ -42,13 +47,7 @@ from ._events import (
     WorkflowStatusEvent,
 )
 from ._executor import (
-    AgentExecutor,
-    AgentExecutorRequest,
-    AgentExecutorResponse,
     Executor,
-    RequestInfoExecutor,
-    RequestInfoMessage,
-    RequestResponse,
     handler,
 )
 from ._function_executor import FunctionExecutor, executor
@@ -73,6 +72,11 @@ from ._magentic import (
     MagenticResponseMessage,
     MagenticStartMessage,
     StandardMagenticManager,
+)
+from ._request_info_executor import (
+    RequestInfoExecutor,
+    RequestInfoMessage,
+    RequestResponse,
 )
 from ._runner import Runner
 from ._runner_context import (

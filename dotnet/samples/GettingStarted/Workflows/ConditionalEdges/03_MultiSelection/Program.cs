@@ -241,7 +241,7 @@ internal sealed class EmailAnalysisExecutor : ReflectingExecutor<EmailAnalysisEx
         this._emailAnalysisAgent = emailAnalysisAgent;
     }
 
-    public async ValueTask<AnalysisResult> HandleAsync(ChatMessage message, IWorkflowContext context)
+    public async ValueTask<AnalysisResult> HandleAsync(ChatMessage message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         // Generate a random email ID and store the email content
         var newEmail = new Email
@@ -249,10 +249,10 @@ internal sealed class EmailAnalysisExecutor : ReflectingExecutor<EmailAnalysisEx
             EmailId = Guid.NewGuid().ToString("N"),
             EmailContent = message.Text
         };
-        await context.QueueStateUpdateAsync(newEmail.EmailId, newEmail, scopeName: EmailStateConstants.EmailStateScope);
+        await context.QueueStateUpdateAsync(newEmail.EmailId, newEmail, scopeName: EmailStateConstants.EmailStateScope, cancellationToken);
 
         // Invoke the agent
-        var response = await this._emailAnalysisAgent.RunAsync(message);
+        var response = await this._emailAnalysisAgent.RunAsync(message, cancellationToken: cancellationToken);
         var AnalysisResult = JsonSerializer.Deserialize<AnalysisResult>(response.Text);
 
         AnalysisResult!.EmailId = newEmail.EmailId;
@@ -287,7 +287,7 @@ internal sealed class EmailAssistantExecutor : ReflectingExecutor<EmailAssistant
         this._emailAssistantAgent = emailAssistantAgent;
     }
 
-    public async ValueTask<EmailResponse> HandleAsync(AnalysisResult message, IWorkflowContext context)
+    public async ValueTask<EmailResponse> HandleAsync(AnalysisResult message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         if (message.spamDecision == SpamDecision.Spam)
         {
@@ -295,10 +295,10 @@ internal sealed class EmailAssistantExecutor : ReflectingExecutor<EmailAssistant
         }
 
         // Retrieve the email content from the context
-        var email = await context.ReadStateAsync<Email>(message.EmailId, scopeName: EmailStateConstants.EmailStateScope);
+        var email = await context.ReadStateAsync<Email>(message.EmailId, scopeName: EmailStateConstants.EmailStateScope, cancellationToken);
 
         // Invoke the agent
-        var response = await this._emailAssistantAgent.RunAsync(email!.EmailContent);
+        var response = await this._emailAssistantAgent.RunAsync(email!.EmailContent, cancellationToken: cancellationToken);
         var emailResponse = JsonSerializer.Deserialize<EmailResponse>(response.Text);
 
         return emailResponse!;
@@ -313,8 +313,8 @@ internal sealed class SendEmailExecutor() : ReflectingExecutor<SendEmailExecutor
     /// <summary>
     /// Simulate the sending of an email.
     /// </summary>
-    public async ValueTask HandleAsync(EmailResponse message, IWorkflowContext context) =>
-        await context.YieldOutputAsync($"Email sent: {message.Response}");
+    public async ValueTask HandleAsync(EmailResponse message, IWorkflowContext context, CancellationToken cancellationToken = default) =>
+        await context.YieldOutputAsync($"Email sent: {message.Response}", cancellationToken);
 }
 
 /// <summary>
@@ -325,11 +325,11 @@ internal sealed class HandleSpamExecutor() : ReflectingExecutor<HandleSpamExecut
     /// <summary>
     /// Simulate the handling of a spam message.
     /// </summary>
-    public async ValueTask HandleAsync(AnalysisResult message, IWorkflowContext context)
+    public async ValueTask HandleAsync(AnalysisResult message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         if (message.spamDecision == SpamDecision.Spam)
         {
-            await context.YieldOutputAsync($"Email marked as spam: {message.Reason}");
+            await context.YieldOutputAsync($"Email marked as spam: {message.Reason}", cancellationToken);
         }
         else
         {
@@ -346,12 +346,12 @@ internal sealed class HandleUncertainExecutor() : ReflectingExecutor<HandleUncer
     /// <summary>
     /// Simulate the handling of an uncertain spam decision.
     /// </summary>
-    public async ValueTask HandleAsync(AnalysisResult message, IWorkflowContext context)
+    public async ValueTask HandleAsync(AnalysisResult message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         if (message.spamDecision == SpamDecision.Uncertain)
         {
-            var email = await context.ReadStateAsync<Email>(message.EmailId, scopeName: EmailStateConstants.EmailStateScope);
-            await context.YieldOutputAsync($"Email marked as uncertain: {message.Reason}. Email content: {email?.EmailContent}");
+            var email = await context.ReadStateAsync<Email>(message.EmailId, scopeName: EmailStateConstants.EmailStateScope, cancellationToken);
+            await context.YieldOutputAsync($"Email marked as uncertain: {message.Reason}. Email content: {email?.EmailContent}", cancellationToken);
         }
         else
         {
@@ -385,13 +385,13 @@ internal sealed class EmailSummaryExecutor : ReflectingExecutor<EmailSummaryExec
         this._emailSummaryAgent = emailSummaryAgent;
     }
 
-    public async ValueTask<AnalysisResult> HandleAsync(AnalysisResult message, IWorkflowContext context)
+    public async ValueTask<AnalysisResult> HandleAsync(AnalysisResult message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         // Read the email content from the shared states
-        var email = await context.ReadStateAsync<Email>(message.EmailId, scopeName: EmailStateConstants.EmailStateScope);
+        var email = await context.ReadStateAsync<Email>(message.EmailId, scopeName: EmailStateConstants.EmailStateScope, cancellationToken);
 
         // Invoke the agent
-        var response = await this._emailSummaryAgent.RunAsync(email!.EmailContent);
+        var response = await this._emailSummaryAgent.RunAsync(email!.EmailContent, cancellationToken: cancellationToken);
         var emailSummary = JsonSerializer.Deserialize<EmailSummary>(response.Text);
         message.EmailSummary = emailSummary!.Summary;
 
@@ -410,17 +410,17 @@ internal sealed class DatabaseEvent(string message) : WorkflowEvent(message) { }
 /// </summary>
 internal sealed class DatabaseAccessExecutor() : ReflectingExecutor<DatabaseAccessExecutor>("DatabaseAccessExecutor"), IMessageHandler<AnalysisResult>
 {
-    public async ValueTask HandleAsync(AnalysisResult message, IWorkflowContext context)
+    public async ValueTask HandleAsync(AnalysisResult message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         // 1. Save the email content
-        await context.ReadStateAsync<Email>(message.EmailId, scopeName: EmailStateConstants.EmailStateScope);
-        await Task.Delay(100); // Simulate database access delay
+        await context.ReadStateAsync<Email>(message.EmailId, scopeName: EmailStateConstants.EmailStateScope, cancellationToken);
+        await Task.Delay(100, cancellationToken); // Simulate database access delay
 
         // 2. Save the analysis result
-        await Task.Delay(100); // Simulate database access delay
+        await Task.Delay(100, cancellationToken); // Simulate database access delay
 
         // Not using the `WorkflowCompletedEvent` because this is not the end of the workflow.
         // The end of the workflow is signaled by the `SendEmailExecutor` or the `HandleUnknownExecutor`.
-        await context.AddEventAsync(new DatabaseEvent($"Email {message.EmailId} saved to database."));
+        await context.AddEventAsync(new DatabaseEvent($"Email {message.EmailId} saved to database."), cancellationToken);
     }
 }

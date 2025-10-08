@@ -3,7 +3,7 @@
 from dataclasses import dataclass  # noqa: I001
 from typing import Any, cast
 
-from agent_framework._workflows._executor import RequestInfoMessage, RequestResponse
+from agent_framework._workflows._request_info_executor import RequestInfoMessage, RequestResponse
 from agent_framework._workflows._runner_context import (  # type: ignore
     _decode_checkpoint_value,  # type: ignore
     _encode_checkpoint_value,  # type: ignore
