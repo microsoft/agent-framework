@@ -139,6 +139,10 @@
     <File Path="samples/SemanticKernelMigration/Playground/README.md" />
     <Project Path="samples/SemanticKernelMigration/Playground/SemanticKernelBasic/SemanticKernelBasic.csproj" />
   </Folder>
+  <Folder Name="/Samples/SemanticKernelMigration/GoogleGemini/">
+    <Project Path="samples/SemanticKernelMigration/GoogleGemini/Step01_Basics/GoogleGemini_Step01_Basics.csproj" />
+    <Project Path="samples/SemanticKernelMigration/GoogleGemini/Step02_DependencyInjection/GoogleGemini_Step02_DependencyInjection.csproj" />
+  </Folder>
   <Folder Name="/Samples/SemanticKernelMigration/OpenAI/">
     <Project Path="samples/SemanticKernelMigration/OpenAI/Step01_Basics/OpenAI_Step01_Basics.csproj" />
     <Project Path="samples/SemanticKernelMigration/OpenAI/Step02_ToolCall/OpenAI_Step02_ToolCall.csproj" />
