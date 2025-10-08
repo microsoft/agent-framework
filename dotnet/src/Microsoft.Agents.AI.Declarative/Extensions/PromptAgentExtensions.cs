@@ -13,10 +13,10 @@ namespace Microsoft.Bot.ObjectModel;
 public static class PromptAgentExtensions
 {
     /// <summary>
-    /// Retrieves the 'type' property from a <see cref="PromptAgent"/>.
+    /// Retrieves the 'kind' property from a <see cref="PromptAgent"/>.
     /// </summary>
     /// <param name="promptAgent">Instance of <see cref="PromptAgent"/></param>
-    public static string? GetTypeValue(this PromptAgent promptAgent)
+    public static string? GetKindValue(this PromptAgent promptAgent)
     {
         Throw.IfNull(promptAgent);
 
@@ -39,31 +39,32 @@ public static class PromptAgentExtensions
     {
         Throw.IfNull(promptAgent);
 
-        var aiSettings = promptAgent.AISettings;
+        var outputSchema = promptAgent.OutputSchema;
+        OpenAIResponsesModel? model = promptAgent.Model as OpenAIResponsesModel;
+        var modelOptions = model?.Options;
         var tools = promptAgent.GetAITools();
-        if (aiSettings is null && tools is null)
+        if (modelOptions is null && tools is null)
         {
             return null;
         }
 
         return new ChatOptions()
         {
-            ConversationId = aiSettings?.ExtensionData?.GetString("conversation_id"),
             Instructions = promptAgent.AdditionalInstructions?.ToTemplateString(),
-            Temperature = (float?)aiSettings?.ExtensionData?.GetNumber("temperature"),
-            MaxOutputTokens = (int?)aiSettings?.ExtensionData?.GetNumber("max_output_tokens"),
-            TopP = (float?)aiSettings?.ExtensionData?.GetNumber("top_p"),
-            TopK = (int?)aiSettings?.ExtensionData?.GetNumber("top_k"),
-            FrequencyPenalty = (float?)aiSettings?.ExtensionData?.GetNumber("frequency_penalty"),
-            PresencePenalty = (float?)aiSettings?.ExtensionData?.GetNumber("presence_penalty"),
-            Seed = (long?)aiSettings?.ExtensionData?.GetNumber("seed"),
-            ResponseFormat = aiSettings?.GetResponseFormat(),
-            ModelId = promptAgent.Model.Id,
-            StopSequences = aiSettings?.GetStopSequences(),
-            AllowMultipleToolCalls = aiSettings?.ExtensionData?.GetBoolean("allow_multiple_tool_calls"),
-            ToolMode = aiSettings?.GetChatToolMode(),
+            Temperature = (float?)model?.Options?.Temperature.LiteralValue,
+            MaxOutputTokens = modelOptions?.GetMaxOutputTokens(),
+            TopP = (float?)modelOptions?.TopP.LiteralValue,
+            TopK = modelOptions?.GetTopK(),
+            FrequencyPenalty = modelOptions?.GetFrequencyPenalty(),
+            PresencePenalty = modelOptions?.GetPresencePenalty(),
+            Seed = modelOptions?.GetSeed(),
+            ResponseFormat = outputSchema?.AsResponseFormat(),
+            ModelId = model?.Id,
+            StopSequences = modelOptions?.GetStopSequences(),
+            AllowMultipleToolCalls = modelOptions?.GetAllowMultipleToolCalls(),
+            ToolMode = modelOptions?.GetChatToolMode(),
             Tools = tools,
-            AdditionalProperties = aiSettings?.GetAdditionalProperties(s_chatOptionProperties),
+            AdditionalProperties = modelOptions?.GetAdditionalProperties(s_chatOptionProperties),
         };
     }
 
@@ -75,38 +76,38 @@ public static class PromptAgentExtensions
     {
         return promptAgent.Tools.Select<AgentTool, AITool>(tool =>
         {
-            var type = tool.ExtensionData?.GetString("type");
-            return type switch
+            var kind = tool.Kind.ToString();
+            return kind switch
             {
-                CodeInterpreterType => tool.CreateCodeInterpreterTool(),
-                FileSearchType => tool.CreateFileSearchTool(),
-                FunctionType => tool.CreateFunctionDeclaration(),
-                WebSearchType => tool.CreateWebSearchTool(),
-                McpType => tool.CreateMcpTool(),
-                _ => throw new NotSupportedException($"Unable to create tool definition because of unsupported tool type: {type}, supported tool types are: {string.Join(",", s_validToolTypes)}"),
+                CodeInterpreterKind => tool.CreateCodeInterpreterTool(),
+                FileSearchKind => tool.CreateFileSearchTool(),
+                FunctionKind => tool.CreateFunctionDeclaration(),
+                WebSearchKind => tool.CreateWebSearchTool(),
+                McpKind => tool.CreateMcpTool(),
+                _ => throw new NotSupportedException($"Unable to create tool definition because of unsupported tool type: {kind}, supported tool types are: {string.Join(",", s_validToolKinds)}"),
             };
         }).ToList() ?? [];
     }
 
     #region private
-    private const string CodeInterpreterType = "code_interpreter";
-    private const string FileSearchType = "file_search";
-    private const string FunctionType = "function";
-    private const string WebSearchType = "web_search";
-    private const string McpType = "mcp";
+    private const string CodeInterpreterKind = "code_interpreter";
+    private const string FileSearchKind = "file_search";
+    private const string FunctionKind = "function";
+    private const string WebSearchKind = "web_search";
+    private const string McpKind = "mcp";
 
-    private static readonly string[] s_validToolTypes =
+    private static readonly string[] s_validToolKinds =
     [
-        CodeInterpreterType,
-        FileSearchType,
-        FunctionType,
-        WebSearchType,
-        McpType
+        CodeInterpreterKind,
+        FileSearchKind,
+        FunctionKind,
+        WebSearchKind,
+        McpKind
     ];
 
     private static readonly string[] s_chatOptionProperties =
-[
-    "allow_multiple_tool_calls",
+    [
+        "allow_multiple_tool_calls",
         "conversation_id",
         "frequency_penalty",
         "instructions",

@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Bot.ObjectModel;
@@ -35,7 +34,7 @@ public abstract class AgentFactory
     /// <param name="promptAgent">Definition of the agent to check is supported.</param>
     public bool IsSupported(PromptAgent promptAgent)
     {
-        return this.Types.Any(s => string.Equals(s, promptAgent.GetTypeValue(), StringComparison.OrdinalIgnoreCase));
+        return true; // this.Types.Any(s => string.Equals(s, promptAgent.Kind.ToString(), StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>
@@ -50,7 +49,7 @@ public abstract class AgentFactory
         Throw.IfNull(promptAgent);
 
         var agent = await this.TryCreateAsync(promptAgent, agentCreationOptions, cancellationToken).ConfigureAwait(false);
-        return agent ?? throw new NotSupportedException($"Agent type {promptAgent.GetTypeValue()} is not supported.");
+        return agent ?? throw new NotSupportedException($"Agent type {promptAgent.Kind} is not supported.");
     }
 
     /// <summary>
