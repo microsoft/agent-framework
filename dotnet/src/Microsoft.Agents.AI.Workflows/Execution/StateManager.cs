@@ -102,7 +102,8 @@ internal sealed class StateManager
         if (typeof(T) == typeof(object))
         {
             // Reading as object will break across serialize/deserialize boundaries, e.g. checkpointing, distributed runtime, etc.
-            throw new NotSupportedException("Reading state as 'object' is not supported. Use 'PortableValue' instead for variants.");
+            // Disabled pending upstream updates for this change; see https://github.com/microsoft/agent-framework/issues/1369
+            //throw new NotSupportedException("Reading state as 'object' is not supported. Use 'PortableValue' instead for variants.");
         }
 
         Throw.IfNullOrEmpty(key);
