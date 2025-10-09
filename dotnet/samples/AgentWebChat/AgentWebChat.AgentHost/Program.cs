@@ -82,6 +82,8 @@ var literatureAgent = builder.AddAIAgent("literator",
     description: "An agent that helps with literature.",
     chatClientServiceKey: "chat-model");
 
+builder.AddSequentialWorkflow("science-sequential-workflow", [chemistryAgent, mathsAgent, literatureAgent]).AsAIAgent();
+builder.AddConcurrentWorkflow("science-concurrent-workflow", [chemistryAgent, mathsAgent, literatureAgent]).AsAIAgent();
 builder.AddWorkflow("science-custom-workflow", (sp, key) =>
 {
     var chemistAgent = sp.GetRequiredKeyedService<AIAgent>("chemist");
@@ -114,6 +116,10 @@ app.MapA2A(agentName: "knights-and-knaves", path: "/a2a/knights-and-knaves", age
 
 app.MapOpenAIResponses("pirate");
 app.MapOpenAIResponses("knights-and-knaves");
+
+// workflow-agents
+app.MapOpenAIResponses("science-sequential-workflow");
+app.MapOpenAIResponses("science-concurrent-workflow");
 
 // Map the agents HTTP endpoints
 app.MapAgentDiscovery("/agents");

@@ -27,11 +27,22 @@ public static partial class AgentWorkflowBuilder
     /// <returns>The built workflow composed of the supplied <paramref name="agents"/>, in the order in which they were yielded from the source.</returns>
     public static Workflow BuildSequential(params IEnumerable<AIAgent> agents)
     {
+        return PrepareSequential(agents).Build();
+    }
+
+    /// <summary>
+    /// todo
+    /// </summary>
+    /// <param name="agents"></param>
+    /// <param name="builder"></param>
+    /// <returns></returns>
+    public static WorkflowBuilder PrepareSequential(IEnumerable<AIAgent> agents, WorkflowBuilder? builder = null)
+    {
         Throw.IfNull(agents);
 
         // Create a builder that chains the agents together in sequence. The workflow simply begins
         // with the first agent in the sequence.
-        WorkflowBuilder? builder = null;
+        builder ??= null;
         ExecutorIsh? previous = null;
         foreach (var agent in agents)
         {
@@ -60,9 +71,7 @@ public static partial class AgentWorkflowBuilder
         Debug.Assert(builder is not null);
 
         OutputMessagesExecutor end = new();
-        return builder.AddEdge(previous, end)
-                      .WithOutputFrom(end)
-                      .Build();
+        return builder.AddEdge(previous, end).WithOutputFrom(end);
     }
 
     /// <summary>

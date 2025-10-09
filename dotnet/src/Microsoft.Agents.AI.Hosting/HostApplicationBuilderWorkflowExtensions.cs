@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Agents.AI.Hosting.Local;
 using Microsoft.Agents.AI.Workflows;
@@ -15,10 +16,37 @@ namespace Microsoft.Agents.AI.Hosting;
 /// </summary>
 public static class HostApplicationBuilderWorkflowExtensions
 {
-    //public static IHostApplicationBuilder AddSequentialWorkflow(this IHostApplicationBuilder builder, string name)
-    //{
+    /// <summary>
+    /// todo
+    /// </summary>
+    /// <param name="builder"></param>
+    /// <param name="name"></param>
+    /// <param name="agentBuilders"></param>
+    /// <returns></returns>
+    public static IHostWorkflowBuilder AddConcurrentWorkflow(this IHostApplicationBuilder builder, string name, IEnumerable<IHostAgentBuilder> agentBuilders)
+    {
+        return builder.AddWorkflow(name, (sp, key) =>
+        {
+            var agents = agentBuilders.Select(ab => sp.GetRequiredKeyedService<AIAgent>(ab.Name));
+            return AgentWorkflowBuilder.PrepareConcurrent(agents: agents).WithName(name).Build();
+        });
+    }
 
-    //}
+    /// <summary>
+    /// todo
+    /// </summary>
+    /// <param name="builder"></param>
+    /// <param name="name"></param>
+    /// <param name="agentBuilders"></param>
+    /// <returns></returns>
+    public static IHostWorkflowBuilder AddSequentialWorkflow(this IHostApplicationBuilder builder, string name, IEnumerable<IHostAgentBuilder> agentBuilders)
+    {
+        return builder.AddWorkflow(name, (sp, key) =>
+        {
+            var agents = agentBuilders.Select(ab => sp.GetRequiredKeyedService<AIAgent>(ab.Name));
+            return AgentWorkflowBuilder.PrepareSequential(agents: agents).WithName(name).Build();
+        });
+    }
 
     /// <summary>
     /// todo

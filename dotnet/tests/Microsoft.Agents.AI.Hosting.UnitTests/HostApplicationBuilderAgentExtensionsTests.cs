@@ -192,9 +192,9 @@ public class HostApplicationBuilderAgentExtensionsTests
         var builder = new HostApplicationBuilder();
 
         // Act
-        builder.AddAIAgent("agent1", "instructions1")
-               .AddAIAgent("agent2", "instructions2")
-               .AddAIAgent("agent3", "instructions3");
+        builder.AddAIAgent("agent1", "instructions1");
+        builder.AddAIAgent("agent2", "instructions2");
+        builder.AddAIAgent("agent3", "instructions3");
 
         // Assert
         var agentDescriptors = builder.Services
