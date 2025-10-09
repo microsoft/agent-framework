@@ -28,7 +28,7 @@ internal sealed class ClearAllVariablesExecutor(ClearAllVariables model, Workflo
 
         if (scope is not null)
         {
-            await context.QueueClearScopeAsync(scope).ConfigureAwait(false);
+            await context.QueueClearScopeAsync(scope, cancellationToken).ConfigureAwait(false);
             Debug.WriteLine(
                 $"""
                 STATE: {this.GetType().Name} [{this.Id}]

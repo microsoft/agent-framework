@@ -81,11 +81,12 @@ def create_test_azure_ai_chat_client(
     client.project_client = mock_ai_project_client
     client.credential = None
     client.agent_id = agent_id
-    client.agent_name = None
+    client.agent_name = agent_name
     client.model_id = azure_ai_settings.model_deployment_name
     client.thread_id = thread_id
-    client._should_delete_agent = should_delete_agent
-    client._should_close_client = False
+    client._should_delete_agent = should_delete_agent  # type: ignore
+    client._should_close_client = False  # type: ignore
+    client._agent_definition = None  # type: ignore
     client.additional_properties = {}
     client.middleware = None
 
@@ -285,7 +286,7 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_create_new(
     azure_ai_settings = AzureAISettings(model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"])
     chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, azure_ai_settings=azure_ai_settings)
 
-    agent_id = await chat_client._get_agent_id_or_create()  # type: ignore
+    agent_id = await chat_client._get_agent_id_or_create(run_options={"model": azure_ai_settings.model_deployment_name})  # type: ignore
 
     assert agent_id == "test-agent-id"
     assert chat_client._should_delete_agent  # type: ignore
@@ -296,6 +297,9 @@ async def test_azure_ai_chat_client_tool_results_without_thread_error_via_public
 ) -> None:
     """Test that tool results without thread ID raise error through public API."""
     chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, agent_id="test-agent")
+
+    # Mock get_agent
+    mock_ai_project_client.agents.get_agent = AsyncMock(return_value=None)
 
     # Create messages with tool results but no thread/conversation ID
     messages = [
@@ -314,6 +318,9 @@ async def test_azure_ai_chat_client_tool_results_without_thread_error_via_public
 async def test_azure_ai_chat_client_thread_management_through_public_api(mock_ai_project_client: MagicMock) -> None:
     """Test thread creation and management through public API."""
     chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, agent_id="test-agent")
+
+    # Mock get_agent to avoid the async error
+    mock_ai_project_client.agents.get_agent = AsyncMock(return_value=None)
 
     mock_thread = MagicMock()
     mock_thread.id = "new-thread-456"
@@ -451,6 +458,9 @@ async def test_azure_ai_chat_client_create_run_options_with_image_content(mock_a
 
     chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, agent_id="test-agent")
 
+    # Mock get_agent
+    mock_ai_project_client.agents.get_agent = AsyncMock(return_value=None)
+
     image_content = UriContent(uri="https://example.com/image.jpg", media_type="image/jpeg")
     messages = [ChatMessage(role=Role.USER, contents=[image_content])]
 
@@ -544,6 +554,19 @@ async def test_azure_ai_chat_client_create_run_options_with_messages(mock_ai_pro
     assert len(run_options["additional_messages"]) == 1  # Only user message
 
 
+async def test_azure_ai_chat_client_instructions_sent_once(mock_ai_project_client: MagicMock) -> None:
+    """Ensure instructions are only sent once for AzureAIAgentClient."""
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client)
+
+    instructions = "You are a helpful assistant."
+    chat_options = ChatOptions(instructions=instructions)
+    messages = chat_client.prepare_messages([ChatMessage(role=Role.USER, text="Hello")], chat_options)
+
+    run_options, _ = await chat_client._create_run_options(messages, chat_options)  # type: ignore
+
+    assert run_options.get("instructions") == instructions
+
+
 async def test_azure_ai_chat_client_inner_get_response(mock_ai_project_client: MagicMock) -> None:
     """Test _inner_get_response method."""
     chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, agent_id="test-agent")
@@ -577,6 +600,7 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_with_run_options(
         "tools": [{"type": "function", "function": {"name": "test_tool"}}],
         "instructions": "Test instructions",
         "response_format": {"type": "json_object"},
+        "model": azure_ai_settings.model_deployment_name,
     }
 
     agent_id = await chat_client._get_agent_id_or_create(run_options)  # type: ignore
@@ -1277,7 +1301,7 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_with_agent_name(
     # Ensure agent_name is None to test the default
     chat_client.agent_name = None  # type: ignore
 
-    agent_id = await chat_client._get_agent_id_or_create()  # type: ignore
+    agent_id = await chat_client._get_agent_id_or_create(run_options={"model": azure_ai_settings.model_deployment_name})  # type: ignore
 
     assert agent_id == "test-agent-id"
     # Verify create_agent was called with default "UnnamedAgent"
@@ -1294,7 +1318,7 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_with_response_format(
     chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, azure_ai_settings=azure_ai_settings)
 
     # Test with response_format in run_options
-    run_options = {"response_format": {"type": "json_object"}}
+    run_options = {"response_format": {"type": "json_object"}, "model": azure_ai_settings.model_deployment_name}
 
     agent_id = await chat_client._get_agent_id_or_create(run_options)  # type: ignore
 
@@ -1313,7 +1337,10 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_with_tool_resources(
     chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, azure_ai_settings=azure_ai_settings)
 
     # Test with tool_resources in run_options
-    run_options = {"tool_resources": {"vector_store_ids": ["vs-123"]}}
+    run_options = {
+        "tool_resources": {"vector_store_ids": ["vs-123"]},
+        "model": azure_ai_settings.model_deployment_name,
+    }
 
     agent_id = await chat_client._get_agent_id_or_create(run_options)  # type: ignore
 

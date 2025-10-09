@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
@@ -24,7 +25,7 @@ internal sealed class DeclarativeWorkflowExecutor<TInput>(
         return default;
     }
 
-    public override async ValueTask HandleAsync(TInput message, IWorkflowContext context)
+    public override async ValueTask HandleAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         // No state to restore if we're starting from the beginning.
         state.SetInitialized();
@@ -35,13 +36,13 @@ internal sealed class DeclarativeWorkflowExecutor<TInput>(
         string? conversationId = options.ConversationId;
         if (string.IsNullOrWhiteSpace(conversationId))
         {
-            conversationId = await options.AgentProvider.CreateConversationAsync(cancellationToken: default).ConfigureAwait(false);
+            conversationId = await options.AgentProvider.CreateConversationAsync(cancellationToken).ConfigureAwait(false);
         }
-        await declarativeContext.QueueConversationUpdateAsync(conversationId, isExternal: true).ConfigureAwait(false);
+        await declarativeContext.QueueConversationUpdateAsync(conversationId, isExternal: true, cancellationToken).ConfigureAwait(false);
 
-        await options.AgentProvider.CreateMessageAsync(conversationId, input, cancellationToken: default).ConfigureAwait(false);
+        await options.AgentProvider.CreateMessageAsync(conversationId, input, cancellationToken).ConfigureAwait(false);
         await declarativeContext.SetLastMessageAsync(input).ConfigureAwait(false);
 
-        await context.SendResultMessageAsync(this.Id).ConfigureAwait(false);
+        await context.SendResultMessageAsync(this.Id, cancellationToken).ConfigureAwait(false);
     }
 }

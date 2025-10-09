@@ -115,28 +115,28 @@ public class SpecializedExecutorSmokeTests
     {
         public List<List<ChatMessage>> Updates { get; } = [];
 
-        public ValueTask AddEventAsync(WorkflowEvent workflowEvent) =>
+        public ValueTask AddEventAsync(WorkflowEvent workflowEvent, CancellationToken cancellationToken = default) =>
             default;
 
-        public ValueTask YieldOutputAsync(object output) =>
+        public ValueTask YieldOutputAsync(object output, CancellationToken cancellationToken = default) =>
             default;
 
         public ValueTask RequestHaltAsync() =>
             default;
 
-        public ValueTask QueueClearScopeAsync(string? scopeName = null) =>
+        public ValueTask QueueClearScopeAsync(string? scopeName = null, CancellationToken cancellationToken = default) =>
             default;
 
-        public ValueTask QueueStateUpdateAsync<T>(string key, T? value, string? scopeName = null) =>
+        public ValueTask QueueStateUpdateAsync<T>(string key, T? value, string? scopeName = null, CancellationToken cancellationToken = default) =>
             default;
 
-        public ValueTask<T?> ReadStateAsync<T>(string key, string? scopeName = null) =>
+        public ValueTask<T?> ReadStateAsync<T>(string key, string? scopeName = null, CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
 
-        public ValueTask<HashSet<string>> ReadStateKeysAsync(string? scopeName = null) =>
+        public ValueTask<HashSet<string>> ReadStateKeysAsync(string? scopeName = null, CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
 
-        public ValueTask SendMessageAsync(object message, string? targetId = null)
+        public ValueTask SendMessageAsync(object message, string? targetId = null, CancellationToken cancellationToken = default)
         {
             if (message is List<ChatMessage> messages)
             {

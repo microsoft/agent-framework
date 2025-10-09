@@ -37,8 +37,9 @@ from ._events import (
     WorkflowStatusEvent,
     _framework_event_origin,  # type: ignore
 )
-from ._executor import Executor, RequestInfoExecutor
+from ._executor import Executor
 from ._model_utils import DictConvertible
+from ._request_info_executor import RequestInfoExecutor
 from ._runner import Runner
 from ._runner_context import InProcRunnerContext, RunnerContext
 from ._shared_state import SharedState
@@ -742,7 +743,7 @@ class Workflow(DictConvertible):
         Returns:
             The RequestInfoExecutor instance if found, None otherwise.
         """
-        from ._executor import RequestInfoExecutor
+        from ._request_info_executor import RequestInfoExecutor
 
         for executor in self.executors.values():
             if isinstance(executor, RequestInfoExecutor):

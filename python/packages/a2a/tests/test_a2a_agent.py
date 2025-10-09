@@ -497,3 +497,21 @@ def test_a2a_parts_to_contents_with_hosted_file_uri() -> None:
     assert isinstance(contents[0], UriContent)
     assert contents[0].uri == "hosted://storage/document.pdf"
     assert contents[0].media_type == ""  # Converted None to empty string
+
+
+def test_auth_interceptor_parameter() -> None:
+    """Test that auth_interceptor parameter is accepted without errors."""
+    # Create a mock auth interceptor
+    mock_auth_interceptor = MagicMock()
+
+    # Test that A2AAgent can be created with auth_interceptor parameter
+    # Using url parameter for simplicity
+    agent = A2AAgent(
+        name="test-agent",
+        url="https://test-agent.example.com",
+        auth_interceptor=mock_auth_interceptor,
+    )
+
+    # Verify the agent was created successfully
+    assert agent.name == "test-agent"
+    assert agent.client is not None

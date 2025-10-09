@@ -223,12 +223,12 @@ public static partial class AgentWorkflowBuilder
 
         protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
             routeBuilder
-                .AddHandler<string>((message, context) => this._pendingMessages.Add(new(ChatRole.User, message)))
-                .AddHandler<ChatMessage>((message, context) => this._pendingMessages.Add(message))
-                .AddHandler<IEnumerable<ChatMessage>>((messages, _) => this._pendingMessages.AddRange(messages))
-                .AddHandler<ChatMessage[]>((messages, _) => this._pendingMessages.AddRange(messages)) // TODO: Remove once https://github.com/microsoft/agent-framework/issues/782 is addressed
-                .AddHandler<List<ChatMessage>>((messages, _) => this._pendingMessages.AddRange(messages))  // TODO: Remove once https://github.com/microsoft/agent-framework/issues/782 is addressed
-                .AddHandler<TurnToken>(async (token, context) =>
+                .AddHandler<string>((message, _, __) => this._pendingMessages.Add(new(ChatRole.User, message)))
+                .AddHandler<ChatMessage>((message, _, __) => this._pendingMessages.Add(message))
+                .AddHandler<IEnumerable<ChatMessage>>((messages, _, __) => this._pendingMessages.AddRange(messages))
+                .AddHandler<ChatMessage[]>((messages, _, __) => this._pendingMessages.AddRange(messages)) // TODO: Remove once https://github.com/microsoft/agent-framework/issues/782 is addressed
+                .AddHandler<List<ChatMessage>>((messages, _, __) => this._pendingMessages.AddRange(messages))  // TODO: Remove once https://github.com/microsoft/agent-framework/issues/782 is addressed
+                .AddHandler<TurnToken>(async (token, context, cancellationToken) =>
                 {
                     List<ChatMessage> messages = [.. this._pendingMessages];
                     this._pendingMessages.Clear();
@@ -239,17 +239,17 @@ public static partial class AgentWorkflowBuilder
                     if (token.EmitEvents is true)
                     {
                         List<AgentRunResponseUpdate> updates = [];
-                        await foreach (var update in agent.RunStreamingAsync(messages).ConfigureAwait(false))
+                        await foreach (var update in agent.RunStreamingAsync(messages, cancellationToken: cancellationToken).ConfigureAwait(false))
                         {
                             updates.Add(update);
-                            await context.AddEventAsync(new AgentRunUpdateEvent(this.Id, update)).ConfigureAwait(false);
+                            await context.AddEventAsync(new AgentRunUpdateEvent(this.Id, update), cancellationToken).ConfigureAwait(false);
                         }
 
                         outputMessages = updates.ToAgentRunResponse().Messages;
                     }
                     else
                     {
-                        var response = await agent.RunAsync(messages).ConfigureAwait(false);
+                        var response = await agent.RunAsync(messages, cancellationToken: cancellationToken).ConfigureAwait(false);
                         outputMessages = response.Messages;
                     }
 
@@ -265,8 +265,8 @@ public static partial class AgentWorkflowBuilder
                         messages = output as List<ChatMessage> ?? output.ToList();
                     }
 
-                    await context.SendMessageAsync(messages).ConfigureAwait(false);
-                    await context.SendMessageAsync(token).ConfigureAwait(false);
+                    await context.SendMessageAsync(messages, cancellationToken: cancellationToken).ConfigureAwait(false);
+                    await context.SendMessageAsync(token, cancellationToken: cancellationToken).ConfigureAwait(false);
                 });
 
         public ValueTask ResetAsync()
@@ -283,7 +283,7 @@ public static partial class AgentWorkflowBuilder
     private sealed class OutputMessagesExecutor() : ChatProtocolExecutor("OutputMessages"), IResettableExecutor
     {
         protected override ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellationToken = default)
-            => context.YieldOutputAsync(messages);
+            => context.YieldOutputAsync(messages, cancellationToken);
 
         ValueTask IResettableExecutor.ResetAsync() => this.ResetAsync();
     }
@@ -293,10 +293,10 @@ public static partial class AgentWorkflowBuilder
     {
         protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
             routeBuilder
-                .AddHandler<string>((message, context) => context.SendMessageAsync(new ChatMessage(ChatRole.User, message)))
-                .AddHandler<ChatMessage>((message, context) => context.SendMessageAsync(message))
-                .AddHandler<List<ChatMessage>>((messages, context) => context.SendMessageAsync(messages))
-                .AddHandler<TurnToken>((turnToken, context) => context.SendMessageAsync(turnToken));
+                .AddHandler<string>((message, context, cancellationToken) => context.SendMessageAsync(new ChatMessage(ChatRole.User, message), cancellationToken: cancellationToken))
+                .AddHandler<ChatMessage>((message, context, cancellationToken) => context.SendMessageAsync(message, cancellationToken: cancellationToken))
+                .AddHandler<List<ChatMessage>>((messages, context, cancellationToken) => context.SendMessageAsync(messages, cancellationToken: cancellationToken))
+                .AddHandler<TurnToken>((turnToken, context, cancellationToken) => context.SendMessageAsync(turnToken, cancellationToken: cancellationToken));
 
         public ValueTask ResetAsync() => default;
     }
@@ -308,7 +308,7 @@ public static partial class AgentWorkflowBuilder
     private sealed class BatchChatMessagesToListExecutor(string id) : ChatProtocolExecutor(id), IResettableExecutor
     {
         protected override ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellationToken = default)
-            => context.SendMessageAsync(messages);
+            => context.SendMessageAsync(messages, cancellationToken: cancellationToken);
 
         ValueTask IResettableExecutor.ResetAsync() => this.ResetAsync();
     }
@@ -340,7 +340,7 @@ public static partial class AgentWorkflowBuilder
         }
 
         protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
-            routeBuilder.AddHandler<List<ChatMessage>>(async (messages, context) =>
+            routeBuilder.AddHandler<List<ChatMessage>>(async (messages, context, cancellationToken) =>
             {
                 this._allResults.Add(messages);
                 if (--this._remaining == 0)
@@ -349,7 +349,7 @@ public static partial class AgentWorkflowBuilder
 
                     var results = this._allResults;
                     this._allResults = new List<List<ChatMessage>>(this._expectedInputs);
-                    await context.YieldOutputAsync(this._aggregator(results)).ConfigureAwait(false);
+                    await context.YieldOutputAsync(this._aggregator(results), cancellationToken).ConfigureAwait(false);
                 }
             });
 
@@ -533,16 +533,17 @@ public static partial class AgentWorkflowBuilder
 
             protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
                 routeBuilder
-                    .AddHandler<string>((message, context) => this._pendingMessages.Add(new(ChatRole.User, message)))
-                    .AddHandler<ChatMessage>((message, context) => this._pendingMessages.Add(message))
-                    .AddHandler<IEnumerable<ChatMessage>>((messages, _) => this._pendingMessages.AddRange(messages))
-                    .AddHandler<ChatMessage[]>((messages, _) => this._pendingMessages.AddRange(messages)) // TODO: Remove once https://github.com/microsoft/agent-framework/issues/782 is addressed
-                    .AddHandler<List<ChatMessage>>((messages, _) => this._pendingMessages.AddRange(messages))  // TODO: Remove once https://github.com/microsoft/agent-framework/issues/782 is addressed
-                    .AddHandler<TurnToken>(async (token, context) =>
+                    .AddHandler<string>((message, context, _) => this._pendingMessages.Add(new(ChatRole.User, message)))
+                    .AddHandler<ChatMessage>((message, context, _) => this._pendingMessages.Add(message))
+                    .AddHandler<IEnumerable<ChatMessage>>((messages, _, __) => this._pendingMessages.AddRange(messages))
+                    .AddHandler<ChatMessage[]>((messages, _, __) => this._pendingMessages.AddRange(messages)) // TODO: Remove once https://github.com/microsoft/agent-framework/issues/782 is addressed
+                    .AddHandler<List<ChatMessage>>((messages, _, __) => this._pendingMessages.AddRange(messages))  // TODO: Remove once https://github.com/microsoft/agent-framework/issues/782 is addressed
+                    .AddHandler<TurnToken>(async (token, context, cancellationToken) =>
                     {
                         var messages = new List<ChatMessage>(this._pendingMessages);
                         this._pendingMessages.Clear();
-                        await context.SendMessageAsync(new HandoffState(token, null, messages)).ConfigureAwait(false);
+                        await context.SendMessageAsync(new HandoffState(token, null, messages), cancellationToken: cancellationToken)
+                                     .ConfigureAwait(false);
                     });
 
             public ValueTask ResetAsync()
@@ -556,8 +557,8 @@ public static partial class AgentWorkflowBuilder
         private sealed class EndHandoffsExecutor() : Executor("HandoffEnd"), IResettableExecutor
         {
             protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
-                routeBuilder.AddHandler<HandoffState>((handoff, context) =>
-                    context.YieldOutputAsync(handoff.Messages));
+                routeBuilder.AddHandler<HandoffState>((handoff, context, cancellationToken) =>
+                    context.YieldOutputAsync(handoff.Messages, cancellationToken));
 
             public ValueTask ResetAsync() => default;
         }
@@ -610,7 +611,7 @@ public static partial class AgentWorkflowBuilder
                 });
 
             protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
-                routeBuilder.AddHandler<HandoffState>(async (handoffState, context) =>
+                routeBuilder.AddHandler<HandoffState>(async (handoffState, context, cancellationToken) =>
                     {
                         string? requestedHandoff = null;
                         List<AgentRunResponseUpdate> updates = [];
@@ -618,24 +619,31 @@ public static partial class AgentWorkflowBuilder
 
                         List<ChatMessage>? roleChanges = ChangeAssistantToUserForOtherParticipants(this._agent.DisplayName, allMessages);
 
-                        await foreach (var update in this._agent.RunStreamingAsync(allMessages, options: this._agentOptions).ConfigureAwait(false))
+                        await foreach (var update in this._agent.RunStreamingAsync(allMessages,
+                                                                                   options: this._agentOptions,
+                                                                                   cancellationToken: cancellationToken)
+                                                                .ConfigureAwait(false))
                         {
-                            await AddUpdateAsync(update).ConfigureAwait(false);
+                            await AddUpdateAsync(update, cancellationToken).ConfigureAwait(false);
 
                             foreach (var c in update.Contents)
                             {
                                 if (c is FunctionCallContent fcc && this._handoffFunctionNames.Contains(fcc.Name))
                                 {
                                     requestedHandoff = fcc.Name;
-                                    await AddUpdateAsync(new AgentRunResponseUpdate
-                                    {
-                                        AgentId = this._agent.Id,
-                                        AuthorName = this._agent.DisplayName,
-                                        Contents = [new FunctionResultContent(fcc.CallId, "Transferred.")],
-                                        CreatedAt = DateTimeOffset.UtcNow,
-                                        MessageId = Guid.NewGuid().ToString("N"),
-                                        Role = ChatRole.Tool,
-                                    }).ConfigureAwait(false);
+                                    await AddUpdateAsync(
+                                        new AgentRunResponseUpdate
+                                        {
+                                            AgentId = this._agent.Id,
+                                            AuthorName = this._agent.DisplayName,
+                                            Contents = [new FunctionResultContent(fcc.CallId, "Transferred.")],
+                                            CreatedAt = DateTimeOffset.UtcNow,
+                                            MessageId = Guid.NewGuid().ToString("N"),
+                                            Role = ChatRole.Tool,
+                                        },
+                                        cancellationToken
+                                     )
+                                    .ConfigureAwait(false);
                                 }
                             }
                         }
@@ -644,14 +652,14 @@ public static partial class AgentWorkflowBuilder
 
                         ResetUserToAssistantForChangedRoles(roleChanges);
 
-                        await context.SendMessageAsync(new HandoffState(handoffState.TurnToken, requestedHandoff, allMessages)).ConfigureAwait(false);
+                        await context.SendMessageAsync(new HandoffState(handoffState.TurnToken, requestedHandoff, allMessages), cancellationToken: cancellationToken).ConfigureAwait(false);
 
-                        async Task AddUpdateAsync(AgentRunResponseUpdate update)
+                        async Task AddUpdateAsync(AgentRunResponseUpdate update, CancellationToken cancellationToken)
                         {
                             updates.Add(update);
                             if (handoffState.TurnToken.EmitEvents is true)
                             {
-                                await context.AddEventAsync(new AgentRunUpdateEvent(this.Id, update)).ConfigureAwait(false);
+                                await context.AddEventAsync(new AgentRunUpdateEvent(this.Id, update), cancellationToken).ConfigureAwait(false);
                             }
                         }
                     });
@@ -699,7 +707,8 @@ public static partial class AgentWorkflowBuilder
         /// Selects the next agent to participate in the group chat based on the provided chat history and team.
         /// </summary>
         /// <param name="history">The chat history to consider.</param>
-        /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+        /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
+        /// The default is <see cref="CancellationToken.None"/>.</param>
         /// <returns>The next <see cref="AIAgent"/> to speak. This agent must be part of the chat.</returns>
         protected internal abstract ValueTask<AIAgent> SelectNextAgentAsync(
             IReadOnlyList<ChatMessage> history,
@@ -709,7 +718,8 @@ public static partial class AgentWorkflowBuilder
         /// Filters the chat history before it's passed to the next agent.
         /// </summary>
         /// <param name="history">The chat history to filter.</param>
-        /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+        /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
+        /// The default is <see cref="CancellationToken.None"/>.</param>
         /// <returns>The filtered chat history.</returns>
         protected internal virtual ValueTask<IEnumerable<ChatMessage>> UpdateHistoryAsync(
             IReadOnlyList<ChatMessage> history,
@@ -720,7 +730,8 @@ public static partial class AgentWorkflowBuilder
         /// Determines whether the group chat should be terminated based on the provided chat history and iteration count.
         /// </summary>
         /// <param name="history">The chat history to consider.</param>
-        /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+        /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
+        /// The default is <see cref="CancellationToken.None"/>.</param>
         /// <returns>A <see cref="bool"/> indicating whether the chat should be terminated.</returns>
         protected internal virtual ValueTask<bool> ShouldTerminateAsync(
             IReadOnlyList<ChatMessage> history,
@@ -865,35 +876,35 @@ public static partial class AgentWorkflowBuilder
             private GroupChatManager? _manager;
 
             protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) => routeBuilder
-                .AddHandler<string>((message, context) => this._pendingMessages.Add(new(ChatRole.User, message)))
-                .AddHandler<ChatMessage>((message, context) => this._pendingMessages.Add(message))
-                .AddHandler<IEnumerable<ChatMessage>>((messages, _) => this._pendingMessages.AddRange(messages))
-                .AddHandler<ChatMessage[]>((messages, _) => this._pendingMessages.AddRange(messages)) // TODO: Remove once https://github.com/microsoft/agent-framework/issues/782 is addressed
-                .AddHandler<List<ChatMessage>>((messages, _) => this._pendingMessages.AddRange(messages))  // TODO: Remove once https://github.com/microsoft/agent-framework/issues/782 is addressed
-                .AddHandler<TurnToken>(async (token, context) =>
+                .AddHandler<string>((message, context, _) => this._pendingMessages.Add(new(ChatRole.User, message)))
+                .AddHandler<ChatMessage>((message, context, _) => this._pendingMessages.Add(message))
+                .AddHandler<IEnumerable<ChatMessage>>((messages, _, __) => this._pendingMessages.AddRange(messages))
+                .AddHandler<ChatMessage[]>((messages, _, __) => this._pendingMessages.AddRange(messages)) // TODO: Remove once https://github.com/microsoft/agent-framework/issues/782 is addressed
+                .AddHandler<List<ChatMessage>>((messages, _, __) => this._pendingMessages.AddRange(messages))  // TODO: Remove once https://github.com/microsoft/agent-framework/issues/782 is addressed
+                .AddHandler<TurnToken>(async (token, context, cancellationToken) =>
                 {
                     List<ChatMessage> messages = [.. this._pendingMessages];
                     this._pendingMessages.Clear();
 
                     this._manager ??= this._managerFactory(this._agents);
 
-                    if (!await this._manager.ShouldTerminateAsync(messages).ConfigureAwait(false))
+                    if (!await this._manager.ShouldTerminateAsync(messages, cancellationToken).ConfigureAwait(false))
                     {
-                        var filtered = await this._manager.UpdateHistoryAsync(messages).ConfigureAwait(false);
+                        var filtered = await this._manager.UpdateHistoryAsync(messages, cancellationToken).ConfigureAwait(false);
                         messages = filtered is null || ReferenceEquals(filtered, messages) ? messages : [.. filtered];
 
-                        if (await this._manager.SelectNextAgentAsync(messages).ConfigureAwait(false) is AIAgent nextAgent &&
+                        if (await this._manager.SelectNextAgentAsync(messages, cancellationToken).ConfigureAwait(false) is AIAgent nextAgent &&
                             this._agentMap.TryGetValue(nextAgent, out var executor))
                         {
                             this._manager.IterationCount++;
-                            await context.SendMessageAsync(messages, executor.Id).ConfigureAwait(false);
-                            await context.SendMessageAsync(token, executor.Id).ConfigureAwait(false);
+                            await context.SendMessageAsync(messages, executor.Id, cancellationToken).ConfigureAwait(false);
+                            await context.SendMessageAsync(token, executor.Id, cancellationToken).ConfigureAwait(false);
                             return;
                         }
                     }
 
                     this._manager = null;
-                    await context.YieldOutputAsync(messages).ConfigureAwait(false);
+                    await context.YieldOutputAsync(messages, cancellationToken).ConfigureAwait(false);
                 });
 
             public ValueTask ResetAsync()
