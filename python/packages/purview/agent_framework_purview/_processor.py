@@ -181,7 +181,7 @@ class ScopedContentProcessor:
     async def _process_with_scopes(self, pc_request: ProcessContentRequest) -> ProcessContentResponse:
         app_location = pc_request.content_to_process.protected_app_metadata.application_location
         locations: list[PolicyLocation | MutableMapping[str, Any]] = [app_location] if app_location is not None else []
-        
+
         ps_req = ProtectionScopesRequest(
             user_id=pc_request.user_id,
             tenant_id=pc_request.tenant_id,
