@@ -7,7 +7,7 @@ import json
 from typing import Any, cast
 
 import httpx
-from agent_framework import AGENT_FRAMEWORK_USER_AGENT, get_logger
+from agent_framework import AGENT_FRAMEWORK_USER_AGENT
 from agent_framework.observability import get_tracer
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
@@ -29,7 +29,6 @@ from ._models import (
 )
 from ._settings import PurviewSettings
 
-logger = get_logger("agent_framework.purview")
 
 class PurviewClient:
     """Async client for calling Graph Purview endpoints.
@@ -61,7 +60,7 @@ class PurviewClient:
         token = cred.get_token(*scopes, tenant_id=tenant_id)
         token = await token if inspect.isawaitable(token) else token
         return token.token
-        
+
     @staticmethod
     def _extract_token_info(token: str) -> dict[str, Any]:
         parts = token.split(".")

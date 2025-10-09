@@ -36,4 +36,3 @@ class TestPurviewExceptions:
         error = PurviewRequestError("Request failed")
         assert str(error) == "Request failed"
         assert isinstance(error, PurviewServiceError)
-

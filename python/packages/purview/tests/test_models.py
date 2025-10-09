@@ -6,7 +6,6 @@ from agent_framework_purview._models import (
     Activity,
     ActivityMetadata,
     ContentToProcess,
-    deserialize_flag,
     DeviceMetadata,
     IntegratedAppMetadata,
     OperatingSystemSpecifications,
@@ -19,6 +18,7 @@ from agent_framework_purview._models import (
     ProtectionScopesRequest,
     ProtectionScopesResponse,
     PurviewTextContent,
+    deserialize_flag,
     serialize_flag,
 )
 
@@ -108,7 +108,6 @@ class TestComplexModels:
 class TestRequestResponseSerialization:
     """Test request/response serialization with aliases."""
 
-
     def test_protection_scopes_request_serialization(self) -> None:
         """Test ProtectionScopesRequest serializes activities correctly."""
         location = PolicyLocation(data_type="microsoft.graph.policyLocationApplication", value="app-id")
@@ -139,9 +138,9 @@ class TestModelDeserialization:
                     "activities": "uploadText,downloadText",
                     "locations": [{"@odata.type": "location.type", "value": "/path"}],
                     "policyActions": [{"action": "warn", "restrictionAction": "blockAccess"}],
-                    "executionMode": "evaluateInline"
+                    "executionMode": "evaluateInline",
                 }
-            ]
+            ],
         }
 
         response = ProtectionScopesResponse.model_validate(api_data)

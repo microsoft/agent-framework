@@ -10,6 +10,7 @@ from azure.core.credentials import AccessToken
 
 from agent_framework_purview import PurviewPolicyMiddleware, PurviewSettings
 
+
 class TestPurviewPolicyMiddleware:
     """Test PurviewPolicyMiddleware functionality."""
 
@@ -23,7 +24,7 @@ class TestPurviewPolicyMiddleware:
     @pytest.fixture
     def settings(self) -> PurviewSettings:
         """Create test settings."""
-        return PurviewSettings(app_name="Test App", tenant_id="test-tenant", default_user_id="test-user")
+        return PurviewSettings(app_name="Test App", tenant_id="test-tenant")
 
     @pytest.fixture
     def middleware(self, mock_credential: AsyncMock, settings: PurviewSettings) -> PurviewPolicyMiddleware:
@@ -50,7 +51,7 @@ class TestPurviewPolicyMiddleware:
         """Test middleware allows prompt that passes policy check."""
         context = AgentRunContext(agent=mock_agent, messages=[ChatMessage(role=Role.USER, text="Hello, how are you?")])
 
-        with patch.object(middleware._processor, "process_messages", return_value=False):
+        with patch.object(middleware._processor, "process_messages", return_value=(False, "user-123")):
             next_called = False
 
             async def mock_next(ctx: AgentRunContext) -> None:
@@ -72,7 +73,7 @@ class TestPurviewPolicyMiddleware:
             agent=mock_agent, messages=[ChatMessage(role=Role.USER, text="Sensitive information")]
         )
 
-        with patch.object(middleware._processor, "process_messages", return_value=True):
+        with patch.object(middleware._processor, "process_messages", return_value=(True, "user-123")):
             next_called = False
 
             async def mock_next(ctx: AgentRunContext) -> None:
@@ -94,10 +95,11 @@ class TestPurviewPolicyMiddleware:
 
         call_count = 0
 
-        async def mock_process_messages(messages, activity):
+        async def mock_process_messages(messages, activity, user_id=None):
             nonlocal call_count
             call_count += 1
-            return call_count != 1
+            should_block = call_count != 1
+            return (should_block, "user-123")
 
         with patch.object(middleware._processor, "process_messages", side_effect=mock_process_messages):
 
@@ -120,7 +122,7 @@ class TestPurviewPolicyMiddleware:
         """Test middleware handles result that doesn't have messages attribute."""
         context = AgentRunContext(agent=mock_agent, messages=[ChatMessage(role=Role.USER, text="Hello")])
 
-        with patch.object(middleware._processor, "process_messages", return_value=False):
+        with patch.object(middleware._processor, "process_messages", return_value=(False, "user-123")):
 
             async def mock_next(ctx: AgentRunContext) -> None:
                 ctx.result = "Some non-standard result"
@@ -137,7 +139,7 @@ class TestPurviewPolicyMiddleware:
 
         context = AgentRunContext(agent=mock_agent, messages=[ChatMessage(role=Role.USER, text="Test")])
 
-        with patch.object(middleware._processor, "process_messages", return_value=False) as mock_process:
+        with patch.object(middleware._processor, "process_messages", return_value=(False, "user-123")) as mock_process:
 
             async def mock_next(ctx: AgentRunContext) -> None:
                 ctx.result = AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Response")])
@@ -147,3 +149,54 @@ class TestPurviewPolicyMiddleware:
             assert mock_process.call_count == 2
             for call in mock_process.call_args_list:
                 assert call[0][1] == Activity.UPLOAD_TEXT
+
+    async def test_middleware_handles_pre_check_exception(
+        self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock
+    ) -> None:
+        """Test that exceptions in pre-check are logged but don't stop processing."""
+        context = AgentRunContext(agent=mock_agent, messages=[ChatMessage(role=Role.USER, text="Test")])
+
+        with patch.object(
+            middleware._processor, "process_messages", side_effect=Exception("Pre-check error")
+        ) as mock_process:
+
+            async def mock_next(ctx: AgentRunContext) -> None:
+                ctx.result = AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Response")])
+
+            await middleware.process(context, mock_next)
+
+            # Should have been called once for pre-check (which raised exception)
+            mock_process.assert_called_once()
+            # Context should not be terminated
+            assert not context.terminate
+            # Result should be set by mock_next
+            assert context.result is not None
+
+    async def test_middleware_handles_post_check_exception(
+        self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock
+    ) -> None:
+        """Test that exceptions in post-check are logged but don't affect result."""
+        context = AgentRunContext(agent=mock_agent, messages=[ChatMessage(role=Role.USER, text="Test")])
+
+        call_count = 0
+
+        async def mock_process_messages(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return (False, "user-123")  # Pre-check succeeds
+            else:
+                raise Exception("Post-check error")  # Post-check fails
+
+        with patch.object(middleware._processor, "process_messages", side_effect=mock_process_messages):
+
+            async def mock_next(ctx: AgentRunContext) -> None:
+                ctx.result = AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Response")])
+
+            await middleware.process(context, mock_next)
+
+            # Should have been called twice (pre and post)
+            assert call_count == 2
+            # Result should still be set
+            assert context.result is not None
+            assert hasattr(context.result, "messages")

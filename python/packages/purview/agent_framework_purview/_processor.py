@@ -6,8 +6,6 @@ from collections.abc import Iterable
 
 from agent_framework import ChatMessage
 
-from ._models import OperatingSystemSpecifications
-
 from ._client import PurviewClient
 from ._models import (
     Activity,
@@ -18,6 +16,7 @@ from ._models import (
     DlpAction,
     DlpActionInfo,
     IntegratedAppMetadata,
+    OperatingSystemSpecifications,
     PolicyLocation,
     ProcessContentRequest,
     ProcessContentResponse,
@@ -55,12 +54,12 @@ class ScopedContentProcessor:
         self, messages: Iterable[ChatMessage], activity: Activity, user_id: str | None = None
     ) -> tuple[bool, str | None]:
         """Process messages for policy evaluation.
-        
+
         Args:
             messages: The messages to process
             activity: The activity type (e.g., UPLOAD_TEXT)
             user_id: Optional user_id to use for all messages. If provided, this is the fallback.
-        
+
         Returns:
             A tuple of (should_block: bool, resolved_user_id: str | None).
             The resolved_user_id can be stored and passed back when processing the response
@@ -83,19 +82,19 @@ class ScopedContentProcessor:
         self, messages: Iterable[ChatMessage], activity: Activity, provided_user_id: str | None = None
     ) -> tuple[list[ProcessContentRequest], str | None]:
         """Map messages to ProcessContentRequests.
-        
+
         Args:
             messages: The messages to map
             activity: The activity type
             provided_user_id: Optional user_id to use. If provided, this is the fallback.
-        
+
         Returns:
             A tuple of (requests, resolved_user_id)
         """
         results: list[ProcessContentRequest] = []
         token_info = None
 
-        if not (self._settings.tenant_id and self._settings.default_user_id and self._settings.purview_app_location):
+        if not (self._settings.tenant_id and self._settings.purview_app_location):
             token_info = await self._client.get_user_info_from_token(tenant_id=self._settings.tenant_id)
 
         tenant_id = (token_info or {}).get("tenant_id") or self._settings.tenant_id
@@ -103,7 +102,7 @@ class ScopedContentProcessor:
             raise ValueError("Tenant id required or must be inferable from credential")
 
         resolved_user_id = (token_info or {}).get("user_id")
-        resolved_author_name = None     
+        resolved_author_name = None
         if not resolved_user_id:
             for m in messages:
                 if m.additional_properties:
@@ -116,10 +115,10 @@ class ScopedContentProcessor:
 
         if not resolved_user_id and resolved_author_name:
             resolved_user_id = resolved_author_name
-        
+
         if not resolved_user_id:
             resolved_user_id = provided_user_id if provided_user_id and _is_valid_guid(provided_user_id) else None
-        
+
         # If we still don't have a user_id, return empty results
         if not resolved_user_id or not _is_valid_guid(resolved_user_id):
             return results, None

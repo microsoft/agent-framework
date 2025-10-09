@@ -17,26 +17,23 @@ class TestPurviewSettings:
         assert settings.app_name == "Test App"
         assert settings.graph_base_uri == "https://graph.microsoft.com/v1.0/"
         assert settings.tenant_id is None
-        assert settings.default_user_id is None
         assert settings.purview_app_location is None
         assert settings.process_inline is False
 
     def test_settings_with_custom_values(self) -> None:
         """Test PurviewSettings with custom values."""
         app_location = PurviewAppLocation(location_type=PurviewLocationType.APPLICATION, location_value="app-123")
-        
+
         settings = PurviewSettings(
             app_name="Test App",
             graph_base_uri="https://graph.microsoft-ppe.com",
             tenant_id="test-tenant-id",
-            default_user_id="user-123",
             process_inline=True,
             purview_app_location=app_location,
         )
 
         assert settings.graph_base_uri == "https://graph.microsoft-ppe.com"
         assert settings.tenant_id == "test-tenant-id"
-        assert settings.default_user_id == "user-123"
         assert settings.process_inline is True
         assert settings.purview_app_location.location_value == "app-123"
 
@@ -86,4 +83,3 @@ class TestPurviewLocationType:
         assert PurviewLocationType.APPLICATION == "application"
         assert PurviewLocationType.URI == "uri"
         assert PurviewLocationType.DOMAIN == "domain"
-
