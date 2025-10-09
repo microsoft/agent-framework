@@ -15,6 +15,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests;
 public sealed class DeclarativeCodeGenTest(ITestOutputHelper output) : WorkflowTest(output)
 {
     [Theory]
+    [InlineData("CheckSystem.yaml", "CheckSystem.json")]
     [InlineData("SendActivity.yaml", "SendActivity.json")]
     [InlineData("InvokeAgent.yaml", "InvokeAgent.json")]
     [InlineData("InvokeAgent.yaml", "InvokeAgent.json", true)]
