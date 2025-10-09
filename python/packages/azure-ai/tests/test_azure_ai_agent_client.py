@@ -849,6 +849,35 @@ async def test_azure_ai_chat_client_prep_tools_web_search_bing_grounding(mock_ai
         )
 
 
+async def test_azure_ai_chat_client_prep_tools_web_search_bing_grounding_with_connection_id(
+    mock_ai_project_client: MagicMock,
+) -> None:
+    """Test _prep_tools with HostedWebSearchTool using Bing Grounding with connection_id (no HTTP call)."""
+
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, agent_id="test-agent")
+
+    web_search_tool = HostedWebSearchTool(
+        additional_properties={
+            "connection_id": "direct-connection-id",
+            "count": 3,
+        }
+    )
+
+    # Mock BingGroundingTool
+    with patch("agent_framework_azure_ai._chat_client.BingGroundingTool") as mock_bing_grounding:
+        mock_bing_tool = MagicMock()
+        mock_bing_tool.definitions = [{"type": "bing_grounding"}]
+        mock_bing_grounding.return_value = mock_bing_tool
+
+        result = await chat_client._prep_tools([web_search_tool])  # type: ignore
+
+        assert len(result) == 1
+        assert result[0] == {"type": "bing_grounding"}
+        # Verify that connection_id was used directly (no HTTP call to connections.get)
+        mock_ai_project_client.connections.get.assert_not_called()
+        mock_bing_grounding.assert_called_once_with(connection_id="direct-connection-id", count=3)
+
+
 async def test_azure_ai_chat_client_prep_tools_web_search_custom_bing(mock_ai_project_client: MagicMock) -> None:
     """Test _prep_tools with HostedWebSearchTool using Custom Bing Search."""
 
