@@ -89,7 +89,7 @@ public static partial class AIAgentExtensions
     /// </summary>
     /// <param name="agentName">The AI agent name to sanitize.</param>
     /// <returns>
-    /// Replaces non-alphanumeric characters in the AI agent name with the underscore character.
+    /// The sanitized agent name with invalid characters replaced by underscores, or <c>null</c> if the input is <c>null</c>.
     /// </returns>
     private static string? SanitizeAgentName(string? agentName)
     {
