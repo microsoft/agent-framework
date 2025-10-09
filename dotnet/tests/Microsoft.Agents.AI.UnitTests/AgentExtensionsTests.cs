@@ -281,6 +281,7 @@ public class AgentExtensionsTests
     [InlineData("MyAgent", "MyAgent")]
     [InlineData("Agent123", "Agent123")]
     [InlineData("Agent_With_Underscores", "Agent_With_Underscores")]
+    [InlineData("Agent_With_________@@@@_Underscores", "Agent_With_Underscores")]
     [InlineData("123Agent", "123Agent")]
     [InlineData("My-Agent", "My_Agent")]
     [InlineData("My Agent", "My_Agent")]
