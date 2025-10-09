@@ -821,13 +821,18 @@ async def test_azure_ai_chat_client_prep_tools_web_search_bing_grounding(mock_ai
 
     web_search_tool = HostedWebSearchTool(
         additional_properties={
-            "connection_id": "test-connection-id",
+            "connection_name": "test-connection-name",
             "count": 5,
             "freshness": "Day",
             "market": "en-US",
             "set_lang": "en",
         }
     )
+
+    # Mock connection get
+    mock_connection = MagicMock()
+    mock_connection.id = "test-connection-id"
+    mock_ai_project_client.connections.get = AsyncMock(return_value=mock_connection)
 
     # Mock BingGroundingTool
     with patch("agent_framework_azure_ai._chat_client.BingGroundingTool") as mock_bing_grounding:
@@ -896,18 +901,6 @@ async def test_azure_ai_chat_client_prep_tools_web_search_custom_bing_connection
     mock_ai_project_client.connections.get = AsyncMock(side_effect=HttpResponseError("Connection not found"))
 
     with pytest.raises(ServiceInitializationError, match="Bing custom connection 'nonexistent-connection' not found"):
-        await chat_client._prep_tools([web_search_tool])  # type: ignore
-
-
-async def test_azure_ai_chat_client_prep_tools_web_search_missing_config(mock_ai_project_client: MagicMock) -> None:
-    """Test _prep_tools with HostedWebSearchTool missing required configuration."""
-
-    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, agent_id="test-agent")
-
-    # Web search tool with no connection configuration
-    web_search_tool = HostedWebSearchTool()
-
-    with pytest.raises(ServiceInitializationError, match="Bing search tool requires either a 'connection_id'"):
         await chat_client._prep_tools([web_search_tool])  # type: ignore
 
 

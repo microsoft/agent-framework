@@ -40,14 +40,14 @@ Before running the examples, you need to set up your environment variables. You 
 
 3. For samples using Bing Grounding search (like `azure_ai_with_bing_grounding.py` and `azure_ai_with_multiple_tools.py`), you'll also need:
    ```
-   BING_CONNECTION_ID="/subscriptions/{subscription-id}/resourceGroups/{resource-group}/providers/Microsoft.CognitiveServices/accounts/{ai-service-name}/projects/{project-name}/connections/{connection-name}"
+   BING_CONNECTION_NAME="bing-grounding-connection"
    ```
 
-   To get your Bing connection ID:
+   To get your Bing connection name:
    - Go to [Azure AI Foundry portal](https://ai.azure.com)
    - Navigate to your project's "Connected resources" section
    - Add a new connection for "Grounding with Bing Search"
-   - Copy the connection ID
+   - Copy the connection name
 
 ### Option 2: Using environment variables directly
 
@@ -56,7 +56,7 @@ Set the environment variables in your shell:
 ```bash
 export AZURE_AI_PROJECT_ENDPOINT="your-project-endpoint"
 export AZURE_AI_MODEL_DEPLOYMENT_NAME="your-model-deployment-name"
-export BING_CONNECTION_ID="your-bing-connection-id"  # Optional, only needed for web search samples
+export BING_CONNECTION_NAME="your-bing-connection-name"  # Optional, only needed for web search samples
 ```
 
 ### Required Variables
@@ -66,4 +66,4 @@ export BING_CONNECTION_ID="your-bing-connection-id"  # Optional, only needed for
 
 ### Optional Variables
 
-- `BING_CONNECTION_ID`: Your Bing connection ID (required for `azure_ai_with_bing_grounding.py` and `azure_ai_with_multiple_tools.py`)
+- `BING_CONNECTION_NAME`: Your Bing connection name (required for `azure_ai_with_bing_grounding.py` and `azure_ai_with_multiple_tools.py`)

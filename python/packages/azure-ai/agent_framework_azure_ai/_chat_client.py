@@ -859,7 +859,7 @@ class AzureAIAgentClient(BaseChatClient):
                     if set_lang := additional_props.get("set_lang"):
                         config_args["set_lang"] = set_lang
                     # Bing Grounding
-                    connection_id = additional_props.get("connection_id") or os.getenv("BING_CONNECTION_ID")
+                    connection_name = additional_props.get("connection_name") or os.getenv("BING_CONNECTION_NAME")
                     # Custom Bing Search
                     custom_connection_name = additional_props.get("custom_connection_name") or os.getenv(
                         "BING_CUSTOM_CONNECTION_NAME"
@@ -868,8 +868,9 @@ class AzureAIAgentClient(BaseChatClient):
                         "BING_CUSTOM_INSTANCE_NAME"
                     )
                     bing_search: BingGroundingTool | BingCustomSearchTool | None = None
-                    if connection_id and not custom_connection_name and not custom_configuration_name:
-                        bing_search = BingGroundingTool(connection_id=connection_id, **config_args)
+                    if connection_name and not custom_connection_name and not custom_configuration_name:
+                        conn_id = (await self.project_client.connections.get(name=connection_name)).id
+                        bing_search = BingGroundingTool(connection_id=conn_id, **config_args)
                     if custom_connection_name and custom_configuration_name:
                         try:
                             bing_custom_connection = await self.project_client.connections.get(

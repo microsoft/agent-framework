@@ -12,23 +12,21 @@ uses Bing Grounding search to find real-time information from the web.
 
 Prerequisites:
 1. A connected Grounding with Bing Search resource in your Azure AI project
-2. Set the BING_CONNECTION_ID environment variable to your Bing connection ID
-   Example: BING_CONNECTION_ID="/subscriptions/{subscription-id}/resourceGroups/{resource-group}/
-            providers/Microsoft.CognitiveServices/accounts/{ai-service-name}/projects/{project-name}/
-            connections/{connection-name}"
+2. Set the BING_CONNECTION_NAME environment variable to your Bing connection name
+   Example: BING_CONNECTION_NAME="bing-grounding-connection"
 
 To set up Bing Grounding:
 1. Go to Azure AI Foundry portal (https://ai.azure.com)
 2. Navigate to your project's "Connected resources" section
 3. Add a new connection for "Grounding with Bing Search"
-4. Copy the connection ID and set it as the BING_CONNECTION_ID environment variable
+4. Copy the connection name and set it as the BING_CONNECTION_NAME environment variable
 """
 
 
 async def main() -> None:
     """Main function demonstrating Azure AI agent with Bing Grounding search."""
     # 1. Create Bing Grounding search tool using HostedWebSearchTool
-    # The connection_id will be automatically picked up from BING_CONNECTION_ID environment variable
+    # The connection_name will be automatically picked up from BING_CONNECTION_NAME environment variable
     bing_search_tool = HostedWebSearchTool(
         name="Bing Grounding Search",
         description="Search the web for current information using Bing",
