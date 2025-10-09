@@ -869,8 +869,15 @@ class AzureAIAgentClient(BaseChatClient):
                     )
                     bing_search: BingGroundingTool | BingCustomSearchTool | None = None
                     if connection_name and not custom_connection_name and not custom_configuration_name:
-                        conn_id = (await self.project_client.connections.get(name=connection_name)).id
-                        bing_search = BingGroundingTool(connection_id=conn_id, **config_args)
+                        try:
+                            bing_connection = await self.project_client.connections.get(name=connection_name)
+                        except HttpResponseError as err:
+                            raise ServiceInitializationError(
+                                f"Bing connection '{connection_name}' not found in the Azure AI Project.",
+                                err,
+                            ) from err
+                        else:
+                            bing_search = BingGroundingTool(connection_id=bing_connection.id, **config_args)
                     if custom_connection_name and custom_configuration_name:
                         try:
                             bing_custom_connection = await self.project_client.connections.get(

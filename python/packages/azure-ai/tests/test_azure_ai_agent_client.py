@@ -46,7 +46,7 @@ from azure.ai.agents.models import (
 )
 from azure.ai.projects.models import ConnectionType
 from azure.core.credentials_async import AsyncTokenCredential
-from azure.core.exceptions import HttpResponseError
+from azure.core.exceptions import HttpResponseError, ResourceNotFoundError
 from azure.identity.aio import AzureCliCredential
 from pydantic import BaseModel, Field, ValidationError
 from pytest import MonkeyPatch
@@ -904,6 +904,26 @@ async def test_azure_ai_chat_client_prep_tools_web_search_custom_bing_connection
         await chat_client._prep_tools([web_search_tool])  # type: ignore
 
 
+async def test_azure_ai_chat_client_prep_tools_web_search_bing_grounding_connection_error(
+    mock_ai_project_client: MagicMock,
+) -> None:
+    """Test _prep_tools with HostedWebSearchTool when Bing Grounding connection is not found."""
+
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, agent_id="test-agent")
+
+    web_search_tool = HostedWebSearchTool(
+        additional_properties={
+            "connection_name": "nonexistent-bing-connection",
+        }
+    )
+
+    # Mock connection get to raise HttpResponseError
+    mock_ai_project_client.connections.get = AsyncMock(side_effect=HttpResponseError("Connection not found"))
+
+    with pytest.raises(ServiceInitializationError, match="Bing connection 'nonexistent-bing-connection' not found"):
+        await chat_client._prep_tools([web_search_tool])  # type: ignore
+
+
 async def test_azure_ai_chat_client_prep_tools_file_search_with_vector_stores(
     mock_ai_project_client: MagicMock,
 ) -> None:
@@ -1375,6 +1395,28 @@ async def test_azure_ai_chat_client_create_agent_stream_submit_tool_outputs(
         # Should call submit_tool_outputs_stream since we have matching run ID
         mock_ai_project_client.agents.runs.submit_tool_outputs_stream.assert_called_once()
         assert final_thread_id == "test-thread"
+
+
+async def test_azure_ai_chat_client_setup_azure_ai_observability_resource_not_found(
+    mock_ai_project_client: MagicMock,
+) -> None:
+    """Test setup_azure_ai_observability when Application Insights connection string is not found."""
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, agent_id="test-agent")
+
+    # Mock telemetry.get_application_insights_connection_string to raise ResourceNotFoundError
+    mock_ai_project_client.telemetry.get_application_insights_connection_string = AsyncMock(
+        side_effect=ResourceNotFoundError("No Application Insights found")
+    )
+
+    # Mock logger.warning to capture the warning message
+    with patch("agent_framework_azure_ai._chat_client.logger") as mock_logger:
+        await chat_client.setup_azure_ai_observability()
+
+        # Verify warning was logged
+        mock_logger.warning.assert_called_once_with(
+            "No Application Insights connection string found for the Azure AI Project, "
+            "please call setup_observability() manually."
+        )
 
 
 def get_weather(
