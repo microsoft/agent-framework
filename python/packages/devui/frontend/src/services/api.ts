@@ -6,10 +6,10 @@
 import type {
   AgentInfo,
   AgentSource,
+  Conversation,
   HealthResponse,
   RunAgentRequest,
   RunWorkflowRequest,
-  ThreadInfo,
   WorkflowInfo,
 } from "@/types";
 import type { AgentFrameworkRequest } from "@/types/agent-framework";
@@ -45,23 +45,12 @@ interface DiscoveryResponse {
   entities: BackendEntityInfo[];
 }
 
-interface ThreadApiResponse {
+// Conversation API types (OpenAI standard)
+interface ConversationApiResponse {
   id: string;
-  object: "thread";
+  object: "conversation";
   created_at: number;
-  metadata: { agent_id: string };
-}
-
-interface ThreadListResponse {
-  object: "list";
-  data: ThreadApiObject[];
-}
-
-interface ThreadApiObject {
-  id: string;
-  object: "thread";
-  agent_id: string;
-  created_at?: string;
+  metadata?: Record<string, string>;
 }
 
 const DEFAULT_API_BASE_URL =
@@ -217,36 +206,69 @@ class ApiClient {
     );
   }
 
-  // Thread management using real /v1/threads endpoints
-  async createThread(agentId: string): Promise<ThreadInfo> {
-    const response = await this.request<ThreadApiResponse>("/v1/threads", {
-      method: "POST",
-      body: JSON.stringify({ agent_id: agentId }),
-    });
+  // ========================================
+  // Conversation Management (OpenAI Standard)
+  // ========================================
+
+  async createConversation(
+    metadata?: Record<string, string>
+  ): Promise<Conversation> {
+    const response = await this.request<ConversationApiResponse>(
+      "/v1/conversations",
+      {
+        method: "POST",
+        body: JSON.stringify({ metadata }),
+      }
+    );
 
     return {
       id: response.id,
-      agent_id: agentId,
-      created_at: new Date(response.created_at * 1000).toISOString(),
-      message_count: 0,
+      object: "conversation",
+      created_at: response.created_at,
+      metadata: response.metadata,
     };
   }
 
-  async getThreads(agentId: string): Promise<ThreadInfo[]> {
-    const response = await this.request<ThreadListResponse>(
-      `/v1/threads?agent_id=${agentId}`
-    );
-    return response.data.map((thread: ThreadApiObject) => ({
-      id: thread.id,
-      agent_id: thread.agent_id,
-      created_at: thread.created_at || new Date().toISOString(),
-      message_count: 0, // We don't track this yet
-    }));
+  async listConversations(
+    agentId?: string
+  ): Promise<{ data: Conversation[]; has_more: boolean }> {
+    const url = agentId
+      ? `/v1/conversations?agent_id=${encodeURIComponent(agentId)}`
+      : "/v1/conversations";
+
+    const response = await this.request<{
+      object: "list";
+      data: ConversationApiResponse[];
+      has_more: boolean;
+    }>(url);
+
+    return {
+      data: response.data.map((conv) => ({
+        id: conv.id,
+        object: "conversation",
+        created_at: conv.created_at,
+        metadata: conv.metadata,
+      })),
+      has_more: response.has_more,
+    };
   }
 
-  async deleteThread(threadId: string): Promise<boolean> {
+  async getConversation(conversationId: string): Promise<Conversation> {
+    const response = await this.request<ConversationApiResponse>(
+      `/v1/conversations/${conversationId}`
+    );
+
+    return {
+      id: response.id,
+      object: "conversation",
+      created_at: response.created_at,
+      metadata: response.metadata,
+    };
+  }
+
+  async deleteConversation(conversationId: string): Promise<boolean> {
     try {
-      await this.request(`/v1/threads/${threadId}`, {
+      await this.request(`/v1/conversations/${conversationId}`, {
         method: "DELETE",
       });
       return true;
@@ -255,56 +277,35 @@ class ApiClient {
     }
   }
 
-  async getThreadMessages(
-    threadId: string
-  ): Promise<import("@/types").ChatMessage[]> {
-    try {
-      const response = await this.request<{ data: unknown[] }>(
-        `/v1/threads/${threadId}/messages`
-      );
+  async listConversationItems(
+    conversationId: string,
+    options?: { limit?: number; after?: string; order?: "asc" | "desc" }
+  ): Promise<{ data: unknown[]; has_more: boolean }> {
+    const params = new URLSearchParams();
+    if (options?.limit) params.set("limit", options.limit.toString());
+    if (options?.after) params.set("after", options.after);
+    if (options?.order) params.set("order", options.order);
 
-      // Convert API messages to ChatMessage format, handling missing fields
-      return response.data.map((msg: unknown, index: number) => {
-        const msgObj = msg as Record<string, unknown>;
-        const role = msgObj.role as string;
-        return {
-          id: (msgObj.message_id as string) || `restored-${index}`,
-          role:
-            role === "user" ||
-            role === "assistant" ||
-            role === "system" ||
-            role === "tool"
-              ? role
-              : "user",
-          contents:
-            (msgObj.contents as import("@/types/agent-framework").Contents[]) ||
-            [],
-          timestamp: (msgObj.timestamp as string) || new Date().toISOString(),
-          author_name: msgObj.author_name as string | undefined,
-          message_id: msgObj.message_id as string | undefined,
-        };
-      });
-    } catch (error) {
-      console.error("Failed to get thread messages:", error);
-      return [];
-    }
+    const queryString = params.toString();
+    const url = `/v1/conversations/${conversationId}/items${
+      queryString ? `?${queryString}` : ""
+    }`;
+
+    return this.request<{ data: unknown[]; has_more: boolean }>(url);
   }
 
   // OpenAI-compatible streaming methods using /v1/responses endpoint
 
-  // Stream agent execution using pure OpenAI format
+  // Stream agent execution using OpenAI format with simplified routing
   async *streamAgentExecutionOpenAI(
     agentId: string,
     request: RunAgentRequest
   ): AsyncGenerator<ExtendedResponseStreamEvent, void, unknown> {
     const openAIRequest: AgentFrameworkRequest = {
-      model: "agent-framework",
+      model: agentId, // Model IS the entity_id (simplified routing!)
       input: request.input, // Direct OpenAI ResponseInputParam
       stream: true,
-      extra_body: {
-        entity_id: agentId,
-        thread_id: request.thread_id,
-      },
+      conversation: request.conversation_id, // OpenAI standard conversation param
     };
 
     return yield* this.streamAgentExecutionOpenAIDirect(agentId, openAIRequest);
@@ -326,7 +327,19 @@ class ApiClient {
     });
 
     if (!response.ok) {
-      throw new Error(`OpenAI streaming request failed: ${response.status}`);
+      // Try to extract detailed error message from response body
+      let errorMessage = `Request failed with status ${response.status}`;
+      try {
+        const errorBody = await response.json();
+        if (errorBody.error && errorBody.error.message) {
+          errorMessage = errorBody.error.message;
+        } else if (errorBody.detail) {
+          errorMessage = errorBody.detail;
+        }
+      } catch {
+        // Fallback to generic message if parsing fails
+      }
+      throw new Error(errorMessage);
     }
 
     const reader = response.body?.getReader();
@@ -380,15 +393,14 @@ class ApiClient {
     workflowId: string,
     request: RunWorkflowRequest
   ): AsyncGenerator<ExtendedResponseStreamEvent, void, unknown> {
-    // Convert to OpenAI format
+    // Convert to OpenAI format - use model field for entity_id (same as agents)
     const openAIRequest: AgentFrameworkRequest = {
-      model: "agent-framework", // Placeholder model name
-      input: "", // Empty string for workflows - actual data is in extra_body.input_data
+      model: workflowId, // Use workflow ID in model field (matches agent pattern)
+      input: typeof request.input_data === 'string'
+        ? request.input_data
+        : JSON.stringify(request.input_data || ""), // Convert input_data to string
       stream: true,
-      extra_body: {
-        entity_id: workflowId,
-        input_data: request.input_data, // Preserve structured data
-      },
+      conversation: request.conversation_id, // Include conversation if present
     };
 
     const response = await fetch(`${this.baseUrl}/v1/responses`, {
@@ -401,7 +413,19 @@ class ApiClient {
     });
 
     if (!response.ok) {
-      throw new Error(`OpenAI streaming request failed: ${response.status}`);
+      // Try to extract detailed error message from response body
+      let errorMessage = `Request failed with status ${response.status}`;
+      try {
+        const errorBody = await response.json();
+        if (errorBody.error && errorBody.error.message) {
+          errorMessage = errorBody.error.message;
+        } else if (errorBody.detail) {
+          errorMessage = errorBody.detail;
+        }
+      } catch {
+        // Fallback to generic message if parsing fails
+      }
+      throw new Error(errorMessage);
     }
 
     const reader = response.body?.getReader();
@@ -457,7 +481,7 @@ class ApiClient {
     agentId: string,
     request: RunAgentRequest
   ): Promise<{
-    thread_id: string;
+    conversation_id: string;
     result: unknown[];
     message_count: number;
   }> {

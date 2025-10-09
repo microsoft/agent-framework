@@ -18,7 +18,7 @@ internal sealed class SendActivityExecutor(SendActivity model, WorkflowFormulaSt
         {
             string activityText = this.Engine.Format(messageActivity.Text).Trim();
 
-            await context.AddEventAsync(new MessageActivityEvent(activityText.Trim())).ConfigureAwait(false);
+            await context.AddEventAsync(new MessageActivityEvent(activityText.Trim()), cancellationToken).ConfigureAwait(false);
         }
 
         return default;

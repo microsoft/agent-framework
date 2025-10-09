@@ -44,19 +44,14 @@ internal sealed class AsyncRunHandle : ICheckpointingHandle, IAsyncDisposable
         }
     }
 
-    //private readonly AsyncCoordinator _waitForResponseCoordinator = new();
-
-    //public ValueTask<bool> WaitForNextInputAsync(CancellationToken cancellation = default)
-    //    => this._waitForResponseCoordinator.WaitForCoordinationAsync(cancellation);
-
     public string RunId => this._stepRunner.RunId;
 
     public IReadOnlyList<CheckpointInfo> Checkpoints => this._checkpointingHandle.Checkpoints;
 
-    public ValueTask<RunStatus> GetStatusAsync(CancellationToken cancellation = default)
-        => this._eventStream.GetStatusAsync(cancellation);
+    public ValueTask<RunStatus> GetStatusAsync(CancellationToken cancellationToken = default)
+        => this._eventStream.GetStatusAsync(cancellationToken);
 
-    public async IAsyncEnumerable<WorkflowEvent> TakeEventStreamAsync(bool blockOnPendingRequest, [EnumeratorCancellation] CancellationToken cancellation = default)
+    public async IAsyncEnumerable<WorkflowEvent> TakeEventStreamAsync(bool blockOnPendingRequest, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         //Debug.Assert(breakOnHalt);
         // Enforce single active enumerator (this runs when enumeration begins)
@@ -68,7 +63,7 @@ internal sealed class AsyncRunHandle : ICheckpointingHandle, IAsyncDisposable
         CancellationTokenSource? linked = null;
         try
         {
-            linked = CancellationTokenSource.CreateLinkedTokenSource(cancellation, this._endRunSource.Token);
+            linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, this._endRunSource.Token);
             var token = linked.Token;
 
             // Build the inner stream before the loop so synchronous exceptions still release the gate
@@ -92,21 +87,21 @@ internal sealed class AsyncRunHandle : ICheckpointingHandle, IAsyncDisposable
         }
     }
 
-    public ValueTask<bool> IsValidInputTypeAsync<T>(CancellationToken cancellation = default)
-        => this._stepRunner.IsValidInputTypeAsync<T>(cancellation);
+    public ValueTask<bool> IsValidInputTypeAsync<T>(CancellationToken cancellationToken = default)
+        => this._stepRunner.IsValidInputTypeAsync<T>(cancellationToken);
 
-    public async ValueTask<bool> EnqueueMessageAsync<T>(T message, CancellationToken cancellation = default)
+    public async ValueTask<bool> EnqueueMessageAsync<T>(T message, CancellationToken cancellationToken = default)
     {
         if (message is ExternalResponse response)
         {
             // EnqueueResponseAsync handles signaling
-            await this.EnqueueResponseAsync(response, cancellation)
+            await this.EnqueueResponseAsync(response, cancellationToken)
                       .ConfigureAwait(false);
 
             return true;
         }
 
-        bool result = await this._stepRunner.EnqueueMessageAsync(message, cancellation)
+        bool result = await this._stepRunner.EnqueueMessageAsync(message, cancellationToken)
                                             .ConfigureAwait(false);
 
         // Signal the run loop that new input is available
@@ -115,7 +110,7 @@ internal sealed class AsyncRunHandle : ICheckpointingHandle, IAsyncDisposable
         return result;
     }
 
-    public async ValueTask<bool> EnqueueMessageUntypedAsync([NotNull] object message, Type? declaredType = null, CancellationToken cancellation = default)
+    public async ValueTask<bool> EnqueueMessageUntypedAsync([NotNull] object message, Type? declaredType = null, CancellationToken cancellationToken = default)
     {
         if (declaredType?.IsInstanceOfType(message) == false)
         {
@@ -125,7 +120,7 @@ internal sealed class AsyncRunHandle : ICheckpointingHandle, IAsyncDisposable
         if (declaredType != null && typeof(ExternalResponse).IsAssignableFrom(declaredType))
         {
             // EnqueueResponseAsync handles signaling
-            await this.EnqueueResponseAsync((ExternalResponse)message, cancellation)
+            await this.EnqueueResponseAsync((ExternalResponse)message, cancellationToken)
                       .ConfigureAwait(false);
 
             return true;
@@ -133,13 +128,13 @@ internal sealed class AsyncRunHandle : ICheckpointingHandle, IAsyncDisposable
         else if (declaredType == null && message is ExternalResponse response)
         {
             // EnqueueResponseAsync handles signaling
-            await this.EnqueueResponseAsync(response, cancellation)
+            await this.EnqueueResponseAsync(response, cancellationToken)
                       .ConfigureAwait(false);
 
             return true;
         }
 
-        bool result = await this._stepRunner.EnqueueMessageUntypedAsync(message, declaredType ?? message.GetType(), cancellation)
+        bool result = await this._stepRunner.EnqueueMessageUntypedAsync(message, declaredType ?? message.GetType(), cancellationToken)
                                             .ConfigureAwait(false);
 
         // Signal the run loop that new input is available
@@ -148,9 +143,9 @@ internal sealed class AsyncRunHandle : ICheckpointingHandle, IAsyncDisposable
         return result;
     }
 
-    public async ValueTask EnqueueResponseAsync(ExternalResponse response, CancellationToken cancellation = default)
+    public async ValueTask EnqueueResponseAsync(ExternalResponse response, CancellationToken cancellationToken = default)
     {
-        await this._stepRunner.EnqueueResponseAsync(response, cancellation).ConfigureAwait(false);
+        await this._stepRunner.EnqueueResponseAsync(response, cancellationToken).ConfigureAwait(false);
 
         // Signal the run loop that new input is available
         this.SignalInputToRunLoop();
