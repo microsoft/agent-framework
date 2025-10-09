@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Agents.AI.Workflows.Reflection;
@@ -138,7 +139,7 @@ internal sealed class Split(string[] mapperIds, string id) :
     /// <summary>
     /// Tokenize input and assign contiguous index ranges to each mapper via shared state.
     /// </summary>
-    public async ValueTask HandleAsync(string message, IWorkflowContext context)
+    public async ValueTask HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         // Ensure temp directory exists
         Directory.CreateDirectory(MapReduceConstants.TempDir);
@@ -147,7 +148,7 @@ internal sealed class Split(string[] mapperIds, string id) :
         var wordList = Preprocess(message);
 
         // Store the tokenized words once so that all mappers can read by index
-        await context.QueueStateUpdateAsync(MapReduceConstants.DataToProcessKey, wordList, scopeName: MapReduceConstants.StateScope);
+        await context.QueueStateUpdateAsync(MapReduceConstants.DataToProcessKey, wordList, scopeName: MapReduceConstants.StateScope, cancellationToken);
 
         // Divide indices into contiguous slices for each mapper
         var mapperCount = this._mapperIds.Length;
@@ -160,10 +161,10 @@ internal sealed class Split(string[] mapperIds, string id) :
             var endIndex = i < mapperCount - 1 ? startIndex + chunkSize : wordList.Length;
 
             // Save the indices under the mapper's Id
-            await context.QueueStateUpdateAsync(this._mapperIds[i], (startIndex, endIndex), scopeName: MapReduceConstants.StateScope);
+            await context.QueueStateUpdateAsync(this._mapperIds[i], (startIndex, endIndex), scopeName: MapReduceConstants.StateScope, cancellationToken);
 
             // Notify the mapper that data is ready
-            await context.SendMessageAsync(new SplitComplete(), targetId: this._mapperIds[i]);
+            await context.SendMessageAsync(new SplitComplete(), targetId: this._mapperIds[i], cancellationToken);
         }
 
         // Process all the chunks
@@ -192,10 +193,10 @@ internal sealed class Mapper(string id) : ReflectingExecutor<Mapper>(id), IMessa
     /// <summary>
     /// Read the assigned slice, emit (word, 1) pairs, and persist to disk.
     /// </summary>
-    public async ValueTask HandleAsync(SplitComplete message, IWorkflowContext context)
+    public async ValueTask HandleAsync(SplitComplete message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        var dataToProcess = await context.ReadStateAsync<string[]>(MapReduceConstants.DataToProcessKey, scopeName: MapReduceConstants.StateScope);
-        var chunk = await context.ReadStateAsync<(int start, int end)>(this.Id, scopeName: MapReduceConstants.StateScope);
+        var dataToProcess = await context.ReadStateAsync<string[]>(MapReduceConstants.DataToProcessKey, scopeName: MapReduceConstants.StateScope, cancellationToken);
+        var chunk = await context.ReadStateAsync<(int start, int end)>(this.Id, scopeName: MapReduceConstants.StateScope, cancellationToken);
 
         var results = dataToProcess![chunk.start..chunk.end]
             .Select(word => (word, 1))
@@ -204,9 +205,9 @@ internal sealed class Mapper(string id) : ReflectingExecutor<Mapper>(id), IMessa
         // Write this mapper's results as simple text lines for easy debugging
         var filePath = Path.Combine(MapReduceConstants.TempDir, $"map_results_{this.Id}.txt");
         var lines = results.Select(r => $"{r.word}: {r.Item2}");
-        await File.WriteAllLinesAsync(filePath, lines);
+        await File.WriteAllLinesAsync(filePath, lines, cancellationToken);
 
-        await context.SendMessageAsync(new MapComplete(filePath));
+        await context.SendMessageAsync(new MapComplete(filePath), cancellationToken: cancellationToken);
     }
 }
 
@@ -224,7 +225,7 @@ internal sealed class Shuffler(string[] reducerIds, string[] mapperIds, string i
     /// <summary>
     /// Aggregate mapper outputs and write one partition file per reducer.
     /// </summary>
-    public async ValueTask HandleAsync(MapComplete message, IWorkflowContext context)
+    public async ValueTask HandleAsync(MapComplete message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         this._mapResults.Add(message);
 
@@ -241,9 +242,9 @@ internal sealed class Shuffler(string[] reducerIds, string[] mapperIds, string i
             // Write one grouped partition for reducer index and notify that reducer
             var filePath = Path.Combine(MapReduceConstants.TempDir, $"shuffle_results_{index}.txt");
             var lines = chunk.Select(kvp => $"{kvp.key}: {JsonSerializer.Serialize(kvp.values)}");
-            await File.WriteAllLinesAsync(filePath, lines);
+            await File.WriteAllLinesAsync(filePath, lines, cancellationToken);
 
-            await context.SendMessageAsync(new ShuffleComplete(filePath, this._reducerIds[index]));
+            await context.SendMessageAsync(new ShuffleComplete(filePath, this._reducerIds[index]), cancellationToken: cancellationToken);
         }
 
         var tasks = chunks.Select((chunk, i) => ProcessChunkAsync(chunk, i));
@@ -318,7 +319,7 @@ internal sealed class Reducer(string id) : ReflectingExecutor<Reducer>(id), IMes
     /// <summary>
     /// Read one shuffle partition and reduce it to totals.
     /// </summary>
-    public async ValueTask HandleAsync(ShuffleComplete message, IWorkflowContext context)
+    public async ValueTask HandleAsync(ShuffleComplete message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         if (message.ReducerId != this.Id)
         {
@@ -327,7 +328,7 @@ internal sealed class Reducer(string id) : ReflectingExecutor<Reducer>(id), IMes
         }
 
         // Read grouped values from the shuffle output
-        var lines = await File.ReadAllLinesAsync(message.FilePath);
+        var lines = await File.ReadAllLinesAsync(message.FilePath, cancellationToken);
 
         // Sum values per key. Values are serialized JSON arrays like [1, 1, ...]
         var reducedResults = new Dictionary<string, int>();
@@ -345,9 +346,9 @@ internal sealed class Reducer(string id) : ReflectingExecutor<Reducer>(id), IMes
         // Persist our partition totals
         var filePath = Path.Combine(MapReduceConstants.TempDir, $"reduced_results_{this.Id}.txt");
         var outputLines = reducedResults.Select(kvp => $"{kvp.Key}: {kvp.Value}");
-        await File.WriteAllLinesAsync(filePath, outputLines);
+        await File.WriteAllLinesAsync(filePath, outputLines, cancellationToken);
 
-        await context.SendMessageAsync(new ReduceComplete(filePath));
+        await context.SendMessageAsync(new ReduceComplete(filePath), cancellationToken: cancellationToken);
     }
 }
 
@@ -361,10 +362,10 @@ internal sealed class CompletionExecutor(string id) :
     /// <summary>
     /// Collect reducer output file paths and yield final output.
     /// </summary>
-    public async ValueTask HandleAsync(List<ReduceComplete> message, IWorkflowContext context)
+    public async ValueTask HandleAsync(List<ReduceComplete> message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         var filePaths = message.ConvertAll(r => r.FilePath);
-        await context.YieldOutputAsync(filePaths);
+        await context.YieldOutputAsync(filePaths, cancellationToken);
     }
 }
 

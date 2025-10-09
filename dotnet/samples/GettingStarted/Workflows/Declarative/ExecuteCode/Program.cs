@@ -76,102 +76,103 @@ internal sealed class Program
 
         string? messageId = null;
 
-        await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
+        await foreach (WorkflowEvent workflowEvent in run.WatchStreamAsync().ConfigureAwait(false))
         {
-            if (evt is ExecutorInvokedEvent executorInvoked)
+            switch (workflowEvent)
             {
-                Debug.WriteLine($"STEP ENTER #{executorInvoked.ExecutorId}");
-            }
-            else if (evt is ExecutorCompletedEvent executorComplete)
-            {
-                Debug.WriteLine($"STEP EXIT #{executorComplete.ExecutorId}");
-            }
-            else if (evt is ExecutorFailedEvent executorFailure)
-            {
-                Debug.WriteLine($"STEP ERROR #{executorFailure.ExecutorId}: {executorFailure.Data?.Message ?? "Unknown"}");
-            }
-            else if (evt is WorkflowErrorEvent workflowError)
-            {
-                Debug.WriteLine("WORKFLOW ERROR");
-            }
-            else if (evt is ConversationUpdateEvent invokeEvent)
-            {
-                Debug.WriteLine($"CONVERSATION: {invokeEvent.Data}");
-            }
-            else if (evt is AgentRunUpdateEvent streamEvent)
-            {
-                if (!string.Equals(messageId, streamEvent.Update.MessageId, StringComparison.Ordinal))
-                {
-                    messageId = streamEvent.Update.MessageId;
+                case ExecutorInvokedEvent executorInvoked:
+                    Debug.WriteLine($"STEP ENTER #{executorInvoked.ExecutorId}");
+                    break;
 
-                    if (messageId is not null)
+                case ExecutorCompletedEvent executorComplete:
+                    Debug.WriteLine($"STEP EXIT #{executorComplete.ExecutorId}");
+                    break;
+
+                case ExecutorFailedEvent executorFailure:
+                    Debug.WriteLine($"STEP ERROR #{executorFailure.ExecutorId}: {executorFailure.Data?.Message ?? "Unknown"}");
+                    break;
+
+                case WorkflowErrorEvent workflowError:
+                    throw workflowError.Data as Exception ?? new InvalidOperationException("Unexpected failure...");
+
+                case ConversationUpdateEvent invokeEvent:
+                    Debug.WriteLine($"CONVERSATION: {invokeEvent.Data}");
+                    break;
+
+                case AgentRunUpdateEvent streamEvent:
+                    if (!string.Equals(messageId, streamEvent.Update.MessageId, StringComparison.Ordinal))
                     {
-                        string? agentId = streamEvent.Update.AuthorName;
-                        if (agentId is not null)
+                        messageId = streamEvent.Update.MessageId;
+
+                        if (messageId is not null)
                         {
-                            if (!s_nameCache.TryGetValue(agentId, out string? realName))
+                            string? agentId = streamEvent.Update.AuthorName;
+                            if (agentId is not null)
                             {
-                                PersistentAgent agent = await this.FoundryClient.Administration.GetAgentAsync(agentId);
-                                s_nameCache[agentId] = agent.Name;
-                                realName = agent.Name;
+                                if (!s_nameCache.TryGetValue(agentId, out string? realName))
+                                {
+                                    PersistentAgent agent = await this.FoundryClient.Administration.GetAgentAsync(agentId);
+                                    s_nameCache[agentId] = agent.Name;
+                                    realName = agent.Name;
+                                }
+                                agentId = realName;
                             }
-                            agentId = realName;
-                        }
-                        agentId ??= nameof(ChatRole.Assistant);
-                        Console.ForegroundColor = ConsoleColor.Cyan;
-                        Console.Write($"\n{agentId.ToUpperInvariant()}:");
-                        Console.ForegroundColor = ConsoleColor.DarkGray;
-                        Console.WriteLine($" [{messageId}]");
-                    }
-                }
-
-                ChatResponseUpdate? chatUpdate = streamEvent.Update.RawRepresentation as ChatResponseUpdate;
-                switch (chatUpdate?.RawRepresentation)
-                {
-                    case MessageContentUpdate messageUpdate:
-                        string? fileId = messageUpdate.ImageFileId ?? messageUpdate.TextAnnotation?.OutputFileId;
-                        if (fileId is not null && s_fileCache.Add(fileId))
-                        {
-                            BinaryData content = await this.FoundryClient.Files.GetFileContentAsync(fileId);
-                            await DownloadFileContentAsync(Path.GetFileName(messageUpdate.TextAnnotation?.TextToReplace ?? "response.png"), content);
-                        }
-                        break;
-                }
-                try
-                {
-                    Console.ResetColor();
-                    Console.Write(streamEvent.Data);
-                }
-                finally
-                {
-                    Console.ResetColor();
-                }
-            }
-            else if (evt is AgentRunResponseEvent messageEvent)
-            {
-                try
-                {
-                    Console.WriteLine();
-                    if (messageEvent.Response.AgentId is null)
-                    {
-                        Console.ForegroundColor = ConsoleColor.Cyan;
-                        Console.WriteLine("ACTIVITY:");
-                        Console.ForegroundColor = ConsoleColor.Yellow;
-                        Console.WriteLine(messageEvent.Response?.Text.Trim());
-                    }
-                    else
-                    {
-                        if (messageEvent.Response.Usage is not null)
-                        {
+                            agentId ??= nameof(ChatRole.Assistant);
+                            Console.ForegroundColor = ConsoleColor.Cyan;
+                            Console.Write($"\n{agentId.ToUpperInvariant()}:");
                             Console.ForegroundColor = ConsoleColor.DarkGray;
-                            Console.WriteLine($"[Tokens Total: {messageEvent.Response.Usage.TotalTokenCount}, Input: {messageEvent.Response.Usage.InputTokenCount}, Output: {messageEvent.Response.Usage.OutputTokenCount}]");
+                            Console.WriteLine($" [{messageId}]");
                         }
                     }
-                }
-                finally
-                {
-                    Console.ResetColor();
-                }
+
+                    ChatResponseUpdate? chatUpdate = streamEvent.Update.RawRepresentation as ChatResponseUpdate;
+                    switch (chatUpdate?.RawRepresentation)
+                    {
+                        case MessageContentUpdate messageUpdate:
+                            string? fileId = messageUpdate.ImageFileId ?? messageUpdate.TextAnnotation?.OutputFileId;
+                            if (fileId is not null && s_fileCache.Add(fileId))
+                            {
+                                BinaryData content = await this.FoundryClient.Files.GetFileContentAsync(fileId);
+                                await DownloadFileContentAsync(Path.GetFileName(messageUpdate.TextAnnotation?.TextToReplace ?? "response.png"), content);
+                            }
+                            break;
+                    }
+                    try
+                    {
+                        Console.ResetColor();
+                        Console.Write(streamEvent.Data);
+                    }
+                    finally
+                    {
+                        Console.ResetColor();
+                    }
+                    break;
+
+                case AgentRunResponseEvent messageEvent:
+                    try
+                    {
+                        Console.WriteLine();
+                        if (messageEvent.Response.AgentId is null)
+                        {
+                            Console.ForegroundColor = ConsoleColor.Cyan;
+                            Console.WriteLine("ACTIVITY:");
+                            Console.ForegroundColor = ConsoleColor.Yellow;
+                            Console.WriteLine(messageEvent.Response?.Text.Trim());
+                        }
+                        else
+                        {
+                            if (messageEvent.Response.Usage is not null)
+                            {
+                                Console.ForegroundColor = ConsoleColor.DarkGray;
+                                Console.WriteLine($"[Tokens Total: {messageEvent.Response.Usage.TotalTokenCount}, Input: {messageEvent.Response.Usage.InputTokenCount}, Output: {messageEvent.Response.Usage.OutputTokenCount}]");
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        Console.ResetColor();
+                    }
+                    break;
             }
         }
     }

@@ -15,7 +15,7 @@ internal interface IRunEventStream : IAsyncDisposable
     // this cannot be cancelled
     ValueTask StopAsync();
 
-    ValueTask<RunStatus> GetStatusAsync(CancellationToken cancellation = default);
+    ValueTask<RunStatus> GetStatusAsync(CancellationToken cancellationToken = default);
 
-    IAsyncEnumerable<WorkflowEvent> TakeEventStreamAsync(bool blockOnPendingRequest, CancellationToken cancellation = default);
+    IAsyncEnumerable<WorkflowEvent> TakeEventStreamAsync(bool blockOnPendingRequest, CancellationToken cancellationToken = default);
 }

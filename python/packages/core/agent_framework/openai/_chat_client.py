@@ -154,10 +154,13 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
 
     def _prepare_options(self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions) -> dict[str, Any]:
         # Preprocess web search tool if it exists
-        options_dict = chat_options.to_provider_settings()
-        instructions = options_dict.pop("instructions", None)
-        if instructions:
-            messages = [ChatMessage(role="system", text=instructions), *messages]
+        options_dict = chat_options.to_dict(
+            exclude={
+                "type",
+                "instructions",  # included as system message
+            }
+        )
+
         if messages and "messages" not in options_dict:
             options_dict["messages"] = self._prepare_chat_history_for_request(messages)
         if "messages" not in options_dict:
@@ -172,14 +175,20 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
             options_dict.pop("parallel_tool_calls", None)
             options_dict.pop("tool_choice", None)
 
-        if "model" not in options_dict:
+        if "model_id" not in options_dict:
             options_dict["model"] = self.model_id
+        else:
+            options_dict["model"] = options_dict.pop("model_id")
         if (
             chat_options.response_format
             and isinstance(chat_options.response_format, type)
             and issubclass(chat_options.response_format, BaseModel)
         ):
             options_dict["response_format"] = type_to_response_format_param(chat_options.response_format)
+        if additional_properties := options_dict.pop("additional_properties", None):
+            for key, value in additional_properties.items():
+                if value is not None:
+                    options_dict[key] = value
         return options_dict
 
     def _create_chat_response(self, response: ChatCompletion, chat_options: ChatOptions) -> "ChatResponse":

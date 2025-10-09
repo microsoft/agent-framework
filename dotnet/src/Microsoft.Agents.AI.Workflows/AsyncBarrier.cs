@@ -10,7 +10,7 @@ internal sealed class AsyncBarrier()
 {
     private readonly InitLocked<TaskCompletionSource<object>> _completionSource = new();
 
-    public async ValueTask<bool> JoinAsync(CancellationToken cancellation = default)
+    public async ValueTask<bool> JoinAsync(CancellationToken cancellationToken = default)
     {
         this._completionSource.Init(() => new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously));
         TaskCompletionSource<object> completionSource = this._completionSource.Get()!;
@@ -19,10 +19,10 @@ internal sealed class AsyncBarrier()
         // should not cancel the entire barrier.
         TaskCompletionSource<object> cancellationSource = new();
 
-        using CancellationTokenRegistration registration = cancellation.Register(() => cancellationSource.SetResult(new()));
+        using CancellationTokenRegistration registration = cancellationToken.Register(() => cancellationSource.SetResult(new()));
 
         await Task.WhenAny(completionSource.Task, cancellationSource.Task).ConfigureAwait(false);
-        return !cancellation.IsCancellationRequested;
+        return !cancellationToken.IsCancellationRequested;
     }
 
     public bool ReleaseBarrier()

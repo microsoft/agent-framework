@@ -163,7 +163,7 @@ class SerializationMixin:
         combined_exclude.update(self.INJECTABLE)
 
         # Get all instance attributes
-        result: dict[str, Any] = {"type": self._get_type_identifier()}
+        result: dict[str, Any] = {} if "type" in combined_exclude else {"type": self._get_type_identifier()}
         for key, value in self.__dict__.items():
             if key not in combined_exclude and not key.startswith("_"):
                 if exclude_none and value is None:
@@ -212,17 +212,18 @@ class SerializationMixin:
 
         return result
 
-    def to_json(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> str:
+    def to_json(self, *, exclude: set[str] | None = None, exclude_none: bool = True, **kwargs: Any) -> str:
         """Convert the instance to a JSON string.
 
         Keyword Args:
             exclude: The set of field names to exclude from serialization.
             exclude_none: Whether to exclude None values from the output. Defaults to True.
+            **kwargs: passed through to the json.dumps method.
 
         Returns:
             JSON string representation of the instance.
         """
-        return json.dumps(self.to_dict(exclude=exclude, exclude_none=exclude_none))
+        return json.dumps(self.to_dict(exclude=exclude, exclude_none=exclude_none), **kwargs)
 
     @classmethod
     def from_dict(
