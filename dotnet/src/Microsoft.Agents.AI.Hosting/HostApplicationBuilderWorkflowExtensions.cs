@@ -25,6 +25,8 @@ public static class HostApplicationBuilderWorkflowExtensions
     /// <returns></returns>
     public static IHostWorkflowBuilder AddConcurrentWorkflow(this IHostApplicationBuilder builder, string name, IEnumerable<IHostAgentBuilder> agentBuilders)
     {
+        Throw.IfNullOrEmpty(agentBuilders);
+
         return builder.AddWorkflow(name, (sp, key) =>
         {
             var agents = agentBuilders.Select(ab => sp.GetRequiredKeyedService<AIAgent>(ab.Name));
@@ -41,6 +43,8 @@ public static class HostApplicationBuilderWorkflowExtensions
     /// <returns></returns>
     public static IHostWorkflowBuilder AddSequentialWorkflow(this IHostApplicationBuilder builder, string name, IEnumerable<IHostAgentBuilder> agentBuilders)
     {
+        Throw.IfNullOrEmpty(agentBuilders);
+
         return builder.AddWorkflow(name, (sp, key) =>
         {
             var agents = agentBuilders.Select(ab => sp.GetRequiredKeyedService<AIAgent>(ab.Name));
