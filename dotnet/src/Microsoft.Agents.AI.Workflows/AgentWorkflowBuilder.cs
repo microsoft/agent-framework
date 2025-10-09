@@ -519,9 +519,11 @@ public static partial class AgentWorkflowBuilder
                             },
                         };
 
+                        int index = 0;
                         foreach (HandoffTarget handoff in handoffs)
                         {
-                            var handoffFunc = AIFunctionFactory.CreateDeclaration($"{FunctionPrefix}{GetDescriptiveIdFromAgent(handoff.Target)}", handoff.Reason, s_handoffSchema);
+                            index++;
+                            var handoffFunc = AIFunctionFactory.CreateDeclaration($"{FunctionPrefix}{index}", handoff.Reason, s_handoffSchema);
 
                             this._handoffFunctionNames.Add(handoffFunc.Name);
 
