@@ -830,7 +830,11 @@ class AzureAIAgentClient(BaseChatClient):
             run_options["additional_messages"] = additional_messages
 
         # Add instruction from existing agent at the beginning
-        if agent_definition is not None and agent_definition.instructions:
+        if (
+            agent_definition is not None
+            and agent_definition.instructions
+            and agent_definition.instructions not in instructions
+        ):
             instructions.insert(0, agent_definition.instructions)
 
         if len(instructions) > 0:

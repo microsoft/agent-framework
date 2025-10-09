@@ -309,6 +309,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                 "logit_bias",  # not supported
                 "seed",  # not supported
                 "stop",  # not supported
+                "instructions",  # already added as system message
             }
         )
         translations = {

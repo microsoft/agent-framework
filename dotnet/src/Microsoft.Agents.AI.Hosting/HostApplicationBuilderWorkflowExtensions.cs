@@ -88,7 +88,7 @@ public static class HostApplicationBuilderWorkflowExtensions
             return workflow;
         });
 
-        // Register the agent by name for discovery.
+        // Register the workflow by name for discovery.
         var workflowRegistry = GetWorkflowRegistry(builder);
         workflowRegistry.WorkflowNames.Add(name);
 

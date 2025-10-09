@@ -554,6 +554,19 @@ async def test_azure_ai_chat_client_create_run_options_with_messages(mock_ai_pro
     assert len(run_options["additional_messages"]) == 1  # Only user message
 
 
+async def test_azure_ai_chat_client_instructions_sent_once(mock_ai_project_client: MagicMock) -> None:
+    """Ensure instructions are only sent once for AzureAIAgentClient."""
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client)
+
+    instructions = "You are a helpful assistant."
+    chat_options = ChatOptions(instructions=instructions)
+    messages = chat_client.prepare_messages([ChatMessage(role=Role.USER, text="Hello")], chat_options)
+
+    run_options, _ = await chat_client._create_run_options(messages, chat_options)  # type: ignore
+
+    assert run_options.get("instructions") == instructions
+
+
 async def test_azure_ai_chat_client_inner_get_response(mock_ai_project_client: MagicMock) -> None:
     """Test _inner_get_response method."""
     chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, agent_id="test-agent")
