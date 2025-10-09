@@ -31,18 +31,17 @@ public static partial class AgentWorkflowBuilder
     }
 
     /// <summary>
-    /// todo
+    /// Prepares a <see cref="WorkflowBuilder"/> that chains the provided agents in sequence, where the output of each agent is passed as input to the next.
     /// </summary>
-    /// <param name="agents"></param>
-    /// <param name="builder"></param>
-    /// <returns></returns>
+    /// <param name="agents">The sequence of agents to be composed into a sequential workflow.</param>
+    /// <param name="builder">An optional existing <see cref="WorkflowBuilder"/> to add the agents to; if null, a new builder is created.</param>
+    /// <returns>A <see cref="WorkflowBuilder"/> with the agents connected in sequence and an output executor added at the end.</returns>
     public static WorkflowBuilder PrepareSequential(IEnumerable<AIAgent> agents, WorkflowBuilder? builder = null)
     {
         Throw.IfNull(agents);
 
         // Create a builder that chains the agents together in sequence. The workflow simply begins
         // with the first agent in the sequence.
-        builder ??= null;
         ExecutorIsh? previous = null;
         foreach (var agent in agents)
         {
