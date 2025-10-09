@@ -147,7 +147,7 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
 
                         # Replace messages attribute if possible; otherwise overwrite result
                         try:
-                            result_obj.messages = [  # type: ignore[attr-defined]
+                            result_obj.messages = [  # type: ignore[union-attr]
                                 ChatMessage(role="system", text="Response blocked by policy")
                             ]
                         except Exception:

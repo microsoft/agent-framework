@@ -5,7 +5,8 @@ from __future__ import annotations
 from enum import Enum
 
 from agent_framework._pydantic import AFBaseSettings
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
+from pydantic_settings import SettingsConfigDict
 
 
 class PurviewLocationType(str, Enum):
@@ -53,7 +54,7 @@ class PurviewSettings(AFBaseSettings):
         default=False, alias="processInline", description="Process content inline if supported."
     )
 
-    model_config = ConfigDict(populate_by_name=True, validate_assignment=True)
+    model_config = SettingsConfigDict(populate_by_name=True, validate_assignment=True)
 
     def get_scopes(self) -> list[str]:
         from urllib.parse import urlparse
