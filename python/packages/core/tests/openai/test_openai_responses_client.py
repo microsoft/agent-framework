@@ -1862,7 +1862,7 @@ def test_streaming_reasoning_summary_text_done_event() -> None:
         text="complete summary",
     )
 
-    with patch.object(client, "_get_metadata_from_response", return_value={"custom": "meta"}) as mock_metadata:
+    with patch.object(client, "_get_metadata_from_response", return_value={"custom": "meta"}):
         response = client._create_streaming_response_content(event, chat_options, function_call_ids)  # type: ignore
 
         # Event should be ignored - no content added
