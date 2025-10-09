@@ -30,7 +30,7 @@ Add Purview when you need to:
 import asyncio
 from agent_framework import ChatAgent, ChatMessage, Role
 from agent_framework.azure import AzureOpenAIChatClient
-from agent_framework_purview import PurviewPolicyMiddleware, PurviewSettings
+from agent_framework.microsoft import PurviewPolicyMiddleware, PurviewSettings
 from azure.identity import InteractiveBrowserCredential
 
 async def main():
@@ -88,15 +88,15 @@ PurviewSettings(
 To scope evaluation by location (application, URL, or domain):
 
 ```python
-from agent_framework_purview import (
+from agent_framework.microsoft import (
 	PurviewAppLocation,
 	PurviewLocationType,
 	PurviewSettings,
 )
 
 settings = PurviewSettings(
-	app_name="Contoso Support",
-	purview_app_location=PurviewAppLocation(
+	appName="Contoso Support",
+	purviewAppLocation=PurviewAppLocation(
 		location_type=PurviewLocationType.APPLICATION,
 		location_value="<app-client-id>"
 	)
@@ -108,26 +108,38 @@ settings = PurviewSettings(
 Use the agent middleware when you already have / want the full agent pipeline:
 
 ```python
-from agent_framework_purview import PurviewPolicyMiddleware, PurviewSettings
+from agent_framework import ChatAgent
+from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.microsoft import PurviewPolicyMiddleware, PurviewSettings
+from azure.identity import DefaultAzureCredential
+
+credential = DefaultAzureCredential()
+client = AzureOpenAIChatClient()
 
 agent = ChatAgent(
 	chat_client=client,
 	instructions="You are helpful.",
-	middleware=[PurviewPolicyMiddleware(credential, PurviewSettings(app_name="My App"))]
+	middleware=[PurviewPolicyMiddleware(credential, PurviewSettings(appName="My App"))]
 )
 ```
 
 Use the chat middleware when you attach directly to a chat client (e.g. minimal agent shell or custom orchestration):
 
 ```python
-from agent_framework_purview import PurviewChatPolicyMiddleware, PurviewSettings
+import os
+from agent_framework import ChatAgent
+from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.microsoft import PurviewChatPolicyMiddleware, PurviewSettings
+from azure.identity import DefaultAzureCredential
+
+credential = DefaultAzureCredential()
 
 chat_client = AzureOpenAIChatClient(
 	deployment_name=os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"],
 	endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
 	credential=credential,
 	middleware=[
-		PurviewChatPolicyMiddleware(credential, PurviewSettings(app_name="My App (Chat)"))
+		PurviewChatPolicyMiddleware(credential, PurviewSettings(appName="My App (Chat)"))
 	],
 )
 
@@ -163,7 +175,7 @@ You can customize your blocking messages by wrapping the middleware or post-proc
 Catch broadly if you want unified fallback:
 
 ```python
-from agent_framework_purview import (
+from agent_framework.microsoft import (
 	PurviewAuthenticationError, PurviewRateLimitError,
 	PurviewRequestError, PurviewServiceError
 )
