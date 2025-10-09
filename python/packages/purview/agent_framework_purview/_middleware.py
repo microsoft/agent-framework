@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 
-from agent_framework import AgentMiddleware, AgentRunContext, ChatMiddleware, ChatContext
+from agent_framework import AgentMiddleware, AgentRunContext, ChatContext, ChatMiddleware
 from agent_framework._logging import get_logger
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
@@ -14,6 +14,7 @@ from ._processor import ScopedContentProcessor
 from ._settings import PurviewSettings
 
 logger = get_logger("agent_framework.purview")
+
 
 class PurviewPolicyMiddleware(AgentMiddleware):
     """Agent middleware that enforces Purview policies on prompt and response.
@@ -53,7 +54,9 @@ class PurviewPolicyMiddleware(AgentMiddleware):
             if should_block_prompt:
                 from agent_framework import AgentRunResponse, ChatMessage, Role
 
-                context.result = AgentRunResponse(messages=[ChatMessage(role=Role.SYSTEM, text="Prompt blocked by policy")])
+                context.result = AgentRunResponse(
+                    messages=[ChatMessage(role=Role.SYSTEM, text="Prompt blocked by policy")]
+                )
                 context.terminate = True
                 return
         except Exception as ex:
@@ -128,7 +131,6 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
         await next(context)
 
         try:
-            
             # Post (response) evaluation only if non-streaming and we have messages result shape
             # Use the same user_id from the request for the response evaluation
             if context.result and not context.is_streaming:

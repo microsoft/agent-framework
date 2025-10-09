@@ -144,7 +144,9 @@ class TestPurviewClient:
                 "fake-token",
             )
 
-    async def test_process_content_success(self, client: PurviewClient, content_to_process_factory, mock_credential: MagicMock) -> None:
+    async def test_process_content_success(
+        self, client: PurviewClient, content_to_process_factory, mock_credential: MagicMock
+    ) -> None:
         """Test process_content method success path."""
         content = content_to_process_factory("Test message")
         request = ProcessContentRequest(
@@ -187,3 +189,40 @@ class TestPurviewClient:
         with patch.object(client._client, "aclose", new_callable=AsyncMock) as mock_close:
             await client.close()
             mock_close.assert_called_once()
+
+    async def test_invalid_jwt_token_format(self, client: PurviewClient) -> None:
+        """Test that invalid JWT token format raises ValueError."""
+        with pytest.raises(ValueError, match="Invalid JWT token format"):
+            client._extract_token_info("invalid-token-without-dots")
+
+    async def test_rate_limit_error(self, client: PurviewClient) -> None:
+        """Test that 429 status code raises PurviewRateLimitError."""
+        request = ProcessContentRequest(
+            user_id="test-user",
+            tenant_id="test-tenant",
+            content_to_process=[],
+            correlation_id="test-correlation-id",
+        )
+
+        with patch.object(client, "_get_token", return_value="fake-token"):
+            with patch.object(
+                client._client, "post", return_value=httpx.Response(429, text="Rate limited", request=httpx.Request("POST", "http://test"))
+            ):
+                with pytest.raises(PurviewRateLimitError, match="Rate limited"):
+                    await client.process_content(request)
+
+    async def test_generic_request_error(self, client: PurviewClient) -> None:
+        """Test that non-200/201/202 status codes raise PurviewRequestError."""
+        request = ProcessContentRequest(
+            user_id="test-user",
+            tenant_id="test-tenant",
+            content_to_process=[],
+            correlation_id="test-correlation-id",
+        )
+
+        with patch.object(client, "_get_token", return_value="fake-token"):
+            with patch.object(
+                client._client, "post", return_value=httpx.Response(500, text="Internal server error", request=httpx.Request("POST", "http://test"))
+            ):
+                with pytest.raises(PurviewRequestError, match="Purview request failed"):
+                    await client.process_content(request)

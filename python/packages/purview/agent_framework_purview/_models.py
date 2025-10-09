@@ -1,20 +1,23 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""
-Unified Purview model definitions and public export surface.
-"""
+"""Unified Purview model definitions and public export surface."""
 
 from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum, Flag, auto
 from typing import Any, ClassVar, Mapping, MutableMapping, Sequence, TypeVar
+from uuid import uuid4
 
+from agent_framework._logging import get_logger
 from agent_framework._serialization import SerializationMixin
+
+logger = get_logger("agent_framework.purview")
 
 # --------------------------------------------------------------------------------------
 # Enums & flag helpers
 # --------------------------------------------------------------------------------------
+
 
 class Activity(str, Enum):
     """High-level activity types representing user or agent operations."""
@@ -69,7 +72,7 @@ def deserialize_flag(
     if isinstance(value, int):
         try:
             return enum_cls(value)
-        except Exception:  # noqa: S110
+        except Exception:
             return None
 
     flag_value = enum_cls(0)
@@ -89,8 +92,8 @@ def deserialize_flag(
             elif isinstance(item, int):
                 try:
                     flag_value |= enum_cls(item)
-                except Exception:  # noqa: S110
-                    pass
+                except Exception:
+                    logger.warning(f"Failed to convert int {item} to {enum_cls.__name__}")
     else:
         return None
 
@@ -175,6 +178,7 @@ def translate_activity(activity: Activity) -> ProtectionScopeActivities:
 # Simple value models
 # --------------------------------------------------------------------------------------
 
+
 class _AliasSerializable(SerializationMixin):
     """Base class adding alias mapping + pydantic-compat helpers.
 
@@ -187,21 +191,21 @@ class _AliasSerializable(SerializationMixin):
 
     _ALIASES: ClassVar[dict[str, str]] = {}
 
-    def __init__(self, **kwargs: Any) -> None:  # noqa: D401 - simple arg normalization
+    def __init__(self, **kwargs: Any) -> None:
         # Normalize alias keys -> internal names across the entire class hierarchy
         # Collect all aliases from parent classes too
         all_aliases: dict[str, str] = {}
         for cls in type(self).__mro__:
-            if hasattr(cls, '_ALIASES') and isinstance(cls._ALIASES, dict):
+            if hasattr(cls, "_ALIASES") and isinstance(cls._ALIASES, dict):
                 for internal, external in cls._ALIASES.items():
                     if external not in all_aliases:
                         all_aliases[external] = internal
-        
+
         # Normalize all aliased keys in kwargs
         for external, internal in all_aliases.items():
             if external in kwargs and internal not in kwargs:
                 kwargs[internal] = kwargs.pop(external)
-        
+
         # Set normalized kwargs as attributes
         # This will overwrite any None values that child __init__ may have set from default params
         for k, v in kwargs.items():
@@ -224,6 +228,7 @@ class _AliasSerializable(SerializationMixin):
 
     def model_dump_json(self, *, by_alias: bool = True, exclude_none: bool = True, **kwargs: Any) -> str:
         import json
+
         return json.dumps(self.model_dump(by_alias=by_alias, exclude_none=exclude_none, **kwargs))
 
     @classmethod
@@ -237,23 +242,23 @@ class _AliasSerializable(SerializationMixin):
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:  # type: ignore[override]
         # Call parent to get base serialization (SerializationMixin already respects DEFAULT_EXCLUDE)
         base = SerializationMixin.to_dict(self, exclude=exclude, exclude_none=exclude_none)
-        
+
         # For Graph API models, remove the auto-generated 'type' field if it's in DEFAULT_EXCLUDE
         if "type" in self.DEFAULT_EXCLUDE:
             base.pop("type", None)
-        
+
         # Collect all aliases from class hierarchy
         all_aliases: dict[str, str] = {}
         for cls in type(self).__mro__:
-            if hasattr(cls, '_ALIASES') and isinstance(cls._ALIASES, dict):
+            if hasattr(cls, "_ALIASES") and isinstance(cls._ALIASES, dict):
                 # Parent aliases first (will be overridden by child if same key)
                 for internal, external in cls._ALIASES.items():
                     if internal not in all_aliases:
                         all_aliases[internal] = external
-        
+
         if not all_aliases:
             return base
-            
+
         # Translate internal -> external keys (except 'type' reserved)
         translated: dict[str, Any] = {}
         for k, v in base.items():
@@ -266,14 +271,14 @@ class _AliasSerializable(SerializationMixin):
 
 
 class PolicyLocation(_AliasSerializable):
-    _ALIASES = {"data_type": "@odata.type"}
+    _ALIASES: ClassVar[dict[str, str]] = {"data_type": "@odata.type"}
     DEFAULT_EXCLUDE: ClassVar[set[str]] = {"type"}  # Exclude auto-generated type field for Graph API
 
     def __init__(self, data_type: str | None = None, value: str | None = None, **kwargs: Any) -> None:
         # Extract aliased values from kwargs
         if "@odata.type" in kwargs:
             data_type = kwargs["@odata.type"]
-        
+
         # Call parent without explicit params with aliases
         super().__init__(**kwargs)
         self.data_type = data_type
@@ -281,7 +286,7 @@ class PolicyLocation(_AliasSerializable):
 
 
 class ActivityMetadata(_AliasSerializable):
-    _ALIASES = {"activity": "activity"}
+    _ALIASES: ClassVar[dict[str, str]] = {"activity": "activity"}
 
     def __init__(self, activity: Activity, **kwargs: Any) -> None:
         super().__init__(activity=activity, **kwargs)
@@ -289,7 +294,7 @@ class ActivityMetadata(_AliasSerializable):
 
 
 class OperatingSystemSpecifications(_AliasSerializable):
-    _ALIASES = {
+    _ALIASES: ClassVar[dict[str, str]] = {
         "operating_system_platform": "operatingSystemPlatform",
         "operating_system_version": "operatingSystemVersion",
     }
@@ -305,7 +310,7 @@ class OperatingSystemSpecifications(_AliasSerializable):
             operating_system_platform = kwargs["operatingSystemPlatform"]
         if "operatingSystemVersion" in kwargs:
             operating_system_version = kwargs["operatingSystemVersion"]
-        
+
         # Call parent without explicit params with aliases
         super().__init__(**kwargs)
         self.operating_system_platform = operating_system_platform
@@ -313,7 +318,7 @@ class OperatingSystemSpecifications(_AliasSerializable):
 
 
 class DeviceMetadata(_AliasSerializable):
-    _ALIASES = {
+    _ALIASES: ClassVar[dict[str, str]] = {
         "ip_address": "ipAddress",
         "operating_system_specifications": "operatingSystemSpecifications",
     }
@@ -329,11 +334,11 @@ class DeviceMetadata(_AliasSerializable):
             ip_address = kwargs["ipAddress"]
         if "operatingSystemSpecifications" in kwargs:
             operating_system_specifications = kwargs["operatingSystemSpecifications"]
-        
+
         # Convert nested objects
         if isinstance(operating_system_specifications, MutableMapping):
             operating_system_specifications = OperatingSystemSpecifications(**operating_system_specifications)
-        
+
         # Call parent without explicit params with aliases
         super().__init__(**kwargs)
         self.ip_address = ip_address
@@ -348,7 +353,7 @@ class IntegratedAppMetadata(_AliasSerializable):
 
 
 class ProtectedAppMetadata(_AliasSerializable):
-    _ALIASES = {"application_location": "applicationLocation"}
+    _ALIASES: ClassVar[dict[str, str]] = {"application_location": "applicationLocation"}
 
     def __init__(
         self,
@@ -360,11 +365,11 @@ class ProtectedAppMetadata(_AliasSerializable):
         # Extract aliased values from kwargs
         if "applicationLocation" in kwargs:
             application_location = kwargs["applicationLocation"]
-        
+
         # Convert nested objects
         if isinstance(application_location, MutableMapping):
             application_location = PolicyLocation(**application_location)
-        
+
         # Call parent without explicit params with aliases
         super().__init__(**kwargs)
         self.name = name
@@ -373,7 +378,7 @@ class ProtectedAppMetadata(_AliasSerializable):
 
 
 class DlpActionInfo(_AliasSerializable):
-    _ALIASES = {"restriction_action": "restrictionAction"}
+    _ALIASES: ClassVar[dict[str, str]] = {"restriction_action": "restrictionAction"}
 
     def __init__(
         self,
@@ -384,7 +389,7 @@ class DlpActionInfo(_AliasSerializable):
         # Extract aliased values from kwargs
         if "restrictionAction" in kwargs:
             restriction_action = kwargs["restrictionAction"]
-        
+
         # Call parent without explicit params with aliases
         super().__init__(**kwargs)
         self.action = action
@@ -392,7 +397,7 @@ class DlpActionInfo(_AliasSerializable):
 
 
 class AccessedResourceDetails(_AliasSerializable):
-    _ALIASES = {
+    _ALIASES: ClassVar[dict[str, str]] = {
         "label_id": "labelId",
         "access_type": "accessType",
         "is_cross_prompt_injection_detected": "isCrossPromptInjectionDetected",
@@ -416,7 +421,7 @@ class AccessedResourceDetails(_AliasSerializable):
             access_type = kwargs["accessType"]
         if "isCrossPromptInjectionDetected" in kwargs:
             is_cross_prompt_injection_detected = kwargs["isCrossPromptInjectionDetected"]
-        
+
         # Call parent without explicit params with aliases
         super().__init__(**kwargs)
         self.identifier = identifier
@@ -460,8 +465,9 @@ class AiAgentInfo(_AliasSerializable):
 # Content models
 # --------------------------------------------------------------------------------------
 
+
 class GraphDataTypeBase(_AliasSerializable):
-    _ALIASES = {"data_type": "@odata.type"}
+    _ALIASES: ClassVar[dict[str, str]] = {"data_type": "@odata.type"}
     # Exclude the auto-generated 'type' field - Graph API uses @odata.type instead
     DEFAULT_EXCLUDE: ClassVar[set[str]] = {"type"}
 
@@ -487,6 +493,7 @@ class PurviewBinaryContent(ContentBase):
 
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:  # type: ignore[override]
         import base64
+
         base = super().to_dict(exclude=exclude, exclude_none=exclude_none)
         # Ensure bytes encoded as base64 string like pydantic would produce
         data_bytes = getattr(self, "data", b"") or b""
@@ -495,7 +502,7 @@ class PurviewBinaryContent(ContentBase):
 
 
 class ProcessConversationMetadata(GraphDataTypeBase):
-    _ALIASES = {
+    _ALIASES: ClassVar[dict[str, str]] = {
         "correlation_id": "correlationId",
         "sequence_number": "sequenceNumber",
         "is_truncated": "isTruncated",
@@ -538,7 +545,7 @@ class ProcessConversationMetadata(GraphDataTypeBase):
             parent_message_id = kwargs["parentMessageId"]
         if "accessedResources_v2" in kwargs:
             accessed_resources = kwargs["accessedResources_v2"]
-        
+
         # Convert nested objects
         if isinstance(content, MutableMapping):
             # determine by type? fall back to text content
@@ -578,7 +585,7 @@ class ProcessConversationMetadata(GraphDataTypeBase):
 
 
 class ContentToProcess(_AliasSerializable):
-    _ALIASES = {
+    _ALIASES: ClassVar[dict[str, str]] = {
         "content_entries": "contentEntries",
         "activity_metadata": "activityMetadata",
         "device_metadata": "deviceMetadata",
@@ -606,10 +613,11 @@ class ContentToProcess(_AliasSerializable):
             integrated_app_metadata = kwargs["integratedAppMetadata"]
         if "protectedAppMetadata" in kwargs:
             protected_app_metadata = kwargs["protectedAppMetadata"]
-        
+
         # Convert nested objects
         entries = [
-            e if isinstance(e, ProcessConversationMetadata) else ProcessConversationMetadata(**e) for e in content_entries
+            e if isinstance(e, ProcessConversationMetadata) else ProcessConversationMetadata(**e)
+            for e in content_entries
         ]
         if isinstance(activity_metadata, MutableMapping):
             activity_metadata = ActivityMetadata(**activity_metadata)
@@ -619,7 +627,7 @@ class ContentToProcess(_AliasSerializable):
             integrated_app_metadata = IntegratedAppMetadata(**integrated_app_metadata)
         if isinstance(protected_app_metadata, MutableMapping):
             protected_app_metadata = ProtectedAppMetadata(**protected_app_metadata)
-        
+
         # Call parent without explicit params with aliases
         super().__init__(**kwargs)
         self.content_entries = entries
@@ -632,12 +640,11 @@ class ContentToProcess(_AliasSerializable):
 # --------------------------------------------------------------------------------------
 # Request models
 # --------------------------------------------------------------------------------------
-from uuid import uuid4  # placed here to avoid earlier shadowing
 
 
 class ProcessContentRequest(_AliasSerializable):
-    _ALIASES = {"content_to_process": "contentToProcess"}
-    DEFAULT_EXCLUDE = {"user_id", "tenant_id", "correlation_id", "process_inline"}
+    _ALIASES: ClassVar[dict[str, str]] = {"content_to_process": "contentToProcess"}
+    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"user_id", "tenant_id", "correlation_id", "process_inline"}
 
     def __init__(
         self,
@@ -651,11 +658,11 @@ class ProcessContentRequest(_AliasSerializable):
         # Extract aliased values from kwargs
         if "contentToProcess" in kwargs:
             content_to_process = kwargs["contentToProcess"]
-        
+
         # Convert nested objects
         if isinstance(content_to_process, MutableMapping):
             content_to_process = ContentToProcess(**content_to_process)
-        
+
         # Call parent without explicit params with aliases
         super().__init__(**kwargs)
         self.content_to_process = content_to_process  # type: ignore[assignment]
@@ -666,8 +673,8 @@ class ProcessContentRequest(_AliasSerializable):
 
 
 class ProtectionScopesRequest(_AliasSerializable):
-    DEFAULT_EXCLUDE = {"user_id", "tenant_id", "correlation_id", "scope_identifier"}
-    _ALIASES = {
+    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"user_id", "tenant_id", "correlation_id", "scope_identifier"}
+    _ALIASES: ClassVar[dict[str, str]] = {
         "pivot_on": "pivotOn",
         "device_metadata": "deviceMetadata",
         "integrated_app_metadata": "integratedAppMetadata",
@@ -693,19 +700,19 @@ class ProtectionScopesRequest(_AliasSerializable):
             device_metadata = kwargs["deviceMetadata"]
         if "integratedAppMetadata" in kwargs:
             integrated_app_metadata = kwargs["integratedAppMetadata"]
-        
+
         # Deserialize activities flag
         if not isinstance(activities, ProtectionScopeActivities) and activities is not None:
             activities = deserialize_flag(activities, _PROTECTION_SCOPE_ACTIVITIES_MAP, ProtectionScopeActivities)
-        
+
         # Convert nested objects
         if locations:
-            locations = [l if isinstance(l, PolicyLocation) else PolicyLocation(**l) for l in locations]
+            locations = [loc if isinstance(loc, PolicyLocation) else PolicyLocation(**loc) for loc in locations]
         if isinstance(device_metadata, MutableMapping):
             device_metadata = DeviceMetadata(**device_metadata)
         if isinstance(integrated_app_metadata, MutableMapping):
             integrated_app_metadata = IntegratedAppMetadata(**integrated_app_metadata)
-        
+
         # Call parent without explicit params with aliases
         super().__init__(**kwargs)
         self.user_id = user_id
@@ -721,26 +728,24 @@ class ProtectionScopesRequest(_AliasSerializable):
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:  # type: ignore[override]
         # Get base dict (activities will be missing because Flag isn't JSON-serializable)
         base = super().to_dict(exclude=exclude, exclude_none=exclude_none)
-        
+
         # Manually serialize activities flag if present and not excluded
         if self.activities is not None or not exclude_none:
             if self.activities is not None:
-                base["activities"] = serialize_flag(
-                    self.activities, _PROTECTION_SCOPE_ACTIVITIES_SERIALIZE_ORDER
-                )
+                base["activities"] = serialize_flag(self.activities, _PROTECTION_SCOPE_ACTIVITIES_SERIALIZE_ORDER)
             elif not exclude_none:
                 base["activities"] = None
-                
+
         return base
 
 
 class ContentActivitiesRequest(_AliasSerializable):
-    _ALIASES = {
+    _ALIASES: ClassVar[dict[str, str]] = {
         "user_id": "userId",
         "scope_identifier": "scopeIdentifier",
         "content_to_process": "contentMetadata",
     }
-    DEFAULT_EXCLUDE = {"tenant_id", "correlation_id"}
+    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"tenant_id", "correlation_id"}
 
     def __init__(
         self,
@@ -759,11 +764,11 @@ class ContentActivitiesRequest(_AliasSerializable):
             scope_identifier = kwargs["scopeIdentifier"]
         if "contentMetadata" in kwargs:
             content_to_process = kwargs["contentMetadata"]
-        
+
         # Convert nested objects
         if isinstance(content_to_process, MutableMapping):
             content_to_process = ContentToProcess(**content_to_process)
-        
+
         # Call parent without explicit params with aliases
         super().__init__(**kwargs)
         self.id = id or str(uuid4())
@@ -777,6 +782,7 @@ class ContentActivitiesRequest(_AliasSerializable):
 # --------------------------------------------------------------------------------------
 # Response models
 # --------------------------------------------------------------------------------------
+
 
 class ErrorDetails(_AliasSerializable):
     def __init__(self, code: str | None = None, message: str | None = None, **kwargs: Any) -> None:
@@ -792,7 +798,7 @@ class ProcessingError(_AliasSerializable):
 
 
 class ProcessContentResponse(_AliasSerializable):
-    _ALIASES = {
+    _ALIASES: ClassVar[dict[str, str]] = {
         "protection_scope_state": "protectionScopeState",
         "policy_actions": "policyActions",
         "processing_errors": "processingErrors",
@@ -813,7 +819,7 @@ class ProcessContentResponse(_AliasSerializable):
             policy_actions = kwargs["policyActions"]
         if "processingErrors" in kwargs:
             processing_errors = kwargs["processingErrors"]
-        
+
         # Convert to objects
         if policy_actions:
             policy_actions = [p if isinstance(p, DlpActionInfo) else DlpActionInfo(**p) for p in policy_actions]
@@ -821,7 +827,7 @@ class ProcessContentResponse(_AliasSerializable):
             processing_errors = [
                 pe if isinstance(pe, ProcessingError) else ProcessingError(**pe) for pe in processing_errors
             ]
-        
+
         # Call parent without explicit params with aliases
         super().__init__(**kwargs)
         self.id = id
@@ -831,7 +837,7 @@ class ProcessContentResponse(_AliasSerializable):
 
 
 class PolicyScope(_AliasSerializable):
-    _ALIASES = {"policy_actions": "policyActions", "execution_mode": "executionMode"}
+    _ALIASES: ClassVar[dict[str, str]] = {"policy_actions": "policyActions", "execution_mode": "executionMode"}
 
     def __init__(
         self,
@@ -846,17 +852,17 @@ class PolicyScope(_AliasSerializable):
             policy_actions = kwargs["policyActions"]
         if "executionMode" in kwargs:
             execution_mode = kwargs["executionMode"]
-        
+
         # Deserialize activities flag
         if not isinstance(activities, ProtectionScopeActivities) and activities is not None:
             activities = deserialize_flag(activities, _PROTECTION_SCOPE_ACTIVITIES_MAP, ProtectionScopeActivities)
-        
+
         # Convert nested objects
         if locations:
-            locations = [l if isinstance(l, PolicyLocation) else PolicyLocation(**l) for l in locations]
+            locations = [loc if isinstance(loc, PolicyLocation) else PolicyLocation(**loc) for loc in locations]
         if policy_actions:
             policy_actions = [p if isinstance(p, DlpActionInfo) else DlpActionInfo(**p) for p in policy_actions]
-        
+
         # Call parent without explicit params with aliases
         super().__init__(**kwargs)
         self.activities = activities  # type: ignore[assignment]
@@ -867,21 +873,20 @@ class PolicyScope(_AliasSerializable):
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:  # type: ignore[override]
         # Get base dict (activities will be missing because Flag isn't JSON-serializable)
         base = super().to_dict(exclude=exclude, exclude_none=exclude_none)
-        
+
         # Manually serialize activities flag if present and not excluded
         if self.activities is not None or not exclude_none:
             if self.activities is not None:
-                base["activities"] = serialize_flag(
-                    self.activities, _PROTECTION_SCOPE_ACTIVITIES_SERIALIZE_ORDER
-                )
+                base["activities"] = serialize_flag(self.activities, _PROTECTION_SCOPE_ACTIVITIES_SERIALIZE_ORDER)
             elif not exclude_none:
                 base["activities"] = None
-                
+
         return base
+
 
 # Fix Serialization
 class ProtectionScopesResponse(_AliasSerializable):
-    _ALIASES = {"scope_identifier": "scopeIdentifier", "scopes": "value"}
+    _ALIASES: ClassVar[dict[str, str]] = {"scope_identifier": "scopeIdentifier", "scopes": "value"}
 
     def __init__(
         self,
@@ -894,10 +899,10 @@ class ProtectionScopesResponse(_AliasSerializable):
             scope_identifier = kwargs["scopeIdentifier"]
         if "value" in kwargs:
             scopes = kwargs["value"]
-            
+
         if scopes:
             scopes = [s if isinstance(s, PolicyScope) else PolicyScope(**s) for s in scopes]
-        
+
         # Don't pass parameters that have aliases - let parent normalize them
         super().__init__(**kwargs)
         self.scope_identifier = scope_identifier
@@ -905,14 +910,20 @@ class ProtectionScopesResponse(_AliasSerializable):
 
 
 class ContentActivitiesResponse(_AliasSerializable):
-    DEFAULT_EXCLUDE = {"status_code"}
+    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"status_code"}
 
-    def __init__(self, status_code: int | None = None, error: ErrorDetails | MutableMapping[str, Any] | None = None, **kwargs: Any) -> None:  # noqa: E501
+    def __init__(
+        self,
+        status_code: int | None = None,
+        error: ErrorDetails | MutableMapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
         if isinstance(error, MutableMapping):
             error = ErrorDetails(**error)
         super().__init__(status_code=status_code, error=error, **kwargs)
         self.status_code = status_code
         self.error = error  # type: ignore[assignment]
+
 
 __all__ = [
     "AccessedResourceDetails",
@@ -927,7 +938,6 @@ __all__ = [
     "DeviceMetadata",
     "DlpAction",
     "DlpActionInfo",
-    "deserialize_flag",
     "ExecutionMode",
     "GraphDataTypeBase",
     "IntegratedAppMetadata",
@@ -947,6 +957,7 @@ __all__ = [
     "PurviewBinaryContent",
     "PurviewTextContent",
     "RestrictionAction",
+    "deserialize_flag",
     "serialize_flag",
     "translate_activity",
 ]
