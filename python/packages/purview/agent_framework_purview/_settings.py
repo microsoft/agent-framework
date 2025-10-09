@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any
 
 from agent_framework._pydantic import AFBaseSettings
 from pydantic import BaseModel, ConfigDict, Field
@@ -42,14 +41,12 @@ class PurviewSettings(AFBaseSettings):
     Attributes:
         app_name: Public app name.
         tenant_id: Optional tenant id (guid) of the user making the request.
-        default_user_id: Optional default user id if not passed in messages.
         purview_app_location: Optional app location for policy evaluation.
         graph_base_uri: Base URI for Microsoft Graph.
     """
 
     app_name: str = Field(..., alias="appName")
     tenant_id: str | None = Field(default=None, alias="tenantId")
-    default_user_id: str | None = Field(default=None, alias="defaultUserId")
     purview_app_location: PurviewAppLocation | None = Field(default=None, alias="purviewAppLocation")
     graph_base_uri: str = Field(default="https://graph.microsoft.com/v1.0/", alias="graphBaseUri")
     process_inline: bool = Field(
