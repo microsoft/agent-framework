@@ -66,6 +66,32 @@ builder.AddAIAgent("knights-and-knaves", (sp, key) =>
 #pragma warning restore VSTHRD002
 });
 
+// Workflow consisting of multiple specialized agents
+var chemistryAgent = builder.AddAIAgent("chemist",
+    instructions: "You are a chemistry expert. Answer thinking from the chemistry perspective",
+    description: "An agent that helps with chemistry.",
+    chatClientServiceKey: "chat-model");
+
+var mathsAgent = builder.AddAIAgent("mathematician",
+    instructions: "You are a mathematics expert. Answer thinking from the maths perspective",
+    description: "An agent that helps with mathematics.",
+    chatClientServiceKey: "chat-model");
+
+var literatureAgent = builder.AddAIAgent("literator",
+    instructions: "You are a literature expert. Answer thinking from the literature perspective",
+    description: "An agent that helps with literature.",
+    chatClientServiceKey: "chat-model");
+
+builder.AddWorkflow("science-custom-workflow", (sp, key) =>
+{
+    var chemistAgent = sp.GetRequiredKeyedService<AIAgent>("chemist");
+    var mathsAgent = sp.GetRequiredKeyedService<AIAgent>("mathematician");
+    var literatureAgent = sp.GetRequiredKeyedService<AIAgent>("literator");
+
+    var chemistryMathWorkflowBuilder = AgentWorkflowBuilder.PrepareConcurrent([chemistAgent, mathsAgent]);
+    return AgentWorkflowBuilder.BuildConcurrent([literatureAgent], chemistryMathWorkflowBuilder);
+}).AsAIAgent();
+
 var app = builder.Build();
 
 app.MapOpenApi();

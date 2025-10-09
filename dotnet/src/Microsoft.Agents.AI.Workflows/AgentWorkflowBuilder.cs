@@ -70,6 +70,7 @@ public static partial class AgentWorkflowBuilder
     /// aggregating their outputs into a single collection.
     /// </summary>
     /// <param name="agents">The set of agents to compose into a concurrent workflow.</param>
+    /// <param name="workflowBuilder">If applicable, existing workflow builder to attach concurrent workflow to.</param>
     /// <param name="aggregator">
     /// The aggregation function that accepts a list of the output messages from each <paramref name="agents"/> and produces
     /// a single result list. If <see langword="null"/>, the default behavior is to return a list containing the last message
@@ -78,13 +79,37 @@ public static partial class AgentWorkflowBuilder
     /// <returns>The built workflow composed of the supplied concurrent <paramref name="agents"/>.</returns>
     public static Workflow BuildConcurrent(
         IEnumerable<AIAgent> agents,
+        WorkflowBuilder? workflowBuilder = null,
+        Func<IList<List<ChatMessage>>, List<ChatMessage>>? aggregator = null)
+    {
+        return PrepareConcurrent(agents, workflowBuilder, aggregator).Build();
+    }
+
+    /// <summary>
+    /// Initializes <see cref="WorkflowBuilder"/> composed of agents that operate concurrently on the same input,
+    /// aggregating their outputs into a single collection.
+    /// </summary>
+    /// <param name="agents">The set of agents to compose into a concurrent workflow.</param>
+    /// <param name="workflowBuilder">
+    /// An existing workflow builder to attach the <paramref name="agents"/> concurrently to it.
+    /// If <see langword="null"/>, a new workflow builder is created.
+    /// </param>
+    /// <param name="aggregator">
+    /// The aggregation function that accepts a list of the output messages from each <paramref name="agents"/> and produces
+    /// a single result list. If <see langword="null"/>, the default behavior is to return a list containing the last message
+    /// from each agent that produced at least one message.
+    /// </param>
+    /// <returns>The workflow builder composed of the supplied concurrent <paramref name="agents"/>.</returns>
+    public static WorkflowBuilder PrepareConcurrent(
+        IEnumerable<AIAgent> agents,
+        WorkflowBuilder? workflowBuilder = null,
         Func<IList<List<ChatMessage>>, List<ChatMessage>>? aggregator = null)
     {
         Throw.IfNull(agents);
 
         // A workflow needs a starting executor, so we create one that forwards everything to each agent.
         ChatForwardingExecutor start = new("Start");
-        WorkflowBuilder builder = new(start);
+        workflowBuilder ??= new(start);
 
         // For each agent, we create an executor to host it and an accumulator to batch up its output messages,
         // so that the final accumulator receives a single list of messages from each agent. Otherwise, the
@@ -92,10 +117,10 @@ public static partial class AgentWorkflowBuilder
         // provenance tracking exposed in the workflow context passed to a handler.
         ExecutorIsh[] agentExecutors = (from agent in agents select (ExecutorIsh)new AgentRunStreamingExecutor(agent, includeInputInOutput: false)).ToArray();
         ExecutorIsh[] accumulators = [.. from agent in agentExecutors select (ExecutorIsh)new BatchChatMessagesToListExecutor($"Batcher/{agent.Id}")];
-        builder.AddFanOutEdge(start, targets: agentExecutors);
+        workflowBuilder.AddFanOutEdge(start, targets: agentExecutors);
         for (int i = 0; i < agentExecutors.Length; i++)
         {
-            builder.AddEdge(agentExecutors[i], accumulators[i]);
+            workflowBuilder.AddEdge(agentExecutors[i], accumulators[i]);
         }
 
         // Create the accumulating executor that will gather the results from each agent, and connect
@@ -103,9 +128,9 @@ public static partial class AgentWorkflowBuilder
         // the last message from each agent
         aggregator ??= static lists => (from list in lists where list.Count > 0 select list.Last()).ToList();
         ConcurrentEndExecutor end = new(agentExecutors.Length, aggregator);
-        builder.AddFanInEdge(end, sources: accumulators);
+        workflowBuilder.AddFanInEdge(end, sources: accumulators);
 
-        return builder.WithOutputFrom(end).Build();
+        return workflowBuilder.WithOutputFrom(end);
     }
 
     /// <summary>Creates a new <see cref="HandoffsWorkflowBuilder"/> using <paramref name="initialAgent"/> as the starting agent in the workflow.</summary>
