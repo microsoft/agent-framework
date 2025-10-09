@@ -10,12 +10,12 @@ namespace Microsoft.Agents.AI.Hosting;
 public interface IHostAgentBuilder
 {
     /// <summary>
-    /// Agent name.
+    /// Gets the name of the agent being configured.
     /// </summary>
     string Name { get; }
 
     /// <summary>
-    /// Application host builder.
+    /// Gets the application host builder for configuring additional services.
     /// </summary>
     IHostApplicationBuilder HostApplicationBuilder { get; }
 }

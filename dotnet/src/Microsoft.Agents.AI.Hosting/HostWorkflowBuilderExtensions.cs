@@ -6,16 +6,16 @@ using Microsoft.Extensions.DependencyInjection;
 namespace Microsoft.Agents.AI.Hosting;
 
 /// <summary>
-/// todo
+/// Provides extension methods for <see cref="IHostWorkflowBuilder"/> to enable additional workflow configuration scenarios.
 /// </summary>
 public static class HostWorkflowBuilderExtensions
 {
     /// <summary>
-    /// todo
+    /// Registers the workflow as an AI agent in the dependency injection container.
     /// </summary>
-    /// <param name="builder"></param>
-    /// <param name="name"></param>
-    /// <returns></returns>
+    /// <param name="builder">The <see cref="IHostWorkflowBuilder"/> instance to extend.</param>
+    /// <param name="name">The optional name for the AI agent. If not specified, the workflow name is used.</param>
+    /// <returns>An <see cref="IHostAgentBuilder"/> that can be used to further configure the agent.</returns>
     public static IHostAgentBuilder AddAsAIAgent(this IHostWorkflowBuilder builder, string? name = null)
     {
         var agentName = name ?? builder.Name;

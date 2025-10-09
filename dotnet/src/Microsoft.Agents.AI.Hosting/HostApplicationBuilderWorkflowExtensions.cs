@@ -17,12 +17,14 @@ namespace Microsoft.Agents.AI.Hosting;
 public static class HostApplicationBuilderWorkflowExtensions
 {
     /// <summary>
-    /// todo
+    /// Registers a concurrent workflow that executes multiple agents in parallel.
     /// </summary>
-    /// <param name="builder"></param>
-    /// <param name="name"></param>
-    /// <param name="agentBuilders"></param>
-    /// <returns></returns>
+    /// <param name="builder">The <see cref="IHostApplicationBuilder"/> to configure.</param>
+    /// <param name="name">The unique name for the workflow.</param>
+    /// <param name="agentBuilders">A collection of <see cref="IHostAgentBuilder"/> instances representing agents to execute concurrently.</param>
+    /// <returns>An <see cref="IHostWorkflowBuilder"/> that can be used to further configure the workflow.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="builder"/>, <paramref name="name"/>, or <paramref name="agentBuilders"/> is null.</exception>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="name"/> or <paramref name="agentBuilders"/> is empty.</exception>
     public static IHostWorkflowBuilder AddConcurrentWorkflow(this IHostApplicationBuilder builder, string name, IEnumerable<IHostAgentBuilder> agentBuilders)
     {
         Throw.IfNullOrEmpty(agentBuilders);
@@ -35,12 +37,14 @@ public static class HostApplicationBuilderWorkflowExtensions
     }
 
     /// <summary>
-    /// todo
+    /// Registers a sequential workflow that executes agents in a specific order.
     /// </summary>
-    /// <param name="builder"></param>
-    /// <param name="name"></param>
-    /// <param name="agentBuilders"></param>
-    /// <returns></returns>
+    /// <param name="builder">The <see cref="IHostApplicationBuilder"/> to configure.</param>
+    /// <param name="name">The unique name for the workflow.</param>
+    /// <param name="agentBuilders">A collection of <see cref="IHostAgentBuilder"/> instances representing agents to execute in sequence.</param>
+    /// <returns>An <see cref="IHostWorkflowBuilder"/> that can be used to further configure the workflow.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="builder"/>, <paramref name="name"/>, or <paramref name="agentBuilders"/> is null.</exception>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="name"/> or <paramref name="agentBuilders"/> is empty.</exception>
     public static IHostWorkflowBuilder AddSequentialWorkflow(this IHostApplicationBuilder builder, string name, IEnumerable<IHostAgentBuilder> agentBuilders)
     {
         Throw.IfNullOrEmpty(agentBuilders);
@@ -53,13 +57,17 @@ public static class HostApplicationBuilderWorkflowExtensions
     }
 
     /// <summary>
-    /// todo
+    /// Registers a custom workflow using a factory delegate.
     /// </summary>
-    /// <param name="builder"></param>
-    /// <param name="name"></param>
-    /// <param name="createWorkflowDelegate"></param>
-    /// <returns></returns>
-    /// <exception cref="InvalidOperationException"></exception>
+    /// <param name="builder">The <see cref="IHostApplicationBuilder"/> to configure.</param>
+    /// <param name="name">The unique name for the workflow.</param>
+    /// <param name="createWorkflowDelegate">A factory function that creates the <see cref="Workflow"/> instance. The function receives the service provider and workflow name as parameters.</param>
+    /// <returns>An <see cref="IHostWorkflowBuilder"/> that can be used to further configure the workflow.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="builder"/>, <paramref name="name"/>, or <paramref name="createWorkflowDelegate"/> is null.</exception>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="name"/> is empty.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when the factory delegate returns null or a workflow with a name that doesn't match the expected name.
+    /// </exception>
     public static IHostWorkflowBuilder AddWorkflow(this IHostApplicationBuilder builder, string name, Func<IServiceProvider, string, Workflow> createWorkflowDelegate)
     {
         Throw.IfNull(builder);

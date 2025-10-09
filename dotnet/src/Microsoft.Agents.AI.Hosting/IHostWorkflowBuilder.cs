@@ -5,17 +5,17 @@ using Microsoft.Extensions.Hosting;
 namespace Microsoft.Agents.AI.Hosting;
 
 /// <summary>
-/// todo
+/// Represents a builder for configuring workflows within a hosting environment.
 /// </summary>
 public interface IHostWorkflowBuilder
 {
     /// <summary>
-    /// Workflow name.
+    /// Gets the name of the workflow being configured.
     /// </summary>
     string Name { get; }
 
     /// <summary>
-    /// Application host builder.
+    /// Gets the application host builder for configuring additional services.
     /// </summary>
     IHostApplicationBuilder HostApplicationBuilder { get; }
 }
