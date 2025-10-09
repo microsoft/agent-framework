@@ -99,6 +99,12 @@ internal sealed class StateManager
 
     public ValueTask<T?> ReadStateAsync<T>(ScopeId scopeId, string key)
     {
+        if (typeof(T) == typeof(object))
+        {
+            // Reading as object will break across serialize/deserialize boundaries, e.g. checkpointing, distributed runtime, etc.
+            throw new NotSupportedException("Reading state as 'object' is not supported. Use 'PortableValue' instead for variants.");
+        }
+
         Throw.IfNullOrEmpty(key);
 
         UpdateKey stateKey = new(scopeId, key);
@@ -115,6 +121,16 @@ internal sealed class StateManager
             if (result.Value is T)
             {
                 return new((T?)result.Value);
+            }
+            else if (result.Value == null)
+            {
+                // Technically should only happen if T is nullable, but we don't have the ability to express that
+                // so we cannot `return new((T?)null);` directly.
+                return new((T?)default);
+            }
+            else if (typeof(T) == typeof(PortableValue))
+            {
+                return new((T)(object)new PortableValue(result.Value));
             }
 
             throw new InvalidOperationException($"State for key '{key}' in scope '{scopeId}' is not of type '{typeof(T).Name}'.");
