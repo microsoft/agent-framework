@@ -98,12 +98,12 @@ public static partial class AIAgentExtensions
             : InvalidNameCharsRegex().Replace(agentName, "_");
     }
 
-    /// <summary>Regex that flags any character other than ASCII digits or letters or the underscore.</summary>
+    /// <summary>Regex that flags any character other than ASCII digits or letters.</summary>
 #if NET
-    [GeneratedRegex("[^0-9A-Za-z_]+")]
+    [GeneratedRegex("[^0-9A-Za-z]+")]
     private static partial Regex InvalidNameCharsRegex();
 #else
     private static Regex InvalidNameCharsRegex() => s_invalidNameCharsRegex;
-    private static readonly Regex s_invalidNameCharsRegex = new("[^0-9A-Za-z_]+", RegexOptions.Compiled);
+    private static readonly Regex s_invalidNameCharsRegex = new("[^0-9A-Za-z]+", RegexOptions.Compiled);
 #endif
 }
