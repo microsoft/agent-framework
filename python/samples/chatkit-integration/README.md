@@ -1,10 +1,10 @@
 # ChatKit Integration Sample with Weather Agent
 
-This sample demonstrates how to integrate Microsoft Agent Framework with OpenAI ChatKit using a weather assistant. It shows a complete full-stack application with:
+This sample demonstrates how to integrate Microsoft Agent Framework with OpenAI ChatKit using a simple weather assistant. It provides a minimal full-stack application with:
 
 - **Backend**: FastAPI server using Agent Framework with Azure OpenAI
-- **Frontend**: React + TypeScript UI using ChatKit React components
-- **Features**: Weather information, current time, and a polished chat interface
+- **Frontend**: Minimal React + TypeScript UI using ChatKit React components
+- **Features**: Weather information, current time, and a simple chat interface
 
 ## Architecture
 
@@ -102,10 +102,9 @@ You should see the Weather Assistant interface where you can:
 
 ### Frontend Components
 
-- **Modern UI**: Beautiful gradient backgrounds with dark mode support
+- **Minimal UI**: Simple, clean interface focused on ChatKit integration
 - **ChatKit Integration**: Full-featured chat interface with streaming responses
-- **Responsive Design**: Works on desktop and mobile devices
-- **Theme Toggle**: Switch between light and dark modes
+- **No Complex Dependencies**: Only React and ChatKit - no styling frameworks or extra libraries
 
 ## Project Structure
 
@@ -116,23 +115,15 @@ chatkit-integration/
 ├── chatkit_demo.db          # SQLite database (auto-created)
 ├── README.md                 # This file
 └── frontend/
-    ├── package.json          # Node.js dependencies
+    ├── package.json          # Node.js dependencies (minimal)
     ├── vite.config.ts        # Vite configuration
     ├── tsconfig.json         # TypeScript configuration
-    ├── tailwind.config.ts    # Tailwind CSS configuration
-    ├── index.html            # HTML entry point
+    ├── index.html            # HTML entry point with inline styles
+    ├── README.md             # Frontend-specific documentation
     └── src/
         ├── main.tsx          # React entry point
-        ├── App.tsx           # Main App component
-        ├── index.css         # Global styles
-        ├── components/
-        │   ├── Home.tsx      # Main page layout
-        │   ├── ChatKitPanel.tsx    # ChatKit integration
-        │   └── ThemeToggle.tsx     # Theme switcher
-        ├── hooks/
-        │   └── useColorScheme.ts   # Theme management
-        └── lib/
-            └── config.ts     # Configuration constants
+        ├── App.tsx           # Main App component (ChatKit integration)
+        └── vite-env.d.ts     # Vite type definitions
 ```
 
 ## Configuration
@@ -148,15 +139,11 @@ chatkit-integration/
 You can customize the frontend by creating a `.env` file in the `frontend` directory:
 
 ```bash
-# Optional: Custom backend URL (default: http://127.0.0.1:8001)
-VITE_BACKEND_URL=http://localhost:8001
-
-# Optional: Custom greeting message
-VITE_GREETING="Welcome! Ask me about the weather!"
-
 # Optional: ChatKit domain key (use default for local development)
 VITE_CHATKIT_API_DOMAIN_KEY=domain_pk_localhost_dev
 ```
+
+The backend URL is configured in `frontend/vite.config.ts` and defaults to `http://127.0.0.1:8001`.
 
 ## Development
 
@@ -200,7 +187,13 @@ weather_agent = ChatAgent(
 
 ### Styling the Frontend
 
-The frontend uses Tailwind CSS. Modify the components in `frontend/src/components/` to change the appearance.
+The frontend is intentionally minimal with inline styles in `index.html`. To customize:
+
+- **Basic styling**: Edit the `<style>` section in `index.html`
+- **ChatKit appearance**: Modify the theme configuration in `src/App.tsx` (see [ChatKit theming docs](https://platform.openai.com/docs/guides/chatkit))
+- **Add components**: Create new React components in a `src/components/` directory
+
+See `frontend/README.md` for more details on customizing the frontend.
 
 ## Troubleshooting
 
