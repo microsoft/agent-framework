@@ -6,7 +6,8 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum, Flag, auto
-from typing import Any, ClassVar, Mapping, MutableMapping, Sequence, TypeVar
+from typing import Any, ClassVar, TypeVar
+from collections.abc import Mapping, MutableMapping, Sequence
 from uuid import uuid4
 
 from agent_framework._logging import get_logger
@@ -212,7 +213,7 @@ class _AliasSerializable(SerializationMixin):
             setattr(self, k, v)
 
     # ------------------------------------------------------------------
-    # Compatibility helpers (subset of Pydantic v2 interface used in codebase)
+    # Compatibility helpers
     # ------------------------------------------------------------------
     def model_dump(self, *, by_alias: bool = True, exclude_none: bool = True, **_: Any) -> dict[str, Any]:
         # Use self.to_dict() to get alias translation
@@ -232,15 +233,13 @@ class _AliasSerializable(SerializationMixin):
         return json.dumps(self.model_dump(by_alias=by_alias, exclude_none=exclude_none, **kwargs))
 
     @classmethod
-    def model_validate(cls, value: MutableMapping[str, Any]) -> "_AliasSerializable":  # type: ignore[name-defined]
-        # Accept dicts as source; mimic pydantic .model_validate
+    def model_validate(cls, value: MutableMapping[str, Any]) -> _AliasSerializable:  # type: ignore[name-defined]
         return cls(**value)
 
     # ------------------------------------------------------------------
     # Override to handle alias emission
     # ------------------------------------------------------------------
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:  # type: ignore[override]
-        # Call parent to get base serialization (SerializationMixin already respects DEFAULT_EXCLUDE)
         base = SerializationMixin.to_dict(self, exclude=exclude, exclude_none=exclude_none)
 
         # For Graph API models, remove the auto-generated 'type' field if it's in DEFAULT_EXCLUDE
@@ -495,7 +494,7 @@ class PurviewBinaryContent(ContentBase):
         import base64
 
         base = super().to_dict(exclude=exclude, exclude_none=exclude_none)
-        # Ensure bytes encoded as base64 string like pydantic would produce
+        # Ensure bytes encoded as base64 string like pydantic
         data_bytes = getattr(self, "data", b"") or b""
         base["data"] = base64.b64encode(data_bytes).decode("utf-8")
         return base
@@ -884,7 +883,6 @@ class PolicyScope(_AliasSerializable):
         return base
 
 
-# Fix Serialization
 class ProtectionScopesResponse(_AliasSerializable):
     _ALIASES: ClassVar[dict[str, str]] = {"scope_identifier": "scopeIdentifier", "scopes": "value"}
 

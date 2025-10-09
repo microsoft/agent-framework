@@ -119,7 +119,7 @@ class ScopedContentProcessor:
         if not resolved_user_id:
             resolved_user_id = provided_user_id if provided_user_id and _is_valid_guid(provided_user_id) else None
 
-        # If we still don't have a user_id, return empty results
+        # Return empty results if user_id is empty
         if not resolved_user_id or not _is_valid_guid(resolved_user_id):
             return results, None
 
