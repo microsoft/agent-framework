@@ -33,8 +33,10 @@ internal abstract class ChatProtocolExecutor(string id, ChatProtocolExecutorOpti
             routeBuilder = routeBuilder.AddHandler<string>((message, _, __) => this._pendingMessages.Add(new(this._stringMessageChatRole.Value, message)));
         }
 
+        // Routing requires exact type matches. The runtime may dispatch either List<ChatMessage> or ChatMessage[].
         return routeBuilder.AddHandler<ChatMessage>((message, _, __) => this._pendingMessages.Add(message))
                            .AddHandler<List<ChatMessage>>((messages, _, __) => this._pendingMessages.AddRange(messages))
+                           .AddHandler<ChatMessage[]>((messages, _, __) => this._pendingMessages.AddRange(messages))
                            .AddHandler<TurnToken>(this.TakeTurnAsync);
     }
 
