@@ -80,8 +80,6 @@ async def handle_approvals_streaming(query: str, agent: "AgentProtocol") -> None
     When we don't have a thread, we need to ensure we include the original query,
     the approval request, and the approval response in each iteration.
     """
-    from agent_framework import ChatMessage
-
     current_input: str | list[Any] = query
     has_user_input_requests = True
     while has_user_input_requests:
