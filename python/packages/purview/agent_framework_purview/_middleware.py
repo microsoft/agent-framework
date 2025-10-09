@@ -46,6 +46,7 @@ class PurviewPolicyMiddleware(AgentMiddleware):
         context: AgentRunContext,
         next: Callable[[AgentRunContext], Awaitable[None]],
     ) -> None:  # type: ignore[override]
+        resolved_user_id: str | None = None
         try:
             # Pre (prompt) check
             should_block_prompt, resolved_user_id = await self._processor.process_messages(
@@ -113,6 +114,7 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
         context: ChatContext,
         next: Callable[[ChatContext], Awaitable[None]],
     ) -> None:  # type: ignore[override]
+        resolved_user_id: str | None = None
         try:
             should_block_prompt, resolved_user_id = await self._processor.process_messages(
                 context.messages, Activity.UPLOAD_TEXT
@@ -120,8 +122,8 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
             if should_block_prompt:
                 from agent_framework import ChatMessage
 
-                context.result = [
-                    ChatMessage(role="system", text="Prompt blocked by policy")  # type: ignore[list-item]
+                context.result = [  # type: ignore[assignment]
+                    ChatMessage(role="system", text="Prompt blocked by policy")
                 ]
                 context.terminate = True
                 return
@@ -149,8 +151,8 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
                                 ChatMessage(role="system", text="Response blocked by policy")
                             ]
                         except Exception:
-                            context.result = [
-                                ChatMessage(role="system", text="Response blocked by policy")  # type: ignore[list-item]
+                            context.result = [  # type: ignore[assignment]
+                                ChatMessage(role="system", text="Response blocked by policy")
                             ]
         except Exception as ex:
             logger.error(f"Error in Purview policy post-check: {ex}")

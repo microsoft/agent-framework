@@ -6,11 +6,14 @@
 
 ### Key Features
 
-- Middleware-based policy enforcement
+- Middleware-based policy enforcement (agent-level and chat-client level)
 - Blocks or allows content at both ingress (prompt) and egress (response)
 - Works with any `ChatAgent` / agent orchestration using the standard Agent Framework middleware pipeline
 - Supports both synchronous `TokenCredential` and `AsyncTokenCredential` from `azure-identity`
 - Simple, typed configuration via `PurviewSettings` / `PurviewAppLocation`
+- Two middleware types:
+	- `PurviewPolicyMiddleware` (Agent pipeline)
+	- `PurviewChatPolicyMiddleware` (Chat client middleware list)
 
 ### When to Use
 Add Purview when you need to:
@@ -35,7 +38,7 @@ async def main():
 
 	purview_middleware = PurviewPolicyMiddleware(
 		credential=InteractiveBrowserCredential(),
-		settings=PurviewSettings(appName="My Sample App", defaultUserId="<user-guid>")
+		settings=PurviewSettings(appName="My Sample App")
 	)
 
 	agent = ChatAgent(
@@ -75,7 +78,6 @@ The APIs require the following Graph Permissions:
 ```python
 PurviewSettings(
     app_name="My App",                # Display / logical name
-    default_user_id="<guid>",         # Fallback user id if not derivable from messages
     tenant_id=None,                    # Optional – used mainly for auth context
     purview_app_location=None,         # Optional PurviewAppLocation for scoping
     graph_base_uri="https://graph.microsoft.com/v1.0/",
@@ -93,12 +95,46 @@ from agent_framework_purview import (
 )
 
 settings = PurviewSettings(
-	appName="Contoso Support",
-	purviewAppLocation=PurviewAppLocation(
+	app_name="Contoso Support",
+	purview_app_location=PurviewAppLocation(
 		location_type=PurviewLocationType.APPLICATION,
-		location_value="<app-client-id>")
+		location_value="<app-client-id>"
+	)
 )
 ```
+
+### Selecting Agent vs Chat Middleware
+
+Use the agent middleware when you already have / want the full agent pipeline:
+
+```python
+from agent_framework_purview import PurviewPolicyMiddleware, PurviewSettings
+
+agent = ChatAgent(
+	chat_client=client,
+	instructions="You are helpful.",
+	middleware=[PurviewPolicyMiddleware(credential, PurviewSettings(app_name="My App"))]
+)
+```
+
+Use the chat middleware when you attach directly to a chat client (e.g. minimal agent shell or custom orchestration):
+
+```python
+from agent_framework_purview import PurviewChatPolicyMiddleware, PurviewSettings
+
+chat_client = AzureOpenAIChatClient(
+	deployment_name=os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+	endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
+	credential=credential,
+	middleware=[
+		PurviewChatPolicyMiddleware(credential, PurviewSettings(app_name="My App (Chat)"))
+	],
+)
+
+agent = ChatAgent(chat_client=chat_client, instructions="You are helpful.")
+```
+
+The policy logic is identical; the difference is only the hook point in the pipeline.
 
 ---
 
@@ -108,6 +144,8 @@ settings = PurviewSettings(
 2. If blocked: `context.result` is replaced with a system message and `context.terminate = True`.
 3. After successful agent execution (`response phase`): the produced messages are evaluated.
 4. If blocked: result messages are replaced with a blocking notice.
+
+When a user identifier is discovered (e.g. in `ChatMessage.additional_properties['user_id']`) during the prompt phase it is reused for the response phase so both evaluations map consistently to the same user.
 
 You can customize your blocking messages by wrapping the middleware or post-processing `context.result` in later middleware.
 
@@ -138,4 +176,11 @@ except (PurviewAuthenticationError, PurviewRateLimitError, PurviewRequestError, 
 ```
 
 ---
+
+## Notes
+- Provide a `user_id` per request (e.g. in `ChatMessage(..., additional_properties={"user_id": "<guid>"})`) when possible for per-user policy scoping; otherwise supply a default via settings or environment.
+- Blocking messages are currently static ("Prompt blocked by policy" / "Response blocked by policy"). 
+- Streaming responses: post-response policy evaluation presently applies only to non-streaming chat responses.
+- Errors during policy checks are logged and do not fail the run; they degrade gracefully.
+
 

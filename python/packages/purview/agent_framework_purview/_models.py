@@ -4,10 +4,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, MutableMapping, Sequence
 from datetime import datetime
 from enum import Enum, Flag, auto
-from typing import Any, ClassVar, TypeVar
-from collections.abc import Mapping, MutableMapping, Sequence
+from typing import Any, ClassVar, TypeVar, cast
 from uuid import uuid4
 
 from agent_framework._logging import get_logger
@@ -186,8 +186,7 @@ class _AliasSerializable(SerializationMixin):
     Each subclass can define ``_ALIASES`` mapping internal attribute name -> external serialized key.
     ``to_dict`` will emit external keys; ``from_dict`` (via ``__init__`` preprocessing) accepts either form.
 
-    Provides light-weight compatibility helpers ``model_dump`` / ``model_validate`` so existing code
-    that previously relied on Pydantic continues to function without broad refactors.
+    Provides light-weight compatibility helpers ``model_dump`` / ``model_validate``
     """
 
     _ALIASES: ClassVar[dict[str, str]] = {}
@@ -802,6 +801,11 @@ class ProcessContentResponse(_AliasSerializable):
         "policy_actions": "policyActions",
         "processing_errors": "processingErrors",
     }
+    
+    id: str | None
+    protection_scope_state: ProtectionScopeState | None
+    policy_actions: list[DlpActionInfo] | None
+    processing_errors: list[ProcessingError] | None
 
     def __init__(
         self,
@@ -820,23 +824,35 @@ class ProcessContentResponse(_AliasSerializable):
             processing_errors = kwargs["processingErrors"]
 
         # Convert to objects
-        if policy_actions:
-            policy_actions = [p if isinstance(p, DlpActionInfo) else DlpActionInfo(**p) for p in policy_actions]
-        if processing_errors:
-            processing_errors = [
-                pe if isinstance(pe, ProcessingError) else ProcessingError(**pe) for pe in processing_errors
-            ]
+        converted_policy_actions: list[DlpActionInfo] | None = None
+        if policy_actions is not None:
+            converted_policy_actions = cast(
+                list[DlpActionInfo],
+                [p if isinstance(p, DlpActionInfo) else DlpActionInfo(**p) for p in policy_actions],
+            )
+        
+        converted_processing_errors: list[ProcessingError] | None = None
+        if processing_errors is not None:
+            converted_processing_errors = cast(
+                list[ProcessingError],
+                [pe if isinstance(pe, ProcessingError) else ProcessingError(**pe) for pe in processing_errors],
+            )
 
         # Call parent without explicit params with aliases
         super().__init__(**kwargs)
         self.id = id
         self.protection_scope_state = protection_scope_state
-        self.policy_actions = policy_actions
-        self.processing_errors = processing_errors
+        self.policy_actions = converted_policy_actions
+        self.processing_errors = converted_processing_errors
 
 
 class PolicyScope(_AliasSerializable):
     _ALIASES: ClassVar[dict[str, str]] = {"policy_actions": "policyActions", "execution_mode": "executionMode"}
+    
+    activities: ProtectionScopeActivities | None
+    locations: list[PolicyLocation] | None
+    policy_actions: list[DlpActionInfo] | None
+    execution_mode: ExecutionMode | None
 
     def __init__(
         self,
@@ -857,16 +873,24 @@ class PolicyScope(_AliasSerializable):
             activities = deserialize_flag(activities, _PROTECTION_SCOPE_ACTIVITIES_MAP, ProtectionScopeActivities)
 
         # Convert nested objects
-        if locations:
-            locations = [loc if isinstance(loc, PolicyLocation) else PolicyLocation(**loc) for loc in locations]
-        if policy_actions:
-            policy_actions = [p if isinstance(p, DlpActionInfo) else DlpActionInfo(**p) for p in policy_actions]
+        converted_locations: list[PolicyLocation] | None = None
+        if locations is not None:
+            converted_locations = cast(
+                list[PolicyLocation], [loc if isinstance(loc, PolicyLocation) else PolicyLocation(**loc) for loc in locations]
+            )
+        
+        converted_policy_actions: list[DlpActionInfo] | None = None
+        if policy_actions is not None:
+            converted_policy_actions = cast(
+                list[DlpActionInfo],
+                [p if isinstance(p, DlpActionInfo) else DlpActionInfo(**p) for p in policy_actions],
+            )
 
         # Call parent without explicit params with aliases
         super().__init__(**kwargs)
         self.activities = activities  # type: ignore[assignment]
-        self.locations = locations
-        self.policy_actions = policy_actions
+        self.locations = converted_locations
+        self.policy_actions = converted_policy_actions
         self.execution_mode = execution_mode
 
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:  # type: ignore[override]
@@ -885,6 +909,9 @@ class PolicyScope(_AliasSerializable):
 
 class ProtectionScopesResponse(_AliasSerializable):
     _ALIASES: ClassVar[dict[str, str]] = {"scope_identifier": "scopeIdentifier", "scopes": "value"}
+    
+    scope_identifier: str | None
+    scopes: list[PolicyScope] | None
 
     def __init__(
         self,
@@ -898,13 +925,14 @@ class ProtectionScopesResponse(_AliasSerializable):
         if "value" in kwargs:
             scopes = kwargs["value"]
 
-        if scopes:
-            scopes = [s if isinstance(s, PolicyScope) else PolicyScope(**s) for s in scopes]
+        converted_scopes: list[PolicyScope] | None = None
+        if scopes is not None:
+            converted_scopes = cast(list[PolicyScope], [s if isinstance(s, PolicyScope) else PolicyScope(**s) for s in scopes])
 
         # Don't pass parameters that have aliases - let parent normalize them
         super().__init__(**kwargs)
         self.scope_identifier = scope_identifier
-        self.scopes = scopes
+        self.scopes = converted_scopes
 
 
 class ContentActivitiesResponse(_AliasSerializable):
