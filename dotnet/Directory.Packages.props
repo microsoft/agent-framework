@@ -14,7 +14,6 @@
     <PackageVersion Include="Aspire.Azure.AI.OpenAI" Version="9.5.1-preview.1.25502.11" />
     <PackageVersion Include="Aspire.Hosting.AppHost" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="Aspire.Hosting.Azure.CognitiveServices" Version="$(AspireAppHostSdkVersion)" />
-    <PackageVersion Include="Aspire.Hosting.Testing" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="Aspire.Microsoft.Azure.Cosmos" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="9.8.0" />
     <!-- Azure.* -->
@@ -22,10 +21,6 @@
     <PackageVersion Include="Azure.AI.OpenAI" Version="2.5.0-beta.1" />
     <PackageVersion Include="Azure.Identity" Version="1.17.0" />
     <PackageVersion Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.4.0" />
-    <PackageVersion Include="Microsoft.Azure.Cosmos" Version="3.53.1" />
-    <!-- Newtonsoft (Required by CosmosClient) -->
-    <PackageVersion Include="Newtonsoft.Json" Version="13.0.4" />
-    <PackageVersion Include="Swashbuckle.AspNetCore.SwaggerUI" Version="9.0.4" />
     <!-- System.* -->
     <PackageVersion Include="System.CodeDom" Version="9.0.9" />
     <PackageVersion Include="System.Collections.Immutable" Version="9.0.9" />
@@ -47,20 +42,15 @@
     <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.12.0" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.12.0" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.12.0" />
-    <!-- Microsoft.Agents.* -->
-    <PackageVersion Include="Microsoft.Agents.AI" Version="1.0.0-preview.251007.1" />
-    <PackageVersion Include="Microsoft.Agents.AI.Abstractions" Version="1.0.0-preview.251007.1" />
-    <PackageVersion Include="Microsoft.Agents.AI.AzureAI" Version="1.0.0-preview.251007.1" />
-    <PackageVersion Include="Microsoft.Agents.AI.OpenAI" Version="1.0.0-preview.251007.1" />
     <!-- Microsoft.AspNetCore.* -->
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="9.0.9" />
+    <PackageVersion Include="Swashbuckle.AspNetCore.SwaggerUI" Version="9.0.4" />
     <!-- Microsoft.Extensions.* -->
     <PackageVersion Include="Microsoft.Extensions.AI" Version="9.9.1" />
     <PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="9.9.1" />
     <PackageVersion Include="Microsoft.Extensions.AI.AzureAIInference" Version="9.9.1-preview.1.25474.6" />
     <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="9.9.1-preview.1.25474.6" />
     <PackageVersion Include="Microsoft.Extensions.Configuration" Version="9.0.9" />
-    <PackageVersion Include="Microsoft.Extensions.Configuration.Abstractions" Version="9.0.9" />
     <PackageVersion Include="Microsoft.Extensions.Configuration.Binder" Version="9.0.9" />
     <PackageVersion Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="9.0.9" />
     <PackageVersion Include="Microsoft.Extensions.Configuration.Json" Version="9.0.9" />
@@ -72,8 +62,6 @@
     <PackageVersion Include="Microsoft.Extensions.Logging" Version="9.0.9" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.9" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="9.0.9" />
-    <PackageVersion Include="Microsoft.Extensions.Logging.Testing" Version="9.0.9" />
-    <PackageVersion Include="Microsoft.Extensions.Options" Version="9.0.9" />
     <PackageVersion Include="Microsoft.Extensions.ServiceDiscovery" Version="$(AspireAppHostSdkVersion)" />
     <!-- Vector Stores -->
     <PackageVersion Include="Microsoft.SemanticKernel" Version="1.66.0" />
