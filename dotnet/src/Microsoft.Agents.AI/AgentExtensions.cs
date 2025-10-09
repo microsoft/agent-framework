@@ -93,12 +93,9 @@ public static partial class AIAgentExtensions
     /// </returns>
     private static string? SanitizeAgentName(string? agentName)
     {
-        if (string.IsNullOrWhiteSpace(agentName))
-        {
-            return agentName;
-        }
-
-        return InvalidNameCharsRegex().Replace(agentName, "_");
+        return agentName is null
+            ? agentName
+            : InvalidNameCharsRegex().Replace(agentName, "_");
     }
 
     /// <summary>Regex that flags any character other than ASCII digits or letters or the underscore.</summary>
