@@ -16,7 +16,7 @@ public static class HostWorkflowBuilderExtensions
     /// <param name="builder"></param>
     /// <param name="name"></param>
     /// <returns></returns>
-    public static IHostAgentBuilder AsAIAgent(this IHostWorkflowBuilder builder, string? name = null)
+    public static IHostAgentBuilder AddAsAIAgent(this IHostWorkflowBuilder builder, string? name = null)
     {
         var agentName = name ?? builder.Name;
         return builder.HostApplicationBuilder.AddAIAgent(agentName, (sp, key) =>

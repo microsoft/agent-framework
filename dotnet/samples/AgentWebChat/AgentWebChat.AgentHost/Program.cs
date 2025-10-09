@@ -82,8 +82,8 @@ var literatureAgent = builder.AddAIAgent("literator",
     description: "An agent that helps with literature.",
     chatClientServiceKey: "chat-model");
 
-builder.AddSequentialWorkflow("science-sequential-workflow", [chemistryAgent, mathsAgent, literatureAgent]).AsAIAgent();
-builder.AddConcurrentWorkflow("science-concurrent-workflow", [chemistryAgent, mathsAgent, literatureAgent]).AsAIAgent();
+builder.AddSequentialWorkflow("science-sequential-workflow", [chemistryAgent, mathsAgent, literatureAgent]).AddAsAIAgent();
+builder.AddConcurrentWorkflow("science-concurrent-workflow", [chemistryAgent, mathsAgent, literatureAgent]).AddAsAIAgent();
 builder.AddWorkflow("science-custom-workflow", (sp, key) =>
 {
     var chemistAgent = sp.GetRequiredKeyedService<AIAgent>("chemist");
@@ -92,7 +92,7 @@ builder.AddWorkflow("science-custom-workflow", (sp, key) =>
 
     var chemistryMathWorkflowBuilder = AgentWorkflowBuilder.PrepareConcurrent([chemistAgent, mathsAgent]);
     return AgentWorkflowBuilder.BuildConcurrent([literatureAgent], chemistryMathWorkflowBuilder);
-}).AsAIAgent();
+}).AddAsAIAgent();
 
 var app = builder.Build();
 
