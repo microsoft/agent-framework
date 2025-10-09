@@ -12,7 +12,6 @@ from agent_framework.observability import get_tracer
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
 from pydantic import BaseModel
-from collections.abc import AsyncIterable, Awaitable
 
 from ._exceptions import (
     PurviewAuthenticationError,

@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 
 from agent_framework import AgentMiddleware, AgentRunContext, ChatMiddleware, ChatContext
+from agent_framework._logging import get_logger
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
 
@@ -12,6 +13,7 @@ from ._models import Activity
 from ._processor import ScopedContentProcessor
 from ._settings import PurviewSettings
 
+logger = get_logger("agent_framework.purview")
 
 class PurviewPolicyMiddleware(AgentMiddleware):
     """Agent middleware that enforces Purview policies on prompt and response.
@@ -43,29 +45,41 @@ class PurviewPolicyMiddleware(AgentMiddleware):
         context: AgentRunContext,
         next: Callable[[AgentRunContext], Awaitable[None]],
     ) -> None:  # type: ignore[override]
-        # Pre (prompt) check
-        should_block_prompt = await self._processor.process_messages(context.messages, Activity.UPLOAD_TEXT)
-        if should_block_prompt:
-            from agent_framework import AgentRunResponse, ChatMessage, Role
+        try:
+            # Pre (prompt) check
+            should_block_prompt, resolved_user_id = await self._processor.process_messages(
+                context.messages, Activity.UPLOAD_TEXT
+            )
+            if should_block_prompt:
+                from agent_framework import AgentRunResponse, ChatMessage, Role
 
-            context.result = AgentRunResponse(messages=[ChatMessage(role=Role.SYSTEM, text="Prompt blocked by policy")])
-            context.terminate = True
-            return
+                context.result = AgentRunResponse(messages=[ChatMessage(role=Role.SYSTEM, text="Prompt blocked by policy")])
+                context.terminate = True
+                return
+        except Exception as ex:
+            # Log and continue if there's an error in the pre-check
+            logger.error(f"Error in Purview policy pre-check: {ex}")
 
         await next(context)
 
-        # Post (response) check only if we have a normal AgentRunResponse
-        if context.result and hasattr(context.result, "messages"):
-            should_block_response = await self._processor.process_messages(
-                context.result.messages,  # type: ignore[attr-defined]
-                Activity.UPLOAD_TEXT,
-            )
-            if should_block_response:
-                from agent_framework import AgentRunResponse, ChatMessage, Role
-
-                context.result = AgentRunResponse(
-                    messages=[ChatMessage(role=Role.SYSTEM, text="Response blocked by policy")]
+        try:
+            # Post (response) check only if we have a normal AgentRunResponse
+            # Use the same user_id from the request for the response evaluation
+            if context.result and hasattr(context.result, "messages"):
+                should_block_response, _ = await self._processor.process_messages(
+                    context.result.messages,  # type: ignore[attr-defined]
+                    Activity.UPLOAD_TEXT,
+                    user_id=resolved_user_id,
                 )
+                if should_block_response:
+                    from agent_framework import AgentRunResponse, ChatMessage, Role
+
+                    context.result = AgentRunResponse(
+                        messages=[ChatMessage(role=Role.SYSTEM, text="Response blocked by policy")]
+                    )
+        except Exception as ex:
+            # Log and continue if there's an error in the post-check
+            logger.error(f"Error in Purview policy post-check: {ex}")
 
 
 class PurviewChatPolicyMiddleware(ChatMiddleware):
@@ -73,19 +87,14 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
 
     This allows users to attach Purview enforcement directly to a chat client
     (e.g., when using a simple chat agent or invoking chat APIs without full
-    agent orchestration). It mirrors the logic of ``PurviewPolicyMiddleware``
-    but operates at the chat middleware layer.
+    agent orchestration).
 
     Behavior:
       * Pre-chat: evaluates outgoing (user + context) messages as an upload activity
         and can terminate execution if blocked.
       * Post-chat: evaluates the received response messages (non-streaming only currently)
-        and can replace them with a blocked message.
-
-    Notes:
-      * Streaming responses are passed through without a second-phase evaluation
-        for now (could be enhanced to accumulate and evaluate partials).
-      * Uses the same ``ScopedContentProcessor`` for consistency.
+        and can replace them with a blocked message. Uses the same user_id from the request
+        to ensure consistent user identity throughout the evaluation.
     """
 
     def __init__(
@@ -101,35 +110,45 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
         context: ChatContext,
         next: Callable[[ChatContext], Awaitable[None]],
     ) -> None:  # type: ignore[override]
-        # Pre (prompt) evaluation
-        should_block_prompt = await self._processor.process_messages(context.messages, Activity.UPLOAD_TEXT)
-        if should_block_prompt:
-            from agent_framework import ChatMessage
+        try:
+            should_block_prompt, resolved_user_id = await self._processor.process_messages(
+                context.messages, Activity.UPLOAD_TEXT
+            )
+            if should_block_prompt:
+                from agent_framework import ChatMessage
 
-            context.result = [
-                ChatMessage(role="system", text="Prompt blocked by policy")  # type: ignore[list-item]
-            ]
-            context.terminate = True
-            return
+                context.result = [
+                    ChatMessage(role="system", text="Prompt blocked by policy")  # type: ignore[list-item]
+                ]
+                context.terminate = True
+                return
+        except Exception as ex:
+            logger.error(f"Error in Purview policy pre-check: {ex}")
 
         await next(context)
 
-        # Post (response) evaluation only if non-streaming and we have messages result shape
-        if context.result and not context.is_streaming:
-            # We attempt to treat context.result as a ChatResponse-like object
-            result_obj = context.result
-            messages = getattr(result_obj, "messages", None)
-            if messages:
-                should_block_response = await self._processor.process_messages(messages, Activity.UPLOAD_TEXT)
-                if should_block_response:
-                    from agent_framework import ChatMessage
+        try:
+            
+            # Post (response) evaluation only if non-streaming and we have messages result shape
+            # Use the same user_id from the request for the response evaluation
+            if context.result and not context.is_streaming:
+                result_obj = context.result
+                messages = getattr(result_obj, "messages", None)
+                if messages:
+                    should_block_response, _ = await self._processor.process_messages(
+                        messages, Activity.UPLOAD_TEXT, user_id=resolved_user_id
+                    )
+                    if should_block_response:
+                        from agent_framework import ChatMessage
 
-                    # Replace messages attribute if possible; otherwise overwrite result
-                    try:
-                        result_obj.messages = [  # type: ignore[attr-defined]
-                            ChatMessage(role="system", text="Response blocked by policy")
-                        ]
-                    except Exception:
-                        context.result = [
-                            ChatMessage(role="system", text="Response blocked by policy")  # type: ignore[list-item]
-                        ]
+                        # Replace messages attribute if possible; otherwise overwrite result
+                        try:
+                            result_obj.messages = [  # type: ignore[attr-defined]
+                                ChatMessage(role="system", text="Response blocked by policy")
+                            ]
+                        except Exception:
+                            context.result = [
+                                ChatMessage(role="system", text="Response blocked by policy")  # type: ignore[list-item]
+                            ]
+        except Exception as ex:
+            logger.error(f"Error in Purview policy post-check: {ex}")
