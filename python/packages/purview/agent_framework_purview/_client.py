@@ -100,7 +100,7 @@ class PurviewClient:
             url = f"{self._graph_uri}/users/{request.user_id}/dataSecurityAndGovernance/activities/contentActivities"
             return cast(ContentActivitiesResponse, await self._post(url, request, ContentActivitiesResponse, token))
 
-    async def _post(self, url: str, model: Any, response_type: type[BaseModel], token: str) -> BaseModel:
+    async def _post(self, url: str, model: Any, response_type: type[Any], token: str) -> Any:
         payload = model.model_dump(by_alias=True, exclude_none=True, mode="json")
         headers = {
             "Authorization": f"Bearer {token}",
@@ -119,6 +119,9 @@ class PurviewClient:
         except ValueError:
             data = {}
         try:
-            return response_type.model_validate(data)
+            # Prefer pydantic-style model_validate if present, else fall back to constructor.
+            if hasattr(response_type, "model_validate"):
+                return response_type.model_validate(data)  # type: ignore[no-any-return]
+            return response_type(**data)  # type: ignore[call-arg, no-any-return]
         except Exception as ex:  # pragma: no cover
             raise PurviewServiceError(f"Failed to deserialize Purview response: {ex}") from ex

@@ -131,8 +131,7 @@ class TestPurviewChatPolicyMiddleware:
             call_count += 1
             if call_count == 1:
                 return (False, "user-123")  # Pre-check succeeds
-            else:
-                raise Exception("Post-check error")  # Post-check fails
+            raise Exception("Post-check error")  # Post-check fails
 
         with patch.object(middleware._processor, "process_messages", side_effect=mock_process_messages):
 

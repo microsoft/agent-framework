@@ -204,12 +204,12 @@ class TestPurviewClient:
             correlation_id="test-correlation-id",
         )
 
-        with patch.object(client, "_get_token", return_value="fake-token"):
-            with patch.object(
-                client._client, "post", return_value=httpx.Response(429, text="Rate limited", request=httpx.Request("POST", "http://test"))
-            ):
-                with pytest.raises(PurviewRateLimitError, match="Rate limited"):
-                    await client.process_content(request)
+        with patch.object(client, "_get_token", return_value="fake-token"), patch.object(
+            client._client,
+            "post",
+            return_value=httpx.Response(429, text="Rate limited", request=httpx.Request("POST", "http://test")),
+        ), pytest.raises(PurviewRateLimitError, match="Rate limited"):
+            await client.process_content(request)
 
     async def test_generic_request_error(self, client: PurviewClient) -> None:
         """Test that non-200/201/202 status codes raise PurviewRequestError."""
@@ -220,9 +220,11 @@ class TestPurviewClient:
             correlation_id="test-correlation-id",
         )
 
-        with patch.object(client, "_get_token", return_value="fake-token"):
-            with patch.object(
-                client._client, "post", return_value=httpx.Response(500, text="Internal server error", request=httpx.Request("POST", "http://test"))
-            ):
-                with pytest.raises(PurviewRequestError, match="Purview request failed"):
-                    await client.process_content(request)
+        with patch.object(client, "_get_token", return_value="fake-token"), patch.object(
+            client._client,
+            "post",
+            return_value=httpx.Response(
+                500, text="Internal server error", request=httpx.Request("POST", "http://test")
+            ),
+        ), pytest.raises(PurviewRequestError, match="Purview request failed"):
+            await client.process_content(request)

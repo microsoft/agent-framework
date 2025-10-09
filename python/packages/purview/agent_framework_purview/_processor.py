@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterable
+from collections.abc import Iterable, MutableMapping
+from typing import Any
 
 from agent_framework import ChatMessage
 
@@ -178,11 +179,14 @@ class ScopedContentProcessor:
         return results, resolved_user_id
 
     async def _process_with_scopes(self, pc_request: ProcessContentRequest) -> ProcessContentResponse:
+        app_location = pc_request.content_to_process.protected_app_metadata.application_location
+        locations: list[PolicyLocation | MutableMapping[str, Any]] = [app_location] if app_location is not None else []
+        
         ps_req = ProtectionScopesRequest(
             user_id=pc_request.user_id,
             tenant_id=pc_request.tenant_id,
             activities=translate_activity(pc_request.content_to_process.activity_metadata.activity),
-            locations=[pc_request.content_to_process.protected_app_metadata.application_location],
+            locations=locations,
             device_metadata=pc_request.content_to_process.device_metadata,
             integrated_app_metadata=pc_request.content_to_process.integrated_app_metadata,
             correlation_id=pc_request.correlation_id,
@@ -230,15 +234,16 @@ class ScopedContentProcessor:
             # Check if all activities in req_activity are present in scope.activities using bitwise flags.
             activity_match = bool(scope.activities and (scope.activities & req_activity) == req_activity)
             location_match = False
-            for loc in scope.locations or []:
-                if (
-                    loc.data_type
-                    and location.data_type
-                    and loc.data_type.lower().endswith(location.data_type.split(".")[-1].lower())
-                    and loc.value == location.value
-                ):
-                    location_match = True
-                    break
+            if location is not None:
+                for loc in scope.locations or []:
+                    if (
+                        loc.data_type
+                        and location.data_type
+                        and loc.data_type.lower().endswith(location.data_type.split(".")[-1].lower())
+                        and loc.value == location.value
+                    ):
+                        location_match = True
+                        break
             if activity_match and location_match:
                 should_process = True
                 if scope.policy_actions:

@@ -165,8 +165,8 @@ class TestPurviewPolicyMiddleware:
 
             await middleware.process(context, mock_next)
 
-            # Should have been called once for pre-check (which raised exception)
-            mock_process.assert_called_once()
+            # Should have been called twice (pre-check raises, then post-check also raises)
+            assert mock_process.call_count == 2
             # Context should not be terminated
             assert not context.terminate
             # Result should be set by mock_next
@@ -185,8 +185,7 @@ class TestPurviewPolicyMiddleware:
             call_count += 1
             if call_count == 1:
                 return (False, "user-123")  # Pre-check succeeds
-            else:
-                raise Exception("Post-check error")  # Post-check fails
+            raise Exception("Post-check error")  # Post-check fails
 
         with patch.object(middleware._processor, "process_messages", side_effect=mock_process_messages):
 

@@ -12,7 +12,6 @@ from agent_framework_purview._models import (
     Activity,
     DlpAction,
     DlpActionInfo,
-    ProcessContentRequest,
     ProcessContentResponse,
     RestrictionAction,
 )
