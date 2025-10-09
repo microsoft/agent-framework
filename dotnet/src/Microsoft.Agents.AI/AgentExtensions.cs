@@ -100,7 +100,7 @@ public static partial class AIAgentExtensions
 
     /// <summary>Regex that flags any character other than ASCII digits or letters or the underscore.</summary>
 #if NET
-    [GeneratedRegex("[^0-9A-Za-z_]")]
+    [GeneratedRegex("[^0-9A-Za-z_]+")]
     private static partial Regex InvalidNameCharsRegex();
 #else
     private static Regex InvalidNameCharsRegex() => s_invalidNameCharsRegex;
