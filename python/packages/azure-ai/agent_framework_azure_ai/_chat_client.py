@@ -862,8 +862,9 @@ class AzureAIAgentClient(BaseChatClient):
                         config_args["market"] = market
                     if set_lang := additional_props.get("set_lang"):
                         config_args["set_lang"] = set_lang
-                    # Bing Grounding
+                    # Bing Grounding (support both connection_id and connection_name)
                     connection_id = additional_props.get("connection_id") or os.getenv("BING_CONNECTION_ID")
+                    connection_name = additional_props.get("connection_name") or os.getenv("BING_CONNECTION_NAME")
                     # Custom Bing Search
                     custom_connection_name = additional_props.get("custom_connection_name") or os.getenv(
                         "BING_CUSTOM_CONNECTION_NAME"
@@ -872,8 +873,26 @@ class AzureAIAgentClient(BaseChatClient):
                         "BING_CUSTOM_INSTANCE_NAME"
                     )
                     bing_search: BingGroundingTool | BingCustomSearchTool | None = None
-                    if connection_id and not custom_connection_name and not custom_configuration_name:
-                        bing_search = BingGroundingTool(connection_id=connection_id, **config_args)
+                    if (
+                        (connection_id or connection_name)
+                        and not custom_connection_name
+                        and not custom_configuration_name
+                    ):
+                        if connection_id:
+                            conn_id = connection_id
+                        elif connection_name:
+                            try:
+                                bing_connection = await self.project_client.connections.get(name=connection_name)
+                            except HttpResponseError as err:
+                                raise ServiceInitializationError(
+                                    f"Bing connection '{connection_name}' not found in the Azure AI Project.",
+                                    err,
+                                ) from err
+                            else:
+                                conn_id = bing_connection.id
+                        else:
+                            raise ServiceInitializationError("Neither connection_id nor connection_name provided.")
+                        bing_search = BingGroundingTool(connection_id=conn_id, **config_args)
                     if custom_connection_name and custom_configuration_name:
                         try:
                             bing_custom_connection = await self.project_client.connections.get(
@@ -892,10 +911,11 @@ class AzureAIAgentClient(BaseChatClient):
                             )
                     if not bing_search:
                         raise ServiceInitializationError(
-                            "Bing search tool requires either a 'connection_id' for Bing Grounding "
+                            "Bing search tool requires either 'connection_id' or 'connection_name' for Bing Grounding "
                             "or both 'custom_connection_name' and 'custom_instance_name' for Custom Bing Search. "
-                            "These can be provided via the tool's additional_properties or environment variables: "
-                            "'BING_CONNECTION_ID', 'BING_CUSTOM_CONNECTION_NAME', 'BING_CUSTOM_INSTANCE_NAME'"
+                            "These can be provided via additional_properties or environment variables: "
+                            "'BING_CONNECTION_ID', 'BING_CONNECTION_NAME', 'BING_CUSTOM_CONNECTION_NAME', "
+                            "'BING_CUSTOM_INSTANCE_NAME'"
                         )
                     tool_definitions.extend(bing_search.definitions)
                 case HostedCodeInterpreterTool():
