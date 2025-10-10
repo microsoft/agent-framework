@@ -493,19 +493,22 @@ class AzureAIAgentClient(BaseChatClient):
             if isinstance(content, MessageDeltaTextContent) and content.text and content.text.annotations:
                 for annotation in content.text.annotations:
                     if isinstance(annotation, MessageDeltaTextUrlCitationAnnotation):
+                        # Create annotated regions only if both start and end indices are available
+                        annotated_regions = []
+                        if annotation.start_index is not None and annotation.end_index is not None:
+                            annotated_regions = [
+                                TextSpanRegion(
+                                    start_index=annotation.start_index,
+                                    end_index=annotation.end_index,
+                                )
+                            ]
+
                         # Create CitationAnnotation from AzureAI annotation
                         citation = CitationAnnotation(
                             title=getattr(annotation.url_citation, "title", None),
                             url=annotation.url_citation.url,
                             snippet=None,
-                            annotated_regions=[
-                                TextSpanRegion(
-                                    start_index=annotation.start_index or 0,
-                                    end_index=annotation.end_index or 0,
-                                )
-                            ]
-                            if annotation.start_index is not None and annotation.end_index is not None
-                            else [],
+                            annotated_regions=annotated_regions,
                             raw_representation=annotation,
                         )
                         url_citations.append(citation)
@@ -529,16 +532,16 @@ class AzureAIAgentClient(BaseChatClient):
                         url_citations = self._extract_url_citations(event_data)
 
                         # Create contents with citations if any exist
-                        contents: list[Contents] = []
+                        citation_content: list[Contents] = []
                         if event_data.text or url_citations:
                             text_content_obj = TextContent(text=event_data.text or "")
                             if url_citations:
                                 text_content_obj.annotations = url_citations
-                            contents.append(text_content_obj)
+                            citation_content.append(text_content_obj)
 
                         yield ChatResponseUpdate(
                             role=role,
-                            contents=contents if contents else None,
+                            contents=citation_content if citation_content else None,
                             conversation_id=thread_id,
                             message_id=response_id,
                             raw_representation=event_data,
