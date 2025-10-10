@@ -46,6 +46,54 @@ internal static class ObjectExtensions
         }
     }
 
+    public static object AsPortable(this object? value) =>
+        value switch
+        {
+            null => UnassignedValue.Instance,
+            string or
+            bool or
+            int or
+            long or
+            decimal or
+            double or
+            DateTime or
+            TimeSpan =>
+                value,
+            IDictionary<string, object?> objectValue => objectValue.AsPortable(),
+            IDictionary recordValue => recordValue.AsPortable(),
+            IEnumerable tableValue => tableValue.AsPortable(),
+            _ => throw new DeclarativeModelException($"Unsupported data type: {value.GetType().Name}"),
+        };
+
+    public static object AsPortable(this IDictionary<string, object?> value) => value.ToDictionary(kvp => kvp.Key, kvp => new PortableValue(kvp.Value.AsPortable()));
+
+    public static object AsPortable(this IDictionary value)
+    {
+        return GetEntries().ToDictionary(kvp => kvp.Key, kvp => new PortableValue(kvp.Value.AsPortable()));
+
+        IEnumerable<KeyValuePair<string, object?>> GetEntries()
+        {
+            foreach (string key in value.Keys)
+            {
+                yield return new KeyValuePair<string, object?>(key, value[key]);
+            }
+        }
+    }
+
+    public static object AsPortable(this IEnumerable value)
+    {
+        return GetValues().ToArray();
+
+        IEnumerable<PortableValue> GetValues()
+        {
+            IEnumerator enumerator = value.GetEnumerator();
+            while (enumerator.MoveNext())
+            {
+                yield return new PortableValue(enumerator.Current.AsPortable());
+            }
+        }
+    }
+
     public static object? ConvertType(this object? sourceValue, VariableType targetType)
     {
         if (!targetType.IsValid())

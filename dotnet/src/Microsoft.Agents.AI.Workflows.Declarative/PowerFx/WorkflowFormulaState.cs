@@ -2,11 +2,11 @@
 
 using System.Collections.Frozen;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
-using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.PowerFx;
 using Microsoft.PowerFx.Types;
@@ -68,20 +68,33 @@ internal sealed class WorkflowFormulaState
             return;
         }
 
+        Stopwatch timer = Stopwatch.StartNew();
+        Debug.WriteLine("RESTORE CHECKPOINT - BEGIN");
         await Task.WhenAll(RestorableScopes.Select(scopeName => ReadScopeAsync(scopeName))).ConfigureAwait(false);
+        Debug.WriteLine($"RESTORE CHECKPOINT - COMPLETE [{timer.Elapsed}]");
+
+        System.Console.WriteLine($"OriginalInput => {this.Get("OriginalInput", VariableScopeNames.Local).Format()}");
+        System.Console.WriteLine($"TestMessage => {this.Get("TestMessage", VariableScopeNames.Local).Format()}");
+        System.Console.WriteLine($"TestRecord => {this.Get("TestRecord", VariableScopeNames.Local).Format()}");
+        System.Console.WriteLine($"TestDictionary => {this.Get("TestDictionary", VariableScopeNames.Local).Format()}");
+        System.Console.WriteLine($"TestObject => {this.Get("TestObject", VariableScopeNames.Local).Format()}");
+        System.Console.WriteLine($"TestArray => {this.Get("TestArray", VariableScopeNames.Local).Format()}");
 
         async Task ReadScopeAsync(string scopeName)
         {
             HashSet<string> keys = await context.ReadStateKeysAsync(scopeName, cancellationToken).ConfigureAwait(false);
             foreach (string key in keys)
             {
-                object? value = await context.ReadStateAsync<object>(key, scopeName, cancellationToken).ConfigureAwait(false);
-                if (value is null or UnassignedValue)
+                PortableValue? value = await context.ReadStateAsync<PortableValue>(key, scopeName, cancellationToken).ConfigureAwait(false);
+                if (value is null)
                 {
-                    value = FormulaValue.NewBlank();
+                    this.Set(key, FormulaValue.NewBlank(), scopeName);
+                    continue;
                 }
-
-                this.Set(key, value.ToFormula(), scopeName);
+                Debug.WriteLine($"RESTORING: {scopeName}.{key} => {value.TypeId.TypeName}");
+                FormulaValue formulaValue = value.ToFormula();
+                this.Set(key, formulaValue, scopeName);
+                Debug.WriteLine($"RESTORED: {scopeName}.{key} => {formulaValue.Type}");
             }
 
             this.Bind(scopeName);
