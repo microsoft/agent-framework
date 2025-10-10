@@ -2,8 +2,9 @@
 
 // This sample shows how to create and use a simple AI agent with a conversation that can be persisted to disk.
 
+using System.ClientModel;
+using System.ClientModel.Primitives;
 using System.Text.Json;
-using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using OpenAI;
@@ -12,9 +13,9 @@ var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? th
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 // Create the agent
-AIAgent agent = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new AzureCliCredential())
+AIAgent agent = new OpenAIClient(
+    new BearerTokenPolicy(new AzureCliCredential(), "https://cognitiveservices.azure.com/.default"),
+    new OpenAIClientOptions() { Endpoint = new Uri(endpoint) })
     .GetChatClient(deploymentName)
     .CreateAIAgent(instructions: "You are good at telling jokes.", name: "Joker");
 

@@ -2,10 +2,11 @@
 
 // This sample shows how to configure ChatClientAgent to produce structured output.
 
+using System.ClientModel;
+using System.ClientModel.Primitives;
 using System.ComponentModel;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using OpenAI;
@@ -16,9 +17,9 @@ var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? th
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 // Create chat client to be used by chat client agents.
-ChatClient chatClient = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new AzureCliCredential())
+ChatClient chatClient = new OpenAIClient(
+    new BearerTokenPolicy(new AzureCliCredential(), "https://cognitiveservices.azure.com/.default"),
+    new OpenAIClientOptions() { Endpoint = new Uri(endpoint) })
         .GetChatClient(deploymentName);
 
 // Create the ChatClientAgent with the specified name and instructions.

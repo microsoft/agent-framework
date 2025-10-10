@@ -2,7 +2,8 @@
 
 // This sample shows how to use Image Multi-Modality with an AI agent.
 
-using Azure.AI.OpenAI;
+using System.ClientModel;
+using System.ClientModel.Primitives;
 using Azure.Identity;
 using Microsoft.Extensions.AI;
 using OpenAI;
@@ -10,7 +11,9 @@ using OpenAI;
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deploymentName = System.Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o";
 
-var agent = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
+var agent = new OpenAIClient(
+    new BearerTokenPolicy(new AzureCliCredential(), "https://cognitiveservices.azure.com/.default"),
+    new OpenAIClientOptions() { Endpoint = new Uri(endpoint) })
     .GetChatClient(deploymentName)
     .CreateAIAgent(
         name: "VisionAgent",
