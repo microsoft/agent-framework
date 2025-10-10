@@ -20,8 +20,7 @@ IChatClient chatClient = new AzureOpenAIClient(
 // Define the agent using a YAML definition.
 var text =
     """
-    kind: GptComponentMetadata
-    type: chat_client_agent
+    kind: Prompt
     name: Assistant
     description: Helpful assistant
     instructions: You are a helpful assistant. You answer questions is the language specified by the user. You return your answers in a JSON format.
