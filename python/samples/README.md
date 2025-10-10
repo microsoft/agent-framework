@@ -167,6 +167,7 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 | File | Description |
 |------|-------------|
 | [`getting_started/mcp/agent_as_mcp_server.py`](./getting_started/mcp/agent_as_mcp_server.py) | Agent as MCP Server Example |
+| [`getting_started/mcp/mcp_api_key_auth.py`](./getting_started/mcp/mcp_api_key_auth.py) | MCP Authentication Example |
 
 ## Middleware
 
