@@ -29,6 +29,18 @@ public static class AIAgentExtensions
         ArgumentNullException.ThrowIfNull(agent);
         ArgumentNullException.ThrowIfNull(agent.Name);
 
+        /*
+         * Main logic of how to operate is here.
+         * we need to instantiate AIHostAgent with the thread store, but also knowing what will be the underlying AgentThread type.
+         * 
+         * if we have such an ability, we can easily plug the restore+save thread into the AIHostAgent, and use it to serialize thread and keep it.
+         * But we probably need to introduce `AIAgent<TThread> where TThread : AgentThread`, otherwise there has to be crazy reflection involved for it to work.
+         * 
+         * Ideally here we would not be just constructing the AIHostAgent, but resolving via DI
+         */
+
+        var hostAgent = new AIHostAgent<ChatClientAgentThread>(agent, new InMemoryAgentThreadStore());
+
         taskManager ??= new();
 
         taskManager.OnMessageReceived += OnMessageReceivedAsync;
@@ -37,12 +49,16 @@ public static class AIAgentExtensions
 
         async Task<A2AResponse> OnMessageReceivedAsync(MessageSendParams messageSendParams, CancellationToken cancellationToken)
         {
-            var response = await agent.RunAsync(
-                messageSendParams.ToChatMessages(),
-                cancellationToken: cancellationToken).ConfigureAwait(false);
             var contextId = messageSendParams.Message.ContextId ?? Guid.NewGuid().ToString("N");
-            var parts = response.Messages.ToParts();
+            var thread = await hostAgent.RestoreThreadAsync(contextId, cancellationToken).ConfigureAwait(false);
 
+            var response = await hostAgent.RunAsync(
+                messageSendParams.ToChatMessages(),
+                thread: thread,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+
+            await hostAgent.SaveThreadAsync(contextId, thread!, cancellationToken).ConfigureAwait(false);
+            var parts = response.Messages.ToParts();
             return new AgentMessage
             {
                 MessageId = response.ResponseId ?? Guid.NewGuid().ToString("N"),
