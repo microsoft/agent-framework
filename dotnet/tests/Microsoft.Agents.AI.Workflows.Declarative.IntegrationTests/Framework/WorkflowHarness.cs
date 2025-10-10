@@ -100,8 +100,8 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
                     }
                     break;
 
-                case ExecutorFailedEvent failureEvent:
-                    Console.WriteLine($"Executor failed [{failureEvent.ExecutorId}]: {failureEvent.Data?.Message ?? "Unknown"}");
+                case ExecutorFailedEvent failedEvent:
+                    Console.WriteLine($"FAILURE [{failedEvent.ExecutorId}]: {failedEvent.Data?.Message ?? "Unknown"}");
                     break;
 
                 case WorkflowErrorEvent errorEvent:

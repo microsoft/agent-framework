@@ -266,6 +266,7 @@ internal sealed class Program
 
         return default;
     }
+
     private static InputResponse HandleExternalRequest(ExternalRequest request)
     {
         InputRequest? message = request.Data.As<InputRequest>();

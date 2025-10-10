@@ -1,0 +1,17 @@
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: my_workflow
+
+  actions:
+    - kind: Question
+      id: question_input
+      alwaysPrompt: false
+      property: Local.TestInput
+      prompt:
+        kind: Message
+        text:
+            - "INPUT:"
+      entity:
+        kind: StringPrebuiltEntity
