@@ -23,6 +23,7 @@ internal static class PortableValueExtensions
             _ when value.IsSystemType(out int? intValue) => FormulaValue.New(intValue.Value),
             _ when value.IsSystemType(out long? longValue) => FormulaValue.New(longValue.Value),
             _ when value.IsSystemType(out decimal? decimalValue) => FormulaValue.New(decimalValue.Value),
+            _ when value.IsSystemType(out float? floatValue) => FormulaValue.New(floatValue.Value),
             _ when value.IsSystemType(out double? doubleValue) => FormulaValue.New(doubleValue.Value),
             _ when value.IsParentType(out Dictionary<string, PortableValue>? recordValue) => recordValue.ToRecord(),
             _ when value.IsParentType(out IDictionary? recordValue) => recordValue.ToRecord(),

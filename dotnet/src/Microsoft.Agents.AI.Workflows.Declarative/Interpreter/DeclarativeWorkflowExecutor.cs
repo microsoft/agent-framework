@@ -42,19 +42,6 @@ internal sealed class DeclarativeWorkflowExecutor<TInput>(
             conversationId = await options.AgentProvider.CreateConversationAsync(cancellationToken).ConfigureAwait(false);
         }
         await declarativeContext.QueueConversationUpdateAsync(conversationId, isExternal: true, cancellationToken).ConfigureAwait(false);
-        ChatMessage testMessage = new(ChatRole.User, "test message content");
-        await declarativeContext.QueueStateUpdateAsync("TestMessage", testMessage, VariableScopeNames.Local, cancellationToken).ConfigureAwait(false);
-        await declarativeContext.QueueStateUpdateAsync("TestRecord", testMessage.ToRecord(), VariableScopeNames.Local, cancellationToken).ConfigureAwait(false);
-        dynamic testObject = new ExpandoObject();
-#pragma warning disable IL2026 // Type or member is obsolete
-        testObject.A = 1;
-        testObject.B = 2;
-
-        await declarativeContext.QueueStateUpdateAsync("TestObject", testObject, VariableScopeNames.Local, cancellationToken).ConfigureAwait(false);
-#pragma warning restore
-        await declarativeContext.QueueStateUpdateAsync("TestDictionary", new Dictionary<string, int> { { "A", 1 }, { "B", 2 } }, VariableScopeNames.Local, cancellationToken).ConfigureAwait(false);
-        ChatMessage[] messages = [testMessage];
-        await declarativeContext.QueueStateUpdateAsync("TestArray", messages.ToTable(), VariableScopeNames.Local, cancellationToken).ConfigureAwait(false);
 
         ChatMessage inputMessage = await options.AgentProvider.CreateMessageAsync(conversationId, input, cancellationToken).ConfigureAwait(false);
         await declarativeContext.SetLastMessageAsync(inputMessage).ConfigureAwait(false);

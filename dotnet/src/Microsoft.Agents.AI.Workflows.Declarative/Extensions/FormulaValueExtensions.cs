@@ -228,7 +228,6 @@ internal static class FormulaValueExtensions
                         TypeSchema.Message.MessageRecordType,
                         [.. value.OfType<ChatMessage>().Select(message => message.ToRecord())]),
                 _ when typeof(IDictionary).IsAssignableFrom(elementType) => value.ToTableOfRecords(),
-                // %%% JSONELEMENT
                 _ => throw new DeclarativeModelException($"Unsupported element type: {elementType.Name}"),
             };
     }

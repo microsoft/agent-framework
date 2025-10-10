@@ -73,13 +73,6 @@ internal sealed class WorkflowFormulaState
         await Task.WhenAll(RestorableScopes.Select(scopeName => ReadScopeAsync(scopeName))).ConfigureAwait(false);
         Debug.WriteLine($"RESTORE CHECKPOINT - COMPLETE [{timer.Elapsed}]");
 
-        System.Console.WriteLine($"OriginalInput => {this.Get("OriginalInput", VariableScopeNames.Local).Format()}");
-        System.Console.WriteLine($"TestMessage => {this.Get("TestMessage", VariableScopeNames.Local).Format()}");
-        System.Console.WriteLine($"TestRecord => {this.Get("TestRecord", VariableScopeNames.Local).Format()}");
-        System.Console.WriteLine($"TestDictionary => {this.Get("TestDictionary", VariableScopeNames.Local).Format()}");
-        System.Console.WriteLine($"TestObject => {this.Get("TestObject", VariableScopeNames.Local).Format()}");
-        System.Console.WriteLine($"TestArray => {this.Get("TestArray", VariableScopeNames.Local).Format()}");
-
         async Task ReadScopeAsync(string scopeName)
         {
             HashSet<string> keys = await context.ReadStateKeysAsync(scopeName, cancellationToken).ConfigureAwait(false);

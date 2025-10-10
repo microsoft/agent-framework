@@ -53,6 +53,7 @@ internal static class ObjectExtensions
             string or
             bool or
             int or
+            float or
             long or
             decimal or
             double or
