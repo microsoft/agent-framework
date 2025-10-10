@@ -15,9 +15,9 @@ using OpenAI.Responses;
 namespace Microsoft.Agents.AI.Hosting.OpenAI;
 
 /// <summary>
-/// Provides extension methods for mapping OpenAI Responses capabilities to an <see cref="AIAgent"/>.
+/// Provides extension methods for mapping OpenAI capabilities to an <see cref="AIAgent"/>.
 /// </summary>
-public static class EndpointRouteBuilderExtensions
+public static partial class EndpointRouteBuilderExtensions
 {
     /// <summary>
     /// Maps OpenAI Responses API endpoints to the specified <see cref="IEndpointRouteBuilder"/> for the given <see cref="AIAgent"/>.

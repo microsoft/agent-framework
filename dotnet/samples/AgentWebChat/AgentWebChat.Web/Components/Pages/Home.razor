@@ -5,6 +5,7 @@
 @inject ILogger<Home> Logger
 @inject A2AAgentClient A2AActorClient
 @inject OpenAIResponsesAgentClient OpenAIResponsesAgentClient
+@inject OpenAIChatCompletionsAgentClient OpenAIChatCompletionsAgentClient
 @rendermode InteractiveServer
 @using System.Text
 @using System.Text.Json
@@ -52,14 +53,18 @@
         <label for="protocol-select" class="protocol-select-label">Choose communication protocol:</label>
         <div class="protocol-select-wrapper">
             <select id="protocol-select" class="protocol-select" @bind="selectedProtocol" disabled="@(isStreaming)">
-                <option value="OpenAIResponses">OpenAI Responses</option>
-                <option value="A2A">A2A (Agent-to-Agent)</option>
+				<option value="OpenAIResponses">OpenAI Responses</option>
+				<option value="OpenAIChatCompletions">OpenAI ChatCompletions</option>
+				<option value="A2A">A2A (Agent-to-Agent)</option>
             </select>
             <div class="protocol-info">
                 @switch (selectedProtocol)
                 {
 					case Protocol.OpenAIResponses:
                         <span class="protocol-description">֎ OpenAI Responses</span>
+                        break;
+					case Protocol.OpenAIChatCompletions:
+                        <span class="protocol-description">֎ OpenAI ChatCompletions</span>
                         break;
 					case Protocol.A2A:
 					default:
@@ -903,7 +908,8 @@
 	private enum Protocol
 	{
 		A2A, // Agent-to-Agent protocol
-		OpenAIResponses
+		OpenAIResponses,
+		OpenAIChatCompletions
 	}
 
 	private sealed class Conversation
@@ -1080,11 +1086,11 @@
 
 		try
 		{
-
 			// Select the appropriate client based on protocol
-			IAgentClient agentClient = selectedProtocol switch
+			AgentClientBase agentClient = selectedProtocol switch
 			{
 				Protocol.OpenAIResponses => OpenAIResponsesAgentClient,
+				Protocol.OpenAIChatCompletions => OpenAIChatCompletionsAgentClient,
 				Protocol.A2A or _ => A2AActorClient
 			};
 
