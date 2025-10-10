@@ -4,6 +4,7 @@
     <VersionPrefix>1.0.0</VersionPrefix>
     <PackageVersion Condition="'$(VersionSuffix)' != ''">$(VersionPrefix)-$(VersionSuffix).251009.1</PackageVersion>
     <PackageVersion Condition="'$(VersionSuffix)' == ''">$(VersionPrefix)-preview.251009.1</PackageVersion>
+    <GitTag>1.0.0-preview.251009.1</GitTag>
 
     <Configurations>Debug;Release;Publish</Configurations>
     <IsPackable>true</IsPackable>

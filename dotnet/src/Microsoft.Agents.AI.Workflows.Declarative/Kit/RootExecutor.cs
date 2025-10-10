@@ -67,8 +67,8 @@ public abstract class RootExecutor<TInput> : Executor<TInput>, IResettableExecut
         }
         await declarativeContext.QueueConversationUpdateAsync(this._conversationId, isExternal: true, cancellationToken).ConfigureAwait(false);
 
-        await this._agentProvider.CreateMessageAsync(this._conversationId, input, cancellationToken).ConfigureAwait(false);
-        await declarativeContext.SetLastMessageAsync(input).ConfigureAwait(false);
+        ChatMessage inputMessage = await this._agentProvider.CreateMessageAsync(this._conversationId, input, cancellationToken).ConfigureAwait(false);
+        await declarativeContext.SetLastMessageAsync(inputMessage).ConfigureAwait(false);
 
         await declarativeContext.SendResultMessageAsync(this.Id, cancellationToken).ConfigureAwait(false);
     }
