@@ -84,7 +84,6 @@ internal sealed class WorkflowFormulaState
                     this.Set(key, FormulaValue.NewBlank(), scopeName);
                     continue;
                 }
-                Debug.WriteLine($"RESTORING: {scopeName}.{key} => {value.TypeId.TypeName}");
                 FormulaValue formulaValue = value.ToFormula();
                 this.Set(key, formulaValue, scopeName);
                 Debug.WriteLine($"RESTORED: {scopeName}.{key} => {formulaValue.Type}");

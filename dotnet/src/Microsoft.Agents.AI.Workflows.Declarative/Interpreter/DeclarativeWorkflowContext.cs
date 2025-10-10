@@ -133,7 +133,7 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
             {
                 this.State.Set(key, FormulaValue.NewBlank(), scopeName);
             }
-            return this.Source.QueueStateUpdateAsync(key, new PortableValue(UnassignedValue.Instance), scopeName, cancellationToken);
+            return this.Source.QueueStateUpdateAsync(key, UnassignedValue.Instance, scopeName, cancellationToken);
         }
 
         ValueTask QueueFormulaStateAsync(FormulaValue formulaValue)
