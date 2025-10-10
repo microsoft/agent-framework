@@ -772,9 +772,6 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
         // Clear text accumulator for new response
         accumulatedText.current = "";
 
-        // Clear debug panel events for new agent run
-        onDebugEvent("clear");
-
         // Use OpenAI-compatible API streaming - direct event handling
         const streamGenerator = apiClient.streamAgentExecutionOpenAI(
           selectedAgent.id,

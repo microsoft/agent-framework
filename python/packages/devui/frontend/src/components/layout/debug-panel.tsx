@@ -24,6 +24,40 @@ import {
 } from "lucide-react";
 import type { ExtendedResponseStreamEvent } from "@/types";
 
+// Simple visual separator component
+function MessageSeparator() {
+  return (
+    <div className="flex items-center gap-2 py-3 px-2">
+      <div className="flex-1 border-t border-border/50" />
+    </div>
+  );
+}
+
+// Helper to add separators between message rounds
+function addSeparatorsToEvents(events: ExtendedResponseStreamEvent[]): (ExtendedResponseStreamEvent | { type: "separator"; id: string })[] {
+  const result: (ExtendedResponseStreamEvent | { type: "separator"; id: string })[] = [];
+  let lastWasResponseDone = false;
+
+  for (let i = 0; i < events.length; i++) {
+    const event = events[i];
+
+    // Add separator before first event after response.done
+    if (lastWasResponseDone && event.type !== "response.done") {
+      result.push({ type: "separator", id: `sep-${i}` });
+      lastWasResponseDone = false;
+    }
+
+    result.push(event);
+
+    // Track when we see response.done
+    if (event.type === "response.done" || event.type === "response.completed") {
+      lastWasResponseDone = true;
+    }
+  }
+
+  return result;
+}
+
 // Type definitions for event data structures
 interface EventDataBase {
   call_id?: string;
@@ -101,9 +135,18 @@ function processEventsForDisplay(
   let accumulatedText = "";
 
   for (const event of events) {
+    // Skip trace events - they belong in the Traces tab only
+    if (
+      event.type === "response.trace_event.complete" ||
+      event.type === "response.trace.complete"
+    ) {
+      continue;
+    }
+
     // Handle response.output_item.added - NEW! Extract function call metadata
     if (event.type === "response.output_item.added") {
-      const outputEvent = event as import("@/types").ResponseOutputItemAddedEvent;
+      const outputEvent =
+        event as import("@/types").ResponseOutputItemAddedEvent;
       const item = outputEvent.item;
 
       // If it's a function call item, extract metadata
@@ -422,7 +465,8 @@ function getEventSummary(event: ExtendedResponseStreamEvent): string {
 
     case "response.completed":
       if ("response" in event && event.response && "usage" in event.response) {
-        const completedEvent = event as import("@/types").ResponseCompletedEvent;
+        const completedEvent =
+          event as import("@/types").ResponseCompletedEvent;
         const usage = completedEvent.response.usage;
         if (usage) {
           return `Response complete (${usage.total_tokens} tokens)`;
@@ -511,6 +555,8 @@ function EventItem({ event }: EventItemProps) {
       event.data) ||
     (event.type === "response.output_item.added" &&
       getFunctionResultFromEvent(event) !== null) ||
+    // Make function result events expandable
+    event.type === "response.function_result.complete" ||
     (event.type === "response.workflow_event.complete" &&
       "data" in event &&
       event.data) ||
@@ -681,6 +727,7 @@ function EventExpandedContent({
       }
       break;
 
+    case "response.function_result.complete":
     case "response.output_item.added": {
       const result = getFunctionResultFromEvent(event);
       if (result) {
@@ -915,7 +962,8 @@ function EventExpandedContent({
 
     case "response.completed":
       if ("response" in event && event.response) {
-        const completedEvent = event as import("@/types").ResponseCompletedEvent;
+        const completedEvent =
+          event as import("@/types").ResponseCompletedEvent;
         const response = completedEvent.response;
         return (
           <div className="space-y-2">
@@ -1006,11 +1054,14 @@ function EventsTab({
   // Process events to accumulate tool calls and reduce noise
   const processedEvents = processEventsForDisplay(events);
 
+  // Add separators between message rounds
+  const eventsWithSeparators = addSeparatorsToEvents(processedEvents);
+
   // Reverse events so latest appears at top
-  const reversedEvents = [...processedEvents].reverse();
+  const reversedEvents = [...eventsWithSeparators].reverse();
 
   return (
-    <div className="h-full">
+    <div className="h-full flex flex-col">
       <div className="flex items-center justify-between p-3 border-b">
         <div className="flex items-center gap-2">
           <Activity className="h-4 w-4" />
@@ -1030,7 +1081,7 @@ function EventsTab({
         )}
       </div>
 
-      <ScrollArea ref={scrollRef}>
+      <ScrollArea ref={scrollRef} className="flex-1">
         <div className="p-3">
           {processedEvents.length === 0 ? (
             <div className="text-center text-muted-foreground text-sm py-8">
@@ -1040,9 +1091,12 @@ function EventsTab({
             </div>
           ) : (
             <div className="space-y-2">
-              {reversedEvents.map((event, index) => (
-                <EventItem key={`${event.type}-${index}`} event={event} />
-              ))}
+              {reversedEvents.map((event, index) => {
+                if ('type' in event && event.type === "separator") {
+                  return <MessageSeparator key={(event as { type: "separator"; id: string }).id} />;
+                }
+                return <EventItem key={`${event.type}-${index}`} event={event as ExtendedResponseStreamEvent} />;
+              })}
             </div>
           )}
         </div>
@@ -1059,8 +1113,11 @@ function TracesTab({ events }: { events: ExtendedResponseStreamEvent[] }) {
       e.type === "response.trace.complete"
   );
 
+  // Add separators between message rounds
+  const tracesWithSeparators = addSeparatorsToEvents(traceEvents);
+
   // Reverse to show latest traces at the top
-  const reversedTraceEvents = [...traceEvents].reverse();
+  const reversedTraceEvents = [...tracesWithSeparators].reverse();
 
   return (
     <div className="h-full">
@@ -1094,9 +1151,12 @@ function TracesTab({ events }: { events: ExtendedResponseStreamEvent[] }) {
             </div>
           ) : (
             <div className="space-y-3">
-              {reversedTraceEvents.map((event, index) => (
-                <TraceEventItem key={index} event={event} />
-              ))}
+              {reversedTraceEvents.map((event, index) => {
+                if ('type' in event && event.type === "separator") {
+                  return <MessageSeparator key={(event as { type: "separator"; id: string }).id} />;
+                }
+                return <TraceEventItem key={index} event={event as ExtendedResponseStreamEvent} />;
+              })}
             </div>
           )}
         </div>
@@ -1165,7 +1225,7 @@ function TraceEventItem({ event }: { event: ExtendedResponseStreamEvent }) {
               <ChevronRight className="h-3 w-3" />
             )}
           </div>
-          <div className="text-muted-foreground flex-1">
+          <div className="text-muted-foreground flex-1 break-all">
             <span className="font-medium">{operationName}</span>
             {entityId && <span className="ml-2 text-xs">({entityId})</span>}
           </div>
@@ -1193,7 +1253,7 @@ function TraceEventItem({ event }: { event: ExtendedResponseStreamEvent }) {
                     <span className="font-medium text-muted-foreground">
                       Span ID:
                     </span>
-                    <span className="ml-2 font-mono text-xs">
+                    <span className="ml-2 font-mono text-xs break-all">
                       {data.span_id}
                     </span>
                   </div>
@@ -1203,7 +1263,7 @@ function TraceEventItem({ event }: { event: ExtendedResponseStreamEvent }) {
                     <span className="font-medium text-muted-foreground">
                       Trace ID:
                     </span>
-                    <span className="ml-2 font-mono text-xs">
+                    <span className="ml-2 font-mono text-xs break-all">
                       {data.trace_id}
                     </span>
                   </div>
@@ -1213,7 +1273,7 @@ function TraceEventItem({ event }: { event: ExtendedResponseStreamEvent }) {
                     <span className="font-medium text-muted-foreground">
                       Parent Span:
                     </span>
-                    <span className="ml-2 font-mono text-xs">
+                    <span className="ml-2 font-mono text-xs break-all">
                       {data.parent_span_id}
                     </span>
                   </div>
@@ -1250,7 +1310,7 @@ function TraceEventItem({ event }: { event: ExtendedResponseStreamEvent }) {
                     <span className="font-medium text-muted-foreground">
                       Entity:
                     </span>
-                    <span className="ml-2 font-mono text-xs">
+                    <span className="ml-2 font-mono text-xs break-all">
                       {data.entity_id}
                     </span>
                   </div>
@@ -1338,8 +1398,11 @@ function ToolsTab({ events }: { events: ExtendedResponseStreamEvent[] }) {
     toolEvents.push(result);
   });
 
+  // Add separators between message rounds
+  const toolsWithSeparators = addSeparatorsToEvents(toolEvents);
+
   // Reverse to show latest tools at the top
-  const reversedToolEvents = [...toolEvents].reverse();
+  const reversedToolEvents = [...toolsWithSeparators].reverse();
 
   return (
     <div className="h-full">
@@ -1358,9 +1421,12 @@ function ToolsTab({ events }: { events: ExtendedResponseStreamEvent[] }) {
             </div>
           ) : (
             <div className="space-y-3">
-              {reversedToolEvents.map((event, index) => (
-                <ToolEventItem key={index} event={event} />
-              ))}
+              {reversedToolEvents.map((event, index) => {
+                if ('type' in event && event.type === "separator") {
+                  return <MessageSeparator key={(event as { type: "separator"; id: string }).id} />;
+                }
+                return <ToolEventItem key={index} event={event as ExtendedResponseStreamEvent} />;
+              })}
             </div>
           )}
         </div>
@@ -1370,20 +1436,20 @@ function ToolsTab({ events }: { events: ExtendedResponseStreamEvent[] }) {
 }
 
 function ToolEventItem({ event }: { event: ExtendedResponseStreamEvent }) {
-  if (!("data" in event)) {
-    return null;
-  }
-
-  const data = event.data as EventDataBase;
   const timestamp = new Date().toLocaleTimeString();
 
-  // Check if this is a function call event
+  // Check if this is a function call or result event
   const isFunctionCall = event.type === "response.function_call.complete";
-  const isFunctionResult = getFunctionResultFromEvent(event) !== null;
+  const resultData = getFunctionResultFromEvent(event);
+  const isFunctionResult = resultData !== null;
 
   if (!isFunctionCall && !isFunctionResult) {
     return null;
   }
+
+  // For function calls: extract data field
+  const callData =
+    isFunctionCall && "data" in event ? (event.data as EventDataBase) : null;
 
   return (
     <div className="border rounded p-3">
@@ -1393,9 +1459,9 @@ function ToolEventItem({ event }: { event: ExtendedResponseStreamEvent }) {
           <span className="font-medium text-sm">
             {isFunctionCall ? "Tool Call" : "Tool Result"}
           </span>
-          {isFunctionCall && data.name !== undefined && (
+          {isFunctionCall && callData && callData.name !== undefined && (
             <span className="text-xs text-muted-foreground">
-              ({String(data.name)})
+              ({String(callData.name)})
             </span>
           )}
         </div>
@@ -1405,7 +1471,7 @@ function ToolEventItem({ event }: { event: ExtendedResponseStreamEvent }) {
       </div>
 
       {/* Function Calls */}
-      {isFunctionCall && (
+      {isFunctionCall && callData && (
         <div className="p-2 bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800 rounded">
           <div className="flex items-center gap-2 mb-2">
             <Wrench className="h-3 w-3 text-blue-600 dark:text-blue-400" />
@@ -1413,19 +1479,19 @@ function ToolEventItem({ event }: { event: ExtendedResponseStreamEvent }) {
               CALL
             </span>
             <span className="font-medium text-sm">
-              {String(data.name || "unknown")}
+              {String(callData.name || "unknown")}
             </span>
           </div>
 
-          {data.arguments !== undefined && (
+          {callData.arguments !== undefined && (
             <div className="text-xs">
               <span className="text-muted-foreground mb-1 block">
                 Arguments:
               </span>
               <pre className="p-2 bg-background border rounded text-xs overflow-auto max-h-32 max-w-full break-all whitespace-pre-wrap">
-                {typeof data.arguments === "string"
-                  ? data.arguments
-                  : JSON.stringify(data.arguments, null, 1)}
+                {typeof callData.arguments === "string"
+                  ? callData.arguments
+                  : JSON.stringify(callData.arguments, null, 1)}
               </pre>
             </div>
           )}
@@ -1433,31 +1499,35 @@ function ToolEventItem({ event }: { event: ExtendedResponseStreamEvent }) {
       )}
 
       {/* Function Results */}
-      {isFunctionResult && (
+      {isFunctionResult && resultData && (
         <div className="p-2 bg-green-50 dark:bg-green-950/50 border border-green-200 dark:border-green-800 rounded">
           <div className="flex items-center gap-2 mb-2">
             <CheckCircle2 className="h-3 w-3 text-green-600 dark:text-green-400" />
             <span className="text-xs font-mono bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 px-2 py-1 rounded">
               RESULT
             </span>
+            {/* Only show status badge for non-completed states (errors/incomplete) */}
+            {resultData.status !== "completed" && (
+              <span className="ml-auto px-2 py-1 rounded text-xs font-medium bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200">
+                {resultData.status}
+              </span>
+            )}
           </div>
 
-          <div className="text-xs">
-            <span className="text-muted-foreground mb-1 block">Result:</span>
-            <pre className="p-2 bg-background border rounded text-xs overflow-auto max-h-32 max-w-full break-all whitespace-pre-wrap">
-              {typeof data.result === "string"
-                ? data.result
-                : JSON.stringify(data.result, null, 1)}
-            </pre>
-          </div>
-
-          {data.exception !== null && data.exception !== undefined && (
-            <div className="mt-2 p-2 bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 rounded">
-              <span className="text-xs text-red-600 dark:text-red-400">
-                Error: {String(data.exception)}
+          <div className="text-xs space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="text-muted-foreground">Call ID:</span>
+              <span className="font-mono text-xs break-all">
+                {resultData.call_id}
               </span>
             </div>
-          )}
+            <div>
+              <span className="text-muted-foreground block mb-1">Output:</span>
+              <pre className="p-2 bg-background border rounded text-xs overflow-auto max-h-32 break-all whitespace-pre-wrap">
+                {resultData.output}
+              </pre>
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -1470,9 +1540,9 @@ export function DebugPanel({
   onClose,
 }: DebugPanelProps) {
   return (
-    <div className=" overflow-auto h-[calc(100vh-3.7rem)] border-l">
-      <Tabs defaultValue="events" className="h-full flex flex-col">
-        <div className="px-3 pt-3 flex items-center gap-2">
+    <div className="flex-1 border-l flex flex-col min-h-0">
+      <Tabs defaultValue="events" className="flex-1 flex flex-col min-h-0">
+        <div className="px-3 pt-3 flex items-center gap-2 flex-shrink-0">
           <TabsList className="flex-1">
             <TabsTrigger value="events" className="flex-1">
               Events
@@ -1497,15 +1567,15 @@ export function DebugPanel({
           )}
         </div>
 
-        <TabsContent value="events" className="flex-1 mt-0">
+        <TabsContent value="events" className="flex-1 mt-0 overflow-hidden">
           <EventsTab events={events} isStreaming={isStreaming} />
         </TabsContent>
 
-        <TabsContent value="traces" className="flex-1 mt-0">
+        <TabsContent value="traces" className="flex-1 mt-0 overflow-hidden">
           <TracesTab events={events} />
         </TabsContent>
 
-        <TabsContent value="tools" className="flex-1 mt-0">
+        <TabsContent value="tools" className="flex-1 mt-0 overflow-hidden">
           <ToolsTab events={events} />
         </TabsContent>
       </Tabs>

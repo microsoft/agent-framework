@@ -4,14 +4,14 @@
  */
 
 import { useState, useEffect, useCallback } from "react";
-import { AppHeader, DebugPanel, SettingsModal } from "@/components/layout";
+import { AppHeader, DebugPanel, SettingsModal, DeploymentModal } from "@/components/layout";
 import { GalleryView } from "@/components/features/gallery";
 import { AgentView } from "@/components/features/agent";
 import { WorkflowView } from "@/components/features/workflow";
 import { LoadingState } from "@/components/ui/loading-state";
 import { Toast } from "@/components/ui/toast";
 import { apiClient } from "@/services/api";
-import { PanelRightOpen, ChevronDown, ServerOff } from "lucide-react";
+import { PanelRightOpen, ChevronDown, ServerOff, Rocket } from "lucide-react";
 import type { SampleEntity } from "@/data/gallery";
 import type {
   AgentInfo,
@@ -46,6 +46,7 @@ export default function App() {
   const [errorEntityId, setErrorEntityId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showEntityNotFoundToast, setShowEntityNotFoundToast] = useState(false);
+  const [showDeployModal, setShowDeployModal] = useState(false);
 
   // Initialize app - load agents and workflows
   useEffect(() => {
@@ -503,7 +504,7 @@ export default function App() {
 
                 {/* Right Panel - Debug */}
                 <div
-                  className="flex-shrink-0"
+                  className="flex-shrink-0 flex flex-col h-[calc(100vh-3.7rem)]"
                   style={{ width: `${debugPanelWidth}px` }}
                 >
                   <DebugPanel
@@ -511,6 +512,21 @@ export default function App() {
                     isStreaming={false} // Each view manages its own streaming state
                     onClose={() => setShowDebugPanel(false)}
                   />
+
+                  {/* Deploy Footer - Pinned to bottom */}
+                  <div className="border-t bg-muted/30 px-3 py-2.5 flex-shrink-0">
+                    <Button
+                      onClick={() => setShowDeployModal(true)}
+                      className="w-full"
+                      variant="outline"
+                      size="sm"
+                    >
+                      <Rocket className="h-3 w-3 mr-2 flex-shrink-0" />
+                      <span className="truncate text-xs">
+                        Deployment Guide for {appState.selectedAgent?.name || "Agent"}
+                      </span>
+                    </Button>
+                  </div>
                 </div>
               </>
             ) : (
@@ -533,6 +549,13 @@ export default function App() {
 
       {/* Settings Modal */}
       <SettingsModal open={showAboutModal} onOpenChange={setShowAboutModal} />
+
+      {/* Deployment Modal */}
+      <DeploymentModal
+        open={showDeployModal}
+        onClose={() => setShowDeployModal(false)}
+        agentName={appState.selectedAgent?.name}
+      />
 
       {/* Toast Notification */}
       {showEntityNotFoundToast && (

@@ -663,15 +663,24 @@ class MessageMapper:
 
     async def _map_approval_request_content(self, content: Any, context: dict[str, Any]) -> dict[str, Any]:
         """Map FunctionApprovalRequestContent to custom event."""
+        # Parse arguments to ensure they're always a dict, not a JSON string
+        # This prevents double-escaping when the frontend calls JSON.stringify()
+        arguments = {}
+        if hasattr(content, "function_call"):
+            if hasattr(content.function_call, "parse_arguments"):
+                # Use parse_arguments() to convert string arguments to dict
+                arguments = content.function_call.parse_arguments() or {}
+            else:
+                # Fallback to direct access if parse_arguments doesn't exist
+                arguments = getattr(content.function_call, "arguments", {})
+
         return {
             "type": "response.function_approval.requested",
             "request_id": getattr(content, "id", "unknown"),
             "function_call": {
                 "id": getattr(content.function_call, "call_id", "") if hasattr(content, "function_call") else "",
                 "name": getattr(content.function_call, "name", "") if hasattr(content, "function_call") else "",
-                "arguments": getattr(content.function_call, "arguments", {})
-                if hasattr(content, "function_call")
-                else {},
+                "arguments": arguments,
             },
             "item_id": context["item_id"],
             "output_index": context["output_index"],

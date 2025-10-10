@@ -173,6 +173,13 @@ export interface ResponseFunctionApprovalRespondedEvent {
   sequence_number: number;
 }
 
+// DevUI Extension: Turn Separator (UI-only event for grouping)
+export interface TurnSeparatorEvent {
+  type: "debug.turn_separator";
+  timestamp: string;
+  collapsed?: boolean;
+}
+
 // Union type for all structured events
 export type StructuredEvent =
   | ResponseCompletedEvent
@@ -186,7 +193,8 @@ export type StructuredEvent =
   | ResponseFunctionCallArgumentsDelta
   | ResponseErrorEvent
   | ResponseFunctionApprovalRequestedEvent
-  | ResponseFunctionApprovalRespondedEvent;
+  | ResponseFunctionApprovalRespondedEvent
+  | TurnSeparatorEvent;
 
 // Extended stream event that includes our structured events
 export type ExtendedResponseStreamEvent = ResponseStreamEvent | StructuredEvent;
