@@ -7,6 +7,7 @@ using System.Linq;
 using System.Text.Json;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Bot.ObjectModel;
+using Microsoft.Extensions.AI;
 using Microsoft.PowerFx.Types;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.Extensions;
@@ -60,6 +61,7 @@ internal static class ObjectExtensions
             DateTime or
             TimeSpan =>
                 value,
+            ChatMessage messageValue => messageValue.ToRecord().AsPortable(),
             IDictionary<string, object?> objectValue => objectValue.AsPortable(),
             IDictionary recordValue => recordValue.AsPortable(),
             IEnumerable tableValue => tableValue.AsPortable(),

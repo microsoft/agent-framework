@@ -6,6 +6,8 @@ using System.Linq;
 using System.Net;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
+using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
+using Microsoft.Extensions.AI;
 using Microsoft.PowerFx.Types;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.Extensions;
@@ -48,13 +50,31 @@ public sealed class PortableValueExtensionsTests
     [Fact]
     public void TimeSpanType() => TestValidType(DateTime.UtcNow.TimeOfDay, FormulaType.Time);
 
-    [Fact(Skip = "WIP")]
-    public void CollectionType()
+    [Fact]
+    public void ChatMessageType() => TestValidType(new ChatMessage(ChatRole.User, "input"), RecordType.Empty());
+
+    [Fact]
+    public void ListSimpleType()
     {
         TableValue convertedValue = (TableValue)TestValidType(new List<int> { 1, 2, 3 }, TableType.Empty());
         Assert.Equal(3, convertedValue.Count());
-        DecimalValue firstElement = Assert.IsType<DecimalValue>(convertedValue.Rows.First());
-        Assert.Equal(1, firstElement.Value);
+        RecordValue firstElement = convertedValue.Rows.First().Value;
+        NamedValue recordElement = Assert.Single(firstElement.Fields);
+        Assert.Equal("Value", recordElement.Name);
+        DecimalValue recordValue = Assert.IsType<DecimalValue>(recordElement.Value);
+        Assert.Equal(1, recordValue.Value);
+    }
+
+    [Fact]
+    public void ListComplexType()
+    {
+        TableValue convertedValue = (TableValue)TestValidType(new List<ChatMessage> { new(ChatRole.User, "input"), new(ChatRole.Assistant, "output") }, TableType.Empty());
+        Assert.Equal(2, convertedValue.Count());
+        RecordValue firstElement = convertedValue.Rows.First().Value;
+        StringValue typeValue = Assert.IsType<StringValue>(firstElement.GetField(TypeSchema.Discriminator));
+        Assert.Equal(nameof(ChatMessage), typeValue.Value);
+        StringValue textValue = Assert.IsType<StringValue>(firstElement.GetField(TypeSchema.Message.Fields.Text));
+        Assert.Equal("input", textValue.Value);
     }
 
     [Fact]

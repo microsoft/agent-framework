@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
+using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.AI;
 using Microsoft.PowerFx.Types;
 
@@ -34,10 +35,45 @@ internal static class PortableValueExtensions
                     FormulaValue.NewDateOnly(dateValue.Date) :
                     FormulaValue.New(dateValue),
             _ when value.IsType(out TimeSpan timeValue) => FormulaValue.New(timeValue),
-            _ => throw new DeclarativeModelException($"Unsupported variable type: {value.TypeId.TypeName}"),
+            _ => throw new DeclarativeModelException($"Unsupported portable type: {value.TypeId.TypeName}"),
         };
 
-    private static TableValue ToTable(this PortableValue[] values) => FormulaValue.NewTable(RecordType.Empty(), values.Select(value => (RecordValue)value.ToFormula())); // %%% HAXX: EMPTY / CAST
+    private static TableValue ToTable(this PortableValue[] values)
+    {
+        FormulaValue[] formulaValues = values.Select(value => value.ToFormula()).ToArray();
+        if (formulaValues[0] is RecordValue recordValue)
+        {
+            return FormulaValue.NewTable(ParseRecordType(recordValue), formulaValues.OfType<RecordValue>());
+        }
+
+        return
+            formulaValues[0] switch
+            {
+                PrimitiveValue<bool> => NewSingleColumnTable<bool>(),
+                PrimitiveValue<string> => NewSingleColumnTable<string>(),
+                PrimitiveValue<int> => NewSingleColumnTable<int>(),
+                PrimitiveValue<long> => NewSingleColumnTable<long>(),
+                PrimitiveValue<float> => NewSingleColumnTable<float>(),
+                PrimitiveValue<decimal> => NewSingleColumnTable<decimal>(),
+                PrimitiveValue<double> => NewSingleColumnTable<double>(),
+                PrimitiveValue<TimeSpan> => NewSingleColumnTable<TimeSpan>(),
+                PrimitiveValue<DateTime> => NewSingleColumnTable<DateTime>(),
+                _ => throw new DeclarativeModelException($"Unsupported table element type: {formulaValues[0].Type.GetType().Name}"),
+            };
+
+        TableValue NewSingleColumnTable<TValue>() =>
+            FormulaValue.NewSingleColumnTable(formulaValues.OfType<PrimitiveValue<TValue>>());
+    }
+
+    private static RecordType ParseRecordType(this RecordValue record)
+    {
+        RecordType recordType = RecordType.Empty();
+        foreach (NamedValue property in record.Fields)
+        {
+            recordType = recordType.Add(property.Name, property.Value.Type);
+        }
+        return recordType;
+    }
 
     private static bool IsParentType<TValue>(this PortableValue value, [NotNullWhen(true)] out TValue? typedValue)
     {
