@@ -606,11 +606,6 @@ public sealed partial class ChatClientAgent : AIAgent
                 """);
         }
 
-        if (!string.IsNullOrWhiteSpace(this.Instructions))
-        {
-            chatOptions ??= new();
-            chatOptions.Instructions = string.IsNullOrWhiteSpace(chatOptions.Instructions) ? this.Instructions : $"{this.Instructions}\n{chatOptions.Instructions}";
-        }
 
         // Only create or update ChatOptions if we have an id on the thread and we don't have the same one already in ChatOptions.
         if (!string.IsNullOrWhiteSpace(typedThread.ConversationId) && typedThread.ConversationId != chatOptions?.ConversationId)
