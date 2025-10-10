@@ -13,6 +13,7 @@ using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.ChatClient;
 using Microsoft.Extensions.AI;
+using OpenAI;
 
 // Get Azure AI Foundry configuration from environment variables
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
