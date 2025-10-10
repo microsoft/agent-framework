@@ -1,7 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.ClientModel;
+using System.ClientModel.Primitives;
 using System.ComponentModel;
-using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Extensions.AI;
 using Microsoft.SemanticKernel;
@@ -44,7 +45,9 @@ async Task SKAgent()
 
 async Task AFAgent()
 {
-    var agent = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName)
+    var agent = new OpenAIClient(
+        new BearerTokenPolicy(new AzureCliCredential(), "https://cognitiveservices.azure.com/.default"),
+        new OpenAIClientOptions() { Endpoint = new Uri(endpoint) }).GetChatClient(deploymentName)
         .CreateAIAgent(instructions: "You are a helpful assistant", tools: [AIFunctionFactory.Create(GetWeather)]);
 
     Console.WriteLine("\n=== AF Agent Response ===\n");

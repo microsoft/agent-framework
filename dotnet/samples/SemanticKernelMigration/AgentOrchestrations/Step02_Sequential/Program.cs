@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Azure.AI.OpenAI;
+using System.ClientModel;
+using System.ClientModel.Primitives;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
@@ -10,6 +11,7 @@ using Microsoft.SemanticKernel.Agents;
 using Microsoft.SemanticKernel.Agents.Orchestration;
 using Microsoft.SemanticKernel.Agents.Orchestration.Sequential;
 using Microsoft.SemanticKernel.Agents.Runtime.InProcess;
+using OpenAI;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
@@ -75,7 +77,9 @@ ValueTask StreamingResultCallback(StreamingChatMessageContent streamedResponse, 
 # region AFSequentialAgentWorkflow
 async Task AFSequentialAgentWorkflow()
 {
-    var client = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName).AsIChatClient();
+    var client = new OpenAIClient(
+        new BearerTokenPolicy(new AzureCliCredential(), "https://cognitiveservices.azure.com/.default"),
+        new OpenAIClientOptions() { Endpoint = new Uri(endpoint) }).GetChatClient(deploymentName).AsIChatClient();
     var frenchAgent = GetAFTranslationAgent("French", client);
     var spanishAgent = GetAFTranslationAgent("Spanish", client);
     var englishAgent = GetAFTranslationAgent("English", client);

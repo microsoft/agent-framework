@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Azure.AI.OpenAI;
+using System.ClientModel;
+using System.ClientModel.Primitives;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
@@ -43,7 +44,9 @@ async Task AFAgent()
     Console.WriteLine("\n=== AF Agent ===\n");
 
     var serviceCollection = new ServiceCollection();
-    serviceCollection.AddTransient((sp) => new AzureOpenAIClient(new(endpoint), new AzureCliCredential())
+    serviceCollection.AddTransient((sp) => new OpenAIClient(
+        new BearerTokenPolicy(new AzureCliCredential(), "https://cognitiveservices.azure.com/.default"),
+        new OpenAIClientOptions() { Endpoint = new Uri(endpoint) })
         .GetChatClient(deploymentName)
         .CreateAIAgent(name: "Joker", instructions: "You are good at telling jokes."));
 

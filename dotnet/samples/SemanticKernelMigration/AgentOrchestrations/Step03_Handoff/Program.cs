@@ -1,8 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.ClientModel;
+using System.ClientModel.Primitives;
 using System.ComponentModel;
 using System.Text.Json;
-using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
@@ -13,6 +14,7 @@ using Microsoft.SemanticKernel.Agents.Orchestration;
 using Microsoft.SemanticKernel.Agents.Orchestration.Handoff;
 using Microsoft.SemanticKernel.Agents.Runtime.InProcess;
 using Microsoft.SemanticKernel.ChatCompletion;
+using OpenAI;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
@@ -170,7 +172,9 @@ static string AFProcessRefund([Description("The order ID to process the refund f
 async Task AFHandoffAgentWorkflow()
 {
     // Create agents
-    var client = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName).AsIChatClient();
+    var client = new OpenAIClient(
+        new BearerTokenPolicy(new AzureCliCredential(), "https://cognitiveservices.azure.com/.default"),
+        new OpenAIClientOptions() { Endpoint = new Uri(endpoint) }).GetChatClient(deploymentName).AsIChatClient();
 
     ChatClientAgent triageAgent = new(client,
         instructions: "A customer support agent that triages issues.",

@@ -2,11 +2,12 @@
 
 // This sample shows how to create and use a simple AI agent with tools from an MCP Server that requires authentication.
 
+using System.ClientModel;
+using System.ClientModel.Primitives;
 using System.Diagnostics;
 using System.Net;
 using System.Text;
 using System.Web;
-using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.Logging;
@@ -46,9 +47,9 @@ await using var mcpClient = await McpClient.CreateAsync(transport, loggerFactory
 // Retrieve the list of tools available on the GitHub server
 var mcpTools = await mcpClient.ListToolsAsync().ConfigureAwait(false);
 
-AIAgent agent = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new AzureCliCredential())
+AIAgent agent = new OpenAIClient(
+    new BearerTokenPolicy(new AzureCliCredential(), "https://cognitiveservices.azure.com/.default"),
+    new OpenAIClientOptions() { Endpoint = new Uri(endpoint) })
      .GetChatClient(deploymentName)
      .CreateAIAgent(instructions: "You answer questions related to the weather.", tools: [.. mcpTools]);
 

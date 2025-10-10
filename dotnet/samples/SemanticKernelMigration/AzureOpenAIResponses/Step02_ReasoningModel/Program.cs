@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Azure.AI.OpenAI;
+using System.ClientModel;
+using System.ClientModel.Primitives;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
@@ -46,7 +47,9 @@ async Task SKAgentAsync()
 {
     Console.WriteLine("\n=== SK Agent ===\n");
 
-    var responseClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
+    var responseClient = new OpenAIClient(
+        new BearerTokenPolicy(new AzureCliCredential(), "https://cognitiveservices.azure.com/.default"),
+        new OpenAIClientOptions() { Endpoint = new Uri(endpoint) })
         .GetOpenAIResponseClient(deploymentName);
     OpenAIResponseAgent agent = new(responseClient)
     {
@@ -114,7 +117,9 @@ async Task AFAgentAsync()
 {
     Console.WriteLine("\n=== AF Agent ===\n");
 
-    var agent = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
+    var agent = new OpenAIClient(
+        new BearerTokenPolicy(new AzureCliCredential(), "https://cognitiveservices.azure.com/.default"),
+        new OpenAIClientOptions() { Endpoint = new Uri(endpoint) })
         .GetOpenAIResponseClient(deploymentName)
         .CreateAIAgent(name: "Thinker", instructions: "You are good at thinking hard before answering.");
 

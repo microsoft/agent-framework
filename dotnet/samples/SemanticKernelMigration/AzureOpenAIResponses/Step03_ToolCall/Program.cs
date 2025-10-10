@@ -1,7 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.ClientModel;
+using System.ClientModel.Primitives;
 using System.ComponentModel;
-using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Extensions.AI;
 using Microsoft.SemanticKernel;
@@ -24,7 +25,9 @@ await AFAgentAsync();
 
 async Task SKAgentAsync()
 {
-    OpenAIResponseAgent agent = new(new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
+    OpenAIResponseAgent agent = new(new OpenAIClient(
+        new BearerTokenPolicy(new AzureCliCredential(), "https://cognitiveservices.azure.com/.default"),
+        new OpenAIClientOptions() { Endpoint = new Uri(endpoint) })
         .GetOpenAIResponseClient(deploymentName));
 
     // Initialize plugin and add to the agent's Kernel (same as direct Kernel usage).
@@ -43,7 +46,9 @@ async Task SKAgentAsync()
 
 async Task AFAgentAsync()
 {
-    var agent = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
+    var agent = new OpenAIClient(
+        new BearerTokenPolicy(new AzureCliCredential(), "https://cognitiveservices.azure.com/.default"),
+        new OpenAIClientOptions() { Endpoint = new Uri(endpoint) })
         .GetOpenAIResponseClient(deploymentName)
         .CreateAIAgent(instructions: "You are a helpful assistant", tools: [AIFunctionFactory.Create(GetWeather)]);
 
