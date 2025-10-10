@@ -50,6 +50,7 @@ class ProcessEvents(Enum):
     OUTPUT_READY_PUBLIC = "OutputReadyPublic"
     OUTPUT_READY_INTERNAL = "OutputReadyInternal"
 
+
 ######################################################################
 # region Semantic Kernel nested process path
 ######################################################################
@@ -151,6 +152,7 @@ async def run_semantic_kernel_nested_process() -> None:
     if repeat_state is None or repeat_state.state is None:
         raise RuntimeError("RepeatStep state missing")
     assert repeat_state.state.last_message == "Test Test Test Test"  # nosec
+
 
 ######################################################################
 # region Agent Framework nested workflow path
@@ -259,6 +261,7 @@ async def run_agent_framework_nested_workflow(initial_message: str) -> Sequence[
             results.append(cast(str, event.data))
 
     return results
+
 
 ######################################################################
 # endregion
