@@ -30,8 +30,8 @@ AIAgent weatherAgent = new OpenAIClient(apiCredential, clientOptions)
 
 // Create the main agent, and provide the weather agent as a function tool.
 AIAgent agent = new OpenAIClient(apiCredential, clientOptions)
-     .GetChatClient(deploymentName)
-     .CreateAIAgent(instructions: "You are a helpful assistant who responds in French.", tools: [weatherAgent.AsAIFunction()]);
+    .GetChatClient(deploymentName)
+    .CreateAIAgent(instructions: "You are a helpful assistant who responds in French.", tools: [weatherAgent.AsAIFunction()]);
 
 // Invoke the agent and output the text result.
 Console.WriteLine(await agent.RunAsync("What is the weather like in Amsterdam?"));

@@ -37,7 +37,13 @@ public sealed class AzureAgentProvider(string projectEndpoint, TokenCredential p
     /// <inheritdoc/>
     public override async Task<string> CreateConversationAsync(CancellationToken cancellationToken = default)
     {
-        PersistentAgentThread conversation = await this.GetAgentsClient().Threads.CreateThreadAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+        PersistentAgentThread conversation =
+            await this.GetAgentsClient().Threads.CreateThreadAsync(
+                messages: null,
+                toolResources: null,
+                metadata: null,
+                cancellationToken).ConfigureAwait(false);
+
         return conversation.Id;
     }
 
@@ -78,6 +84,7 @@ public sealed class AzureAgentProvider(string projectEndpoint, TokenCredential p
                         TextContent textContent => new MessageInputTextBlock(textContent.Text),
                         HostedFileContent fileContent => new MessageInputImageFileBlock(new MessageImageFileParam(fileContent.FileId)),
                         UriContent uriContent when uriContent.Uri is not null => new MessageInputImageUriBlock(new MessageImageUriParam(uriContent.Uri.ToString())),
+                        DataContent dataContent when dataContent.Uri is not null => new MessageInputImageUriBlock(new MessageImageUriParam(dataContent.Uri)),
                         _ => null // Unsupported content type
                     };
 
@@ -91,7 +98,7 @@ public sealed class AzureAgentProvider(string projectEndpoint, TokenCredential p
 
     /// <inheritdoc/>
     public override async Task<AIAgent> GetAgentAsync(string agentId, CancellationToken cancellationToken = default) =>
-        await this.GetAgentsClient().GetAIAgentAsync(agentId, chatOptions: null, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await this.GetAgentsClient().GetAIAgentAsync(agentId, chatOptions: null, clientFactory: null, cancellationToken).ConfigureAwait(false);
 
     /// <inheritdoc/>
     public override async Task<ChatMessage> GetMessageAsync(string conversationId, string messageId, CancellationToken cancellationToken = default)

@@ -7,18 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0b251007] - 2025-10-07
+
 ### Added
+- Added method to expose agent as MCP server ([#1248](https://github.com/microsoft/agent-framework/pull/1248))
+- Add PDF file support to OpenAI content parser with filename mapping ([#1121](https://github.com/microsoft/agent-framework/pull/1121))
+- Sample on integration of Azure OpenAI Responses Client with a local MCP server ([#1215](https://github.com/microsoft/agent-framework/pull/1215))
+- Added approval_mode and allowed_tools to local MCP ([#1203](https://github.com/microsoft/agent-framework/pull/1203))
 - Introducing AI Function approval ([#1131](https://github.com/microsoft/agent-framework/pull/1131))
 - Add name and description to workflows ([#1183](https://github.com/microsoft/agent-framework/pull/1183))
 - Add Ollama example using OpenAIChatClient ([#1100](https://github.com/microsoft/agent-framework/pull/1100))
 - Add DevUI improvements with color scheme, linking, agent details, and token usage data ([#1091](https://github.com/microsoft/agent-framework/pull/1091))
 - Add semantic-kernel to agent-framework migration code samples ([#1045](https://github.com/microsoft/agent-framework/pull/1045))
-- Add metapackage metadata stub to restore flit builds ([#1043](https://github.com/microsoft/agent-framework/pull/1043))
 
 ### Changed
+- [BREAKING] Parameter naming and other fixes ([#1255](https://github.com/microsoft/agent-framework/pull/1255))
+- [BREAKING] Introduce add_agent functionality and added output_response to AgentExecutor; agent streaming behavior to follow workflow invocation ([#1184](https://github.com/microsoft/agent-framework/pull/1184))
+- OpenAI Clients accepting api_key callback ([#1139](https://github.com/microsoft/agent-framework/pull/1139))
+- Updated docstrings ([#1225](https://github.com/microsoft/agent-framework/pull/1225))
+- Standardize docstrings: Use Keyword Args for Settings classes and add environment variable examples ([#1202](https://github.com/microsoft/agent-framework/pull/1202))
 - Update References to Agent2Agent protocol to use correct terminology ([#1162](https://github.com/microsoft/agent-framework/pull/1162))
 - Update getting started samples to reflect AF and update unit test ([#1093](https://github.com/microsoft/agent-framework/pull/1093))
-- Update README with links to video content and initial code samples as quickstart ([#1049](https://github.com/microsoft/agent-framework/pull/1049))
 - Update Lab Installation instructions to install from source ([#1051](https://github.com/microsoft/agent-framework/pull/1051))
 - Update python DEV_SETUP to add brew-based uv installation ([#1173](https://github.com/microsoft/agent-framework/pull/1173))
 - Update docstrings of all files and add example code in public interfaces ([#1107](https://github.com/microsoft/agent-framework/pull/1107))
@@ -29,8 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python: Foundry Agent Completeness ([#954](https://github.com/microsoft/agent-framework/pull/954))
 
 ### Fixed
-- Fix MCP tool calls to flatten nested JSON arguments (handle $ref schemas) ([#990](https://github.com/microsoft/agent-framework/pull/990))
-- Fix PyPI version strings to comply with PEP 440 ([#1040](https://github.com/microsoft/agent-framework/pull/1040))
+- Ollama + azureai openapi samples fix ([#1244](https://github.com/microsoft/agent-framework/pull/1244))
 - Fix multimodal input sample: Document required environment variables and configuration options ([#1088](https://github.com/microsoft/agent-framework/pull/1088))
 - Fix Azure AI Getting Started samples: Improve documentation and code readability ([#1089](https://github.com/microsoft/agent-framework/pull/1089))
 - Fix a2a import ([#1058](https://github.com/microsoft/agent-framework/pull/1058))
@@ -53,5 +61,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251001...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251007...HEAD
+[1.0.0b251007]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251001...python-1.0.0b251007
 [1.0.0b251001]: https://github.com/microsoft/agent-framework/releases/tag/python-1.0.0b251001

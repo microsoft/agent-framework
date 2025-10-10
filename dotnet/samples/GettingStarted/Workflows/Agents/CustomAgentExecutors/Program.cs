@@ -138,17 +138,17 @@ internal sealed class SloganWriterExecutor
         this._thread = this._agent.GetNewThread();
     }
 
-    public async ValueTask<SloganResult> HandleAsync(string message, IWorkflowContext context)
+    public async ValueTask<SloganResult> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        var result = await this._agent.RunAsync(message, this._thread);
+        var result = await this._agent.RunAsync(message, this._thread, cancellationToken: cancellationToken);
 
         var sloganResult = JsonSerializer.Deserialize<SloganResult>(result.Text) ?? throw new InvalidOperationException("Failed to deserialize slogan result.");
 
-        await context.AddEventAsync(new SloganGeneratedEvent(sloganResult));
+        await context.AddEventAsync(new SloganGeneratedEvent(sloganResult), cancellationToken);
         return sloganResult;
     }
 
-    public async ValueTask<SloganResult> HandleAsync(FeedbackResult message, IWorkflowContext context)
+    public async ValueTask<SloganResult> HandleAsync(FeedbackResult message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         var feedbackMessage = $"""
             Here is the feedback on your previous slogan:
@@ -159,10 +159,10 @@ internal sealed class SloganWriterExecutor
             Please use this feedback to improve your slogan.
             """;
 
-        var result = await this._agent.RunAsync(feedbackMessage, this._thread);
+        var result = await this._agent.RunAsync(feedbackMessage, this._thread, cancellationToken: cancellationToken);
         var sloganResult = JsonSerializer.Deserialize<SloganResult>(result.Text) ?? throw new InvalidOperationException("Failed to deserialize slogan result.");
 
-        await context.AddEventAsync(new SloganGeneratedEvent(sloganResult));
+        await context.AddEventAsync(new SloganGeneratedEvent(sloganResult), cancellationToken);
         return sloganResult;
     }
 }
@@ -209,7 +209,7 @@ internal sealed class FeedbackExecutor : ReflectingExecutor<FeedbackExecutor>, I
         this._thread = this._agent.GetNewThread();
     }
 
-    public async ValueTask HandleAsync(SloganResult message, IWorkflowContext context)
+    public async ValueTask HandleAsync(SloganResult message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         var sloganMessage = $"""
             Here is a slogan for the task '{message.Task}':
@@ -217,24 +217,24 @@ internal sealed class FeedbackExecutor : ReflectingExecutor<FeedbackExecutor>, I
             Please provide feedback on this slogan, including comments, a rating from 1 to 10, and suggested actions for improvement.
             """;
 
-        var response = await this._agent.RunAsync(sloganMessage, this._thread);
+        var response = await this._agent.RunAsync(sloganMessage, this._thread, cancellationToken: cancellationToken);
         var feedback = JsonSerializer.Deserialize<FeedbackResult>(response.Text) ?? throw new InvalidOperationException("Failed to deserialize feedback.");
 
-        await context.AddEventAsync(new FeedbackEvent(feedback));
+        await context.AddEventAsync(new FeedbackEvent(feedback), cancellationToken);
 
         if (feedback.Rating >= this.MinimumRating)
         {
-            await context.YieldOutputAsync($"The following slogan was accepted:\n\n{message.Slogan}");
+            await context.YieldOutputAsync($"The following slogan was accepted:\n\n{message.Slogan}", cancellationToken);
             return;
         }
 
         if (this._attempts >= this.MaxAttempts)
         {
-            await context.YieldOutputAsync($"The slogan was rejected after {this.MaxAttempts} attempts. Final slogan:\n\n{message.Slogan}");
+            await context.YieldOutputAsync($"The slogan was rejected after {this.MaxAttempts} attempts. Final slogan:\n\n{message.Slogan}", cancellationToken);
             return;
         }
 
-        await context.SendMessageAsync(feedback);
+        await context.SendMessageAsync(feedback, cancellationToken: cancellationToken);
         this._attempts++;
     }
 }

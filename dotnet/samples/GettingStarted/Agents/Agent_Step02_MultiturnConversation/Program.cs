@@ -10,14 +10,11 @@ using OpenAI;
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
-const string JokerName = "Joker";
-const string JokerInstructions = "You are good at telling jokes.";
-
 AIAgent agent = new OpenAIClient(
     new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
     new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") })
-     .GetChatClient(deploymentName)
-     .CreateAIAgent(JokerInstructions, JokerName);
+    .GetChatClient(deploymentName)
+    .CreateAIAgent(instructions: "You are good at telling jokes.", name: "Joker");
 
 // Invoke the agent with a multi-turn conversation, where the context is preserved in the thread object.
 AgentThread thread = agent.GetNewThread();
