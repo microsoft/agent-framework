@@ -103,7 +103,7 @@ internal static class AgentProviderExtensions
             {
                 conversationId = assignValue;
 
-                await context.QueueConversationUpdateAsync(conversationId, cancellationToken: cancellationToken).ConfigureAwait(false);
+                await context.QueueConversationUpdateAsync(conversationId, cancellationToken).ConfigureAwait(false);
             }
         }
     }

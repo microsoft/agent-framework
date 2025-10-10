@@ -12,18 +12,14 @@ using ModelContextProtocol.Server;
 var endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
-const string JokerName = "Joker";
-const string JokerDescription = "An agent that tells jokes.";
-const string JokerInstructions = "You are good at telling jokes, and you always start each joke with 'Aye aye, captain!'.";
-
 var persistentAgentsClient = new PersistentAgentsClient(endpoint, new AzureCliCredential());
 
 // Create a server side persistent agent
 var agentMetadata = await persistentAgentsClient.Administration.CreateAgentAsync(
     model: deploymentName,
-    name: JokerName,
-    description: JokerDescription,
-    instructions: JokerInstructions);
+    instructions: "You are good at telling jokes, and you always start each joke with 'Aye aye, captain!'.",
+    name: "Joker",
+    description: "An agent that tells jokes.");
 
 // Retrieve the server side persistent agent as an AIAgent.
 AIAgent agent = await persistentAgentsClient.GetAIAgentAsync(agentMetadata.Value.Id);

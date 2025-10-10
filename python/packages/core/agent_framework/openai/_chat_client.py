@@ -28,6 +28,8 @@ from .._types import (
     Contents,
     DataContent,
     FinishReason,
+    FunctionApprovalRequestContent,
+    FunctionApprovalResponseContent,
     FunctionCallContent,
     FunctionResultContent,
     Role,
@@ -154,10 +156,13 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
 
     def _prepare_options(self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions) -> dict[str, Any]:
         # Preprocess web search tool if it exists
-        options_dict = chat_options.to_dict(exclude={"type"})
-        instructions = options_dict.pop("instructions", None)
-        if instructions:
-            messages = [ChatMessage(role="system", text=instructions), *messages]
+        options_dict = chat_options.to_dict(
+            exclude={
+                "type",
+                "instructions",  # included as system message
+            }
+        )
+
         if messages and "messages" not in options_dict:
             options_dict["messages"] = self._prepare_chat_history_for_request(messages)
         if "messages" not in options_dict:
@@ -353,6 +358,10 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
         """Parse a chat message into the openai format."""
         all_messages: list[dict[str, Any]] = []
         for content in message.contents:
+            # Skip approval content - it's internal framework state, not for the LLM
+            if isinstance(content, (FunctionApprovalRequestContent, FunctionApprovalResponseContent)):
+                continue
+
             args: dict[str, Any] = {
                 "role": message.role.value if isinstance(message.role, Role) else message.role,
             }

@@ -53,7 +53,7 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
                 // Copy keys to array to avoid modifying collection during enumeration.
                 foreach (string key in this.State.Keys(scopeName).ToArray())
                 {
-                    await this.UpdateStateAsync(key, UnassignedValue.Instance, scopeName, cancellationToken: cancellationToken).ConfigureAwait(false);
+                    await this.UpdateStateAsync(key, UnassignedValue.Instance, scopeName, allowSystem: false, cancellationToken).ConfigureAwait(false);
                 }
             }
             else
@@ -68,13 +68,7 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
     /// <inheritdoc/>
     public async ValueTask QueueStateUpdateAsync<T>(string key, T? value, string? scopeName = null, CancellationToken cancellationToken = default)
     {
-        await this.UpdateStateAsync(key, value, scopeName, cancellationToken: cancellationToken).ConfigureAwait(false);
-        this.State.Bind();
-    }
-
-    public async ValueTask QueueSystemUpdateAsync<TValue>(string key, TValue? value, CancellationToken cancellationToken = default)
-    {
-        await this.UpdateStateAsync(key, value, VariableScopeNames.System, allowSystem: true, cancellationToken).ConfigureAwait(false);
+        await this.UpdateStateAsync(key, value, scopeName, allowSystem: false, cancellationToken).ConfigureAwait(false);
         this.State.Bind();
     }
 
@@ -105,7 +99,7 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
     public ValueTask SendMessageAsync(object message, string? targetId = null, CancellationToken cancellationToken = default)
         => this.Source.SendMessageAsync(message, targetId, cancellationToken);
 
-    private ValueTask UpdateStateAsync<T>(string key, T? value, string? scopeName, bool allowSystem = true, CancellationToken cancellationToken = default)
+    public ValueTask UpdateStateAsync<T>(string key, T? value, string? scopeName, bool allowSystem, CancellationToken cancellationToken = default)
     {
         bool isManagedScope =
             scopeName is not null && // null scope cannot be managed

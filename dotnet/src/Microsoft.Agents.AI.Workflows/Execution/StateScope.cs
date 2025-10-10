@@ -51,6 +51,13 @@ internal sealed class StateScope
         Throw.IfNullOrEmpty(key);
         if (this._stateData.TryGetValue(key, out PortableValue? value))
         {
+            if (typeof(T) == typeof(PortableValue) && !value.TypeId.IsMatch(typeof(PortableValue)))
+            {
+                // value is PortableValue, and we do not need to unwrap a PortableValue instance inside of it
+                // Unfortunately we need to cast through object here.
+                return new((T)(object)value);
+            }
+
             return new(value.As<T>());
         }
 

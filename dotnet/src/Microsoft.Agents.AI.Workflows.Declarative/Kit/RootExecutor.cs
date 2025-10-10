@@ -6,7 +6,6 @@ using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
-using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 
@@ -68,10 +67,10 @@ public abstract class RootExecutor<TInput> : Executor<TInput>, IResettableExecut
         }
         await declarativeContext.QueueConversationUpdateAsync(this._conversationId, isExternal: true, cancellationToken).ConfigureAwait(false);
 
-        await this._agentProvider.CreateMessageAsync(this._conversationId, input, cancellationToken).ConfigureAwait(false);
-        await declarativeContext.SetLastMessageAsync(input).ConfigureAwait(false);
+        ChatMessage inputMessage = await this._agentProvider.CreateMessageAsync(this._conversationId, input, cancellationToken).ConfigureAwait(false);
+        await declarativeContext.SetLastMessageAsync(inputMessage).ConfigureAwait(false);
 
-        await declarativeContext.SendMessageAsync(new ActionExecutorResult(this.Id), cancellationToken: cancellationToken).ConfigureAwait(false);
+        await declarativeContext.SendResultMessageAsync(this.Id, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -94,7 +93,7 @@ public abstract class RootExecutor<TInput> : Executor<TInput>, IResettableExecut
     {
         foreach (string variableName in variableNames)
         {
-            await context.QueueStateUpdateAsync(variableName, GetEnvironmentVariable(variableName), VariableScopeNames.Environment).ConfigureAwait(false);
+            await context.QueueEnvironmentUpdateAsync(variableName, GetEnvironmentVariable(variableName)).ConfigureAwait(false);
         }
 
         string GetEnvironmentVariable(string name)

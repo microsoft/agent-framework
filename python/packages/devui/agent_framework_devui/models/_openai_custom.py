@@ -3,7 +3,7 @@
 """Custom OpenAI-compatible event types for Agent Framework extensions.
 
 These are custom event types that extend beyond the standard OpenAI Responses API
-to support Agent Framework specific features like workflows, traces, and function results.
+to support Agent Framework specific features like workflows and traces.
 """
 
 from __future__ import annotations
@@ -15,59 +15,12 @@ from pydantic import BaseModel, ConfigDict
 # Custom Agent Framework OpenAI event types for structured data
 
 
-class ResponseWorkflowEventDelta(BaseModel):
-    """Structured workflow event with completion tracking."""
-
-    type: Literal["response.workflow_event.delta"] = "response.workflow_event.delta"
-    delta: dict[str, Any]
-    executor_id: str | None = None
-    is_complete: bool = False  # Track if this is the final part
-    item_id: str
-    output_index: int = 0
-    sequence_number: int
-
-
 class ResponseWorkflowEventComplete(BaseModel):
     """Complete workflow event data."""
 
     type: Literal["response.workflow_event.complete"] = "response.workflow_event.complete"
     data: dict[str, Any]  # Complete event data, not delta
     executor_id: str | None = None
-    item_id: str
-    output_index: int = 0
-    sequence_number: int
-
-
-class ResponseFunctionResultDelta(BaseModel):
-    """Structured function result with completion tracking."""
-
-    type: Literal["response.function_result.delta"] = "response.function_result.delta"
-    delta: dict[str, Any]
-    call_id: str
-    is_complete: bool = False
-    item_id: str
-    output_index: int = 0
-    sequence_number: int
-
-
-class ResponseFunctionResultComplete(BaseModel):
-    """Complete function result data."""
-
-    type: Literal["response.function_result.complete"] = "response.function_result.complete"
-    data: dict[str, Any]  # Complete function result data, not delta
-    call_id: str
-    item_id: str
-    output_index: int = 0
-    sequence_number: int
-
-
-class ResponseTraceEventDelta(BaseModel):
-    """Structured trace event with completion tracking."""
-
-    type: Literal["response.trace.delta"] = "response.trace.delta"
-    delta: dict[str, Any]
-    span_id: str | None = None
-    is_complete: bool = False
     item_id: str
     output_index: int = 0
     sequence_number: int
@@ -84,22 +37,18 @@ class ResponseTraceEventComplete(BaseModel):
     sequence_number: int
 
 
-class ResponseUsageEventDelta(BaseModel):
-    """Structured usage event with completion tracking."""
+class ResponseFunctionResultComplete(BaseModel):
+    """Custom DevUI event for function execution results.
 
-    type: Literal["response.usage.delta"] = "response.usage.delta"
-    delta: dict[str, Any]
-    is_complete: bool = False
-    item_id: str
-    output_index: int = 0
-    sequence_number: int
+    This is a DevUI extension - OpenAI doesn't stream function execution results
+    because in their model, the application executes functions, not the API.
+    Agent Framework executes functions, so we emit this event for debugging visibility.
+    """
 
-
-class ResponseUsageEventComplete(BaseModel):
-    """Complete usage event data."""
-
-    type: Literal["response.usage.complete"] = "response.usage.complete"
-    data: dict[str, Any]  # Complete usage data, not delta
+    type: Literal["response.function_result.complete"] = "response.function_result.complete"
+    call_id: str
+    output: str
+    status: Literal["in_progress", "completed", "incomplete"]
     item_id: str
     output_index: int = 0
     sequence_number: int
@@ -110,7 +59,6 @@ class AgentFrameworkExtraBody(BaseModel):
     """Agent Framework specific routing fields for OpenAI requests."""
 
     entity_id: str
-    thread_id: str | None = None
     input_data: dict[str, Any] | None = None
 
     model_config = ConfigDict(extra="allow")
@@ -118,16 +66,20 @@ class AgentFrameworkExtraBody(BaseModel):
 
 # Agent Framework Request Model - Extending real OpenAI types
 class AgentFrameworkRequest(BaseModel):
-    """OpenAI ResponseCreateParams with Agent Framework extensions.
+    """OpenAI ResponseCreateParams with Agent Framework routing.
 
-    This properly extends the real OpenAI API request format while adding
-    our custom routing fields in extra_body.
+    This properly extends the real OpenAI API request format.
+    - Uses 'model' field as entity_id (agent/workflow name)
+    - Uses 'conversation' field for conversation context (OpenAI standard)
     """
 
     # All OpenAI fields from ResponseCreateParams
-    model: str
+    model: str  # Used as entity_id in DevUI!
     input: str | list[Any]  # ResponseInputParam
     stream: bool | None = False
+
+    # OpenAI conversation parameter (standard!)
+    conversation: str | dict[str, Any] | None = None  # Union[str, {"id": str}]
 
     # Common OpenAI optional fields
     instructions: str | None = None
@@ -136,32 +88,35 @@ class AgentFrameworkRequest(BaseModel):
     max_output_tokens: int | None = None
     tools: list[dict[str, Any]] | None = None
 
-    # Agent Framework extension - strongly typed
-    extra_body: AgentFrameworkExtraBody | None = None
-
-    entity_id: str | None = None  # Allow entity_id as top-level field
+    # Optional extra_body for advanced use cases
+    extra_body: dict[str, Any] | None = None
 
     model_config = ConfigDict(extra="allow")
 
-    def get_entity_id(self) -> str | None:
-        """Get entity_id from either top-level field or extra_body."""
-        # Priority 1: Top-level entity_id field
-        if self.entity_id:
-            return self.entity_id
+    def get_entity_id(self) -> str:
+        """Get entity_id from model field.
 
-        # Priority 2: entity_id in extra_body
-        if self.extra_body and hasattr(self.extra_body, "entity_id"):
-            return self.extra_body.entity_id
+        In DevUI, model IS the entity_id (agent/workflow name).
+        Simple and clean!
+        """
+        return self.model
 
+    def get_conversation_id(self) -> str | None:
+        """Extract conversation_id from conversation parameter.
+
+        Supports both string and object forms:
+        - conversation: "conv_123"
+        - conversation: {"id": "conv_123"}
+        """
+        if isinstance(self.conversation, str):
+            return self.conversation
+        if isinstance(self.conversation, dict):
+            return self.conversation.get("id")
         return None
 
     def to_openai_params(self) -> dict[str, Any]:
         """Convert to dict for OpenAI client compatibility."""
-        data = self.model_dump(exclude={"extra_body", "entity_id"}, exclude_none=True)
-        if self.extra_body:
-            # Don't merge extra_body into main params to keep them separate
-            data["extra_body"] = self.extra_body
-        return data
+        return self.model_dump(exclude_none=True)
 
 
 # Error handling
@@ -198,12 +153,7 @@ __all__ = [
     "AgentFrameworkRequest",
     "OpenAIError",
     "ResponseFunctionResultComplete",
-    "ResponseFunctionResultDelta",
     "ResponseTraceEvent",
     "ResponseTraceEventComplete",
-    "ResponseTraceEventDelta",
-    "ResponseUsageEventComplete",
-    "ResponseUsageEventDelta",
     "ResponseWorkflowEventComplete",
-    "ResponseWorkflowEventDelta",
 ]
