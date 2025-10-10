@@ -6,11 +6,11 @@ This sample demonstrates how to build an AI agent that helps users translate vid
 
 | File | Description |
 |------|-------------|
-| [`agent.py`](agent/src/azure_ai_video_translation.py) | Main agent implementation with video translation tools including upload, download, translation, and status checking functionality. Demonstrates long-running operation handling with pull-based status updates. |
-| [`video_translation_client.py`](agent/src/video_translation_client.py) | API client for Azure Video Translation service with methods for creating, listing, and managing translations. |
-| [`video_translation_dataclass.py`](agent/src/video_translation_dataclass.py) | Data models for API request and response structures. |
-| [`video_translation_enum.py`](agent/src/video_translation_enum.py) | Enumerations for voice kinds, WebVTT file types, and translation status values. |
-| [`video_translation_util.py`](agent/src/video_translation_util.py) | Utility functions for API interactions and data processing. |
+| [`agent.py`](agent.py) | Main agent implementation with video translation tools including upload, download, translation, and status checking functionality. Demonstrates long-running operation handling with pull-based status updates. |
+| [`video_translation_client.py`](video_translation_client.py) | API client for Azure Video Translation service with methods for creating, listing, and managing translations. |
+| [`video_translation_dataclass.py`](video_translation_dataclass.py) | Data models for API request and response structures. |
+| [`video_translation_enum.py`](video_translation_enum.py) | Enumerations for voice kinds, WebVTT file types, and translation status values. |
+| [`video_translation_util.py`](video_translation_util.py) | Utility functions for API interactions and data processing. |
 
 ## Environment Variables
 
@@ -21,7 +21,7 @@ Make sure to set the following environment variables before running the example:
 - `COGNITIVE_SERVICES_ENDPOINT`: Your Azure Cognitive Services endpoint for video translation
 - `AZURE_STORAGE_ACCOUNT_NAME`: Your Azure Storage account name (for uploading video files)
 
-You can set these in a `.env` file in the `agent/src` directory (copy from `.env.sample`).
+You can set these in a `.env` file in this directory (copy from `.env.sample`).
 
 ## Authentication
 

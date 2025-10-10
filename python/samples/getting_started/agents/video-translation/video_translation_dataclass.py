@@ -1,29 +1,28 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import locale
-from datetime import datetime
 from dataclasses import dataclass
-from urllib3.util import Url
-from typing import Optional
+from datetime import datetime
 
-from video_translation_enum import OperationStatus, WebvttFileKind, VoiceKind, OneApiState
+from urllib3.util import Url
+from video_translation_enum import OneApiState, OperationStatus, VoiceKind, WebvttFileKind
 
 
 @dataclass(kw_only=True)
-class OperationDefinition():
+class OperationDefinition:
     id: str
     status: OperationStatus
 
 
 @dataclass(kw_only=True)
-class TranslationInputBaseDefinition():
-    speakerCount: Optional[int] = None
-    exportSubtitleInVideo: Optional[bool] = None
-    subtitleMaxCharCountPerSegment: Optional[int] = None
+class TranslationInputBaseDefinition:
+    speakerCount: int | None = None
+    exportSubtitleInVideo: bool | None = None
+    subtitleMaxCharCountPerSegment: int | None = None
 
 
 @dataclass(kw_only=True)
-class WebvttFileDefinition():
+class WebvttFileDefinition:
     url: Url
     kind: WebvttFileKind
 
@@ -31,61 +30,61 @@ class WebvttFileDefinition():
 @dataclass(kw_only=True)
 class TranslationInputDefinition(TranslationInputBaseDefinition):
     # This is optional because the moment after translation created, API has not downloaded video file to server side yet.
-    videoFileUrl: Optional[str] = None
+    videoFileUrl: str | None = None
     sourceLocale: locale
     targetLocale: locale
     voiceKind: VoiceKind
 
 
 @dataclass(kw_only=True)
-class StatelessResourceBaseDefinition():
-    id: Optional[str] = None
-    displayName: Optional[str] = None
-    description: Optional[str] = None
-    createdDateTime: Optional[datetime] = None
+class StatelessResourceBaseDefinition:
+    id: str | None = None
+    displayName: str | None = None
+    description: str | None = None
+    createdDateTime: datetime | None = None
 
 
 @dataclass(kw_only=True)
 class StatefulResourceBaseDefinition(StatelessResourceBaseDefinition):
-    status: Optional[OneApiState] = None
-    lastActionDateTime: Optional[datetime] = None
+    status: OneApiState | None = None
+    lastActionDateTime: datetime | None = None
 
 
 @dataclass(kw_only=True)
 class IterationInputDefinition(TranslationInputBaseDefinition):
-    webvttFile: Optional[WebvttFileDefinition] = None
+    webvttFile: WebvttFileDefinition | None = None
 
 
 @dataclass(kw_only=True)
-class IterationResultDefinition():
-    translatedVideoFileUrl: Optional[Url] = None
-    sourceLocaleSubtitleWebvttFileUrl: Optional[Url] = None
-    targetLocaleSubtitleWebvttFileUrl: Optional[Url] = None
-    metadataJsonWebvttFileUrl: Optional[Url] = None
+class IterationResultDefinition:
+    translatedVideoFileUrl: Url | None = None
+    sourceLocaleSubtitleWebvttFileUrl: Url | None = None
+    targetLocaleSubtitleWebvttFileUrl: Url | None = None
+    metadataJsonWebvttFileUrl: Url | None = None
 
 
 @dataclass(kw_only=True)
 class IterationDefinition(StatefulResourceBaseDefinition):
     input: IterationInputDefinition
-    result: Optional[IterationResultDefinition] = None
-    iterationFailureReason: Optional[str] = None
+    result: IterationResultDefinition | None = None
+    iterationFailureReason: str | None = None
 
 
 @dataclass(kw_only=True)
 class TranslationDefinition(StatefulResourceBaseDefinition):
     input: TranslationInputDefinition
-    latestIteration: Optional[IterationDefinition] = None
-    latestSucceededIteration: Optional[IterationDefinition] = None
-    translationFailureReason: Optional[str] = None
+    latestIteration: IterationDefinition | None = None
+    latestSucceededIteration: IterationDefinition | None = None
+    translationFailureReason: str | None = None
 
 
 @dataclass(kw_only=True)
-class PagedTranslationDefinition():
+class PagedTranslationDefinition:
     value: list[TranslationDefinition]
-    nextLink: Optional[Url] = None
+    nextLink: Url | None = None
 
 
 @dataclass(kw_only=True)
-class PagedIterationDefinition():
+class PagedIterationDefinition:
     value: list[IterationDefinition]
-    nextLink: Optional[Url] = None
+    nextLink: Url | None = None

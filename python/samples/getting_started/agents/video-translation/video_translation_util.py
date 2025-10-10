@@ -1,13 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from dataclasses import fields, is_dataclass
-from typing import Any, Type
-from urllib3.util import Url
+from typing import Any
 from urllib.parse import urlencode
+
 import urllib3
+from urllib3.util import Url
 
 
-def dict_to_dataclass(data: dict, dataclass_type: Type[Any]) -> Any:
+def dict_to_dataclass(data: dict, dataclass_type: type[Any]) -> Any:
     if not is_dataclass(dataclass_type):
         raise ValueError(f"{dataclass_type} is not a dataclass")
 
@@ -30,10 +31,9 @@ def append_url_args(url: Url, args: dict) -> Url:
     encoded_args = ""
     if len(args) == 0:
         return url
+    encoded_args += urlencode(args)
+    if "?" in url.url:
+        url = f"{url}&{encoded_args}"
     else:
-        encoded_args += urlencode(args)
-        if "?" in url.url:
-            url = f"{url}&{encoded_args}"
-        else:
-            url = f"{url}?{encoded_args}"
-        return urllib3.util.parse_url(url)
+        url = f"{url}?{encoded_args}"
+    return urllib3.util.parse_url(url)
