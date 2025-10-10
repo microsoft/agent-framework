@@ -65,7 +65,7 @@ internal sealed class QuestionExecutor(Question model, WorkflowFormulaState stat
         }
         else
         {
-            await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
+            await context.SendResultMessageAsync(this.Id, cancellationToken).ConfigureAwait(false);
         }
 
         return default;
@@ -75,7 +75,7 @@ internal sealed class QuestionExecutor(Question model, WorkflowFormulaState stat
     {
         int count = await this._promptCount.ReadAsync(context).ConfigureAwait(false);
         InputRequest inputRequest = new(this.FormatPrompt(this.Model.Prompt));
-        await context.SendMessageAsync(inputRequest, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await context.SendMessageAsync(inputRequest, targetId: null, cancellationToken).ConfigureAwait(false);
         await this._promptCount.WriteAsync(context, count + 1).ConfigureAwait(false);
     }
 
@@ -109,7 +109,7 @@ internal sealed class QuestionExecutor(Question model, WorkflowFormulaState stat
         {
             await this.AssignAsync(this.Model.Variable?.Path, extractedValue, context).ConfigureAwait(false);
             await this._hasExecuted.WriteAsync(context, true).ConfigureAwait(false);
-            await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
+            await context.SendResultMessageAsync(this.Id, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -129,7 +129,7 @@ internal sealed class QuestionExecutor(Question model, WorkflowFormulaState stat
             await this.AssignAsync(this.Model.Variable?.Path, defaultValue.ToFormula(), context).ConfigureAwait(false);
             string defaultValueResponse = this.FormatPrompt(this.Model.DefaultValueResponse);
             await context.AddEventAsync(new MessageActivityEvent(defaultValueResponse.Trim()), cancellationToken).ConfigureAwait(false);
-            await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
+            await context.SendResultMessageAsync(this.Id, cancellationToken).ConfigureAwait(false);
         }
         else
         {
