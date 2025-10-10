@@ -33,6 +33,7 @@ async def non_streaming_example() -> None:
     print("=== Non-streaming Response Example ===")
 
     agent = OpenAIChatClient(
+        api_key="ollama", # Just a placeholder, Ollama doesn't require API key
         base_url=os.getenv("OLLAMA_ENDPOINT"),
         model_id=os.getenv("OLLAMA_MODEL"),
     ).create_agent(
@@ -44,7 +45,7 @@ async def non_streaming_example() -> None:
     query = "What's the weather like in Seattle?"
     print(f"User: {query}")
     result = await agent.run(query)
-    print(f"Result: {result}\n")
+    print(f"Agent: {result}\n")
 
 
 async def streaming_example() -> None:
@@ -52,6 +53,7 @@ async def streaming_example() -> None:
     print("=== Streaming Response Example ===")
 
     agent = OpenAIChatClient(
+        api_key="ollama", # Just a placeholder, Ollama doesn't require API key
         base_url=os.getenv("OLLAMA_ENDPOINT"),
         model_id=os.getenv("OLLAMA_MODEL"),
     ).create_agent(

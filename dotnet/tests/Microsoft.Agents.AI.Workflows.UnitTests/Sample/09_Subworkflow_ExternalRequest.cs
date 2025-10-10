@@ -7,6 +7,8 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
+using Microsoft.Agents.AI.Workflows.InProc;
+using Microsoft.Agents.AI.Workflows.UnitTests;
 
 namespace Microsoft.Agents.AI.Workflows.Sample;
 
@@ -170,12 +172,13 @@ internal static class Step9EntryPoint
                              .Select(request => Part2FinishedResponses[request.Id])
                              .OrderBy(request => request.Id)];
 
-    public static async ValueTask<List<RequestFinished>> RunAsync(TextWriter writer)
+    public static async ValueTask<List<RequestFinished>> RunAsync(TextWriter writer, ExecutionMode executionMode)
     {
         RunStatus runStatus;
         List<RequestFinished> results = [];
 
-        Run workflowRun = await InProcessExecution.RunAsync(WorkflowInstance, RequestsToProcess.ToList());
+        InProcessExecutionEnvironment env = executionMode.GetEnvironment();
+        Run workflowRun = await env.RunAsync(WorkflowInstance, RequestsToProcess.ToList());
 
         RunStatus part1Status = ExpectedResponsesPart2.Length > 0 ? RunStatus.PendingRequests : RunStatus.Idle;
         runStatus = await workflowRun.GetStatusAsync();

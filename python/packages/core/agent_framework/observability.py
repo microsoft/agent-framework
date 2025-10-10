@@ -199,6 +199,8 @@ class OtelAttr(str, Enum):
 
     # Workflow attributes
     WORKFLOW_ID = "workflow.id"
+    WORKFLOW_NAME = "workflow.name"
+    WORKFLOW_DESCRIPTION = "workflow.description"
     WORKFLOW_DEFINITION = "workflow.definition"
     WORKFLOW_BUILD_SPAN = "workflow.build"
     WORKFLOW_RUN_SPAN = "workflow.run"
@@ -408,18 +410,33 @@ class ObservabilitySettings(AFBaseSettings):
     Warning:
         Sensitive events should only be enabled on test and development environments.
 
-    Args:
+    Keyword Args:
         enable_otel: Enable OpenTelemetry diagnostics. Default is False.
-                    (Env var ENABLE_OTEL)
+            Can be set via environment variable ENABLE_OTEL.
         enable_sensitive_data: Enable OpenTelemetry sensitive events. Default is False.
-                    (Env var ENABLE_SENSITIVE_DATA)
+            Can be set via environment variable ENABLE_SENSITIVE_DATA.
         applicationinsights_connection_string: The Azure Monitor connection string. Default is None.
-                    (Env var APPLICATIONINSIGHTS_CONNECTION_STRING)
-        otlp_endpoint:  The OpenTelemetry Protocol (OTLP) endpoint. Default is None.
-                    (Env var OTLP_ENDPOINT)
-        vs_code_extension_port: The port the AI Toolkit or AzureAI Foundry VS Code extensions are listening on.
-                    Default is None.
-                    (Env var VS_CODE_EXTENSION_PORT)
+            Can be set via environment variable APPLICATIONINSIGHTS_CONNECTION_STRING.
+        otlp_endpoint: The OpenTelemetry Protocol (OTLP) endpoint. Default is None.
+            Can be set via environment variable OTLP_ENDPOINT.
+        vs_code_extension_port: The port the AI Toolkit or Azure AI Foundry VS Code extensions are listening on.
+            Default is None.
+            Can be set via environment variable VS_CODE_EXTENSION_PORT.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import ObservabilitySettings
+
+            # Using environment variables
+            # Set ENABLE_OTEL=true
+            # Set APPLICATIONINSIGHTS_CONNECTION_STRING=InstrumentationKey=...
+            settings = ObservabilitySettings()
+
+            # Or passing parameters directly
+            settings = ObservabilitySettings(
+                enable_otel=True, applicationinsights_connection_string="InstrumentationKey=..."
+            )
     """
 
     env_prefix: ClassVar[str] = ""
@@ -855,6 +872,8 @@ def _trace_get_response(
 
     Args:
         func: The function to trace.
+
+    Keyword Args:
         provider_name: The model provider name.
     """
 
@@ -869,7 +888,7 @@ def _trace_get_response(
         ) -> "ChatResponse":
             global OBSERVABILITY_SETTINGS
             if not OBSERVABILITY_SETTINGS.ENABLED:
-                # If model diagnostics are not enabled, just return the completion
+                # If model_id diagnostics are not enabled, just return the completion
                 return await func(
                     self,
                     messages=messages,
@@ -880,7 +899,7 @@ def _trace_get_response(
             if "operation_duration_histogram" not in self.additional_properties:
                 self.additional_properties["operation_duration_histogram"] = _get_duration_histogram()
             model_id = (
-                kwargs.get("model")
+                kwargs.get("model_id")
                 or (chat_options.model_id if (chat_options := kwargs.get("chat_options")) else None)
                 or getattr(self, "model_id", None)
             )
@@ -892,7 +911,7 @@ def _trace_get_response(
             attributes = _get_span_attributes(
                 operation_name=OtelAttr.CHAT_COMPLETION_OPERATION,
                 provider_name=provider_name,
-                model_id=model_id,
+                model=model_id,
                 service_url=service_url,
                 **kwargs,
             )
@@ -941,6 +960,8 @@ def _trace_get_streaming_response(
 
     Args:
         func: The function to trace.
+
+    Keyword Args:
         provider_name: The model provider name.
     """
 
@@ -965,7 +986,7 @@ def _trace_get_streaming_response(
                 self.additional_properties["operation_duration_histogram"] = _get_duration_histogram()
 
             model_id = (
-                kwargs.get("model")
+                kwargs.get("model_id")
                 or (chat_options.model_id if (chat_options := kwargs.get("chat_options")) else None)
                 or getattr(self, "model_id", None)
             )
@@ -977,7 +998,7 @@ def _trace_get_streaming_response(
             attributes = _get_span_attributes(
                 operation_name=OtelAttr.CHAT_COMPLETION_OPERATION,
                 provider_name=provider_name,
-                model_id=model_id,
+                model=model_id,
                 service_url=service_url,
                 **kwargs,
             )
@@ -1182,7 +1203,6 @@ def _trace_agent_run_stream(
     """Decorator to trace streaming agent run activities.
 
     Args:
-        agent: The agent that is wrapped.
         run_streaming_func: The function to trace.
         provider_name: The system name used for Open Telemetry.
     """
@@ -1389,7 +1409,7 @@ def _get_span_attributes(**kwargs: Any) -> dict[str, Any]:
         attributes[SpanAttributes.LLM_SYSTEM] = system_name
     if provider_name := kwargs.get("provider_name"):
         attributes[OtelAttr.PROVIDER_NAME] = provider_name
-    attributes[SpanAttributes.LLM_REQUEST_MODEL] = kwargs.get("model_id", "unknown")
+    attributes[SpanAttributes.LLM_REQUEST_MODEL] = kwargs.get("model", "unknown")
     if service_url := kwargs.get("service_url"):
         attributes[OtelAttr.ADDRESS] = service_url
     if conversation_id := kwargs.get("conversation_id", chat_options.conversation_id):

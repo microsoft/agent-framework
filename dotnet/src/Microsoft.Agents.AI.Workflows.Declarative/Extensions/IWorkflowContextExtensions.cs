@@ -14,23 +14,11 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 
 internal static class IWorkflowContextExtensions
 {
-    public static ValueTask RaiseInvocationEventAsync(this IWorkflowContext context, DialogAction action, string? priorEventId = null) =>
-        context.AddEventAsync(new DeclarativeActionInvokedEvent(action, priorEventId));
+    public static ValueTask RaiseInvocationEventAsync(this IWorkflowContext context, DialogAction action, string? priorEventId = null, CancellationToken cancellationToken = default) =>
+        context.AddEventAsync(new DeclarativeActionInvokedEvent(action, priorEventId), cancellationToken);
 
-    public static ValueTask RaiseCompletionEventAsync(this IWorkflowContext context, DialogAction action) =>
-        context.AddEventAsync(new DeclarativeActionCompletedEvent(action));
-
-    public static ValueTask SendResultMessageAsync(this IWorkflowContext context, string id, object? result = null, CancellationToken cancellationToken = default) =>
-        context.SendMessageAsync(new ActionExecutorResult(id, result));
-
-    public static ValueTask QueueStateResetAsync(this IWorkflowContext context, PropertyPath variablePath) =>
-        context.QueueStateUpdateAsync(Throw.IfNull(variablePath.VariableName), UnassignedValue.Instance, Throw.IfNull(variablePath.NamespaceAlias));
-
-    public static ValueTask QueueStateUpdateAsync<TValue>(this IWorkflowContext context, PropertyPath variablePath, TValue? value) =>
-        context.QueueStateUpdateAsync(Throw.IfNull(variablePath.VariableName), value, Throw.IfNull(variablePath.NamespaceAlias));
-
-    public static ValueTask QueueSystemUpdateAsync<TValue>(this IWorkflowContext context, string key, TValue? value) =>
-        DeclarativeContext(context).QueueSystemUpdateAsync(key, value);
+    public static ValueTask RaiseCompletionEventAsync(this IWorkflowContext context, DialogAction action, CancellationToken cancellationToken = default) =>
+        context.AddEventAsync(new DeclarativeActionCompletedEvent(action), cancellationToken);
 
     public static FormulaValue ReadState(this IWorkflowContext context, PropertyPath variablePath) =>
         context.ReadState(Throw.IfNull(variablePath.VariableName), Throw.IfNull(variablePath.NamespaceAlias));
@@ -38,25 +26,68 @@ internal static class IWorkflowContextExtensions
     public static FormulaValue ReadState(this IWorkflowContext context, string key, string? scopeName = null) =>
         DeclarativeContext(context).State.Get(key, scopeName);
 
-    public static async ValueTask QueueConversationUpdateAsync(this IWorkflowContext context, string conversationId)
-    {
-        RecordValue conversation = (RecordValue)context.ReadState(SystemScope.Names.Conversation, VariableScopeNames.System);
-        conversation.UpdateField("Id", FormulaValue.New(conversationId));
-        await context.QueueSystemUpdateAsync(SystemScope.Names.Conversation, conversation).ConfigureAwait(false);
-        await context.QueueSystemUpdateAsync(SystemScope.Names.ConversationId, FormulaValue.New(conversationId)).ConfigureAwait(false);
+    public static ValueTask SendResultMessageAsync(this IWorkflowContext context, string id, CancellationToken cancellationToken = default) =>
+        context.SendResultMessageAsync(id, result: null, cancellationToken);
 
-        await context.AddEventAsync(new ConversationUpdateEvent(conversationId)).ConfigureAwait(false);
+    public static ValueTask SendResultMessageAsync(this IWorkflowContext context, string id, object? result, CancellationToken cancellationToken = default) =>
+        context.SendMessageAsync(new ActionExecutorResult(id, result), targetId: null, cancellationToken);
+
+    public static ValueTask QueueStateResetAsync(this IWorkflowContext context, PropertyPath variablePath, CancellationToken cancellationToken = default) =>
+        context.QueueStateUpdateAsync(Throw.IfNull(variablePath.VariableName), UnassignedValue.Instance, Throw.IfNull(variablePath.NamespaceAlias), cancellationToken);
+
+    public static ValueTask QueueStateUpdateAsync<TValue>(this IWorkflowContext context, PropertyPath variablePath, TValue? value, CancellationToken cancellationToken = default) =>
+        context.QueueStateUpdateAsync(Throw.IfNull(variablePath.VariableName), value, Throw.IfNull(variablePath.NamespaceAlias), cancellationToken);
+
+    public static async ValueTask QueueEnvironmentUpdateAsync<TValue>(this IWorkflowContext context, string key, TValue? value, CancellationToken cancellationToken = default)
+    {
+        DeclarativeWorkflowContext declarativeContext = DeclarativeContext(context);
+        await declarativeContext.UpdateStateAsync(key, value, VariableScopeNames.Environment, allowSystem: true, cancellationToken).ConfigureAwait(false);
+        declarativeContext.State.Bind();
     }
 
-    public static bool IsWorkflowConversation(this IWorkflowContext context, string? conversationId)
+    public static async ValueTask QueueSystemUpdateAsync<TValue>(this IWorkflowContext context, string key, TValue? value, CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(conversationId))
+        DeclarativeWorkflowContext declarativeContext = DeclarativeContext(context);
+        await declarativeContext.UpdateStateAsync(key, value, VariableScopeNames.System, allowSystem: true, cancellationToken).ConfigureAwait(false);
+        declarativeContext.State.Bind();
+    }
+
+    public static ValueTask QueueConversationUpdateAsync(this IWorkflowContext context, string conversationId, CancellationToken cancellationToken = default) =>
+        context.QueueConversationUpdateAsync(conversationId, isExternal: false, cancellationToken);
+
+    public static async ValueTask QueueConversationUpdateAsync(this IWorkflowContext context, string conversationId, bool isExternal = false, CancellationToken cancellationToken = default)
+    {
+        RecordValue conversation = (RecordValue)context.ReadState(SystemScope.Names.Conversation, VariableScopeNames.System);
+
+        if (isExternal)
         {
-            return false;
+            conversation.UpdateField("Id", FormulaValue.New(conversationId));
+            await context.QueueSystemUpdateAsync(SystemScope.Names.Conversation, conversation, cancellationToken).ConfigureAwait(false);
+            await context.QueueSystemUpdateAsync(SystemScope.Names.ConversationId, FormulaValue.New(conversationId), cancellationToken).ConfigureAwait(false);
         }
 
-        StringValue workflowId = (StringValue)context.ReadState(SystemScope.Names.ConversationId, VariableScopeNames.System);
-        return workflowId.Value.Equals(conversationId, StringComparison.Ordinal);
+        await context.AddEventAsync(new ConversationUpdateEvent(conversationId) { IsWorkflow = isExternal }, cancellationToken).ConfigureAwait(false);
+    }
+
+    public static bool IsWorkflowConversation(
+        this IWorkflowContext context,
+        string? conversationId,
+        out string? workflowConversationId)
+    {
+        FormulaValue idValue = context.ReadState(SystemScope.Names.ConversationId, VariableScopeNames.System);
+        switch (idValue)
+        {
+            case BlankValue:
+            case ErrorValue:
+                workflowConversationId = null;
+                return false;
+            case StringValue stringValue when stringValue.Value.Length > 0:
+                workflowConversationId = stringValue.Value;
+                return workflowConversationId.Equals(conversationId, StringComparison.Ordinal);
+            default:
+                // Something has gone terribly wrong.
+                throw new DeclarativeActionException($"Invalid '{SystemScope.Names.ConversationId}' value type: {idValue.GetType().Name}.");
+        }
     }
 
     private static DeclarativeWorkflowContext DeclarativeContext(IWorkflowContext context)

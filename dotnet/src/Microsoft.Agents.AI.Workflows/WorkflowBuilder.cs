@@ -7,6 +7,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Observability;
 using Microsoft.Shared.Diagnostics;
 
@@ -36,6 +37,8 @@ public class WorkflowBuilder
     private readonly HashSet<string> _outputExecutors = [];
 
     private readonly string _startExecutorId;
+    private string? _name;
+    private string? _description;
 
     private static readonly string s_namespace = typeof(WorkflowBuilder).Namespace!;
     private static readonly ActivitySource s_activitySource = new(s_namespace);
@@ -111,6 +114,28 @@ public class WorkflowBuilder
             this._outputExecutors.Add(this.Track(executor).Id);
         }
 
+        return this;
+    }
+
+    /// <summary>
+    /// Sets the human-readable name for the workflow.
+    /// </summary>
+    /// <param name="name">The name of the workflow.</param>
+    /// <returns>The current <see cref="WorkflowBuilder"/> instance, enabling fluent configuration.</returns>
+    public WorkflowBuilder WithName(string name)
+    {
+        this._name = name;
+        return this;
+    }
+
+    /// <summary>
+    /// Sets the description for the workflow.
+    /// </summary>
+    /// <param name="description">The description of what the workflow does.</param>
+    /// <returns>The current <see cref="WorkflowBuilder"/> instance, enabling fluent configuration.</returns>
+    public WorkflowBuilder WithDescription(string description)
+    {
+        this._description = description;
         return this;
     }
 
@@ -372,7 +397,7 @@ public class WorkflowBuilder
 
         activity?.AddEvent(new ActivityEvent(EventNames.BuildValidationCompleted));
 
-        var workflow = new Workflow(this._startExecutorId)
+        var workflow = new Workflow(this._startExecutorId, this._name, this._description)
         {
             Registrations = this._executors,
             Edges = this._edges,
@@ -382,23 +407,21 @@ public class WorkflowBuilder
 
         // Using the start executor ID as a proxy for the workflow ID
         activity?.SetTag(Tags.WorkflowId, workflow.StartExecutorId);
-        if (activity is not null)
+        if (workflow.Name is not null)
         {
-            var workflowJsonDefinitionData = new WorkflowJsonDefinitionData
-            {
-                StartExecutorId = this._startExecutorId,
-                Edges = this._edges.Values.SelectMany(e => e),
-                Ports = this._inputPorts.Values,
-                OutputExecutors = this._outputExecutors
-            };
-            activity.SetTag(
+            activity?.SetTag(Tags.WorkflowName, workflow.Name);
+        }
+        if (workflow.Description is not null)
+        {
+            activity?.SetTag(Tags.WorkflowDescription, workflow.Description);
+        }
+        activity?.SetTag(
                 Tags.WorkflowDefinition,
                 JsonSerializer.Serialize(
-                    workflowJsonDefinitionData,
-                    WorkflowJsonDefinitionJsonContext.Default.WorkflowJsonDefinitionData
+                    workflow.ToWorkflowInfo(),
+                    WorkflowsJsonUtilities.JsonContext.Default.WorkflowInfo
                 )
             );
-        }
 
         return workflow;
     }
