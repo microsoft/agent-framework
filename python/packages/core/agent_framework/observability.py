@@ -46,10 +46,12 @@ __all__ = [
     "OtelAttr",
     "get_meter",
     "get_tracer",
+    "is_azure_monitor_available",  # NEW: Helper function to check Azure Monitor availability
     "setup_observability",
     "use_agent_observability",
     "use_observability",
 ]
+
 
 
 TAgent = TypeVar("TAgent", bound="AgentProtocol")
@@ -57,6 +59,23 @@ TChatClient = TypeVar("TChatClient", bound="ChatClientProtocol")
 
 
 logger = get_logger()
+
+# Check if Azure Monitor is available (add after line 60)
+_AZURE_MONITOR_AVAILABLE = False
+try:
+    from azure.monitor.opentelemetry.exporter import (
+        AzureMonitorLogExporter,
+        AzureMonitorMetricExporter,
+        AzureMonitorTraceExporter,
+    )
+    _AZURE_MONITOR_AVAILABLE = True
+    logger.debug("Azure Monitor OpenTelemetry is available")
+except ImportError:
+    logger.debug(
+        "Azure Monitor OpenTelemetry not available. "
+        "Install with: pip install agent-framework-core[azure-monitor]"
+    )
+
 
 
 OTEL_METRICS: Final[str] = "__otel_metrics__"
@@ -275,7 +294,29 @@ def _get_azure_monitor_exporters(
     connection_strings: list[str],
     credential: "TokenCredential | None" = None,
 ) -> list["LogExporter | SpanExporter | MetricExporter"]:
-    """Create Azure Monitor Exporters, based on the connection strings and optionally the credential."""
+    """Create Azure Monitor Exporters, based on the connection strings and optionally the credential.
+    
+    Note:
+        Requires azure-monitor-opentelemetry packages to be installed.
+        Install with: pip install agent-framework-core[azure-monitor]
+    
+    Args:
+        connection_strings: List of Azure Monitor connection strings
+        credential: Optional TokenCredential for Entra ID authentication
+    
+    Returns:
+        List of Azure Monitor exporters (Log, Trace, Metric)
+    
+    Raises:
+        ImportError: If Azure Monitor packages are not installed
+    """
+    if not _AZURE_MONITOR_AVAILABLE:
+        logger.warning(
+            "Azure Monitor connection string(s) provided but azure-monitor-opentelemetry not installed. "
+            "Install with: pip install agent-framework-core[azure-monitor]"
+        )
+        return []
+    
     from azure.monitor.opentelemetry.exporter import (
         AzureMonitorLogExporter,
         AzureMonitorMetricExporter,
@@ -284,10 +325,30 @@ def _get_azure_monitor_exporters(
 
     exporters: list["LogExporter | SpanExporter | MetricExporter"] = []
     for conn_string in connection_strings:
-        exporters.append(AzureMonitorLogExporter(connection_string=conn_string, credential=credential))
-        exporters.append(AzureMonitorTraceExporter(connection_string=conn_string, credential=credential))
-        exporters.append(AzureMonitorMetricExporter(connection_string=conn_string, credential=credential))
+        try:
+            exporters.append(AzureMonitorLogExporter(connection_string=conn_string, credential=credential))
+            exporters.append(AzureMonitorTraceExporter(connection_string=conn_string, credential=credential))
+            exporters.append(AzureMonitorMetricExporter(connection_string=conn_string, credential=credential))
+        except Exception as e:
+            logger.error(f"Failed to create Azure Monitor exporters for connection string: {e}")
+    
     return exporters
+
+def is_azure_monitor_available() -> bool:
+    """Check if Azure Monitor OpenTelemetry packages are available.
+    
+    Returns:
+        True if Azure Monitor packages are installed and can be imported, False otherwise.
+    
+    Examples:
+        >>> from agent_framework import is_azure_monitor_available
+        >>> if is_azure_monitor_available():
+        ...     setup_observability(applicationinsights_connection_string="...")
+        ... else:
+        ...     print("Install Azure Monitor: pip install agent-framework-core[azure-monitor]")
+    """
+    return _AZURE_MONITOR_AVAILABLE
+
 
 
 def get_exporters(
@@ -667,6 +728,8 @@ def setup_observability(
             Default is None.
         applicationinsights_connection_string: The Azure Monitor connection string.
             Will be used to create AzureMonitorExporters. Default is None.
+            Note: Requires installing agent-framework-core[azure-monitor]
+            Default is None.
         credential: The credential to use for Azure Monitor Entra ID authentication.
             Default is None.
         exporters: A list of exporters for logs, metrics or spans, or any combination.

@@ -31,6 +31,17 @@ dependencies = [
     "agent-framework-devui",
 ]
 
+# Add optional dependencies for Azure Monitor
+[project.optional-dependencies]
+azure-monitor = [
+    "azure-monitor-opentelemetry>=1.6.0",
+    "azure-monitor-opentelemetry-exporter>=1.0.0b32",
+]
+all = [
+    "azure-monitor-opentelemetry>=1.6.0",
+    "azure-monitor-opentelemetry-exporter>=1.0.0b32",
+]
+
 [dependency-groups]
 dev = [
     "uv>=0.8.2,<0.9.0",
