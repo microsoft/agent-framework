@@ -7,6 +7,7 @@ using System.Reflection;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Events;
 using Shared.Code;
+using Xunit.Sdk;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Framework;
 
@@ -17,7 +18,7 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
 
     public async Task<WorkflowEvents> RunTestcaseAsync<TInput>(Testcase testcase, TInput input) where TInput : notnull
     {
-        WorkflowEvents workflowEvents = await this.RunAsync(input);
+        WorkflowEvents workflowEvents = await this.RunWorkflowAsync(input);
         int requestCount = (workflowEvents.InputEvents.Count + 1) / 2;
         int responseCount = 0;
         while (requestCount > responseCount)
@@ -36,11 +37,11 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
         return workflowEvents;
     }
 
-    private async Task<WorkflowEvents> RunAsync<TInput>(TInput input) where TInput : notnull
+    public async Task<WorkflowEvents> RunWorkflowAsync<TInput>(TInput input) where TInput : notnull
     {
         Console.WriteLine("RUNNING WORKFLOW...");
         Checkpointed<StreamingRun> run = await InProcessExecution.StreamAsync(workflow, input, this._checkpointManager, runId);
-        IReadOnlyList<WorkflowEvent> workflowEvents = await this.MonitorWorkflowRunAsync(run).ToArrayAsync();
+        IReadOnlyList<WorkflowEvent> workflowEvents = await MonitorAndDisposeWorkflowRunAsync(run).ToArrayAsync();
         this.LastCheckpoint = workflowEvents.OfType<SuperStepCompletedEvent>().LastOrDefault()?.CompletionInfo?.Checkpoint;
         return new WorkflowEvents(workflowEvents);
     }
@@ -50,7 +51,7 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
         Console.WriteLine("RESUMING WORKFLOW...");
         Assert.NotNull(this.LastCheckpoint);
         Checkpointed<StreamingRun> run = await InProcessExecution.ResumeStreamAsync(workflow, this.LastCheckpoint, this._checkpointManager, runId);
-        IReadOnlyList<WorkflowEvent> workflowEvents = await this.MonitorWorkflowRunAsync(run, response).ToArrayAsync();
+        IReadOnlyList<WorkflowEvent> workflowEvents = await MonitorAndDisposeWorkflowRunAsync(run, response).ToArrayAsync();
         return new WorkflowEvents(workflowEvents);
     }
 
@@ -75,8 +76,10 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
         return new WorkflowHarness(workflow, runId);
     }
 
-    private async IAsyncEnumerable<WorkflowEvent> MonitorWorkflowRunAsync(Checkpointed<StreamingRun> run, InputResponse? response = null)
+    private static async IAsyncEnumerable<WorkflowEvent> MonitorAndDisposeWorkflowRunAsync(Checkpointed<StreamingRun> run, InputResponse? response = null)
     {
+        await using IAsyncDisposable disposeRun = run;
+
         await foreach (WorkflowEvent workflowEvent in run.Run.WatchStreamAsync().ConfigureAwait(false))
         {
             bool exitLoop = false;
@@ -93,10 +96,17 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
                     }
                     else
                     {
-                        await run.Run.EndRunAsync().ConfigureAwait(false);
                         exitLoop = true;
                     }
                     break;
+
+                case ExecutorFailedEvent failureEvent:
+                    Console.WriteLine($"Executor failed [{failureEvent.ExecutorId}]: {failureEvent.Data?.Message ?? "Unknown"}");
+                    break;
+
+                case WorkflowErrorEvent errorEvent:
+                    throw errorEvent.Data as Exception ?? new XunitException("Unexpected failure...");
+
                 case DeclarativeActionInvokedEvent actionInvokeEvent:
                     Console.WriteLine($"ACTION: {actionInvokeEvent.ActionId} [{actionInvokeEvent.ActionType}]");
                     break;

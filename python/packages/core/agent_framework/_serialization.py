@@ -47,7 +47,7 @@ class SerializationProtocol(Protocol):
     def to_dict(self, **kwargs: Any) -> dict[str, Any]:
         """Convert the instance to a dictionary.
 
-        Args:
+        Keyword Args:
             kwargs: Additional keyword arguments for serialization.
 
         Returns:
@@ -61,6 +61,8 @@ class SerializationProtocol(Protocol):
 
         Args:
             value: Dictionary containing the instance data (positional-only).
+
+        Keyword Args:
             kwargs: Additional keyword arguments for deserialization.
 
         Returns:
@@ -123,7 +125,7 @@ class SerializationMixin:
     Examples:
         .. code-block:: python
 
-            from libary import Client
+            from library import Client
 
 
             class MyClass(SerializationMixin):
@@ -147,7 +149,7 @@ class SerializationMixin:
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
         """Convert the instance and any nested objects to a dictionary.
 
-        Args:
+        Keyword Args:
             exclude: The set of field names to exclude from serialization.
             exclude_none: Whether to exclude None values from the output. Defaults to True.
 
@@ -161,7 +163,7 @@ class SerializationMixin:
         combined_exclude.update(self.INJECTABLE)
 
         # Get all instance attributes
-        result: dict[str, Any] = {"type": self._get_type_identifier()}
+        result: dict[str, Any] = {} if "type" in combined_exclude else {"type": self._get_type_identifier()}
         for key, value in self.__dict__.items():
             if key not in combined_exclude and not key.startswith("_"):
                 if exclude_none and value is None:
@@ -210,26 +212,29 @@ class SerializationMixin:
 
         return result
 
-    def to_json(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> str:
+    def to_json(self, *, exclude: set[str] | None = None, exclude_none: bool = True, **kwargs: Any) -> str:
         """Convert the instance to a JSON string.
 
-        Args:
+        Keyword Args:
             exclude: The set of field names to exclude from serialization.
             exclude_none: Whether to exclude None values from the output. Defaults to True.
+            **kwargs: passed through to the json.dumps method.
 
         Returns:
             JSON string representation of the instance.
         """
-        return json.dumps(self.to_dict(exclude=exclude, exclude_none=exclude_none))
+        return json.dumps(self.to_dict(exclude=exclude, exclude_none=exclude_none), **kwargs)
 
     @classmethod
     def from_dict(
-        cls: type[TClass], value: MutableMapping[str, Any], /, dependencies: MutableMapping[str, Any] | None = None
+        cls: type[TClass], value: MutableMapping[str, Any], /, *, dependencies: MutableMapping[str, Any] | None = None
     ) -> TClass:
         """Create an instance from a dictionary.
 
         Args:
             value: The dictionary containing the instance data (positional-only).
+
+        Keyword Args:
             dependencies: The dictionary mapping dependency keys to values.
                 Keys should be in format ``"<type>.<parameter>"`` or ``"<type>.<dict-parameter>.<key>"``.
 
@@ -278,11 +283,13 @@ class SerializationMixin:
         return cls(**kwargs)
 
     @classmethod
-    def from_json(cls: type[TClass], value: str, /, dependencies: MutableMapping[str, Any] | None = None) -> TClass:
+    def from_json(cls: type[TClass], value: str, /, *, dependencies: MutableMapping[str, Any] | None = None) -> TClass:
         """Create an instance from a JSON string.
 
         Args:
             value: The JSON string containing the instance data (positional-only).
+
+        Keyword Args:
             dependencies: The dictionary mapping dependency keys to values.
                 Keys should be in format ``"<type>.<parameter>"`` or ``"<type>.<dict-parameter>.<key>"``.
 

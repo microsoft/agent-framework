@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Execution;
 using Microsoft.Shared.Diagnostics;
@@ -55,7 +56,7 @@ internal sealed class RequestInfoExecutor : Executor
 
     internal void AttachRequestSink(IExternalRequestSink requestSink) => this.RequestSink = Throw.IfNull(requestSink);
 
-    public async ValueTask<ExternalRequest?> HandleCatchAllAsync(PortableValue message, IWorkflowContext context)
+    public async ValueTask<ExternalRequest?> HandleCatchAllAsync(PortableValue message, IWorkflowContext context, CancellationToken cancellationToken)
     {
         Throw.IfNull(message);
 
@@ -70,13 +71,13 @@ internal sealed class RequestInfoExecutor : Executor
         }
         else if (message.Is(out ExternalRequest? request))
         {
-            return await this.HandleAsync(request, context).ConfigureAwait(false);
+            return await this.HandleAsync(request, context, cancellationToken).ConfigureAwait(false);
         }
 
         return null;
     }
 
-    public async ValueTask<ExternalRequest> HandleAsync(ExternalRequest message, IWorkflowContext context)
+    public async ValueTask<ExternalRequest> HandleAsync(ExternalRequest message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         Debug.Assert(this._allowWrapped);
         Throw.IfNull(message);
@@ -100,7 +101,7 @@ internal sealed class RequestInfoExecutor : Executor
         return request;
     }
 
-    public async ValueTask<ExternalRequest> HandleAsync(object message, IWorkflowContext context)
+    public async ValueTask<ExternalRequest> HandleAsync(object message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(message);
         Debug.Assert(this.Port.Request.IsInstanceOfType(message));
@@ -111,7 +112,7 @@ internal sealed class RequestInfoExecutor : Executor
         return request;
     }
 
-    public async ValueTask<ExternalResponse?> HandleAsync(ExternalResponse message, IWorkflowContext context)
+    public async ValueTask<ExternalResponse?> HandleAsync(ExternalResponse message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(message);
         Throw.IfNull(message.Data);
@@ -127,14 +128,14 @@ internal sealed class RequestInfoExecutor : Executor
 
         if (this._allowWrapped && this._wrappedRequests.TryGetValue(message.RequestId, out ExternalRequest? originalRequest))
         {
-            await context.SendMessageAsync(originalRequest.RewrapResponse(message)).ConfigureAwait(false);
+            await context.SendMessageAsync(originalRequest.RewrapResponse(message), cancellationToken: cancellationToken).ConfigureAwait(false);
         }
         else
         {
-            await context.SendMessageAsync(message).ConfigureAwait(false);
+            await context.SendMessageAsync(message, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
 
-        await context.SendMessageAsync(data).ConfigureAwait(false);
+        await context.SendMessageAsync(data, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         return message;
     }

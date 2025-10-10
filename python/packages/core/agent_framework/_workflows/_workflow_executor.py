@@ -19,10 +19,12 @@ from ._events import (
 )
 from ._executor import (
     Executor,
+    handler,
+)
+from ._request_info_executor import (
     RequestInfoExecutor,
     RequestInfoMessage,
     RequestResponse,
-    handler,
 )
 from ._typing_utils import is_instance_of
 from ._workflow_context import WorkflowContext
@@ -210,6 +212,8 @@ class WorkflowExecutor(Executor):
         Args:
             workflow: The workflow to execute as a sub-workflow.
             id: Unique identifier for this executor.
+
+        Keyword Args:
             **kwargs: Additional keyword arguments passed to the parent constructor.
         """
         super().__init__(id, **kwargs)

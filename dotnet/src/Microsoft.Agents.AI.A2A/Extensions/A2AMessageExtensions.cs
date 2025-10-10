@@ -16,7 +16,11 @@ internal static class A2AMessageExtensions
 
         foreach (var part in message.Parts)
         {
-            (aiContents ??= []).Add(part.ToAIContent());
+            var content = part.ToAIContent();
+            if (content is not null)
+            {
+                (aiContents ??= []).Add(content);
+            }
         }
 
         return new ChatMessage(ChatRole.Assistant, aiContents)
