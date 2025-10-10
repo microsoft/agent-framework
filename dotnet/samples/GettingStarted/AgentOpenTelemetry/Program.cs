@@ -4,7 +4,7 @@ using System.ClientModel;
 using System.ClientModel.Primitives;
 using System.ComponentModel;
 using System.Diagnostics;
-using System.Diagnostics.Meters;
+using System.Diagnostics.Metrics;
 using Azure.Identity;
 using Azure.Monitor.OpenTelemetry.Exporter;
 using Microsoft.Agents.AI;
