@@ -1,18 +1,16 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 """
-Script to run all workflow samples in the getting_started/workflows directory.
-This script will fail fast if any sample fails to execute except when run with --concurrent.
+Script to run all workflow samples in the getting_started/workflows directory concurrently.
+This script will run all samples and report results at the end.
 
 Note: This script is AI generated. This is for internal validation purposes only.
 
 Samples that require human interaction are known to fail.
 
 Usage:
-    python _run_all_samples.py                 # Run all samples using uv run (sequential)
-    python _run_all_samples.py --concurrent    # Run all samples using uv run (concurrent)
-    python _run_all_samples.py --direct        # Run all samples directly (sequential, assumes environment is set up)
-    python _run_all_samples.py --direct --concurrent  # Run all samples directly (concurrent)
+    python _run_all_samples.py              # Run all samples using uv run (concurrent)
+    python _run_all_samples.py --direct     # Run all samples directly (concurrent, assumes environment is set up)
 """
 
 import os
@@ -32,7 +30,7 @@ def find_python_samples(workflows_dir: Path) -> list[Path]:
         dirs[:] = [d for d in dirs if d != "__pycache__"]
 
         for file in files:
-            if file.endswith(".py") and not file.startswith("_") and file != "run_all_samples.py":
+            if file.endswith(".py") and not file.startswith("_"):
                 python_files.append(Path(root) / file)
 
     # Sort files for consistent execution order
@@ -43,7 +41,6 @@ def run_sample(
     sample_path: Path,
     use_uv: bool = True,
     python_root: Path | None = None,
-    quiet: bool = False,
 ) -> tuple[bool, str, str]:
     """
     Run a single sample file using subprocess and return (success, output, error_info).
@@ -52,30 +49,18 @@ def run_sample(
         sample_path: Path to the sample file
         use_uv: Whether to use uv run
         python_root: Root directory for uv run
-        quiet: Whether to suppress output during execution
 
     Returns:
         Tuple of (success, output, error_info)
     """
-    if not quiet:
-        print(f"\n{'=' * 60}")
-        print(f"Running: {sample_path.relative_to(sample_path.parents[3])}")
-        print(f"{'=' * 60}")
+    if use_uv and python_root:
+        cmd = ["uv", "run", "python", str(sample_path)]
+        cwd = python_root
+    else:
+        cmd = [sys.executable, sample_path.name]
+        cwd = sample_path.parent
 
     try:
-        # Change to the sample's directory to handle relative imports/paths
-        sample_dir = sample_path.parent
-
-        if use_uv and python_root:
-            # Use uv run from the python root directory
-            cmd = ["uv", "run", "python", str(sample_path)]
-            cwd = python_root
-        else:
-            # Run directly with python
-            cmd = [sys.executable, sample_path.name]
-            cwd = sample_dir
-
-        # Run the sample
         result = subprocess.run(
             cmd,
             cwd=cwd,
@@ -85,68 +70,55 @@ def run_sample(
         )
 
         if result.returncode == 0:
-            success_msg = f"✅ SUCCESS: {sample_path.name}"
             output = result.stdout.strip() if result.stdout.strip() else "No output"
-            if not quiet:
-                print(success_msg)
-                if result.stdout.strip():
-                    print("Output:")
-                    print(result.stdout)
             return True, output, ""
 
         error_info = f"Exit code: {result.returncode}"
         if result.stderr.strip():
             error_info += f"\nSTDERR: {result.stderr}"
 
-        if not quiet:
-            print(f"❌ FAILED: {sample_path.name}")
-            print(error_info)
-            if result.stdout.strip():
-                print("STDOUT:")
-                print(result.stdout)
-
         return False, result.stdout.strip() if result.stdout.strip() else "", error_info
 
     except subprocess.TimeoutExpired:
-        error_info = f"TIMEOUT: {sample_path.name} (exceeded 50 seconds)"
-        if not quiet:
-            print(f"❌ {error_info}")
-        return False, "", error_info
+        return False, "", f"TIMEOUT: {sample_path.name} (exceeded 50 seconds)"
     except Exception as e:
-        error_info = f"ERROR: {sample_path.name} - Exception: {str(e)}"
-        if not quiet:
-            print(f"❌ {error_info}")
-        return False, "", error_info
+        return False, "", f"ERROR: {sample_path.name} - Exception: {str(e)}"
 
 
-def run_samples_concurrently(
-    sample_files: list[Path],
-    use_uv: bool = True,
-    python_root: Path | None = None,
-    max_workers: int = 4,
-) -> tuple[int, int, list[tuple[Path, bool, str, str]]]:
-    """
-    Run multiple samples concurrently and return results.
+def main() -> None:
+    """Main function to run all workflow samples concurrently."""
+    # Check command line arguments
+    use_uv = "--direct" not in sys.argv
 
-    Args:
-        sample_files: List of sample file paths
-        use_uv: Whether to use uv run
-        python_root: Root directory for uv run
-        max_workers: Maximum number of concurrent workers
+    # Get the workflows directory (assuming this script is in the workflows directory)
+    workflows_dir = Path(__file__).parent
+    python_root = workflows_dir.parents[2]  # Go up to the python/ directory
 
-    Returns:
-        Tuple of (successful_runs, failed_runs, results_list)
-        results_list contains (sample_path, success, output, error_info) for each sample
-    """
-    print(f"\n🚀 Running {len(sample_files)} samples concurrently with {max_workers} workers...")
+    print(f"Scanning for Python samples in: {workflows_dir}")
+    if use_uv:
+        print(f"Using uv run from: {python_root}")
+    else:
+        print("Running samples directly (assuming environment is set up)")
 
+    print("🚀 Running samples concurrently...")
+
+    # Find all Python sample files
+    sample_files = find_python_samples(workflows_dir)
+
+    if not sample_files:
+        print("No Python sample files found!")
+        return
+
+    print(f"Found {len(sample_files)} Python sample files")
+
+    # Run samples concurrently
     results: list[tuple[Path, bool, str, str]] = []
+    max_workers = 16
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         # Submit all tasks
         future_to_sample = {
-            executor.submit(run_sample, sample_path, use_uv, python_root, quiet=True): sample_path
-            for sample_path in sample_files
+            executor.submit(run_sample, sample_path, use_uv, python_root): sample_path for sample_path in sample_files
         }
 
         # Collect results as they complete
@@ -174,98 +146,33 @@ def run_samples_concurrently(
     successful_runs = sum(1 for _, success, _, _ in results if success)
     failed_runs = len(results) - successful_runs
 
-    return successful_runs, failed_runs, results
+    # Print detailed results
+    print(f"\n{'=' * 60}")
+    print("DETAILED RESULTS:")
+    print(f"{'=' * 60}")
 
-
-def main() -> None:
-    """Main function to run all workflow samples."""
-    # Check command line arguments
-    use_uv = "--direct" not in sys.argv
-    use_concurrent = "--concurrent" in sys.argv
-
-    # Get the workflows directory (assuming this script is in the workflows directory)
-    workflows_dir = Path(__file__).parent
-    python_root = workflows_dir.parents[2]  # Go up to the python/ directory
-
-    print(f"Scanning for Python samples in: {workflows_dir}")
-    if use_uv:
-        print(f"Using uv run from: {python_root}")
-    else:
-        print("Running samples directly (assuming environment is set up)")
-
-    if use_concurrent:
-        print("🚀 Concurrent execution enabled")
-    else:
-        print("🔄 Sequential execution (fail-fast)")
-
-    # Find all Python sample files
-    sample_files = find_python_samples(workflows_dir)
-
-    if not sample_files:
-        print("No Python sample files found!")
-        return
-
-    print(f"Found {len(sample_files)} Python sample files:")
-    for file in sample_files:
-        print(f"  - {file.relative_to(workflows_dir)}")
-
-    if use_concurrent:
-        # Run samples concurrently
-        successful_runs, failed_runs, results = run_samples_concurrently(
-            sample_files, use_uv=use_uv, python_root=python_root, max_workers=16
-        )
-
-        # Print detailed results
-        print(f"\n{'=' * 60}")
-        print("DETAILED RESULTS:")
-        print(f"{'=' * 60}")
-
-        for sample_path, success, output, error_info in results:
-            if success:
-                print(f"✅ {sample_path.name}")
-                if output and output != "No output":
-                    print(f"   Output preview: {output[:100]}{'...' if len(output) > 100 else ''}")
-            else:
-                print(f"❌ {sample_path.name}")
-                print(f"   Error: {error_info}")
-
-        # Print summary
-        print(f"\n{'=' * 60}")
-        if failed_runs == 0:
-            print("🎉 ALL SAMPLES COMPLETED SUCCESSFULLY!")
+    for sample_path, success, output, error_info in results:
+        if success:
+            print(f"✅ {sample_path.name}")
+            if output and output != "No output":
+                print(f"   Output preview: {output[:100]}{'...' if len(output) > 100 else ''}")
         else:
-            print(f"❌ {failed_runs} SAMPLE(S) FAILED!")
-        print(f"Successful runs: {successful_runs}")
-        print(f"Failed runs: {failed_runs}")
-        print(f"{'=' * 60}")
+            print(f"❌ {sample_path.name}")
+            print(f"   Error: {error_info}")
 
-        # Exit with error code if any samples failed
-        if failed_runs > 0:
-            sys.exit(1)
-    else:
-        # Run samples sequentially with fail-fast behavior
-        successful_runs = 0
-        failed_runs = 0
-
-        for sample_file in sample_files:
-            success, _, error_info = run_sample(sample_file, use_uv=use_uv, python_root=python_root)
-            if success:
-                successful_runs += 1
-            else:
-                failed_runs += 1
-                # Fail fast - exit immediately on first failure
-                print(f"\n{'=' * 60}")
-                print(f"❌ EXECUTION STOPPED due to failure in: {sample_file.name}")
-                print(f"Successful runs: {successful_runs}")
-                print(f"Failed runs: {failed_runs}")
-                print(f"{'=' * 60}")
-                sys.exit(1)
-
-        # All samples completed successfully
-        print(f"\n{'=' * 60}")
+    # Print summary
+    print(f"\n{'=' * 60}")
+    if failed_runs == 0:
         print("🎉 ALL SAMPLES COMPLETED SUCCESSFULLY!")
-        print(f"Total samples run: {successful_runs}")
-        print(f"{'=' * 60}")
+    else:
+        print(f"❌ {failed_runs} SAMPLE(S) FAILED!")
+    print(f"Successful runs: {successful_runs}")
+    print(f"Failed runs: {failed_runs}")
+    print(f"{'=' * 60}")
+
+    # Exit with error code if any samples failed
+    if failed_runs > 0:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
