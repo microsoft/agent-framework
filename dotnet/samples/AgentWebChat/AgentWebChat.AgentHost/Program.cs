@@ -91,7 +91,7 @@ builder.AddWorkflow("science-custom-workflow", (sp, key) =>
     var literatureAgent = sp.GetRequiredKeyedService<AIAgent>("literator");
 
     var chemistryMathWorkflowBuilder = AgentWorkflowBuilder.PrepareConcurrent([chemistAgent, mathsAgent]);
-    return AgentWorkflowBuilder.BuildConcurrent([literatureAgent], chemistryMathWorkflowBuilder);
+    return AgentWorkflowBuilder.PrepareConcurrent([literatureAgent], chemistryMathWorkflowBuilder).WithName("science-custom-workflow").Build();
 }).AddAsAIAgent();
 
 var app = builder.Build();
