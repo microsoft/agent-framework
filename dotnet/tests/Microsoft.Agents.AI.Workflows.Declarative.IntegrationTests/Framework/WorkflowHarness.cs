@@ -6,6 +6,7 @@ using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Events;
+using Microsoft.Extensions.AI;
 using Shared.Code;
 using Xunit.Sdk;
 
@@ -27,9 +28,8 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
             Assert.NotEmpty(testcase.Setup.Responses);
             string inputText = testcase.Setup.Responses[responseCount].Value;
             Console.WriteLine($"INPUT: {inputText}");
-            InputResponse response = new(inputText);
             ++responseCount;
-            WorkflowEvents runEvents = await this.ResumeAsync(response).ConfigureAwait(false);
+            WorkflowEvents runEvents = await this.ResumeAsync(new InputResponse(inputText)).ConfigureAwait(false);
             workflowEvents = new WorkflowEvents([.. workflowEvents.Events, .. runEvents.Events]);
             requestCount = (workflowEvents.InputEvents.Count + 1) / 2;
         }
@@ -46,7 +46,7 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
         return new WorkflowEvents(workflowEvents);
     }
 
-    private async Task<WorkflowEvents> ResumeAsync(InputResponse response)
+    public async Task<WorkflowEvents> ResumeAsync(object response)
     {
         Console.WriteLine("RESUMING WORKFLOW...");
         Assert.NotNull(this.LastCheckpoint);
@@ -76,7 +76,7 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
         return new WorkflowHarness(workflow, runId);
     }
 
-    private static async IAsyncEnumerable<WorkflowEvent> MonitorAndDisposeWorkflowRunAsync(Checkpointed<StreamingRun> run, InputResponse? response = null)
+    private static async IAsyncEnumerable<WorkflowEvent> MonitorAndDisposeWorkflowRunAsync(Checkpointed<StreamingRun> run, object? response = null)
     {
         await using IAsyncDisposable disposeRun = run;
 
@@ -107,8 +107,26 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
                 case WorkflowErrorEvent errorEvent:
                     throw errorEvent.Data as Exception ?? new XunitException("Unexpected failure...");
 
+                case ExecutorInvokedEvent executorInvokeEvent:
+                    Console.WriteLine($"EXEC: {executorInvokeEvent.ExecutorId}");
+                    break;
+
                 case DeclarativeActionInvokedEvent actionInvokeEvent:
                     Console.WriteLine($"ACTION: {actionInvokeEvent.ActionId} [{actionInvokeEvent.ActionType}]");
+                    break;
+
+                case AgentRunResponseEvent responseEvent:
+                    if (!string.IsNullOrEmpty(responseEvent.Response.Text))
+                    {
+                        Console.WriteLine($"AGENT: {responseEvent.Response.AgentId}: {responseEvent.Response.Text}");
+                    }
+                    else
+                    {
+                        foreach (FunctionCallContent toolCall in responseEvent.Response.Messages.SelectMany(m => m.Contents.OfType<FunctionCallContent>()))
+                        {
+                            Console.WriteLine($"TOOL: {toolCall.Name} [{responseEvent.Response.AgentId}]");
+                        }
+                    }
                     break;
             }
 
