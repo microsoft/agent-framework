@@ -325,7 +325,7 @@ class Runner:
             logger.error(f"Failed to restore from checkpoint {checkpoint_id}: {e}")
             return False
 
-    async def _restore_executor_states(self, executor_states: dict[str, dict]) -> None:
+    async def _restore_executor_states(self, executor_states: dict[str, dict[str, Any]]) -> None:
         for exec_id, state in executor_states.items():
             executor = self._executors.get(exec_id)
             if not executor:
