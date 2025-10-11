@@ -26,7 +26,7 @@ await AFAgentAsync();
 async Task SKAgentAsync()
 {
     OpenAIResponseAgent agent = new(new OpenAIClient(
-        new BearerTokenPolicy(new AzureCliCredential(), "https://cognitiveservices.azure.com/.default"),
+        new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
         new OpenAIClientOptions() { Endpoint = new Uri(endpoint) })
         .GetOpenAIResponseClient(deploymentName));
 
@@ -47,7 +47,7 @@ async Task SKAgentAsync()
 async Task AFAgentAsync()
 {
     var agent = new OpenAIClient(
-        new BearerTokenPolicy(new AzureCliCredential(), "https://cognitiveservices.azure.com/.default"),
+        new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
         new OpenAIClientOptions() { Endpoint = new Uri(endpoint) })
         .GetOpenAIResponseClient(deploymentName)
         .CreateAIAgent(instructions: "You are a helpful assistant", tools: [AIFunctionFactory.Create(GetWeather)]);

@@ -24,7 +24,7 @@ static string GetWeather([Description("The location to get the weather for.")] s
 // Create the chat client and agent.
 // Note that we are wrapping the function tool with ApprovalRequiredAIFunction to require user approval before invoking it.
 AIAgent agent = new OpenAIClient(
-    new BearerTokenPolicy(new AzureCliCredential(), "https://cognitiveservices.azure.com/.default"),
+    new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
     new OpenAIClientOptions() { Endpoint = new Uri(endpoint) })
     .GetChatClient(deploymentName)
     .CreateAIAgent(instructions: "You are a helpful assistant", tools: [new ApprovalRequiredAIFunction(AIFunctionFactory.Create(GetWeather))]);

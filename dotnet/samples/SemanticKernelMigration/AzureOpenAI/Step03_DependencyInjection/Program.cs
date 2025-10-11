@@ -45,7 +45,7 @@ async Task AFAgent()
 
     var serviceCollection = new ServiceCollection();
     serviceCollection.AddTransient((sp) => new OpenAIClient(
-        new BearerTokenPolicy(new AzureCliCredential(), "https://cognitiveservices.azure.com/.default"),
+        new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
         new OpenAIClientOptions() { Endpoint = new Uri(endpoint) })
         .GetChatClient(deploymentName)
         .CreateAIAgent(name: "Joker", instructions: "You are good at telling jokes."));

@@ -52,7 +52,7 @@ async Task AFAgent()
     Console.WriteLine("\n=== AF Agent ===\n");
 
     var agent = new OpenAIClient(
-        new BearerTokenPolicy(new AzureCliCredential(), "https://cognitiveservices.azure.com/.default"),
+        new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
         new OpenAIClientOptions() { Endpoint = new Uri(endpoint) }).GetChatClient(deploymentName)
         .CreateAIAgent(name: "Joker", instructions: "You are good at telling jokes.");
 

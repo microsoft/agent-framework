@@ -29,7 +29,7 @@ services.AddSingleton<AgentPlugin>(); // The plugin depends on WeatherProvider a
 IServiceProvider serviceProvider = services.BuildServiceProvider();
 
 AIAgent agent = new OpenAIClient(
-    new BearerTokenPolicy(new AzureCliCredential(), "https://cognitiveservices.azure.com/.default"),
+    new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
     new OpenAIClientOptions() { Endpoint = new Uri(endpoint) })
     .GetChatClient(deploymentName)
     .CreateAIAgent(

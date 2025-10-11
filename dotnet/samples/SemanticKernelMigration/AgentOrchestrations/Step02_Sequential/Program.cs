@@ -78,7 +78,7 @@ ValueTask StreamingResultCallback(StreamingChatMessageContent streamedResponse, 
 async Task AFSequentialAgentWorkflow()
 {
     var client = new OpenAIClient(
-        new BearerTokenPolicy(new AzureCliCredential(), "https://cognitiveservices.azure.com/.default"),
+        new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
         new OpenAIClientOptions() { Endpoint = new Uri(endpoint) }).GetChatClient(deploymentName).AsIChatClient();
     var frenchAgent = GetAFTranslationAgent("French", client);
     var spanishAgent = GetAFTranslationAgent("Spanish", client);

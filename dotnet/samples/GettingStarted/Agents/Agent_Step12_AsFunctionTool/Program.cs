@@ -19,7 +19,7 @@ static string GetWeather([Description("The location to get the weather for.")] s
 
 // Create the chat client and agent, and provide the function tool to the agent.
 AIAgent weatherAgent = new OpenAIClient(
-    new BearerTokenPolicy(new AzureCliCredential(), "https://cognitiveservices.azure.com/.default"),
+    new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
     new OpenAIClientOptions() { Endpoint = new Uri(endpoint) })
      .GetChatClient(deploymentName)
      .CreateAIAgent(
@@ -30,7 +30,7 @@ AIAgent weatherAgent = new OpenAIClient(
 
 // Create the main agent, and provide the weather agent as a function tool.
 AIAgent agent = new OpenAIClient(
-    new BearerTokenPolicy(new AzureCliCredential(), "https://cognitiveservices.azure.com/.default"),
+    new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
     new OpenAIClientOptions() { Endpoint = new Uri(endpoint) })
     .GetChatClient(deploymentName)
     .CreateAIAgent(instructions: "You are a helpful assistant who responds in French.", tools: [weatherAgent.AsAIFunction()]);

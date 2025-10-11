@@ -38,7 +38,7 @@ public static class Program
         var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
         var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
         var chatClient = new OpenAIClient(
-            new BearerTokenPolicy(new AzureCliCredential(), "https://cognitiveservices.azure.com/.default"),
+            new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
             new OpenAIClientOptions() { Endpoint = new Uri(endpoint) }).GetChatClient(deploymentName).AsIChatClient();
 
         // Create the executors

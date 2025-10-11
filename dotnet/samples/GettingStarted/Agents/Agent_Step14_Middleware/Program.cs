@@ -21,7 +21,7 @@ var deploymentName = System.Environment.GetEnvironmentVariable("AZURE_OPENAI_DEP
 
 // Get a client to create/retrieve server side agents with
 var azureOpenAIClient = new OpenAIClient(
-    new BearerTokenPolicy(new AzureCliCredential(), "https://cognitiveservices.azure.com/.default"),
+    new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
     new OpenAIClientOptions() { Endpoint = new Uri(endpoint) })
     .GetChatClient(deploymentName);
 

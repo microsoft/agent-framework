@@ -25,7 +25,7 @@ builder.Services.AddSingleton(
 
 // Add a chat client to the service collection.
 builder.Services.AddKeyedChatClient("AzureOpenAI", (sp) => new OpenAIClient(
-    new BearerTokenPolicy(new AzureCliCredential(), "https://cognitiveservices.azure.com/.default"),
+    new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
     new OpenAIClientOptions() { Endpoint = new Uri(endpoint) })
         .GetChatClient(deploymentName)
         .AsIChatClient());

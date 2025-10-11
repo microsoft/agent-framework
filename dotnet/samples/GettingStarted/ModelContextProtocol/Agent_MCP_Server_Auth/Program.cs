@@ -48,7 +48,7 @@ await using var mcpClient = await McpClient.CreateAsync(transport, loggerFactory
 var mcpTools = await mcpClient.ListToolsAsync().ConfigureAwait(false);
 
 AIAgent agent = new OpenAIClient(
-    new BearerTokenPolicy(new AzureCliCredential(), "https://cognitiveservices.azure.com/.default"),
+    new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
     new OpenAIClientOptions() { Endpoint = new Uri(endpoint) })
      .GetChatClient(deploymentName)
      .CreateAIAgent(instructions: "You answer questions related to the weather.", tools: [.. mcpTools]);

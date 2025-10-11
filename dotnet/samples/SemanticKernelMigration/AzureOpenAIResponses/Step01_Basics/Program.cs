@@ -21,7 +21,7 @@ async Task SKAgentAsync()
     Console.WriteLine("\n=== SK Agent ===\n");
 
     var responseClient = new OpenAIClient(
-        new BearerTokenPolicy(new AzureCliCredential(), "https://cognitiveservices.azure.com/.default"),
+        new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
         new OpenAIClientOptions() { Endpoint = new Uri(endpoint) })
         .GetOpenAIResponseClient(deploymentName);
     OpenAIResponseAgent agent = new(responseClient)
@@ -53,7 +53,7 @@ async Task AFAgentAsync()
     Console.WriteLine("\n=== AF Agent ===\n");
 
     var agent = new OpenAIClient(
-        new BearerTokenPolicy(new AzureCliCredential(), "https://cognitiveservices.azure.com/.default"),
+        new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
         new OpenAIClientOptions() { Endpoint = new Uri(endpoint) })
         .GetOpenAIResponseClient(deploymentName)
         .CreateAIAgent(name: "Joker", instructions: "You are good at telling jokes.");
