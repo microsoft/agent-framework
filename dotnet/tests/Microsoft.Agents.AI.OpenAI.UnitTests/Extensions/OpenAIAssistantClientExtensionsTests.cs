@@ -208,6 +208,254 @@ public sealed class OpenAIAssistantClientExtensionsTests
     }
 
     /// <summary>
+    /// Verify that GetAIAgent with ClientResult and options works correctly.
+    /// </summary>
+    [Fact]
+    public void GetAIAgent_WithClientResultAndOptions_WorksCorrectly()
+    {
+        // Arrange
+        var assistantClient = new TestAssistantClient();
+        var assistant = ModelReaderWriter.Read<Assistant>(BinaryData.FromString("""{"id": "asst_abc123", "name": "Original Name", "description": "Original Description", "instructions": "Original Instructions"}"""))!;
+        var clientResult = ClientResult.FromValue(assistant, new FakePipelineResponse());
+
+        var options = new ChatClientAgentOptions
+        {
+            Name = "Override Name",
+            Description = "Override Description",
+            Instructions = "Override Instructions"
+        };
+
+        // Act
+        var agent = assistantClient.GetAIAgent(clientResult, options);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Override Name", agent.Name);
+        Assert.Equal("Override Description", agent.Description);
+        Assert.Equal("Override Instructions", agent.Instructions);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgent with Assistant and options works correctly.
+    /// </summary>
+    [Fact]
+    public void GetAIAgent_WithAssistantAndOptions_WorksCorrectly()
+    {
+        // Arrange
+        var assistantClient = new TestAssistantClient();
+        var assistant = ModelReaderWriter.Read<Assistant>(BinaryData.FromString("""{"id": "asst_abc123", "name": "Original Name", "description": "Original Description", "instructions": "Original Instructions"}"""))!;
+
+        var options = new ChatClientAgentOptions
+        {
+            Name = "Override Name",
+            Description = "Override Description",
+            Instructions = "Override Instructions"
+        };
+
+        // Act
+        var agent = assistantClient.GetAIAgent(assistant, options);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Override Name", agent.Name);
+        Assert.Equal("Override Description", agent.Description);
+        Assert.Equal("Override Instructions", agent.Instructions);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgent with Assistant and options falls back to assistant metadata when options are null.
+    /// </summary>
+    [Fact]
+    public void GetAIAgent_WithAssistantAndOptionsWithNullFields_FallsBackToAssistantMetadata()
+    {
+        // Arrange
+        var assistantClient = new TestAssistantClient();
+        var assistant = ModelReaderWriter.Read<Assistant>(BinaryData.FromString("""{"id": "asst_abc123", "name": "Original Name", "description": "Original Description", "instructions": "Original Instructions"}"""))!;
+
+        var options = new ChatClientAgentOptions(); // Empty options
+
+        // Act
+        var agent = assistantClient.GetAIAgent(assistant, options);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Original Name", agent.Name);
+        Assert.Equal("Original Description", agent.Description);
+        Assert.Equal("Original Instructions", agent.Instructions);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgent with agentId and options works correctly.
+    /// </summary>
+    [Fact]
+    public void GetAIAgent_WithAgentIdAndOptions_WorksCorrectly()
+    {
+        // Arrange
+        var assistantClient = new TestAssistantClient();
+        const string AgentId = "asst_abc123";
+
+        var options = new ChatClientAgentOptions
+        {
+            Name = "Override Name",
+            Description = "Override Description",
+            Instructions = "Override Instructions"
+        };
+
+        // Act
+        var agent = assistantClient.GetAIAgent(AgentId, options);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Override Name", agent.Name);
+        Assert.Equal("Override Description", agent.Description);
+        Assert.Equal("Override Instructions", agent.Instructions);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgentAsync with agentId and options works correctly.
+    /// </summary>
+    [Fact]
+    public async Task GetAIAgentAsync_WithAgentIdAndOptions_WorksCorrectlyAsync()
+    {
+        // Arrange
+        var assistantClient = new TestAssistantClient();
+        const string AgentId = "asst_abc123";
+
+        var options = new ChatClientAgentOptions
+        {
+            Name = "Override Name",
+            Description = "Override Description",
+            Instructions = "Override Instructions"
+        };
+
+        // Act
+        var agent = await assistantClient.GetAIAgentAsync(AgentId, options);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Override Name", agent.Name);
+        Assert.Equal("Override Description", agent.Description);
+        Assert.Equal("Override Instructions", agent.Instructions);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgent with clientFactory parameter correctly applies the factory.
+    /// </summary>
+    [Fact]
+    public void GetAIAgent_WithClientFactory_AppliesFactoryCorrectly()
+    {
+        // Arrange
+        var assistantClient = new TestAssistantClient();
+        var assistant = ModelReaderWriter.Read<Assistant>(BinaryData.FromString("""{"id": "asst_abc123", "name": "Test Agent"}"""))!;
+        var testChatClient = new TestChatClient(assistantClient.AsIChatClient("asst_abc123"));
+
+        var options = new ChatClientAgentOptions
+        {
+            Name = "Test Agent"
+        };
+
+        // Act
+        var agent = assistantClient.GetAIAgent(
+            assistant,
+            options,
+            clientFactory: (innerClient) => testChatClient);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Test Agent", agent.Name);
+
+        // Verify that the custom chat client can be retrieved from the agent's service collection
+        var retrievedTestClient = agent.GetService<TestChatClient>();
+        Assert.NotNull(retrievedTestClient);
+        Assert.Same(testChatClient, retrievedTestClient);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgent throws ArgumentNullException when assistantClientResult is null.
+    /// </summary>
+    [Fact]
+    public void GetAIAgent_WithNullClientResult_ThrowsArgumentNullException()
+    {
+        // Arrange
+        var assistantClient = new TestAssistantClient();
+        var options = new ChatClientAgentOptions();
+
+        // Act & Assert
+        var exception = Assert.Throws<ArgumentNullException>(() =>
+            assistantClient.GetAIAgent((ClientResult<Assistant>)null!, options));
+
+        Assert.Equal("assistantClientResult", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgent throws ArgumentNullException when assistant is null.
+    /// </summary>
+    [Fact]
+    public void GetAIAgent_WithNullAssistant_ThrowsArgumentNullException()
+    {
+        // Arrange
+        var assistantClient = new TestAssistantClient();
+        var options = new ChatClientAgentOptions();
+
+        // Act & Assert
+        var exception = Assert.Throws<ArgumentNullException>(() =>
+            assistantClient.GetAIAgent((Assistant)null!, options));
+
+        Assert.Equal("assistantMetadata", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgent throws ArgumentNullException when options is null.
+    /// </summary>
+    [Fact]
+    public void GetAIAgent_WithNullOptions_ThrowsArgumentNullException()
+    {
+        // Arrange
+        var assistantClient = new TestAssistantClient();
+        var assistant = ModelReaderWriter.Read<Assistant>(BinaryData.FromString("""{"id": "asst_abc123"}"""))!;
+
+        // Act & Assert
+        var exception = Assert.Throws<ArgumentNullException>(() =>
+            assistantClient.GetAIAgent(assistant, (ChatClientAgentOptions)null!));
+
+        Assert.Equal("options", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgent throws ArgumentException when agentId is empty.
+    /// </summary>
+    [Fact]
+    public void GetAIAgent_WithEmptyAgentId_ThrowsArgumentException()
+    {
+        // Arrange
+        var assistantClient = new TestAssistantClient();
+        var options = new ChatClientAgentOptions();
+
+        // Act & Assert
+        var exception = Assert.Throws<ArgumentException>(() =>
+            assistantClient.GetAIAgent(string.Empty, options));
+
+        Assert.Equal("agentId", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgentAsync throws ArgumentException when agentId is empty.
+    /// </summary>
+    [Fact]
+    public async Task GetAIAgentAsync_WithEmptyAgentId_ThrowsArgumentExceptionAsync()
+    {
+        // Arrange
+        var assistantClient = new TestAssistantClient();
+        var options = new ChatClientAgentOptions();
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<ArgumentException>(() =>
+            assistantClient.GetAIAgentAsync(string.Empty, options));
+
+        Assert.Equal("agentId", exception.ParamName);
+    }
+
+    /// <summary>
     /// Creates a test AssistantClient implementation for testing.
     /// </summary>
     private sealed class TestAssistantClient : AssistantClient
@@ -219,6 +467,17 @@ public sealed class OpenAIAssistantClientExtensionsTests
         public override ClientResult<Assistant> CreateAssistant(string model, AssistantCreationOptions? options = null, CancellationToken cancellationToken = default)
         {
             return ClientResult.FromValue(ModelReaderWriter.Read<Assistant>(BinaryData.FromString("""{"id": "asst_abc123"}""")), new FakePipelineResponse())!;
+        }
+
+        public override ClientResult<Assistant> GetAssistant(string assistantId, CancellationToken cancellationToken = default)
+        {
+            return ClientResult.FromValue(ModelReaderWriter.Read<Assistant>(BinaryData.FromString("""{"id": "asst_abc123", "name": "Original Name", "description": "Original Description", "instructions": "Original Instructions"}""")), new FakePipelineResponse())!;
+        }
+
+        public override async Task<ClientResult<Assistant>> GetAssistantAsync(string assistantId, CancellationToken cancellationToken = default)
+        {
+            await Task.Delay(1, cancellationToken); // Simulate async operation
+            return ClientResult.FromValue(ModelReaderWriter.Read<Assistant>(BinaryData.FromString("""{"id": "asst_abc123", "name": "Original Name", "description": "Original Description", "instructions": "Original Instructions"}""")), new FakePipelineResponse())!;
         }
     }
 
