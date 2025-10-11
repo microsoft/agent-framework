@@ -2,7 +2,7 @@
 
 using System.Collections.Generic;
 
-namespace Microsoft.Agents.AI.Hosting;
+namespace Microsoft.Agents.AI.Hosting.Local;
 
 internal sealed class LocalAgentRegistry
 {

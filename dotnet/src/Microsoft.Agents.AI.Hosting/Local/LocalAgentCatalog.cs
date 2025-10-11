@@ -7,7 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace Microsoft.Agents.AI.Hosting;
+namespace Microsoft.Agents.AI.Hosting.Local;
 
 // Implementation of an AgentCatalog which enumerates agents registered in the local service provider.
 internal sealed class LocalAgentCatalog : AgentCatalog
