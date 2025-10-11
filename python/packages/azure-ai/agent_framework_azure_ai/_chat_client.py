@@ -949,7 +949,7 @@ class AzureAIAgentClient(BaseChatClient):
                             azs_conn_id = await self.project_client.connections.get_default(
                                 ConnectionType.AZURE_AI_SEARCH
                             )
-                        except HttpResponseError as err:
+                        except ValueError as err:
                             raise ServiceInitializationError(
                                 "No default Azure AI Search connection found in the Azure AI Project. "
                                 "Please create one or provide vector store inputs for the file search tool.",

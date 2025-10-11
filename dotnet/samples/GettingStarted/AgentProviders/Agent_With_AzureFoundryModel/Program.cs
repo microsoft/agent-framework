@@ -14,9 +14,6 @@ var endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_OPENAI_ENDPOINT
 var apiKey = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_OPENAI_APIKEY");
 var model = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_MODEL_DEPLOYMENT") ?? "Phi-4-mini-instruct";
 
-const string JokerName = "Joker";
-const string JokerInstructions = "You are good at telling jokes.";
-
 // Since we are using the OpenAI Client SDK, we need to override the default endpoint to point to Azure Foundry.
 var clientOptions = new OpenAIClientOptions() { Endpoint = new Uri(endpoint) };
 
@@ -26,8 +23,8 @@ OpenAIClient client = string.IsNullOrWhiteSpace(apiKey)
     : new OpenAIClient(new ApiKeyCredential(apiKey), clientOptions);
 
 AIAgent agent = client
-     .GetChatClient(model)
-     .CreateAIAgent(JokerInstructions, JokerName);
+    .GetChatClient(model)
+    .CreateAIAgent(instructions: "You are good at telling jokes.", name: "Joker");
 
 // Invoke the agent and output the text result.
 Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate."));
