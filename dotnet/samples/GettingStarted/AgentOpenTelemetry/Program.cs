@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.ClientModel;
 using System.ClientModel.Primitives;
 using System.ComponentModel;
 using System.Diagnostics;
