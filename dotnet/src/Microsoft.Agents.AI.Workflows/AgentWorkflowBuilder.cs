@@ -115,9 +115,19 @@ public static partial class AgentWorkflowBuilder
     {
         Throw.IfNull(agents);
 
-        // A workflow needs a starting executor, so we create one that forwards everything to each agent.
-        ChatForwardingExecutor start = new("Start");
-        workflowBuilder ??= new(start);
+        ExecutorIsh start;
+        if (workflowBuilder is null)
+        {
+            // Create a new workflow with a forwarding executor as the start
+            start = new ChatForwardingExecutor("Start");
+            workflowBuilder = new(start);
+        }
+        else
+        {
+            // Use a new forwarding executor that will be added to the existing workflow
+            start = new ChatForwardingExecutor($"ConcurrentStart_{Guid.NewGuid():N}");
+            // The existing workflow builder will connect to this executor
+        }
 
         // For each agent, we create an executor to host it and an accumulator to batch up its output messages,
         // so that the final accumulator receives a single list of messages from each agent. Otherwise, the
@@ -135,8 +145,11 @@ public static partial class AgentWorkflowBuilder
         // each agent's accumulator to it. If no aggregation function was provided, we default to returning
         // the last message from each agent
         aggregator ??= static lists => (from list in lists where list.Count > 0 select list.Last()).ToList();
-        ConcurrentEndExecutor end = new(agentExecutors.Length, aggregator);
-        workflowBuilder.AddFanInEdge(end, sources: accumulators);
+
+        // Use a unique ID for the end executor to avoid conflicts when attaching to existing workflows
+        string endId = workflowBuilder is null ? "ConcurrentEnd" : $"ConcurrentEnd_{Guid.NewGuid():N}";
+        ConcurrentEndExecutor end = new(agentExecutors.Length, aggregator, endId);
+        workflowBuilder!.AddFanInEdge(end, sources: accumulators);
 
         return workflowBuilder.WithOutputFrom(end);
     }
@@ -273,7 +286,7 @@ public static partial class AgentWorkflowBuilder
         private List<List<ChatMessage>> _allResults;
         private int _remaining;
 
-        public ConcurrentEndExecutor(int expectedInputs, Func<IList<List<ChatMessage>>, List<ChatMessage>> aggregator) : base("ConcurrentEnd")
+        public ConcurrentEndExecutor(int expectedInputs, Func<IList<List<ChatMessage>>, List<ChatMessage>> aggregator, string id = "ConcurrentEnd") : base(id)
         {
             this._expectedInputs = expectedInputs;
             this._aggregator = Throw.IfNull(aggregator);
