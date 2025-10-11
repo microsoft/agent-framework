@@ -44,11 +44,6 @@ public class ChatClientAgentOptions
         {
             (this.ChatOptions ??= new()).Tools = tools;
         }
-
-        if (instructions is not null)
-        {
-            (this.ChatOptions ??= new()).Instructions = instructions;
-        }
     }
 
     /// <summary>
