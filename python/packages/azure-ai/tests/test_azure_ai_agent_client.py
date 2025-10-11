@@ -18,6 +18,8 @@ from agent_framework import (
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
+    DataContent,
+    ErrorContent,
     FunctionApprovalRequestContent,
     FunctionApprovalResponseContent,
     FunctionCallContent,
@@ -29,7 +31,10 @@ from agent_framework import (
     HostedWebSearchTool,
     Role,
     TextContent,
+    TextReasoningContent,
     UriContent,
+    UsageContent,
+    UsageDetails,
 )
 from agent_framework._serialization import SerializationMixin
 from agent_framework.exceptions import ServiceInitializationError
@@ -1862,3 +1867,135 @@ async def test_azure_ai_chat_client_agent_chat_options_agent_level() -> None:
         assert isinstance(response, AgentRunResponse)
         assert response.text is not None
         assert len(response.text) > 0
+
+
+async def test_azure_ai_content_parsing_image(azure_ai_unit_test_env: dict[str, str]) -> None:
+    """Test Azure AI client handles image content (DataContent/UriContent)."""
+    from agent_framework import DataContent
+
+    mock_client = MagicMock()
+    client = create_test_azure_ai_chat_client(
+        mock_ai_project_client=mock_client,
+        azure_ai_settings=AzureAISettings(env_file_path="test.env"),
+    )
+
+    # Create message with image content
+    image_content = UriContent(uri="https://example.com/image.jpg", media_type="image/jpeg")
+    message = ChatMessage(role=Role.USER, contents=[image_content])
+
+    # Create run options
+    chat_options = ChatOptions(model_id="test-model")
+    run_options, _ = await client._create_run_options([message], chat_options)
+
+    # Check that the image content is properly converted
+    assert "additional_messages" in run_options
+    assert len(run_options["additional_messages"]) == 1
+    assert len(run_options["additional_messages"][0].content) == 1
+    assert run_options["additional_messages"][0].content[0].image_url.url == "https://example.com/image.jpg"
+
+
+async def test_azure_ai_content_parsing_data_image(azure_ai_unit_test_env: dict[str, str]) -> None:
+    """Test Azure AI client handles DataContent with image data."""
+    from agent_framework import DataContent
+
+    mock_client = MagicMock()
+    client = create_test_azure_ai_chat_client(
+        mock_ai_project_client=mock_client,
+        azure_ai_settings=AzureAISettings(env_file_path="test.env"),
+    )
+
+    # Create message with DataContent image
+    image_data_content = DataContent(
+        uri="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+        media_type="image/png",
+    )
+    message = ChatMessage(role=Role.USER, contents=[image_data_content])
+
+    # Create run options
+    chat_options = ChatOptions(model_id="test-model")
+    run_options, _ = await client._create_run_options([message], chat_options)
+
+    # Check that the image content is properly converted
+    assert "additional_messages" in run_options
+    assert len(run_options["additional_messages"]) == 1
+    assert len(run_options["additional_messages"][0].content) == 1
+    assert run_options["additional_messages"][0].content[0].image_url.url.startswith("data:image/png;base64,")
+
+
+async def test_azure_ai_content_unsupported_types(azure_ai_unit_test_env: dict[str, str]) -> None:
+    """Test Azure AI client handles unsupported content types."""
+    from agent_framework import ErrorContent, UsageContent, UsageDetails, TextReasoningContent
+
+    mock_client = MagicMock()
+    client = create_test_azure_ai_chat_client(
+        mock_ai_project_client=mock_client,
+        azure_ai_settings=AzureAISettings(env_file_path="test.env"),
+    )
+
+    # Test with ErrorContent - should be skipped (not added to additional_messages)
+    error_content = ErrorContent(message="Test error", error_code="ERR001")
+    message = ChatMessage(role=Role.USER, contents=[error_content])
+    chat_options = ChatOptions(model_id="test-model")
+    run_options, _ = await client._create_run_options([message], chat_options)
+    # ErrorContent is not a MessageInputContentBlock, so it's skipped
+    assert "additional_messages" not in run_options or len(run_options.get("additional_messages", [])) == 0
+
+    # Test with UsageContent - should be skipped
+    usage_content = UsageContent(details=UsageDetails(input_token_count=10, output_token_count=20))
+    message = ChatMessage(role=Role.USER, contents=[usage_content])
+    run_options, _ = await client._create_run_options([message], chat_options)
+    assert "additional_messages" not in run_options or len(run_options.get("additional_messages", [])) == 0
+
+    # Test with TextReasoningContent - should be skipped (not supported in Azure AI)
+    reasoning_content = TextReasoningContent(text="Reasoning text")
+    message = ChatMessage(role=Role.USER, contents=[reasoning_content])
+    run_options, _ = await client._create_run_options([message], chat_options)
+    assert "additional_messages" not in run_options or len(run_options.get("additional_messages", [])) == 0
+
+
+async def test_azure_ai_content_parsing_audio(azure_ai_unit_test_env: dict[str, str]) -> None:
+    """Test Azure AI client with audio content (currently unsupported)."""
+    from agent_framework import DataContent
+
+    mock_client = MagicMock()
+    client = create_test_azure_ai_chat_client(
+        mock_ai_project_client=mock_client,
+        azure_ai_settings=AzureAISettings(env_file_path="test.env"),
+    )
+
+    # Create message with audio content (should be skipped as not supported)
+    audio_content = DataContent(uri="data:audio/wav;base64,UklGRiQAAABXQVZFZm10", media_type="audio/wav")
+    message = ChatMessage(role=Role.USER, contents=[audio_content])
+
+    # Create run options
+    chat_options = ChatOptions(model_id="test-model")
+    run_options, _ = await client._create_run_options([message], chat_options)
+
+    # Audio content is not supported yet, so it should be skipped
+    assert "additional_messages" not in run_options or len(run_options.get("additional_messages", [])) == 0
+
+
+async def test_azure_ai_content_parsing_application(azure_ai_unit_test_env: dict[str, str]) -> None:
+    """Test Azure AI client with application/* content (currently unsupported)."""
+    from agent_framework import DataContent
+
+    mock_client = MagicMock()
+    client = create_test_azure_ai_chat_client(
+        mock_ai_project_client=mock_client,
+        azure_ai_settings=AzureAISettings(env_file_path="test.env"),
+    )
+
+    # Create message with PDF content (should be skipped as not supported)
+    pdf_content = DataContent(
+        uri="data:application/pdf;base64,JVBERi0xLjQK",
+        media_type="application/pdf",
+        additional_properties={"filename": "document.pdf"},
+    )
+    message = ChatMessage(role=Role.USER, contents=[pdf_content])
+
+    # Create run options
+    chat_options = ChatOptions(model_id="test-model")
+    run_options, _ = await client._create_run_options([message], chat_options)
+
+    # Application content is not supported yet, so it should be skipped
+    assert "additional_messages" not in run_options or len(run_options.get("additional_messages", [])) == 0

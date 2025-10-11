@@ -18,11 +18,18 @@ from agent_framework import (
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
+    DataContent,
+    ErrorContent,
     HostedCodeInterpreterTool,
     HostedFileSearchTool,
     HostedMCPTool,
     HostedVectorStoreContent,
+    Role,
     TextContent,
+    TextReasoningContent,
+    UriContent,
+    UsageContent,
+    UsageDetails,
     ai_function,
 )
 from agent_framework.azure import AzureOpenAIResponsesClient
@@ -652,3 +659,66 @@ async def test_azure_responses_client_file_search_streaming() -> None:
 
     assert "sunny" in full_message.lower()
     assert "75" in full_message
+
+
+def test_azure_responses_content_parser_error_content() -> None:
+    """Test _openai_content_parser with ErrorContent."""
+    client = AzureOpenAIResponsesClient(model_id="test-model")
+
+    # Test ErrorContent - should return empty dict (unsupported for sending)
+    error_content = ErrorContent(message="Test error", error_code="ERR001")
+    result = client._openai_content_parser(Role.USER, error_content, {})  # type: ignore
+    assert result == {}
+
+
+def test_azure_responses_content_parser_usage_content() -> None:
+    """Test _openai_content_parser with UsageContent."""
+    client = AzureOpenAIResponsesClient(model_id="test-model")
+
+    # Test UsageContent - should return empty dict (unsupported for sending, only received)
+    usage_content = UsageContent(
+        details=UsageDetails(input_token_count=10, output_token_count=20)
+    )
+    result = client._openai_content_parser(Role.ASSISTANT, usage_content, {})  # type: ignore
+    assert result == {}
+
+
+def test_azure_responses_content_parser_application_file() -> None:
+    """Test _openai_content_parser with application/* DataContent/UriContent."""
+    client = AzureOpenAIResponsesClient(model_id="test-model")
+
+    # Test PDF file with DataContent
+    pdf_content = DataContent(
+        uri="data:application/pdf;base64,JVBERi0xLjQK",
+        media_type="application/pdf",
+        additional_properties={"filename": "document.pdf"},
+    )
+    result = client._openai_content_parser(Role.USER, pdf_content, {})  # type: ignore
+    assert result["type"] == "input_file"
+    assert result["file_data"] == "data:application/pdf;base64,JVBERi0xLjQK"
+    assert result["filename"] == "document.pdf"
+
+    # Test file without filename
+    json_content = UriContent(
+        uri="data:application/json;base64,eyJ0ZXN0IjoidmFsdWUifQ==",
+        media_type="application/json",
+    )
+    result = client._openai_content_parser(Role.USER, json_content, {})  # type: ignore
+    assert result["type"] == "input_file"
+    assert result["file_data"] == "data:application/json;base64,eyJ0ZXN0IjoidmFsdWUifQ=="
+    assert "filename" not in result
+
+
+def test_azure_responses_content_parser_text_reasoning() -> None:
+    """Test _openai_content_parser with TextReasoningContent."""
+    client = AzureOpenAIResponsesClient(model_id="test-model")
+
+    # Test TextReasoningContent
+    reasoning_content = TextReasoningContent(
+        text="Summary of reasoning",
+        additional_properties={"reasoning_text": "Step by step reasoning"},
+    )
+    result = client._openai_content_parser(Role.ASSISTANT, reasoning_content, {})  # type: ignore
+    assert result["type"] == "reasoning"
+    assert result["summary"]["text"] == "Summary of reasoning"
+    assert result["content"]["text"] == "Step by step reasoning"

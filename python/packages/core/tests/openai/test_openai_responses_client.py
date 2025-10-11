@@ -27,6 +27,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     DataContent,
+    ErrorContent,
     FunctionApprovalRequestContent,
     FunctionApprovalResponseContent,
     FunctionCallContent,
@@ -41,6 +42,7 @@ from agent_framework import (
     TextContent,
     TextReasoningContent,
     UriContent,
+    UsageContent,
     ai_function,
 )
 from agent_framework._types import ChatOptions
@@ -2113,3 +2115,51 @@ def test_openai_responses_client_with_callable_api_key() -> None:
     assert client.model_id == "gpt-4o"
     # OpenAI SDK now manages callable API keys internally
     assert client.client is not None
+
+
+def test_openai_content_parser_error_content() -> None:
+    """Test _openai_content_parser with ErrorContent."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    # Test ErrorContent - should return empty dict (unsupported for sending)
+    error_content = ErrorContent(message="Test error", error_code="ERR001")
+    result = client._openai_content_parser(Role.USER, error_content, {})  # type: ignore
+    assert result == {}
+
+
+def test_openai_content_parser_usage_content() -> None:
+    """Test _openai_content_parser with UsageContent."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    # Test UsageContent - should return empty dict (unsupported for sending, only received)
+    usage_content = UsageContent(
+        details=UsageDetails(input_token_count=10, output_token_count=20)
+    )
+    result = client._openai_content_parser(Role.ASSISTANT, usage_content, {})  # type: ignore
+    assert result == {}
+
+
+def test_openai_content_parser_application_file() -> None:
+    """Test _openai_content_parser with application/* DataContent/UriContent."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    # Test PDF file with DataContent
+    pdf_content = DataContent(
+        uri="data:application/pdf;base64,JVBERi0xLjQK",
+        media_type="application/pdf",
+        additional_properties={"filename": "document.pdf"},
+    )
+    result = client._openai_content_parser(Role.USER, pdf_content, {})  # type: ignore
+    assert result["type"] == "input_file"
+    assert result["file_data"] == "data:application/pdf;base64,JVBERi0xLjQK"
+    assert result["filename"] == "document.pdf"
+
+    # Test file without filename
+    json_content = UriContent(
+        uri="data:application/json;base64,eyJ0ZXN0IjoidmFsdWUifQ==",
+        media_type="application/json",
+    )
+    result = client._openai_content_parser(Role.USER, json_content, {})  # type: ignore
+    assert result["type"] == "input_file"
+    assert result["file_data"] == "data:application/json;base64,eyJ0ZXN0IjoidmFsdWUifQ=="
+    assert "filename" not in result

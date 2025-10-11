@@ -18,10 +18,13 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     DataContent,
+    ErrorContent,
     FunctionResultContent,
     HostedWebSearchTool,
     TextContent,
     ToolProtocol,
+    UsageContent,
+    UsageDetails,
     ai_function,
     prepare_function_call_results,
 )
@@ -874,3 +877,31 @@ def test_openai_content_parser_document_file_mapping(openai_unit_test_env: dict[
 
     assert result["type"] == "file"
     assert "filename" not in result["file"]  # None filename should be omitted
+
+
+def test_openai_content_parser_error_content(openai_unit_test_env: dict[str, str]) -> None:
+    """Test _openai_content_parser with ErrorContent."""
+
+    client = OpenAIChatClient()
+
+    # Test ErrorContent - should fall back to to_dict
+    error_content = ErrorContent(message="Test error", error_code="ERR001")
+    result = client._openai_content_parser(error_content)  # type: ignore
+    assert result["type"] == "error"
+    assert result["message"] == "Test error"
+    assert result["error_code"] == "ERR001"
+
+
+def test_openai_content_parser_usage_content(openai_unit_test_env: dict[str, str]) -> None:
+    """Test _openai_content_parser with UsageContent."""
+
+    client = OpenAIChatClient()
+
+    # Test UsageContent - should fall back to to_dict (unsupported for sending, only received)
+    usage_content = UsageContent(
+        details=UsageDetails(input_token_count=10, output_token_count=20)
+    )
+    result = client._openai_content_parser(usage_content)  # type: ignore
+    assert result["type"] == "usage"
+    assert result["details"]["input_token_count"] == 10
+    assert result["details"]["output_token_count"] == 20

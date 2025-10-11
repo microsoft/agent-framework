@@ -26,7 +26,10 @@ from agent_framework import (
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
+    ErrorContent,
     TextContent,
+    UsageContent,
+    UsageDetails,
     ai_function,
 )
 from agent_framework._telemetry import USER_AGENT_KEY
@@ -855,3 +858,29 @@ async def test_azure_chat_client_agent_level_tool_persistence():
         assert second_response.text is not None
         # Should use the agent-level weather tool again
         assert any(term in second_response.text.lower() for term in ["miami", "sunny", "72"])
+
+
+def test_azure_chat_content_parser_error_content(azure_openai_unit_test_env: dict[str, str]) -> None:
+    """Test _openai_content_parser with ErrorContent."""
+    client = AzureOpenAIChatClient()
+
+    # Test ErrorContent - should fall back to to_dict
+    error_content = ErrorContent(message="Test error", error_code="ERR001")
+    result = client._openai_content_parser(error_content)  # type: ignore
+    assert result["type"] == "error"
+    assert result["message"] == "Test error"
+    assert result["error_code"] == "ERR001"
+
+
+def test_azure_chat_content_parser_usage_content(azure_openai_unit_test_env: dict[str, str]) -> None:
+    """Test _openai_content_parser with UsageContent."""
+    client = AzureOpenAIChatClient()
+
+    # Test UsageContent - should fall back to to_dict (unsupported for sending, only received)
+    usage_content = UsageContent(
+        details=UsageDetails(input_token_count=10, output_token_count=20)
+    )
+    result = client._openai_content_parser(usage_content)  # type: ignore
+    assert result["type"] == "usage"
+    assert result["details"]["input_token_count"] == 10
+    assert result["details"]["output_token_count"] == 20
