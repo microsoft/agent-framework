@@ -6,71 +6,108 @@ Implement agent protocols, base classes, and chat agents with thread management.
 
 **Goal**: Build the core agent system with support for both service-managed and local-managed conversation threads.
 
-**Estimated Total Effort**: 38 hours (5 developer days)
+**Estimated Total Effort**: 36.5 hours (groomed into 17 focused tasks)
 
-**Status**: ⬜ Not Started
+**Status**: 🔄 Groomed & Ready for Implementation
 
-## Task List
+**📋 See**:
+- [GROOMED-BACKLOG.md](./GROOMED-BACKLOG.md) - Detailed task breakdown with 17 sub-tasks
+- [QUICK-START-GUIDE.md](./QUICK-START-GUIDE.md) - How to pick up and implement tasks
+
+## Task List (Original - see GROOMED-BACKLOG.md for breakdown)
 
 | ID | Task | Priority | Effort | Status | Assignee |
 |----|------|----------|--------|--------|----------|
-| [TASK-101](./TASK-101-chat-agent.md) | ChatAgent Implementation | Critical | 8h | ⬜ | - |
+| [TASK-101](./TASK-101-chat-agent.md) | ChatAgent Implementation | Critical | 8h → 12h (4 subtasks) | ⬜ | - |
 | [TASK-102](./TASK-102-agent-protocol-type-guards.md) | AgentProtocol Type Guards | High | 3h | ⬜ | - |
-| [TASK-103](./TASK-103-agent-serialization.md) | Agent Serialization/Deserialization | High | 4h | ⬜ | - |
-| [TASK-104](./TASK-104-service-managed-threads.md) | Service-Managed Thread Support | High | 5h | ⬜ | - |
-| [TASK-105](./TASK-105-local-managed-threads.md) | Local-Managed Thread Support | High | 4h | ⬜ | - |
-| [TASK-106](./TASK-106-lifecycle-hooks.md) | Agent Lifecycle Hooks | Medium | 4h | ⬜ | - |
-| [TASK-107](./TASK-107-middleware-system.md) | Agent Middleware System | High | 6h | ⬜ | - |
-| [TASK-108](./TASK-108-integration-tests.md) | Integration Tests - Phase 2 | High | 4h | ⬜ | - |
+| [TASK-103](./TASK-103-agent-serialization.md) | Agent Serialization/Deserialization | High | 4h → 4.5h (2 subtasks) | ⬜ | - |
+| [TASK-104](./TASK-104-service-managed-threads.md) | Service-Managed Thread Support | High | 5h → 4.5h (2 subtasks) | ⬜ | - |
+| [TASK-105](./TASK-105-local-managed-threads.md) | Local-Managed Thread Support | High | 4h → (merged with 104) | ⬜ | - |
+| [TASK-106](./TASK-106-lifecycle-hooks.md) | Agent Lifecycle Hooks | Medium | 4h (2 subtasks) | ⬜ | - |
+| [TASK-107](./TASK-107-middleware-system.md) | Agent Middleware System | High | 6h → 5h (2 subtasks) | ⬜ | - |
+| [TASK-108](./TASK-108-integration-tests.md) | Integration Tests - Phase 2 | High | 4h (2 subtasks) | ⬜ | - |
 
-## Dependency Graph
+### Groomed Subtasks (17 total)
+
+**Wave 1 - Foundation** (can run in parallel):
+- TASK-101a: ChatAgent Types (2h)
+- TASK-102: Type Guards (3h)
+- TASK-103a: Serialization Core (3h)
+- TASK-104a: Service Thread Types (1.5h)
+- TASK-105a: Local Thread Store (2h)
+- TASK-106a: Lifecycle Interfaces (2h)
+- TASK-107a: Middleware Interfaces (2h)
+- TASK-104-105: Thread Logic (3h)
+
+**Wave 2 - ChatAgent Core** (sequential):
+- TASK-101b: Basic Implementation (4h)
+- TASK-101c: run() Method (2h)
+- TASK-101d: runStream() Method (2h)
+
+**Wave 3 - Advanced** (can run in parallel):
+- TASK-101e: MCP Tools (2h)
+- TASK-103b: Agent Serialization (1.5h)
+- TASK-106b: Lifecycle Implementation (2h)
+- TASK-107b: Middleware Decorators (3h)
+
+**Wave 4 - Integration** (sequential):
+- TASK-108a: Test Infrastructure (1.5h)
+- TASK-108b: Integration Tests (2.5h)
+
+## Dependency Graph (Groomed)
 
 ```
-TASK-101 (ChatAgent) [CRITICAL PATH]
-    ├──→ Requires: TASK-007 (BaseAgent), TASK-004 (ChatClientProtocol), TASK-005 (Tool System)
-    ↓
-    ├──→ TASK-102 (AgentProtocol Type Guards)
-    │        └──→ Validates protocol conformance for custom agents
-    │
-    ├──→ TASK-103 (Agent Serialization)
-    │        └──→ Save/restore agent state with dependency injection
-    │
-    ├──→ TASK-104 (Service-Managed Threads)
-    │        └──→ Server-side conversation storage via conversation ID
-    │
-    ├──→ TASK-105 (Local-Managed Threads)
-    │        ├──→ Requires: TASK-010 (MessageStore)
-    │        └──→ Client-side conversation storage
-    │
-    ├──→ TASK-106 (Agent Lifecycle Hooks)
-    │        ├──→ Requires: TASK-012 (ContextProvider)
-    │        └──→ Context provider lifecycle integration
-    │
-    └──→ TASK-107 (Agent Middleware System)
-             └──→ Intercept and modify agent/function calls
-
-TASK-108 (Integration Tests)
-    └──→ Requires: All Phase 2 tasks (TASK-101 through TASK-107)
+Phase 2A (Foundation) - Parallel Wave 1
+├── TASK-101a (Types) ────────┐
+├── TASK-102 (Type Guards) ───┤
+├── TASK-106a (Lifecycle IF)  ├──┐
+├── TASK-107a (Middleware IF) ├──┤
+├── TASK-103a (Serialization) ┘  │
+├── TASK-104a (Service Types) ───┤
+└── TASK-105a (Local Types) ─────┤
+                                 │
+    TASK-104-105 (Thread Logic) ─┘
+                ↓
+Phase 2B (ChatAgent Core) - Sequential Wave 2
+├── TASK-101b (Basic) ←──────────────────
+├── TASK-101c (run method)
+└── TASK-101d (runStream)
+                ↓
+Phase 2C (Advanced) - Parallel Wave 3
+├── TASK-101e (MCP Tools)
+├── TASK-106b (Lifecycle Impl)
+├── TASK-107b (Middleware Impl)
+└── TASK-103b (Agent Serialization)
+                ↓
+Phase 2D (Integration) - Sequential Wave 4
+├── TASK-108a (Test Infrastructure)
+└── TASK-108b (Integration Tests)
 ```
 
-## Critical Path
+## Critical Path (Groomed)
 
-1. **TASK-101** (ChatAgent Implementation) - 8h
-2. **TASK-108** (Integration Tests) - 4h
+**Wave 1**: 3h (longest parallel task: TASK-102, TASK-103a)
+**Sequential**: TASK-104-105 (3h)
+**Wave 2**: 8h (sequential: TASK-101b→c→d)
+**Wave 3**: 3h (longest parallel task: TASK-107b)
+**Wave 4**: 4h (sequential: TASK-108a→b)
 
-**Critical Path Total**: 12 hours
+**Critical Path Total**: 21 hours (with full parallelization)
+**Solo Developer**: 36.5 hours (all tasks sequential)
 
-## Parallel Work Opportunities
+## Parallel Work Opportunities (Updated)
 
-**Group A** (After TASK-101):
-- TASK-102 (AgentProtocol Type Guards)
-- TASK-103 (Agent Serialization)
-- TASK-106 (Agent Lifecycle Hooks)
-- TASK-107 (Agent Middleware System)
+**Wave 1 - 7 tasks in parallel** (3h duration):
+- TASK-101a, TASK-102, TASK-103a, TASK-104a, TASK-105a, TASK-106a, TASK-107a
 
-**Group B** (After TASK-101 + TASK-010):
-- TASK-104 (Service-Managed Threads)
-- TASK-105 (Local-Managed Threads)
+**Wave 2 - Sequential** (8h duration):
+- TASK-101b → TASK-101c → TASK-101d
+
+**Wave 3 - 4 tasks in parallel** (3h duration):
+- TASK-101e, TASK-103b, TASK-106b, TASK-107b
+
+**Wave 4 - Sequential** (4h duration):
+- TASK-108a → TASK-108b
 
 ## Phase Completion Criteria
 
