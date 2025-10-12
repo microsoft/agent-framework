@@ -33,11 +33,11 @@ public sealed class InMemoryAgentThreadStore : IAgentThreadStore
     public ValueTask SaveThreadAsync(
         string conversationId,
         string agentId,
-        JsonElement serializedThread,
+        AgentThread thread,
         CancellationToken cancellationToken = default)
     {
         var key = GetKey(conversationId, agentId);
-        this._threads[key] = serializedThread;
+        this._threads[key] = thread.Serialize();
         return default;
     }
 

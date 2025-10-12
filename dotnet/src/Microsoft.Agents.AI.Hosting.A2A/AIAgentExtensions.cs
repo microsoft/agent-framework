@@ -20,31 +20,23 @@ public static class AIAgentExtensions
     /// <param name="agent">Agent to attach A2A messaging processing capabilities to.</param>
     /// <param name="taskManager">Instance of <see cref="TaskManager"/> to configure for A2A messaging. New instance will be created if not passed.</param>
     /// <param name="loggerFactory">The logger factory to use for creating <see cref="ILogger"/> instances.</param>
+    /// <param name="agentThreadStore">The store to store thread contents and metadata.</param>
     /// <returns>The configured <see cref="TaskManager"/>.</returns>
     public static TaskManager MapA2A(
         this AIAgent agent,
         TaskManager? taskManager = null,
-        ILoggerFactory? loggerFactory = null)
+        ILoggerFactory? loggerFactory = null,
+        IAgentThreadStore? agentThreadStore = null)
     {
         ArgumentNullException.ThrowIfNull(agent);
         ArgumentNullException.ThrowIfNull(agent.Name);
 
-        /*
-         * Main logic of how to operate is here.
-         * we need to instantiate AIHostAgent with the thread store, but also knowing what will be the underlying AgentThread type.
-         * 
-         * if we have such an ability, we can easily plug the restore+save thread into the AIHostAgent, and use it to serialize thread and keep it.
-         * But we probably need to introduce `AIAgent<TThread> where TThread : AgentThread`, otherwise there has to be crazy reflection involved for it to work.
-         * 
-         * Ideally here we would not be just constructing the AIHostAgent, but resolving via DI
-         */
-
-        var hostAgent = new AIHostAgent<ChatClientAgentThread>(agent, new InMemoryAgentThreadStore());
+        var hostAgent = new AIHostAgent(
+            innerAgent: agent,
+            threadStore: agentThreadStore ?? new NoContextAgentThreadStore());
 
         taskManager ??= new();
-
         taskManager.OnMessageReceived += OnMessageReceivedAsync;
-
         return taskManager;
 
         async Task<A2AResponse> OnMessageReceivedAsync(MessageSendParams messageSendParams, CancellationToken cancellationToken)
@@ -76,14 +68,16 @@ public static class AIAgentExtensions
     /// <param name="agentCard">The agent card to return on query.</param>
     /// <param name="taskManager">Instance of <see cref="TaskManager"/> to configure for A2A messaging. New instance will be created if not passed.</param>
     /// <param name="loggerFactory">The logger factory to use for creating <see cref="ILogger"/> instances.</param>
+    /// <param name="agentThreadStore">The store to store thread contents and metadata.</param>
     /// <returns>The configured <see cref="TaskManager"/>.</returns>
     public static TaskManager MapA2A(
         this AIAgent agent,
         AgentCard agentCard,
         TaskManager? taskManager = null,
-        ILoggerFactory? loggerFactory = null)
+        ILoggerFactory? loggerFactory = null,
+        IAgentThreadStore? agentThreadStore = null)
     {
-        taskManager = agent.MapA2A(taskManager, loggerFactory);
+        taskManager = agent.MapA2A(taskManager, loggerFactory, agentThreadStore);
 
         taskManager.OnAgentCardQuery += (context, query) =>
         {

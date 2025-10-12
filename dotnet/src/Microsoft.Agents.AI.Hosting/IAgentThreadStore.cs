@@ -21,7 +21,7 @@ public interface IAgentThreadStore
     /// </summary>
     /// <param name="conversationId">The unique identifier for the conversation/thread.</param>
     /// <param name="agentId">The identifier of the agent that owns this thread.</param>
-    /// <param name="serializedThread">The serialized thread state as a JSON element.</param>
+    /// <param name="thread">The thread to save.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
     /// <returns>A task that represents the asynchronous save operation.</returns>
     /// <remarks>
@@ -31,7 +31,7 @@ public interface IAgentThreadStore
     ValueTask SaveThreadAsync(
         string conversationId,
         string agentId,
-        JsonElement serializedThread,
+        AgentThread thread,
         CancellationToken cancellationToken = default);
 
     /// <summary>

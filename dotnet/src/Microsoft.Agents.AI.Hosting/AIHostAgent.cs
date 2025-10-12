@@ -2,12 +2,10 @@
 
 using System;
 using System.Collections.Generic;
-using System.Reflection;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Hosting;
@@ -16,25 +14,23 @@ namespace Microsoft.Agents.AI.Hosting;
 /// Provides a hosting wrapper around an <see cref="AIAgent"/> that adds thread persistence capabilities
 /// for server-hosted scenarios where conversations need to be restored across requests.
 /// </summary>
-/// <typeparam name="TThread">The type of <see cref="AgentThread"/> used by the wrapped agent.</typeparam>
 /// <remarks>
 /// <para>
-/// <see cref="AIHostAgent{TThread}"/> wraps an existing agent implementation and adds the ability to
+/// <see cref="AIHostAgent"/> wraps an existing agent implementation and adds the ability to
 /// persist and restore conversation threads using an <see cref="IAgentThreadStore"/>.
 /// </para>
 /// <para>
-/// The generic type parameter ensures type safety when working with threads, eliminating runtime
-/// type checks and enabling better IDE support.
+/// This wrapper enables thread persistence without requiring type-specific knowledge of the thread type,
+/// as all thread operations work through the base <see cref="AgentThread"/> abstraction.
 /// </para>
 /// </remarks>
-public class AIHostAgent<TThread> : AIAgent
-    where TThread : AgentThread
+public class AIHostAgent : AIAgent
 {
     private readonly AIAgent _innerAgent;
     private readonly IAgentThreadStore _threadStore;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="AIHostAgent{TThread}"/> class.
+    /// Initializes a new instance of the <see cref="AIHostAgent"/> class.
     /// </summary>
     /// <param name="innerAgent">The underlying agent implementation to wrap.</param>
     /// <param name="threadStore">The thread store to use for persisting conversation state.</param>
@@ -77,7 +73,7 @@ public class AIHostAgent<TThread> : AIAgent
     /// or <see langword="null"/> if no thread with the given ID exists in the store.
     /// </returns>
     /// <exception cref="ArgumentException"><paramref name="conversationId"/> is null or whitespace.</exception>
-    public async ValueTask<TThread?> RestoreThreadAsync(
+    public async ValueTask<AgentThread?> RestoreThreadAsync(
         string conversationId,
         CancellationToken cancellationToken = default)
     {
@@ -93,8 +89,7 @@ public class AIHostAgent<TThread> : AIAgent
             return null;
         }
 
-        var thread = this._innerAgent.DeserializeThread(serializedThread.Value);
-        return thread as TThread;
+        return this._innerAgent.DeserializeThread(serializedThread.Value);
     }
 
     /// <summary>
@@ -108,17 +103,16 @@ public class AIHostAgent<TThread> : AIAgent
     /// <exception cref="ArgumentNullException"><paramref name="thread"/> is <see langword="null"/>.</exception>
     public async ValueTask SaveThreadAsync(
         string conversationId,
-        TThread thread,
+        AgentThread thread,
         CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNullOrWhitespace(conversationId);
         _ = Throw.IfNull(thread);
 
-        var serializedThread = thread.Serialize();
         await this._threadStore.SaveThreadAsync(
             conversationId,
             this.Id,
-            serializedThread,
+            thread,
             cancellationToken).ConfigureAwait(false);
     }
 
