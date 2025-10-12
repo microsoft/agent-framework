@@ -18,3 +18,6 @@ export * from './storage';
 
 // Chat client exports
 export * from './chat-client';
+
+// Agent exports
+export * from './agents';

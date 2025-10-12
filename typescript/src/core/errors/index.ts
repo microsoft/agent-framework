@@ -11,7 +11,7 @@
  */
 
 export { AgentFrameworkError } from './base-error';
-export { AgentExecutionError, AgentInitializationError } from './agent-errors';
+export { AgentExecutionError, AgentInitializationError, AgentThreadError } from './agent-errors';
 export { ToolExecutionError } from './tool-errors';
 export { ChatClientError } from './chat-client-error';
 export { WorkflowValidationError, GraphConnectivityError, TypeCompatibilityError } from './workflow-errors';
