@@ -6,4 +6,5 @@
  * @module agents
  */
 
-export { AgentThread, AgentThreadOptions, ThreadState, MessageStoreState } from './agent-thread';
+export { AgentThread, AgentThreadOptions, ThreadState, MessageStoreState } from './agent-thread.js';
+export { BaseAgent, AgentProtocol } from './base-agent.js';
