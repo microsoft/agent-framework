@@ -32,3 +32,9 @@ lab:
 - changed-files:
   - any-glob-to-any-file:
     - python/packages/lab/**
+
+# Add 'typescript' label to any change within the 'typescript' directory
+typescript:
+- changed-files:
+  - any-glob-to-any-file:
+    - typescript/**

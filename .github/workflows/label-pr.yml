@@ -18,4 +18,4 @@ jobs:
     steps:
       - uses: actions/labeler@v6
         with:
-          repo-token: "${{ secrets.GH_ACTIONS_PR_WRITE }}"
+          repo-token: "${{ secrets.GITHUB_TOKEN }}"
