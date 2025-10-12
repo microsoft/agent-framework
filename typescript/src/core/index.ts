@@ -37,3 +37,13 @@ export * from './tools';
 
 // Context exports
 export * from './context';
+
+// Serialization exports
+export {
+  SerializationProtocol,
+  SerializationMixin,
+  SerializationOptions,
+  DeserializationOptions,
+  isSerializable,
+  isSerializationProtocol,
+} from './serialization.js';
