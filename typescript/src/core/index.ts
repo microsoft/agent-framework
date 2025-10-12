@@ -17,10 +17,23 @@ export * from './types';
 export * from './storage';
 
 // Chat client exports
-export * from './chat-client';
+export type {
+  ChatClientProtocol,
+  ChatCompletionOptions,
+  UsageInfo,
+  ProviderMetadata,
+  MessageDeltaEvent,
+  UsageEvent,
+  MetadataEvent,
+  StreamEvent,
+} from './chat-client';
+export { isMessageDelta, isUsageEvent, isMetadataEvent, MockChatClient } from './chat-client';
 
 // Agent exports
 export * from './agents';
 
-// Tool exports
+// Tool exports (includes AITool which should be the canonical export)
 export * from './tools';
+
+// Context exports
+export * from './context';
