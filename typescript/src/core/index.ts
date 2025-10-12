@@ -12,3 +12,6 @@ export { Logger, LogLevel, LoggingConfig, getLogger, configureLogging } from './
 
 // Type exports
 export * from './types';
+
+// Storage exports
+export * from './storage';
