@@ -21,3 +21,6 @@ export * from './chat-client';
 
 // Agent exports
 export * from './agents';
+
+// Tool exports
+export * from './tools';
