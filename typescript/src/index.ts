@@ -10,3 +10,6 @@ export const version = '0.1.0';
 
 // Export core functionality
 export * from './core';
+
+// Export provider implementations
+export * from './providers/openai';

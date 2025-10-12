@@ -8,19 +8,7 @@
  */
 
 import type { AISettings } from '../types/agent-info';
-
-/**
- * Forward reference to AITool type (will be defined in TASK-005).
- *
- * This represents a tool that can be called by the AI during chat completion.
- * The actual definition will be provided when the Tool interface is implemented.
- */
-export interface AITool {
-  // Forward reference - will be fully defined in TASK-005
-  name: string;
-  description?: string;
-  [key: string]: unknown;
-}
+import type { AITool } from '../tools/base-tool';
 
 /**
  * Options for chat completion requests.

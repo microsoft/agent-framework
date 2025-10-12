@@ -12,7 +12,6 @@ export type { ChatClientProtocol } from './protocol';
 
 // Export types
 export type {
-  AITool,
   ChatCompletionOptions,
   UsageInfo,
   ProviderMetadata,
