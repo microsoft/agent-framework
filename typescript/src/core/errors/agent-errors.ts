@@ -103,3 +103,51 @@ export class AgentInitializationError extends AgentFrameworkError {
     super(message, cause, code);
   }
 }
+
+/**
+ * Error thrown when there are issues with thread management.
+ *
+ * This error indicates that an operation on an AgentThread encountered a problem.
+ * This could be due to:
+ * - Invalid thread configuration (e.g., both serviceThreadId and messageStore set)
+ * - Attempting to switch thread modes after initialization
+ * - Invalid state during serialization/deserialization
+ * - Thread state conflicts
+ *
+ * @example
+ * ```typescript
+ * // Invalid configuration
+ * try {
+ *   const thread = new AgentThread({
+ *     serviceThreadId: 'thread_123',
+ *     messageStore: new InMemoryMessageStore() // Error: both set
+ *   });
+ * } catch (error) {
+ *   if (error instanceof AgentThreadError) {
+ *     console.error('Thread configuration error:', error.message);
+ *   }
+ * }
+ *
+ * // Mode switching attempt
+ * const thread = new AgentThread({ serviceThreadId: 'thread_123' });
+ * try {
+ *   thread.messageStore = new InMemoryMessageStore(); // Error: cannot switch modes
+ * } catch (error) {
+ *   if (error instanceof AgentThreadError) {
+ *     console.error('Cannot switch thread modes:', error.message);
+ *   }
+ * }
+ * ```
+ */
+export class AgentThreadError extends AgentFrameworkError {
+  /**
+   * Creates a new AgentThreadError.
+   *
+   * @param message - Description of the thread error
+   * @param cause - Optional underlying error that caused this error
+   * @param code - Optional error code for programmatic handling
+   */
+  constructor(message: string, cause?: Error, code?: string) {
+    super(message, cause, code);
+  }
+}

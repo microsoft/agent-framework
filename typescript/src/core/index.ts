@@ -16,5 +16,11 @@ export * from './types';
 // Storage exports
 export * from './storage';
 
+// Chat client exports
+export * from './chat-client';
+
+// Agent exports
+export * from './agents';
+
 // Tool exports
 export * from './tools';
