@@ -47,3 +47,6 @@ export {
   isSerializable,
   isSerializationProtocol,
 } from './serialization.js';
+
+// Thread exports
+export * from './threads';
