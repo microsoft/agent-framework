@@ -269,7 +269,9 @@ public sealed class InProcessExecutionEnvironment : IWorkflowExecutionEnvironmen
                               .ConfigureAwait(false);
     }
 
-    // Helper method to detect if the starting executor of a given workflow accepts the provided input type as well as a TurnToken
+    /// <summary>
+    /// Helper method to detect if the starting executor of a given workflow accepts the provided input type as well as a TurnToken.
+    /// </summary>
     private static async ValueTask<bool> StartingExecutorHandlesTurnTokenAsync<TInput>(Workflow workflow)
     {
         if (workflow.Registrations.TryGetValue(workflow.StartExecutorId, out var registration))
