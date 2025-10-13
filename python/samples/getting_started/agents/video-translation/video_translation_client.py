@@ -41,7 +41,12 @@ class VideoTranslationClient:
 
     VIDEO_TRANSLATION_SCOPE = "https://cognitiveservices.azure.com/.default"
 
-    def __init__(self: str, api_version: str, credential: TokenCredential = None, token_provider: Callable = None):
+    def __init__(
+        self,
+        api_version: str,
+        credential: TokenCredential | None = None,
+        token_provider: Callable[[], str] | None = None,
+    ):
         """
         Initialize the Video Translation client.
 
@@ -58,10 +63,10 @@ class VideoTranslationClient:
             token_provider = get_bearer_token_provider(credential, "https://cognitiveservices.azure.com/.default")
 
         self.api_version = api_version
-        self.credential = credential
-        self.token_provider = token_provider
-        self.token = None
-        self.token_expiry = None
+        self.credential: TokenCredential | None = credential
+        self.token_provider: Callable[[], str] | None = token_provider
+        self.token: str | None = None
+        self.token_expiry: datetime | None = None
 
         status_forcelist = tuple(
             {x for x in requests.status_codes._codes} - {x for x in [200, 201, 204, 400, 401, 403, 404, 409]}
@@ -101,11 +106,11 @@ class VideoTranslationClient:
                     self.token_expiry = current_time + timedelta(minutes=55)
                     return self.token
         except Exception as e:
-            logger.Exception(f"Failed to get authentication token: {str(e)}")
+            logger.exception(f"Failed to get authentication token: {str(e)}")
 
         return None
 
-    def build_request_header(self) -> dict:
+    def build_request_header(self) -> tuple[bool, dict[str, str] | str]:
         """Build the request headers with appropriate authentication"""
         headers = {"Content-Type": "application/json"}
 

@@ -29,7 +29,8 @@ class WebvttFileDefinition:
 
 @dataclass(kw_only=True)
 class TranslationInputDefinition(TranslationInputBaseDefinition):
-    # This is optional because the moment after translation created, API has not downloaded video file to server side yet.
+    # This is optional because the moment after translation created,
+    # API has not downloaded video file to server side yet.
     videoFileUrl: str | None = None
     sourceLocale: locale
     targetLocale: locale

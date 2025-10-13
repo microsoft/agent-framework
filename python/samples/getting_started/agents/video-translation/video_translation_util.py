@@ -4,8 +4,7 @@ from dataclasses import fields, is_dataclass
 from typing import Any
 from urllib.parse import urlencode
 
-import urllib3
-from urllib3.util import Url
+from urllib3.util import Url, parse_url
 
 
 def dict_to_dataclass(data: dict, dataclass_type: type[Any]) -> Any:
@@ -27,13 +26,10 @@ def dict_to_dataclass(data: dict, dataclass_type: type[Any]) -> Any:
     return dataclass_type(**filtered_data)
 
 
-def append_url_args(url: Url, args: dict) -> Url:
+def append_url_args(url: Url, args: dict[str, Any]) -> Url:
     encoded_args = ""
     if len(args) == 0:
         return url
     encoded_args += urlencode(args)
-    if "?" in url.url:
-        url = f"{url}&{encoded_args}"
-    else:
-        url = f"{url}?{encoded_args}"
-    return urllib3.util.parse_url(url)
+    url_str = f"{url}&{encoded_args}" if "?" in url.url else f"{url}?{encoded_args}"
+    return parse_url(url_str)

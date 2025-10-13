@@ -124,7 +124,9 @@ async def download_and_upload_video(
     desired_blob_name: Annotated[
         str,
         Field(
-            description="Optional name for the blob in storage (e.g., 'my-video.mp4'). If not provided, extracts from URL."
+            description=(
+                "Optional name for the blob in storage (e.g., 'my-video.mp4'). If not provided, extracts from URL."
+            )
         ),
     ] = None,
 ) -> str:
@@ -185,7 +187,7 @@ async def download_and_upload_video(
             # Clean up temp file
             try:
                 os.remove(temp_file_path)
-            except:
+            except Exception:
                 pass
             return (
                 "ERROR: Error: AZURE_STORAGE_ACCOUNT_NAME environment variable is not set. "
@@ -254,7 +256,10 @@ async def download_and_upload_video(
                 pass  # Ignore cleanup errors
 
     except Exception as e:
-        return f"ERROR: Error in download and upload process: {str(e)}\n\nPlease check your network connection and Azure credentials."
+        return (
+            f"ERROR: Error in download and upload process: {str(e)}\n\n"
+            "Please check your network connection and Azure credentials."
+        )
 
 
 async def generate_sas_url(
@@ -755,7 +760,8 @@ async def main() -> None:
                 async_credential=credential,
                 agent_name="VideoTranslationAgent",
             ),
-            instructions="""You are a helpful video translation assistant that helps users translate videos using Azure AI services.
+            instructions="""You are a helpful video translation assistant that helps users
+translate videos using Azure AI services.
 
 **YOUR CAPABILITIES:**
 - Upload local video files to Azure Storage
@@ -811,10 +817,13 @@ async def main() -> None:
 
 **CRITICAL RULES:**
 - Video translation is ASYNC - don't block or wait
-- **BE SMART**: For example, when user says "check the most recent translation", extract the ID from the preceding interaction or list recent translations and use that ID
+- **BE SMART**: For example, when user says "check the most recent translation",
+  extract the ID from the preceding interaction or list recent translations and use that ID
 - **WHEN USER ASKS ABOUT STATUS** → call check_translation_status tool with the translation ID
-- **WHEN USER ASKS FOR DOWNLOAD LINKS** → call check_translation_status to retrieve the actual URLs
-- **NEVER MAKE UP URLS OR USE EXAMPLE.COM** → All URLs must be real Azure blob storage URLs from the API""",
+- **WHEN USER ASKS FOR DOWNLOAD LINKS** → call check_translation_status to retrieve the
+  actual URLs
+- **NEVER MAKE UP URLS OR USE EXAMPLE.COM** → All URLs must be real Azure blob storage
+  URLs from the API""",
             tools=[
                 upload_video_file,
                 download_and_upload_video,
@@ -913,10 +922,12 @@ Now I'll start the translation from English (en-US) to Spanish (es-ES).
 Languages: Translating from en-US to es-ES
 Time: Estimated time: 5-15 minutes
 
-TIP: Check status by asking: 'Check status of translation 01092025143022_en-US_es-ES_PlatformVoice'
+TIP: Check status by asking:
+     'Check status of translation 01092025143022_en-US_es-ES_PlatformVoice'
  Or list all translations with: 'Show all my translations'
 
-Your video is now being translated! The process will take approximately 5-15 minutes. You can check the status at any time by asking me.
+Your video is now being translated! The process will take approximately 5-15 minutes.
+You can check the status at any time by asking me.
 
 You: Check the status
 
