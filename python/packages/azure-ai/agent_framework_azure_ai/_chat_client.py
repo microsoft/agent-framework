@@ -565,11 +565,13 @@ class AzureAIAgentClient(BaseChatClient):
                                     "submit_tool_outputs",
                                     "submit_tool_approval",
                                 ]:
-                                    contents = self._create_function_call_contents(event_data, response_id)
-                                    if contents:
+                                    function_call_contents = self._create_function_call_contents(
+                                        event_data, response_id
+                                    )
+                                    if function_call_contents:
                                         yield ChatResponseUpdate(
                                             role=Role.ASSISTANT,
-                                            contents=contents,
+                                            contents=function_call_contents,
                                             conversation_id=thread_id,
                                             message_id=response_id,
                                             raw_representation=event_data,
@@ -636,22 +638,22 @@ class AzureAIAgentClient(BaseChatClient):
                                     tool_call.code_interpreter,
                                     RunStepDeltaCodeInterpreterDetailItemObject,
                                 ):
-                                    contents: list[Contents] = []
+                                    code_contents: list[Contents] = []
                                     if tool_call.code_interpreter.input is not None:
                                         logger.debug(f"Code Interpreter Input: {tool_call.code_interpreter.input}")
                                     if tool_call.code_interpreter.outputs is not None:
                                         for output in tool_call.code_interpreter.outputs:
                                             if isinstance(output, RunStepDeltaCodeInterpreterLogOutput) and output.logs:
-                                                contents.append(TextContent(text=output.logs))
+                                                code_contents.append(TextContent(text=output.logs))
                                             if (
                                                 isinstance(output, RunStepDeltaCodeInterpreterImageOutput)
                                                 and output.image is not None
                                                 and output.image.file_id is not None
                                             ):
-                                                contents.append(HostedFileContent(file_id=output.image.file_id))
+                                                code_contents.append(HostedFileContent(file_id=output.image.file_id))
                                     yield ChatResponseUpdate(
                                         role=Role.ASSISTANT,
-                                        contents=contents,
+                                        contents=code_contents,
                                         conversation_id=thread_id,
                                         message_id=response_id,
                                         raw_representation=tool_call.code_interpreter,
