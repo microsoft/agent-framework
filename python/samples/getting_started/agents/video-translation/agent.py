@@ -9,6 +9,7 @@ from typing import Annotated
 from agent_framework import ChatAgent
 from agent_framework.azure import AzureAIAgentClient
 from azure.identity import AzureCliCredential, get_bearer_token_provider
+from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
 from azure.identity.aio import DefaultAzureCredential as AsyncDefaultAzureCredential
 from azure.storage.blob import BlobSasPermissions, generate_blob_sas
 from azure.storage.blob.aio import BlobServiceClient
@@ -422,7 +423,7 @@ def start_video_translation(
         operation_id = str(uuid.uuid4())
 
         # 4. Start the translation (NON-BLOCKING - returns immediately)
-        success, error, translation, operation_location = client.request_create_translation(
+        success, error, _translation, _operation_location = client.request_create_translation(
             translation_id=translation_id,
             video_file_url=video_url,
             source_locale=source_locale,
@@ -575,10 +576,10 @@ def list_translations() -> str:
             return " No translations found.\n\nStart a new translation to see it listed here."
 
         # translations_data is returned as a raw dict, not a dataclass
+        from typing import Any, cast
+        translations: list[dict[str, Any]] = []
         if isinstance(translations_data, dict):
-            translations = translations_data.get("value", [])
-        else:
-            translations = []
+            translations = cast(list[dict[str, Any]], translations_data.get("value", []))
         
         if not translations:
             return " No translations found.\n\nStart a new translation to see it listed here."
@@ -586,11 +587,12 @@ def list_translations() -> str:
         response = f" Found {len(translations)} translation(s):\n\n"
 
         for i, trans in enumerate(translations, 1):
-            trans_id = trans.get("id", "Unknown")
-            status = trans.get("status", "Unknown")
-            source = trans.get("input", {}).get("sourceLocale", "Unknown")
-            target = trans.get("input", {}).get("targetLocale", "Unknown")
-            created = trans.get("createdDateTime", "Unknown")
+            trans_id: str = trans.get("id", "Unknown")  # type: ignore[assignment]
+            status: str = trans.get("status", "Unknown")  # type: ignore[assignment]
+            input_data: dict[str, Any] = trans.get("input", {})  # type: ignore[assignment]
+            source: str = input_data.get("sourceLocale", "Unknown")  # type: ignore[assignment]
+            target: str = input_data.get("targetLocale", "Unknown")  # type: ignore[assignment]
+            created: str = trans.get("createdDateTime", "Unknown")  # type: ignore[assignment]
 
             response += f"{i}. Translation ID: {trans_id}\n"
             response += f"   Status: {status}\n"
@@ -696,7 +698,7 @@ def create_iteration_with_subtitle(
         # 4. Create the iteration (NON-BLOCKING - returns immediately)
         from urllib3.util import parse_url
         webvtt_url = parse_url(webvtt_file_url)
-        success, error, iteration, operation_location = client.request_create_iteration(
+        success, error, _iteration, _operation_location = client.request_create_iteration(
             translation_id=translation_id,
             iteration_id=iteration_id,
             webvtt_file_kind=kind_map[webvtt_file_kind],
@@ -757,14 +759,14 @@ async def main() -> None:
             return
 
         # 3. Set up Azure authentication
-        credential = AzureCliCredential()
+        async_credential = AsyncAzureCliCredential()
 
         # 4. Create the AI agent with video translation tools
         async with ChatAgent(
             chat_client=AzureAIAgentClient(
                 project_endpoint=project_endpoint,
                 model_deployment_name=model_deployment,
-                async_credential=credential,
+                async_credential=async_credential,
                 agent_name="VideoTranslationAgent",
             ),
             instructions="""You are a helpful video translation assistant that helps users

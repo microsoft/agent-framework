@@ -2,7 +2,6 @@
 
 import dataclasses
 import json
-import locale
 import logging
 import os
 import time
@@ -12,7 +11,6 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import orjson
-import requests
 import urllib3
 from azure.core.credentials import TokenCredential
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
