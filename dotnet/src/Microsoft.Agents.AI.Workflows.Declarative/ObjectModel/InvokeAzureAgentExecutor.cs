@@ -44,8 +44,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
     }
 
     public ValueTask ResumeAsync(IWorkflowContext context, AgentToolResponse message, CancellationToken cancellationToken) =>
-        // %%% FUNCTION: AUTO EXECUTE EXISTING FUNCTIONS
-        this.InvokeAgentAsync(context, [new ChatMessage(ChatRole.Tool, [.. message.FunctionResults])], cancellationToken);
+        this.InvokeAgentAsync(context, [message.FunctionResults.ToChatMessage()], cancellationToken);
 
     public async ValueTask CompleteAsync(IWorkflowContext context, ActionExecutorResult message, CancellationToken cancellationToken)
     {
@@ -59,57 +58,22 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
         string? additionalInstructions = this.GetAdditionalInstructions();
         bool autoSend = this.GetAutoSendValue();
 
-        bool isComplete;
-        AgentRunResponse agentResponse;
-        do
+        bool isComplete = true;
+
+        AgentRunResponse agentResponse = await agentProvider.InvokeAgentAsync(this.Id, context, agentName, conversationId, autoSend, additionalInstructions, messages, cancellationToken).ConfigureAwait(false);
+
+        if (string.IsNullOrEmpty(agentResponse.Text))
         {
-            agentResponse = await agentProvider.InvokeAgentAsync(this.Id, context, agentName, conversationId, autoSend, additionalInstructions, messages, cancellationToken).ConfigureAwait(false);
+            HashSet<FunctionCallContent> toolCalls = agentResponse.Messages.SelectMany(m => m.Contents.OfType<FunctionCallContent>()).ToHashSet();
 
-            isComplete = true;
-            if (string.IsNullOrEmpty(agentResponse.Text))
+            isComplete = toolCalls.Count == 0;
+
+            if (!isComplete)
             {
-                IEnumerable<FunctionCallContent> toolCallsSequential = agentResponse.Messages.SelectMany(m => m.Contents.OfType<FunctionCallContent>());
-                HashSet<string> pendingToolCalls = [];
-                List<(FunctionCallContent, AIFunction)> availableTools = [];
-#pragma warning disable CA1851 // %%% PRAGMA COLLECTION: Possible multiple enumerations of 'IEnumerable' collection
-                foreach (FunctionCallContent functionCall in toolCallsSequential)
-                {
-                    if (agentProvider.TryGetFunctionTool(functionCall.Name, out AIFunction? functionTool))
-                    {
-                        availableTools.Add((functionCall, functionTool));
-                    }
-                    else
-                    {
-                        pendingToolCalls.Add(functionCall.CallId);
-                    }
-                }
-
-                isComplete = pendingToolCalls.Count == 0;
-
-                if (isComplete && availableTools.Count > 0) // %%% FUNCTION: isComplete = false => INVOKE LATER WHEN RESULTS RETURNED
-                {
-                    // All tools are available, invoke them.
-                    IList<FunctionResultContent> functionResults = await InvokeToolsAsync(availableTools, cancellationToken).ConfigureAwait(false);
-                    messages = [new ChatMessage(ChatRole.Tool, [.. functionResults])]; // %%% FUNCTION: DRY !!!
-                    isComplete = false;
-                }
-
-                if (pendingToolCalls.Count > 0)
-                {
-                    Dictionary<string, FunctionCallContent> toolCalls = toolCallsSequential.ToDictionary(tool => tool.CallId);
-                    AgentToolRequest toolRequest =
-                        new(agentName,
-                            toolCalls
-                                .Where(toolCall => pendingToolCalls.Contains(toolCall.Value.CallId))
-                                .Select(toolCall => toolCall.Value));
-                    await context.SendMessageAsync(toolRequest, targetId: null, cancellationToken).ConfigureAwait(false);
-                    isComplete = false;
-                    break;
-                }
-#pragma warning restore CA1851
+                AgentToolRequest toolRequest = new(agentName, toolCalls);
+                await context.SendMessageAsync(toolRequest, targetId: null, cancellationToken).ConfigureAwait(false);
             }
         }
-        while (!isComplete);
 
         if (isComplete)
         {
@@ -117,26 +81,6 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
         }
 
         await this.AssignAsync(this.AgentOutput?.Messages?.Path, agentResponse.Messages.ToTable(), context).ConfigureAwait(false);
-    }
-
-    private static async ValueTask<IList<FunctionResultContent>> InvokeToolsAsync(IEnumerable<(FunctionCallContent, AIFunction)> functionCalls, CancellationToken cancellationToken) // %%% FUNCTION: DRY !!!
-    {
-        List<FunctionResultContent> results = [];
-        foreach ((FunctionCallContent functionCall, AIFunction functionTool) in functionCalls) // %%% PARALLEL
-        {
-            AIFunctionArguments functionArguments = new(functionCall.Arguments); // %%% FUNCTION: PORTABLE
-            if (functionArguments.Count > 0)
-            {
-                functionArguments = new(new Dictionary<string, object?>() { { "menuItem", "Clam Chowder" } });
-            }
-            object? result = await functionTool.InvokeAsync(functionArguments, cancellationToken).ConfigureAwait(false); // %%% MEAI COMMON ???
-#pragma warning disable IL2026 // %%% PRAGMA JSON: Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code
-#pragma warning disable IL3050 // %%% PRAGMA JSON: Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
-            results.Add(new FunctionResultContent(functionCall.CallId, JsonSerializer.Serialize(result))); // %%% JSON CONVERSION
-#pragma warning restore IL3050
-#pragma warning restore IL2026
-        }
-        return results;
     }
 
     private IEnumerable<ChatMessage>? GetInputMessages()

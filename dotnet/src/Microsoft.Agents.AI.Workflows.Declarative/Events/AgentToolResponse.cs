@@ -39,7 +39,7 @@ public sealed class AgentToolResponse
         HashSet<string> resultIds = functionResults.Select(call => call.CallId).ToHashSet();
         if (!callIds.SetEquals(resultIds))
         {
-            throw new DeclarativeActionException("Mismatched function call IDs between request and results."); // %%% EXECEPTION MESSAGE
+            throw new DeclarativeActionException($"Missing results for: {string.Join(",", callIds.Except(resultIds))}");
         }
         return new AgentToolResponse(toolRequest.AgentName, functionResults);
     }

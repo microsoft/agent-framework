@@ -99,26 +99,27 @@ public sealed class AzureAgentProvider(string projectEndpoint, TokenCredential p
     /// <inheritdoc/>
     public override async Task<AIAgent> GetAgentAsync(string agentId, CancellationToken cancellationToken = default)
     {
-        ChatClientAgentOptions agentOptions =
-            new()
-            {
-                ChatOptions =
-                    new ChatOptions()
-                    {
-                        AllowMultipleToolCalls = true, // %%% CONFIG
-                    },
-            };
+        ChatClientAgent agent =
+            await this.GetAgentsClient().GetAIAgentAsync(
+                agentId,
+                new ChatOptions()
+                {
+                    AllowMultipleToolCalls = this.AllowMultipleToolCalls,
+                },
+                clientFactory: null,
+                cancellationToken).ConfigureAwait(false);
 
-        PersistentAgentsClient foundryClient = this.GetAgentsClient();
-        IChatClient chatClient = foundryClient.AsIChatClient(agentId, defaultThreadId: null);
-        ChatClientAgent agent = new(chatClient, agentOptions, loggerFactory: null, services: null);
         FunctionInvokingChatClient? functionInvokingClient = agent.GetService<FunctionInvokingChatClient>();
         if (functionInvokingClient is not null)
         {
+            // Make functions available for execution.  Doesn't change what tool is available for any given agent.
+            functionInvokingClient.AdditionalTools = this.Functions is null ? null : [.. this.Functions.OfType<AITool>()];
+            // Allow concurrent invocations if configured
+            functionInvokingClient.AllowConcurrentInvocation = this.AllowConcurrentInvocation;
             // Allows the caller to respond with function responses
             functionInvokingClient.TerminateOnUnknownCalls = true;
-            functionInvokingClient.AllowConcurrentInvocation = true;
         }
+
         return agent;
     }
 
