@@ -1,8 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Generic;
-using System.ComponentModel;
 using System.Linq;
 using System.Net.Http;
 using System.Runtime.CompilerServices;
@@ -107,24 +105,17 @@ public sealed class AzureAgentProvider(string projectEndpoint, TokenCredential p
                 ChatOptions =
                     new ChatOptions()
                     {
-                        AllowMultipleToolCalls = true,
+                        AllowMultipleToolCalls = true, // %%% CONFIG
                     },
             };
 
         PersistentAgentsClient foundryClient = this.GetAgentsClient();
-        PersistentAgent foundryAgent = await foundryClient.Administration.GetAgentAsync(agentId, cancellationToken).ConfigureAwait(false);
-        if (foundryAgent.Tools.Any(tool => tool is FunctionToolDefinition))
-        {
-            agentOptions.ChatOptions.Tools = [.. new MenuPlugin().GetTools().Select(t => t.AsDeclarationOnly())]; // %%% TOOL: HAXX - REMOVE
-            // %%% TOOL: DESCRIBE
-            //IEnumerable<AITool> tools = foundryAgent.Tools.OfType<FunctionToolDefinition>().Select(tool => tool.AsAITool());
-            //IEnumerable<AITool> tools = [];
-        }
-        IChatClient chatClient = foundryClient.AsIChatClient(agentId, defaultThreadId: null); // %%% TOOL: REDUNDANT ROUNDTRIP
+        IChatClient chatClient = foundryClient.AsIChatClient(agentId, defaultThreadId: null);
         ChatClientAgent agent = new(chatClient, agentOptions, loggerFactory: null, services: null);
         FunctionInvokingChatClient? functionInvokingClient = agent.GetService<FunctionInvokingChatClient>();
         if (functionInvokingClient is not null)
         {
+            // Allows the caller to respond with function responses
             functionInvokingClient.TerminateOnUnknownCalls = true;
             functionInvokingClient.AllowConcurrentInvocation = true;
         }
@@ -211,86 +202,5 @@ public sealed class AzureAgentProvider(string projectEndpoint, TokenCredential p
 
             return new AdditionalPropertiesDictionary(message.Metadata.Select(m => new KeyValuePair<string, object?>(m.Key, m.Value)));
         }
-    }
-}
-
-internal sealed class MenuPlugin // %%% TOOL: HAXX - REMOVE
-{
-    public IEnumerable<AIFunction> GetTools()
-    {
-        yield return AIFunctionFactory.Create(this.GetMenu); // %%% , $"{nameof(MenuPlugin)}_{nameof(GetMenu)}");
-        yield return AIFunctionFactory.Create(this.GetSpecials); // %%% , $"{nameof(MenuPlugin)}_{nameof(GetSpecials)}");
-        yield return AIFunctionFactory.Create(this.GetItemPrice); // %%% , $"{nameof(MenuPlugin)}_{nameof(GetItemPrice)}");
-    }
-
-    [Description("Provides a list items on the menu.")]
-    public MenuItem[] GetMenu()
-    {
-        return s_menuItems;
-    }
-
-    [Description("Provides a list of specials from the menu.")]
-    public MenuItem[] GetSpecials()
-    {
-        return [.. s_menuItems.Where(i => i.IsSpecial)];
-    }
-
-    [Description("Provides the price of the requested menu item.")]
-    public float? GetItemPrice(
-        [Description("The name of the menu item.")]
-        string menuItem)
-    {
-        return s_menuItems.FirstOrDefault(i => i.Name.Equals(menuItem, StringComparison.OrdinalIgnoreCase))?.Price;
-    }
-
-    private static readonly MenuItem[] s_menuItems =
-        [
-            new()
-            {
-                Category = "Soup",
-                Name = "Clam Chowder",
-                Price = 4.95f,
-                IsSpecial = true,
-            },
-            new()
-            {
-                Category = "Soup",
-                Name = "Tomato Soup",
-                Price = 4.95f,
-                IsSpecial = false,
-            },
-            new()
-            {
-                Category = "Salad",
-                Name = "Cobb Salad",
-                Price = 9.99f,
-            },
-            new()
-            {
-                Category = "Salad",
-                Name = "House Salad",
-                Price = 4.95f,
-            },
-            new()
-            {
-                Category = "Drink",
-                Name = "Chai Tea",
-                Price = 2.95f,
-                IsSpecial = true,
-            },
-            new()
-            {
-                Category = "Drink",
-                Name = "Soda",
-                Price = 1.95f,
-            },
-        ];
-
-    public sealed class MenuItem
-    {
-        public string Category { get; init; } = string.Empty;
-        public string Name { get; init; } = string.Empty;
-        public float Price { get; init; }
-        public bool IsSpecial { get; init; }
     }
 }

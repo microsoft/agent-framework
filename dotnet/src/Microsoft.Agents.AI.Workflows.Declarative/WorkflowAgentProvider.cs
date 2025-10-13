@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -12,6 +14,19 @@ namespace Microsoft.Agents.AI.Workflows.Declarative;
 /// </summary>
 public abstract class WorkflowAgentProvider
 {
+    /// <summary>
+    /// Functions that can be used by the AI agents based on their definition.
+    /// </summary>
+    /// <remarks>
+    /// %%% COMMENT
+    /// A <see cref="AIFunction"/> instance will be automatically executed, when:
+    /// CASE 1 - AIAgent.ChatOptions.Tools (AIFunction) => AUTO
+    /// CASE 2 - AzureAgent Tools OR AIAgent.ChatOptions.Tools (AIFunctionDeclaration) LOOKUP => AUTO
+    /// Or else:
+    /// CASE 3 - AzureAgent Tools OR AIAgent.ChatOptions.Tools (AIFunctionDeclaration) MISSING => REQUEST
+    /// </remarks>
+    public IEnumerable<AIFunction>? Functions { get; init; }
+
     /// <summary>
     /// Asynchronously retrieves an AI agent by its unique identifier.
     /// </summary>
@@ -61,4 +76,27 @@ public abstract class WorkflowAgentProvider
         string? before = null,
         bool newestFirst = false,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Retrieves the requested function tool by name.
+    /// </summary>
+    /// <param name="name">Name of the function tool</param>
+    /// <param name="functionTool">// %%% COMMENT</param>
+    /// <returns>The requested function tool declaration.</returns>
+    /// <exception cref="DeclarativeActionException">If function tool is not defined</exception>
+    public bool TryGetFunctionTool(string name, [NotNullWhen(true)] out AIFunction? functionTool) // %%% FUNCTION PROVIDER (OPTIONS: FUNCTIONS/FUNCTION PROVIDER(DEFAULT))
+    {
+        if (this.Functions is not null)
+        {
+            this._functionMap ??= this.Functions.ToDictionary(tool => tool.Name, tool => tool);
+        }
+        else
+        {
+            this._functionMap ??= [];
+        }
+
+        return this._functionMap.TryGetValue(name, out functionTool);
+    }
+
+    private Dictionary<string, AIFunction>? _functionMap;
 }

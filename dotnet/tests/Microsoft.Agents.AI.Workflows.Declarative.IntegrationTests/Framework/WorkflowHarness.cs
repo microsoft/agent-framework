@@ -50,7 +50,7 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
 
     public async Task<WorkflowEvents> ResumeAsync(object response)
     {
-        Console.WriteLine("RESUMING WORKFLOW...");
+        Console.WriteLine("\nRESUMING WORKFLOW...");
         Assert.NotNull(this.LastCheckpoint);
         Checkpointed<StreamingRun> run = await InProcessExecution.ResumeStreamAsync(workflow, this.LastCheckpoint, this.GetCheckpointManager(), runId);
         IReadOnlyList<WorkflowEvent> workflowEvents = await MonitorAndDisposeWorkflowRunAsync(run, response).ToArrayAsync();
@@ -159,6 +159,6 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
             }
         }
 
-        Console.WriteLine("SUSPENDING WORKFLOW...");
+        Console.WriteLine("SUSPENDING WORKFLOW...\n");
     }
 }

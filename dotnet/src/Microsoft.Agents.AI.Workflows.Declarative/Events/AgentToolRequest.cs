@@ -2,6 +2,7 @@
 
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.Events;
@@ -21,6 +22,7 @@ public sealed class AgentToolRequest
     /// </summary>
     public IReadOnlyList<FunctionCallContent> FunctionCalls { get; }
 
+    [JsonConstructor]
     internal AgentToolRequest(string agentName, IEnumerable<FunctionCallContent> functionCalls)
     {
         this.AgentName = agentName;
