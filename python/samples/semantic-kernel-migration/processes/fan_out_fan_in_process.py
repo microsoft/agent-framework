@@ -65,6 +65,7 @@ class CommonEvents(Enum):
     EXIT_REQUESTED = "ExitRequested"
     START_PROCESS = "StartProcess"
 
+
 ######################################################################
 # region Semantic Kernel Process Framework path
 ######################################################################
@@ -152,6 +153,7 @@ async def run_semantic_kernel_process_example() -> None:
             raise RuntimeError("CStep state unavailable")
         assert c_step_state.state.current_cycle == 3  # nosec
         print(f"Final State Check: CStepState current cycle: {c_step_state.state.current_cycle}")
+
 
 ######################################################################
 # region Agent Framework workflow path
