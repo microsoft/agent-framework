@@ -7,7 +7,7 @@ namespace Microsoft.Agents.AI.Hosting;
 /// <summary>
 /// Represents a builder for configuring AI agents within a hosting environment.
 /// </summary>
-public interface IHostAgentBuilder
+public interface IHostedAgentBuilder
 {
     /// <summary>
     /// Gets the name of the agent being configured.

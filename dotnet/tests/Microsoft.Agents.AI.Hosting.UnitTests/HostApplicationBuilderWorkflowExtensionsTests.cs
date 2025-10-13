@@ -59,7 +59,7 @@ public class HostApplicationBuilderWorkflowExtensionsTests
         var result = builder.AddWorkflow("workflowName", (sp, key) => CreateTestWorkflow(key));
 
         Assert.NotNull(result);
-        Assert.IsAssignableFrom<IHostWorkflowBuilder>(result);
+        Assert.IsAssignableFrom<IHostedWorkflowBuilder>(result);
     }
 
     /// <summary>
@@ -156,7 +156,7 @@ public class HostApplicationBuilderWorkflowExtensionsTests
         var builder = new HostApplicationBuilder();
 
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            builder.AddConcurrentWorkflow(null!, [new HostAgentBuilder("test", builder)]));
+            builder.AddConcurrentWorkflow(null!, [new HostedAgentBuilder("test", builder)]));
         Assert.Equal("name", exception.ParamName);
     }
 
@@ -181,10 +181,10 @@ public class HostApplicationBuilderWorkflowExtensionsTests
     {
         var builder = new HostApplicationBuilder();
 
-        var result = builder.AddConcurrentWorkflow("concurrentWorkflow", [new HostAgentBuilder("test", builder)]);
+        var result = builder.AddConcurrentWorkflow("concurrentWorkflow", [new HostedAgentBuilder("test", builder)]);
 
         Assert.NotNull(result);
-        Assert.IsAssignableFrom<IHostWorkflowBuilder>(result);
+        Assert.IsAssignableFrom<IHostedWorkflowBuilder>(result);
     }
 
     /// <summary>
@@ -206,7 +206,7 @@ public class HostApplicationBuilderWorkflowExtensionsTests
         var builder = new HostApplicationBuilder();
 
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            builder.AddSequentialWorkflow(null!, [new HostAgentBuilder("test", builder)]));
+            builder.AddSequentialWorkflow(null!, [new HostedAgentBuilder("test", builder)]));
         Assert.Equal("name", exception.ParamName);
     }
 
@@ -229,7 +229,7 @@ public class HostApplicationBuilderWorkflowExtensionsTests
         var builder = new HostApplicationBuilder();
 
         var exception = Assert.Throws<ArgumentException>(() =>
-            builder.AddSequentialWorkflow("sequentialWorkflow", Array.Empty<IHostAgentBuilder>()));
+            builder.AddSequentialWorkflow("sequentialWorkflow", Array.Empty<IHostedAgentBuilder>()));
         Assert.Equal("agentBuilders", exception.ParamName);
     }
 
@@ -242,8 +242,6 @@ public class HostApplicationBuilderWorkflowExtensionsTests
         var mockAgent = new Mock<AIAgent>();
         mockAgent.Setup(a => a.Name).Returns("testAgent");
 
-        return AgentWorkflowBuilder.PrepareSequential(agents: [mockAgent.Object])
-            .WithName(name)
-            .Build();
+        return AgentWorkflowBuilder.BuildSequential(workflowName: name, agents: [mockAgent.Object]);
     }
 }

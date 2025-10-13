@@ -21,11 +21,11 @@ public static class HostApplicationBuilderWorkflowExtensions
     /// </summary>
     /// <param name="builder">The <see cref="IHostApplicationBuilder"/> to configure.</param>
     /// <param name="name">The unique name for the workflow.</param>
-    /// <param name="agentBuilders">A collection of <see cref="IHostAgentBuilder"/> instances representing agents to execute concurrently.</param>
-    /// <returns>An <see cref="IHostWorkflowBuilder"/> that can be used to further configure the workflow.</returns>
+    /// <param name="agentBuilders">A collection of <see cref="IHostedAgentBuilder"/> instances representing agents to execute concurrently.</param>
+    /// <returns>An <see cref="IHostedWorkflowBuilder"/> that can be used to further configure the workflow.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="builder"/>, <paramref name="name"/>, or <paramref name="agentBuilders"/> is null.</exception>
     /// <exception cref="ArgumentException">Thrown when <paramref name="name"/> or <paramref name="agentBuilders"/> is empty.</exception>
-    public static IHostWorkflowBuilder AddConcurrentWorkflow(this IHostApplicationBuilder builder, string name, IEnumerable<IHostAgentBuilder> agentBuilders)
+    public static IHostedWorkflowBuilder AddConcurrentWorkflow(this IHostApplicationBuilder builder, string name, IEnumerable<IHostedAgentBuilder> agentBuilders)
     {
         Throw.IfNullOrEmpty(agentBuilders);
 
@@ -41,11 +41,11 @@ public static class HostApplicationBuilderWorkflowExtensions
     /// </summary>
     /// <param name="builder">The <see cref="IHostApplicationBuilder"/> to configure.</param>
     /// <param name="name">The unique name for the workflow.</param>
-    /// <param name="agentBuilders">A collection of <see cref="IHostAgentBuilder"/> instances representing agents to execute in sequence.</param>
-    /// <returns>An <see cref="IHostWorkflowBuilder"/> that can be used to further configure the workflow.</returns>
+    /// <param name="agentBuilders">A collection of <see cref="IHostedAgentBuilder"/> instances representing agents to execute in sequence.</param>
+    /// <returns>An <see cref="IHostedWorkflowBuilder"/> that can be used to further configure the workflow.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="builder"/>, <paramref name="name"/>, or <paramref name="agentBuilders"/> is null.</exception>
     /// <exception cref="ArgumentException">Thrown when <paramref name="name"/> or <paramref name="agentBuilders"/> is empty.</exception>
-    public static IHostWorkflowBuilder AddSequentialWorkflow(this IHostApplicationBuilder builder, string name, IEnumerable<IHostAgentBuilder> agentBuilders)
+    public static IHostedWorkflowBuilder AddSequentialWorkflow(this IHostApplicationBuilder builder, string name, IEnumerable<IHostedAgentBuilder> agentBuilders)
     {
         Throw.IfNullOrEmpty(agentBuilders);
 
@@ -62,13 +62,13 @@ public static class HostApplicationBuilderWorkflowExtensions
     /// <param name="builder">The <see cref="IHostApplicationBuilder"/> to configure.</param>
     /// <param name="name">The unique name for the workflow.</param>
     /// <param name="createWorkflowDelegate">A factory function that creates the <see cref="Workflow"/> instance. The function receives the service provider and workflow name as parameters.</param>
-    /// <returns>An <see cref="IHostWorkflowBuilder"/> that can be used to further configure the workflow.</returns>
+    /// <returns>An <see cref="IHostedWorkflowBuilder"/> that can be used to further configure the workflow.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="builder"/>, <paramref name="name"/>, or <paramref name="createWorkflowDelegate"/> is null.</exception>
     /// <exception cref="ArgumentException">Thrown when <paramref name="name"/> is empty.</exception>
     /// <exception cref="InvalidOperationException">
     /// Thrown when the factory delegate returns null or a workflow with a name that doesn't match the expected name.
     /// </exception>
-    public static IHostWorkflowBuilder AddWorkflow(this IHostApplicationBuilder builder, string name, Func<IServiceProvider, string, Workflow> createWorkflowDelegate)
+    public static IHostedWorkflowBuilder AddWorkflow(this IHostApplicationBuilder builder, string name, Func<IServiceProvider, string, Workflow> createWorkflowDelegate)
     {
         Throw.IfNull(builder);
         Throw.IfNull(name);
@@ -92,7 +92,7 @@ public static class HostApplicationBuilderWorkflowExtensions
         var workflowRegistry = GetWorkflowRegistry(builder);
         workflowRegistry.WorkflowNames.Add(name);
 
-        return new HostWorkflowBuilder(name, builder);
+        return new HostedWorkflowBuilder(name, builder);
     }
 
     private static LocalWorkflowRegistry GetWorkflowRegistry(IHostApplicationBuilder builder)
