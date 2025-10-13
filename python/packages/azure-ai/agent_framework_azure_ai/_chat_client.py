@@ -495,7 +495,7 @@ class AzureAIAgentClient(BaseChatClient):
                     if isinstance(annotation, MessageDeltaTextUrlCitationAnnotation):
                         # Create annotated regions only if both start and end indices are available
                         annotated_regions = []
-                        if annotation.start_index is not None and annotation.end_index is not None:
+                        if annotation.start_index and annotation.end_index:
                             annotated_regions = [
                                 TextSpanRegion(
                                     start_index=annotation.start_index,
