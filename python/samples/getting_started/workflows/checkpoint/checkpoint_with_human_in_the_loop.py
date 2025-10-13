@@ -252,7 +252,7 @@ def _render_checkpoint_summary(checkpoints: list["WorkflowCheckpoint"]) -> None:
         # and pick the resume point that still has outstanding human work.
         line = (
             f"- {summary.checkpoint_id} | iter={summary.iteration_count} "
-            f"| targets={summary.targets} | states={summary.executor_states}"
+            f"| targets={summary.targets} | states={summary.executor_ids}"
         )
         if summary.status:
             line += f" | status={summary.status}"

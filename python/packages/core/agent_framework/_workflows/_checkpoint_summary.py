@@ -20,7 +20,7 @@ class WorkflowCheckpointSummary:
     checkpoint_id: str
     iteration_count: int
     targets: list[str]
-    executor_states: list[str]
+    executor_ids: list[str]
     status: str
     draft_preview: str | None
     pending_requests: list[PendingRequestDetails]
@@ -33,7 +33,7 @@ def get_checkpoint_summary(
     preview_width: int = 70,
 ) -> WorkflowCheckpointSummary:
     targets = sorted(checkpoint.messages.keys())
-    executor_states = sorted(checkpoint.executor_states.keys())
+    executor_ids = sorted(checkpoint.executor_states.keys())
     pending = _pending_requests_from_checkpoint(checkpoint, request_executor_ids=request_executor_ids)
 
     draft_preview: str | None = None
@@ -44,8 +44,8 @@ def get_checkpoint_summary(
 
     status = "idle"
     if pending:
-        status = "awaiting human response"
-    elif not checkpoint.messages and "finalise" in executor_states:
+        status = "awaiting request response"
+    elif not checkpoint.messages and "finalise" in executor_ids:
         status = "completed"
     elif checkpoint.messages:
         status = "awaiting next superstep"
@@ -56,7 +56,7 @@ def get_checkpoint_summary(
         checkpoint_id=checkpoint.checkpoint_id,
         iteration_count=checkpoint.iteration_count,
         targets=targets,
-        executor_states=executor_states,
+        executor_ids=executor_ids,
         status=status,
         draft_preview=draft_preview,
         pending_requests=pending,
