@@ -62,8 +62,8 @@ jobs:
           - { targetFramework: "net9.0", os: "ubuntu-latest", configuration: Release, integration-tests: true, environment: "integration" }
           - { targetFramework: "net9.0", os: "ubuntu-latest", configuration: Debug }
           - { targetFramework: "net9.0", os: "windows-latest", configuration: Release }
-          - { targetFramework: "net8.0", os: "ubuntu-latest", configuration: Debug }
-          - { targetFramework: "net8.0", os: "windows-latest", configuration: Debug }
+          - { targetFramework: "net8.0", os: "ubuntu-latest", configuration: Release }
+          - { targetFramework: "net8.0", os: "windows-latest", configuration: Release }
           - { targetFramework: "net472", os: "windows-latest", configuration: Release, integration-tests: true, environment: "integration" }
 
     runs-on: ${{ matrix.os }}
