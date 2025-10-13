@@ -4,7 +4,9 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using FluentAssertions;
+using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Execution;
+using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
@@ -450,5 +452,120 @@ public class StateManagerTests
         {
             await act.Should().NotThrowAsync("writes to private scopes should not be visible across executors");
         }
+    }
+
+    private static void VerifyIs<TExpectedType>(PortableValue? candidatePV, TExpectedType value)
+    {
+        candidatePV.Should().NotBeNull();
+        candidatePV.Is(out TExpectedType? candidateValue).Should().BeTrue();
+        candidateValue.Should().Be(value);
+    }
+
+    private static void VerifyIsNot<TExpectedType>(PortableValue? candidatePV)
+    {
+        candidatePV.Should().NotBeNull();
+        candidatePV.Is(out TExpectedType? _).Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Test_LoadPortableValueStateAsync(bool publishStateUpdates)
+    {
+        ScopeId scope = new("executor1");
+        const string StringValue = "string";
+        const int IntValue = 42;
+        ScopeKey ScopeKey = new("executor1", "scope", "key");
+        PortableValue PortableValueValue = new(StringValue);
+
+        // Arrange
+        StateManager manager = new();
+        await manager.WriteStateAsync(scope, nameof(StringValue), StringValue);
+        await manager.WriteStateAsync(scope, nameof(IntValue), IntValue);
+        await manager.WriteStateAsync(scope, nameof(ScopeKey), ScopeKey);
+        await manager.WriteStateAsync(scope, nameof(PortableValueValue), PortableValueValue);
+
+        if (publishStateUpdates)
+        {
+            await manager.PublishUpdatesAsync(tracer: null);
+        }
+
+        // Act & Assert - Read as the original types
+        PortableValue? stringAsPV = await manager.ReadStateAsync<PortableValue>(scope, nameof(StringValue));
+        VerifyIs(stringAsPV, StringValue);
+        VerifyIsNot<int>(stringAsPV);
+        VerifyIsNot<ChatMessage>(stringAsPV);
+        VerifyIsNot<PortableValue>(stringAsPV);
+
+        PortableValue? intAsPV = await manager.ReadStateAsync<PortableValue>(scope, nameof(IntValue));
+        VerifyIsNot<string>(intAsPV);
+        VerifyIs(intAsPV, IntValue);
+        VerifyIsNot<ChatMessage>(intAsPV);
+        VerifyIsNot<PortableValue>(intAsPV);
+
+        PortableValue? scopeKeyAsPV = await manager.ReadStateAsync<PortableValue>(scope, nameof(ScopeKey));
+        VerifyIsNot<string>(scopeKeyAsPV);
+        VerifyIsNot<int>(scopeKeyAsPV);
+        VerifyIs(scopeKeyAsPV, ScopeKey);
+        VerifyIsNot<PortableValue>(scopeKeyAsPV);
+
+        PortableValue? pvAsPV = await manager.ReadStateAsync<PortableValue>(scope, nameof(PortableValueValue));
+        VerifyIs(pvAsPV, StringValue);
+        VerifyIsNot<int>(pvAsPV);
+        VerifyIsNot<ChatMessage>(pvAsPV);
+
+        // Check that we don't double-wrap stored PortableValues on the out path
+        VerifyIsNot<PortableValue>(pvAsPV);
+    }
+
+    [Fact]
+    public async Task Test_LoadPortableValueState_AfterSerializationAsync()
+    {
+        ScopeId scope = new("executor1");
+        const string StringValue = "string";
+        const int IntValue = 42;
+        ScopeKey ScopeKey = new("executor1", "scope", "key");
+        PortableValue PortableValueValue = new(StringValue);
+
+        // Arrange
+        StateManager manager = new();
+        await manager.WriteStateAsync(scope, nameof(StringValue), StringValue);
+        await manager.WriteStateAsync(scope, nameof(IntValue), IntValue);
+        await manager.WriteStateAsync(scope, nameof(ScopeKey), ScopeKey);
+        await manager.WriteStateAsync(scope, nameof(PortableValueValue), PortableValueValue);
+
+        await manager.PublishUpdatesAsync(tracer: null);
+
+        Dictionary<ScopeKey, PortableValue> exportedState = await manager.ExportStateAsync();
+        Dictionary<ScopeKey, PortableValue> serializedState = JsonSerializationTests.RunJsonRoundtrip(exportedState);
+        Checkpoint testCheckpoint = new(0, await JsonSerializationTests.CreateTestWorkflowInfoAsync(), new([], [], []), serializedState, new());
+
+        manager = new();
+        await manager.ImportStateAsync(testCheckpoint);
+
+        // Act & Assert - Read as the original types
+        PortableValue? stringAsPV = await manager.ReadStateAsync<PortableValue>(scope, nameof(StringValue));
+        VerifyIs(stringAsPV, StringValue);
+        VerifyIsNot<int>(stringAsPV);
+        VerifyIsNot<ChatMessage>(stringAsPV);
+
+        PortableValue? intAsPV = await manager.ReadStateAsync<PortableValue>(scope, nameof(IntValue));
+        VerifyIsNot<string>(intAsPV);
+        VerifyIs(intAsPV, IntValue);
+        VerifyIsNot<ChatMessage>(intAsPV);
+
+        PortableValue? scopeKeyAsPV = await manager.ReadStateAsync<PortableValue>(scope, nameof(ScopeKey));
+        VerifyIsNot<string>(scopeKeyAsPV);
+        VerifyIsNot<int>(scopeKeyAsPV);
+        VerifyIs(scopeKeyAsPV, ScopeKey);
+        VerifyIsNot<PortableValue>(scopeKeyAsPV);
+
+        PortableValue? pvAsPV = await manager.ReadStateAsync<PortableValue>(scope, nameof(PortableValueValue));
+        VerifyIs(pvAsPV, StringValue);
+        VerifyIsNot<int>(pvAsPV);
+        VerifyIsNot<ChatMessage>(pvAsPV);
+
+        // Check that we don't double-wrap stored PortableValues on the out path
+        VerifyIsNot<PortableValue>(pvAsPV);
     }
 }

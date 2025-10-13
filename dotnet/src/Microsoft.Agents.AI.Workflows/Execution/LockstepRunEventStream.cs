@@ -22,7 +22,7 @@ internal sealed class LockstepRunEventStream : IRunEventStream
 
     private readonly ISuperStepRunner _stepRunner;
 
-    public ValueTask<RunStatus> GetStatusAsync(CancellationToken cancellation = default) => new(this.RunStatus);
+    public ValueTask<RunStatus> GetStatusAsync(CancellationToken cancellationToken = default) => new(this.RunStatus);
 
     public LockstepRunEventStream(ISuperStepRunner stepRunner)
     {
@@ -36,7 +36,7 @@ internal sealed class LockstepRunEventStream : IRunEventStream
         // No-op for lockstep execution
     }
 
-    public async IAsyncEnumerable<WorkflowEvent> TakeEventStreamAsync(bool blockOnPendingRequest, [EnumeratorCancellation] CancellationToken cancellation = default)
+    public async IAsyncEnumerable<WorkflowEvent> TakeEventStreamAsync(bool blockOnPendingRequest, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
 #if NET
         ObjectDisposedException.ThrowIf(Volatile.Read(ref this._isDisposed) == 1, this);
@@ -47,7 +47,7 @@ internal sealed class LockstepRunEventStream : IRunEventStream
         }
 #endif
 
-        CancellationTokenSource linkedSource = CancellationTokenSource.CreateLinkedTokenSource(this._stopCancellation.Token, cancellation);
+        CancellationTokenSource linkedSource = CancellationTokenSource.CreateLinkedTokenSource(this._stopCancellation.Token, cancellationToken);
 
         ConcurrentQueue<WorkflowEvent> eventSink = [];
 

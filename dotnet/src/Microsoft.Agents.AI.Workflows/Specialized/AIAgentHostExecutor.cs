@@ -30,7 +30,7 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
         if (this._thread is not null)
         {
             JsonElement threadValue = this._thread.Serialize();
-            threadTask = context.QueueStateUpdateAsync(ThreadStateKey, threadValue).AsTask();
+            threadTask = context.QueueStateUpdateAsync(ThreadStateKey, threadValue, cancellationToken: cancellationToken).AsTask();
         }
 
         Task baseTask = base.OnCheckpointingAsync(context, cancellationToken).AsTask();
@@ -40,7 +40,7 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
 
     protected internal override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        JsonElement? threadValue = await context.ReadStateAsync<JsonElement?>(ThreadStateKey).ConfigureAwait(false);
+        JsonElement? threadValue = await context.ReadStateAsync<JsonElement?>(ThreadStateKey, cancellationToken: cancellationToken).ConfigureAwait(false);
         if (threadValue.HasValue)
         {
             this._thread = this._agent.DeserializeThread(threadValue.Value);
@@ -67,7 +67,7 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
 
             if (emitEvents ?? this._emitEvents)
             {
-                await context.AddEventAsync(new AgentRunUpdateEvent(this.Id, update)).ConfigureAwait(false);
+                await context.AddEventAsync(new AgentRunUpdateEvent(this.Id, update), cancellationToken).ConfigureAwait(false);
             }
 
             // TODO: FunctionCall request handling, and user info request handling.
@@ -100,7 +100,7 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
                 currentStreamingMessage.Contents = updates;
                 updates = [];
 
-                await context.SendMessageAsync(currentStreamingMessage).ConfigureAwait(false);
+                await context.SendMessageAsync(currentStreamingMessage, cancellationToken: cancellationToken).ConfigureAwait(false);
             }
 
             currentStreamingMessage = null;

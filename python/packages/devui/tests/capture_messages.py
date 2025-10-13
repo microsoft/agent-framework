@@ -10,6 +10,7 @@ import asyncio
 import contextlib
 import http.client
 import json
+import logging
 import threading
 import time
 from pathlib import Path
@@ -20,12 +21,20 @@ from openai import OpenAI
 
 from agent_framework_devui import DevServer
 
+logger = logging.getLogger(__name__)
+
 
 def start_server() -> tuple[str, Any]:
     """Start server with samples directory."""
-    # Get samples directory
+    # Get samples directory - updated path after samples were moved
     current_dir = Path(__file__).parent
-    samples_dir = current_dir.parent / "samples"
+    # Samples are now in python/samples/getting_started/devui
+    samples_dir = current_dir.parent.parent.parent / "samples" / "getting_started" / "devui"
+
+    if not samples_dir.exists():
+        raise RuntimeError(f"Samples directory not found: {samples_dir}")
+
+    logger.info(f"Using samples directory: {samples_dir}")
 
     # Create and start server with simplified parameters
     server = DevServer(
@@ -41,7 +50,7 @@ def start_server() -> tuple[str, Any]:
         app=app,
         host="127.0.0.1",
         port=8085,
-        log_level="info",  # More verbose to see tracing setup
+        # log_level="info",  # More verbose to see tracing setup
     )
     server_instance = uvicorn.Server(server_config)
 
@@ -80,10 +89,9 @@ def capture_agent_stream_with_tracing(client: OpenAI, agent_id: str, scenario: s
 
     try:
         stream = client.responses.create(
-            model="agent-framework",
+            model=agent_id,  # DevUI uses model field as entity_id
             input="Tell me about the weather in Tokyo. I want details.",
             stream=True,
-            extra_body={"entity_id": agent_id},
         )
 
         events = []
@@ -122,13 +130,12 @@ def capture_workflow_stream_with_tracing(
 
     try:
         stream = client.responses.create(
-            model="agent-framework",
+            model=workflow_id,  # DevUI uses model field as entity_id
             input=(
                 "Process this spam detection workflow with multiple emails: "
                 "'Buy now!', 'Hello mom', 'URGENT: Click here!'"
             ),
             stream=True,
-            extra_body={"entity_id": workflow_id},
         )
 
         events = []
@@ -159,70 +166,6 @@ def capture_workflow_stream_with_tracing(
             "entity_type": "workflow",
         }
         return [error_event]
-
-
-def capture_agent_with_bad_config(base_url: str, agent_id: str) -> list[dict[str, Any]]:
-    """Capture agent events with intentionally bad configuration to test error handling."""
-
-    # Test with invalid API key
-    bad_client = OpenAI(base_url=f"{base_url}/v1", api_key="invalid-api-key-123")
-
-    try:
-        return capture_agent_stream_with_tracing(bad_client, agent_id, "bad_api_key")
-    except Exception as e:
-        return [
-            {
-                "type": "error",
-                "scenario": "bad_api_key",
-                "error_message": str(e),
-                "error_type": type(e).__name__,
-                "timestamp": time.time(),
-            }
-        ]
-
-
-def capture_agent_with_wrong_model(base_url: str, agent_id: str) -> list[dict[str, Any]]:
-    """Capture agent events with wrong model name to test error handling."""
-
-    client = OpenAI(
-        base_url=f"{base_url}/v1",
-        api_key="dummy-key",  # Use the same key as success case
-    )
-
-    try:
-        stream = client.responses.create(
-            model="gpt-4-nonexistent-model",  # Wrong model name
-            input="Tell me about the weather in Tokyo. I want details.",
-            stream=True,
-            extra_body={"entity_id": agent_id},
-        )
-
-        events = []
-        for event in stream:
-            # Serialize the entire event object
-            try:
-                event_dict = json.loads(event.model_dump_json())
-            except Exception:
-                # Fallback to dict conversion if model_dump_json fails
-                event_dict = event.__dict__ if hasattr(event, "__dict__") else str(event)
-
-            events.append(event_dict)
-
-            if len(events) >= 200:
-                break
-
-        return events
-
-    except Exception as e:
-        return [
-            {
-                "type": "error",
-                "scenario": "wrong_model",
-                "error_message": str(e),
-                "error_type": type(e).__name__,
-                "timestamp": time.time(),
-            }
-        ]
 
 
 def main():

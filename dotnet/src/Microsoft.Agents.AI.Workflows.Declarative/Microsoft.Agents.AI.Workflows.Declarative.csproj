@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
@@ -21,16 +21,15 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Azure.AI.Agents.Persistent" />
     <PackageReference Include="Azure.Identity" />
     <PackageReference Include="Microsoft.Bot.ObjectModel" />
     <PackageReference Include="Microsoft.Bot.ObjectModel.Json" />
     <PackageReference Include="Microsoft.Bot.ObjectModel.PowerFx" />
     <PackageReference Include="Microsoft.PowerFx.Interpreter" />
-    <PackageReference Include="System.CodeDom" />
-    <PackageReference Include="System.Collections.Immutable" />
     <PackageReference Include="Microsoft.Extensions.Configuration" />
     <PackageReference Include="Microsoft.Extensions.Logging" />
+    <PackageReference Include="System.CodeDom" />
+    <PackageReference Include="System.Collections.Immutable" />
   </ItemGroup>
 
   <ItemGroup>

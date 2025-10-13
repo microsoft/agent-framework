@@ -261,11 +261,15 @@ class PolicyEngine(Executor):
 
     @handler
     async def handle_policy_request(
-        self, request: PolicyCheckRequest, ctx: WorkflowContext[RequestResponse[PolicyCheckRequest, Any] | PolicyCheckRequest]
+        self,
+        request: PolicyCheckRequest,
+        ctx: WorkflowContext[RequestResponse[PolicyCheckRequest, Any] | PolicyCheckRequest],
     ) -> None:
         """Handle POLICY requests from sub-workflows and apply rules."""
         policy_request = request
-        print(f"🛡️  POLICY interceptor checking: {policy_request.amount} {policy_request.resource_type}, policy={policy_request.policy_type}")
+        print(
+            f"🛡️  POLICY interceptor checking: {policy_request.amount} {policy_request.resource_type}, policy={policy_request.policy_type}"
+        )
 
         quota_limit = self.quota.get(policy_request.resource_type, 0)
 

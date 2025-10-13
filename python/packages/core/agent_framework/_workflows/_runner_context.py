@@ -12,7 +12,7 @@ from typing import Any, Protocol, TypedDict, TypeVar, cast, runtime_checkable
 
 from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
 from ._const import DEFAULT_MAX_ITERATIONS
-from ._events import AgentRunUpdateEvent, WorkflowEvent
+from ._events import WorkflowEvent
 from ._shared_state import SharedState
 
 logger = logging.getLogger(__name__)
@@ -487,28 +487,6 @@ class InProcRunnerContext:
         Events are enqueued so runners can stream them in real time instead of
         waiting for superstep boundaries.
         """
-        # Filter out empty AgentRunUpdateEvent updates to avoid emitting None/empty chunks
-        try:
-            if isinstance(event, AgentRunUpdateEvent):
-                update = getattr(event, "data", None)
-                # Skip if no update payload
-                if not update:
-                    return
-                # Robust emptiness check: allow either top-level text or any text-bearing content
-                text_val = getattr(update, "text", None)
-                contents = getattr(update, "contents", None)
-                has_text_content = False
-                if contents:
-                    for c in contents:
-                        if getattr(c, "text", None):
-                            has_text_content = True
-                            break
-                if not (text_val or has_text_content):
-                    return
-        except Exception as exc:  # pragma: no cover - defensive logging path
-            # Best-effort filtering only; never block event delivery on filtering errors
-            logger.debug(f"Error while filtering event {event!r}: {exc}", exc_info=True)
-
         await self._event_queue.put(event)
 
     async def drain_events(self) -> list[WorkflowEvent]:

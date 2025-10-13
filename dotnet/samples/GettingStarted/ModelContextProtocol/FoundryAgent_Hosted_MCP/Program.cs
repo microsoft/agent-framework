@@ -9,9 +9,6 @@ using Microsoft.Agents.AI;
 var endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
 var model = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_MODEL_ID") ?? "gpt-4.1-mini";
 
-const string AgentName = "MicrosoftLearnAgent";
-const string AgentInstructions = "You answer questions by searching the Microsoft Learn content only.";
-
 // Get a client to create/retrieve server side agents with.
 var persistentAgentsClient = new PersistentAgentsClient(endpoint, new AzureCliCredential());
 
@@ -24,8 +21,8 @@ mcpTool.AllowedTools.Add("microsoft_docs_search");
 // Create a server side persistent agent with the Azure.AI.Agents.Persistent SDK.
 var agentMetadata = await persistentAgentsClient.Administration.CreateAgentAsync(
     model: model,
-    name: AgentName,
-    instructions: AgentInstructions,
+    name: "MicrosoftLearnAgent",
+    instructions: "You answer questions by searching the Microsoft Learn content only.",
     tools: [mcpTool]);
 
 // Retrieve an already created server side persistent agent as an AIAgent.

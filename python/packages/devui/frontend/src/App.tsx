@@ -4,12 +4,10 @@
  */
 
 import { useState, useEffect, useCallback } from "react";
-import { AppHeader } from "@/components/shared/app-header";
-import { DebugPanel } from "@/components/shared/debug-panel";
-import { SettingsModal } from "@/components/shared/settings-modal";
-import { GalleryView } from "@/components/gallery";
-import { AgentView } from "@/components/agent/agent-view";
-import { WorkflowView } from "@/components/workflow/workflow-view";
+import { AppHeader, DebugPanel, SettingsModal } from "@/components/layout";
+import { GalleryView } from "@/components/features/gallery";
+import { AgentView } from "@/components/features/agent";
+import { WorkflowView } from "@/components/features/workflow";
 import { LoadingState } from "@/components/ui/loading-state";
 import { Toast } from "@/components/ui/toast";
 import { apiClient } from "@/services/api";

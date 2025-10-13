@@ -43,8 +43,8 @@ public sealed class Run : IAsyncDisposable
     /// <summary>
     /// Gets the current execution status of the workflow run.
     /// </summary>
-    public ValueTask<RunStatus> GetStatusAsync(CancellationToken cancellation = default)
-        => this._runHandle.GetStatusAsync(cancellation);
+    public ValueTask<RunStatus> GetStatusAsync(CancellationToken cancellationToken = default)
+        => this._runHandle.GetStatusAsync(cancellationToken);
 
     /// <summary>
     /// Gets all events emitted by the workflow.
@@ -113,7 +113,7 @@ public sealed class Run : IAsyncDisposable
         {
             foreach (object? message in messages)
             {
-                await this._runHandle.EnqueueMessageUntypedAsync(message, cancellation: cancellationToken).ConfigureAwait(false);
+                await this._runHandle.EnqueueMessageUntypedAsync(message, cancellationToken: cancellationToken).ConfigureAwait(false);
             }
         }
         else

@@ -242,6 +242,7 @@ class TestRedisChatMessageStore:
         state = await redis_store.serialize()
 
         expected_state = {
+            "type": "redis_store_state",
             "thread_id": "test_thread_123",
             "redis_url": "redis://localhost:6379",
             "key_prefix": "chat_messages",

@@ -48,9 +48,6 @@ from ._events import (
 )
 from ._executor import (
     Executor,
-    RequestInfoExecutor,
-    RequestInfoMessage,
-    RequestResponse,
     handler,
 )
 from ._function_executor import FunctionExecutor, executor
@@ -75,6 +72,11 @@ from ._magentic import (
     MagenticResponseMessage,
     MagenticStartMessage,
     StandardMagenticManager,
+)
+from ._request_info_executor import (
+    RequestInfoExecutor,
+    RequestInfoMessage,
+    RequestResponse,
 )
 from ._runner import Runner
 from ._runner_context import (

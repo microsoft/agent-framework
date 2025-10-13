@@ -747,13 +747,14 @@ async def test_non_streaming_single_function_requires_approval():
     # Execute
     result = await wrapped(mock_client, messages=[], tools=[requires_approval_tool])
 
-    # Verify: should return 2 messages - function call and approval request
+    # Verify: should return 1 message with function call and approval request
     from agent_framework import FunctionApprovalRequestContent
 
-    assert len(result.messages) == 2
+    assert len(result.messages) == 1
+    assert len(result.messages[0].contents) == 2
     assert isinstance(result.messages[0].contents[0], FunctionCallContent)
-    assert isinstance(result.messages[1].contents[0], FunctionApprovalRequestContent)
-    assert result.messages[1].contents[0].function_call.name == "requires_approval_tool"
+    assert isinstance(result.messages[0].contents[1], FunctionApprovalRequestContent)
+    assert result.messages[0].contents[1].function_call.name == "requires_approval_tool"
 
 
 async def test_non_streaming_two_functions_both_no_approval():
@@ -838,16 +839,17 @@ async def test_non_streaming_two_functions_both_require_approval():
     # Execute
     result = await wrapped(mock_client, messages=[], tools=[requires_approval_tool])
 
-    # Verify: should return 2 messages - function calls and approval requests
+    # Verify: should return 1 message with function calls and approval requests
     from agent_framework import FunctionApprovalRequestContent
 
-    assert len(result.messages) == 2
-    assert len(result.messages[0].contents) == 2  # Both function calls
-    assert all(isinstance(c, FunctionCallContent) for c in result.messages[0].contents)
-    assert len(result.messages[1].contents) == 2  # Both approval requests
-    assert all(isinstance(c, FunctionApprovalRequestContent) for c in result.messages[1].contents)
-    assert result.messages[1].contents[0].function_call.name == "requires_approval_tool"
-    assert result.messages[1].contents[1].function_call.name == "requires_approval_tool"
+    assert len(result.messages) == 1
+    assert len(result.messages[0].contents) == 4  # 2 function calls + 2 approval requests
+    function_calls = [c for c in result.messages[0].contents if isinstance(c, FunctionCallContent)]
+    approval_requests = [c for c in result.messages[0].contents if isinstance(c, FunctionApprovalRequestContent)]
+    assert len(function_calls) == 2
+    assert len(approval_requests) == 2
+    assert approval_requests[0].function_call.name == "requires_approval_tool"
+    assert approval_requests[1].function_call.name == "requires_approval_tool"
 
 
 async def test_non_streaming_two_functions_mixed_approval():
@@ -886,10 +888,10 @@ async def test_non_streaming_two_functions_mixed_approval():
     # Verify: should return approval requests for both (when one needs approval, all are sent for approval)
     from agent_framework import FunctionApprovalRequestContent
 
-    assert len(result.messages) == 2
-    assert len(result.messages[0].contents) == 2  # Both function calls
-    assert len(result.messages[1].contents) == 2  # Both approval requests
-    assert all(isinstance(c, FunctionApprovalRequestContent) for c in result.messages[1].contents)
+    assert len(result.messages) == 1
+    assert len(result.messages[0].contents) == 4  # 2 function calls + 2 approval requests
+    approval_requests = [c for c in result.messages[0].contents if isinstance(c, FunctionApprovalRequestContent)]
+    assert len(approval_requests) == 2
 
 
 async def test_streaming_single_function_no_approval():
@@ -974,7 +976,7 @@ async def test_streaming_single_function_requires_approval():
 
     assert len(updates) == 2
     assert isinstance(updates[0].contents[0], FunctionCallContent)
-    assert updates[1].role == Role.TOOL
+    assert updates[1].role == Role.ASSISTANT
     assert isinstance(updates[1].contents[0], FunctionApprovalRequestContent)
 
 
@@ -1069,8 +1071,8 @@ async def test_streaming_two_functions_both_require_approval():
     assert len(updates) == 3
     assert isinstance(updates[0].contents[0], FunctionCallContent)
     assert isinstance(updates[1].contents[0], FunctionCallContent)
-    # Tool update with both approval requests
-    assert updates[2].role == Role.TOOL
+    # Assistant update with both approval requests
+    assert updates[2].role == Role.ASSISTANT
     assert len(updates[2].contents) == 2
     assert all(isinstance(c, FunctionApprovalRequestContent) for c in updates[2].contents)
 
@@ -1116,7 +1118,7 @@ async def test_streaming_two_functions_mixed_approval():
     assert len(updates) == 3
     assert isinstance(updates[0].contents[0], FunctionCallContent)
     assert isinstance(updates[1].contents[0], FunctionCallContent)
-    # Tool update with both approval requests
-    assert updates[2].role == Role.TOOL
+    # Assistant update with both approval requests
+    assert updates[2].role == Role.ASSISTANT
     assert len(updates[2].contents) == 2
     assert all(isinstance(c, FunctionApprovalRequestContent) for c in updates[2].contents)

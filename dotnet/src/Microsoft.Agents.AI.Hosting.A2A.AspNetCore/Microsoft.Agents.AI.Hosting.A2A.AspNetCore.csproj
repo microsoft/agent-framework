@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <TargetFrameworks>$(ProjectsCoreTargetFrameworks)</TargetFrameworks>
-    <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsCoreTargetFrameworks)</TargetFrameworks>
+    <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugCoreTargetFrameworks)</TargetFrameworks>
     <RootNamespace>Microsoft.Agents.AI.Hosting.A2A.AspNetCore</RootNamespace>
     <VersionSuffix>preview</VersionSuffix>
   </PropertyGroup>

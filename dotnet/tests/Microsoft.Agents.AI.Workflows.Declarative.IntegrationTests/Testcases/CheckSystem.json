@@ -1,0 +1,24 @@
+﻿{
+  "description": "Send an activity message.",
+  "setup": {
+    "input": {
+      "type": "String",
+      "value": "Everything good?"
+    }
+  },
+  "validation": {
+    "conversation_count": 1,
+    "min_action_count": 2,
+    "max_action_count": -1,
+    "min_response_count": 0,
+    "actions": {
+      "start": [
+        "check_system"
+      ],
+      "final": [
+        "activity_passed",
+        "check_system_Post"
+      ]
+    }
+  }
+}

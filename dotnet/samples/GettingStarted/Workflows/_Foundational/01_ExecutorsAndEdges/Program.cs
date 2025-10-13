@@ -51,8 +51,10 @@ internal sealed class UppercaseExecutor() : ReflectingExecutor<UppercaseExecutor
     /// </summary>
     /// <param name="message">The input text to convert</param>
     /// <param name="context">Workflow context for accessing workflow services and adding events</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
+    /// The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>The input text converted to uppercase</returns>
-    public async ValueTask<string> HandleAsync(string message, IWorkflowContext context) =>
+    public async ValueTask<string> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default) =>
         message.ToUpperInvariant(); // The return value will be sent as a message along an edge to subsequent executors
 }
 
@@ -66,8 +68,10 @@ internal sealed class ReverseTextExecutor() : ReflectingExecutor<ReverseTextExec
     /// </summary>
     /// <param name="message">The input text to reverse</param>
     /// <param name="context">Workflow context for accessing workflow services and adding events</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
+    /// The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>The input text reversed</returns>
-    public async ValueTask<string> HandleAsync(string message, IWorkflowContext context)
+    public async ValueTask<string> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         // Because we do not suppress it, the returned result will be yielded as an output from this executor.
         return string.Concat(message.Reverse());

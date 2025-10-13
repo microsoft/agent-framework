@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Reflection;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Execution;
 
@@ -26,14 +27,19 @@ internal readonly struct MessageHandlerInfo
         this.HandlerInfo = handlerInfo;
 
         ParameterInfo[] parameters = handlerInfo.GetParameters();
-        if (parameters.Length != 2)
+        if (parameters.Length != 3)
         {
-            throw new ArgumentException("Handler method must have exactly two parameters: TMessage and IExecutionContext.", nameof(handlerInfo));
+            throw new ArgumentException("Handler method must have exactly three parameters: TMessage, IWorkflowContext, and CancellationToken.", nameof(handlerInfo));
         }
 
         if (parameters[1].ParameterType != typeof(IWorkflowContext))
         {
-            throw new ArgumentException("Handler method's second parameter must be of type IExecutionContext.", nameof(handlerInfo));
+            throw new ArgumentException("Handler method's second parameter must be of type IWorkflowContext.", nameof(handlerInfo));
+        }
+
+        if (parameters[2].ParameterType != typeof(CancellationToken))
+        {
+            throw new ArgumentException("Handler method's third parameter must be of type CancellationToken.", nameof(handlerInfo));
         }
 
         this.InType = parameters[0].ParameterType;
@@ -61,17 +67,17 @@ internal readonly struct MessageHandlerInfo
         }
     }
 
-    public static Func<object, IWorkflowContext, ValueTask<CallResult>> Bind(Func<object, IWorkflowContext, object?> handlerAsync, bool checkType, Type? resultType = null, Func<object, ValueTask<object?>>? unwrapper = null)
+    public static Func<object, IWorkflowContext, CancellationToken, ValueTask<CallResult>> Bind(Func<object, IWorkflowContext, CancellationToken, object?> handlerAsync, bool checkType, Type? resultType = null, Func<object, ValueTask<object?>>? unwrapper = null)
     {
         return InvokeHandlerAsync;
 
-        async ValueTask<CallResult> InvokeHandlerAsync(object message, IWorkflowContext workflowContext)
+        async ValueTask<CallResult> InvokeHandlerAsync(object message, IWorkflowContext workflowContext, CancellationToken cancellationToken)
         {
             bool expectingVoid = resultType is null || resultType == typeof(void);
 
             try
             {
-                object? maybeValueTask = handlerAsync(message, workflowContext);
+                object? maybeValueTask = handlerAsync(message, workflowContext, cancellationToken);
 
                 if (expectingVoid)
                 {
@@ -109,6 +115,11 @@ internal readonly struct MessageHandlerInfo
 
                 return CallResult.ReturnResult(result);
             }
+            catch (OperationCanceledException)
+            {
+                // If the operation was canceled, return a canceled CallResult.
+                return CallResult.Cancelled(wasVoid: expectingVoid);
+            }
             catch (Exception ex)
             {
                 // If the handler throws an exception, return it in the CallResult.
@@ -117,7 +128,7 @@ internal readonly struct MessageHandlerInfo
         }
     }
 
-    public Func<object, IWorkflowContext, ValueTask<CallResult>> Bind<
+    public Func<object, IWorkflowContext, CancellationToken, ValueTask<CallResult>> Bind<
         [DynamicallyAccessedMembers(
             ReflectionDemands.RuntimeInterfaceDiscoveryAndInvocation)
         ] TExecutor
@@ -128,9 +139,9 @@ internal readonly struct MessageHandlerInfo
         MethodInfo handlerMethod = this.HandlerInfo;
         return Bind(InvokeHandler, checkType, this.OutType, this.Unwrapper);
 
-        object? InvokeHandler(object message, IWorkflowContext workflowContext)
+        object? InvokeHandler(object message, IWorkflowContext workflowContext, CancellationToken cancellationToken)
         {
-            return handlerMethod.Invoke(executor, [message, workflowContext]);
+            return handlerMethod.Invoke(executor, [message, workflowContext, cancellationToken]);
         }
     }
 }

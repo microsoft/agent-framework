@@ -39,7 +39,7 @@ class EntityInfo(BaseModel):
 
     # Agent-specific fields (optional, populated when available)
     instructions: str | None = None
-    model: str | None = None
+    model_id: str | None = None
     chat_client_type: str | None = None
     context_providers: list[str] | None = None
     middleware: list[str] | None = None

@@ -277,6 +277,31 @@ public class AgentExtensionsTests
         Assert.Equal("Complex response", result.ToString());
     }
 
+    [Theory]
+    [InlineData("MyAgent", "MyAgent")]
+    [InlineData("Agent123", "Agent123")]
+    [InlineData("Agent_With_Underscores", "Agent_With_Underscores")]
+    [InlineData("Agent_With_________@@@@_Underscores", "Agent_With_Underscores")]
+    [InlineData("123Agent", "123Agent")]
+    [InlineData("My-Agent", "My_Agent")]
+    [InlineData("My Agent", "My_Agent")]
+    [InlineData("Agent@123", "Agent_123")]
+    [InlineData("Agent/With\\Slashes", "Agent_With_Slashes")]
+    [InlineData("Agent.With.Dots", "Agent_With_Dots")]
+    public void CreateFromAgent_SanitizesAgentName(string agentName, string expectedFunctionName)
+    {
+        // Arrange
+        var mockAgent = new Mock<AIAgent>();
+        mockAgent.Setup(a => a.Name).Returns(agentName);
+
+        // Act
+        var result = mockAgent.Object.AsAIFunction();
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(expectedFunctionName, result.Name);
+    }
+
     /// <summary>
     /// Test implementation of AIAgent for testing purposes.
     /// </summary>

@@ -1142,16 +1142,17 @@ def _extract_tools(kwargs: dict[str, Any]) -> Any:
     return tools
 
 
-def _collect_approval_todos(
+def _collect_approval_responses(
     messages: "list[ChatMessage]",
 ) -> dict[str, "FunctionApprovalResponseContent"]:
-    """Collect approved function calls from messages."""
+    """Collect approval responses (both approved and rejected) from messages."""
     from ._types import ChatMessage, FunctionApprovalResponseContent
 
     fcc_todo: dict[str, FunctionApprovalResponseContent] = {}
     for msg in messages:
         for content in msg.contents if isinstance(msg, ChatMessage) else []:
-            if isinstance(content, FunctionApprovalResponseContent) and content.approved:
+            # Collect BOTH approved and rejected responses
+            if isinstance(content, FunctionApprovalResponseContent):
                 fcc_todo[content.id] = content
     return fcc_todo
 
@@ -1162,26 +1163,52 @@ def _replace_approval_contents_with_results(
     approved_function_results: "list[Contents]",
 ) -> None:
     """Replace approval request/response contents with function call/result contents in-place."""
-    from ._types import FunctionApprovalRequestContent, FunctionApprovalResponseContent, FunctionResultContent
+    from ._types import (
+        FunctionApprovalRequestContent,
+        FunctionApprovalResponseContent,
+        FunctionCallContent,
+        FunctionResultContent,
+        Role,
+    )
 
     result_idx = 0
     for msg in messages:
+        # First pass - collect existing function call IDs to avoid duplicates
+        existing_call_ids = {
+            content.call_id for content in msg.contents if isinstance(content, FunctionCallContent) and content.call_id
+        }
+
+        # Track approval requests that should be removed (duplicates)
+        contents_to_remove = []
+
         for content_idx, content in enumerate(msg.contents):
             if isinstance(content, FunctionApprovalRequestContent):
-                # put back the function call content
-                msg.contents[content_idx] = content.function_call
-            if isinstance(content, FunctionApprovalResponseContent):
+                # Don't add the function call if it already exists (would create duplicate)
+                if content.function_call.call_id in existing_call_ids:
+                    # Just mark for removal - the function call already exists
+                    contents_to_remove.append(content_idx)
+                else:
+                    # Put back the function call content only if it doesn't exist
+                    msg.contents[content_idx] = content.function_call
+            elif isinstance(content, FunctionApprovalResponseContent):
                 if content.approved and content.id in fcc_todo:
                     # Replace with the corresponding result
                     if result_idx < len(approved_function_results):
                         msg.contents[content_idx] = approved_function_results[result_idx]
                         result_idx += 1
+                        msg.role = Role.TOOL
                 else:
                     # Create a "not approved" result for rejected calls
+                    # Use function_call.call_id (the function's ID), not content.id (approval's ID)
                     msg.contents[content_idx] = FunctionResultContent(
-                        call_id=content.id,
+                        call_id=content.function_call.call_id,
                         result="Error: Tool call invocation was rejected by user.",
                     )
+                    msg.role = Role.TOOL
+
+        # Remove approval requests that were duplicates (in reverse order to preserve indices)
+        for idx in reversed(contents_to_remove):
+            msg.contents.pop(idx)
 
 
 def _handle_function_calls_response(
@@ -1234,16 +1261,20 @@ def _handle_function_calls_response(
             response: "ChatResponse | None" = None
             fcc_messages: "list[ChatMessage]" = []
             for attempt_idx in range(instance_max_iterations):
-                fcc_todo = _collect_approval_todos(prepped_messages)
+                fcc_todo = _collect_approval_responses(prepped_messages)
                 if fcc_todo:
                     tools = _extract_tools(kwargs)
-                    approved_function_results: list[Contents] = await _execute_function_calls(
-                        custom_args=kwargs,
-                        attempt_idx=attempt_idx,
-                        function_calls=list(fcc_todo.values()),
-                        tools=tools,  # type: ignore
-                        middleware_pipeline=stored_middleware_pipeline,
-                    )
+                    # Only execute APPROVED function calls, not rejected ones
+                    approved_responses = [resp for resp in fcc_todo.values() if resp.approved]
+                    approved_function_results: list[Contents] = []
+                    if approved_responses:
+                        approved_function_results = await _execute_function_calls(
+                            custom_args=kwargs,
+                            attempt_idx=attempt_idx,
+                            function_calls=approved_responses,
+                            tools=tools,  # type: ignore
+                            middleware_pipeline=stored_middleware_pipeline,
+                        )
                     _replace_approval_contents_with_results(prepped_messages, fcc_todo, approved_function_results)
 
                 response = await func(self, messages=prepped_messages, **kwargs)
@@ -1273,6 +1304,21 @@ def _handle_function_calls_response(
                         tools=tools,  # type: ignore
                         middleware_pipeline=stored_middleware_pipeline,
                     )
+
+                    # Check if we have approval requests in the results
+                    if any(isinstance(fccr, FunctionApprovalRequestContent) for fccr in function_call_results):
+                        # Add approval requests to the existing assistant message (with tool_calls)
+                        # instead of creating a separate tool message
+                        from ._types import Role
+
+                        if response.messages and response.messages[0].role == Role.ASSISTANT:
+                            response.messages[0].contents.extend(function_call_results)
+                        else:
+                            # Fallback: create new assistant message (shouldn't normally happen)
+                            result_message = ChatMessage(role="assistant", contents=function_call_results)
+                            response.messages.append(result_message)
+                        return response
+
                     # add a single ChatMessage to the response with the results
                     result_message = ChatMessage(role="tool", contents=function_call_results)
                     response.messages.append(result_message)
@@ -1283,9 +1329,6 @@ def _handle_function_calls_response(
                     # this runs in every but the first run
                     # we need to keep track of all function call messages
                     fcc_messages.extend(response.messages)
-                    # and add them as additional context to the messages
-                    if any(isinstance(fccr, FunctionApprovalRequestContent) for fccr in function_call_results):
-                        return response
                     if getattr(kwargs.get("chat_options"), "store", False):
                         prepped_messages.clear()
                         prepped_messages.append(result_message)
@@ -1365,16 +1408,20 @@ def _handle_function_calls_streaming_response(
             prepped_messages = prepare_messages(messages)
             fcc_messages: "list[ChatMessage]" = []
             for attempt_idx in range(instance_max_iterations):
-                fcc_todo = _collect_approval_todos(prepped_messages)
+                fcc_todo = _collect_approval_responses(prepped_messages)
                 if fcc_todo:
                     tools = _extract_tools(kwargs)
-                    approved_function_results: list[Contents] = await _execute_function_calls(
-                        custom_args=kwargs,
-                        attempt_idx=attempt_idx,
-                        function_calls=list(fcc_todo.values()),
-                        tools=tools,  # type: ignore
-                        middleware_pipeline=stored_middleware_pipeline,
-                    )
+                    # Only execute APPROVED function calls, not rejected ones
+                    approved_responses = [resp for resp in fcc_todo.values() if resp.approved]
+                    approved_function_results: list[Contents] = []
+                    if approved_responses:
+                        approved_function_results = await _execute_function_calls(
+                            custom_args=kwargs,
+                            attempt_idx=attempt_idx,
+                            function_calls=approved_responses,
+                            tools=tools,  # type: ignore
+                            middleware_pipeline=stored_middleware_pipeline,
+                        )
                     _replace_approval_contents_with_results(prepped_messages, fcc_todo, approved_function_results)
 
                 all_updates: list["ChatResponseUpdate"] = []
@@ -1427,6 +1474,24 @@ def _handle_function_calls_streaming_response(
                         tools=tools,  # type: ignore
                         middleware_pipeline=stored_middleware_pipeline,
                     )
+
+                    # Check if we have approval requests in the results
+                    if any(isinstance(fccr, FunctionApprovalRequestContent) for fccr in function_call_results):
+                        # Add approval requests to the existing assistant message (with tool_calls)
+                        # instead of creating a separate tool message
+                        from ._types import Role
+
+                        if response.messages and response.messages[0].role == Role.ASSISTANT:
+                            response.messages[0].contents.extend(function_call_results)
+                            # Yield the approval requests as part of the assistant message
+                            yield ChatResponseUpdate(contents=function_call_results, role="assistant")
+                        else:
+                            # Fallback: create new assistant message (shouldn't normally happen)
+                            result_message = ChatMessage(role="assistant", contents=function_call_results)
+                            yield ChatResponseUpdate(contents=function_call_results, role="assistant")
+                            response.messages.append(result_message)
+                        return
+
                     # add a single ChatMessage to the response with the results
                     result_message = ChatMessage(role="tool", contents=function_call_results)
                     yield ChatResponseUpdate(contents=function_call_results, role="tool")
@@ -1438,9 +1503,6 @@ def _handle_function_calls_streaming_response(
                     # this runs in every but the first run
                     # we need to keep track of all function call messages
                     fcc_messages.extend(response.messages)
-                    # and add them as additional context to the messages
-                    if any(isinstance(fccr, FunctionApprovalRequestContent) for fccr in function_call_results):
-                        return
                     if getattr(kwargs.get("chat_options"), "store", False):
                         prepped_messages.clear()
                         prepped_messages.append(result_message)

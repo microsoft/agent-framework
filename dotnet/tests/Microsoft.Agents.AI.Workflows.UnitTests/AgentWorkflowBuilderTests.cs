@@ -6,6 +6,7 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -159,7 +160,7 @@ public class AgentWorkflowBuilderTests
 
     private sealed class DoubleEchoAgentThread() : InMemoryAgentThread();
 
-    [Fact(Skip = "issue #1109")]
+    [Fact]
     public async Task BuildConcurrent_AgentsRunInParallelAsync()
     {
         StrongBox<TaskCompletionSource<bool>> barrier = new();
@@ -182,10 +183,10 @@ public class AgentWorkflowBuilderTests
 
             // TODO: https://github.com/microsoft/agent-framework/issues/784
             // These asserts are flaky until we guarantee message delivery order.
-            //Assert.Single(Regex.Matches(updateText, "agent1"));
-            //Assert.Single(Regex.Matches(updateText, "agent2"));
-            //Assert.Equal(4, Regex.Matches(updateText, "abc").Count);
-            //Assert.Equal(2, result.Count);
+            Assert.Single(Regex.Matches(updateText, "agent1"));
+            Assert.Single(Regex.Matches(updateText, "agent2"));
+            Assert.Equal(4, Regex.Matches(updateText, "abc").Count);
+            Assert.Equal(2, result.Count);
         }
     }
 

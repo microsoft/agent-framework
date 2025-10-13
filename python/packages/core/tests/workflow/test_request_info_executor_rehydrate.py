@@ -7,7 +7,7 @@ from typing import Any
 
 from agent_framework._workflows._checkpoint import CheckpointStorage, WorkflowCheckpoint
 from agent_framework._workflows._events import RequestInfoEvent, WorkflowEvent
-from agent_framework._workflows._executor import (
+from agent_framework._workflows._request_info_executor import (
     PendingRequestDetails,
     RequestInfoExecutor,
     RequestInfoMessage,

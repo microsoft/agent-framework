@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Text.Json.Serialization;
+
 namespace Microsoft.Agents.AI.Workflows.Declarative.Events;
 
 /// <summary>
@@ -12,6 +14,7 @@ public sealed class InputRequest
     /// </summary>
     public string Prompt { get; }
 
+    [JsonConstructor]
     internal InputRequest(string prompt)
     {
         this.Prompt = prompt;

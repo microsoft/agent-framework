@@ -14,9 +14,10 @@ from agent_framework_devui._discovery import EntityDiscovery
 @pytest.fixture
 def test_entities_dir():
     """Use the samples directory which has proper entity structure."""
-    # Get the samples directory relative to the current test file
+    # Get the samples directory from the main python samples folder
     current_dir = Path(__file__).parent
-    samples_dir = current_dir.parent / "samples"
+    # Navigate to python/samples/getting_started/devui
+    samples_dir = current_dir.parent.parent.parent / "samples" / "getting_started" / "devui"
     return str(samples_dir.resolve())
 
 
@@ -64,6 +65,58 @@ async def test_empty_directory():
         entities = await discovery.discover_entities()
 
         assert len(entities) == 0
+
+
+async def test_discovery_accepts_agents_with_only_run():
+    """Test that discovery accepts agents with only run() method."""
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir)
+
+        # Create agent with only run() method
+        agent_dir = temp_path / "non_streaming_agent"
+        agent_dir.mkdir()
+
+        init_file = agent_dir / "__init__.py"
+        init_file.write_text("""
+from agent_framework import AgentRunResponse, AgentThread, ChatMessage, Role, TextContent
+
+class NonStreamingAgent:
+    id = "non_streaming"
+    name = "Non-Streaming Agent"
+    description = "Agent without run_stream"
+
+    @property
+    def display_name(self):
+        return self.name
+
+    async def run(self, messages=None, *, thread=None, **kwargs):
+        return AgentRunResponse(
+            messages=[ChatMessage(
+                role=Role.ASSISTANT,
+                contents=[TextContent(text="response")]
+            )],
+            response_id="test"
+        )
+
+    def get_new_thread(self, **kwargs):
+        return AgentThread()
+
+agent = NonStreamingAgent()
+""")
+
+        discovery = EntityDiscovery(str(temp_path))
+        entities = await discovery.discover_entities()
+
+        # Should discover the non-streaming agent
+        agents = [e for e in entities if e.type == "agent"]
+        assert len(agents) == 1
+        # ID is auto-generated, just check it exists and starts with agent_
+        assert agents[0].id.startswith("agent_")
+        assert agents[0].name == "Non-Streaming Agent"
+        assert not agents[0].metadata.get("has_run_stream")
 
 
 if __name__ == "__main__":

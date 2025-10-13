@@ -10,7 +10,8 @@
     <Nullable>enable</Nullable>
     <NoWarn>$(NoWarn);NU5128</NoWarn>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <ProjectsCoreTargetFrameworks>net9.0</ProjectsCoreTargetFrameworks>
+    <ProjectsCoreTargetFrameworks>net9.0;net8.0</ProjectsCoreTargetFrameworks>
+    <ProjectsDebugCoreTargetFrameworks>net9.0</ProjectsDebugCoreTargetFrameworks>
     <ProjectsTargetFrameworks>net9.0;net8.0;netstandard2.0;net472</ProjectsTargetFrameworks>
     <ProjectsDebugTargetFrameworks>net9.0;net472</ProjectsDebugTargetFrameworks>
     <IsAotCompatible Condition="$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net7.0'))">true</IsAotCompatible>

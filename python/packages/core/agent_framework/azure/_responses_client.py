@@ -21,8 +21,8 @@ from ._shared import (
 TAzureOpenAIResponsesClient = TypeVar("TAzureOpenAIResponsesClient", bound="AzureOpenAIResponsesClient")
 
 
-@use_observability
 @use_function_invocation
+@use_observability
 @use_chat_middleware
 class AzureOpenAIResponsesClient(AzureOpenAIConfigMixin, OpenAIBaseResponsesClient):
     """Azure Responses completion class."""

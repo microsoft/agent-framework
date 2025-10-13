@@ -15,11 +15,11 @@ internal interface ISuperStepRunner
     bool HasUnservicedRequests { get; }
     bool HasUnprocessedMessages { get; }
 
-    ValueTask EnqueueResponseAsync(ExternalResponse response, CancellationToken cancellation = default);
+    ValueTask EnqueueResponseAsync(ExternalResponse response, CancellationToken cancellationToken = default);
 
-    ValueTask<bool> IsValidInputTypeAsync<T>(CancellationToken cancellation = default);
-    ValueTask<bool> EnqueueMessageAsync<T>(T message, CancellationToken cancellation = default);
-    ValueTask<bool> EnqueueMessageUntypedAsync(object message, Type declaredType, CancellationToken cancellation = default);
+    ValueTask<bool> IsValidInputTypeAsync<T>(CancellationToken cancellationToken = default);
+    ValueTask<bool> EnqueueMessageAsync<T>(T message, CancellationToken cancellationToken = default);
+    ValueTask<bool> EnqueueMessageUntypedAsync(object message, Type declaredType, CancellationToken cancellationToken = default);
 
     ConcurrentEventSink OutgoingEvents { get; }
 

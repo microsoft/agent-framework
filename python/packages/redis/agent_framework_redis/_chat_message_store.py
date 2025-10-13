@@ -2,23 +2,30 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Sequence
 from typing import Any
 from uuid import uuid4
 
 import redis.asyncio as redis
 from agent_framework import ChatMessage
-from pydantic import BaseModel
+from agent_framework._serialization import SerializationMixin
 
 
-class RedisStoreState(BaseModel):
+class RedisStoreState(SerializationMixin):
     """State model for serializing and deserializing Redis chat message store data."""
 
-    thread_id: str
-    redis_url: str | None = None
-    key_prefix: str = "chat_messages"
-    max_messages: int | None = None
+    def __init__(
+        self,
+        thread_id: str,
+        redis_url: str | None = None,
+        key_prefix: str = "chat_messages",
+        max_messages: int | None = None,
+    ) -> None:
+        """State model for serializing and deserializing Redis chat message store data."""
+        self.thread_id = thread_id
+        self.redis_url = redis_url
+        self.key_prefix = key_prefix
+        self.max_messages = max_messages
 
 
 class RedisChatMessageStore:
@@ -241,7 +248,7 @@ class RedisChatMessageStore:
             key_prefix=self.key_prefix,
             max_messages=self.max_messages,
         )
-        return state.model_dump(**kwargs)
+        return state.to_dict(exclude_none=False, **kwargs)
 
     @classmethod
     async def deserialize(cls, serialized_store_state: Any, **kwargs: Any) -> RedisChatMessageStore:
@@ -268,7 +275,7 @@ class RedisChatMessageStore:
             raise ValueError("serialized_store_state is required for deserialization")
 
         # Validate and parse the serialized state using Pydantic
-        state = RedisStoreState.model_validate(serialized_store_state, **kwargs)
+        state = RedisStoreState.from_dict(serialized_store_state, **kwargs)
 
         # Create and return a new store instance with the deserialized configuration
         return cls(
@@ -296,7 +303,7 @@ class RedisChatMessageStore:
             return
 
         # Validate and parse the serialized state using Pydantic
-        state = RedisStoreState.model_validate(serialized_store_state, **kwargs)
+        state = RedisStoreState.from_dict(serialized_store_state, **kwargs)
 
         # Update store configuration from deserialized state
         self.thread_id = state.thread_id
@@ -344,10 +351,8 @@ class RedisChatMessageStore:
         Returns:
             JSON string representation of the message.
         """
-        # Convert ChatMessage to dictionary using custom serialization
-        message_dict = message.to_dict()
         # Serialize to compact JSON (no extra whitespace for Redis efficiency)
-        return json.dumps(message_dict, separators=(",", ":"))
+        return message.to_json(separators=(",", ":"))
 
     def _deserialize_message(self, serialized_message: str) -> ChatMessage:
         """Deserialize a JSON string to ChatMessage.
@@ -358,10 +363,8 @@ class RedisChatMessageStore:
         Returns:
             ChatMessage object.
         """
-        # Parse JSON string back to dictionary
-        message_dict = json.loads(serialized_message)
         # Reconstruct ChatMessage using custom deserialization
-        return ChatMessage.from_dict(message_dict)
+        return ChatMessage.from_json(serialized_message)
 
     # ============================================================================
     # List-like Convenience Methods (Redis-optimized async versions)

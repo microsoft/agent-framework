@@ -7,6 +7,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Observability;
 using Microsoft.Shared.Diagnostics;
 
@@ -414,23 +415,13 @@ public class WorkflowBuilder
         {
             activity?.SetTag(Tags.WorkflowDescription, workflow.Description);
         }
-        if (activity is not null)
-        {
-            var workflowJsonDefinitionData = new WorkflowJsonDefinitionData
-            {
-                StartExecutorId = this._startExecutorId,
-                Edges = this._edges.Values.SelectMany(e => e),
-                Ports = this._inputPorts.Values,
-                OutputExecutors = this._outputExecutors
-            };
-            activity.SetTag(
+        activity?.SetTag(
                 Tags.WorkflowDefinition,
                 JsonSerializer.Serialize(
-                    workflowJsonDefinitionData,
-                    WorkflowJsonDefinitionJsonContext.Default.WorkflowJsonDefinitionData
+                    workflow.ToWorkflowInfo(),
+                    WorkflowsJsonUtilities.JsonContext.Default.WorkflowInfo
                 )
             );
-        }
 
         return workflow;
     }

@@ -9,7 +9,8 @@ from types import UnionType
 from typing import Any, Union, get_args, get_origin
 
 from ._edge import Edge, EdgeGroup, FanInEdgeGroup
-from ._executor import Executor, RequestInfoExecutor
+from ._executor import Executor
+from ._request_info_executor import RequestInfoExecutor
 
 logger = logging.getLogger(__name__)
 

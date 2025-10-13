@@ -33,6 +33,14 @@ export interface WorkflowExecutor extends Executor {
   workflow: Workflow; // Nested workflow
 }
 
+export interface MagenticOrchestratorExecutor extends Executor {
+  type: "MagenticOrchestratorExecutor";
+}
+
+export interface MagenticAgentExecutor extends Executor {
+  type: "MagenticAgentExecutor";
+}
+
 /**
  * Edge interface that mirrors agent_framework_workflow._edge.Edge
  */

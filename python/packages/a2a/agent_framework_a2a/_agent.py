@@ -9,6 +9,7 @@ from typing import Any, cast
 
 import httpx
 from a2a.client import Client, ClientConfig, ClientFactory, minimal_agent_card
+from a2a.client.auth.interceptor import AuthInterceptor
 from a2a.types import (
     AgentCard,
     Artifact,
@@ -78,6 +79,7 @@ class A2AAgent(BaseAgent):
         url: str | None = None,
         client: Client | None = None,
         http_client: httpx.AsyncClient | None = None,
+        auth_interceptor: AuthInterceptor | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the A2AAgent.
@@ -90,6 +92,7 @@ class A2AAgent(BaseAgent):
             url: The URL for the A2A server.
             client: The A2A client for the agent.
             http_client: Optional httpx.AsyncClient to use.
+            auth_interceptor: Optional authentication interceptor for secured endpoints.
             kwargs: any additional properties, passed to BaseAgent.
         """
         super().__init__(id=id, name=name, description=description, **kwargs)
@@ -123,7 +126,8 @@ class A2AAgent(BaseAgent):
             supported_transports=[TransportProtocol.jsonrpc],
         )
         factory = ClientFactory(config)
-        self.client = factory.create(agent_card)
+        interceptors = [auth_interceptor] if auth_interceptor is not None else None
+        self.client = factory.create(agent_card, interceptors=interceptors)  # type: ignore
 
     async def __aenter__(self) -> "A2AAgent":
         """Async context manager entry."""

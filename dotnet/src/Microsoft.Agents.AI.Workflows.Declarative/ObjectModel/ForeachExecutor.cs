@@ -68,11 +68,11 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
         {
             FormulaValue value = this._values[this._index];
 
-            await context.QueueStateUpdateAsync(Throw.IfNull(this.Model.Value), value).ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(Throw.IfNull(this.Model.Value), value, cancellationToken).ConfigureAwait(false);
 
             if (this.Model.Index is not null)
             {
-                await context.QueueStateUpdateAsync(this.Model.Index.Path, FormulaValue.New(this._index)).ConfigureAwait(false);
+                await context.QueueStateUpdateAsync(this.Model.Index.Path, FormulaValue.New(this._index), cancellationToken).ConfigureAwait(false);
             }
 
             this._index++;
@@ -83,15 +83,15 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
     {
         try
         {
-            await context.QueueStateResetAsync(Throw.IfNull(this.Model.Value)).ConfigureAwait(false);
+            await context.QueueStateResetAsync(Throw.IfNull(this.Model.Value), cancellationToken).ConfigureAwait(false);
             if (this.Model.Index is not null)
             {
-                await context.QueueStateResetAsync(this.Model.Index).ConfigureAwait(false);
+                await context.QueueStateResetAsync(this.Model.Index, cancellationToken).ConfigureAwait(false);
             }
         }
         finally
         {
-            await context.RaiseCompletionEventAsync(this.Model).ConfigureAwait(false);
+            await context.RaiseCompletionEventAsync(this.Model, cancellationToken).ConfigureAwait(false);
         }
     }
 }

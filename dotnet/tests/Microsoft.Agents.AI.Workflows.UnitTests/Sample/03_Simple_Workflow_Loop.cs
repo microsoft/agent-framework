@@ -73,12 +73,12 @@ internal sealed class GuessNumberExecutor : ReflectingExecutor<GuessNumberExecut
     private int NextGuess => (this.LowerBound + this.UpperBound) / 2;
 
     private int _currGuess = -1;
-    public async ValueTask<int> HandleAsync(NumberSignal message, IWorkflowContext context)
+    public async ValueTask<int> HandleAsync(NumberSignal message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         switch (message)
         {
             case NumberSignal.Matched:
-                await context.YieldOutputAsync($"Guessed the number: {this._currGuess}")
+                await context.YieldOutputAsync($"Guessed the number: {this._currGuess}", cancellationToken)
                              .ConfigureAwait(false);
                 break;
 
@@ -106,7 +106,7 @@ internal sealed class JudgeExecutor : ReflectingExecutor<JudgeExecutor>, IMessag
         this._targetNumber = targetNumber;
     }
 
-    public async ValueTask<NumberSignal> HandleAsync(int message, IWorkflowContext context)
+    public async ValueTask<NumberSignal> HandleAsync(int message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         this.Tries = this.Tries is int tries ? tries + 1 : 1;
 
@@ -118,12 +118,12 @@ internal sealed class JudgeExecutor : ReflectingExecutor<JudgeExecutor>, IMessag
 
     protected internal override ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        return context.QueueStateUpdateAsync("TryCount", this.Tries);
+        return context.QueueStateUpdateAsync("TryCount", this.Tries, cancellationToken: cancellationToken);
     }
 
     protected internal override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        this.Tries = await context.ReadStateAsync<int?>("TryCount").ConfigureAwait(false) ?? 0;
+        this.Tries = await context.ReadStateAsync<int?>("TryCount", cancellationToken: cancellationToken).ConfigureAwait(false) ?? 0;
     }
 
     public ValueTask ResetAsync()

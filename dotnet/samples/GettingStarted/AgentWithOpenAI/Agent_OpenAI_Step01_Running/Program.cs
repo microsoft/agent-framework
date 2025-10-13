@@ -10,12 +10,9 @@ using OpenAI.Chat;
 var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
 var model = Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o-mini";
 
-const string JokerName = "Joker";
-const string JokerInstructions = "You are good at telling jokes.";
-
 AIAgent agent = new OpenAIClient(apiKey)
     .GetChatClient(model)
-    .CreateAIAgent(JokerInstructions, JokerName);
+    .CreateAIAgent(instructions: "You are good at telling jokes.", name: "Joker");
 
 UserChatMessage chatMessage = new("Tell me a joke about a pirate.");
 

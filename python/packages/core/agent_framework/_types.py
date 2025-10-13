@@ -13,14 +13,14 @@ from collections.abc import (
     Sequence,
 )
 from copy import deepcopy
-from typing import Any, ClassVar, Literal, TypeVar, overload
+from typing import Any, ClassVar, Literal, TypeVar, cast, overload
 
 from pydantic import BaseModel, ValidationError
 
 from ._logging import get_logger
 from ._serialization import SerializationMixin
 from ._tools import ToolProtocol, ai_function
-from .exceptions import AdditionItemMismatch
+from .exceptions import AdditionItemMismatch, ContentError
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -96,7 +96,10 @@ def _parse_content(content_data: MutableMapping[str, Any]) -> "Contents":
         content_data: Content data (dict)
 
     Returns:
-        Content object or raises ValidationError if parsing fails
+        Content object
+
+    Raises:
+        ContentError if parsing fails
     """
     content_type = str(content_data.get("type"))
     match content_type:
@@ -125,7 +128,7 @@ def _parse_content(content_data: MutableMapping[str, Any]) -> "Contents":
         case "text_reasoning":
             return TextReasoningContent.from_dict(content_data)
         case _:
-            raise ValidationError([f"Unknown content type '{content_type}'"], model=Contents)  # type: ignore
+            raise ContentError(f"Unknown content type '{content_type}'")
 
 
 def _parse_content_list(contents_data: Sequence[Any]) -> list["Contents"]:
@@ -143,8 +146,8 @@ def _parse_content_list(contents_data: Sequence[Any]) -> list["Contents"]:
             try:
                 content = _parse_content(content_data)
                 contents.append(content)
-            except ValidationError as ve:
-                logger.warning(f"Skipping unknown content type or invalid content: {ve}")
+            except ContentError as exc:
+                logger.warning(f"Skipping unknown content type or invalid content: {exc}")
         else:
             # If it's already a content object, keep it as is
             contents.append(content_data)
@@ -2098,8 +2101,8 @@ def _process_update(
             try:
                 cont = _parse_content(content)
                 message.contents.append(cont)
-            except ValidationError as ve:
-                logger.warning(f"Skipping unknown content type or invalid content: {ve}")
+            except ContentError as exc:
+                logger.warning(f"Skipping unknown content type or invalid content: {exc}")
         else:
             message.contents.append(content)
     # Incorporate the update's properties into the response.
@@ -2816,12 +2819,12 @@ class AgentRunResponseUpdate(SerializationMixin):
             kwargs: will be combined with additional_properties if provided.
 
         """
-        contents = [] if contents is None else _parse_content_list(contents)
+        parsed_contents: list[Contents] = [] if contents is None else _parse_content_list(contents)
 
         if text is not None:
             if isinstance(text, str):
                 text = TextContent(text=text)
-            contents.append(text)
+            parsed_contents.append(text)
 
         # Convert role from dict if needed (for SerializationMixin support)
         if isinstance(role, MutableMapping):
@@ -2829,7 +2832,7 @@ class AgentRunResponseUpdate(SerializationMixin):
         elif isinstance(role, str):
             role = Role(value=role)
 
-        self.contents = contents
+        self.contents = parsed_contents
         self.role = role
         self.author_name = author_name
         self.response_id = response_id
@@ -3011,11 +3014,11 @@ class ChatOptions(SerializationMixin):
         top_p: float | None = None,
         user: str | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
+        **kwargs: Any,
     ):
         """Initialize ChatOptions.
 
         Keyword Args:
-            additional_properties: Provider-specific additional properties.
             model_id: The AI model ID to use.
             allow_multiple_tool_calls: Whether to allow multiple tool calls.
             conversation_id: The conversation ID.
@@ -3034,6 +3037,8 @@ class ChatOptions(SerializationMixin):
             tools: List of available tools.
             top_p: The top-p value (must be between 0.0 and 1.0).
             user: The user ID.
+            additional_properties: Provider-specific additional properties, can also be passed as kwargs.
+            **kwargs: Additional properties to include in additional_properties.
         """
         # Validate numeric constraints and convert types as needed
         if frequency_penalty is not None:
@@ -3055,7 +3060,12 @@ class ChatOptions(SerializationMixin):
         if max_tokens is not None and max_tokens <= 0:
             raise ValueError("max_tokens must be greater than 0")
 
-        self.additional_properties = additional_properties or {}
+        if additional_properties is None:
+            additional_properties = {}
+        if kwargs:
+            additional_properties.update(kwargs)
+
+        self.additional_properties = cast(dict[str, Any], additional_properties)
         self.model_id = model_id
         self.allow_multiple_tool_calls = allow_multiple_tool_calls
         self.conversation_id = conversation_id
@@ -3128,47 +3138,10 @@ class ChatOptions(SerializationMixin):
                 case "none":
                     return ToolMode.NONE
                 case _:
-                    raise ValidationError(f"Invalid tool choice: {tool_choice}")
+                    raise ContentError(f"Invalid tool choice: {tool_choice}")
         if isinstance(tool_choice, (dict, Mapping)):
             return ToolMode.from_dict(tool_choice)  # type: ignore
         return tool_choice
-
-    def to_provider_settings(self, *, by_alias: bool = True, exclude: set[str] | None = None) -> dict[str, Any]:
-        """Convert the ChatOptions to a dictionary suitable for provider requests.
-
-        Keyword Args:
-            by_alias: Use alias names for fields if True.
-            exclude: Additional keys to exclude from the output.
-
-        Returns:
-            Dictionary of settings for provider.
-        """
-        default_exclude = {"additional_properties", "type"}  # 'type' is for serialization, not API calls
-        # No tool choice if no tools are defined
-        if self.tools is None or len(self.tools) == 0:
-            default_exclude.add("tool_choice")
-        # No metadata and logit bias if they are empty
-        # Prevents 400 error
-        if not self.logit_bias:
-            default_exclude.add("logit_bias")
-        if not self.metadata:
-            default_exclude.add("metadata")
-
-        merged_exclude = default_exclude if exclude is None else default_exclude | set(exclude)
-
-        settings = self.to_dict(exclude_none=True, exclude=merged_exclude)
-        if by_alias and self.model_id is not None:
-            settings["model"] = settings.pop("model_id", None)
-
-        # Serialize tool_choice to its string representation for provider settings
-        if "tool_choice" in settings and isinstance(self.tool_choice, ToolMode):
-            settings["tool_choice"] = self.tool_choice.serialize_model()
-
-        settings = {k: v for k, v in settings.items() if v is not None}
-        settings.update(self.additional_properties)
-        for key in merged_exclude:
-            settings.pop(key, None)
-        return settings
 
     def __and__(self, other: object) -> "ChatOptions":
         """Combines two ChatOptions instances.
@@ -3189,14 +3162,13 @@ class ChatOptions(SerializationMixin):
         combined.tools = list(self.tools) if self.tools else None
         combined.logit_bias = dict(self.logit_bias) if self.logit_bias else None
         combined.metadata = dict(self.metadata) if self.metadata else None
-        combined.additional_properties = dict(self.additional_properties)
         combined.response_format = response_format
 
         # Apply scalar and mapping updates from the other options
         updated_data = other.to_dict(exclude_none=True, exclude={"tools"})
         logit_bias = updated_data.pop("logit_bias", {})
         metadata = updated_data.pop("metadata", {})
-        additional_properties = updated_data.pop("additional_properties", {})
+        additional_properties: dict[str, Any] = updated_data.pop("additional_properties", {})
 
         for key, value in updated_data.items():
             setattr(combined, key, value)
@@ -3205,10 +3177,18 @@ class ChatOptions(SerializationMixin):
         # Preserve response_format from other if it exists, otherwise keep self's
         if other.response_format is not None:
             combined.response_format = other.response_format
-        combined.instructions = "\n".join([combined.instructions or "", other.instructions or ""])
-        combined.logit_bias = {**(combined.logit_bias or {}), **logit_bias}
-        combined.metadata = {**(combined.metadata or {}), **metadata}
-        combined.additional_properties = {**(combined.additional_properties or {}), **additional_properties}
+        if other.instructions:
+            combined.instructions = "\n".join([combined.instructions or "", other.instructions or ""])
+
+        combined.logit_bias = (
+            {**(combined.logit_bias or {}), **logit_bias} if logit_bias or combined.logit_bias else None
+        )
+        combined.metadata = {**(combined.metadata or {}), **metadata} if metadata or combined.metadata else None
+        if combined.additional_properties and additional_properties:
+            combined.additional_properties.update(additional_properties)
+        else:
+            if additional_properties:
+                combined.additional_properties = additional_properties
         if other_tools:
             if combined.tools is None:
                 combined.tools = list(other_tools)

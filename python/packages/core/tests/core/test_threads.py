@@ -224,11 +224,15 @@ class TestAgentThread:
         """Test _deserialize with existing message store."""
         store = MockChatMessageStore()
         thread = AgentThread(message_store=store)
-        serialized_data: dict[str, Any] = {"service_thread_id": None, "chat_message_store_state": {"messages": []}}
+        serialized_data: dict[str, Any] = {
+            "service_thread_id": None,
+            "chat_message_store_state": {"messages": [ChatMessage(role="user", text="test")]},
+        }
 
         await thread.update_from_thread_state(serialized_data)
 
-        assert store._deserialize_calls == 1  # pyright: ignore[reportPrivateUsage]
+        assert store._messages
+        assert store._messages[0].text == "test"
 
     async def test_serialize_with_service_thread_id(self) -> None:
         """Test serialize with service_thread_id."""
@@ -267,6 +271,23 @@ class TestAgentThread:
         await thread.serialize(custom_param="test_value")
 
         assert store._serialize_calls == 1  # pyright: ignore[reportPrivateUsage]
+
+    async def test_serialize_round_trip_messages(self, sample_messages: list[ChatMessage]) -> None:
+        """Test a roundtrip of the serialization."""
+        store = ChatMessageStore(sample_messages)
+        thread = AgentThread(message_store=store)
+        new_thread = await AgentThread.deserialize(await thread.serialize())
+        assert new_thread.message_store is not None
+        new_messages = await new_thread.message_store.list_messages()
+        assert len(new_messages) == len(sample_messages)
+        assert {new.text for new in new_messages} == {orig.text for orig in sample_messages}
+
+    async def test_serialize_round_trip_thread_id(self) -> None:
+        """Test a roundtrip of the serialization."""
+        thread = AgentThread(service_thread_id="test-1234")
+        new_thread = await AgentThread.deserialize(await thread.serialize())
+        assert new_thread.message_store is None
+        assert new_thread.service_thread_id == "test-1234"
 
 
 class TestChatMessageList:
@@ -377,7 +398,7 @@ class TestThreadState:
     def test_init_with_chat_message_store_state(self) -> None:
         """Test AgentThreadState initialization with chat_message_store_state."""
         store_data: dict[str, Any] = {"messages": []}
-        state = AgentThreadState.model_validate({"chat_message_store_state": store_data})
+        state = AgentThreadState.from_dict({"chat_message_store_state": store_data})
 
         assert state.service_thread_id is None
         assert state.chat_message_store_state.messages == []
@@ -385,9 +406,7 @@ class TestThreadState:
     def test_init_with_both(self) -> None:
         """Test AgentThreadState initialization with both parameters."""
         store_data: dict[str, Any] = {"messages": []}
-        with pytest.raises(
-            AgentThreadException, match="Only one of service_thread_id or chat_message_store_state may be set"
-        ):
+        with pytest.raises(AgentThreadException):
             AgentThreadState(service_thread_id="test-conv-123", chat_message_store_state=store_data)
 
     def test_init_defaults(self) -> None:

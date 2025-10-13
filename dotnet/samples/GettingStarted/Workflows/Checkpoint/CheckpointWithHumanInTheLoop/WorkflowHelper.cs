@@ -69,21 +69,21 @@ internal sealed class JudgeExecutor() : ReflectingExecutor<JudgeExecutor>("Judge
         this._targetNumber = targetNumber;
     }
 
-    public async ValueTask HandleAsync(int message, IWorkflowContext context)
+    public async ValueTask HandleAsync(int message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         this._tries++;
         if (message == this._targetNumber)
         {
-            await context.YieldOutputAsync($"{this._targetNumber} found in {this._tries} tries!")
+            await context.YieldOutputAsync($"{this._targetNumber} found in {this._tries} tries!", cancellationToken)
                          .ConfigureAwait(false);
         }
         else if (message < this._targetNumber)
         {
-            await context.SendMessageAsync(new SignalWithNumber(NumberSignal.Below, message)).ConfigureAwait(false);
+            await context.SendMessageAsync(new SignalWithNumber(NumberSignal.Below, message), cancellationToken: cancellationToken).ConfigureAwait(false);
         }
         else
         {
-            await context.SendMessageAsync(new SignalWithNumber(NumberSignal.Above, message)).ConfigureAwait(false);
+            await context.SendMessageAsync(new SignalWithNumber(NumberSignal.Above, message), cancellationToken: cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -92,12 +92,12 @@ internal sealed class JudgeExecutor() : ReflectingExecutor<JudgeExecutor>("Judge
     /// This must be overridden to save any state that is needed to resume the executor.
     /// </summary>
     protected override ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default) =>
-        context.QueueStateUpdateAsync(StateKey, this._tries);
+        context.QueueStateUpdateAsync(StateKey, this._tries, cancellationToken: cancellationToken);
 
     /// <summary>
     /// Restore the state of the executor from a checkpoint.
     /// This must be overridden to restore any state that was saved during checkpointing.
     /// </summary>
     protected override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default) =>
-        this._tries = await context.ReadStateAsync<int>(StateKey).ConfigureAwait(false);
+        this._tries = await context.ReadStateAsync<int>(StateKey, cancellationToken: cancellationToken).ConfigureAwait(false);
 }

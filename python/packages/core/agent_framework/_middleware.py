@@ -221,7 +221,7 @@ class ChatContext(SerializationMixin):
                 async def process(self, context: ChatContext, next):
                     print(f"Chat client: {context.chat_client.__class__.__name__}")
                     print(f"Messages: {len(context.messages)}")
-                    print(f"Model: {context.chat_options.model}")
+                    print(f"Model: {context.chat_options.model_id}")
 
                     # Store metadata
                     context.metadata["input_tokens"] = self.count_tokens(context.messages)

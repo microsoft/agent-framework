@@ -3,7 +3,7 @@ import type { Node, Edge } from "@xyflow/react";
 import type {
   ExecutorNodeData,
   ExecutorState,
-} from "@/components/workflow/executor-node";
+} from "@/components/features/workflow/executor-node";
 import type {
   ExtendedResponseStreamEvent,
   ResponseWorkflowEventComplete,
@@ -309,9 +309,11 @@ export function applyDagreLayout(
  * Process workflow events and extract node updates
  */
 export function processWorkflowEvents(
-  events: ExtendedResponseStreamEvent[]
+  events: ExtendedResponseStreamEvent[],
+  startExecutorId?: string
 ): Record<string, NodeUpdate> {
   const nodeUpdates: Record<string, NodeUpdate> = {};
+  let hasWorkflowStarted = false;
 
   events.forEach((event) => {
     if (
@@ -343,6 +345,9 @@ export function processWorkflowEvents(
         state = "cancelled";
       } else if (eventType === "WorkflowCompletedEvent" || eventType === "WorkflowOutputEvent") {
         state = "completed";
+      } else if (eventType === "WorkflowStartedEvent") {
+        // Mark that workflow has started - we'll set start node to running
+        hasWorkflowStarted = true;
       }
 
       // Update the node state (keep most recent update per executor)
@@ -357,6 +362,18 @@ export function processWorkflowEvents(
       }
     }
   });
+
+  // If workflow has started and we have a start executor, set it to running
+  // (unless it already has a specific state from an ExecutorInvokedEvent)
+  if (hasWorkflowStarted && startExecutorId && !nodeUpdates[startExecutorId]) {
+    nodeUpdates[startExecutorId] = {
+      nodeId: startExecutorId,
+      state: "running",
+      data: undefined,
+      error: undefined,
+      timestamp: new Date().toISOString(),
+    };
+  }
 
   return nodeUpdates;
 }

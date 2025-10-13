@@ -4,12 +4,21 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Azure.AI.Agents.Persistent;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 
 internal static class AgentProviderExtensions
 {
+    private static readonly HashSet<Azure.AI.Agents.Persistent.RunStatus> s_failureStatus =
+        [
+            Azure.AI.Agents.Persistent.RunStatus.Failed,
+            Azure.AI.Agents.Persistent.RunStatus.Cancelled,
+            Azure.AI.Agents.Persistent.RunStatus.Cancelling,
+            Azure.AI.Agents.Persistent.RunStatus.Expired,
+        ];
+
     public static async ValueTask<AgentRunResponse> InvokeAgentAsync(
         this WorkflowAgentProvider agentProvider,
         string executorId,
@@ -51,9 +60,16 @@ internal static class AgentProviderExtensions
 
             updates.Add(update);
 
+            if (update.RawRepresentation is ChatResponseUpdate chatUpdate &&
+                chatUpdate.RawRepresentation is RunUpdate runUpdate &&
+                s_failureStatus.Contains(runUpdate.Value.Status))
+            {
+                throw new DeclarativeActionException($"Unexpected failure invoking agent, run {runUpdate.Value.Status}: {agent.Name ?? agent.Id} [{runUpdate.Value.Id}/{conversationId}]");
+            }
+
             if (autoSend)
             {
-                await context.AddEventAsync(new AgentRunUpdateEvent(executorId, update)).ConfigureAwait(false);
+                await context.AddEventAsync(new AgentRunUpdateEvent(executorId, update), cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -61,7 +77,7 @@ internal static class AgentProviderExtensions
 
         if (autoSend)
         {
-            await context.AddEventAsync(new AgentRunResponseEvent(executorId, response)).ConfigureAwait(false);
+            await context.AddEventAsync(new AgentRunResponseEvent(executorId, response), cancellationToken).ConfigureAwait(false);
         }
 
         if (autoSend && !isWorkflowConversation && workflowConversationId is not null)
@@ -87,7 +103,7 @@ internal static class AgentProviderExtensions
             {
                 conversationId = assignValue;
 
-                await context.QueueConversationUpdateAsync(conversationId).ConfigureAwait(false);
+                await context.QueueConversationUpdateAsync(conversationId, cancellationToken).ConfigureAwait(false);
             }
         }
     }

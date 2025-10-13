@@ -31,8 +31,8 @@ public sealed class StreamingRun : IAsyncDisposable
     /// <summary>
     /// Gets the current execution status of the workflow run.
     /// </summary>
-    public ValueTask<RunStatus> GetStatusAsync(CancellationToken cancellation = default)
-        => this._runHandle.GetStatusAsync(cancellation);
+    public ValueTask<RunStatus> GetStatusAsync(CancellationToken cancellationToken = default)
+        => this._runHandle.GetStatusAsync(cancellationToken);
 
     /// <summary>
     /// Asynchronously sends the specified response to the external system and signals completion of the current
@@ -67,7 +67,7 @@ public sealed class StreamingRun : IAsyncDisposable
     /// progresses. The stream completes when a <see cref="RequestHaltEvent"/> is encountered. Events are
     /// delivered in the order they are raised.</remarks>
     /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel the streaming operation. If cancellation is
-    /// requested, the stream will end and no further events will be yielded.</param>
+    /// requested, the stream will end and no further events will be yielded, but this will not cancel the workflow execution.</param>
     /// <returns>An asynchronous stream of <see cref="WorkflowEvent"/> objects representing significant workflow state changes.
     /// The stream ends when the workflow completes or when cancellation is requested.</returns>
     public IAsyncEnumerable<WorkflowEvent> WatchStreamAsync(

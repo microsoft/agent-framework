@@ -56,7 +56,7 @@ internal static class Step8EntryPoint
         return results;
     }
 
-    private static ValueTask ProcessTextAsync(TextProcessingRequest request, IWorkflowContext context, CancellationToken cancellation = default)
+    private static ValueTask ProcessTextAsync(TextProcessingRequest request, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         int wordCount = 0;
         int charCount = 0;
@@ -67,7 +67,7 @@ internal static class Step8EntryPoint
             charCount = request.Text.Length;
         }
 
-        return context.YieldOutputAsync(new TextProcessingResult(request.TaskId, request.Text, wordCount, charCount));
+        return context.YieldOutputAsync(new TextProcessingResult(request.TaskId, request.Text, wordCount, charCount), cancellationToken);
     }
 
     private sealed class TextProcessingOrchestrator() : Executor("TextOrchestrator")

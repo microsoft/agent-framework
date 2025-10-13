@@ -140,3 +140,9 @@ class MiddlewareException(AgentFrameworkException):
     """An error occurred during middleware execution."""
 
     pass
+
+
+class ContentError(AgentFrameworkException):
+    """An error occurred while processing content."""
+
+    pass

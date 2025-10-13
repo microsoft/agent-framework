@@ -11,6 +11,133 @@ from typing import Any, get_args, get_origin
 logger = logging.getLogger(__name__)
 
 # ============================================================================
+# Agent Metadata Extraction
+# ============================================================================
+
+
+def extract_agent_metadata(entity_object: Any) -> dict[str, Any]:
+    """Extract agent-specific metadata from an entity object.
+
+    Args:
+        entity_object: Agent Framework agent object
+
+    Returns:
+        Dictionary with agent metadata: instructions, model, chat_client_type,
+        context_providers, and middleware
+    """
+    metadata = {
+        "instructions": None,
+        "model": None,
+        "chat_client_type": None,
+        "context_providers": None,
+        "middleware": None,
+    }
+
+    # Try to get instructions
+    if hasattr(entity_object, "chat_options") and hasattr(entity_object.chat_options, "instructions"):
+        metadata["instructions"] = entity_object.chat_options.instructions
+
+    # Try to get model - check both chat_options and chat_client
+    if (
+        hasattr(entity_object, "chat_options")
+        and hasattr(entity_object.chat_options, "model_id")
+        and entity_object.chat_options.model_id
+    ):
+        metadata["model"] = entity_object.chat_options.model_id
+    elif hasattr(entity_object, "chat_client") and hasattr(entity_object.chat_client, "model_id"):
+        metadata["model"] = entity_object.chat_client.model_id
+
+    # Try to get chat client type
+    if hasattr(entity_object, "chat_client"):
+        metadata["chat_client_type"] = entity_object.chat_client.__class__.__name__
+
+    # Try to get context providers
+    if (
+        hasattr(entity_object, "context_provider")
+        and entity_object.context_provider
+        and hasattr(entity_object.context_provider, "__class__")
+    ):
+        metadata["context_providers"] = [entity_object.context_provider.__class__.__name__]  # type: ignore
+
+    # Try to get middleware
+    if hasattr(entity_object, "middleware") and entity_object.middleware:
+        middleware_list: list[str] = []
+        for m in entity_object.middleware:
+            # Try multiple ways to get a good name for middleware
+            if hasattr(m, "__name__"):  # Function or callable
+                middleware_list.append(m.__name__)
+            elif hasattr(m, "__class__"):  # Class instance
+                middleware_list.append(m.__class__.__name__)
+            else:
+                middleware_list.append(str(m))
+        metadata["middleware"] = middleware_list  # type: ignore
+
+    return metadata
+
+
+# ============================================================================
+# Workflow Input Type Utilities
+# ============================================================================
+
+
+def extract_executor_message_types(executor: Any) -> list[Any]:
+    """Extract declared input types for the given executor.
+
+    Args:
+        executor: Workflow executor object
+
+    Returns:
+        List of message types that the executor accepts
+    """
+    message_types: list[Any] = []
+
+    try:
+        input_types = getattr(executor, "input_types", None)
+    except Exception as exc:  # pragma: no cover - defensive logging path
+        logger.debug(f"Failed to access executor input_types: {exc}")
+    else:
+        if input_types:
+            message_types = list(input_types)
+
+    if not message_types and hasattr(executor, "_handlers"):
+        try:
+            handlers = executor._handlers
+            if isinstance(handlers, dict):
+                message_types = list(handlers.keys())
+        except Exception as exc:  # pragma: no cover - defensive logging path
+            logger.debug(f"Failed to read executor handlers: {exc}")
+
+    return message_types
+
+
+def select_primary_input_type(message_types: list[Any]) -> Any | None:
+    """Choose the most user-friendly input type for workflow inputs.
+
+    Prefers str and dict types for better user experience.
+
+    Args:
+        message_types: List of possible message types
+
+    Returns:
+        Selected primary input type, or None if list is empty
+    """
+    if not message_types:
+        return None
+
+    preferred = (str, dict)
+
+    for candidate in preferred:
+        for message_type in message_types:
+            if message_type is candidate:
+                return candidate
+            origin = get_origin(message_type)
+            if origin is candidate:
+                return candidate
+
+    return message_types[0]
+
+
+# ============================================================================
 # Type System Utilities
 # ============================================================================
 

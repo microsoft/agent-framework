@@ -2,14 +2,11 @@
 
 import asyncio
 import os
-from random import randint
-from typing import Annotated
 
 from agent_framework import ChatAgent
 from agent_framework.azure import AzureAIAgentClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
-from pydantic import Field
 
 """
 Azure AI Agent with Existing Agent Example
@@ -17,14 +14,6 @@ Azure AI Agent with Existing Agent Example
 This sample demonstrates working with pre-existing Azure AI Agents by providing
 agent IDs, showing agent reuse patterns for production scenarios.
 """
-
-
-def get_weather(
-    location: Annotated[str, Field(description="The location to get the weather for.")],
-) -> str:
-    """Get the weather for a given location."""
-    conditions = ["sunny", "cloudy", "rainy", "stormy"]
-    return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
 
 
 async def main() -> None:
@@ -35,24 +24,33 @@ async def main() -> None:
         AzureCliCredential() as credential,
         AIProjectClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as client,
     ):
-        # Create an agent that will persist
-        created_agent = await client.agents.create_agent(
-            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"], name="WeatherAgent"
+        azure_ai_agent = await client.agents.create_agent(
+            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            # Create remote agent with default instructions
+            # These instructions will persist on created agent for every run.
+            instructions="End each response with [END].",
         )
+
+        chat_client = AzureAIAgentClient(project_client=client, agent_id=azure_ai_agent.id)
 
         try:
             async with ChatAgent(
-                # passing in the client is optional here, so if you take the agent_id from the portal
-                # you can use it directly without the two lines above.
-                chat_client=AzureAIAgentClient(project_client=client, agent_id=created_agent.id),
-                instructions="You are a helpful weather agent.",
-                tools=get_weather,
+                chat_client=chat_client,
+                # Instructions here are applicable only to this ChatAgent instance
+                # These instructions will be combined with instructions on existing remote agent.
+                # The final instructions during the execution will look like:
+                # "'End each response with [END]. Respond with 'Hello World' only'"
+                instructions="Respond with 'Hello World' only",
             ) as agent:
-                result = await agent.run("What's the weather like in Tokyo?")
-                print(f"Result: {result}\n")
+                query = "How are you?"
+                print(f"User: {query}")
+                result = await agent.run(query)
+                # Based on local and remote instructions, the result will be
+                # 'Hello World [END]'.
+                print(f"Agent: {result}\n")
         finally:
             # Clean up the agent manually
-            await client.agents.delete_agent(created_agent.id)
+            await client.agents.delete_agent(azure_ai_agent.id)
 
 
 if __name__ == "__main__":

@@ -43,9 +43,7 @@ async def main() -> None:
     ):
         agent = chat_client.create_agent(
             name="CodingAgent",
-            instructions=(
-                "You are a helpful assistant that can write and execute Python code to solve problems."
-            ),
+            instructions=("You are a helpful assistant that can write and execute Python code to solve problems."),
             tools=HostedCodeInterpreterTool(),
         )
         query = "Generate the factorial of 100 using python code, show the code and execute it."
