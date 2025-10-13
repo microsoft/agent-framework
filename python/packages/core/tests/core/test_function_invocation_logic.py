@@ -252,15 +252,17 @@ async def test_function_invocation_scenarios(
     # Verify based on scenario (for no thread and local thread cases)
     if num_functions == 1:
         if approval_required:
-            # Single function with approval: call + approval request
+            # Single function with approval: assistant message contains both call + approval request
             if not streaming:
-                assert len(messages) == 2
+                assert len(messages) == 1
+                # Assistant message should have FunctionCallContent + FunctionApprovalRequestContent
+                assert len(messages[0].contents) == 2
                 assert isinstance(messages[0].contents[0], FunctionCallContent)
-                assert isinstance(messages[1].contents[0], FunctionApprovalRequestContent)
-                assert messages[1].contents[0].function_call.name == "approval_func"
+                assert isinstance(messages[0].contents[1], FunctionApprovalRequestContent)
+                assert messages[0].contents[1].function_call.name == "approval_func"
                 assert exec_counter == 0  # Function not executed yet
             else:
-                # Streaming: 2 function call chunks + 1 approval request
+                # Streaming: 2 function call chunks + 1 approval request update (same assistant message)
                 assert len(messages) == 3
                 assert isinstance(messages[0].contents[0], FunctionCallContent)
                 assert isinstance(messages[1].contents[0], FunctionCallContent)
@@ -288,15 +290,16 @@ async def test_function_invocation_scenarios(
     else:  # num_functions == 2
         # Two functions with mixed approval
         if not streaming:
-            # Mixed: first message has both calls, second has approval requests for both
+            # Mixed: assistant message has both calls + approval requests (4 items total)
             # (because when one requires approval, all are batched for approval)
-            assert len(messages) == 2
-            assert len(messages[0].contents) == 2  # Both function calls
+            assert len(messages) == 1
+            # Should have: 2 FunctionCallContent + 2 FunctionApprovalRequestContent
+            assert len(messages[0].contents) == 4
             assert isinstance(messages[0].contents[0], FunctionCallContent)
             assert isinstance(messages[0].contents[1], FunctionCallContent)
             # Both should result in approval requests
-            assert len(messages[1].contents) == 2
-            assert all(isinstance(c, FunctionApprovalRequestContent) for c in messages[1].contents)
+            approval_requests = [c for c in messages[0].contents if isinstance(c, FunctionApprovalRequestContent)]
+            assert len(approval_requests) == 2
             assert exec_counter == 0  # Neither function executed yet
         else:
             # Streaming: 2 function call updates + 1 approval request with 2 contents
@@ -344,13 +347,16 @@ async def test_rejected_approval(chat_client_base: ChatClientProtocol):
 
     # Get the response with approval requests
     response = await chat_client_base.get_response("hello", tool_choice="auto", tools=[func_approved, func_rejected])
-    assert len(response.messages) == 2
-    assert len(response.messages[1].contents) == 2
-    assert all(isinstance(c, FunctionApprovalRequestContent) for c in response.messages[1].contents)
+    # Approval requests are now added to the assistant message, not a separate message
+    assert len(response.messages) == 1
+    # Assistant message should have: 2 FunctionCallContent + 2 FunctionApprovalRequestContent
+    assert len(response.messages[0].contents) == 4
+    approval_requests = [c for c in response.messages[0].contents if isinstance(c, FunctionApprovalRequestContent)]
+    assert len(approval_requests) == 2
 
     # Approve one and reject the other
-    approval_req_1 = response.messages[1].contents[0]
-    approval_req_2 = response.messages[1].contents[1]
+    approval_req_1 = approval_requests[0]
+    approval_req_2 = approval_requests[1]
 
     approved_response = FunctionApprovalResponseContent(
         id=approval_req_1.id,
@@ -390,6 +396,184 @@ async def test_rejected_approval(chat_client_base: ChatClientProtocol):
     assert rejected_result is not None, "Should have found result for rejected function"
     assert rejected_result.result == "Error: Tool call invocation was rejected by user."
     assert exec_counter_rejected == 0
+
+    # Verify that messages with FunctionResultContent have role="tool"
+    # This ensures the message format is correct for OpenAI's API
+    for msg in all_messages:
+        for content in msg.contents:
+            if isinstance(content, FunctionResultContent):
+                assert msg.role == Role.TOOL, (
+                    f"Message with FunctionResultContent must have role='tool', got '{msg.role}'"
+                )
+
+
+async def test_approval_requests_in_assistant_message(chat_client_base: ChatClientProtocol):
+    """Approval requests should be added to the assistant message that contains the function call."""
+    exec_counter = 0
+
+    @ai_function(name="test_func", approval_mode="always_require")
+    def func_with_approval(arg1: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Result {arg1}"
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=ChatMessage(
+                role="assistant",
+                contents=[
+                    FunctionCallContent(call_id="1", name="test_func", arguments='{"arg1": "value1"}'),
+                ],
+            )
+        ),
+    ]
+
+    response = await chat_client_base.get_response("hello", tool_choice="auto", tools=[func_with_approval])
+
+    # Should have one assistant message containing both the call and approval request
+    assert len(response.messages) == 1
+    assert response.messages[0].role == Role.ASSISTANT
+    assert len(response.messages[0].contents) == 2
+    assert isinstance(response.messages[0].contents[0], FunctionCallContent)
+    assert isinstance(response.messages[0].contents[1], FunctionApprovalRequestContent)
+    assert exec_counter == 0
+
+
+async def test_persisted_approval_messages_replay_correctly(chat_client_base: ChatClientProtocol):
+    """Approval flow should work when messages are persisted and sent back (thread scenario)."""
+    from agent_framework import FunctionApprovalResponseContent
+
+    exec_counter = 0
+
+    @ai_function(name="test_func", approval_mode="always_require")
+    def func_with_approval(arg1: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Result {arg1}"
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=ChatMessage(
+                role="assistant",
+                contents=[
+                    FunctionCallContent(call_id="1", name="test_func", arguments='{"arg1": "value1"}'),
+                ],
+            )
+        ),
+        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+    ]
+
+    # Get approval request
+    response1 = await chat_client_base.get_response("hello", tool_choice="auto", tools=[func_with_approval])
+
+    # Store messages (like a thread would)
+    persisted_messages = [
+        ChatMessage(role="user", contents=[TextContent(text="hello")]),
+        *response1.messages,
+    ]
+
+    # Send approval
+    approval_req = [c for c in response1.messages[0].contents if isinstance(c, FunctionApprovalRequestContent)][0]
+    approval_response = FunctionApprovalResponseContent(
+        id=approval_req.id,
+        function_call=approval_req.function_call,
+        approved=True,
+    )
+    persisted_messages.append(ChatMessage(role="user", contents=[approval_response]))
+
+    # Continue with all persisted messages
+    response2 = await chat_client_base.get_response(persisted_messages, tool_choice="auto", tools=[func_with_approval])
+
+    # Should execute successfully
+    assert response2 is not None
+    assert exec_counter == 1
+    assert response2.messages[-1].text == "done"
+
+
+async def test_no_duplicate_function_calls_after_approval_processing(chat_client_base: ChatClientProtocol):
+    """Processing approval should not create duplicate function calls in messages."""
+    from agent_framework import FunctionApprovalResponseContent
+
+    @ai_function(name="test_func", approval_mode="always_require")
+    def func_with_approval(arg1: str) -> str:
+        return f"Result {arg1}"
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=ChatMessage(
+                role="assistant",
+                contents=[
+                    FunctionCallContent(call_id="1", name="test_func", arguments='{"arg1": "value1"}'),
+                ],
+            )
+        ),
+        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+    ]
+
+    response1 = await chat_client_base.get_response("hello", tool_choice="auto", tools=[func_with_approval])
+
+    approval_req = [c for c in response1.messages[0].contents if isinstance(c, FunctionApprovalRequestContent)][0]
+    approval_response = FunctionApprovalResponseContent(
+        id=approval_req.id,
+        function_call=approval_req.function_call,
+        approved=True,
+    )
+
+    all_messages = response1.messages + [ChatMessage(role="user", contents=[approval_response])]
+    await chat_client_base.get_response(all_messages, tool_choice="auto", tools=[func_with_approval])
+
+    # Count function calls with the same call_id
+    function_call_count = sum(
+        1
+        for msg in all_messages
+        for content in msg.contents
+        if isinstance(content, FunctionCallContent) and content.call_id == "1"
+    )
+
+    assert function_call_count == 1
+
+
+async def test_rejection_result_uses_function_call_id(chat_client_base: ChatClientProtocol):
+    """Rejection error result should use the function call's call_id, not the approval's id."""
+    from agent_framework import FunctionApprovalResponseContent
+
+    @ai_function(name="test_func", approval_mode="always_require")
+    def func_with_approval(arg1: str) -> str:
+        return f"Result {arg1}"
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=ChatMessage(
+                role="assistant",
+                contents=[
+                    FunctionCallContent(call_id="call_123", name="test_func", arguments='{"arg1": "value1"}'),
+                ],
+            )
+        ),
+        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+    ]
+
+    response1 = await chat_client_base.get_response("hello", tool_choice="auto", tools=[func_with_approval])
+
+    approval_req = [c for c in response1.messages[0].contents if isinstance(c, FunctionApprovalRequestContent)][0]
+    rejection_response = FunctionApprovalResponseContent(
+        id=approval_req.id,
+        function_call=approval_req.function_call,
+        approved=False,
+    )
+
+    all_messages = response1.messages + [ChatMessage(role="user", contents=[rejection_response])]
+    await chat_client_base.get_response(all_messages, tool_choice="auto", tools=[func_with_approval])
+
+    # Find the rejection result
+    rejection_result = next(
+        (content for msg in all_messages for content in msg.contents if isinstance(content, FunctionResultContent)),
+        None,
+    )
+
+    assert rejection_result is not None
+    assert rejection_result.call_id == "call_123"
+    assert "rejected" in rejection_result.result.lower()
 
 
 async def test_max_iterations_limit(chat_client_base: ChatClientProtocol):

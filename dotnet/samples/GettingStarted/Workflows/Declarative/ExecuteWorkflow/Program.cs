@@ -1,10 +1,14 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+// Uncomment this to enable JSON checkpointing to the local file system.
+#define CHECKPOINT_JSON
+
 using System.Diagnostics;
 using System.Reflection;
 using Azure.AI.Agents.Persistent;
 using Azure.Identity;
 using Microsoft.Agents.AI.Workflows;
+using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Declarative;
 using Microsoft.Agents.AI.Workflows.Declarative.Events;
 using Microsoft.Extensions.AI;
@@ -57,8 +61,15 @@ internal sealed class Program
         // Run the workflow, just like any other workflow
         string input = this.GetWorkflowInput();
 
-        CheckpointManager checkpointManager = CheckpointManager.CreateInMemory();
+#if CHECKPOINT_JSON
+        // Use a file-system based JSON checkpoint store to persist checkpoints to disk.
+        DirectoryInfo checkpointFolder = Directory.CreateDirectory(Path.Combine(".", $"chk-{DateTime.Now:YYmmdd-hhMMss-ff}"));
+        CheckpointManager checkpointManager = CheckpointManager.CreateJson(new FileSystemJsonCheckpointStore(checkpointFolder));
         Checkpointed<StreamingRun> run = await InProcessExecution.StreamAsync(workflow, input, checkpointManager);
+#else
+        // Use an in-memory checkpoint store that will not persist checkpoints beyond the lifetime of the process.
+        CheckpointManager checkpointManager = CheckpointManager.CreateInMemory();
+#endif
 
         bool isComplete = false;
         InputResponse? response = null;
