@@ -209,7 +209,7 @@ def test_pending_requests_from_checkpoint_and_summary() -> None:
 
     summary = get_checkpoint_summary(checkpoint)
     assert summary.checkpoint_id == "cp-1"
-    assert summary.status == "awaiting human response"
+    assert summary.status == "awaiting request response"
     assert summary.pending_requests[0].request_id == "req-42"
 
     pending = summary.pending_requests
