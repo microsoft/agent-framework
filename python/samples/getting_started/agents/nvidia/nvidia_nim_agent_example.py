@@ -8,11 +8,11 @@ from typing import Annotated
 from nvidia_nim_chat_client import NVIDIANIMChatClient
 
 """
-NVIDIA NIM with OpenAI Chat Client Example
+NVIDIA NIM Agent Example
 
 This sample demonstrates using NVIDIA NIM (NVIDIA Inference Microservices) models 
-deployed on Azure AI Foundry through OpenAI Chat Client by configuring the base URL 
-to point to the Azure AI Foundry endpoint for OpenAI-compatible API access.
+deployed on Azure AI Foundry with the Agent Framework. It uses a custom chat client
+that handles NVIDIA NIM's specific message format requirements.
 
 ## Prerequisites - Deploy NVIDIA NIM on Azure AI Foundry
 
@@ -46,6 +46,24 @@ Set the following environment variables before running this example:
 - OPENAI_BASE_URL: Your Azure AI Foundry endpoint URL (e.g., 'https://<endpoint>.<region>.inference.ml.azure.com/v1')
 - OPENAI_API_KEY: Your Azure AI Foundry API key
 - OPENAI_CHAT_MODEL_ID: The NVIDIA NIM model to use (e.g., 'nvidia/llama-3.1-8b-instruct')
+
+## Running the Example
+
+After setting up your NVIDIA NIM deployment and environment variables:
+
+```bash
+# Set your environment variables
+export OPENAI_BASE_URL="https://your-endpoint.region.inference.ml.azure.com/v1"
+export OPENAI_API_KEY="your-api-key"
+export OPENAI_CHAT_MODEL_ID="nvidia/llama-3.1-8b-instruct"
+
+# Run the example
+python nvidia_nim_agent_example.py
+```
+
+The example will demonstrate:
+- Chat completion with NVIDIA NIM models
+- Basic conversation capabilities
 
 ## API Compatibility
 
@@ -83,9 +101,9 @@ def get_ai_insights(
     return insights[randint(0, len(insights) - 1)]
 
 
-async def non_streaming_example() -> None:
-    """Example of non-streaming response (get the complete result at once)."""
-    print("=== Non-streaming Response Example ===")
+async def first_example() -> None:
+    """First example response."""
+    print("=== Response ===")
 
     agent = NVIDIANIMChatClient(
         api_key=os.environ["OPENAI_API_KEY"],
@@ -93,19 +111,17 @@ async def non_streaming_example() -> None:
         model_id=os.environ["OPENAI_CHAT_MODEL_ID"],
     ).create_agent(
         name="NVIDIAAIAgent",
-        instructions="You are a helpful AI assistant powered by NVIDIA NIM models. You can provide weather information and AI insights.",
-        tools=[get_weather, get_ai_insights],
     )
 
-    query = "What's the weather like in Seattle and tell me about AI in healthcare?"
+    query = "Hello! Can you tell me about yourself and what you can help with?"
     print(f"User: {query}")
     result = await agent.run(query)
-    print(f"Result: {result}\n")
+    print(f"Agent: {result}\n")
 
 
-async def streaming_example() -> None:
-    """Example of streaming response (get results as they are generated)."""
-    print("=== Streaming Response Example ===")
+async def second_example() -> None:
+    """Second example response."""
+    print("=== Response ===")
 
     agent = NVIDIANIMChatClient(
         api_key=os.environ["OPENAI_API_KEY"],
@@ -113,26 +129,21 @@ async def streaming_example() -> None:
         model_id=os.environ["OPENAI_CHAT_MODEL_ID"],
     ).create_agent(
         name="NVIDIAAIAgent",
-        instructions="You are a helpful AI assistant powered by NVIDIA NIM models. You can provide weather information and AI insights.",
-        tools=[get_weather, get_ai_insights],
     )
 
-    query = "What's the weather like in Portland and give me insights about AI in autonomous vehicles?"
+    query = "Can you explain what artificial intelligence is and how it works?"
     print(f"User: {query}")
-    print("Agent: ", end="", flush=True)
-    async for chunk in agent.run_stream(query):
-        if chunk.text:
-            print(chunk.text, end="", flush=True)
-    print("\n")
+    result = await agent.run(query)
+    print(f"Agent: {result}\n")
 
 
 async def main() -> None:
-    print("=== NVIDIA NIM with OpenAI Chat Client Agent Example ===")
+    print("=== NVIDIA NIM Agent Example ===")
     print("This example demonstrates using NVIDIA NIM models deployed on Azure AI Foundry")
-    print("through OpenAI-compatible API endpoints.\n")
+    print("with the Agent Framework using a custom chat client.\n")
 
-    await non_streaming_example()
-    await streaming_example()
+    await first_example()
+    await second_example()
 
 
 if __name__ == "__main__":
