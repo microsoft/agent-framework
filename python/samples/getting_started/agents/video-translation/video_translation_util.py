@@ -7,7 +7,7 @@ from urllib.parse import urlencode
 from urllib3.util import Url, parse_url
 
 
-def dict_to_dataclass(data: dict, dataclass_type: type[Any]) -> Any:
+def dict_to_dataclass(data: dict[str, Any], dataclass_type: type[Any]) -> Any:
     if not is_dataclass(dataclass_type):
         raise ValueError(f"{dataclass_type} is not a dataclass")
 
@@ -18,15 +18,17 @@ def dict_to_dataclass(data: dict, dataclass_type: type[Any]) -> Any:
     for key, value in data.items():
         if key in field_names:
             field_type = field_names[key]
-            if is_dataclass(field_type):  # Check for nested dataclass
-                filtered_data[key] = dict_to_dataclass(value, field_type)
+            if isinstance(value, dict) and is_dataclass(field_type):  # Check for nested dataclass
+                filtered_data[key] = dict_to_dataclass(value, field_type)  # type: ignore[arg-type]
             else:
                 filtered_data[key] = value
 
     return dataclass_type(**filtered_data)
 
 
-def append_url_args(url: Url, args: dict[str, Any]) -> Url:
+def append_url_args(url: str | Url, args: dict[str, Any]) -> Url:
+    if isinstance(url, str):
+        url = parse_url(url)
     encoded_args = ""
     if len(args) == 0:
         return url

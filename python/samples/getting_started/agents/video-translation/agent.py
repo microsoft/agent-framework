@@ -122,7 +122,7 @@ async def download_and_upload_video(
         str, Field(description="Public URL of the video to download and upload (e.g., https://example.com/video.mp4)")
     ],
     desired_blob_name: Annotated[
-        str,
+        str | None,
         Field(
             description=(
                 "Optional name for the blob in storage (e.g., 'my-video.mp4'). If not provided, extracts from URL."
@@ -369,7 +369,7 @@ def start_video_translation(
     source_locale: Annotated[str, Field(description="Source language code (e.g., 'en-US', 'ja-JP', 'es-ES')")],
     target_locale: Annotated[str, Field(description="Target language code (e.g., 'en-US', 'ja-JP', 'es-ES')")],
     voice_kind: Annotated[str, Field(description="Voice type: 'PlatformVoice' or 'PersonalVoice'")] = "PlatformVoice",
-    speaker_count: Annotated[int, Field(description="Number of speakers in the video (optional)")] = None,
+    speaker_count: Annotated[int | None, Field(description="Number of speakers in the video (optional)")] = None,
 ) -> str:
     """
     Start a video translation operation (asynchronous, non-blocking).
@@ -502,7 +502,7 @@ def check_translation_status(
 
         # 3. Format status response
         # translation.status can be either a string or an enum, handle both
-        if hasattr(translation.status, "value"):
+        if translation.status is not None and hasattr(translation.status, "value"):
             status = translation.status.value
         else:
             status = str(translation.status) if translation.status else "Unknown"
@@ -571,10 +571,15 @@ def list_translations() -> str:
             return f"ERROR: Error listing translations: {error}"
 
         # 3. Parse and format results
-        if not translations_data or not translations_data[0]:
+        if not translations_data:
             return " No translations found.\n\nStart a new translation to see it listed here."
 
-        translations = translations_data[0].get("value", [])
+        # translations_data is returned as a raw dict, not a dataclass
+        if isinstance(translations_data, dict):
+            translations = translations_data.get("value", [])
+        else:
+            translations = []
+        
         if not translations:
             return " No translations found.\n\nStart a new translation to see it listed here."
 
@@ -689,11 +694,13 @@ def create_iteration_with_subtitle(
         operation_id = str(uuid.uuid4())
 
         # 4. Create the iteration (NON-BLOCKING - returns immediately)
+        from urllib3.util import parse_url
+        webvtt_url = parse_url(webvtt_file_url)
         success, error, iteration, operation_location = client.request_create_iteration(
             translation_id=translation_id,
             iteration_id=iteration_id,
             webvtt_file_kind=kind_map[webvtt_file_kind],
-            webvtt_file_url=webvtt_file_url,
+            webvtt_file_url=webvtt_url,
             speaker_count=None,
             subtitle_max_char_count_per_segment=None,
             export_subtitle_in_video=False,

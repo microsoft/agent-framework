@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import locale
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -32,8 +31,8 @@ class TranslationInputDefinition(TranslationInputBaseDefinition):
     # This is optional because the moment after translation created,
     # API has not downloaded video file to server side yet.
     videoFileUrl: str | None = None
-    sourceLocale: locale
-    targetLocale: locale
+    sourceLocale: str
+    targetLocale: str
     voiceKind: VoiceKind
 
 
