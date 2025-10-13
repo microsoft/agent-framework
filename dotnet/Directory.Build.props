@@ -16,7 +16,7 @@
     <ProjectsDebugTargetFrameworks>net9.0;net472</ProjectsDebugTargetFrameworks>
     <IsAotCompatible Condition="$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net7.0'))">true</IsAotCompatible>
     <Configurations>Debug;Release;Publish</Configurations>
-  </PropertyGroup>  
+  </PropertyGroup>
 
   <PropertyGroup>
     <IsReleaseCandidate>false</IsReleaseCandidate>
