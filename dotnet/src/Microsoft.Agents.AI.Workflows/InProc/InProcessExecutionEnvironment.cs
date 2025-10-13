@@ -276,7 +276,7 @@ public sealed class InProcessExecutionEnvironment : IWorkflowExecutionEnvironmen
         {
             // Create instance to check type
             Executor startExecutor = await registration.CreateInstanceAsync(string.Empty)
-                                                        .ConfigureAwait(false);
+                                                       .ConfigureAwait(false);
             return startExecutor.CanHandle(typeof(TInput)) && startExecutor.CanHandle(typeof(TurnToken));
         }
 
