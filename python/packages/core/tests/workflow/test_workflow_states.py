@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from dataclasses import dataclass
-from typing import Any
 
 import pytest
 from typing_extensions import Never
@@ -25,7 +24,6 @@ from agent_framework import (
     WorkflowStatusEvent,
     handler,
 )
-from agent_framework import WorkflowContext as WFContext
 
 
 class FailingExecutor(Executor):
@@ -182,39 +180,3 @@ class SnapshotRequester(Executor):
     @handler
     async def ask(self, _: str, ctx: WorkflowContext[SnapshotRequest]) -> None:  # pragma: no cover - simple helper
         await ctx.send_message(SnapshotRequest(prompt=self._prompt, draft=self._draft, iteration=1))
-
-
-async def test_request_info_executor_tracks_pending_requests_via_shared_state():
-    prompt = "Review the launch copy"
-    draft = "Limited edition grinder now $249"
-    requester = SnapshotRequester(id="snapshot_req", prompt=prompt, draft=draft)
-    request_info = RequestInfoExecutor(id="request_info")
-
-    wf = WorkflowBuilder().set_start_executor(requester).add_edge(requester, request_info).build()
-
-    events = [event async for event in wf.run_stream("start")]
-    assert any(isinstance(event, RequestInfoEvent) for event in events)
-
-    pending_map: dict[str, Any] = await wf._shared_state.get(RequestInfoExecutor._PENDING_SHARED_STATE_KEY)  # type: ignore[reportPrivateUsage]
-    assert isinstance(pending_map, dict)
-    assert len(pending_map) == 1
-    snapshot: dict[str, Any] = next(iter(pending_map.values()))
-    assert snapshot["prompt"] == prompt
-    assert snapshot["draft"] == draft
-    assert snapshot.get("iteration") == 1
-
-    request_id: str = snapshot["request_id"]
-
-    request_info_resume = RequestInfoExecutor(id="request_info_resume")
-    resume_context: WFContext[Any] = WFContext(
-        executor_id=request_info_resume.id,
-        source_executor_ids=[wf.__class__.__name__],
-        shared_state=wf._shared_state,  # type: ignore[reportPrivateUsage]
-        runner_context=wf._runner_context,  # type: ignore[reportPrivateUsage]
-    )
-
-    await request_info_resume.handle_response("approve", request_id, resume_context)
-
-    updated_pending: dict[str, Any] = await wf._shared_state.get(RequestInfoExecutor._PENDING_SHARED_STATE_KEY)  # type: ignore[reportPrivateUsage]
-    assert isinstance(updated_pending, dict)
-    assert request_id not in updated_pending

@@ -12,10 +12,10 @@ from agent_framework import (
     ChatMessage,
     Executor,
     FileCheckpointStorage,
-    RequestInfoExecutor,
     Role,
     WorkflowBuilder,
     WorkflowContext,
+    get_checkpoint_summary,
     handler,
 )
 from agent_framework.azure import AzureOpenAIChatClient
@@ -194,7 +194,7 @@ def _render_checkpoint_summary(checkpoints: list["WorkflowCheckpoint"]) -> None:
 
     print("\nCheckpoint summary:")
     for cp in sorted(checkpoints, key=lambda c: c.timestamp):
-        summary = RequestInfoExecutor.checkpoint_summary(cp)
+        summary = get_checkpoint_summary(cp)
         msg_count = sum(len(v) for v in cp.messages.values())
         state_keys = sorted(cp.executor_states.keys())
         orig = cp.shared_state.get("original_input")
@@ -241,7 +241,7 @@ async def main():
 
     print("\nAvailable checkpoints to resume from:")
     for idx, cp in enumerate(sorted_cps):
-        summary = RequestInfoExecutor.checkpoint_summary(cp)
+        summary = get_checkpoint_summary(cp)
         line = f"  [{idx}] id={summary.checkpoint_id} iter={summary.iteration_count}"
         if summary.status:
             line += f" status={summary.status}"
