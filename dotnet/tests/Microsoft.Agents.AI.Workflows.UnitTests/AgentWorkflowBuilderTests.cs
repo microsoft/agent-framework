@@ -26,6 +26,24 @@ public class AgentWorkflowBuilderTests
     }
 
     [Fact]
+    public async Task Workflows_FilterNullMessageIdUpdates_PreventsIncorrectAuthorAsync()
+    {
+        // Test that null MessageId updates are filtered out during message reconstruction in all workflow types
+        // This prevents reasoning/metadata tokens from being incorrectly appended to previous messages
+        var agent = new ChatClientAgent(new MockChatClientWithNullMessageIds(), name: "testAgent");
+        var workflow = AgentWorkflowBuilder.BuildSequential([agent]);
+
+        (string updateText, List<ChatMessage>? result) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "test")]);
+
+        Assert.NotNull(result);
+        Assert.Equal(2, result.Count); // User message + 1 assistant message (2 null-MessageId updates filtered out)
+
+        Assert.Equal(ChatRole.Assistant, result[1].Role);
+        Assert.Equal("testAgent", result[1].AuthorName);
+        Assert.Equal("validContent", result[1].Text);
+    }
+
+    [Fact]
     public void BuildConcurrent_InvalidArguments_Throws()
     {
         Assert.Throws<ArgumentNullException>("agents", () => AgentWorkflowBuilder.BuildConcurrent(null!));
@@ -434,10 +452,43 @@ public class AgentWorkflowBuilderTests
         public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
             IEnumerable<ChatMessage> messages, ChatOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
-            foreach (var update in (await this.GetResponseAsync(messages, options, cancellationToken).ConfigureAwait(false)).ToChatResponseUpdates())
+            var response = await this.GetResponseAsync(messages, options, cancellationToken).ConfigureAwait(false);
+            string messageId = Guid.NewGuid().ToString("N");
+
+            foreach (var update in response.ToChatResponseUpdates())
             {
+                // Ensure updates have MessageId (null MessageId updates are filtered out in workflows)
+                if (string.IsNullOrEmpty(update.MessageId))
+                {
+                    update.MessageId = messageId;
+                }
                 yield return update;
             }
+        }
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+        public void Dispose() { }
+    }
+
+    private sealed class MockChatClientWithNullMessageIds : IChatClient
+    {
+        public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, "validContent")));
+
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+            IEnumerable<ChatMessage> messages, ChatOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await Task.Yield();
+
+            string validId = Guid.NewGuid().ToString("N");
+
+            // Valid update with MessageId - should be included in final messages
+            yield return new ChatResponseUpdate { MessageId = validId, Role = ChatRole.Assistant, Contents = [new TextContent("validContent")] };
+
+            // Null MessageId updates (simulating reasoning tokens/metadata) - should be filtered out
+            // to prevent incorrect appending to previous messages during ToAgentRunResponse reconstruction
+            yield return new ChatResponseUpdate { MessageId = null, Role = ChatRole.Assistant, Contents = [new TextContent("reasoningToken1")] };
+            yield return new ChatResponseUpdate { MessageId = null, Role = ChatRole.Assistant, Contents = [new TextContent("reasoningToken2")] };
         }
 
         public object? GetService(Type serviceType, object? serviceKey = null) => null;
