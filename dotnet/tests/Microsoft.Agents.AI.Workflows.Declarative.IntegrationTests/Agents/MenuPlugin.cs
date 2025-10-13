@@ -13,9 +13,9 @@ public sealed class MenuPlugin
 {
     public IEnumerable<AIFunction> GetTools()
     {
-        yield return AIFunctionFactory.Create(this.GetMenu);
-        yield return AIFunctionFactory.Create(this.GetSpecials);
-        yield return AIFunctionFactory.Create(this.GetItemPrice);
+        yield return AIFunctionFactory.Create(this.GetMenu, name: $"{nameof(MenuPlugin)}_{nameof(GetMenu)}");
+        yield return AIFunctionFactory.Create(this.GetSpecials, name: $"{nameof(MenuPlugin)}_{nameof(GetSpecials)}");
+        yield return AIFunctionFactory.Create(this.GetItemPrice, name: $"{nameof(MenuPlugin)}_{nameof(GetItemPrice)}");
     }
 
     [KernelFunction, Description("Provides a list items on the menu.")]

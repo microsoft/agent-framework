@@ -12,12 +12,12 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Events;
 public sealed class AgentToolRequest
 {
     /// <summary>
-    /// %%% COMMENT
+    /// The name of the agent associated with the tool request.
     /// </summary>
     public string AgentName { get; }
 
     /// <summary>
-    /// %%% COMMENT
+    /// A list of tool requests.
     /// </summary>
     public IReadOnlyList<FunctionCallContent> FunctionCalls { get; }
 

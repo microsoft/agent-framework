@@ -2,7 +2,6 @@
 
 using System.Collections.Generic;
 using System.Collections.Immutable;
-using System.Linq;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.Events;
@@ -13,12 +12,12 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Events;
 public sealed class AgentToolResponse
 {
     /// <summary>
-    /// %%% COMMENT
+    /// The name of the agent associated with the tool response.
     /// </summary>
     public string AgentName { get; }
 
     /// <summary>
-    /// %%% COMMENT
+    /// A list of tool responses.
     /// </summary>
     public IReadOnlyList<FunctionResultContent> FunctionResults { get; }
 

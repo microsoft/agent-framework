@@ -48,8 +48,7 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
         return new WorkflowEvents(workflowEvents);
     }
 
-
-    private async Task<WorkflowEvents> ResumeAsync(object response)
+    public async Task<WorkflowEvents> ResumeAsync(object response)
     {
         Console.WriteLine("RESUMING WORKFLOW...");
         Assert.NotNull(this.LastCheckpoint);
