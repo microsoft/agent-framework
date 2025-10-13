@@ -217,7 +217,7 @@ public sealed class InProcessExecutionEnvironment : IWorkflowExecutionEnvironmen
         string? runId,
         CancellationToken cancellationToken)
     {
-        var knownTypes = new List<Type>();
+        var knownTypes = new List<Type>() { typeof(TInput) };
         var needsTurnToken = await StartingExecutorHandlesTurnTokenAsync<TInput>(workflow).ConfigureAwait(false);
         if (needsTurnToken)
         {
