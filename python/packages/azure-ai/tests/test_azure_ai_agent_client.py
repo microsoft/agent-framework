@@ -1067,8 +1067,8 @@ async def test_azure_ai_chat_client_prep_tools_file_search_no_connection(mock_ai
 
     file_search_tool = HostedFileSearchTool(additional_properties={"index_name": "test-index"})
 
-    # Mock connections.get_default to raise HttpResponseError
-    mock_ai_project_client.connections.get_default = AsyncMock(side_effect=HttpResponseError("No connection found"))
+    # Mock connections.get_default to raise ValueError
+    mock_ai_project_client.connections.get_default = AsyncMock(side_effect=ValueError("No connection found"))
 
     with pytest.raises(ServiceInitializationError, match="No default Azure AI Search connection found"):
         await chat_client._prep_tools([file_search_tool])  # type: ignore
