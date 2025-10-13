@@ -29,15 +29,40 @@ Before running these examples, you need to set up NVIDIA NIM models on Azure AI 
 
 | File | Description |
 |------|-------------|
-| [`nvidia_nim_with_openai_chat_client.py`](nvidia_nim_with_openai_chat_client.py) | Demonstrates how to configure OpenAI Chat Client to use NVIDIA NIM models deployed on Azure AI Foundry. Shows both streaming and non-streaming responses with tool calling capabilities. |
+| [`nvidia_nim_agent_example.py`](nvidia_nim_agent_example.py) | Complete example demonstrating how to use NVIDIA NIM models with the Agent Framework. Shows both streaming and non-streaming responses with tool calling capabilities. |
+| [`nvidia_nim_chat_client.py`](nvidia_nim_chat_client.py) | Custom chat client implementation that handles NVIDIA NIM's specific message format requirements. |
 
 ## Environment Variables
 
 Set the following environment variables before running the examples:
 
-- `AZURE_AI_ENDPOINT`: Your Azure AI Foundry endpoint URL (e.g., `https://<endpoint>.<region>.inference.ml.azure.com/v1`)
-- `AZURE_AI_API_KEY`: Your Azure AI Foundry API key
-- `NVIDIA_NIM_MODEL`: The NVIDIA NIM model to use (e.g., `meta/llama-3.1-8b-instruct`)
+- `OPENAI_BASE_URL`: Your Azure AI Foundry endpoint URL (e.g., `https://<endpoint>.<region>.inference.ml.azure.com/v1`)
+- `OPENAI_API_KEY`: Your Azure AI Foundry API key
+- `OPENAI_CHAT_MODEL_ID`: The NVIDIA NIM model to use (e.g., `nvidia/llama-3.1-8b-instruct`)
+
+## Running the Example
+
+After setting up your NVIDIA NIM deployment and environment variables, you can run the example:
+
+```bash
+# Navigate to the examples directory
+cd python/samples/getting_started/agents/nvidia
+
+# Activate the virtual environment (if using one)
+source ../../../.venv/bin/activate
+
+# Set your environment variables
+export OPENAI_BASE_URL="https://your-endpoint.region.inference.ml.azure.com/v1"
+export OPENAI_API_KEY="your-api-key"
+export OPENAI_CHAT_MODEL_ID="nvidia/llama-3.1-8b-instruct"
+
+# Run the example
+python nvidia_nim_agent_example.py
+```
+
+The example will demonstrate:
+- Chat completion with NVIDIA NIM models
+- Basic conversation capabilities
 
 ## API Compatibility
 
@@ -47,6 +72,26 @@ NVIDIA NIM models deployed on Azure AI Foundry expose an OpenAI-compatible API, 
 - Streaming and non-streaming responses
 - Tool calling capabilities
 - System and user messages
+
+### Message Format Differences
+
+NVIDIA NIM models expect the `content` field in messages to be a simple string, not an array of content objects like the standard OpenAI API. The example uses a custom `NVIDIANIMChatClient` that handles this conversion automatically.
+
+**Standard OpenAI format:**
+```json
+{
+  "role": "user",
+  "content": [{"type": "text", "text": "Hello"}]
+}
+```
+
+**NVIDIA NIM format:**
+```json
+{
+  "role": "user", 
+  "content": "Hello"
+}
+```
 
 ## Available Models
 
