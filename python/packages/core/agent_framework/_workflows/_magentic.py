@@ -2088,7 +2088,8 @@ class MagenticWorkflow:
         elif isinstance(message, ChatMessage):
             message = MagenticStartMessage(task=message)
         elif isinstance(message, dict) and 'input' in message:
-            message = MagenticStartMessage(task=message['input'])
+            message = MagenticStartMessage.from_string(message['input'])
+
         async for event in self._workflow.run_stream(message):
             yield event
 
