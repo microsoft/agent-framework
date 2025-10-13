@@ -575,11 +575,8 @@ def list_translations() -> str:
         if not translations_data:
             return " No translations found.\n\nStart a new translation to see it listed here."
 
-        # translations_data is returned as a raw dict, not a dataclass
-        from typing import Any, cast
-        translations: list[dict[str, Any]] = []
-        if isinstance(translations_data, dict):
-            translations = cast(list[dict[str, Any]], translations_data.get("value", []))
+        # translations_data is a PagedTranslationDefinition dataclass
+        translations = translations_data.value if hasattr(translations_data, 'value') else []
         
         if not translations:
             return " No translations found.\n\nStart a new translation to see it listed here."

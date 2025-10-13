@@ -130,9 +130,6 @@ class VideoTranslationClient:
         subtitle_max_char_count_per_segment: int = 32,
         export_subtitle_in_video: bool = False,
     ) -> tuple[bool, str | None, TranslationDefinition | None, IterationDefinition | None, str | None, str | None]:
-        if video_file_url is None or source_locale is None or target_locale is None or voice_kind is None:
-            raise ValueError
-
         now = datetime.now()
         nowString = now.strftime("%m%d%Y%H%M%S")
         translation_id = f"{nowString}_{source_locale}_{target_locale}_{voice_kind}"
@@ -173,9 +170,6 @@ class VideoTranslationClient:
         subtitle_max_char_count_per_segment: int = 32,
         export_subtitle_in_video: bool = False,
     ) -> tuple[bool, str | None, TranslationDefinition | None, IterationDefinition | None]:
-        if webvtt_file_kind is None or webvtt_file_url is None:
-            raise ValueError
-
         success, error, translation = self.request_get_translation(
             translation_id=translation_id,
         )
@@ -286,8 +280,6 @@ class VideoTranslationClient:
         subtitle_max_char_count_per_segment: int | None = None,
         export_subtitle_in_video: bool | None = None,
     ) -> tuple[bool, str | None, IterationDefinition | None]:
-        if translation_id is None or iteration_id is None:
-            raise ValueError
         success, error, response_iteration, operation_location = self.request_create_iteration(
             translation_id=translation_id,
             iteration_id=iteration_id,
@@ -334,20 +326,14 @@ class VideoTranslationClient:
         return f"{self.URL_PATH_ROOT}/{self.URL_SEGMENT_NAME_TRANSLATIONS}"
 
     def build_translation_path(self, translation_id: str) -> str:
-        if translation_id is None:
-            raise ValueError
         translations_path = self.build_translations_path()
         return f"{translations_path}/{translation_id}"
 
     def build_iterations_path(self, translation_id: str) -> str:
-        if translation_id is None:
-            raise ValueError
         translation_path = self.build_translation_path(translation_id)
         return f"{translation_path}/{self.URL_SEGMENT_NAME_ITERATIONS}"
 
     def build_iteration_path(self, translation_id: str, iteration_id: str) -> str:
-        if translation_id is None or iteration_id is None:
-            raise ValueError
         iterations_path = self.build_iterations_path(translation_id)
         return f"{iterations_path}/{iteration_id}"
 
@@ -363,8 +349,6 @@ class VideoTranslationClient:
         return endpoint
 
     def build_url(self, segments: str) -> str:
-        if segments is None:
-            raise ValueError
         endpoint = self.build_endpoint()
         if segments.startswith("/"):
             segments = segments[1:]
@@ -375,28 +359,19 @@ class VideoTranslationClient:
         return self.build_url(path)
 
     def build_translation_url(self, translation_id: str) -> str:
-        if translation_id is None:
-            raise ValueError
         path = self.build_translation_path(translation_id)
         return self.build_url(path)
 
     def build_iterations_url(self, translation_id: str) -> str:
-        if translation_id is None:
-            raise ValueError
         path = self.build_iterations_path(translation_id)
         return self.build_url(path)
 
     def build_iteration_url(self, translation_id: str, iteration_id: str) -> str:
-        if translation_id is None or iteration_id is None:
-            raise ValueError
         path = self.build_iteration_path(translation_id, iteration_id)
         return self.build_url(path)
 
     # https://learn.microsoft.com/rest/api/aiservices/videotranslation/operation-operations/get-operation?view=rest-aiservices-videotranslation-2024-05-20-preview&tabs=HTTP
     def request_get_operation(self, operation_location: Url, printUrl: bool) -> tuple[bool, str | None, OperationDefinition | None]:
-        if operation_location is None:
-            raise ValueError
-
         success, headers_or_error = self.build_request_header()
         if not success:
             assert isinstance(headers_or_error, str)
@@ -418,9 +393,6 @@ class VideoTranslationClient:
 
     # https://learn.microsoft.com/rest/api/aiservices/videotranslation/translation-operations/get-translation?view=rest-aiservices-videotranslation-2024-05-20-preview&tabs=HTTP
     def request_get_translation(self, translation_id: str) -> tuple[bool, str | None, TranslationDefinition | None]:
-        if translation_id is None:
-            raise ValueError
-
         url = self.build_translation_url(translation_id)
         success, headers_or_error = self.build_request_header()
         if not success:
@@ -445,9 +417,6 @@ class VideoTranslationClient:
 
     # https://learn.microsoft.com/rest/api/aiservices/videotranslation/iteration-operations/get-iteration?view=rest-aiservices-videotranslation-2024-05-20-preview&tabs=HTTP
     def request_get_iteration(self, translation_id: str, iteration_id: str) -> tuple[bool, str | None, IterationDefinition | None]:
-        if translation_id is None or iteration_id is None:
-            raise ValueError
-
         url = self.build_iteration_url(translation_id, iteration_id)
         success, headers_or_error = self.build_request_header()
         if not success:
@@ -473,7 +442,7 @@ class VideoTranslationClient:
         self, top: int | None = None, skip: int | None = None, maxPageSize: int | None = None
     ) -> tuple[bool, str | None, PagedTranslationDefinition | None]:
         url = self.build_translations_url()
-        args = {}
+        args: dict[str, int] = {}
         if top is not None:
             args["top"] = top
         if skip is not None:
@@ -557,22 +526,13 @@ class VideoTranslationClient:
         source_locale: str,
         target_locale: str,
         voice_kind: VoiceKind,
-        speaker_count: int = 1,
-        subtitle_max_char_count_per_segment: int = 32,
-        export_subtitle_in_video: bool = False,
+        speaker_count: int | None = None,
+        subtitle_max_char_count_per_segment: int | None = None,
+        export_subtitle_in_video: bool | None = None,
         translation_display_name: str | None = None,
         translation_description: str | None = None,
         operation_id: str | None = None,
     ) -> tuple[bool, str | None, TranslationDefinition | None, Url | None]:
-        if (
-            translation_id is None
-            or video_file_url is None
-            or source_locale is None
-            or target_locale is None
-            or voice_kind is None
-        ):
-            raise ValueError
-
         if not operation_id:
             operation_id = self.generate_operation_id()
 
@@ -643,9 +603,6 @@ class VideoTranslationClient:
         iteration_description: str | None = None,
         operation_id: str | None = None,
     ) -> tuple[bool, str | None, IterationDefinition | None, Url | None]:
-        if translation_id is None or iteration_id is None:
-            raise ValueError
-
         if not operation_id:
             operation_id = self.generate_operation_id()
 
@@ -668,8 +625,6 @@ class VideoTranslationClient:
 
         encoded_iteration_create_body = orjson.dumps(dataclasses.asdict(iteration_create_body))
         url = self.build_iteration_url(translation_id, iteration_id)
-        if operation_id is None:
-            operation_id = str(uuid.uuid4())
         success, headers_or_error = self.build_request_header()
         if not success:
             assert isinstance(headers_or_error, str)
