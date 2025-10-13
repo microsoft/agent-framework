@@ -26,22 +26,24 @@ public static partial class AgentWorkflowBuilder
     /// <param name="agents">The sequence of agents to compose into a sequential workflow.</param>
     /// <returns>The built workflow composed of the supplied <paramref name="agents"/>, in the order in which they were yielded from the source.</returns>
     public static Workflow BuildSequential(params IEnumerable<AIAgent> agents)
-    {
-        return PrepareSequential(agents).Build();
-    }
+        => BuildSequentialCore(workflowName: null, agents);
 
     /// <summary>
-    /// Prepares a <see cref="WorkflowBuilder"/> that chains the provided agents in sequence, where the output of each agent is passed as input to the next.
+    /// Builds a <see cref="Workflow{T}"/> composed of a pipeline of agents where the output of one agent is the input to the next.
     /// </summary>
-    /// <param name="agents">The sequence of agents to be composed into a sequential workflow.</param>
-    /// <param name="builder">An optional existing <see cref="WorkflowBuilder"/> to add the agents to; if null, a new builder is created.</param>
-    /// <returns>A <see cref="WorkflowBuilder"/> with the agents connected in sequence and an output executor added at the end.</returns>
-    public static WorkflowBuilder PrepareSequential(IEnumerable<AIAgent> agents, WorkflowBuilder? builder = null)
+    /// <param name="workflowName">The name of workflow.</param>
+    /// <param name="agents">The sequence of agents to compose into a sequential workflow.</param>
+    /// <returns>The built workflow composed of the supplied <paramref name="agents"/>, in the order in which they were yielded from the source.</returns>
+    public static Workflow BuildSequential(string workflowName, params IEnumerable<AIAgent> agents)
+        => BuildSequentialCore(workflowName, agents);
+
+    private static Workflow BuildSequentialCore(string? workflowName, params IEnumerable<AIAgent> agents)
     {
         Throw.IfNull(agents);
 
         // Create a builder that chains the agents together in sequence. The workflow simply begins
         // with the first agent in the sequence.
+        WorkflowBuilder? builder = null;
         ExecutorIsh? previous = null;
         foreach (var agent in agents)
         {
@@ -70,7 +72,12 @@ public static partial class AgentWorkflowBuilder
         Debug.Assert(builder is not null);
 
         OutputMessagesExecutor end = new();
-        return builder.AddEdge(previous, end).WithOutputFrom(end);
+        builder = builder.AddEdge(previous, end).WithOutputFrom(end);
+        if (workflowName is not null)
+        {
+            builder = builder.WithName(workflowName);
+        }
+        return builder.Build();
     }
 
     /// <summary>
@@ -78,7 +85,6 @@ public static partial class AgentWorkflowBuilder
     /// aggregating their outputs into a single collection.
     /// </summary>
     /// <param name="agents">The set of agents to compose into a concurrent workflow.</param>
-    /// <param name="workflowBuilder">If applicable, existing workflow builder to attach concurrent workflow to.</param>
     /// <param name="aggregator">
     /// The aggregation function that accepts a list of the output messages from each <paramref name="agents"/> and produces
     /// a single result list. If <see langword="null"/>, the default behavior is to return a list containing the last message
@@ -87,47 +93,37 @@ public static partial class AgentWorkflowBuilder
     /// <returns>The built workflow composed of the supplied concurrent <paramref name="agents"/>.</returns>
     public static Workflow BuildConcurrent(
         IEnumerable<AIAgent> agents,
-        WorkflowBuilder? workflowBuilder = null,
         Func<IList<List<ChatMessage>>, List<ChatMessage>>? aggregator = null)
-    {
-        return PrepareConcurrent(agents, workflowBuilder, aggregator).Build();
-    }
+        => BuildConcurrentCore(workflowName: null, agents, aggregator);
 
     /// <summary>
-    /// Initializes <see cref="WorkflowBuilder"/> composed of agents that operate concurrently on the same input,
+    /// Builds a <see cref="Workflow{T}"/> composed of agents that operate concurrently on the same input,
     /// aggregating their outputs into a single collection.
     /// </summary>
+    /// <param name="workflowName">The name of the workflow.</param>
     /// <param name="agents">The set of agents to compose into a concurrent workflow.</param>
-    /// <param name="workflowBuilder">
-    /// An existing workflow builder to attach the <paramref name="agents"/> concurrently to it.
-    /// If <see langword="null"/>, a new workflow builder is created.
-    /// </param>
     /// <param name="aggregator">
     /// The aggregation function that accepts a list of the output messages from each <paramref name="agents"/> and produces
     /// a single result list. If <see langword="null"/>, the default behavior is to return a list containing the last message
     /// from each agent that produced at least one message.
     /// </param>
-    /// <returns>The workflow builder composed of the supplied concurrent <paramref name="agents"/>.</returns>
-    public static WorkflowBuilder PrepareConcurrent(
+    /// <returns>The built workflow composed of the supplied concurrent <paramref name="agents"/>.</returns>
+    public static Workflow BuildConcurrent(
+        string workflowName,
         IEnumerable<AIAgent> agents,
-        WorkflowBuilder? workflowBuilder = null,
+        Func<IList<List<ChatMessage>>, List<ChatMessage>>? aggregator = null)
+        => BuildConcurrentCore(workflowName, agents, aggregator);
+
+    private static Workflow BuildConcurrentCore(
+        string? workflowName,
+        IEnumerable<AIAgent> agents,
         Func<IList<List<ChatMessage>>, List<ChatMessage>>? aggregator = null)
     {
         Throw.IfNull(agents);
 
-        ExecutorIsh start;
-        if (workflowBuilder is null)
-        {
-            // Create a new workflow with a forwarding executor as the start
-            start = new ChatForwardingExecutor("Start");
-            workflowBuilder = new(start);
-        }
-        else
-        {
-            // Use a new forwarding executor that will be added to the existing workflow
-            start = new ChatForwardingExecutor($"ConcurrentStart_{Guid.NewGuid():N}");
-            // The existing workflow builder will connect to this executor
-        }
+        // A workflow needs a starting executor, so we create one that forwards everything to each agent.
+        ChatForwardingExecutor start = new("Start");
+        WorkflowBuilder builder = new(start);
 
         // For each agent, we create an executor to host it and an accumulator to batch up its output messages,
         // so that the final accumulator receives a single list of messages from each agent. Otherwise, the
@@ -135,23 +131,25 @@ public static partial class AgentWorkflowBuilder
         // provenance tracking exposed in the workflow context passed to a handler.
         ExecutorIsh[] agentExecutors = (from agent in agents select (ExecutorIsh)new AgentRunStreamingExecutor(agent, includeInputInOutput: false)).ToArray();
         ExecutorIsh[] accumulators = [.. from agent in agentExecutors select (ExecutorIsh)new BatchChatMessagesToListExecutor($"Batcher/{agent.Id}")];
-        workflowBuilder.AddFanOutEdge(start, targets: agentExecutors);
+        builder.AddFanOutEdge(start, targets: agentExecutors);
         for (int i = 0; i < agentExecutors.Length; i++)
         {
-            workflowBuilder.AddEdge(agentExecutors[i], accumulators[i]);
+            builder.AddEdge(agentExecutors[i], accumulators[i]);
         }
 
         // Create the accumulating executor that will gather the results from each agent, and connect
         // each agent's accumulator to it. If no aggregation function was provided, we default to returning
         // the last message from each agent
         aggregator ??= static lists => (from list in lists where list.Count > 0 select list.Last()).ToList();
+        ConcurrentEndExecutor end = new(agentExecutors.Length, aggregator);
+        builder.AddFanInEdge(end, sources: accumulators);
 
-        // Use a unique ID for the end executor to avoid conflicts when attaching to existing workflows
-        string endId = workflowBuilder is null ? "ConcurrentEnd" : $"ConcurrentEnd_{Guid.NewGuid():N}";
-        ConcurrentEndExecutor end = new(agentExecutors.Length, aggregator, endId);
-        workflowBuilder!.AddFanInEdge(end, sources: accumulators);
-
-        return workflowBuilder.WithOutputFrom(end);
+        builder = builder.WithOutputFrom(end);
+        if (workflowName is not null)
+        {
+            builder = builder.WithName(workflowName);
+        }
+        return builder.Build();
     }
 
     /// <summary>Creates a new <see cref="HandoffsWorkflowBuilder"/> using <paramref name="initialAgent"/> as the starting agent in the workflow.</summary>
@@ -286,7 +284,7 @@ public static partial class AgentWorkflowBuilder
         private List<List<ChatMessage>> _allResults;
         private int _remaining;
 
-        public ConcurrentEndExecutor(int expectedInputs, Func<IList<List<ChatMessage>>, List<ChatMessage>> aggregator, string id = "ConcurrentEnd") : base(id)
+        public ConcurrentEndExecutor(int expectedInputs, Func<IList<List<ChatMessage>>, List<ChatMessage>> aggregator) : base("ConcurrentEnd")
         {
             this._expectedInputs = expectedInputs;
             this._aggregator = Throw.IfNull(aggregator);
@@ -582,57 +580,57 @@ public static partial class AgentWorkflowBuilder
 
             protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
                 routeBuilder.AddHandler<HandoffState>(async (handoffState, context, cancellationToken) =>
+                {
+                    string? requestedHandoff = null;
+                    List<AgentRunResponseUpdate> updates = [];
+                    List<ChatMessage> allMessages = handoffState.Messages;
+
+                    List<ChatMessage>? roleChanges = ChangeAssistantToUserForOtherParticipants(this._agent.DisplayName, allMessages);
+
+                    await foreach (var update in this._agent.RunStreamingAsync(allMessages,
+                                                                               options: this._agentOptions,
+                                                                               cancellationToken: cancellationToken)
+                                                            .ConfigureAwait(false))
                     {
-                        string? requestedHandoff = null;
-                        List<AgentRunResponseUpdate> updates = [];
-                        List<ChatMessage> allMessages = handoffState.Messages;
+                        await AddUpdateAsync(update, cancellationToken).ConfigureAwait(false);
 
-                        List<ChatMessage>? roleChanges = ChangeAssistantToUserForOtherParticipants(this._agent.DisplayName, allMessages);
-
-                        await foreach (var update in this._agent.RunStreamingAsync(allMessages,
-                                                                                   options: this._agentOptions,
-                                                                                   cancellationToken: cancellationToken)
-                                                                .ConfigureAwait(false))
+                        foreach (var c in update.Contents)
                         {
-                            await AddUpdateAsync(update, cancellationToken).ConfigureAwait(false);
-
-                            foreach (var c in update.Contents)
+                            if (c is FunctionCallContent fcc && this._handoffFunctionNames.Contains(fcc.Name))
                             {
-                                if (c is FunctionCallContent fcc && this._handoffFunctionNames.Contains(fcc.Name))
-                                {
-                                    requestedHandoff = fcc.Name;
-                                    await AddUpdateAsync(
-                                        new AgentRunResponseUpdate
-                                        {
-                                            AgentId = this._agent.Id,
-                                            AuthorName = this._agent.DisplayName,
-                                            Contents = [new FunctionResultContent(fcc.CallId, "Transferred.")],
-                                            CreatedAt = DateTimeOffset.UtcNow,
-                                            MessageId = Guid.NewGuid().ToString("N"),
-                                            Role = ChatRole.Tool,
-                                        },
-                                        cancellationToken
-                                     )
-                                    .ConfigureAwait(false);
-                                }
+                                requestedHandoff = fcc.Name;
+                                await AddUpdateAsync(
+                                    new AgentRunResponseUpdate
+                                    {
+                                        AgentId = this._agent.Id,
+                                        AuthorName = this._agent.DisplayName,
+                                        Contents = [new FunctionResultContent(fcc.CallId, "Transferred.")],
+                                        CreatedAt = DateTimeOffset.UtcNow,
+                                        MessageId = Guid.NewGuid().ToString("N"),
+                                        Role = ChatRole.Tool,
+                                    },
+                                    cancellationToken
+                                 )
+                                .ConfigureAwait(false);
                             }
                         }
+                    }
 
-                        allMessages.AddRange(updates.ToAgentRunResponse().Messages);
+                    allMessages.AddRange(updates.ToAgentRunResponse().Messages);
 
-                        ResetUserToAssistantForChangedRoles(roleChanges);
+                    ResetUserToAssistantForChangedRoles(roleChanges);
 
-                        await context.SendMessageAsync(new HandoffState(handoffState.TurnToken, requestedHandoff, allMessages), cancellationToken: cancellationToken).ConfigureAwait(false);
+                    await context.SendMessageAsync(new HandoffState(handoffState.TurnToken, requestedHandoff, allMessages), cancellationToken: cancellationToken).ConfigureAwait(false);
 
-                        async Task AddUpdateAsync(AgentRunResponseUpdate update, CancellationToken cancellationToken)
+                    async Task AddUpdateAsync(AgentRunResponseUpdate update, CancellationToken cancellationToken)
+                    {
+                        updates.Add(update);
+                        if (handoffState.TurnToken.EmitEvents is true)
                         {
-                            updates.Add(update);
-                            if (handoffState.TurnToken.EmitEvents is true)
-                            {
-                                await context.AddEventAsync(new AgentRunUpdateEvent(this.Id, update), cancellationToken).ConfigureAwait(false);
-                            }
+                            await context.AddEventAsync(new AgentRunUpdateEvent(this.Id, update), cancellationToken).ConfigureAwait(false);
                         }
-                    });
+                    }
+                });
 
             public ValueTask ResetAsync() => default;
         }

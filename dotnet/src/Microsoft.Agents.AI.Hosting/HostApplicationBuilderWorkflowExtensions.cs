@@ -32,7 +32,7 @@ public static class HostApplicationBuilderWorkflowExtensions
         return builder.AddWorkflow(name, (sp, key) =>
         {
             var agents = agentBuilders.Select(ab => sp.GetRequiredKeyedService<AIAgent>(ab.Name));
-            return AgentWorkflowBuilder.PrepareConcurrent(agents: agents).WithName(name).Build();
+            return AgentWorkflowBuilder.BuildConcurrent(workflowName: name, agents: agents);
         });
     }
 
@@ -52,7 +52,7 @@ public static class HostApplicationBuilderWorkflowExtensions
         return builder.AddWorkflow(name, (sp, key) =>
         {
             var agents = agentBuilders.Select(ab => sp.GetRequiredKeyedService<AIAgent>(ab.Name));
-            return AgentWorkflowBuilder.PrepareSequential(agents: agents).WithName(name).Build();
+            return AgentWorkflowBuilder.BuildSequential(workflowName: name, agents: agents);
         });
     }
 

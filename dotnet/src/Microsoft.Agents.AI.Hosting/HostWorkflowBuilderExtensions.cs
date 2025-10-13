@@ -14,9 +14,17 @@ public static class HostWorkflowBuilderExtensions
     /// Registers the workflow as an AI agent in the dependency injection container.
     /// </summary>
     /// <param name="builder">The <see cref="IHostWorkflowBuilder"/> instance to extend.</param>
+    /// <returns>An <see cref="IHostAgentBuilder"/> that can be used to further configure the agent.</returns>
+    public static IHostAgentBuilder AddAsAIAgent(this IHostWorkflowBuilder builder)
+        => builder.AddAsAIAgent(name: null);
+
+    /// <summary>
+    /// Registers the workflow as an AI agent in the dependency injection container.
+    /// </summary>
+    /// <param name="builder">The <see cref="IHostWorkflowBuilder"/> instance to extend.</param>
     /// <param name="name">The optional name for the AI agent. If not specified, the workflow name is used.</param>
     /// <returns>An <see cref="IHostAgentBuilder"/> that can be used to further configure the agent.</returns>
-    public static IHostAgentBuilder AddAsAIAgent(this IHostWorkflowBuilder builder, string? name = null)
+    public static IHostAgentBuilder AddAsAIAgent(this IHostWorkflowBuilder builder, string? name)
     {
         var agentName = name ?? builder.Name;
         return builder.HostApplicationBuilder.AddAIAgent(agentName, (sp, key) =>
