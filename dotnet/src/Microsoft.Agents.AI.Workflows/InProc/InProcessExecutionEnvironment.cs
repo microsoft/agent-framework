@@ -126,7 +126,7 @@ public sealed class InProcessExecutionEnvironment : IWorkflowExecutionEnvironmen
         string? runId = null,
         CancellationToken cancellationToken = default) where TInput : notnull
     {
-        var runHandle = await this.GetRunHanldeWithTurnTokenAsync(workflow: workflow, input: input, checkpointManager: null, runId: runId, cancellationToken).ConfigureAwait(false);
+        var runHandle = await this.GetRunHandleWithTurnTokenAsync(workflow: workflow, input: input, checkpointManager: null, runId: runId, cancellationToken).ConfigureAwait(false);
 
         Run run = new(runHandle);
         await run.RunToNextHaltAsync(cancellationToken).ConfigureAwait(false);
@@ -140,7 +140,7 @@ public sealed class InProcessExecutionEnvironment : IWorkflowExecutionEnvironmen
         string? runId = null,
         CancellationToken cancellationToken = default) where TInput : notnull
     {
-        var runHandle = await this.GetRunHanldeWithTurnTokenAsync(workflow: workflow, input: input, checkpointManager: null, runId: runId, cancellationToken).ConfigureAwait(false);
+        var runHandle = await this.GetRunHandleWithTurnTokenAsync(workflow: workflow, input: input, checkpointManager: null, runId: runId, cancellationToken).ConfigureAwait(false);
 
         Run run = new(runHandle);
         await run.RunToNextHaltAsync(cancellationToken).ConfigureAwait(false);
@@ -155,7 +155,7 @@ public sealed class InProcessExecutionEnvironment : IWorkflowExecutionEnvironmen
         string? runId = null,
         CancellationToken cancellationToken = default) where TInput : notnull
     {
-        var runHandle = await this.GetRunHanldeWithTurnTokenAsync(workflow: workflow, input: input, checkpointManager: checkpointManager, runId: runId, cancellationToken).ConfigureAwait(false);
+        var runHandle = await this.GetRunHandleWithTurnTokenAsync(workflow: workflow, input: input, checkpointManager: checkpointManager, runId: runId, cancellationToken).ConfigureAwait(false);
 
         Run run = new(runHandle);
         await run.RunToNextHaltAsync(cancellationToken).ConfigureAwait(false);
@@ -171,7 +171,7 @@ public sealed class InProcessExecutionEnvironment : IWorkflowExecutionEnvironmen
         string? runId = null,
         CancellationToken cancellationToken = default) where TInput : notnull
     {
-        var runHandle = await this.GetRunHanldeWithTurnTokenAsync(workflow: workflow, input: input, checkpointManager: checkpointManager, runId: runId, cancellationToken).ConfigureAwait(false);
+        var runHandle = await this.GetRunHandleWithTurnTokenAsync(workflow: workflow, input: input, checkpointManager: checkpointManager, runId: runId, cancellationToken).ConfigureAwait(false);
 
         Run run = new(runHandle);
         await run.RunToNextHaltAsync(cancellationToken).ConfigureAwait(false);
@@ -210,7 +210,7 @@ public sealed class InProcessExecutionEnvironment : IWorkflowExecutionEnvironmen
     }
 
     // Helper to construct a RunHandle with the provided input enqueued. If the starting executor supports it, a TurnToken will be enqueued also.
-    private async ValueTask<AsyncRunHandle> GetRunHanldeWithTurnTokenAsync<TInput>(
+    private async ValueTask<AsyncRunHandle> GetRunHandleWithTurnTokenAsync<TInput>(
         Workflow workflow,
         TInput input,
         CheckpointManager? checkpointManager,
