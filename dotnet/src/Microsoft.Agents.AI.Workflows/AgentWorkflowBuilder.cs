@@ -179,7 +179,13 @@ public static partial class AgentWorkflowBuilder
                         messages.Clear();
                     }
 
-                    messages.AddRange(updates.ToAgentRunResponse().Messages);
+                    // Filter out updates without MessageId before reconstruction to prevent
+                    // ToAgentRunResponse() from incorrectly appending them to previous messages
+                    var filteredUpdates = FilterUpdatesWithMessageId(updates);
+                    if (filteredUpdates.Count > 0)
+                    {
+                        messages.AddRange(filteredUpdates.ToAgentRunResponse().Messages);
+                    }
 
                     await context.SendMessageAsync(messages, cancellationToken: cancellationToken).ConfigureAwait(false);
                     await context.SendMessageAsync(token, cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -572,7 +578,12 @@ public static partial class AgentWorkflowBuilder
                             }
                         }
 
-                        allMessages.AddRange(updates.ToAgentRunResponse().Messages);
+                        var filteredUpdates = FilterUpdatesWithMessageId(updates);
+
+                        if (filteredUpdates.Count > 0)
+                        {
+                            allMessages.AddRange(filteredUpdates.ToAgentRunResponse().Messages);
+                        }
 
                         ResetUserToAssistantForChangedRoles(roleChanges);
 
@@ -854,7 +865,11 @@ public static partial class AgentWorkflowBuilder
                 m.AuthorName != targetAgentName &&
                 m.Contents.All(c => c is TextContent or DataContent or UriContent or UsageContent))
             {
+                // Preserve AuthorName before and after role change
+                // Some ChatMessage implementations clear AuthorName when Role changes
+                string? preservedAuthor = m.AuthorName;
                 m.Role = ChatRole.User;
+                m.AuthorName = preservedAuthor;
                 (roleChanged ??= []).Add(m);
             }
         }
@@ -876,6 +891,16 @@ public static partial class AgentWorkflowBuilder
             }
         }
     }
+
+    /// <summary>
+    /// Filters streaming updates to include only those with valid MessageId values.
+    /// This prevents null-MessageId updates (reasoning tokens, metadata) from being incorrectly
+    /// appended to previous messages during ToAgentRunResponse reconstruction.
+    /// </summary>
+    /// <param name="updates">The collection of streaming updates to filter.</param>
+    /// <returns>A list containing only updates with non-empty MessageId values.</returns>
+    private static List<AgentRunResponseUpdate> FilterUpdatesWithMessageId(IEnumerable<AgentRunResponseUpdate> updates) =>
+        updates.Where(u => !string.IsNullOrEmpty(u.MessageId)).ToList();
 
     /// <summary>Derives from an agent a unique but also hopefully descriptive name that can be used as an executor's name or in a function name.</summary>
     private static string GetDescriptiveIdFromAgent(AIAgent agent)
