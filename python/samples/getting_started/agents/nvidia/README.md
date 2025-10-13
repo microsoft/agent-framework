@@ -62,7 +62,8 @@ python nvidia_nim_agent_example.py
 
 The example will demonstrate:
 - Chat completion with NVIDIA NIM models
-- Basic conversation capabilities
+- Function calling capabilities
+- Tool integration
 
 ## API Compatibility
 

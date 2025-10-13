@@ -63,7 +63,8 @@ python nvidia_nim_agent_example.py
 
 The example will demonstrate:
 - Chat completion with NVIDIA NIM models
-- Basic conversation capabilities
+- Function calling capabilities
+- Tool integration
 
 ## API Compatibility
 
@@ -102,7 +103,7 @@ def get_ai_insights(
 
 
 async def first_example() -> None:
-    """First example response."""
+    """First example with function calling."""
     print("=== Response ===")
 
     agent = NVIDIANIMChatClient(
@@ -111,16 +112,18 @@ async def first_example() -> None:
         model_id=os.environ["OPENAI_CHAT_MODEL_ID"],
     ).create_agent(
         name="NVIDIAAIAgent",
+        instructions="You are a helpful AI assistant powered by NVIDIA NIM models. You can provide weather information and AI insights.",
+        tools=[get_weather, get_ai_insights],
     )
 
-    query = "Hello! Can you tell me about yourself and what you can help with?"
+    query = "What's the weather like in Seattle and tell me about AI in healthcare?"
     print(f"User: {query}")
     result = await agent.run(query)
     print(f"Agent: {result}\n")
 
 
 async def second_example() -> None:
-    """Second example response."""
+    """Second example with function calling."""
     print("=== Response ===")
 
     agent = NVIDIANIMChatClient(
@@ -129,9 +132,11 @@ async def second_example() -> None:
         model_id=os.environ["OPENAI_CHAT_MODEL_ID"],
     ).create_agent(
         name="NVIDIAAIAgent",
+        instructions="You are a helpful AI assistant powered by NVIDIA NIM models. You can provide weather information and AI insights.",
+        tools=[get_weather, get_ai_insights],
     )
 
-    query = "Can you explain what artificial intelligence is and how it works?"
+    query = "What's the weather like in Portland and give me insights about AI in autonomous vehicles?"
     print(f"User: {query}")
     result = await agent.run(query)
     print(f"Agent: {result}\n")
