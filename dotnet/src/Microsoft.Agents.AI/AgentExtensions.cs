@@ -2,6 +2,7 @@
 
 using System;
 using System.ComponentModel;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -12,7 +13,7 @@ namespace Microsoft.Agents.AI;
 /// <summary>
 /// Provides extensions for <see cref="AIAgent"/>.
 /// </summary>
-public static class AIAgentExtensions
+public static partial class AIAgentExtensions
 {
     /// <summary>
     /// Creates a new <see cref="AIAgentBuilder"/> using the specified agent as the foundation for the builder pipeline.
@@ -77,9 +78,32 @@ public static class AIAgentExtensions
         }
 
         options ??= new();
-        options.Name ??= agent.Name;
+        options.Name ??= SanitizeAgentName(agent.Name);
         options.Description ??= agent.Description;
 
         return AIFunctionFactory.Create(InvokeAgentAsync, options);
     }
+
+    /// <summary>
+    /// Removes characters from AI agent name that shouldn't be used in an AI function name.
+    /// </summary>
+    /// <param name="agentName">The AI agent name to sanitize.</param>
+    /// <returns>
+    /// The sanitized agent name with invalid characters replaced by underscores, or <c>null</c> if the input is <c>null</c>.
+    /// </returns>
+    private static string? SanitizeAgentName(string? agentName)
+    {
+        return agentName is null
+            ? agentName
+            : InvalidNameCharsRegex().Replace(agentName, "_");
+    }
+
+    /// <summary>Regex that flags any character other than ASCII digits or letters.</summary>
+#if NET
+    [GeneratedRegex("[^0-9A-Za-z]+")]
+    private static partial Regex InvalidNameCharsRegex();
+#else
+    private static Regex InvalidNameCharsRegex() => s_invalidNameCharsRegex;
+    private static readonly Regex s_invalidNameCharsRegex = new("[^0-9A-Za-z]+", RegexOptions.Compiled);
+#endif
 }

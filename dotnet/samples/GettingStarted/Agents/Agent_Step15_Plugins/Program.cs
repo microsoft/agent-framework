@@ -27,16 +27,13 @@ services.AddSingleton<AgentPlugin>(); // The plugin depends on WeatherProvider a
 
 IServiceProvider serviceProvider = services.BuildServiceProvider();
 
-const string AgentName = "Assistant";
-const string AgentInstructions = "You are a helpful assistant that helps people find information.";
-
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
-     .GetChatClient(deploymentName)
-     .CreateAIAgent(
-        instructions: AgentInstructions,
-        name: AgentName,
+    .GetChatClient(deploymentName)
+    .CreateAIAgent(
+        instructions: "You are a helpful assistant that helps people find information.",
+        name: "Assistant",
         tools: [.. serviceProvider.GetRequiredService<AgentPlugin>().AsAITools()],
         services: serviceProvider); // Pass the service provider to the agent so it will be available to plugin functions to resolve dependencies.
 

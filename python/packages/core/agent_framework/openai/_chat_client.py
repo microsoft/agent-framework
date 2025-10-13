@@ -28,6 +28,8 @@ from .._types import (
     Contents,
     DataContent,
     FinishReason,
+    FunctionApprovalRequestContent,
+    FunctionApprovalResponseContent,
     FunctionCallContent,
     FunctionResultContent,
     Role,
@@ -356,6 +358,10 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
         """Parse a chat message into the openai format."""
         all_messages: list[dict[str, Any]] = []
         for content in message.contents:
+            # Skip approval content - it's internal framework state, not for the LLM
+            if isinstance(content, (FunctionApprovalRequestContent, FunctionApprovalResponseContent)):
+                continue
+
             args: dict[str, Any] = {
                 "role": message.role.value if isinstance(message.role, Role) else message.role,
             }
