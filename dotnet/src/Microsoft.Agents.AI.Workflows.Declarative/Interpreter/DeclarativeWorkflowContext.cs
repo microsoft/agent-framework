@@ -53,7 +53,7 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
                 // Copy keys to array to avoid modifying collection during enumeration.
                 foreach (string key in this.State.Keys(scopeName).ToArray())
                 {
-                    await this.UpdateStateAsync(key, UnassignedValue.Instance, scopeName, cancellationToken: cancellationToken).ConfigureAwait(false);
+                    await this.UpdateStateAsync(key, UnassignedValue.Instance, scopeName, allowSystem: false, cancellationToken).ConfigureAwait(false);
                 }
             }
             else
@@ -68,13 +68,7 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
     /// <inheritdoc/>
     public async ValueTask QueueStateUpdateAsync<T>(string key, T? value, string? scopeName = null, CancellationToken cancellationToken = default)
     {
-        await this.UpdateStateAsync(key, value, scopeName, cancellationToken: cancellationToken).ConfigureAwait(false);
-        this.State.Bind();
-    }
-
-    public async ValueTask QueueSystemUpdateAsync<TValue>(string key, TValue? value, CancellationToken cancellationToken = default)
-    {
-        await this.UpdateStateAsync(key, value, VariableScopeNames.System, allowSystem: true, cancellationToken).ConfigureAwait(false);
+        await this.UpdateStateAsync(key, value, scopeName, allowSystem: false, cancellationToken).ConfigureAwait(false);
         this.State.Bind();
     }
 
@@ -105,7 +99,7 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
     public ValueTask SendMessageAsync(object message, string? targetId = null, CancellationToken cancellationToken = default)
         => this.Source.SendMessageAsync(message, targetId, cancellationToken);
 
-    private ValueTask UpdateStateAsync<T>(string key, T? value, string? scopeName, bool allowSystem = true, CancellationToken cancellationToken = default)
+    public ValueTask UpdateStateAsync<T>(string key, T? value, string? scopeName, bool allowSystem, CancellationToken cancellationToken = default)
     {
         bool isManagedScope =
             scopeName is not null && // null scope cannot be managed
@@ -148,27 +142,32 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
             {
                 this.State.Set(key, formulaValue, scopeName);
             }
-            return this.Source.QueueStateUpdateAsync(key, formulaValue.ToObject(), scopeName, cancellationToken);
+
+            return this.Source.QueueStateUpdateAsync(key, formulaValue.AsPortable(), scopeName, cancellationToken);
         }
 
         ValueTask QueueDataValueStateAsync(DataValue dataValue)
         {
+            FormulaValue formulaValue = dataValue.ToFormula();
+
             if (isManagedScope)
             {
-                FormulaValue formulaValue = dataValue.ToFormula();
                 this.State.Set(key, formulaValue, scopeName);
             }
-            return this.Source.QueueStateUpdateAsync(key, dataValue.ToObject(), scopeName, cancellationToken);
+
+            return this.Source.QueueStateUpdateAsync(key, formulaValue.AsPortable(), scopeName, cancellationToken);
         }
 
-        ValueTask QueueNativeStateAsync(object? rawValue)
+        ValueTask QueueNativeStateAsync(object rawValue)
         {
+            FormulaValue formulaValue = rawValue.ToFormula();
+
             if (isManagedScope)
             {
-                FormulaValue formulaValue = rawValue.ToFormula();
                 this.State.Set(key, formulaValue, scopeName);
             }
-            return this.Source.QueueStateUpdateAsync(key, rawValue, scopeName, cancellationToken);
+
+            return this.Source.QueueStateUpdateAsync(key, formulaValue.AsPortable(), scopeName, cancellationToken);
         }
     }
 }

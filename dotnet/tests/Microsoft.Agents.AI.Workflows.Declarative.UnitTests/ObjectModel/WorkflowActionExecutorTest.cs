@@ -6,7 +6,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
-using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.PowerFx.Types;
@@ -72,6 +71,6 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
     internal sealed class TestWorkflowExecutor() : Executor<WorkflowFormulaState>("test_workflow")
     {
         public override async ValueTask HandleAsync(WorkflowFormulaState message, IWorkflowContext context, CancellationToken cancellationToken) =>
-            await context.SendMessageAsync(new ActionExecutorResult(this.Id), cancellationToken: cancellationToken).ConfigureAwait(false);
+            await context.SendResultMessageAsync(this.Id, cancellationToken).ConfigureAwait(false);
     }
 }

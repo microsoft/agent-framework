@@ -49,7 +49,7 @@ internal class DelegateActionExecutor<TMessage> : Executor<TMessage>, IResettabl
 
         if (this._emitResult)
         {
-            await context.SendResultMessageAsync(this.Id, cancellationToken: cancellationToken).ConfigureAwait(false);
+            await context.SendResultMessageAsync(this.Id, cancellationToken).ConfigureAwait(false);
         }
     }
 }

@@ -441,14 +441,11 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
         Executors call this with a JSON-serializable dict capturing the minimal
         state needed to resume. It replaces any previously stored state.
         """
-        if hasattr(self._runner_context, "set_state"):
-            await self._runner_context.set_state(self._executor_id, state)  # type: ignore[arg-type]
+        await self._runner_context.set_state(self._executor_id, state)
 
     async def get_state(self) -> dict[str, Any] | None:
         """Retrieve previously persisted state for this executor, if any."""
-        if hasattr(self._runner_context, "get_state"):
-            return await self._runner_context.get_state(self._executor_id)  # type: ignore[return-value]
-        return None
+        return await self._runner_context.get_state(self._executor_id)
 
     def is_streaming(self) -> bool:
         """Check if the workflow is running in streaming mode.

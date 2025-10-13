@@ -6,17 +6,19 @@ from datetime import datetime, timezone
 from typing import Any
 
 from agent_framework._workflows._checkpoint import CheckpointStorage, WorkflowCheckpoint
+from agent_framework._workflows._checkpoint_summary import get_checkpoint_summary
 from agent_framework._workflows._events import RequestInfoEvent, WorkflowEvent
 from agent_framework._workflows._request_info_executor import (
     PendingRequestDetails,
+    PendingRequestSnapshot,
     RequestInfoExecutor,
     RequestInfoMessage,
     RequestResponse,
 )
-from agent_framework._workflows._runner_context import (  # type: ignore
+from agent_framework._workflows._runner_context import (
     CheckpointState,
     Message,
-    _encode_checkpoint_value,
+    _encode_checkpoint_value,  # type: ignore
 )
 from agent_framework._workflows._shared_state import SharedState
 from agent_framework._workflows._workflow_context import WorkflowContext
@@ -85,6 +87,12 @@ class _StubRunnerContext:
     async def set_checkpoint_state(self, state: CheckpointState) -> None:  # pragma: no cover - unused
         pass
 
+    def set_streaming(self, streaming: bool) -> None:  # pragma: no cover - unused
+        pass
+
+    def is_streaming(self) -> bool:  # pragma: no cover - unused
+        return False
+
 
 @dataclass(kw_only=True)
 class SimpleApproval(RequestInfoMessage):
@@ -109,30 +117,18 @@ async def test_rehydrate_falls_back_when_request_type_missing() -> None:
     This simulates resuming a workflow where the HumanApprovalRequest class is unavailable
     in the current process (e.g., defined in __main__ during the original run).
     """
-
     request_id = "request-123"
-    snapshot = {
-        "request_id": request_id,
-        "source_executor_id": "review_gateway",
-        "request_type": "nonexistent.module:MissingRequest",
-        "summary": "...",
-        "details": {
+    snapshot = PendingRequestSnapshot(
+        request_id=request_id,
+        source_executor_id="review_gateway",
+        request_type="nonexistent.module:MissingRequest",
+        request_as_json_safe_dict={
             "request_id": request_id,
-            "prompt": "Review draft",
-            "draft": "Draft text",
-            "iteration": 2,
         },
-    }
+    )
 
-    shared_state = SharedState()
-    async with shared_state.hold():
-        await shared_state.set_within_hold(
-            PENDING_STATE_KEY,
-            {request_id: snapshot},
-        )
-
-    runner_ctx = _StubRunnerContext({"pending_requests": {request_id: snapshot}})
-    ctx: WorkflowContext[Any] = WorkflowContext("request_info", ["workflow"], shared_state, runner_ctx)
+    runner_ctx = _StubRunnerContext({PENDING_STATE_KEY: {request_id: snapshot}})
+    ctx: WorkflowContext[Any] = WorkflowContext("request_info", ["workflow"], SharedState(), runner_ctx)
 
     executor = RequestInfoExecutor(id="request_info")
 
@@ -141,31 +137,21 @@ async def test_rehydrate_falls_back_when_request_type_missing() -> None:
     assert event is not None
     assert event.request_id == request_id
     assert isinstance(event.data, RequestInfoMessage)
-    assert getattr(event.data, "prompt", None) == "Review draft"
-    assert getattr(event.data, "iteration", None) == 2
 
 
 async def test_has_pending_request_detects_snapshot() -> None:
-    request_id = "req-pending"
-    snapshot = {
-        "request_id": request_id,
-        "source_executor_id": "review_gateway",
-        "details": {
+    request_id = "request-123"
+    snapshot = PendingRequestSnapshot(
+        request_id=request_id,
+        source_executor_id="review_gateway",
+        request_type="nonexistent.module:MissingRequest",
+        request_as_json_safe_dict={
             "request_id": request_id,
-            "prompt": "Review",
-            "draft": "Draft",
         },
-    }
+    )
 
-    shared_state = SharedState()
-    async with shared_state.hold():
-        await shared_state.set_within_hold(
-            PENDING_STATE_KEY,
-            {request_id: snapshot},
-        )
-
-    runner_ctx = _StubRunnerContext({"pending_requests": {request_id: snapshot}})
-    ctx: WorkflowContext[Any] = WorkflowContext("request_info", ["workflow"], shared_state, runner_ctx)
+    runner_ctx = _StubRunnerContext({PENDING_STATE_KEY: {request_id: snapshot}})
+    ctx: WorkflowContext[Any] = WorkflowContext("request_info", ["workflow"], SharedState(), runner_ctx)
 
     executor = RequestInfoExecutor(id="request_info")
 
@@ -221,7 +207,12 @@ def test_pending_requests_from_checkpoint_and_summary() -> None:
         iteration_count=1,
     )
 
-    pending = RequestInfoExecutor.pending_requests_from_checkpoint(checkpoint)
+    summary = get_checkpoint_summary(checkpoint)
+    assert summary.checkpoint_id == "cp-1"
+    assert summary.status == "awaiting request response"
+    assert summary.pending_requests[0].request_id == "req-42"
+
+    pending = summary.pending_requests
     assert len(pending) == 1
     entry = pending[0]
     assert isinstance(entry, PendingRequestDetails)
@@ -230,11 +221,6 @@ def test_pending_requests_from_checkpoint_and_summary() -> None:
     assert entry.draft == "Draft text"
     assert entry.iteration == 3
     assert entry.original_request is not None
-
-    summary = RequestInfoExecutor.checkpoint_summary(checkpoint)
-    assert summary.checkpoint_id == "cp-1"
-    assert summary.status == "awaiting human response"
-    assert summary.pending_requests[0].request_id == "req-42"
 
 
 def test_snapshot_state_serializes_non_json_payloads() -> None:
@@ -305,13 +291,10 @@ async def test_run_persists_pending_requests_in_runner_state() -> None:
     await executor.execute(approval, ctx.source_executor_ids, shared_state, runner_ctx)
 
     # Runner state should include both pending snapshot and serialized request events
-    assert "pending_requests" in runner_ctx._state  # pyright: ignore[reportPrivateUsage]
-    assert approval.request_id in runner_ctx._state["pending_requests"]  # pyright: ignore[reportPrivateUsage]
-    assert "request_events" in runner_ctx._state  # pyright: ignore[reportPrivateUsage]
-    assert approval.request_id in runner_ctx._state["request_events"]  # pyright: ignore[reportPrivateUsage]
+    assert PENDING_STATE_KEY in runner_ctx._state  # pyright: ignore[reportPrivateUsage]
+    assert approval.request_id in runner_ctx._state[PENDING_STATE_KEY]  # pyright: ignore[reportPrivateUsage]
 
     response_ctx: WorkflowContext[None] = WorkflowContext("request_info", ["source"], shared_state, runner_ctx)
     await executor.handle_response("approved", approval.request_id, response_ctx)  # type: ignore
 
-    assert runner_ctx._state["pending_requests"] == {}  # pyright: ignore[reportPrivateUsage]
-    assert runner_ctx._state.get("request_events", {}).get(approval.request_id) is None  # pyright: ignore[reportPrivateUsage]
+    assert runner_ctx._state[PENDING_STATE_KEY] == {}  # pyright: ignore[reportPrivateUsage]

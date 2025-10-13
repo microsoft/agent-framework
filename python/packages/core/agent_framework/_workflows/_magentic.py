@@ -972,7 +972,6 @@ class MagenticOrchestratorExecutor(Executor):
         self._require_plan_signoff = require_plan_signoff
         self._plan_review_round = 0
         self._max_plan_review_rounds = max_plan_review_rounds
-        self._inner_loop_lock = asyncio.Lock()
         # Registry of agent executors for internal coordination (e.g., resets)
         self._agent_executors = {}
         # Terminal state marker to stop further processing after completion/limits
@@ -1104,8 +1103,6 @@ class MagenticOrchestratorExecutor(Executor):
             task=message.task,
             participant_descriptions=self._participants,
         )
-        # Record the original user task in orchestrator context (no broadcast)
-        self._context.chat_history.append(message.task)
         self._state_restored = True
         # Non-streaming callback for the orchestrator receipt of the task
         if self._message_callback:
@@ -1317,10 +1314,10 @@ class MagenticOrchestratorExecutor(Executor):
         """Run the inner orchestration loop. Coordination phase. Serialized with a lock."""
         if self._context is None or self._task_ledger is None:
             raise RuntimeError("Context or task ledger not initialized")
-        async with self._inner_loop_lock:
-            await self._run_inner_loop_locked(context)
 
-    async def _run_inner_loop_locked(
+        await self._run_inner_loop_helper(context)
+
+    async def _run_inner_loop_helper(
         self,
         context: WorkflowContext[MagenticResponseMessage | MagenticRequestMessage, ChatMessage],
     ) -> None:

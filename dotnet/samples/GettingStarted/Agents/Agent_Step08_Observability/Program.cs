@@ -14,9 +14,6 @@ var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? th
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 var applicationInsightsConnectionString = Environment.GetEnvironmentVariable("APPLICATIONINSIGHTS_CONNECTION_STRING");
 
-const string JokerName = "Joker";
-const string JokerInstructions = "You are good at telling jokes.";
-
 // Create TracerProvider with console exporter
 // This will output the telemetry data to the console.
 string sourceName = Guid.NewGuid().ToString("N");
@@ -32,7 +29,7 @@ using var tracerProvider = tracerProviderBuilder.Build();
 // Create the agent, and enable OpenTelemetry instrumentation.
 AIAgent agent = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
     .GetChatClient(deploymentName)
-    .CreateAIAgent(JokerInstructions, JokerName)
+    .CreateAIAgent(instructions: "You are good at telling jokes.", name: "Joker")
     .AsBuilder()
     .UseOpenTelemetry(sourceName: sourceName)
     .Build();

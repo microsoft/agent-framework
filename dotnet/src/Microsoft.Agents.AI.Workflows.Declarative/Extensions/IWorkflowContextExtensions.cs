@@ -20,8 +20,17 @@ internal static class IWorkflowContextExtensions
     public static ValueTask RaiseCompletionEventAsync(this IWorkflowContext context, DialogAction action, CancellationToken cancellationToken = default) =>
         context.AddEventAsync(new DeclarativeActionCompletedEvent(action), cancellationToken);
 
-    public static ValueTask SendResultMessageAsync(this IWorkflowContext context, string id, object? result = null, CancellationToken cancellationToken = default) =>
-        context.SendMessageAsync(new ActionExecutorResult(id, result), cancellationToken: cancellationToken);
+    public static FormulaValue ReadState(this IWorkflowContext context, PropertyPath variablePath) =>
+        context.ReadState(Throw.IfNull(variablePath.VariableName), Throw.IfNull(variablePath.NamespaceAlias));
+
+    public static FormulaValue ReadState(this IWorkflowContext context, string key, string? scopeName = null) =>
+        DeclarativeContext(context).State.Get(key, scopeName);
+
+    public static ValueTask SendResultMessageAsync(this IWorkflowContext context, string id, CancellationToken cancellationToken = default) =>
+        context.SendResultMessageAsync(id, result: null, cancellationToken);
+
+    public static ValueTask SendResultMessageAsync(this IWorkflowContext context, string id, object? result, CancellationToken cancellationToken = default) =>
+        context.SendMessageAsync(new ActionExecutorResult(id, result), targetId: null, cancellationToken);
 
     public static ValueTask QueueStateResetAsync(this IWorkflowContext context, PropertyPath variablePath, CancellationToken cancellationToken = default) =>
         context.QueueStateUpdateAsync(Throw.IfNull(variablePath.VariableName), UnassignedValue.Instance, Throw.IfNull(variablePath.NamespaceAlias), cancellationToken);
@@ -29,14 +38,22 @@ internal static class IWorkflowContextExtensions
     public static ValueTask QueueStateUpdateAsync<TValue>(this IWorkflowContext context, PropertyPath variablePath, TValue? value, CancellationToken cancellationToken = default) =>
         context.QueueStateUpdateAsync(Throw.IfNull(variablePath.VariableName), value, Throw.IfNull(variablePath.NamespaceAlias), cancellationToken);
 
-    public static ValueTask QueueSystemUpdateAsync<TValue>(this IWorkflowContext context, string key, TValue? value, CancellationToken cancellationToken = default) =>
-        DeclarativeContext(context).QueueSystemUpdateAsync(key, value, cancellationToken);
+    public static async ValueTask QueueEnvironmentUpdateAsync<TValue>(this IWorkflowContext context, string key, TValue? value, CancellationToken cancellationToken = default)
+    {
+        DeclarativeWorkflowContext declarativeContext = DeclarativeContext(context);
+        await declarativeContext.UpdateStateAsync(key, value, VariableScopeNames.Environment, allowSystem: true, cancellationToken).ConfigureAwait(false);
+        declarativeContext.State.Bind();
+    }
 
-    public static FormulaValue ReadState(this IWorkflowContext context, PropertyPath variablePath) =>
-        context.ReadState(Throw.IfNull(variablePath.VariableName), Throw.IfNull(variablePath.NamespaceAlias));
+    public static async ValueTask QueueSystemUpdateAsync<TValue>(this IWorkflowContext context, string key, TValue? value, CancellationToken cancellationToken = default)
+    {
+        DeclarativeWorkflowContext declarativeContext = DeclarativeContext(context);
+        await declarativeContext.UpdateStateAsync(key, value, VariableScopeNames.System, allowSystem: true, cancellationToken).ConfigureAwait(false);
+        declarativeContext.State.Bind();
+    }
 
-    public static FormulaValue ReadState(this IWorkflowContext context, string key, string? scopeName = null) =>
-        DeclarativeContext(context).State.Get(key, scopeName);
+    public static ValueTask QueueConversationUpdateAsync(this IWorkflowContext context, string conversationId, CancellationToken cancellationToken = default) =>
+        context.QueueConversationUpdateAsync(conversationId, isExternal: false, cancellationToken);
 
     public static async ValueTask QueueConversationUpdateAsync(this IWorkflowContext context, string conversationId, bool isExternal = false, CancellationToken cancellationToken = default)
     {
