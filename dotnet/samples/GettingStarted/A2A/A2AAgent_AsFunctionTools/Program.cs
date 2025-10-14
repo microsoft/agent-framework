@@ -30,7 +30,9 @@ AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
     .GetChatClient(deploymentName)
-    .CreateAIAgent(instructions: "You are a helpful assistant that helps people with travel planning.", tools: [.. CreateFunctionTools(a2aAgent, agentCard)]);
+    .CreateAIAgent(
+        instructions: "You are a helpful assistant that helps people with travel planning.", 
+        tools: [.. CreateFunctionTools(a2aAgent, agentCard)]);
 
 // Invoke the agent and output the text result.
 Console.WriteLine(await agent.RunAsync("Plan a route from '1600 Amphitheatre Parkway, Mountain View, CA' to 'San Francisco International Airport' avoiding tolls"));
