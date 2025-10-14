@@ -130,12 +130,9 @@ internal sealed class SloganWriterExecutor : Executor
         this._thread = this._agent.GetNewThread();
     }
 
-    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
-    {
-        routeBuilder.AddHandler<string, SloganResult>(this.HandleAsync);
-        routeBuilder.AddHandler<FeedbackResult, SloganResult>(this.HandleAsync);
-        return routeBuilder;
-    }
+    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
+        routeBuilder.AddHandler<string, SloganResult>(this.HandleAsync)
+                    .AddHandler<FeedbackResult, SloganResult>(this.HandleAsync);
 
     public async ValueTask<SloganResult> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {

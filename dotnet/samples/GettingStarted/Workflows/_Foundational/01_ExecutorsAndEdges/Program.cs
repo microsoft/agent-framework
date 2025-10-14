@@ -73,6 +73,6 @@ internal sealed class ReverseTextExecutor() : Executor<string, string>("ReverseT
     public override ValueTask<string> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         // Because we do not suppress it, the returned result will be yielded as an output from this executor.
-        return new(string.Concat(message.Reverse()));
+        return ValueTask.FromResult(string.Concat(message.Reverse()));
     }
 }
