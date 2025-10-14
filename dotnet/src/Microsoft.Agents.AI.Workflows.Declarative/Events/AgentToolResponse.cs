@@ -43,7 +43,7 @@ public sealed class AgentToolResponse
     /// <exception cref="DeclarativeActionException">Not all <see cref="AgentToolRequest.FunctionCalls"/> have a corresponding <see cref="FunctionResultContent"/>.</exception>
     public static AgentToolResponse Create(AgentToolRequest toolRequest, params IEnumerable<FunctionResultContent> functionResults)
     {
-        HashSet<string> callIds = toolRequest.FunctionCalls.Select(call => call.CallId).ToHashSet();
+        HashSet<string> callIds = [.. toolRequest.FunctionCalls.Select(call => call.CallId)];
         HashSet<string> resultIds = [.. functionResults.Select(call => call.CallId)];
         if (!callIds.SetEquals(resultIds))
         {
