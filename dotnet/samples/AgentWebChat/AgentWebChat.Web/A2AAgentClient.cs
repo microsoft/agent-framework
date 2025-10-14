@@ -10,7 +10,7 @@ using Microsoft.Extensions.AI;
 
 namespace AgentWebChat.Web;
 
-internal sealed class A2AAgentClient : IAgentClient
+internal sealed class A2AAgentClient : AgentClientBase
 {
     private readonly ILogger _logger;
     private readonly Uri _uri;
@@ -25,7 +25,7 @@ internal sealed class A2AAgentClient : IAgentClient
         this._uri = baseUri;
     }
 
-    public async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    public async override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
         string agentName,
         IList<ChatMessage> messages,
         string? threadId = null,
@@ -126,7 +126,7 @@ internal sealed class A2AAgentClient : IAgentClient
         }
     }
 
-    public async Task<AgentCard?> GetAgentCardAsync(string agentName, CancellationToken cancellationToken = default)
+    public async override Task<AgentCard?> GetAgentCardAsync(string agentName, CancellationToken cancellationToken = default)
     {
         this._logger.LogInformation("Retrieving agent card for {Agent}", agentName);
 
