@@ -29,11 +29,14 @@ public sealed class DeclarativeCodeGenTest(ITestOutputHelper output) : WorkflowT
     [InlineData("Marketing.yaml", "Marketing.json", true)]
     [InlineData("MathChat.yaml", "MathChat.json", true)]
     [InlineData("DeepResearch.yaml", "DeepResearch.json", Skip = "Long running")]
-    [InlineData("HumanInLoop.yaml", "HumanInLoop.json", Skip = "Needs template support")]
     public Task ValidateScenarioAsync(string workflowFileName, string testcaseFileName, bool externalConveration = false) =>
         this.RunWorkflowAsync(Path.Combine(GetRepoFolder(), "workflow-samples", workflowFileName), testcaseFileName, externalConveration);
 
-    protected override async Task RunAndVerifyAsync<TInput>(Testcase testcase, string workflowPath, DeclarativeWorkflowOptions workflowOptions, TInput input)
+    [Fact(Skip = "Needs template support")]
+    public Task ValidateMultiTurnAsync() =>
+        this.RunWorkflowAsync(Path.Combine(GetRepoFolder(), "workflow-samples", "HumanInLoop.yaml"), "HumanInLoop.json", useJsonCheckpoint: true);
+
+    protected override async Task RunAndVerifyAsync<TInput>(Testcase testcase, string workflowPath, DeclarativeWorkflowOptions workflowOptions, TInput input, bool useJsonCheckpoint)
     {
         const string WorkflowNamespace = "Test.WorkflowProviders";
         const string WorkflowPrefix = "Test";
@@ -49,13 +52,13 @@ public sealed class DeclarativeCodeGenTest(ITestOutputHelper output) : WorkflowT
                 workflowOptions,
                 input);
 
-            WorkflowEvents workflowEvents = await harness.RunTestcaseAsync(testcase, input).ConfigureAwait(false);
+            WorkflowEvents workflowEvents = await harness.RunTestcaseAsync(testcase, input, useJsonCheckpoint).ConfigureAwait(false);
 
             // Verify no action events are present
             Assert.Empty(workflowEvents.ActionInvokeEvents);
             Assert.Empty(workflowEvents.ActionCompleteEvents);
             // Verify the associated conversations
-            AssertWorkflow.Conversation(workflowOptions.ConversationId, workflowEvents.ConversationEvents, testcase);
+            AssertWorkflow.Conversation(workflowEvents.ConversationEvents, testcase);
             // Verify executor events
             AssertWorkflow.EventCounts(workflowEvents.ExecutorInvokeEvents.Count - 2, testcase);
             AssertWorkflow.EventCounts(workflowEvents.ExecutorCompleteEvents.Count - 2, testcase);

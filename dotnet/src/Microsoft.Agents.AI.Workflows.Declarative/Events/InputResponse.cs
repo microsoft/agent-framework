@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Text.Json.Serialization;
+
 namespace Microsoft.Agents.AI.Workflows.Declarative.Events;
 
 /// <summary>
@@ -16,6 +18,7 @@ public sealed class InputResponse
     /// Initializes a new instance of the <see cref="InputResponse"/> class.
     /// </summary>
     /// <param name="value">The response value.</param>
+    [JsonConstructor]
     public InputResponse(string value)
     {
         this.Value = value;

@@ -29,22 +29,25 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     [InlineData("Marketing.yaml", "Marketing.json", true)]
     [InlineData("MathChat.yaml", "MathChat.json", true)]
     [InlineData("DeepResearch.yaml", "DeepResearch.json", Skip = "Long running")]
-    [InlineData("HumanInLoop.yaml", "HumanInLoop.json")]
     public Task ValidateScenarioAsync(string workflowFileName, string testcaseFileName, bool externalConveration = false) =>
         this.RunWorkflowAsync(Path.Combine(GetRepoFolder(), "workflow-samples", workflowFileName), testcaseFileName, externalConveration);
 
-    protected override async Task RunAndVerifyAsync<TInput>(Testcase testcase, string workflowPath, DeclarativeWorkflowOptions workflowOptions, TInput input)
+    [Fact]
+    public Task ValidateMultiTurnAsync() =>
+        this.RunWorkflowAsync(Path.Combine(GetRepoFolder(), "workflow-samples", "HumanInLoop.yaml"), "HumanInLoop.json", useJsonCheckpoint: true);
+
+    protected override async Task RunAndVerifyAsync<TInput>(Testcase testcase, string workflowPath, DeclarativeWorkflowOptions workflowOptions, TInput input, bool useJsonCheckpoint)
     {
         Workflow workflow = DeclarativeWorkflowBuilder.Build<TInput>(workflowPath, workflowOptions);
 
         WorkflowHarness harness = new(workflow, runId: Path.GetFileNameWithoutExtension(workflowPath));
-        WorkflowEvents workflowEvents = await harness.RunTestcaseAsync(testcase, input).ConfigureAwait(false);
+        WorkflowEvents workflowEvents = await harness.RunTestcaseAsync(testcase, input, useJsonCheckpoint).ConfigureAwait(false);
 
         // Verify executor events are present
         Assert.NotEmpty(workflowEvents.ExecutorInvokeEvents);
         Assert.NotEmpty(workflowEvents.ExecutorCompleteEvents);
         // Verify the associated conversations
-        AssertWorkflow.Conversation(workflowOptions.ConversationId, workflowEvents.ConversationEvents, testcase);
+        AssertWorkflow.Conversation(workflowEvents.ConversationEvents, testcase);
         // Verify the agent responses
         AssertWorkflow.Responses(workflowEvents.AgentResponseEvents, testcase);
         // Verify the messages on the workflow conversation

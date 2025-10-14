@@ -22,12 +22,14 @@ public abstract class WorkflowTest(ITestOutputHelper output) : IntegrationTest(o
         Testcase testcase,
         string workflowPath,
         DeclarativeWorkflowOptions workflowOptions,
-        TInput input) where TInput : notnull;
+        TInput input,
+        bool useJsonCheckpoint) where TInput : notnull;
 
     protected Task RunWorkflowAsync(
         string workflowPath,
         string testcaseFileName,
-        bool externalConversation = false)
+        bool externalConversation = false,
+        bool useJsonCheckpoint = false)
     {
         this.Output.WriteLine($"WORKFLOW: {workflowPath}");
         this.Output.WriteLine($"TESTCASE: {testcaseFileName}");
@@ -39,24 +41,21 @@ public abstract class WorkflowTest(ITestOutputHelper output) : IntegrationTest(o
         return
             testcase.Setup.Input.Type switch
             {
-                nameof(ChatMessage) => this.TestWorkflowAsync<ChatMessage>(testcase, workflowPath),
-                nameof(String) => this.TestWorkflowAsync<string>(testcase, workflowPath),
+                nameof(ChatMessage) => TestWorkflowAsync<ChatMessage>(),
+                nameof(String) => TestWorkflowAsync<string>(),
                 _ => throw new NotSupportedException($"Input type '{testcase.Setup.Input.Type}' is not supported."),
             };
-    }
 
-    protected async Task TestWorkflowAsync<TInput>(
-        Testcase testcase,
-        string workflowPath,
-        bool externalConversation = false) where TInput : notnull
-    {
-        this.Output.WriteLine($"INPUT: {testcase.Setup.Input.Value}");
+        async Task TestWorkflowAsync<TInput>() where TInput : notnull
+        {
+            this.Output.WriteLine($"INPUT: {testcase.Setup.Input.Value}");
 
-        DeclarativeWorkflowOptions workflowOptions = await this.CreateOptionsAsync(externalConversation).ConfigureAwait(false);
+            DeclarativeWorkflowOptions workflowOptions = await this.CreateOptionsAsync(externalConversation).ConfigureAwait(false);
 
-        TInput input = (TInput)GetInput<TInput>(testcase);
+            TInput input = (TInput)GetInput<TInput>(testcase);
 
-        await this.RunAndVerifyAsync(testcase, workflowPath, workflowOptions, input);
+            await this.RunAndVerifyAsync(testcase, workflowPath, workflowOptions, input, useJsonCheckpoint);
+        }
     }
 
     protected static string? GetConversationId(string? conversationId, IReadOnlyList<ConversationUpdateEvent> conversationEvents)
@@ -76,8 +75,8 @@ public abstract class WorkflowTest(ITestOutputHelper output) : IntegrationTest(o
 
     protected static Testcase ReadTestcase(string testcaseFileName)
     {
-        using Stream testcaseStream = File.Open(Path.Combine("Testcases", testcaseFileName), FileMode.Open);
-        Testcase? testcase = JsonSerializer.Deserialize<Testcase>(testcaseStream, s_jsonSerializerOptions);
+        string testcaseJson = File.ReadAllText(Path.Combine("Testcases", testcaseFileName));
+        Testcase? testcase = JsonSerializer.Deserialize<Testcase>(testcaseJson, s_jsonSerializerOptions);
         Assert.NotNull(testcase);
         return testcase;
     }
@@ -109,16 +108,9 @@ public abstract class WorkflowTest(ITestOutputHelper output) : IntegrationTest(o
 
     protected static class AssertWorkflow
     {
-        public static void Conversation(string? conversationId, IReadOnlyList<ConversationUpdateEvent> conversationEvents, Testcase testcase)
+        public static void Conversation(IReadOnlyList<ConversationUpdateEvent> conversationEvents, Testcase testcase)
         {
-            if (string.IsNullOrEmpty(conversationId))
-            {
-                Assert.Equal(testcase.Validation.ConversationCount, conversationEvents.Count);
-            }
-            else
-            {
-                Assert.Equal(testcase.Validation.ConversationCount - 1, conversationEvents.Count);
-            }
+            Assert.Equal(testcase.Validation.ConversationCount, conversationEvents.Count);
         }
 
         // "isCompletion" adjusts validation logic to account for when condition completion is not experienced due to goto.  Remove this test logic once addressed.

@@ -15,7 +15,11 @@ namespace Microsoft.Agents.AI.Workflows;
 /// </summary>
 public sealed class PortableValue
 {
-    internal PortableValue(object value)
+    /// <summary>
+    /// Initializes a new instance <see cref="PortableValue"/>.
+    /// </summary>
+    /// <param name="value">The represented value.</param>
+    public PortableValue(object value)
     {
         this._value = value;
         this.TypeId = new(value.GetType());
