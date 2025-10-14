@@ -87,7 +87,7 @@ public static class Program
         // Execute the workflow
         await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, new ChatMessage(ChatRole.User, email));
         await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
-        await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync())
         {
             if (evt is WorkflowOutputEvent outputEvent)
             {
@@ -248,10 +248,10 @@ internal sealed class EmailAnalysisExecutor : Executor<ChatMessage, AnalysisResu
             EmailId = Guid.NewGuid().ToString("N"),
             EmailContent = message.Text
         };
-        await context.QueueStateUpdateAsync(newEmail.EmailId, newEmail, scopeName: EmailStateConstants.EmailStateScope, cancellationToken).ConfigureAwait(false);
+        await context.QueueStateUpdateAsync(newEmail.EmailId, newEmail, scopeName: EmailStateConstants.EmailStateScope, cancellationToken);
 
         // Invoke the agent
-        var response = await this._emailAnalysisAgent.RunAsync(message, cancellationToken: cancellationToken).ConfigureAwait(false);
+        var response = await this._emailAnalysisAgent.RunAsync(message, cancellationToken: cancellationToken);
         var AnalysisResult = JsonSerializer.Deserialize<AnalysisResult>(response.Text);
 
         AnalysisResult!.EmailId = newEmail.EmailId;
@@ -294,10 +294,10 @@ internal sealed class EmailAssistantExecutor : Executor<AnalysisResult, EmailRes
         }
 
         // Retrieve the email content from the context
-        var email = await context.ReadStateAsync<Email>(message.EmailId, scopeName: EmailStateConstants.EmailStateScope, cancellationToken).ConfigureAwait(false);
+        var email = await context.ReadStateAsync<Email>(message.EmailId, scopeName: EmailStateConstants.EmailStateScope, cancellationToken);
 
         // Invoke the agent
-        var response = await this._emailAssistantAgent.RunAsync(email!.EmailContent, cancellationToken: cancellationToken).ConfigureAwait(false);
+        var response = await this._emailAssistantAgent.RunAsync(email!.EmailContent, cancellationToken: cancellationToken);
         var emailResponse = JsonSerializer.Deserialize<EmailResponse>(response.Text);
 
         return emailResponse!;
@@ -313,7 +313,7 @@ internal sealed class SendEmailExecutor() : Executor<EmailResponse>("SendEmailEx
     /// Simulate the sending of an email.
     /// </summary>
     public override async ValueTask HandleAsync(EmailResponse message, IWorkflowContext context, CancellationToken cancellationToken = default) =>
-        await context.YieldOutputAsync($"Email sent: {message.Response}", cancellationToken).ConfigureAwait(false);
+        await context.YieldOutputAsync($"Email sent: {message.Response}", cancellationToken);
 }
 
 /// <summary>
@@ -328,7 +328,7 @@ internal sealed class HandleSpamExecutor() : Executor<AnalysisResult>("HandleSpa
     {
         if (message.spamDecision == SpamDecision.Spam)
         {
-            await context.YieldOutputAsync($"Email marked as spam: {message.Reason}", cancellationToken).ConfigureAwait(false);
+            await context.YieldOutputAsync($"Email marked as spam: {message.Reason}", cancellationToken);
         }
         else
         {
@@ -349,8 +349,8 @@ internal sealed class HandleUncertainExecutor() : Executor<AnalysisResult>("Hand
     {
         if (message.spamDecision == SpamDecision.Uncertain)
         {
-            var email = await context.ReadStateAsync<Email>(message.EmailId, scopeName: EmailStateConstants.EmailStateScope, cancellationToken).ConfigureAwait(false);
-            await context.YieldOutputAsync($"Email marked as uncertain: {message.Reason}. Email content: {email?.EmailContent}", cancellationToken).ConfigureAwait(false);
+            var email = await context.ReadStateAsync<Email>(message.EmailId, scopeName: EmailStateConstants.EmailStateScope, cancellationToken);
+            await context.YieldOutputAsync($"Email marked as uncertain: {message.Reason}. Email content: {email?.EmailContent}", cancellationToken);
         }
         else
         {
@@ -387,10 +387,10 @@ internal sealed class EmailSummaryExecutor : Executor<AnalysisResult, AnalysisRe
     public override async ValueTask<AnalysisResult> HandleAsync(AnalysisResult message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         // Read the email content from the shared states
-        var email = await context.ReadStateAsync<Email>(message.EmailId, scopeName: EmailStateConstants.EmailStateScope, cancellationToken).ConfigureAwait(false);
+        var email = await context.ReadStateAsync<Email>(message.EmailId, scopeName: EmailStateConstants.EmailStateScope, cancellationToken);
 
         // Invoke the agent
-        var response = await this._emailSummaryAgent.RunAsync(email!.EmailContent, cancellationToken: cancellationToken).ConfigureAwait(false);
+        var response = await this._emailSummaryAgent.RunAsync(email!.EmailContent, cancellationToken: cancellationToken);
         var emailSummary = JsonSerializer.Deserialize<EmailSummary>(response.Text);
         message.EmailSummary = emailSummary!.Summary;
 
@@ -412,14 +412,14 @@ internal sealed class DatabaseAccessExecutor() : Executor<AnalysisResult>("Datab
     public override async ValueTask HandleAsync(AnalysisResult message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         // 1. Save the email content
-        await context.ReadStateAsync<Email>(message.EmailId, scopeName: EmailStateConstants.EmailStateScope, cancellationToken).ConfigureAwait(false);
-        await Task.Delay(100, cancellationToken).ConfigureAwait(false); // Simulate database access delay
+        await context.ReadStateAsync<Email>(message.EmailId, scopeName: EmailStateConstants.EmailStateScope, cancellationToken);
+        await Task.Delay(100, cancellationToken); // Simulate database access delay
 
         // 2. Save the analysis result
-        await Task.Delay(100, cancellationToken).ConfigureAwait(false); // Simulate database access delay
+        await Task.Delay(100, cancellationToken); // Simulate database access delay
 
         // Not using the `WorkflowCompletedEvent` because this is not the end of the workflow.
         // The end of the workflow is signaled by the `SendEmailExecutor` or the `HandleUnknownExecutor`.
-        await context.AddEventAsync(new DatabaseEvent($"Email {message.EmailId} saved to database."), cancellationToken).ConfigureAwait(false);
+        await context.AddEventAsync(new DatabaseEvent($"Email {message.EmailId} saved to database."), cancellationToken);
     }
 }

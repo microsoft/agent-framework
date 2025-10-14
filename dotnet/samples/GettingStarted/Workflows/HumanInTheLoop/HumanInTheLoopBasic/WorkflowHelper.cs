@@ -58,15 +58,15 @@ internal sealed class JudgeExecutor() : Executor<int>("Judge")
         if (message == this._targetNumber)
         {
             await context.YieldOutputAsync($"{this._targetNumber} found in {this._tries} tries!", cancellationToken)
-                         .ConfigureAwait(false);
+                         ;
         }
         else if (message < this._targetNumber)
         {
-            await context.SendMessageAsync(NumberSignal.Below, cancellationToken: cancellationToken).ConfigureAwait(false);
+            await context.SendMessageAsync(NumberSignal.Below, cancellationToken: cancellationToken);
         }
         else
         {
-            await context.SendMessageAsync(NumberSignal.Above, cancellationToken: cancellationToken).ConfigureAwait(false);
+            await context.SendMessageAsync(NumberSignal.Above, cancellationToken: cancellationToken);
         }
     }
 }

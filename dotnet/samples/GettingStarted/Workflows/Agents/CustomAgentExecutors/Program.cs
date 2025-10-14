@@ -49,7 +49,7 @@ public static class Program
 
         // Execute the workflow
         await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, "Create a slogan for a new electric SUV that is affordable and fun to drive.");
-        await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync())
         {
             if (evt is SloganGeneratedEvent or FeedbackEvent)
             {
@@ -139,11 +139,11 @@ internal sealed class SloganWriterExecutor : Executor
 
     public async ValueTask<SloganResult> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        var result = await this._agent.RunAsync(message, this._thread, cancellationToken: cancellationToken).ConfigureAwait(false);
+        var result = await this._agent.RunAsync(message, this._thread, cancellationToken: cancellationToken);
 
         var sloganResult = JsonSerializer.Deserialize<SloganResult>(result.Text) ?? throw new InvalidOperationException("Failed to deserialize slogan result.");
 
-        await context.AddEventAsync(new SloganGeneratedEvent(sloganResult), cancellationToken).ConfigureAwait(false);
+        await context.AddEventAsync(new SloganGeneratedEvent(sloganResult), cancellationToken);
         return sloganResult;
     }
 
@@ -158,10 +158,10 @@ internal sealed class SloganWriterExecutor : Executor
             Please use this feedback to improve your slogan.
             """;
 
-        var result = await this._agent.RunAsync(feedbackMessage, this._thread, cancellationToken: cancellationToken).ConfigureAwait(false);
+        var result = await this._agent.RunAsync(feedbackMessage, this._thread, cancellationToken: cancellationToken);
         var sloganResult = JsonSerializer.Deserialize<SloganResult>(result.Text) ?? throw new InvalidOperationException("Failed to deserialize slogan result.");
 
-        await context.AddEventAsync(new SloganGeneratedEvent(sloganResult), cancellationToken).ConfigureAwait(false);
+        await context.AddEventAsync(new SloganGeneratedEvent(sloganResult), cancellationToken);
         return sloganResult;
     }
 }
@@ -216,24 +216,24 @@ internal sealed class FeedbackExecutor : Executor<SloganResult>
             Please provide feedback on this slogan, including comments, a rating from 1 to 10, and suggested actions for improvement.
             """;
 
-        var response = await this._agent.RunAsync(sloganMessage, this._thread, cancellationToken: cancellationToken).ConfigureAwait(false);
+        var response = await this._agent.RunAsync(sloganMessage, this._thread, cancellationToken: cancellationToken);
         var feedback = JsonSerializer.Deserialize<FeedbackResult>(response.Text) ?? throw new InvalidOperationException("Failed to deserialize feedback.");
 
-        await context.AddEventAsync(new FeedbackEvent(feedback), cancellationToken).ConfigureAwait(false);
+        await context.AddEventAsync(new FeedbackEvent(feedback), cancellationToken);
 
         if (feedback.Rating >= this.MinimumRating)
         {
-            await context.YieldOutputAsync($"The following slogan was accepted:\n\n{message.Slogan}", cancellationToken).ConfigureAwait(false);
+            await context.YieldOutputAsync($"The following slogan was accepted:\n\n{message.Slogan}", cancellationToken);
             return;
         }
 
         if (this._attempts >= this.MaxAttempts)
         {
-            await context.YieldOutputAsync($"The slogan was rejected after {this.MaxAttempts} attempts. Final slogan:\n\n{message.Slogan}", cancellationToken).ConfigureAwait(false);
+            await context.YieldOutputAsync($"The slogan was rejected after {this.MaxAttempts} attempts. Final slogan:\n\n{message.Slogan}", cancellationToken);
             return;
         }
 
-        await context.SendMessageAsync(feedback, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await context.SendMessageAsync(feedback, cancellationToken: cancellationToken);
         this._attempts++;
     }
 }

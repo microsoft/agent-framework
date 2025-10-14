@@ -73,15 +73,15 @@ internal sealed class GuessNumberExecutor() : Executor<NumberSignal>("Guess")
         switch (message)
         {
             case NumberSignal.Init:
-                await context.SendMessageAsync(this.NextGuess, cancellationToken: cancellationToken).ConfigureAwait(false);
+                await context.SendMessageAsync(this.NextGuess, cancellationToken: cancellationToken);
                 break;
             case NumberSignal.Above:
                 this.UpperBound = this.NextGuess - 1;
-                await context.SendMessageAsync(this.NextGuess, cancellationToken: cancellationToken).ConfigureAwait(false);
+                await context.SendMessageAsync(this.NextGuess, cancellationToken: cancellationToken);
                 break;
             case NumberSignal.Below:
                 this.LowerBound = this.NextGuess + 1;
-                await context.SendMessageAsync(this.NextGuess, cancellationToken: cancellationToken).ConfigureAwait(false);
+                await context.SendMessageAsync(this.NextGuess, cancellationToken: cancellationToken);
                 break;
         }
     }
@@ -98,7 +98,7 @@ internal sealed class GuessNumberExecutor() : Executor<NumberSignal>("Guess")
     /// This must be overridden to restore any state that was saved during checkpointing.
     /// </summary>
     protected override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default) =>
-        (this.LowerBound, this.UpperBound) = await context.ReadStateAsync<(int, int)>(StateKey, cancellationToken: cancellationToken).ConfigureAwait(false);
+        (this.LowerBound, this.UpperBound) = await context.ReadStateAsync<(int, int)>(StateKey, cancellationToken: cancellationToken);
 }
 
 /// <summary>
@@ -124,15 +124,15 @@ internal sealed class JudgeExecutor() : Executor<int>("Judge")
         this._tries++;
         if (message == this._targetNumber)
         {
-            await context.YieldOutputAsync($"{this._targetNumber} found in {this._tries} tries!", cancellationToken: cancellationToken).ConfigureAwait(false);
+            await context.YieldOutputAsync($"{this._targetNumber} found in {this._tries} tries!", cancellationToken: cancellationToken);
         }
         else if (message < this._targetNumber)
         {
-            await context.SendMessageAsync(NumberSignal.Below, cancellationToken: cancellationToken).ConfigureAwait(false);
+            await context.SendMessageAsync(NumberSignal.Below, cancellationToken: cancellationToken);
         }
         else
         {
-            await context.SendMessageAsync(NumberSignal.Above, cancellationToken: cancellationToken).ConfigureAwait(false);
+            await context.SendMessageAsync(NumberSignal.Above, cancellationToken: cancellationToken);
         }
     }
 
@@ -148,5 +148,5 @@ internal sealed class JudgeExecutor() : Executor<int>("Judge")
     /// This must be overridden to restore any state that was saved during checkpointing.
     /// </summary>
     protected override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default) =>
-        this._tries = await context.ReadStateAsync<int>(StateKey, cancellationToken: cancellationToken).ConfigureAwait(false);
+        this._tries = await context.ReadStateAsync<int>(StateKey, cancellationToken: cancellationToken);
 }

@@ -59,7 +59,7 @@ AIAgent reporter = new ChatClientAgent(anthropic,
 // Build a sequential workflow: Researcher -> Fact-Checker -> Reporter
 AIAgent workflowAgent = await AgentWorkflowBuilder.BuildSequential(researcher, factChecker, reporter)
                                                   .AsAgentAsync()
-                                                  .ConfigureAwait(false);
+                                                  ;
 
 // Run the workflow, streaming the output as it arrives.
 string? lastAuthor = null;

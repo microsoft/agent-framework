@@ -59,7 +59,7 @@ public static class Program
 
         // Execute the workflow in streaming mode
         await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, "What is temperature?");
-        await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync())
         {
             if (evt is WorkflowOutputEvent output)
             {
@@ -87,9 +87,9 @@ internal sealed class ConcurrentStartExecutor() :
     {
         // Broadcast the message to all connected agents. Receiving agents will queue
         // the message but will not start processing until they receive a turn token.
-        await context.SendMessageAsync(new ChatMessage(ChatRole.User, message), cancellationToken: cancellationToken).ConfigureAwait(false);
+        await context.SendMessageAsync(new ChatMessage(ChatRole.User, message), cancellationToken: cancellationToken);
         // Broadcast the turn token to kick off the agents.
-        await context.SendMessageAsync(new TurnToken(emitEvents: true), cancellationToken: cancellationToken).ConfigureAwait(false);
+        await context.SendMessageAsync(new TurnToken(emitEvents: true), cancellationToken: cancellationToken);
     }
 }
 
@@ -116,7 +116,7 @@ internal sealed class ConcurrentAggregationExecutor() :
         if (this._messages.Count == 2)
         {
             var formattedMessages = string.Join(Environment.NewLine, this._messages.Select(m => $"{m.AuthorName}: {m.Text}"));
-            await context.YieldOutputAsync(formattedMessages, cancellationToken).ConfigureAwait(false);
+            await context.YieldOutputAsync(formattedMessages, cancellationToken);
         }
     }
 }

@@ -55,9 +55,9 @@ internal static class WorkflowHelper
         {
             // Broadcast the message to all connected agents. Receiving agents will queue
             // the message but will not start processing until they receive a turn token.
-            await context.SendMessageAsync(message, cancellationToken: cancellationToken).ConfigureAwait(false);
+            await context.SendMessageAsync(message, cancellationToken: cancellationToken);
             // Broadcast the turn token to kick off the agents.
-            await context.SendMessageAsync(new TurnToken(emitEvents: true), cancellationToken: cancellationToken).ConfigureAwait(false);
+            await context.SendMessageAsync(new TurnToken(emitEvents: true), cancellationToken: cancellationToken);
         }
     }
 
@@ -83,7 +83,7 @@ internal static class WorkflowHelper
             if (this._messages.Count == 2)
             {
                 var formattedMessages = string.Join(Environment.NewLine, this._messages.Select(m => $"{m.Text}"));
-                await context.YieldOutputAsync(formattedMessages, cancellationToken).ConfigureAwait(false);
+                await context.YieldOutputAsync(formattedMessages, cancellationToken);
             }
         }
     }

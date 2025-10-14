@@ -74,15 +74,15 @@ internal sealed class JudgeExecutor() : Executor<int>("Judge")
         if (message == this._targetNumber)
         {
             await context.YieldOutputAsync($"{this._targetNumber} found in {this._tries} tries!", cancellationToken)
-                         .ConfigureAwait(false);
+                         ;
         }
         else if (message < this._targetNumber)
         {
-            await context.SendMessageAsync(new SignalWithNumber(NumberSignal.Below, message), cancellationToken: cancellationToken).ConfigureAwait(false);
+            await context.SendMessageAsync(new SignalWithNumber(NumberSignal.Below, message), cancellationToken: cancellationToken);
         }
         else
         {
-            await context.SendMessageAsync(new SignalWithNumber(NumberSignal.Above, message), cancellationToken: cancellationToken).ConfigureAwait(false);
+            await context.SendMessageAsync(new SignalWithNumber(NumberSignal.Above, message), cancellationToken: cancellationToken);
         }
     }
 
@@ -98,5 +98,5 @@ internal sealed class JudgeExecutor() : Executor<int>("Judge")
     /// This must be overridden to restore any state that was saved during checkpointing.
     /// </summary>
     protected override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default) =>
-        this._tries = await context.ReadStateAsync<int>(StateKey, cancellationToken: cancellationToken).ConfigureAwait(false);
+        this._tries = await context.ReadStateAsync<int>(StateKey, cancellationToken: cancellationToken);
 }

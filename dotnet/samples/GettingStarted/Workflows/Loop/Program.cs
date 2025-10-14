@@ -32,8 +32,8 @@ public static class Program
             .BuildAsync<NumberSignal>();
 
         // Execute the workflow
-        await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, NumberSignal.Init).ConfigureAwait(false);
-        await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
+        await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, NumberSignal.Init);
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync())
         {
             if (evt is WorkflowOutputEvent outputEvent)
             {
@@ -87,15 +87,15 @@ internal sealed class GuessNumberExecutor : Executor<NumberSignal>
         switch (message)
         {
             case NumberSignal.Init:
-                await context.SendMessageAsync(this.NextGuess, cancellationToken: cancellationToken).ConfigureAwait(false);
+                await context.SendMessageAsync(this.NextGuess, cancellationToken: cancellationToken);
                 break;
             case NumberSignal.Above:
                 this.UpperBound = this.NextGuess - 1;
-                await context.SendMessageAsync(this.NextGuess, cancellationToken: cancellationToken).ConfigureAwait(false);
+                await context.SendMessageAsync(this.NextGuess, cancellationToken: cancellationToken);
                 break;
             case NumberSignal.Below:
                 this.LowerBound = this.NextGuess + 1;
-                await context.SendMessageAsync(this.NextGuess, cancellationToken: cancellationToken).ConfigureAwait(false);
+                await context.SendMessageAsync(this.NextGuess, cancellationToken: cancellationToken);
                 break;
         }
     }
@@ -125,15 +125,15 @@ internal sealed class JudgeExecutor : Executor<int>
         if (message == this._targetNumber)
         {
             await context.YieldOutputAsync($"{this._targetNumber} found in {this._tries} tries!", cancellationToken)
-                         .ConfigureAwait(false);
+                         ;
         }
         else if (message < this._targetNumber)
         {
-            await context.SendMessageAsync(NumberSignal.Below, cancellationToken: cancellationToken).ConfigureAwait(false);
+            await context.SendMessageAsync(NumberSignal.Below, cancellationToken: cancellationToken);
         }
         else
         {
-            await context.SendMessageAsync(NumberSignal.Above, cancellationToken: cancellationToken).ConfigureAwait(false);
+            await context.SendMessageAsync(NumberSignal.Above, cancellationToken: cancellationToken);
         }
     }
 }

@@ -79,7 +79,7 @@ public static class Program
         // Execute the workflow
         await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, new ChatMessage(ChatRole.User, email));
         await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
-        await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync())
         {
             if (evt is WorkflowOutputEvent outputEvent)
             {
@@ -192,10 +192,10 @@ internal sealed class SpamDetectionExecutor : Executor<ChatMessage, DetectionRes
             EmailId = Guid.NewGuid().ToString("N"),
             EmailContent = message.Text
         };
-        await context.QueueStateUpdateAsync(newEmail.EmailId, newEmail, scopeName: EmailStateConstants.EmailStateScope, cancellationToken).ConfigureAwait(false);
+        await context.QueueStateUpdateAsync(newEmail.EmailId, newEmail, scopeName: EmailStateConstants.EmailStateScope, cancellationToken);
 
         // Invoke the agent
-        var response = await this._spamDetectionAgent.RunAsync(message, cancellationToken: cancellationToken).ConfigureAwait(false);
+        var response = await this._spamDetectionAgent.RunAsync(message, cancellationToken: cancellationToken);
         var detectionResult = JsonSerializer.Deserialize<DetectionResult>(response.Text);
 
         detectionResult!.EmailId = newEmail.EmailId;
@@ -237,10 +237,10 @@ internal sealed class EmailAssistantExecutor : Executor<DetectionResult, EmailRe
         }
 
         // Retrieve the email content from the context
-        var email = await context.ReadStateAsync<Email>(message.EmailId, scopeName: EmailStateConstants.EmailStateScope, cancellationToken).ConfigureAwait(false);
+        var email = await context.ReadStateAsync<Email>(message.EmailId, scopeName: EmailStateConstants.EmailStateScope, cancellationToken);
 
         // Invoke the agent
-        var response = await this._emailAssistantAgent.RunAsync(email!.EmailContent, cancellationToken: cancellationToken).ConfigureAwait(false);
+        var response = await this._emailAssistantAgent.RunAsync(email!.EmailContent, cancellationToken: cancellationToken);
         var emailResponse = JsonSerializer.Deserialize<EmailResponse>(response.Text);
 
         return emailResponse!;
@@ -256,7 +256,7 @@ internal sealed class SendEmailExecutor() : Executor<EmailResponse>("SendEmailEx
     /// Simulate the sending of an email.
     /// </summary>
     public override async ValueTask HandleAsync(EmailResponse message, IWorkflowContext context, CancellationToken cancellationToken = default) =>
-        await context.YieldOutputAsync($"Email sent: {message.Response}", cancellationToken).ConfigureAwait(false);
+        await context.YieldOutputAsync($"Email sent: {message.Response}", cancellationToken);
 }
 
 /// <summary>
@@ -271,7 +271,7 @@ internal sealed class HandleSpamExecutor() : Executor<DetectionResult>("HandleSp
     {
         if (message.spamDecision == SpamDecision.Spam)
         {
-            await context.YieldOutputAsync($"Email marked as spam: {message.Reason}", cancellationToken).ConfigureAwait(false);
+            await context.YieldOutputAsync($"Email marked as spam: {message.Reason}", cancellationToken);
         }
         else
         {
@@ -292,8 +292,8 @@ internal sealed class HandleUncertainExecutor() : Executor<DetectionResult>("Han
     {
         if (message.spamDecision == SpamDecision.Uncertain)
         {
-            var email = await context.ReadStateAsync<Email>(message.EmailId, scopeName: EmailStateConstants.EmailStateScope, cancellationToken).ConfigureAwait(false);
-            await context.YieldOutputAsync($"Email marked as uncertain: {message.Reason}. Email content: {email?.EmailContent}", cancellationToken).ConfigureAwait(false);
+            var email = await context.ReadStateAsync<Email>(message.EmailId, scopeName: EmailStateConstants.EmailStateScope, cancellationToken);
+            await context.YieldOutputAsync($"Email marked as uncertain: {message.Reason}. Email content: {email?.EmailContent}", cancellationToken);
         }
         else
         {

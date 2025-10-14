@@ -150,7 +150,7 @@ internal sealed class Program
 
         string? messageId = null;
 
-        await foreach (WorkflowEvent workflowEvent in run.Run.WatchStreamAsync().ConfigureAwait(false))
+        await foreach (WorkflowEvent workflowEvent in run.Run.WatchStreamAsync())
         {
             switch (workflowEvent)
             {
@@ -187,12 +187,12 @@ internal sealed class Program
                     if (response is not null)
                     {
                         ExternalResponse requestResponse = requestInfo.Request.CreateResponse(response);
-                        await run.Run.SendResponseAsync(requestResponse).ConfigureAwait(false);
+                        await run.Run.SendResponseAsync(requestResponse);
                         response = null;
                     }
                     else
                     {
-                        await run.Run.DisposeAsync().ConfigureAwait(false);
+                        await run.Run.DisposeAsync();
                         return requestInfo.Request;
                     }
                     break;
