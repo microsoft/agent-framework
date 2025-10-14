@@ -28,7 +28,6 @@ internal sealed class AIAgentChatCompletionsProcessor
 
     public async Task<IResult> CreateChatCompletionAsync(ChatCompletionOptions chatCompletionOptions, CancellationToken cancellationToken)
     {
-        var options = new OpenAIChatCompletionsRunOptions();
         AgentThread? agentThread = null; // not supported to resolve from conversationId
 
         var inputItems = chatCompletionOptions.GetMessages();
@@ -39,7 +38,7 @@ internal sealed class AIAgentChatCompletionsProcessor
             return new OpenAIStreamingChatCompletionResult(this._agent, chatMessages);
         }
 
-        var agentResponse = await this._agent.RunAsync(chatMessages, agentThread, options, cancellationToken).ConfigureAwait(false);
+        var agentResponse = await this._agent.RunAsync(chatMessages, agentThread, cancellationToken: cancellationToken).ConfigureAwait(false);
         return new OpenAIChatCompletionResult(agentResponse);
     }
 
