@@ -94,8 +94,41 @@ public sealed class AzureAgentProvider(string projectEndpoint, TokenCredential p
     }
 
     /// <inheritdoc/>
-    public override async Task<AIAgent> GetAgentAsync(string agentId, CancellationToken cancellationToken = default) =>
-        await this.GetAgentsClient().GetAIAgentAsync(agentId, chatOptions: null, clientFactory: null, cancellationToken).ConfigureAwait(false);
+    public override async Task<AIAgent> GetAgentAsync(string agentId, CancellationToken cancellationToken = default)
+    {
+        ChatClientAgent agent =
+            await this.GetAgentsClient().GetAIAgentAsync(
+                agentId,
+                new ChatOptions()
+                {
+                    AllowMultipleToolCalls = this.AllowMultipleToolCalls,
+                },
+                clientFactory: null,
+                cancellationToken).ConfigureAwait(false);
+
+        FunctionInvokingChatClient? functionInvokingClient = agent.GetService<FunctionInvokingChatClient>();
+        if (functionInvokingClient is not null)
+        {
+            // Allow concurrent invocations if configured
+            functionInvokingClient.AllowConcurrentInvocation = this.AllowConcurrentInvocation;
+            // Allows the caller to respond with function responses
+            functionInvokingClient.TerminateOnUnknownCalls = true;
+            // Make functions available for execution.  Doesn't change what tool is available for any given agent.
+            if (this.Functions is not null)
+            {
+                if (functionInvokingClient.AdditionalTools is null)
+                {
+                    functionInvokingClient.AdditionalTools = [.. this.Functions];
+                }
+                else
+                {
+                    functionInvokingClient.AdditionalTools = [.. functionInvokingClient.AdditionalTools, .. this.Functions];
+                }
+            }
+        }
+
+        return agent;
+    }
 
     /// <inheritdoc/>
     public override async Task<ChatMessage> GetMessageAsync(string conversationId, string messageId, CancellationToken cancellationToken = default)
