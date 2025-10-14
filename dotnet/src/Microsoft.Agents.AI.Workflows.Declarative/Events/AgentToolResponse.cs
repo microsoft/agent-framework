@@ -44,7 +44,7 @@ public sealed class AgentToolResponse
     public static AgentToolResponse Create(AgentToolRequest toolRequest, params IEnumerable<FunctionResultContent> functionResults)
     {
         HashSet<string> callIds = toolRequest.FunctionCalls.Select(call => call.CallId).ToHashSet();
-        HashSet<string> resultIds = functionResults.Select(call => call.CallId).ToHashSet();
+        HashSet<string> resultIds = new(functionResults.Select(call => call.CallId));
         if (!callIds.SetEquals(resultIds))
         {
             throw new DeclarativeActionException($"Missing results for: {string.Join(",", callIds.Except(resultIds))}");
