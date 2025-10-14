@@ -22,11 +22,11 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests;
 public sealed class ToolInputWorkflowTest(ITestOutputHelper output) : IntegrationTest(output)
 {
     [Fact]
-    public Task ValidateAutoInvoke() =>
+    public Task ValidateAutoInvokeAsync() =>
         this.RunWorkflowAsync(autoInvoke: true, new MenuPlugin().GetTools());
 
     [Fact]
-    public Task ValidateRequestInvoke() =>
+    public Task ValidateRequestInvokeAsync() =>
         this.RunWorkflowAsync(autoInvoke: false, new MenuPlugin().GetTools());
 
     private static string GetWorkflowPath(string workflowFileName) => Path.Combine(Environment.CurrentDirectory, "Workflows", workflowFileName);
