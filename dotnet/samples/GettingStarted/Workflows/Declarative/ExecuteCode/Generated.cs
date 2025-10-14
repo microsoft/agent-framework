@@ -49,7 +49,7 @@ public static class TestWorkflowProvider
                 "FOUNDRY_AGENT_RESEARCHANALYST",
                 "FOUNDRY_AGENT_RESEARCHCODER",
                 "FOUNDRY_AGENT_RESEARCHMANAGER",
-                "FOUNDRY_AGENT_RESEARCHWEATHER");
+                "FOUNDRY_AGENT_RESEARCHWEATHER").ConfigureAwait(false);
 
             // Initialize variables
             await context.QueueStateUpdateAsync("AgentResponse", UnassignedValue.Instance, "Local");
