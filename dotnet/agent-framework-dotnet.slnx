@@ -22,6 +22,7 @@
     <File Path="samples/GettingStarted/README.md" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/A2A/">
+    <File Path="samples/GettingStarted/A2A/README.md" />
     <Project Path="samples/GettingStarted/A2A/A2AAgent_AsFunctionTools/A2AAgent_AsFunctionTools.csproj"/>
   </Folder>
   <Folder Name="/Samples/GettingStarted/AgentProviders/">
