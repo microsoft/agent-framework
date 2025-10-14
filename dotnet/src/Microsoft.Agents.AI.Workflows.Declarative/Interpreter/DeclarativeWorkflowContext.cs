@@ -142,27 +142,32 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
             {
                 this.State.Set(key, formulaValue, scopeName);
             }
-            return this.Source.QueueStateUpdateAsync(key, formulaValue.ToObject(), scopeName, cancellationToken);
+
+            return this.Source.QueueStateUpdateAsync(key, formulaValue.AsPortable(), scopeName, cancellationToken);
         }
 
         ValueTask QueueDataValueStateAsync(DataValue dataValue)
         {
+            FormulaValue formulaValue = dataValue.ToFormula();
+
             if (isManagedScope)
             {
-                FormulaValue formulaValue = dataValue.ToFormula();
                 this.State.Set(key, formulaValue, scopeName);
             }
-            return this.Source.QueueStateUpdateAsync(key, dataValue.ToObject(), scopeName, cancellationToken);
+
+            return this.Source.QueueStateUpdateAsync(key, formulaValue.AsPortable(), scopeName, cancellationToken);
         }
 
-        ValueTask QueueNativeStateAsync(object? rawValue)
+        ValueTask QueueNativeStateAsync(object rawValue)
         {
+            FormulaValue formulaValue = rawValue.ToFormula();
+
             if (isManagedScope)
             {
-                FormulaValue formulaValue = rawValue.ToFormula();
                 this.State.Set(key, formulaValue, scopeName);
             }
-            return this.Source.QueueStateUpdateAsync(key, rawValue, scopeName, cancellationToken);
+
+            return this.Source.QueueStateUpdateAsync(key, formulaValue.AsPortable(), scopeName, cancellationToken);
         }
     }
 }

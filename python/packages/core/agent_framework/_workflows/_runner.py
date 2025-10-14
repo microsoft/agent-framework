@@ -304,6 +304,8 @@ class Runner:
                     checkpoint_id,
                 )
 
+            await self._restore_executor_states(checkpoint.executor_states)
+
             state = self._checkpoint_to_state(checkpoint)
             await self._ctx.set_checkpoint_state(state)
             if checkpoint.workflow_id:
@@ -322,6 +324,27 @@ class Runner:
         except Exception as e:
             logger.error(f"Failed to restore from checkpoint {checkpoint_id}: {e}")
             return False
+
+    async def _restore_executor_states(self, executor_states: dict[str, dict[str, Any]]) -> None:
+        for exec_id, state in executor_states.items():
+            executor = self._executors.get(exec_id)
+            if not executor:
+                logger.debug(f"Executor {exec_id} not found during state restoration; skipping.")
+                continue
+
+            restored = False
+            restore_method = getattr(executor, "restore_state", None)
+            try:
+                if callable(restore_method):
+                    maybe = restore_method(state)
+                    if asyncio.iscoroutine(maybe):  # type: ignore[arg-type]
+                        await maybe  # type: ignore[arg-type]
+                    restored = True
+            except Exception as ex:  # pragma: no cover - defensive
+                logger.debug(f"Executor {exec_id} restore_state failed: {ex}")
+
+            if not restored:
+                logger.debug(f"Executor {exec_id} does not support state restoration; skipping.")
 
     async def _restore_shared_state_from_context(self) -> None:
         try:
