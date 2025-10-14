@@ -63,7 +63,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
 
         if (string.IsNullOrEmpty(agentResponse.Text))
         {
-            HashSet<FunctionCallContent> toolCalls = agentResponse.Messages.SelectMany(m => m.Contents.OfType<FunctionCallContent>()).ToHashSet();
+            HashSet<FunctionCallContent> toolCalls = [.. agentResponse.Messages.SelectMany(m => m.Contents.OfType<FunctionCallContent>())];
 
             isComplete = toolCalls.Count == 0;
 
