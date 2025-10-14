@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
@@ -35,14 +36,16 @@ public static class PromptAgentExtensions
     /// Retrieves the 'options' property from a <see cref="PromptAgent"/> as a <see cref="ChatOptions"/> instance.
     /// </summary>
     /// <param name="promptAgent">Instance of <see cref="PromptAgent"/></param>
-    public static ChatOptions? GetChatOptions(this PromptAgent promptAgent)
+    /// <param name="agentCreationOptions">Instance of <see cref="AgentCreationOptions"/></param>
+    public static ChatOptions? GetChatOptions(this PromptAgent promptAgent, AgentCreationOptions agentCreationOptions)
     {
         Throw.IfNull(promptAgent);
 
         var outputSchema = promptAgent.OutputSchema;
         OpenAIResponsesModel? model = promptAgent.Model as OpenAIResponsesModel;
         var modelOptions = model?.Options;
-        var tools = promptAgent.GetAITools();
+        var tools = promptAgent.GetAITools(agentCreationOptions.Tools);
+
         if (modelOptions is null && tools is null)
         {
             return null;
@@ -72,21 +75,25 @@ public static class PromptAgentExtensions
     /// Retrieves the 'tools' property from a <see cref="PromptAgent"/>.
     /// </summary>
     /// <param name="promptAgent">Instance of <see cref="PromptAgent"/></param>
-    public static List<AITool>? GetAITools(this PromptAgent promptAgent)
+    /// <param name="tools">Instance of <see cref="IList{AITool}"/></param>
+    public static List<AITool>? GetAITools(this PromptAgent promptAgent, IList<AITool>? tools)
     {
-        return promptAgent.Tools.Select<AgentTool, AITool>(tool =>
+        var promptTools = promptAgent.Tools.Select(tool =>
         {
-            var kind = tool.Kind.ToString();
-            return kind switch
+            return tool switch
             {
-                CodeInterpreterKind => tool.CreateCodeInterpreterTool(),
-                FileSearchKind => tool.CreateFileSearchTool(),
-                FunctionKind => tool.CreateFunctionDeclaration(),
-                WebSearchKind => tool.CreateWebSearchTool(),
-                McpKind => tool.CreateMcpTool(),
-                _ => throw new NotSupportedException($"Unable to create tool definition because of unsupported tool type: {kind}, supported tool types are: {string.Join(",", s_validToolKinds)}"),
+                CodeInterpreterTool => ((CodeInterpreterTool)tool).CreateCodeInterpreterTool(),
+                FunctionTool => ((FunctionTool)tool).CreateFunctionTool(tools),
+                McpTool => ((McpTool)tool).CreateMcpTool(),
+                FileSearchTool => ((FileSearchTool)tool).CreateFileSearchTool(),
+                WebSearchTool => ((WebSearchTool)tool).CreateWebSearchTool(),
+                _ => throw new NotSupportedException($"Unable to create tool definition because of unsupported tool type: {tool.Kind}, supported tool types are: {string.Join(",", s_validToolKinds)}"),
             };
         }).ToList() ?? [];
+
+        return tools != null
+            ? [.. promptTools, .. tools]
+            : promptTools;
     }
 
     #region private

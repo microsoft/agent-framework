@@ -1,0 +1,16 @@
+    kind: Prompt
+    name: MicrosoftLearnAgent
+    description: Microsoft Learn Agent
+    instructions: You answer questions by searching the Microsoft Learn content only.
+    model:
+        options:
+            temperature: 0.9
+            topP: 0.95
+    tools:
+      - kind: mcp
+        name: microsoft_learn
+        description: Get information from Microsoft Learn.
+        url: https://learn.microsoft.com/api/mcp
+        requireApproval: requireSpecific
+        allowedTools:
+          - microsoft_docs_search

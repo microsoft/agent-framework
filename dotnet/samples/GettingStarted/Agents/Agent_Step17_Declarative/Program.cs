@@ -27,7 +27,7 @@ var text =
     model:
         options:
             temperature: 0.9
-            top_p: 0.95
+            topP: 0.95
     outputSchema:
         properties:
             language:

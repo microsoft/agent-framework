@@ -60,6 +60,10 @@
     <Project Path="samples/GettingStarted/AgentWithOpenAI/Agent_OpenAI_Step01_Running/Agent_OpenAI_Step01_Running.csproj" />
     <Project Path="samples/GettingStarted/AgentWithOpenAI/Agent_OpenAI_Step02_Reasoning/Agent_OpenAI_Step02_Reasoning.csproj" />
   </Folder>
+  <Folder Name="/Samples/GettingStarted/DeclarativeAgents/">
+    <Project Path="samples/GettingStarted/DeclarativeAgents/ChatClient/DeclarativeChatClientAgents.csproj" />
+    <Project Path="samples/GettingStarted/DeclarativeAgents/Foundry/DeclarativeFoundryAgents.csproj" />
+  </Folder>
   <Folder Name="/Samples/GettingStarted/ModelContextProtocol/">
     <Project Path="samples/GettingStarted/ModelContextProtocol/Agent_MCP_Server/Agent_MCP_Server.csproj" />
     <Project Path="samples/GettingStarted/ModelContextProtocol/Agent_MCP_Server_Auth/Agent_MCP_Server_Auth.csproj" />

@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 using System;
 using System.ComponentModel;
+using System.Linq;
 using System.Text.Json.Serialization;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.AI;
@@ -39,8 +40,8 @@ public class AgentBotElementYamlTests
             chatToolMode: auto
         tools:
           - kind: codeInterpreter
-          - name: GetWeather
-            kind: function
+          - kind: function
+            name: GetWeather
             description: Get the weather for a given location.
             parameters:
               - name: location
@@ -54,13 +55,25 @@ public class AgentBotElementYamlTests
                 enum:
                   - celsius
                   - fahrenheit
+          - kind: mcp
+            name: PersonInfoTool
+            description: Get information about a person.
+            url: https://my-mcp-endpoint.com/api
+          - kind: webSearch
+            name: WebSearchTool
+            description: Search the web for information.
+          - kind: fileSearch
+            name: FileSearchTool
+            description: Search files for information.
+            vectorScoreIds:
+              - 1
+              - 2
+              - 3
         """;
 
     private const string AgentWithOutputSchema =
         """
         kind: Prompt
-        type: chat_client_agent
-        id: my_translation_agent
         name: Translation Assistant
         description: A helpful assistant that translates text to a specified language.
         model:
@@ -94,9 +107,9 @@ public class AgentBotElementYamlTests
     private const string AgentWithConnection =
         """
         kind: Prompt
-        name: Joker
-        description: Joker Agent
-        instructions: You are good at telling jokes.
+        name: AgentName
+        description: Agent description
+        instructions: You are a helpful assistant.
         model:
           id: gpt-4o
           connection:
@@ -110,9 +123,9 @@ public class AgentBotElementYamlTests
     private const string AgentWithEnvironmentVariables =
         """
         kind: Prompt
-        name: Joker
-        description: Joker Agent
-        instructions: You are good at telling jokes.
+        name: AgentName
+        description: Agent description
+        instructions: You are a helpful assistant.
         model:
           id: =Env.AzureOpenAIModelId
           connection:
@@ -197,6 +210,21 @@ public class AgentBotElementYamlTests
     }
 
     [Fact]
+    public void FromYaml_CodeInterpreter()
+    {
+        // Arrange & Act
+        var agent = AgentBotElementYaml.FromYaml(AgentWithEverything);
+
+        // Assert
+        Assert.NotNull(agent);
+        var tools = agent.Tools;
+        var codeInterpreterTools = tools.Where(t => t is CodeInterpreterTool).ToArray();
+        Assert.Single(codeInterpreterTools);
+        var codeInterpreterTool = codeInterpreterTools[0] as CodeInterpreterTool;
+        Assert.NotNull(codeInterpreterTool);
+    }
+
+    [Fact]
     public void FromYaml_FunctionTool()
     {
         // Arrange & Act
@@ -204,13 +232,66 @@ public class AgentBotElementYamlTests
 
         // Assert
         Assert.NotNull(agent);
-        //var tools = agent.Tools;
-        //Assert.Single(tools);
-        //Assert.NotNull(tools[0]);
-        // TODO: Re-enable when function tools are supported.
-        //Assert.Equal("function", tools[0].GetId());
-        //Assert.Equal("GetWeather", tools[0].GetName());
-        //Assert.Equal("Get the weather for a given location.", tools[0].GetDescription());
+        var tools = agent.Tools;
+        var functionTools = tools.Where(t => t is FunctionTool).ToArray();
+        Assert.Single(functionTools);
+        var functionTool = functionTools[0] as FunctionTool;
+        Assert.NotNull(functionTool);
+        Assert.Equal("GetWeather", functionTool.Name);
+        Assert.Equal("Get the weather for a given location.", functionTool.Description);
+        // TODO check schema
+    }
+
+    [Fact]
+    public void FromYaml_MCP()
+    {
+        // Arrange & Act
+        var agent = AgentBotElementYaml.FromYaml(AgentWithEverything);
+
+        // Assert
+        Assert.NotNull(agent);
+        var tools = agent.Tools;
+        var mcpTools = tools.Where(t => t is McpTool).ToArray();
+        Assert.Single(mcpTools);
+        var mcpTool = mcpTools[0] as McpTool;
+        Assert.NotNull(mcpTool);
+        Assert.Equal("PersonInfoTool", mcpTool.Name?.LiteralValue);
+        Assert.Equal("https://my-mcp-endpoint.com/api", mcpTool.Url?.LiteralValue);
+    }
+
+    [Fact]
+    public void FromYaml_WebSearchTool()
+    {
+        // Arrange & Act
+        var agent = AgentBotElementYaml.FromYaml(AgentWithEverything);
+
+        // Assert
+        Assert.NotNull(agent);
+        var tools = agent.Tools;
+        var webSearchTools = tools.Where(t => t is WebSearchTool).ToArray();
+        Assert.Single(webSearchTools);
+        Assert.NotNull(webSearchTools[0] as WebSearchTool);
+    }
+
+    [Fact]
+    public void FromYaml_FileSearchTool()
+    {
+        // Arrange & Act
+        var agent = AgentBotElementYaml.FromYaml(AgentWithEverything);
+
+        // Assert
+        Assert.NotNull(agent);
+        var tools = agent.Tools;
+        var fileSearchTools = tools.Where(t => t is FileSearchTool).ToArray();
+        Assert.Single(fileSearchTools);
+        var fileSearchTool = fileSearchTools[0] as FileSearchTool;
+        Assert.NotNull(fileSearchTool);
+
+        // Verify VectorScoreIds property exists and has correct values
+        Assert.Equal(3, fileSearchTool.VectorScoreIds.Length);
+        Assert.Equal("1", fileSearchTool.VectorScoreIds[0]);
+        Assert.Equal("2", fileSearchTool.VectorScoreIds[1]);
+        Assert.Equal("3", fileSearchTool.VectorScoreIds[2]);
     }
 
     [Fact]
