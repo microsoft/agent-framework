@@ -52,22 +52,22 @@ public static class TestWorkflowProvider
                 "FOUNDRY_AGENT_RESEARCHWEATHER").ConfigureAwait(false);
 
             // Initialize variables
-            await context.QueueStateUpdateAsync("AgentResponse", UnassignedValue.Instance, "Local").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync("AgentResponseText", UnassignedValue.Instance, "Local").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync("AvailableAgents", UnassignedValue.Instance, "Local").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync("FinalResponse", UnassignedValue.Instance, "Local").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync("InputTask", UnassignedValue.Instance, "Local").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync("InternalConversationId", UnassignedValue.Instance, "Local").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync("NextSpeaker", UnassignedValue.Instance, "Local").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync("Plan", UnassignedValue.Instance, "Local").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync("ProgressLedgerUpdate", UnassignedValue.Instance, "Local").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync("RestartCount", UnassignedValue.Instance, "Local").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync("SeedTask", UnassignedValue.Instance, "Local").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync("StallCount", UnassignedValue.Instance, "Local").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync("TaskFacts", UnassignedValue.Instance, "Local").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync("TaskInstructions", UnassignedValue.Instance, "Local").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync("TeamDescription", UnassignedValue.Instance, "Local").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync("TypedProgressLedger", UnassignedValue.Instance, "Local").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync("AgentResponse", UnassignedValue.Instance, "Local");
+            await context.QueueStateUpdateAsync("AgentResponseText", UnassignedValue.Instance, "Local");
+            await context.QueueStateUpdateAsync("AvailableAgents", UnassignedValue.Instance, "Local");
+            await context.QueueStateUpdateAsync("FinalResponse", UnassignedValue.Instance, "Local");
+            await context.QueueStateUpdateAsync("InputTask", UnassignedValue.Instance, "Local");
+            await context.QueueStateUpdateAsync("InternalConversationId", UnassignedValue.Instance, "Local");
+            await context.QueueStateUpdateAsync("NextSpeaker", UnassignedValue.Instance, "Local");
+            await context.QueueStateUpdateAsync("Plan", UnassignedValue.Instance, "Local");
+            await context.QueueStateUpdateAsync("ProgressLedgerUpdate", UnassignedValue.Instance, "Local");
+            await context.QueueStateUpdateAsync("RestartCount", UnassignedValue.Instance, "Local");
+            await context.QueueStateUpdateAsync("SeedTask", UnassignedValue.Instance, "Local");
+            await context.QueueStateUpdateAsync("StallCount", UnassignedValue.Instance, "Local");
+            await context.QueueStateUpdateAsync("TaskFacts", UnassignedValue.Instance, "Local");
+            await context.QueueStateUpdateAsync("TaskInstructions", UnassignedValue.Instance, "Local");
+            await context.QueueStateUpdateAsync("TeamDescription", UnassignedValue.Instance, "Local");
+            await context.QueueStateUpdateAsync("TypedProgressLedger", UnassignedValue.Instance, "Local");
         }
     }
 
@@ -97,8 +97,8 @@ public static class TestWorkflowProvider
             agentid: Env.FOUNDRY_AGENT_RESEARCHWEB
         }
     ]
-    """).ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "AvailableAgents", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
+    """);
+            await context.QueueStateUpdateAsync(key: "AvailableAgents", value: evaluatedValue, scopeName: "Local");
 
             return default;
         }
@@ -115,8 +115,8 @@ public static class TestWorkflowProvider
             object? evaluatedValue = await context.EvaluateValueAsync<object>("""
     Concat(ForAll(Local.AvailableAgents, $"- " & name & $": " & description), Value, "
     ")
-    """).ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "TeamDescription", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
+    """);
+            await context.QueueStateUpdateAsync(key: "TeamDescription", value: evaluatedValue, scopeName: "Local");
 
             return default;
         }
@@ -130,8 +130,8 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            object? evaluatedValue = await context.EvaluateValueAsync<object>("System.LastMessage.Text").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "InputTask", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
+            object? evaluatedValue = await context.EvaluateValueAsync<object>("System.LastMessage.Text");
+            await context.QueueStateUpdateAsync(key: "InputTask", value: evaluatedValue, scopeName: "Local");
 
             return default;
         }
@@ -145,8 +145,8 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            object? evaluatedValue = await context.EvaluateValueAsync<object>("UserMessage(Local.InputTask)").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "SeedTask", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
+            object? evaluatedValue = await context.EvaluateValueAsync<object>("UserMessage(Local.InputTask)");
+            await context.QueueStateUpdateAsync(key: "SeedTask", value: evaluatedValue, scopeName: "Local");
 
             return default;
         }
@@ -167,7 +167,7 @@ public static class TestWorkflowProvider
                     """
                 );
             AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
-            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);
+            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response));
 
             return default;
         }
@@ -180,8 +180,8 @@ public static class TestWorkflowProvider
     {
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            string conversationId = await agentProvider.CreateConversationAsync(cancellationToken).ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "InternalConversationId", value: conversationId, scopeName: "Local").ConfigureAwait(false);
+            string conversationId = await agentProvider.CreateConversationAsync(cancellationToken);
+            await context.QueueStateUpdateAsync(key: "InternalConversationId", value: conversationId, scopeName: "Local");
 
             return default;
         }
@@ -195,14 +195,14 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            string? agentName = await context.ReadStateAsync<string>(key: "FOUNDRY_AGENT_RESEARCHANALYST", scopeName: "Env").ConfigureAwait(false);
+            string? agentName = await context.ReadStateAsync<string>(key: "FOUNDRY_AGENT_RESEARCHANALYST", scopeName: "Env");
 
             if (string.IsNullOrWhiteSpace(agentName))
             {
                 throw new InvalidOperationException($"Agent name must be defined: {this.Id}");
             }
 
-            string? conversationId = await context.ReadStateAsync<string>(key: "InternalConversationId", scopeName: "Local").ConfigureAwait(false);
+            string? conversationId = await context.ReadStateAsync<string>(key: "InternalConversationId", scopeName: "Local");
             bool autoSend = true;
             string additionalInstructions =
                 await context.FormatTemplateAsync(
@@ -226,7 +226,7 @@ public static class TestWorkflowProvider
     
                     DO NOT include any other headings or sections in your response. DO NOT list next steps or plans until asked to do so.
                     """);
-            IList<ChatMessage>? inputMessages = await context.EvaluateListAsync<ChatMessage>("UserMessage(Local.InputTask)").ConfigureAwait(false);
+            IList<ChatMessage>? inputMessages = await context.EvaluateListAsync<ChatMessage>("UserMessage(Local.InputTask)");
 
             AgentRunResponse agentResponse =
                 await InvokeAgentAsync(
@@ -236,14 +236,14 @@ public static class TestWorkflowProvider
                     autoSend,
                     additionalInstructions,
                     inputMessages,
-                    cancellationToken).ConfigureAwait(false);
+                    cancellationToken);
 
             if (autoSend)
             {
-                await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
+                await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse));
             }
 
-            await context.QueueStateUpdateAsync(key: "TaskFacts", value: agentResponse.Messages, scopeName: "Local").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "TaskFacts", value: agentResponse.Messages, scopeName: "Local");
 
             return default;
         }
@@ -264,7 +264,7 @@ public static class TestWorkflowProvider
                     """
                 );
             AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
-            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);
+            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response));
 
             return default;
         }
@@ -278,14 +278,14 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            string? agentName = await context.ReadStateAsync<string>(key: "FOUNDRY_AGENT_RESEARCHMANAGER", scopeName: "Env").ConfigureAwait(false);
+            string? agentName = await context.ReadStateAsync<string>(key: "FOUNDRY_AGENT_RESEARCHMANAGER", scopeName: "Env");
 
             if (string.IsNullOrWhiteSpace(agentName))
             {
                 throw new InvalidOperationException($"Agent name must be defined: {this.Id}");
             }
 
-            string? conversationId = await context.ReadStateAsync<string>(key: "InternalConversationId", scopeName: "Local").ConfigureAwait(false);
+            string? conversationId = await context.ReadStateAsync<string>(key: "InternalConversationId", scopeName: "Local");
             bool autoSend = true;
             string additionalInstructions =
                 await context.FormatTemplateAsync(
@@ -300,7 +300,7 @@ public static class TestWorkflowProvider
     
                     Remember, there is no requirement to involve the entire team -- only select team member's whose particular expertise is required for this task.
                     """);
-            IList<ChatMessage>? inputMessages = await context.EvaluateListAsync<ChatMessage>("UserMessage(Local.InputTask)").ConfigureAwait(false);
+            IList<ChatMessage>? inputMessages = await context.EvaluateListAsync<ChatMessage>("UserMessage(Local.InputTask)");
 
             AgentRunResponse agentResponse =
                 await InvokeAgentAsync(
@@ -310,14 +310,14 @@ public static class TestWorkflowProvider
                     autoSend,
                     additionalInstructions,
                     inputMessages,
-                    cancellationToken).ConfigureAwait(false);
+                    cancellationToken);
 
             if (autoSend)
             {
-                await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
+                await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse));
             }
 
-            await context.QueueStateUpdateAsync(key: "Plan", value: agentResponse.Messages, scopeName: "Local").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "Plan", value: agentResponse.Messages, scopeName: "Local");
 
             return default;
         }
@@ -354,8 +354,8 @@ public static class TestWorkflowProvider
     Here is the plan to follow as best as possible:
     
     " & Last(Local.Plan).Text
-    """).ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "TaskInstructions", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
+    """);
+            await context.QueueStateUpdateAsync(key: "TaskInstructions", value: evaluatedValue, scopeName: "Local");
 
             return default;
         }
@@ -376,7 +376,7 @@ public static class TestWorkflowProvider
                     """
                 );
             AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
-            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);
+            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response));
 
             return default;
         }
@@ -390,14 +390,14 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            string? agentName = await context.ReadStateAsync<string>(key: "FOUNDRY_AGENT_RESEARCHMANAGER", scopeName: "Env").ConfigureAwait(false);
+            string? agentName = await context.ReadStateAsync<string>(key: "FOUNDRY_AGENT_RESEARCHMANAGER", scopeName: "Env");
 
             if (string.IsNullOrWhiteSpace(agentName))
             {
                 throw new InvalidOperationException($"Agent name must be defined: {this.Id}");
             }
 
-            string? conversationId = await context.ReadStateAsync<string>(key: "InternalConversationId", scopeName: "Local").ConfigureAwait(false);
+            string? conversationId = await context.ReadStateAsync<string>(key: "InternalConversationId", scopeName: "Local");
             bool autoSend = true;
             string additionalInstructions =
                 await context.FormatTemplateAsync(
@@ -443,7 +443,7 @@ public static class TestWorkflowProvider
                             }}
                         }}
                     """);
-            IList<ChatMessage>? inputMessages = await context.EvaluateListAsync<ChatMessage>("UserMessage(Local.AgentResponseText)").ConfigureAwait(false);
+            IList<ChatMessage>? inputMessages = await context.EvaluateListAsync<ChatMessage>("UserMessage(Local.AgentResponseText)");
 
             AgentRunResponse agentResponse =
                 await InvokeAgentAsync(
@@ -453,14 +453,14 @@ public static class TestWorkflowProvider
                     autoSend,
                     additionalInstructions,
                     inputMessages,
-                    cancellationToken).ConfigureAwait(false);
+                    cancellationToken);
 
             if (autoSend)
             {
-                await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
+                await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse));
             }
 
-            await context.QueueStateUpdateAsync(key: "ProgressLedgerUpdate", value: agentResponse.Messages, scopeName: "Local").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "ProgressLedgerUpdate", value: agentResponse.Messages, scopeName: "Local");
 
             return default;
         }
@@ -496,8 +496,8 @@ public static class TestWorkflowProvider
     VariableType.Record(
     ("reason", typeof(string)),
         ("answer", typeof(string)))));
-            object? parsedValue = await context.ConvertValueAsync(targetType, "Last(Local.ProgressLedgerUpdate).Text", cancellationToken).ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "TypedProgressLedger", value: parsedValue, scopeName: "Local").ConfigureAwait(false);
+            object? parsedValue = await context.ConvertValueAsync(targetType, "Last(Local.ProgressLedgerUpdate).Text", cancellationToken);
+            await context.QueueStateUpdateAsync(key: "TypedProgressLedger", value: parsedValue, scopeName: "Local");
 
             return default;
         }
@@ -511,13 +511,13 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            bool condition0 = await context.EvaluateValueAsync<bool>("Local.TypedProgressLedger.is_request_satisfied.answer").ConfigureAwait(false);
+            bool condition0 = await context.EvaluateValueAsync<bool>("Local.TypedProgressLedger.is_request_satisfied.answer");
             if (condition0)
             {
                 return "conditionItem_fj432c";
             }
 
-            bool condition1 = await context.EvaluateValueAsync<bool>("Local.TypedProgressLedger.is_in_loop.answer || Not(Local.TypedProgressLedger.is_progress_being_made.answer)").ConfigureAwait(false);
+            bool condition1 = await context.EvaluateValueAsync<bool>("Local.TypedProgressLedger.is_in_loop.answer || Not(Local.TypedProgressLedger.is_progress_being_made.answer)");
             if (condition1)
             {
                 return "conditionItem_yiqund";
@@ -542,7 +542,7 @@ public static class TestWorkflowProvider
                     """
                 );
             AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
-            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);
+            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response));
 
             return default;
         }
@@ -556,14 +556,14 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            string? agentName = await context.ReadStateAsync<string>(key: "FOUNDRY_AGENT_RESEARCHMANAGER", scopeName: "Env").ConfigureAwait(false);
+            string? agentName = await context.ReadStateAsync<string>(key: "FOUNDRY_AGENT_RESEARCHMANAGER", scopeName: "Env");
 
             if (string.IsNullOrWhiteSpace(agentName))
             {
                 throw new InvalidOperationException($"Agent name must be defined: {this.Id}");
             }
 
-            string? conversationId = await context.ReadStateAsync<string>(key: "ConversationId", scopeName: "System").ConfigureAwait(false);
+            string? conversationId = await context.ReadStateAsync<string>(key: "ConversationId", scopeName: "System");
             bool autoSend = true;
             string additionalInstructions =
                 await context.FormatTemplateAsync(
@@ -572,7 +572,7 @@ public static class TestWorkflowProvider
                     Based only on the conversation and without adding any new information, synthesize the result of the conversation as a complete response to the user task.
                     The user will only every see this last response and not the entire conversation, so please ensure it is complete and self-contained.
                     """);
-            IList<ChatMessage>? inputMessages = await context.ReadListAsync<ChatMessage>(key: "SeedTask", scopeName: "Local").ConfigureAwait(false);
+            IList<ChatMessage>? inputMessages = await context.ReadListAsync<ChatMessage>(key: "SeedTask", scopeName: "Local");
 
             AgentRunResponse agentResponse =
                 await InvokeAgentAsync(
@@ -582,14 +582,14 @@ public static class TestWorkflowProvider
                     autoSend,
                     additionalInstructions,
                     inputMessages,
-                    cancellationToken).ConfigureAwait(false);
+                    cancellationToken);
 
             if (autoSend)
             {
-                await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
+                await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse));
             }
 
-            await context.QueueStateUpdateAsync(key: "FinalResponse", value: agentResponse.Messages, scopeName: "Local").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "FinalResponse", value: agentResponse.Messages, scopeName: "Local");
 
             return default;
         }
@@ -603,8 +603,8 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            object? evaluatedValue = await context.EvaluateValueAsync<object>("Local.StallCount + 1").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "StallCount", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
+            object? evaluatedValue = await context.EvaluateValueAsync<object>("Local.StallCount + 1");
+            await context.QueueStateUpdateAsync(key: "StallCount", value: evaluatedValue, scopeName: "Local");
 
             return default;
         }
@@ -618,13 +618,13 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            bool condition0 = await context.EvaluateValueAsync<bool>(".TypedProgressLedger.is_in_loop.answer").ConfigureAwait(false);
+            bool condition0 = await context.EvaluateValueAsync<bool>(".TypedProgressLedger.is_in_loop.answer");
             if (condition0)
             {
                 return "conditionItem_fpaNL9";
             }
 
-            bool condition1 = await context.EvaluateValueAsync<bool>("Not(Local.TypedProgressLedger.is_progress_being_made.answer)").ConfigureAwait(false);
+            bool condition1 = await context.EvaluateValueAsync<bool>("Not(Local.TypedProgressLedger.is_progress_being_made.answer)");
             if (condition1)
             {
                 return "conditionItem_NnqvXh";
@@ -649,7 +649,7 @@ public static class TestWorkflowProvider
                     """
                 );
             AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
-            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);
+            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response));
 
             return default;
         }
@@ -670,7 +670,7 @@ public static class TestWorkflowProvider
                     """
                 );
             AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
-            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);
+            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response));
 
             return default;
         }
@@ -684,7 +684,7 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            bool condition0 = await context.EvaluateValueAsync<bool>("Local.StallCount > 2").ConfigureAwait(false);
+            bool condition0 = await context.EvaluateValueAsync<bool>("Local.StallCount > 2");
             if (condition0)
             {
                 return "conditionItem_NlQTBv";
@@ -709,7 +709,7 @@ public static class TestWorkflowProvider
                     """
                 );
             AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
-            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);
+            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response));
 
             return default;
         }
@@ -723,7 +723,7 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            bool condition0 = await context.EvaluateValueAsync<bool>("Local.RestartCount > 2").ConfigureAwait(false);
+            bool condition0 = await context.EvaluateValueAsync<bool>("Local.RestartCount > 2");
             if (condition0)
             {
                 return "conditionItem_EXAlhZ";
@@ -748,7 +748,7 @@ public static class TestWorkflowProvider
                     """
                 );
             AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
-            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);
+            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response));
 
             return default;
         }
@@ -769,7 +769,7 @@ public static class TestWorkflowProvider
                     """
                 );
             AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
-            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);
+            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response));
 
             return default;
         }
@@ -783,14 +783,14 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            string? agentName = await context.ReadStateAsync<string>(key: "FOUNDRY_AGENT_RESEARCHANALYST", scopeName: "Env").ConfigureAwait(false);
+            string? agentName = await context.ReadStateAsync<string>(key: "FOUNDRY_AGENT_RESEARCHANALYST", scopeName: "Env");
 
             if (string.IsNullOrWhiteSpace(agentName))
             {
                 throw new InvalidOperationException($"Agent name must be defined: {this.Id}");
             }
 
-            string? conversationId = await context.ReadStateAsync<string>(key: "InternalConversationId", scopeName: "Local").ConfigureAwait(false);
+            string? conversationId = await context.ReadStateAsync<string>(key: "InternalConversationId", scopeName: "Local");
             bool autoSend = true;
             string additionalInstructions =
                 await context.FormatTemplateAsync(
@@ -810,7 +810,7 @@ public static class TestWorkflowProvider
       "As a reminder, we are working to solve the following task:
     
       " & Local.InputTask)
-    """).ConfigureAwait(false);
+    """);
 
             AgentRunResponse agentResponse =
                 await InvokeAgentAsync(
@@ -820,14 +820,14 @@ public static class TestWorkflowProvider
                     autoSend,
                     additionalInstructions,
                     inputMessages,
-                    cancellationToken).ConfigureAwait(false);
+                    cancellationToken);
 
             if (autoSend)
             {
-                await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
+                await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse));
             }
 
-            await context.QueueStateUpdateAsync(key: "TaskFacts", value: agentResponse.Messages, scopeName: "Local").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "TaskFacts", value: agentResponse.Messages, scopeName: "Local");
 
             return default;
         }
@@ -848,7 +848,7 @@ public static class TestWorkflowProvider
                     """
                 );
             AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
-            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);
+            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response));
 
             return default;
         }
@@ -862,14 +862,14 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            string? agentName = await context.ReadStateAsync<string>(key: "FOUNDRY_AGENT_RESEARCHMANAGER", scopeName: "Env").ConfigureAwait(false);
+            string? agentName = await context.ReadStateAsync<string>(key: "FOUNDRY_AGENT_RESEARCHMANAGER", scopeName: "Env");
 
             if (string.IsNullOrWhiteSpace(agentName))
             {
                 throw new InvalidOperationException($"Agent name must be defined: {this.Id}");
             }
 
-            string? conversationId = await context.ReadStateAsync<string>(key: "InternalConversationId", scopeName: "Local").ConfigureAwait(false);
+            string? conversationId = await context.ReadStateAsync<string>(key: "InternalConversationId", scopeName: "Local");
             bool autoSend = true;
             string additionalInstructions =
                 await context.FormatTemplateAsync(
@@ -891,14 +891,14 @@ public static class TestWorkflowProvider
                     autoSend,
                     additionalInstructions,
                     inputMessages,
-                    cancellationToken).ConfigureAwait(false);
+                    cancellationToken);
 
             if (autoSend)
             {
-                await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
+                await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse));
             }
 
-            await context.QueueStateUpdateAsync(key: "Plan", value: agentResponse.Messages, scopeName: "Local").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "Plan", value: agentResponse.Messages, scopeName: "Local");
 
             return default;
         }
@@ -935,8 +935,8 @@ public static class TestWorkflowProvider
     Here is the plan to follow as best as possible:
     
     " & Local.Plan.Text
-    """).ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "TaskInstructions", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
+    """);
+            await context.QueueStateUpdateAsync(key: "TaskInstructions", value: evaluatedValue, scopeName: "Local");
 
             return default;
         }
@@ -951,7 +951,7 @@ public static class TestWorkflowProvider
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
             object? evaluatedValue = 0;
-            await context.QueueStateUpdateAsync(key: "StallCount", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "StallCount", value: evaluatedValue, scopeName: "Local");
 
             return default;
         }
@@ -965,8 +965,8 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            object? evaluatedValue = await context.EvaluateValueAsync<object>("Local.RestartCount + 1").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "RestartCount", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
+            object? evaluatedValue = await context.EvaluateValueAsync<object>("Local.RestartCount + 1");
+            await context.QueueStateUpdateAsync(key: "RestartCount", value: evaluatedValue, scopeName: "Local");
 
             return default;
         }
@@ -989,7 +989,7 @@ public static class TestWorkflowProvider
                     """
                 );
             AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
-            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);
+            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response));
 
             return default;
         }
@@ -1004,7 +1004,7 @@ public static class TestWorkflowProvider
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
             object? evaluatedValue = 0;
-            await context.QueueStateUpdateAsync(key: "StallCount", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "StallCount", value: evaluatedValue, scopeName: "Local");
 
             return default;
         }
@@ -1018,8 +1018,8 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            object? evaluatedValue = await context.EvaluateValueAsync<object>("Search(Local.AvailableAgents, Local.TypedProgressLedger.next_speaker.answer, name)").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "NextSpeaker", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
+            object? evaluatedValue = await context.EvaluateValueAsync<object>("Search(Local.AvailableAgents, Local.TypedProgressLedger.next_speaker.answer, name)");
+            await context.QueueStateUpdateAsync(key: "NextSpeaker", value: evaluatedValue, scopeName: "Local");
 
             return default;
         }
@@ -1033,7 +1033,7 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            bool condition0 = await context.EvaluateValueAsync<bool>("CountRows(Local.NextSpeaker) = 1").ConfigureAwait(false);
+            bool condition0 = await context.EvaluateValueAsync<bool>("CountRows(Local.NextSpeaker) = 1");
             if (condition0)
             {
                 return "conditionItem_GmigcU";
@@ -1051,21 +1051,21 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            string? agentName = await context.EvaluateValueAsync<string>("First(Local.NextSpeaker).agentid").ConfigureAwait(false);
+            string? agentName = await context.EvaluateValueAsync<string>("First(Local.NextSpeaker).agentid");
 
             if (string.IsNullOrWhiteSpace(agentName))
             {
                 throw new InvalidOperationException($"Agent name must be defined: {this.Id}");
             }
 
-            string? conversationId = await context.ReadStateAsync<string>(key: "ConversationId", scopeName: "System").ConfigureAwait(false);
+            string? conversationId = await context.ReadStateAsync<string>(key: "ConversationId", scopeName: "System");
             bool autoSend = true;
             string additionalInstructions =
                 await context.FormatTemplateAsync(
                     """
                     {Local.TypedProgressLedger.instruction_or_question.answer}
                     """);
-            IList<ChatMessage>? inputMessages = await context.ReadListAsync<ChatMessage>(key: "SeedTask", scopeName: "Local").ConfigureAwait(false);
+            IList<ChatMessage>? inputMessages = await context.ReadListAsync<ChatMessage>(key: "SeedTask", scopeName: "Local");
 
             AgentRunResponse agentResponse =
                 await InvokeAgentAsync(
@@ -1075,14 +1075,14 @@ public static class TestWorkflowProvider
                     autoSend,
                     additionalInstructions,
                     inputMessages,
-                    cancellationToken).ConfigureAwait(false);
+                    cancellationToken);
 
             if (autoSend)
             {
-                await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
+                await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse));
             }
 
-            await context.QueueStateUpdateAsync(key: "AgentResponse", value: agentResponse.Messages, scopeName: "Local").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "AgentResponse", value: agentResponse.Messages, scopeName: "Local");
 
             return default;
         }
@@ -1096,8 +1096,8 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            object? evaluatedValue = await context.EvaluateValueAsync<object>("Last(Local.AgentResponse).Text").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "AgentResponseText", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
+            object? evaluatedValue = await context.EvaluateValueAsync<object>("Last(Local.AgentResponse).Text");
+            await context.QueueStateUpdateAsync(key: "AgentResponseText", value: evaluatedValue, scopeName: "Local");
 
             return default;
         }
@@ -1111,7 +1111,7 @@ public static class TestWorkflowProvider
     {
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            await context.QueueStateUpdateAsync(key: "SeedTask", value: UnassignedValue.Instance, scopeName: "Local").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "SeedTask", value: UnassignedValue.Instance, scopeName: "Local");
 
             return default;
         }
@@ -1132,7 +1132,7 @@ public static class TestWorkflowProvider
                     """
                 );
             AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
-            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);
+            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response));
 
             return default;
         }
@@ -1146,8 +1146,8 @@ public static class TestWorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            object? evaluatedValue = await context.EvaluateValueAsync<object>("Local.StallCount + 1").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "StallCount", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
+            object? evaluatedValue = await context.EvaluateValueAsync<object>("Local.StallCount + 1");
+            await context.QueueStateUpdateAsync(key: "StallCount", value: evaluatedValue, scopeName: "Local");
 
             return default;
         }
