@@ -283,11 +283,17 @@ internal sealed class Program
                                 await DownloadFileContentAsync(Path.GetFileName(messageUpdate.TextAnnotation?.TextToReplace ?? "response.png"), content);
                             }
                             break;
+                        case RequiredActionUpdate actionUpdate:
+                            Console.ForegroundColor = ConsoleColor.White;
+                            Console.Write($"Calling tool: {actionUpdate.FunctionName}");
+                            Console.ForegroundColor = ConsoleColor.DarkGray;
+                            Console.WriteLine($" [{actionUpdate.ToolCallId}]");
+                            break;
                     }
                     try
                     {
                         Console.ResetColor();
-                        Console.Write(streamEvent.Data);
+                        Console.Write(streamEvent.Update.Text);
                     }
                     finally
                     {
