@@ -182,7 +182,11 @@ public sealed class AzureRealtimeClient : IAsyncDisposable
             case "error":
                 if (root.TryGetProperty("error", out var errorElement))
                 {
-                    string? message = errorElement.GetProperty("message").GetString();
+                    string? message = null;
+                    if (errorElement.TryGetProperty("message", out var messageElement))
+                    {
+                        message = messageElement.GetString();
+                    }
                     Console.WriteLine($"[WARNING] Azure OpenAI realtime error: {message ?? "Unknown error"}");
                 }
                 break;
