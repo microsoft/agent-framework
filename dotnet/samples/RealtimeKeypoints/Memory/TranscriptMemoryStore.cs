@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Numerics.Tensors;
+using System.Runtime.InteropServices;
 
 namespace RealtimeKeypoints.Memory;
 
@@ -150,9 +151,19 @@ public sealed class TranscriptMemoryStore : InMemoryVectorStore, IDisposable
             return 0f;
         }
 
-        Span<float> spanA = a is float[] arrayA ? arrayA : a.ToArray();
-        Span<float> spanB = b is float[] arrayB ? arrayB : b.ToArray();
+        ReadOnlySpan<float> spanA = GetSpan(a);
+        ReadOnlySpan<float> spanB = GetSpan(b);
         return TensorPrimitives.CosineSimilarity(spanA, spanB);
+    }
+
+    private static ReadOnlySpan<float> GetSpan(IReadOnlyList<float> list)
+    {
+        return list switch
+        {
+            float[] array => array,
+            List<float> listImpl => CollectionsMarshal.AsSpan(listImpl),
+            _ => list.ToArray() // Fallback for other collection types
+        };
     }
 
     public sealed record TranscriptEntry(string Text, DateTimeOffset Timestamp, IReadOnlyList<float>? Embedding = null);
