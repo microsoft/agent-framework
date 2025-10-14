@@ -98,13 +98,12 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
     private List<FunctionCallContent> GetOrphanedFunctionCalls(AgentRunResponse agentResponse)
     {
         HashSet<string> functionResultIds =
-            agentResponse.Messages
-                .SelectMany(
-                    m =>
-                        m.Contents
-                            .OfType<FunctionResultContent>()
-                            .Select(functionCall => functionCall.CallId))
-                .ToHashSet();
+            [.. agentResponse.Messages
+                    .SelectMany(
+                        m =>
+                            m.Contents
+                                .OfType<FunctionResultContent>()
+                                .Select(functionCall => functionCall.CallId))];
 
         List<FunctionCallContent> functionCalls = [];
         foreach (FunctionCallContent functionCall in agentResponse.Messages.SelectMany(m => m.Contents.OfType<FunctionCallContent>()))
