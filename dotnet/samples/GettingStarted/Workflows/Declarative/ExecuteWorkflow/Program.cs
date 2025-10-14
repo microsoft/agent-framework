@@ -112,12 +112,21 @@ internal sealed class Program
         Notify("\nWORKFLOW: Done!\n");
     }
 
+    /// <summary>
+    /// Create the workflow from the declarative YAML.  Includes definition of the
+    /// <see cref="DeclarativeWorkflowOptions" /> and the associated <see cref="WorkflowAgentProvider"/>.
+    /// </summary>
+    /// <remarks>
+    /// The value assigned to <see cref="IncludeFunctions" /> controls on whether the function
+    /// tools (<see cref="AIFunction"/>) initialized in the constructor are included for auto-invocation.
+    /// </remarks>
     private Workflow CreateWorkflow()
     {
         // Use DeclarativeWorkflowBuilder to build a workflow based on a YAML file.
         AzureAgentProvider agentProvider = new(this.FoundryEndpoint, new AzureCliCredential())
         {
-            Functions = this.FunctionMap.Values,
+            // Functions included here will be auto-executed by the framework.
+            Functions = IncludeFunctions ? this.FunctionMap.Values : null,
         };
 
         DeclarativeWorkflowOptions options =
@@ -131,7 +140,17 @@ internal sealed class Program
         return DeclarativeWorkflowBuilder.Build<string>(this.WorkflowFile, options);
     }
 
+    /// <summary>
+    /// Configuration key used to identify the Foundry project endpoint.
+    /// </summary>
     private const string ConfigKeyFoundryEndpoint = "FOUNDRY_PROJECT_ENDPOINT";
+
+    /// <summary>
+    /// Controls on whether the function tools (<see cref="AIFunction"/>) initialized
+    /// in the constructor are included for auto-invocation.
+    /// NOTE: By default, no functions exist as part of this sample.
+    /// </summary>
+    private const bool IncludeFunctions = true;
 
     private static Dictionary<string, string> NameCache { get; } = [];
     private static HashSet<string> FileCache { get; } = [];
@@ -156,7 +175,8 @@ internal sealed class Program
 
         List<AIFunction> functions =
             [
-                // Define any custom functions that may be required by agents within the workflow.
+                // Manually define any custom functions that may be required by agents within the workflow.
+                // By default, this sample does not include any functions.
                 //AIFunctionFactory.Create(),
             ];
         this.FunctionMap = functions.ToDictionary(f => f.Name);
@@ -296,14 +316,23 @@ internal sealed class Program
         return default;
     }
 
+    /// <summary>
+    /// Handle request for external input, either from a human or a function tool invocation.
+    /// </summary>
     private async ValueTask<object> HandleExternalRequestAsync(ExternalRequest request) =>
         request.Data.TypeId.TypeName switch
         {
+            // Request for human input
             _ when request.Data.TypeId.IsMatch<InputRequest>() => HandleInputRequest(request.DataAs<InputRequest>()!),
+            // Request for function tool invocation.  (Only active when functions are defined and IncludeFunctions is true.)
             _ when request.Data.TypeId.IsMatch<AgentToolRequest>() => await this.HandleToolRequestAsync(request.DataAs<AgentToolRequest>()!),
+            // Unknown request type.
             _ => throw new InvalidOperationException($"Unsupported external request type: {request.GetType().Name}."),
         };
 
+    /// <summary>
+    /// Handle request for human input.
+    /// </summary>
     private static InputResponse HandleInputRequest(InputRequest request)
     {
         string? userInput;
@@ -319,6 +348,13 @@ internal sealed class Program
         return new InputResponse(userInput);
     }
 
+    /// <summary>
+    /// Handle a function tool request by invoking the specified tools and returning the results.
+    /// </summary>
+    /// <remarks>
+    /// This handler is only active when <see cref="IncludeFunctions"/> is set to true and
+    /// one or more <see cref="AIFunction"/> instances are defined in the constructor.
+    /// </remarks>
     private async ValueTask<AgentToolResponse> HandleToolRequestAsync(AgentToolRequest request)
     {
         Task<FunctionResultContent>[] functionTasks = request.FunctionCalls.Select(functionCall => InvokesToolAsync(functionCall)).ToArray();
