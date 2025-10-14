@@ -59,11 +59,6 @@ export AZURE_OPENAI_CHAT_DEPLOYMENT="gpt-4o-mini"
 
 ## Run the sample
 
-```powershell
-dotnet run --project dotnet/samples/RealtimeKeypoints
-dotnet run --project dotnet/samples/RealtimeKeypoints # (Bash users: replace with your shell syntax)
-```
-
 Speak into your microphone. You'll see:
 
 - **Yellow text**: Finalised transcript turns as they are received from the realtime session
