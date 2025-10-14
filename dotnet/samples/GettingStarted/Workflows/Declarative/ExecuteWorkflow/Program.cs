@@ -233,7 +233,7 @@ internal sealed class Program
 
                         if (messageId is not null)
                         {
-                            string? agentId = streamEvent.Update.AuthorName;
+                            string? agentId = streamEvent.Update.AgentId;
                             if (agentId is not null)
                             {
                                 if (!NameCache.TryGetValue(agentId, out string? realName))
