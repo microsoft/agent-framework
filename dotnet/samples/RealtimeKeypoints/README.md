@@ -100,4 +100,4 @@ Press Ctrl+C to stop the capture.
 
 ## License
 
-This sample is provided under the [MIT License](../../LICENSE).
+This sample is provided under the [MIT License](../../../LICENSE).
