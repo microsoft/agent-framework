@@ -63,10 +63,10 @@ static IEnumerable<AIFunction> CreateFunctionTools(AIAgent a2aAgent, AgentCard a
             """,
         };
 
-        yield return AIFunctionFactory.Create(InvokeAgentAsync, options);
+        yield return AIFunctionFactory.Create(RunAgentAsync, options);
     }
 
-    async Task<string> InvokeAgentAsync(string input, CancellationToken cancellationToken)
+    async Task<string> RunAgentAsync(string input, CancellationToken cancellationToken)
     {
         var response = await a2aAgent.RunAsync(input, cancellationToken: cancellationToken).ConfigureAwait(false);
 
