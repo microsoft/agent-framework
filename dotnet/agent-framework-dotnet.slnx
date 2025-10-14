@@ -206,6 +206,7 @@
     <File Path="../docs/decisions/0001-agent-run-response.md" />
     <File Path="../docs/decisions/0001-agent-tools.md" />
     <File Path="../docs/decisions/0002-agent-opentelemetry-instrumentation.md" />
+    <File Path="../docs/decisions/000N-support-long-running-execution.md" />
     <File Path="../docs/decisions/adr-short-template.md" />
     <File Path="../docs/decisions/adr-template.md" />
     <File Path="../docs/decisions/README.md" />
