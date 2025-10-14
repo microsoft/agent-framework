@@ -26,7 +26,7 @@
     <PackageVersion Include="System.Collections.Immutable" Version="9.0.9" />
     <PackageVersion Include="System.CommandLine" Version="2.0.0-rc.1.25451.107" />
     <PackageVersion Include="System.Diagnostics.DiagnosticSource" Version="9.0.9" />
-    <PackageVersion Include="System.Numerics.Tensors" Version="9.0.0" />
+  <PackageVersion Include="System.Numerics.Tensors" Version="9.0.8" />
     <PackageVersion Include="System.Net.ServerSentEvents" Version="9.0.9" />
     <PackageVersion Include="System.Text.Json" Version="9.0.9" />
     <PackageVersion Include="System.Threading.Channels" Version="9.0.9" />

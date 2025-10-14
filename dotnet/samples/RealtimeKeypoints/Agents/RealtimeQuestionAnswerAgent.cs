@@ -1,9 +1,9 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Collections.Concurrent;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using RealtimeKeypoints.Memory;
-using System.Collections.Concurrent;
 
 namespace RealtimeKeypoints.Agents;
 

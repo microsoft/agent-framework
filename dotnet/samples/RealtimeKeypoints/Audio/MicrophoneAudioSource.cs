@@ -1,8 +1,6 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Threading.Channels;
-using System.Threading.Tasks;
 using NAudio.Wave;
 
 namespace RealtimeKeypoints.Audio;

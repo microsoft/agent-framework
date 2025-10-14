@@ -52,6 +52,8 @@ public static partial class EndpointRouteBuilderExtensions
         // MapConversations(conversationsRouteGroup, agent, loggerFactory);
     }
 
+    [RequiresDynamicCode("Calls Microsoft.AspNetCore.Builder.EndpointRouteBuilderExtensions.MapPost(String, Delegate)")]
+    [RequiresUnreferencedCode("Calls Microsoft.AspNetCore.Builder.EndpointRouteBuilderExtensions.MapPost(String, Delegate)")]
     private static void MapResponses(IEndpointRouteBuilder routeGroup, AIAgent agent)
     {
         var endpointAgentName = agent.DisplayName;
@@ -76,6 +78,8 @@ public static partial class EndpointRouteBuilderExtensions
     }
 
 #pragma warning disable IDE0051 // Remove unused private members
+    [RequiresDynamicCode("Calls Microsoft.AspNetCore.Builder.EndpointRouteBuilderExtensions.MapGet(String, Delegate)")]
+    [RequiresUnreferencedCode("Calls Microsoft.AspNetCore.Builder.EndpointRouteBuilderExtensions.MapGet(String, Delegate)")]
     private static void MapConversations(IEndpointRouteBuilder routeGroup, AIAgent agent)
 #pragma warning restore IDE0051 // Remove unused private members
     {

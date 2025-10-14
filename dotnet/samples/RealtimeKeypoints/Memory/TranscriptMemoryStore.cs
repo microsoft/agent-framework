@@ -1,11 +1,6 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Numerics.Tensors;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace RealtimeKeypoints.Memory;
 

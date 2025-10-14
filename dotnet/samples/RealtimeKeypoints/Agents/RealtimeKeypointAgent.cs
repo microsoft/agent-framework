@@ -1,13 +1,7 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Text;
 using System.Text.Json;
-using System.IO;
-using System.Threading;
-using System.Threading.Tasks;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using RealtimeKeypoints.Realtime;
@@ -226,7 +220,7 @@ public sealed class RealtimeKeypointAgent : AIAgent
             yield break;
         }
 
-        using var reader = new System.IO.StringReader(normalized);
+        using var reader = new StringReader(normalized);
         string? line;
         while ((line = reader.ReadLine()) is not null)
         {

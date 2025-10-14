@@ -41,6 +41,8 @@ public static partial class EndpointRouteBuilderExtensions
         MapChatCompletions(chatCompletionsRouteGroup, agent);
     }
 
+    [RequiresDynamicCode("Calls Microsoft.AspNetCore.Builder.EndpointRouteBuilderExtensions.MapPost(String, Delegate)")]
+    [RequiresUnreferencedCode("Calls Microsoft.AspNetCore.Builder.EndpointRouteBuilderExtensions.MapPost(String, Delegate)")]
     private static void MapChatCompletions(IEndpointRouteBuilder routeGroup, AIAgent agent)
     {
         var endpointAgentName = agent.DisplayName;

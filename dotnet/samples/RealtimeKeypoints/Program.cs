@@ -1,17 +1,13 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Text;
-using System.Threading;
 using System.Threading.Channels;
-using System.Threading.Tasks;
 using Azure;
 using Azure.AI.OpenAI;
 using Microsoft.Extensions.AI;
-using Microsoft.Agents.AI;
 using RealtimeKeypoints.Agents;
-using RealtimeKeypoints.Realtime;
 using RealtimeKeypoints.Memory;
+using RealtimeKeypoints.Realtime;
 
 namespace RealtimeKeypoints;
 
@@ -154,7 +150,7 @@ public static class Program
         CancellationToken cancellationToken)
     {
         // Buffer transcripts briefly before processing to reduce API calls
-        var buffer = new System.Collections.Generic.List<string>();
+        var buffer = new List<string>();
         var lastProcessTime = DateTimeOffset.UtcNow;
         const int MinBufferSize = 2;
         var processingInterval = TimeSpan.FromSeconds(5);
