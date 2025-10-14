@@ -107,6 +107,9 @@ app.MapA2A(agentName: "knights-and-knaves", path: "/a2a/knights-and-knaves", age
 
 app.MapOpenAIResponses("pirate");
 app.MapOpenAIResponses("knights-and-knaves");
+      
+app.MapOpenAIChatCompletions("pirate");
+app.MapOpenAIChatCompletions("knights-and-knaves");
 
 // workflow-agents
 app.MapOpenAIResponses("science-sequential-workflow");
