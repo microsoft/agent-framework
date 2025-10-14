@@ -33,9 +33,9 @@ public sealed class MenuPlugin
     [KernelFunction, Description("Provides the price of the requested menu item.")]
     public float? GetItemPrice(
         [Description("The name of the menu item.")]
-        string itemName)
+        string name)
     {
-        return s_menuItems.FirstOrDefault(i => i.Name.Equals(itemName, StringComparison.OrdinalIgnoreCase))?.Price;
+        return s_menuItems.FirstOrDefault(i => i.Name.Equals(name, StringComparison.OrdinalIgnoreCase))?.Price;
     }
 
     private static readonly MenuItem[] s_menuItems =
