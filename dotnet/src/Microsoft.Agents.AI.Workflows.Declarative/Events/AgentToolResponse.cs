@@ -33,7 +33,15 @@ public sealed class AgentToolResponse
         this.FunctionResults = functionResults.ToImmutableArray();
     }
 
-    internal static AgentToolResponse Create(AgentToolRequest toolRequest, params IEnumerable<FunctionResultContent> functionResults)
+    /// <summary>
+    /// Factory method to create an <see cref="AgentToolResponse"/> from an <see cref="AgentToolRequest"/>
+    /// Ensures that all function calls in the request have a corresponding result.
+    /// </summary>
+    /// <param name="toolRequest">The tool request.</param>
+    /// <param name="functionResults">On or more function results</param>
+    /// <returns>An <see cref="AgentToolResponse"/> that can be provided to the workflow.</returns>
+    /// <exception cref="DeclarativeActionException">Not all <see cref="AgentToolRequest.FunctionCalls"/> have a corresponding <see cref="FunctionResultContent"/>.</exception>
+    public static AgentToolResponse Create(AgentToolRequest toolRequest, params IEnumerable<FunctionResultContent> functionResults)
     {
         HashSet<string> callIds = toolRequest.FunctionCalls.Select(call => call.CallId).ToHashSet();
         HashSet<string> resultIds = functionResults.Select(call => call.CallId).ToHashSet();

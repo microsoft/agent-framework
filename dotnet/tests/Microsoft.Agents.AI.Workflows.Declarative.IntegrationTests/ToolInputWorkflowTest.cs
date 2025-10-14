@@ -10,6 +10,7 @@ using Microsoft.Agents.AI.Workflows.Declarative.Events;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Agents;
 using Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Framework;
+using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Extensions.AI;
 using Xunit.Abstractions;
 
@@ -85,16 +86,14 @@ public sealed class ToolInputWorkflowTest(ITestOutputHelper output) : Integratio
     private static async ValueTask<IList<FunctionResultContent>> InvokeToolsAsync(IEnumerable<(FunctionCallContent, AIFunction)> functionCalls)
     {
         List<FunctionResultContent> results = [];
+
         foreach ((FunctionCallContent functionCall, AIFunction functionTool) in functionCalls)
         {
-            AIFunctionArguments functionArguments = new(functionCall.Arguments); // %%% FUNCTION: PORTABLE
-            if (functionArguments.Count > 0)
-            {
-                functionArguments = new(new Dictionary<string, object?>() { { "menuItem", "Clam Chowder" } });
-            }
+            AIFunctionArguments? functionArguments = functionCall.Arguments is null ? null : new(functionCall.Arguments.NormalizePortableValues());
             object? result = await functionTool.InvokeAsync(functionArguments).ConfigureAwait(false);
             results.Add(new FunctionResultContent(functionCall.CallId, JsonSerializer.Serialize(result)));
         }
+
         return results;
     }
 }

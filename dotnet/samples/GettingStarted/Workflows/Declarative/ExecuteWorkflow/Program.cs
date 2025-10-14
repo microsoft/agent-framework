@@ -1,16 +1,20 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 // Uncomment this to enable JSON checkpointing to the local file system.
-#define CHECKPOINT_JSON
+// #define CHECKPOINT_JSON
 
 using System.Diagnostics;
 using System.Reflection;
+using System.Text.Json;
 using Azure.AI.Agents.Persistent;
 using Azure.Identity;
 using Microsoft.Agents.AI.Workflows;
+#if CHECKPOINT_JSON
 using Microsoft.Agents.AI.Workflows.Checkpointing;
+#endif
 using Microsoft.Agents.AI.Workflows.Declarative;
 using Microsoft.Agents.AI.Workflows.Declarative.Events;
+using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 
@@ -65,18 +69,19 @@ internal sealed class Program
         // Use a file-system based JSON checkpoint store to persist checkpoints to disk.
         DirectoryInfo checkpointFolder = Directory.CreateDirectory(Path.Combine(".", $"chk-{DateTime.Now:YYmmdd-hhMMss-ff}"));
         CheckpointManager checkpointManager = CheckpointManager.CreateJson(new FileSystemJsonCheckpointStore(checkpointFolder));
-        Checkpointed<StreamingRun> run = await InProcessExecution.StreamAsync(workflow, input, checkpointManager);
 #else
         // Use an in-memory checkpoint store that will not persist checkpoints beyond the lifetime of the process.
         CheckpointManager checkpointManager = CheckpointManager.CreateInMemory();
 #endif
 
+        Checkpointed<StreamingRun> run = await InProcessExecution.StreamAsync(workflow, input, checkpointManager);
+
         bool isComplete = false;
-        InputResponse? response = null;
+        object? response = null;
         do
         {
-            ExternalRequest? inputRequest = await this.MonitorAndDisposeWorkflowRunAsync(run, response);
-            if (inputRequest is not null)
+            ExternalRequest? externalRequest = await this.MonitorAndDisposeWorkflowRunAsync(run, response);
+            if (externalRequest is not null)
             {
                 Notify("\nWORKFLOW: Yield");
 
@@ -86,7 +91,7 @@ internal sealed class Program
                 }
 
                 // Process the external request.
-                response = HandleExternalRequest(inputRequest);
+                response = await this.HandleExternalRequestAsync(externalRequest);
 
                 // Let's resume on an entirely new workflow instance to demonstrate checkpoint portability.
                 workflow = this.CreateWorkflow();
@@ -110,8 +115,13 @@ internal sealed class Program
     private Workflow CreateWorkflow()
     {
         // Use DeclarativeWorkflowBuilder to build a workflow based on a YAML file.
+        AzureAgentProvider agentProvider = new(this.FoundryEndpoint, new AzureCliCredential())
+        {
+            Functions = this.FunctionMap.Values,
+        };
+
         DeclarativeWorkflowOptions options =
-            new(new AzureAgentProvider(this.FoundryEndpoint, new AzureCliCredential()))
+            new(agentProvider)
             {
                 Configuration = this.Configuration,
                 //ConversationId = null, // Assign to continue a conversation
@@ -132,6 +142,7 @@ internal sealed class Program
     private PersistentAgentsClient FoundryClient { get; }
     private IConfiguration Configuration { get; }
     private CheckpointInfo? LastCheckpoint { get; set; }
+    private Dictionary<string, AIFunction> FunctionMap { get; }
 
     private Program(string workflowFile, string? workflowInput)
     {
@@ -142,9 +153,16 @@ internal sealed class Program
 
         this.FoundryEndpoint = this.Configuration[ConfigKeyFoundryEndpoint] ?? throw new InvalidOperationException($"Undefined configuration setting: {ConfigKeyFoundryEndpoint}");
         this.FoundryClient = new PersistentAgentsClient(this.FoundryEndpoint, new AzureCliCredential());
+
+        List<AIFunction> functions =
+            [
+                // Define any custom functions that may be required by agents within the workflow.
+                //AIFunctionFactory.Create(),
+            ];
+        this.FunctionMap = functions.ToDictionary(f => f.Name);
     }
 
-    private async Task<ExternalRequest?> MonitorAndDisposeWorkflowRunAsync(Checkpointed<StreamingRun> run, InputResponse? response = null)
+    private async Task<ExternalRequest?> MonitorAndDisposeWorkflowRunAsync(Checkpointed<StreamingRun> run, object? response = null)
     {
         await using IAsyncDisposable disposeRun = run;
 
@@ -277,20 +295,45 @@ internal sealed class Program
 
         return default;
     }
-    private static InputResponse HandleExternalRequest(ExternalRequest request)
+
+    private async ValueTask<object> HandleExternalRequestAsync(ExternalRequest request) =>
+        request.Data.TypeId.TypeName switch
+        {
+            _ when request.Data.TypeId.IsMatch<InputRequest>() => HandleInputRequest(request.DataAs<InputRequest>()!),
+            _ when request.Data.TypeId.IsMatch<AgentToolRequest>() => await this.HandleToolRequestAsync(request.DataAs<AgentToolRequest>()!),
+            _ => throw new InvalidOperationException($"Unsupported external request type: {request.GetType().Name}."),
+        };
+
+    private static InputResponse HandleInputRequest(InputRequest request)
     {
-        InputRequest? message = request.Data.As<InputRequest>();
         string? userInput;
         do
         {
             Console.ForegroundColor = ConsoleColor.DarkGreen;
-            Console.Write($"\n{message?.Prompt ?? "INPUT:"} ");
+            Console.Write($"\n{request.Prompt ?? "INPUT:"} ");
             Console.ForegroundColor = ConsoleColor.White;
             userInput = Console.ReadLine();
         }
         while (string.IsNullOrWhiteSpace(userInput));
 
         return new InputResponse(userInput);
+    }
+
+    private async ValueTask<AgentToolResponse> HandleToolRequestAsync(AgentToolRequest request)
+    {
+        Task<FunctionResultContent>[] functionTasks = request.FunctionCalls.Select(functionCall => InvokesToolAsync(functionCall)).ToArray();
+
+        await Task.WhenAll(functionTasks);
+
+        return AgentToolResponse.Create(request, functionTasks.Select(task => task.Result));
+
+        async Task<FunctionResultContent> InvokesToolAsync(FunctionCallContent functionCall)
+        {
+            AIFunction functionTool = this.FunctionMap[functionCall.Name];
+            AIFunctionArguments? functionArguments = functionCall.Arguments is null ? null : new(functionCall.Arguments.NormalizePortableValues());
+            object? result = await functionTool.InvokeAsync(functionArguments);
+            return new FunctionResultContent(functionCall.CallId, JsonSerializer.Serialize(result));
+        }
     }
 
     private static string? ParseWorkflowFile(string[] args)
