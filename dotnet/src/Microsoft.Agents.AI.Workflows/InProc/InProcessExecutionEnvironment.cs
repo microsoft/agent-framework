@@ -126,10 +126,11 @@ public sealed class InProcessExecutionEnvironment : IWorkflowExecutionEnvironmen
         string? runId = null,
         CancellationToken cancellationToken = default) where TInput : notnull
     {
-        AsyncRunHandle runHandle = await this.BeginRunAsync(workflow, checkpointManager: null, runId: runId, [], cancellationToken)
-                                             .ConfigureAwait(false);
+        var runHandle = await this.GetRunHandleWithTurnTokenAsync(workflow: workflow, input: input, checkpointManager: null, runId: runId, cancellationToken).ConfigureAwait(false);
 
-        return await runHandle.EnqueueAndRunAsync(input, cancellationToken).ConfigureAwait(false);
+        Run run = new(runHandle);
+        await run.RunToNextHaltAsync(cancellationToken).ConfigureAwait(false);
+        return run;
     }
 
     /// <inheritdoc/>
@@ -139,10 +140,11 @@ public sealed class InProcessExecutionEnvironment : IWorkflowExecutionEnvironmen
         string? runId = null,
         CancellationToken cancellationToken = default) where TInput : notnull
     {
-        AsyncRunHandle runHandle = await this.BeginRunAsync(workflow, checkpointManager: null, runId: runId, [typeof(TInput)], cancellationToken)
-                                             .ConfigureAwait(false);
+        var runHandle = await this.GetRunHandleWithTurnTokenAsync(workflow: workflow, input: input, checkpointManager: null, runId: runId, cancellationToken).ConfigureAwait(false);
 
-        return await runHandle.EnqueueAndRunAsync(input, cancellationToken).ConfigureAwait(false);
+        Run run = new(runHandle);
+        await run.RunToNextHaltAsync(cancellationToken).ConfigureAwait(false);
+        return run;
     }
 
     /// <inheritdoc/>
@@ -153,10 +155,11 @@ public sealed class InProcessExecutionEnvironment : IWorkflowExecutionEnvironmen
         string? runId = null,
         CancellationToken cancellationToken = default) where TInput : notnull
     {
-        AsyncRunHandle runHandle = await this.BeginRunAsync(workflow, checkpointManager, runId: runId, [], cancellationToken)
-                                             .ConfigureAwait(false);
+        var runHandle = await this.GetRunHandleWithTurnTokenAsync(workflow: workflow, input: input, checkpointManager: checkpointManager, runId: runId, cancellationToken).ConfigureAwait(false);
 
-        return await runHandle.WithCheckpointingAsync(() => runHandle.EnqueueAndRunAsync(input, cancellationToken))
+        Run run = new(runHandle);
+        await run.RunToNextHaltAsync(cancellationToken).ConfigureAwait(false);
+        return await runHandle.WithCheckpointingAsync(() => new ValueTask<Run>(run))
                               .ConfigureAwait(false);
     }
 
@@ -168,10 +171,11 @@ public sealed class InProcessExecutionEnvironment : IWorkflowExecutionEnvironmen
         string? runId = null,
         CancellationToken cancellationToken = default) where TInput : notnull
     {
-        AsyncRunHandle runHandle = await this.BeginRunAsync(workflow, checkpointManager, runId: runId, [typeof(TInput)], cancellationToken)
-                                             .ConfigureAwait(false);
+        var runHandle = await this.GetRunHandleWithTurnTokenAsync(workflow: workflow, input: input, checkpointManager: checkpointManager, runId: runId, cancellationToken).ConfigureAwait(false);
 
-        return await runHandle.WithCheckpointingAsync(() => runHandle.EnqueueAndRunAsync(input, cancellationToken))
+        Run run = new(runHandle);
+        await run.RunToNextHaltAsync(cancellationToken).ConfigureAwait(false);
+        return await runHandle.WithCheckpointingAsync(() => new ValueTask<Run>(run))
                               .ConfigureAwait(false);
     }
 
@@ -203,5 +207,49 @@ public sealed class InProcessExecutionEnvironment : IWorkflowExecutionEnvironmen
 
         return await runHandle.WithCheckpointingAsync<Run>(() => new(new Run(runHandle)))
                               .ConfigureAwait(false);
+    }
+
+    // Helper to construct a RunHandle with the provided input enqueued. If the starting executor supports it, a TurnToken will be enqueued also.
+    private async ValueTask<AsyncRunHandle> GetRunHandleWithTurnTokenAsync<TInput>(
+        Workflow workflow,
+        TInput input,
+        CheckpointManager? checkpointManager,
+        string? runId,
+        CancellationToken cancellationToken)
+    {
+        var knownTypes = new List<Type>() { typeof(TInput) };
+        var needsTurnToken = await StartingExecutorHandlesTurnTokenAsync<TInput>(workflow).ConfigureAwait(false);
+        if (needsTurnToken)
+        {
+            knownTypes.Add(typeof(TurnToken));
+        }
+
+        AsyncRunHandle runHandle = await this.BeginRunAsync(workflow, checkpointManager: checkpointManager, runId: runId, knownTypes, cancellationToken)
+                                             .ConfigureAwait(false);
+
+        await runHandle.EnqueueMessageAsync(input, cancellationToken).ConfigureAwait(false);
+
+        if (needsTurnToken)
+        {
+            await runHandle.EnqueueMessageAsync(new TurnToken(emitEvents: true), cancellationToken).ConfigureAwait(false);
+        }
+
+        return runHandle;
+    }
+
+    /// <summary>
+    /// Helper method to detect if the starting executor of a given workflow accepts the provided input type as well as a TurnToken.
+    /// </summary>
+    private static async ValueTask<bool> StartingExecutorHandlesTurnTokenAsync<TInput>(Workflow workflow)
+    {
+        if (workflow.Registrations.TryGetValue(workflow.StartExecutorId, out var registration))
+        {
+            // Create instance to check type
+            Executor startExecutor = await registration.CreateInstanceAsync(string.Empty)
+                                                       .ConfigureAwait(false);
+            return startExecutor.CanHandle(typeof(TInput)) && startExecutor.CanHandle(typeof(TurnToken));
+        }
+
+        return false;
     }
 }
