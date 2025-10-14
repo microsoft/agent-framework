@@ -112,12 +112,22 @@ public sealed class AzureAgentProvider(string projectEndpoint, TokenCredential p
         FunctionInvokingChatClient? functionInvokingClient = agent.GetService<FunctionInvokingChatClient>();
         if (functionInvokingClient is not null)
         {
-            // Make functions available for execution.  Doesn't change what tool is available for any given agent.
-            functionInvokingClient.AdditionalTools = this.Functions is null ? null : [.. this.Functions.OfType<AITool>()];
             // Allow concurrent invocations if configured
             functionInvokingClient.AllowConcurrentInvocation = this.AllowConcurrentInvocation;
             // Allows the caller to respond with function responses
             functionInvokingClient.TerminateOnUnknownCalls = true;
+            // Make functions available for execution.  Doesn't change what tool is available for any given agent.
+            if (this.Functions is not null)
+            {
+                if (functionInvokingClient.AdditionalTools is null)
+                {
+                    functionInvokingClient.AdditionalTools = [.. this.Functions];
+                }
+                else
+                {
+                    functionInvokingClient.AdditionalTools = [.. functionInvokingClient.AdditionalTools, .. this.Functions];
+                }
+            }
         }
 
         return agent;

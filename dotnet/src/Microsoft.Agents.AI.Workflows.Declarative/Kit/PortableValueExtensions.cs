@@ -78,25 +78,13 @@ public static class PortableValueExtensions
 
         IEnumerable<KeyValuePair<string, object?>> GetValues()
         {
-            foreach (string key in source.Keys)
+            foreach (DictionaryEntry entry in source)
             {
-                object? value = source[key];
-                yield return new KeyValuePair<string, object?>(key, value.NormalizePortableValue());
+                yield return new KeyValuePair<string, object?>((string)entry.Key, entry.Value.NormalizePortableValue());
             }
         }
     }
 
-    private static object?[] NormalizePortableValues(this IEnumerable source)
-    {
-        return GetValues().ToArray();
-
-        IEnumerable<object?> GetValues()
-        {
-            IEnumerator enumerator = source.GetEnumerator();
-            while (enumerator.MoveNext())
-            {
-                yield return enumerator.Current.NormalizePortableValue();
-            }
-        }
-    }
+    private static object?[] NormalizePortableValues(this IEnumerable source) =>
+        source.Cast<object?>().Select(NormalizePortableValue).ToArray();
 }

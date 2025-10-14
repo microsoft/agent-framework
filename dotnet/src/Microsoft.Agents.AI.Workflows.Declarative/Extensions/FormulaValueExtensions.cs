@@ -5,6 +5,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Dynamic;
+using System.IdentityModel.Protocols.WSTrust;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -157,9 +158,9 @@ internal static class FormulaValueExtensions
 
         IEnumerable<NamedValue> GetFields()
         {
-            foreach (string key in value.Keys)
+            foreach (DictionaryEntry entry in value)
             {
-                yield return new NamedValue(key, value[key].ToFormula());
+                yield return new NamedValue((string)entry.Key, entry.Value.ToFormula());
             }
         }
     }
