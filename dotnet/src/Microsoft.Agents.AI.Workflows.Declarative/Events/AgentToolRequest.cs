@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
-using System.Collections.Immutable;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
 
@@ -20,12 +19,12 @@ public sealed class AgentToolRequest
     /// <summary>
     /// A list of tool requests.
     /// </summary>
-    public IReadOnlyList<FunctionCallContent> FunctionCalls { get; }
+    public IList<FunctionCallContent> FunctionCalls { get; }
 
     [JsonConstructor]
-    internal AgentToolRequest(string agentName, IEnumerable<FunctionCallContent> functionCalls)
+    internal AgentToolRequest(string agentName, IList<FunctionCallContent>? functionCalls = null)
     {
         this.AgentName = agentName;
-        this.FunctionCalls = functionCalls.ToImmutableArray();
+        this.FunctionCalls = functionCalls ?? [];
     }
 }

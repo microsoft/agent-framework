@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 // Uncomment this to enable JSON checkpointing to the local file system.
-// #define CHECKPOINT_JSON
+//#define CHECKPOINT_JSON
 
 using System.Diagnostics;
 using System.Reflection;
@@ -67,7 +67,7 @@ internal sealed class Program
 
 #if CHECKPOINT_JSON
         // Use a file-system based JSON checkpoint store to persist checkpoints to disk.
-        DirectoryInfo checkpointFolder = Directory.CreateDirectory(Path.Combine(".", $"chk-{DateTime.Now:YYmmdd-hhMMss-ff}"));
+        DirectoryInfo checkpointFolder = Directory.CreateDirectory(Path.Combine(".", $"chk-{DateTime.Now:yyMMdd-hhmmss-ff}"));
         CheckpointManager checkpointManager = CheckpointManager.CreateJson(new FileSystemJsonCheckpointStore(checkpointFolder));
 #else
         // Use an in-memory checkpoint store that will not persist checkpoints beyond the lifetime of the process.
@@ -186,6 +186,7 @@ internal sealed class Program
     {
         await using IAsyncDisposable disposeRun = run;
 
+        bool hasStreamed = false;
         string? messageId = null;
 
         await foreach (WorkflowEvent workflowEvent in run.Run.WatchStreamAsync().ConfigureAwait(false))
@@ -249,6 +250,7 @@ internal sealed class Program
                 case AgentRunUpdateEvent streamEvent:
                     if (!string.Equals(messageId, streamEvent.Update.MessageId, StringComparison.Ordinal))
                     {
+                        hasStreamed = false;
                         messageId = streamEvent.Update.MessageId;
 
                         if (messageId is not null)
@@ -294,6 +296,7 @@ internal sealed class Program
                     {
                         Console.ResetColor();
                         Console.Write(streamEvent.Update.Text);
+                        hasStreamed |= !string.IsNullOrEmpty(streamEvent.Update.Text);
                     }
                     finally
                     {
@@ -304,7 +307,11 @@ internal sealed class Program
                 case AgentRunResponseEvent messageEvent:
                     try
                     {
-                        Console.WriteLine();
+                        if (hasStreamed)
+                        {
+                            Console.WriteLine();
+                        }
+
                         if (messageEvent.Response.Usage is not null)
                         {
                             Console.ForegroundColor = ConsoleColor.DarkGray;

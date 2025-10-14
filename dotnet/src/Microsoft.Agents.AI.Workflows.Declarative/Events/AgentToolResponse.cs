@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
-using System.Collections.Immutable;
 using System.Linq;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
@@ -21,16 +20,16 @@ public sealed class AgentToolResponse
     /// <summary>
     /// A list of tool responses.
     /// </summary>
-    public IReadOnlyList<FunctionResultContent> FunctionResults { get; }
+    public IList<FunctionResultContent> FunctionResults { get; }
 
     /// <summary>
     /// Initializes a new instance of the <see cref="InputResponse"/> class.
     /// </summary>
     [JsonConstructor]
-    internal AgentToolResponse(string agentName, params IEnumerable<FunctionResultContent> functionResults)
+    internal AgentToolResponse(string agentName, IList<FunctionResultContent> functionResults)
     {
         this.AgentName = agentName;
-        this.FunctionResults = functionResults.ToImmutableArray();
+        this.FunctionResults = functionResults;
     }
 
     /// <summary>
@@ -49,6 +48,6 @@ public sealed class AgentToolResponse
         {
             throw new DeclarativeActionException($"Missing results for: {string.Join(",", callIds.Except(resultIds))}");
         }
-        return new AgentToolResponse(toolRequest.AgentName, functionResults);
+        return new AgentToolResponse(toolRequest.AgentName, [.. functionResults]);
     }
 }
