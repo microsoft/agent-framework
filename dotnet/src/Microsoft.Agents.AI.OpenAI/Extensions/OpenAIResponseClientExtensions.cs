@@ -30,9 +30,9 @@ public static class OpenAIResponseClientExtensions
     /// <param name="tools">Optional collection of AI tools that the agent can use during conversations.</param>
     /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <param name="loggerFactory">Optional logger factory for enabling logging within the agent.</param>
-    /// <returns>An <see cref="AIAgent"/> instance backed by the OpenAI Response service.</returns>
+    /// <returns>An <see cref="ChatClientAgent"/> instance backed by the OpenAI Response service.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> is <see langword="null"/>.</exception>
-    public static AIAgent CreateAIAgent(
+    public static ChatClientAgent CreateAIAgent(
         this OpenAIResponseClient client,
         string? instructions = null,
         string? name = null,
@@ -65,9 +65,9 @@ public static class OpenAIResponseClientExtensions
     /// <param name="options">Full set of options to configure the agent.</param>
     /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <param name="loggerFactory">Optional logger factory for enabling logging within the agent.</param>
-    /// <returns>An <see cref="AIAgent"/> instance backed by the OpenAI Response service.</returns>
+    /// <returns>An <see cref="ChatClientAgent"/> instance backed by the OpenAI Response service.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> or <paramref name="options"/> is <see langword="null"/>.</exception>
-    public static AIAgent CreateAIAgent(
+    public static ChatClientAgent CreateAIAgent(
         this OpenAIResponseClient client,
         ChatClientAgentOptions options,
         Func<IChatClient, IChatClient>? clientFactory = null,

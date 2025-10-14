@@ -4,12 +4,21 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Azure.AI.Agents.Persistent;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 
 internal static class AgentProviderExtensions
 {
+    private static readonly HashSet<Azure.AI.Agents.Persistent.RunStatus> s_failureStatus =
+        [
+            Azure.AI.Agents.Persistent.RunStatus.Failed,
+            Azure.AI.Agents.Persistent.RunStatus.Cancelled,
+            Azure.AI.Agents.Persistent.RunStatus.Cancelling,
+            Azure.AI.Agents.Persistent.RunStatus.Expired,
+        ];
+
     public static async ValueTask<AgentRunResponse> InvokeAgentAsync(
         this WorkflowAgentProvider agentProvider,
         string executorId,
@@ -40,7 +49,7 @@ internal static class AgentProviderExtensions
                 agent.RunStreamingAsync(null, options, cancellationToken);
 
         // Enable "autoSend" behavior if this is the workflow conversation.
-        bool isWorkflowConversation = context.IsWorkflowConversation(conversationId);
+        bool isWorkflowConversation = context.IsWorkflowConversation(conversationId, out string? workflowConversationId);
         autoSend |= isWorkflowConversation;
 
         // Process the agent response updates.
@@ -51,9 +60,16 @@ internal static class AgentProviderExtensions
 
             updates.Add(update);
 
+            if (update.RawRepresentation is ChatResponseUpdate chatUpdate &&
+                chatUpdate.RawRepresentation is RunUpdate runUpdate &&
+                s_failureStatus.Contains(runUpdate.Value.Status))
+            {
+                throw new DeclarativeActionException($"Unexpected failure invoking agent, run {runUpdate.Value.Status}: {agent.Name ?? agent.Id} [{runUpdate.Value.Id}/{conversationId}]");
+            }
+
             if (autoSend)
             {
-                await context.AddEventAsync(new AgentRunUpdateEvent(executorId, update)).ConfigureAwait(false);
+                await context.AddEventAsync(new AgentRunUpdateEvent(executorId, update), cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -61,10 +77,10 @@ internal static class AgentProviderExtensions
 
         if (autoSend)
         {
-            await context.AddEventAsync(new AgentRunResponseEvent(executorId, response)).ConfigureAwait(false);
+            await context.AddEventAsync(new AgentRunResponseEvent(executorId, response), cancellationToken).ConfigureAwait(false);
         }
 
-        if (autoSend && !isWorkflowConversation && conversationId is not null)
+        if (autoSend && !isWorkflowConversation && workflowConversationId is not null)
         {
             // Copy messages with content that aren't function calls or results.
             IEnumerable<ChatMessage> messages =
@@ -75,7 +91,7 @@ internal static class AgentProviderExtensions
                         !message.Contents.OfType<FunctionResultContent>().Any());
             foreach (ChatMessage message in messages)
             {
-                await agentProvider.CreateMessageAsync(conversationId, message, cancellationToken).ConfigureAwait(false);
+                await agentProvider.CreateMessageAsync(workflowConversationId, message, cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -87,7 +103,7 @@ internal static class AgentProviderExtensions
             {
                 conversationId = assignValue;
 
-                await context.QueueConversationUpdateAsync(conversationId).ConfigureAwait(false);
+                await context.QueueConversationUpdateAsync(conversationId, cancellationToken).ConfigureAwait(false);
             }
         }
     }

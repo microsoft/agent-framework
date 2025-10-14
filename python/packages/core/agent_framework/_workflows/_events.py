@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 from agent_framework import AgentRunResponse, AgentRunResponseUpdate
 
 if TYPE_CHECKING:
-    from ._executor import RequestInfoMessage
+    from ._request_info_executor import RequestInfoMessage
 
 
 class WorkflowEventSource(str, Enum):

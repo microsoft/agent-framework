@@ -160,7 +160,8 @@ internal static class MessageConverter
                 RawRepresentation = textPart,
                 AdditionalProperties = textPart.Metadata?.ToAdditionalPropertiesDictionary()
             },
-            FilePart or DataPart or _ => throw new NotSupportedException($"Part type '{part.GetType().Name}' is not supported. Only TextPart is supported.")
+            // Ignore unknown content types (FilePart, DataPart, etc.)
+            _ => null
         };
 
     /// <summary>
@@ -234,7 +235,8 @@ internal static class MessageConverter
             {
                 Text = textContent.Text
             },
-            _ => throw new NotSupportedException($"Content type '{content.GetType().Name}' is not supported.")
+            // Ignore unknown content types (FunctionCallContent, FunctionResultContent, etc.)
+            _ => null
         };
 
     private static AdditionalPropertiesDictionary? ToAdditionalPropertiesDictionary(this Dictionary<string, JsonElement> metadata)

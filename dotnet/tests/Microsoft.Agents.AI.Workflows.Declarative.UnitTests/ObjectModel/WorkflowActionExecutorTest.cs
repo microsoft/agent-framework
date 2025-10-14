@@ -2,10 +2,10 @@
 
 using System;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
-using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.PowerFx.Types;
@@ -29,7 +29,7 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
         TestWorkflowExecutor workflowExecutor = new();
         WorkflowBuilder workflowBuilder = new(workflowExecutor);
         workflowBuilder.AddEdge(workflowExecutor, executor);
-        StreamingRun run = await InProcessExecution.StreamAsync(workflowBuilder.Build(), this.State);
+        await using StreamingRun run = await InProcessExecution.StreamAsync(workflowBuilder.Build(), this.State);
         WorkflowEvent[] events = await run.WatchStreamAsync().ToArrayAsync();
         Assert.Contains(events, e => e is DeclarativeActionInvokedEvent);
         Assert.Contains(events, e => e is DeclarativeActionCompletedEvent);
@@ -70,7 +70,7 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
 
     internal sealed class TestWorkflowExecutor() : Executor<WorkflowFormulaState>("test_workflow")
     {
-        public override async ValueTask HandleAsync(WorkflowFormulaState message, IWorkflowContext context) =>
-            await context.SendMessageAsync(new ActionExecutorResult(this.Id)).ConfigureAwait(false);
+        public override async ValueTask HandleAsync(WorkflowFormulaState message, IWorkflowContext context, CancellationToken cancellationToken) =>
+            await context.SendResultMessageAsync(this.Id, cancellationToken).ConfigureAwait(false);
     }
 }

@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
 from ._edge import EdgeGroup
 from ._edge_runner import EdgeRunner, create_edge_runner
-from ._events import WorkflowEvent, WorkflowOutputEvent, _framework_event_origin
+from ._events import WorkflowEvent
 from ._executor import Executor
 from ._runner_context import (
     _DATACLASS_MARKER,  # type: ignore
@@ -22,7 +22,7 @@ from ._runner_context import (
 from ._shared_state import SharedState
 
 if TYPE_CHECKING:
-    from ._executor import RequestInfoExecutor
+    from ._request_info_executor import RequestInfoExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -183,54 +183,7 @@ class Runner:
                 _normalize_message_payload(message)
                 # Deliver a message through all edge runners associated with the source executor concurrently.
                 tasks = [_deliver_message_inner(edge_runner, message) for edge_runner in associated_edge_runners]
-                if not tasks:
-                    # No outgoing edges. If this is an AgentExecutorResponse, treat it as an
-                    # intentional terminal emission and emit a WorkflowOutputEvent here.
-                    # (Previously this relied on the executor to emit, but AgentExecutor only
-                    # sends an AgentExecutorResponse message; centralized completion keeps the
-                    # contract consistent with other executors.)
-                    try:  # Local import to avoid circular dependencies at module import time.
-                        from ._executor import AgentExecutorResponse  # type: ignore
-
-                        if isinstance(message.data, AgentExecutorResponse):
-                            final_messages = message.data.agent_run_response.messages
-                            final_text = final_messages[-1].text if final_messages else "(no content)"
-                            with _framework_event_origin():
-                                # TODO(moonbox3): does user expect this event to contain the final text?
-                                output_event = WorkflowOutputEvent(data=final_text, source_executor_id="<Runner>")
-                            await self._ctx.add_event(output_event)
-                            continue  # Terminal handled
-                    except Exception as exc:  # pragma: no cover - defensive
-                        logger.debug("Suppressed exception during terminal message type check: %s", exc)
-                    # Otherwise keep prior behavior (emit warning for unexpected undelivered message).
-                    logger.warning(
-                        f"Message {message} could not be delivered (no outgoing edges). "
-                        "Add a downstream executor or remove the send if this is unexpected."
-                    )
-                    continue
-                results = await asyncio.gather(*tasks)
-                if not any(results):
-                    # Outgoing edges exist but none accepted the message. If this is an
-                    # AgentExecutorResponse, treat as natural terminal and emit completion.
-                    try:
-                        from ._executor import AgentExecutorResponse  # type: ignore
-
-                        if isinstance(message.data, AgentExecutorResponse):
-                            # Emit a single completion event with final text (best-effort extraction)
-                            final_messages = message.data.agent_run_response.messages
-                            final_text = final_messages[-1].text if final_messages else "(no content)"
-                            with _framework_event_origin():
-                                # TODO(moonbox3): does user expect this event to contain the final text?
-                                output_event = WorkflowOutputEvent(data=final_text, source_executor_id="<Runner>")
-                            await self._ctx.add_event(output_event)
-                            continue
-                    except Exception as exc:  # pragma: no cover
-                        logger.debug("Terminal completion emission failed: %s", exc)
-
-                    logger.warning(
-                        f"Message {message} could not be delivered. "
-                        "This may be due to type incompatibility or no matching targets."
-                    )
+                await asyncio.gather(*tasks)
 
         messages = await self._ctx.drain_messages()
         tasks = [_deliver_messages(source_executor_id, messages) for source_executor_id, messages in messages.items()]
@@ -351,6 +304,8 @@ class Runner:
                     checkpoint_id,
                 )
 
+            await self._restore_executor_states(checkpoint.executor_states)
+
             state = self._checkpoint_to_state(checkpoint)
             await self._ctx.set_checkpoint_state(state)
             if checkpoint.workflow_id:
@@ -369,6 +324,27 @@ class Runner:
         except Exception as e:
             logger.error(f"Failed to restore from checkpoint {checkpoint_id}: {e}")
             return False
+
+    async def _restore_executor_states(self, executor_states: dict[str, dict[str, Any]]) -> None:
+        for exec_id, state in executor_states.items():
+            executor = self._executors.get(exec_id)
+            if not executor:
+                logger.debug(f"Executor {exec_id} not found during state restoration; skipping.")
+                continue
+
+            restored = False
+            restore_method = getattr(executor, "restore_state", None)
+            try:
+                if callable(restore_method):
+                    maybe = restore_method(state)
+                    if asyncio.iscoroutine(maybe):  # type: ignore[arg-type]
+                        await maybe  # type: ignore[arg-type]
+                    restored = True
+            except Exception as ex:  # pragma: no cover - defensive
+                logger.debug(f"Executor {exec_id} restore_state failed: {ex}")
+
+            if not restored:
+                logger.debug(f"Executor {exec_id} does not support state restoration; skipping.")
 
     async def _restore_shared_state_from_context(self) -> None:
         try:
@@ -419,7 +395,7 @@ class Runner:
         Returns:
             The RequestInfoExecutor instance if found, None otherwise.
         """
-        from ._executor import RequestInfoExecutor
+        from ._request_info_executor import RequestInfoExecutor
 
         for executor in self._executors.values():
             if isinstance(executor, RequestInfoExecutor):
@@ -435,7 +411,7 @@ class Runner:
         Returns:
             True if the message targets a RequestInfoExecutor, False otherwise.
         """
-        from ._executor import RequestInfoExecutor
+        from ._request_info_executor import RequestInfoExecutor
 
         if not msg.target_id:
             return False

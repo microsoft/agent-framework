@@ -1,0 +1,19 @@
+{
+  "name": "Python 3",
+  "image": "mcr.microsoft.com/devcontainers/python:3.13-bullseye",
+  "features": {
+    "ghcr.io/va-h/devcontainers-features/uv:1": {},
+    "ghcr.io/devcontainers/features/azure-cli:1.2.8": {}
+  },
+  "postCreateCommand": "bash ./devsetup.sh",
+  "workspaceFolder": "/workspaces/agent-framework/python/",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-windows-ai-studio.windows-ai-studio",
+        "littlefoxteam.vscode-python-test-adapter"
+      ]
+    }
+  }
+}

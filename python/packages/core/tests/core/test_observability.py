@@ -238,7 +238,7 @@ async def test_chat_client_observability(mock_chat_client, span_exporter: InMemo
 
     messages = [ChatMessage(role=Role.USER, text="Test message")]
     span_exporter.clear()
-    response = await client.get_response(messages=messages, model="Test")
+    response = await client.get_response(messages=messages, model_id="Test")
     assert response is not None
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
@@ -263,7 +263,7 @@ async def test_chat_client_streaming_observability(
     span_exporter.clear()
     # Collect all yielded updates
     updates = []
-    async for update in client.get_streaming_response(messages=messages, model="Test"):
+    async for update in client.get_streaming_response(messages=messages, model_id="Test"):
         updates.append(update)
 
     # Verify we got the expected updates, this shouldn't be dependent on otel

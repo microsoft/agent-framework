@@ -12,7 +12,7 @@ from typing import Any, Protocol, TypedDict, TypeVar, cast, runtime_checkable
 
 from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
 from ._const import DEFAULT_MAX_ITERATIONS
-from ._events import AgentRunUpdateEvent, WorkflowEvent
+from ._events import WorkflowEvent
 from ._shared_state import SharedState
 
 logger = logging.getLogger(__name__)
@@ -393,6 +393,22 @@ class RunnerContext(Protocol):
         """Reset the context for a new workflow run."""
         ...
 
+    def set_streaming(self, streaming: bool) -> None:
+        """Set whether agents should stream incremental updates.
+
+        Args:
+            streaming: True for streaming mode (run_stream), False for non-streaming (run).
+        """
+        ...
+
+    def is_streaming(self) -> bool:
+        """Check if the workflow is in streaming mode.
+
+        Returns:
+            True if streaming mode is enabled, False otherwise.
+        """
+        ...
+
     async def create_checkpoint(self, metadata: dict[str, Any] | None = None) -> str:
         """Create a checkpoint of the current workflow state.
 
@@ -450,6 +466,9 @@ class InProcRunnerContext:
         self._iteration_count: int = 0
         self._max_iterations: int = 100
 
+        # Streaming flag - set by workflow's run_stream() vs run()
+        self._streaming: bool = False
+
     async def send_message(self, message: Message) -> None:
         self._messages.setdefault(message.source_id, [])
         self._messages[message.source_id].append(message)
@@ -468,28 +487,6 @@ class InProcRunnerContext:
         Events are enqueued so runners can stream them in real time instead of
         waiting for superstep boundaries.
         """
-        # Filter out empty AgentRunUpdateEvent updates to avoid emitting None/empty chunks
-        try:
-            if isinstance(event, AgentRunUpdateEvent):
-                update = getattr(event, "data", None)
-                # Skip if no update payload
-                if not update:
-                    return
-                # Robust emptiness check: allow either top-level text or any text-bearing content
-                text_val = getattr(update, "text", None)
-                contents = getattr(update, "contents", None)
-                has_text_content = False
-                if contents:
-                    for c in contents:
-                        if getattr(c, "text", None):
-                            has_text_content = True
-                            break
-                if not (text_val or has_text_content):
-                    return
-        except Exception as exc:  # pragma: no cover - defensive logging path
-            # Best-effort filtering only; never block event delivery on filtering errors
-            logger.debug(f"Error while filtering event {event!r}: {exc}", exc_info=True)
-
         await self._event_queue.put(event)
 
     async def drain_events(self) -> list[WorkflowEvent]:
@@ -524,6 +521,22 @@ class InProcRunnerContext:
     def set_workflow_id(self, workflow_id: str) -> None:
         self._workflow_id = workflow_id
 
+    def set_streaming(self, streaming: bool) -> None:
+        """Set whether agents should stream incremental updates.
+
+        Args:
+            streaming: True for streaming mode (run_stream), False for non-streaming (run).
+        """
+        self._streaming = streaming
+
+    def is_streaming(self) -> bool:
+        """Check if the workflow is in streaming mode.
+
+        Returns:
+            True if streaming mode is enabled, False otherwise.
+        """
+        return self._streaming
+
     def reset_for_new_run(self, workflow_shared_state: SharedState | None = None) -> None:
         self._messages.clear()
         # Clear any pending events (best-effort) by recreating the queue
@@ -531,6 +544,7 @@ class InProcRunnerContext:
         self._shared_state.clear()
         self._executor_states.clear()
         self._iteration_count = 0
+        self._streaming = False  # Reset streaming flag
         if workflow_shared_state is not None and hasattr(workflow_shared_state, "_state"):
             workflow_shared_state._state.clear()  # type: ignore[attr-defined]
 

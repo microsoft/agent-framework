@@ -1,10 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using A2A.AspNetCore;
 using AgentWebChat.AgentHost;
 using AgentWebChat.AgentHost.Utilities;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hosting;
 using Microsoft.Agents.AI.Hosting.A2A.AspNetCore;
+using Microsoft.Agents.AI.Hosting.OpenAI;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 
@@ -64,6 +66,25 @@ builder.AddAIAgent("knights-and-knaves", (sp, key) =>
 #pragma warning restore VSTHRD002
 });
 
+// Workflow consisting of multiple specialized agents
+var chemistryAgent = builder.AddAIAgent("chemist",
+    instructions: "You are a chemistry expert. Answer thinking from the chemistry perspective",
+    description: "An agent that helps with chemistry.",
+    chatClientServiceKey: "chat-model");
+
+var mathsAgent = builder.AddAIAgent("mathematician",
+    instructions: "You are a mathematics expert. Answer thinking from the maths perspective",
+    description: "An agent that helps with mathematics.",
+    chatClientServiceKey: "chat-model");
+
+var literatureAgent = builder.AddAIAgent("literator",
+    instructions: "You are a literature expert. Answer thinking from the literature perspective",
+    description: "An agent that helps with literature.",
+    chatClientServiceKey: "chat-model");
+
+builder.AddSequentialWorkflow("science-sequential-workflow", [chemistryAgent, mathsAgent, literatureAgent]).AddAsAIAgent();
+builder.AddConcurrentWorkflow("science-concurrent-workflow", [chemistryAgent, mathsAgent, literatureAgent]).AddAsAIAgent();
+
 var app = builder.Build();
 
 app.MapOpenApi();
@@ -83,6 +104,16 @@ app.MapA2A(agentName: "knights-and-knaves", path: "/a2a/knights-and-knaves", age
     // Url can be not set, and SDK will help assign it.
     // Url = "http://localhost:5390/a2a/knights-and-knaves"
 });
+
+app.MapOpenAIResponses("pirate");
+app.MapOpenAIResponses("knights-and-knaves");
+
+app.MapOpenAIChatCompletions("pirate");
+app.MapOpenAIChatCompletions("knights-and-knaves");
+
+// workflow-agents
+app.MapOpenAIResponses("science-sequential-workflow");
+app.MapOpenAIResponses("science-concurrent-workflow");
 
 // Map the agents HTTP endpoints
 app.MapAgentDiscovery("/agents");

@@ -33,7 +33,7 @@ public class JsonSerializationTests
 
     private static EdgeId TakeEdgeId() => new(Interlocked.Increment(ref s_nextEdgeId));
 
-    private static T RunJsonRoundtrip<T>(T value, JsonSerializerOptions? externalOptions = null, Expression<Func<T, bool>>? predicate = null)
+    internal static T RunJsonRoundtrip<T>(T value, JsonSerializerOptions? externalOptions = null, Expression<Func<T, bool>>? predicate = null)
     {
         JsonMarshaller marshaller = new(externalOptions);
 
@@ -172,7 +172,7 @@ public class JsonSerializationTests
         return builder.BuildAsync<string>();
     }
 
-    private static async ValueTask<WorkflowInfo> CreateTestWorkflowInfoAsync()
+    internal static async ValueTask<WorkflowInfo> CreateTestWorkflowInfoAsync()
     {
         Workflow<string> testWorkflow = await CreateTestWorkflowAsync().ConfigureAwait(false);
         return testWorkflow.ToWorkflowInfo();
