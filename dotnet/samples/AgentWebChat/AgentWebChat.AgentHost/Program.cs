@@ -22,13 +22,13 @@ builder.Services.AddProblemDetails();
 // Configure the chat model and our agent.
 builder.AddKeyedChatClient("chat-model");
 
-builder.AddAIAgent(
+builder.Services.AddAIAgent(
     "pirate",
     instructions: "You are a pirate. Speak like a pirate",
     description: "An agent that speaks like a pirate.",
     chatClientServiceKey: "chat-model");
 
-builder.AddAIAgent("knights-and-knaves", (sp, key) =>
+builder.Services.AddAIAgent("knights-and-knaves", (sp, key) =>
 {
     var chatClient = sp.GetRequiredKeyedService<IChatClient>("chat-model");
 
