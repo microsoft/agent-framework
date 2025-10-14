@@ -7,7 +7,7 @@ namespace Microsoft.Agents.AI.Hosting;
 /// <summary>
 /// Represents a builder for configuring workflows within a hosting environment.
 /// </summary>
-public interface IHostWorkflowBuilder
+public interface IHostedWorkflowBuilder
 {
     /// <summary>
     /// Gets the name of the workflow being configured.

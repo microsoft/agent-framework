@@ -85,15 +85,6 @@ var literatureAgent = builder.AddAIAgent("literator",
 
 builder.AddSequentialWorkflow("science-sequential-workflow", [chemistryAgent, mathsAgent, literatureAgent]).AddAsAIAgent();
 builder.AddConcurrentWorkflow("science-concurrent-workflow", [chemistryAgent, mathsAgent, literatureAgent]).AddAsAIAgent();
-builder.AddWorkflow("science-custom-workflow", (sp, key) =>
-{
-    var chemistAgent = sp.GetRequiredKeyedService<AIAgent>("chemist");
-    var mathsAgent = sp.GetRequiredKeyedService<AIAgent>("mathematician");
-    var literatureAgent = sp.GetRequiredKeyedService<AIAgent>("literator");
-
-    var chemistryMathWorkflowBuilder = AgentWorkflowBuilder.PrepareConcurrent([chemistAgent, mathsAgent]);
-    return AgentWorkflowBuilder.PrepareConcurrent([literatureAgent], chemistryMathWorkflowBuilder).WithName("science-custom-workflow").Build();
-}).AddAsAIAgent();
 
 var app = builder.Build();
 
