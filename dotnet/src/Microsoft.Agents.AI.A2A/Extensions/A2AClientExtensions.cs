@@ -25,7 +25,7 @@ public static class A2AClientExtensions
     /// Retrieves an instance of <see cref="AIAgent"/> for an existing A2A agent.
     /// </summary>
     /// <remarks>
-    /// This method can be used to create AI agents for A2A agents whose hosts support the
+    /// This method can be used to access A2A agents that support the
     /// <see href="https://github.com/a2aproject/A2A/blob/main/docs/topics/agent-discovery.md#3-direct-configuration--private-discovery">Direct Configuration / Private Discovery</see>
     /// discovery mechanism.
     /// </remarks>
