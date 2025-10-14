@@ -54,7 +54,7 @@ internal sealed class UppercaseExecutor() : Executor<string, string>("UppercaseE
     /// The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>The input text converted to uppercase</returns>
     public override ValueTask<string> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default) =>
-        new(message.ToUpperInvariant()); // The return value will be sent as a message along an edge to subsequent executors
+        ValueTask.FromResult(message.ToUpperInvariant()); // The return value will be sent as a message along an edge to subsequent executors
 }
 
 /// <summary>

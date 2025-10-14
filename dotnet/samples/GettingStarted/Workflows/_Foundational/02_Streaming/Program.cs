@@ -53,7 +53,7 @@ internal sealed class UppercaseExecutor() : Executor<string, string>("UppercaseE
     /// The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>The input text converted to uppercase</returns>
     public override ValueTask<string> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default) =>
-        new(message.ToUpperInvariant()); // The return value will be sent as a message along an edge to subsequent executors
+        ValueTask.FromResult(message.ToUpperInvariant()); // The return value will be sent as a message along an edge to subsequent executors
 }
 
 /// <summary>
@@ -72,6 +72,6 @@ internal sealed class ReverseTextExecutor() : Executor<string, string>("ReverseT
     public override ValueTask<string> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         // Because we do not suppress it, the returned result will be yielded as an output from this executor.
-        return new(string.Concat(message.Reverse()));
+        return ValueTask.FromResult(string.Concat(message.Reverse()));
     }
 }
