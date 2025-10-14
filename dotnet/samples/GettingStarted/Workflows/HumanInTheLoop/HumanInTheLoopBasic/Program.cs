@@ -24,18 +24,18 @@ public static class Program
     private static async Task Main()
     {
         // Create the workflow
-        var workflow = await WorkflowHelper.GetWorkflowAsync().ConfigureAwait(false);
+        var workflow = await WorkflowHelper.GetWorkflowAsync();
 
         // Execute the workflow
-        await using StreamingRun handle = await InProcessExecution.StreamAsync(workflow, NumberSignal.Init).ConfigureAwait(false);
-        await foreach (WorkflowEvent evt in handle.WatchStreamAsync().ConfigureAwait(false))
+        await using StreamingRun handle = await InProcessExecution.StreamAsync(workflow, NumberSignal.Init);
+        await foreach (WorkflowEvent evt in handle.WatchStreamAsync())
         {
             switch (evt)
             {
                 case RequestInfoEvent requestInputEvt:
                     // Handle `RequestInfoEvent` from the workflow
                     ExternalResponse response = HandleExternalRequest(requestInputEvt.Request);
-                    await handle.SendResponseAsync(response).ConfigureAwait(false);
+                    await handle.SendResponseAsync(response);
                     break;
 
                 case WorkflowOutputEvent outputEvt:
