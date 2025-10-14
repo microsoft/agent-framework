@@ -58,6 +58,7 @@ class OllamaChatClient(BaseChatClient):
 
     def __init__(
         self,
+        *,
         host: str | None = None,
         client: AsyncClient | None = None,
         chat_model_id: str | None = None,
@@ -67,8 +68,9 @@ class OllamaChatClient(BaseChatClient):
     ) -> None:
         """Initialize an Ollama Chat client.
 
-        Args:
-            host: The Ollama server host URL. Can be set via the OLLAMA_HOST env variable.
+        Keyword Args:
+            host: Ollama server URL, if none `http://localhost:11434` is used.
+                Can be set via the OLLAMA_HOST env variable.
             client: An optional Ollama Client instance. If not provided, a new instance will be created.
             chat_model_id: The Ollama chat model ID to use. Can be set via the OLLAMA_CHAT_MODEL_ID env variable.
             env_file_path: An optional path to a dotenv (.env) file to load environment variables from.
@@ -125,7 +127,7 @@ class OllamaChatClient(BaseChatClient):
         except Exception as ex:
             raise ServiceResponseException(f"Ollama chat request failed : {ex}", ex) from ex
 
-        return self._ollama_response_to_agent_framework_message(response)
+        return self._ollama_response_to_agent_framework_response(response)
 
     async def _inner_get_streaming_response(
         self,
@@ -147,11 +149,11 @@ class OllamaChatClient(BaseChatClient):
             raise ServiceResponseException(f"Ollama streaming chat request failed : {ex}", ex) from ex
 
         async for part in response_object:
-            yield self._ollama_streaming_response_to_agent_framework_message(part)
+            yield self._ollama_streaming_response_to_agent_framework_response(part)
 
     def _prepare_options(self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions) -> dict[str, Any]:
         # Preprocess web search tool if it exists
-        options_dict = chat_options.to_provider_settings(exclude={"instructions"})
+        options_dict = chat_options.to_dict(exclude={"instructions"})
         # Prepare Messages from Agent Framework format to Ollama format
         if messages and "messages" not in options_dict:
             options_dict["messages"] = self._prepare_chat_history_for_request(messages)
@@ -172,11 +174,11 @@ class OllamaChatClient(BaseChatClient):
         return options_dict
 
     def _prepare_chat_history_for_request(self, messages: MutableSequence[ChatMessage]) -> list[OllamaMessage]:
-        ollama_messages = [self._agent_framework_to_ollama_message(msg) for msg in messages]
+        ollama_messages = [self._agent_framework_message_to_ollama_message(msg) for msg in messages]
         # Flatten the list of lists into a single list
         return list(chain.from_iterable(ollama_messages))
 
-    def _agent_framework_to_ollama_message(self, message: ChatMessage) -> list[OllamaMessage]:
+    def _agent_framework_message_to_ollama_message(self, message: ChatMessage) -> list[OllamaMessage]:
         MESSAGE_CONVERTERS: dict[str, Callable[[ChatMessage], list[OllamaMessage]]] = {
             Role.SYSTEM.value: self._format_system_message,
             Role.USER.value: self._format_user_message,
@@ -207,12 +209,6 @@ class OllamaChatClient(BaseChatClient):
         return [user_message]
 
     def _format_assistant_message(self, message: ChatMessage) -> list[OllamaMessage]:
-        if not any(isinstance(c, (FunctionCallContent, TextContent, TextReasoningContent)) for c in message.contents):
-            raise ServiceInvalidRequestError(
-                "Ollama connector currently only supports user messages with TextContent,"
-                " TextReasoningContent, or FunctionCallContent."
-            )
-
         assistant_message = OllamaMessage(role="assistant", content=message.text, thinking=message.reasoning)
 
         tool_calls = [item for item in message.contents if isinstance(item, FunctionCallContent)]
@@ -233,18 +229,13 @@ class OllamaChatClient(BaseChatClient):
 
     def _format_tool_message(self, message: ChatMessage) -> list[OllamaMessage]:
         # Ollama does not support multiple tool results in a single message, so we create a separate
-        function_result_items = [
+        return [
             OllamaMessage(role="tool", content=str(item.result), tool_name=item.call_id)
             for item in message.contents
             if isinstance(item, FunctionResultContent)
         ]
 
-        if not function_result_items:
-            raise ValueError("Tool message must have a function result content item.")
-
-        return function_result_items
-
-    def _ollama_to_agent_framework_content(self, response: OllamaChatResponse) -> list[Contents]:
+    def _ollama_response_to_agent_framework_content(self, response: OllamaChatResponse) -> list[Contents]:
         contents: list[Contents] = []
         if response.message.thinking:
             contents.append(TextReasoningContent(text=response.message.thinking))
@@ -255,8 +246,10 @@ class OllamaChatClient(BaseChatClient):
             contents.extend(tool_calls)
         return contents
 
-    def _ollama_streaming_response_to_agent_framework_message(self, response: OllamaChatResponse) -> ChatResponseUpdate:
-        contents = self._ollama_to_agent_framework_content(response)
+    def _ollama_streaming_response_to_agent_framework_response(
+        self, response: OllamaChatResponse
+    ) -> ChatResponseUpdate:
+        contents = self._ollama_response_to_agent_framework_content(response)
         return ChatResponseUpdate(
             contents=contents,
             role=Role.ASSISTANT,
@@ -264,8 +257,8 @@ class OllamaChatClient(BaseChatClient):
             created_at=response.created_at,
         )
 
-    def _ollama_response_to_agent_framework_message(self, response: OllamaChatResponse) -> ChatResponse:
-        contents = self._ollama_to_agent_framework_content(response)
+    def _ollama_response_to_agent_framework_response(self, response: OllamaChatResponse) -> ChatResponse:
+        contents = self._ollama_response_to_agent_framework_content(response)
 
         return ChatResponse(
             messages=[ChatMessage(role=Role.ASSISTANT, contents=contents)],
@@ -274,11 +267,6 @@ class OllamaChatClient(BaseChatClient):
             usage_details=UsageDetails(
                 input_token_count=response.prompt_eval_count,
                 output_token_count=response.eval_count,
-                total_token_count=(
-                    response.prompt_eval_count + response.eval_count
-                    if response.prompt_eval_count is not None and response.eval_count is not None
-                    else None
-                ),
             ),
         )
 

@@ -15,6 +15,7 @@ from agent_framework import (
     HostedWebSearchTool,
     TextContent,
     UriContent,
+    chat_middleware,
 )
 from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError, ServiceResponseException
 from ollama import AsyncClient
@@ -158,6 +159,29 @@ def test_serialize(ollama_unit_test_env: dict[str, str]) -> None:
     assert serialized["chat_model_id"] == ollama_unit_test_env["OLLAMA_CHAT_MODEL_ID"]
 
 
+def test_chat_middleware(ollama_unit_test_env: dict[str, str]) -> None:
+    @chat_middleware
+    async def sample_middleware(context, next):
+        await next(context)
+
+    ollama_chat_client = OllamaChatClient(middleware=[sample_middleware])
+    assert len(ollama_chat_client.middleware) == 1
+    assert ollama_chat_client.middleware[0] == sample_middleware
+
+
+def test_additional_properties(ollama_unit_test_env: dict[str, str]) -> None:
+    additional_properties = {
+        "user_location": {
+            "country": "US",
+            "city": "Seattle",
+        }
+    }
+    ollama_chat_client = OllamaChatClient(
+        additional_properties=additional_properties,
+    )
+    assert ollama_chat_client.additional_properties == additional_properties
+
+
 # region CMC
 
 
@@ -191,6 +215,7 @@ async def test_cmc(
     mock_chat_completion_response: AsyncStream[OllamaChatResponse],
 ) -> None:
     mock_chat.return_value = mock_chat_completion_response
+    chat_history.append(ChatMessage(text="hello world", role="system"))
     chat_history.append(ChatMessage(text="hello world", role="user"))
 
     ollama_client = OllamaChatClient()
@@ -242,6 +267,7 @@ async def test_cmc_streaming(
     mock_streaming_chat_completion_response: AsyncStream[OllamaChatResponse],
 ) -> None:
     mock_chat.return_value = mock_streaming_chat_completion_response
+    chat_history.append(ChatMessage(text="hello world", role="system"))
     chat_history.append(ChatMessage(text="hello world", role="user"))
 
     ollama_client = OllamaChatClient()
