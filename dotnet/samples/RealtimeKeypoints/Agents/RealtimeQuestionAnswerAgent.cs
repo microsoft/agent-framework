@@ -127,15 +127,15 @@ public sealed class RealtimeQuestionAnswerAgent
                 {
                     try
                     {
-                        await this.AnswerQuestionAsync(question, CancellationToken.None);
+                        await this.AnswerQuestionAsync(question, cancellationToken);
                     }
                     finally
                     {
                         // Remove from processed set after a delay to allow for deduplication window
-                        await Task.Delay(TimeSpan.FromSeconds(30), CancellationToken.None);
+                        await Task.Delay(TimeSpan.FromSeconds(30), cancellationToken);
                         this._processedQuestions.TryRemove(questionKey, out _);
                     }
-                }, CancellationToken.None);
+                }, cancellationToken);
             }
             catch (Exception)
             {
