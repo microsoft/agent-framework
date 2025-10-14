@@ -170,7 +170,11 @@ public sealed class AzureRealtimeClient : IAsyncDisposable
                 // Transcription failed
                 if (root.TryGetProperty("error", out var transcriptError))
                 {
-                    string? errorMsg = transcriptError.GetProperty("message").GetString();
+                    string? errorMsg = null;
+                    if (transcriptError.TryGetProperty("message", out var messageElement))
+                    {
+                        errorMsg = messageElement.GetString();
+                    }
                     Console.WriteLine($"[WARNING] Audio transcription failed: {errorMsg ?? "Unknown error"}");
                 }
                 break;
