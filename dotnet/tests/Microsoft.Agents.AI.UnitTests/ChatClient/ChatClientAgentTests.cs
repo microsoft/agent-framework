@@ -667,6 +667,44 @@ public partial class ChatClientAgentTests
         Assert.Equal(expectedSO.Species, agentRunResponse.Result.Species);
     }
 
+    /// <summary>
+    /// Verify that RunAsync with useJsonSchemaResponseFormat: false
+    /// works correctly for models that don't support JSON schema (e.g., Ollama models).
+    /// </summary>
+    [Fact]
+    public async Task RunAsyncWithTypeParameterAndJsonSchemaDisabledWorksForNonSchemaModelsAsync()
+    {
+        // Arrange
+        Animal expectedSO = new() { Id = 2, FullName = "Leo", Species = Species.Bear };
+
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(s => s
+            .GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant, JsonSerializer.Serialize(expectedSO, JsonContext2.Default.Animal)))
+            {
+                ResponseId = "test-no-schema",
+            });
+
+        ChatClientAgent agent = new(mockService.Object, options: new());
+
+        // Act - Call with useJsonSchemaResponseFormat: false for models like Ollama
+        AgentRunResponse<Animal> agentRunResponse = await agent.RunAsync<Animal>(
+            messages: [new(ChatRole.User, "Tell me about Leo the bear")],
+            serializerOptions: JsonContext2.Default.Options,
+            useJsonSchemaResponseFormat: false);
+
+        // Assert
+        Assert.Single(agentRunResponse.Messages);
+
+        Assert.NotNull(agentRunResponse.Result);
+        Assert.Equal(expectedSO.Id, agentRunResponse.Result.Id);
+        Assert.Equal(expectedSO.FullName, agentRunResponse.Result.FullName);
+        Assert.Equal(expectedSO.Species, agentRunResponse.Result.Species);
+    }
+
     #endregion
 
     #region Property Override Tests

@@ -32,3 +32,30 @@ Set the following environment variables:
 $env:OLLAMA_ENDPOINT="http://localhost:11434"
 $env:OLLAMA_MODEL_NAME="gpt-oss"
 ```
+
+## Known Limitations
+
+### Structured Output
+
+Ollama models (including gpt-oss, llama3, phi3, etc.) do not support native JSON schema-based structured output. If you try to use `RunAsync<T>()` for structured output with the default settings, you may receive empty responses.
+
+To use structured output with Ollama models, you must set `useJsonSchemaResponseFormat: false`:
+
+```csharp
+// This will NOT work with Ollama (may return empty responses)
+var response = await agent.RunAsync<MyType>("prompt");
+
+// This WILL work with Ollama
+var response = await agent.RunAsync<MyType>("prompt", useJsonSchemaResponseFormat: false);
+```
+
+Additionally, you should include instructions in your agent prompt to guide the output format:
+
+```csharp
+AIAgent agent = new OllamaApiClient(new Uri(endpoint), modelName)
+    .CreateAIAgent(
+        instructions: "You are a helpful assistant. Always respond with valid JSON matching the requested format.",
+        name: "Assistant");
+```
+
+For more details on structured output and model compatibility, see the [Structured Output sample](../../Agents/Agent_Step05_StructuredOutput/README.md).

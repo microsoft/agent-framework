@@ -1,5 +1,21 @@
 # Frequently Asked Questions
 
+### Why am I getting empty responses with structured output?
+
+If you're getting empty responses when using `RunAsync<T>()` for structured output, your model likely doesn't support JSON schema. This is a common issue with Ollama models (gpt-oss, llama3, phi3, etc.) and some other providers.
+
+**Solution**: Set `useJsonSchemaResponseFormat: false` when calling `RunAsync<T>()`:
+
+```csharp
+var response = await agent.RunAsync<MyType>(
+    "prompt", 
+    useJsonSchemaResponseFormat: false);
+```
+
+Also add clear JSON formatting instructions to your agent's prompt.
+
+For detailed troubleshooting, see the [Structured Output Troubleshooting Guide](./TROUBLESHOOTING_STRUCTURED_OUTPUT.md).
+
 ### How do I get access to nightly builds?
 
 Nightly builds of the Agent Framework are available [here](https://github.com/orgs/microsoft/packages?repo_name=agent-framework).
