@@ -12,7 +12,7 @@ namespace A2A;
 /// Provides extension methods for <see cref="AgentCard"/> to simplify the creation of A2A agents.
 /// </summary>
 /// <remarks>
-/// These extensions bridge the gap between A2A SDK client <see cref="AgentCard"/> and <see cref="AIAgent"/>."/>
+/// These extensions bridge the gap between A2A SDK client <see cref="AgentCard"/> and <see cref="AIAgent"/>.
 /// </remarks>
 public static class A2AAgentCardExtensions
 {

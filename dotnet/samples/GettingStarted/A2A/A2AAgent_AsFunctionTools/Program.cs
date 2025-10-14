@@ -56,7 +56,7 @@ static IEnumerable<AIFunction> CreateFunctionTools(AIAgent a2aAgent, AgentCard a
             {
                 "description": "{{skill.Description}}",
                 "tags": "[{{string.Join(", ", skill.Tags ?? [])}}]",
-                "examples": "[{{string.Join(", ", skill.Examples ?? [])}}]"
+                "examples": "[{{string.Join(", ", skill.Examples ?? [])}}]",
                 "inputModes": "[{{string.Join(", ", skill.InputModes ?? [])}}]",
                 "outputModes": "[{{string.Join(", ", skill.OutputModes ?? [])}}]"
             }
