@@ -17,7 +17,7 @@
     <PackageVersion Include="Aspire.Microsoft.Azure.Cosmos" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="9.8.0" />
     <!-- Azure.* -->
-    <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.5" />
+    <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.6" />
     <PackageVersion Include="Azure.AI.OpenAI" Version="2.5.0-beta.1" />
     <PackageVersion Include="Azure.Identity" Version="1.17.0" />
     <PackageVersion Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.4.0" />
@@ -78,8 +78,8 @@
     <PackageVersion Include="ModelContextProtocol" Version="0.4.0-preview.2" />
     <!-- Inference SDKs -->
     <PackageVersion Include="Anthropic.SDK" Version="5.6.0" />
-    <PackageVersion Include="AWSSDK.Extensions.Bedrock.MEAI" Version="4.0.3.6" />
-    <PackageVersion Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.9.2" />
+    <PackageVersion Include="AWSSDK.Extensions.Bedrock.MEAI" Version="4.0.3.8" />
+    <PackageVersion Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.10.0" />
     <PackageVersion Include="OllamaSharp" Version="5.4.7" />
     <PackageVersion Include="OpenAI" Version="2.5.0" />
     <!-- Identity -->
