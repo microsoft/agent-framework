@@ -45,7 +45,7 @@ class TestSerializationMixin:
         with caplog.at_level(logging.DEBUG):
             obj = TestClass.from_dict(
                 {"type": "test_class", "value": "test"},
-                dependencies={"test_class.client": mock_client},
+                dependencies={"test_class": {"client": mock_client}},
             )
 
         assert obj.value == "test"
@@ -68,7 +68,7 @@ class TestSerializationMixin:
         with caplog.at_level(logging.DEBUG):
             obj = TestClass.from_dict(
                 {"type": "test_class", "value": "test"},
-                dependencies={"test_class.other": mock_other},
+                dependencies={"test_class": {"other": mock_other}},
             )
 
         assert obj.value == "test"
@@ -105,9 +105,11 @@ class TestSerializationMixin:
             obj = TestClass.from_dict(
                 {"type": "test_class", "value": "test"},
                 dependencies={
-                    "test_class.client": mock_client,
-                    "test_class.logger": mock_logger,
-                    "test_class.other": mock_other,
+                    "test_class": {
+                        "client": mock_client,
+                        "logger": mock_logger,
+                        "other": mock_other,
+                    }
                 },
             )
 
@@ -136,7 +138,7 @@ class TestSerializationMixin:
         with caplog.at_level(logging.DEBUG):
             obj = TestClass.from_dict(
                 {"type": "test_class", "value": "test"},
-                dependencies={"test_class.client": mock_client},
+                dependencies={"test_class": {"client": mock_client}},
             )
 
         assert obj.value == "test"
@@ -184,7 +186,7 @@ class TestSerializationMixin:
         assert "client" not in data  # Excluded from serialization
 
         # Deserialize with dependency injection
-        restored = TestClass.from_dict(data, dependencies={"test_class.client": mock_client})
+        restored = TestClass.from_dict(data, dependencies={"test_class": {"client": mock_client}})
         assert restored.value == "test"
         assert restored.number == 42
         assert restored.client == mock_client

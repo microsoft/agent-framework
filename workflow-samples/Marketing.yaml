@@ -14,13 +14,6 @@ trigger:
   id: workflow_demo
   actions:
 
-    - kind: AddConversationMessage
-      id: add_input_message
-      conversationId: =System.ConversationId
-      content:
-        - type: Text
-          value: {System.LastMessage.Text}
-
     - kind: InvokeAzureAgent
       id: invoke_analyst
       conversationId: =System.ConversationId

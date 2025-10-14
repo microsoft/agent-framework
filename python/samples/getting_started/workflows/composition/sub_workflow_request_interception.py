@@ -182,7 +182,7 @@ class SmartEmailOrchestrator(Executor):
     async def handle_domain_request(
         self,
         request: DomainCheckRequest,
-        ctx: WorkflowContext[RequestResponse[DomainCheckRequest, bool] | DomainCheckRequest]
+        ctx: WorkflowContext[RequestResponse[DomainCheckRequest, bool] | DomainCheckRequest],
     ) -> None:
         """Handle requests from sub-workflows."""
         print(f"🔍 Parent intercepting domain check for: {request.domain}")
@@ -190,11 +190,7 @@ class SmartEmailOrchestrator(Executor):
         if request.domain in self.approved_domains:
             print(f"✅ Domain '{request.domain}' is pre-approved locally!")
             # Send response back to sub-workflow
-            response = RequestResponse(
-                data=True,
-                original_request=request,
-                request_id=request.request_id
-            )
+            response = RequestResponse(data=True, original_request=request, request_id=request.request_id)
             await ctx.send_message(response, target_id=request.source_executor_id)
         else:
             print(f"❓ Domain '{request.domain}' unknown, forwarding to external service...")

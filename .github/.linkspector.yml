@@ -1,5 +1,7 @@
-dirs: 
+dirs:
   - .
+excludedFiles:
+  - ./python/CHANGELOG.md
 ignorePatterns:
   - pattern: "/github/"
   - pattern: "./actions"
@@ -18,7 +20,7 @@ ignorePatterns:
 # excludedDirs:
   # Folders which include links to localhost, since it's not ignored with regular expressions
 baseUrl: https://github.com/microsoft/agent-framework/
-aliveStatusCodes: 
+aliveStatusCodes:
   - 200
   - 206
   - 429

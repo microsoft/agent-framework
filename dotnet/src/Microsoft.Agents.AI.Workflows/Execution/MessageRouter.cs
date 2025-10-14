@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Shared.Diagnostics;
@@ -11,12 +12,14 @@ using CatchAllF =
     System.Func<
         Microsoft.Agents.AI.Workflows.PortableValue, // message
         Microsoft.Agents.AI.Workflows.IWorkflowContext, // context
+        System.Threading.CancellationToken, // cancellation
         System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.Workflows.Execution.CallResult>
     >;
 using MessageHandlerF =
     System.Func<
         object, // message
         Microsoft.Agents.AI.Workflows.IWorkflowContext, // context
+        System.Threading.CancellationToken, // cancellation
         System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.Workflows.Execution.CallResult>
     >;
 
@@ -56,7 +59,7 @@ internal sealed class MessageRouter
 
     public HashSet<Type> DefaultOutputTypes { get; }
 
-    public async ValueTask<CallResult?> RouteMessageAsync(object message, IWorkflowContext context, bool requireRoute = false)
+    public async ValueTask<CallResult?> RouteMessageAsync(object message, IWorkflowContext context, bool requireRoute = false, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(message);
 
@@ -74,13 +77,13 @@ internal sealed class MessageRouter
         {
             if (this._typedHandlers.TryGetValue(message.GetType(), out MessageHandlerF? handler))
             {
-                result = await handler(message, context).ConfigureAwait(false);
+                result = await handler(message, context, cancellationToken).ConfigureAwait(false);
             }
             else if (this.HasCatchAll)
             {
                 portableValue ??= new PortableValue(message);
 
-                result = await this._catchAllFunc(portableValue, context).ConfigureAwait(false);
+                result = await this._catchAllFunc(portableValue, context, cancellationToken).ConfigureAwait(false);
             }
         }
         catch (Exception e)

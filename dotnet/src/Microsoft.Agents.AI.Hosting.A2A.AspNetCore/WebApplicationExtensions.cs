@@ -9,12 +9,12 @@ using Microsoft.Extensions.Logging;
 namespace Microsoft.Agents.AI.Hosting.A2A.AspNetCore;
 
 /// <summary>
-/// Provides extension methods for configuring A2A (Agent-to-Agent) communication in a host application builder.
+/// Provides extension methods for configuring A2A (Agent2Agent) communication in a host application builder.
 /// </summary>
 public static class WebApplicationExtensions
 {
     /// <summary>
-    /// Attaches A2A (Agent-to-Agent) communication capabilities via Message processing to the specified web application.
+    /// Attaches A2A (Agent2Agent) communication capabilities via Message processing to the specified web application.
     /// </summary>
     /// <param name="app">The web application used to configure the pipeline and routes.</param>
     /// <param name="agentName">The name of the agent to use for A2A protocol integration.</param>
@@ -29,7 +29,7 @@ public static class WebApplicationExtensions
     }
 
     /// <summary>
-    /// Attaches A2A (Agent-to-Agent) communication capabilities via Message processing to the specified web application.
+    /// Attaches A2A (Agent2Agent) communication capabilities via Message processing to the specified web application.
     /// </summary>
     /// <param name="app">The web application used to configure the pipeline and routes.</param>
     /// <param name="agentName">The name of the agent to use for A2A protocol integration.</param>

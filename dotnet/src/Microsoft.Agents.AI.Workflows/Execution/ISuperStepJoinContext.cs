@@ -10,8 +10,8 @@ internal interface ISuperStepJoinContext
 {
     bool WithCheckpointing { get; }
 
-    ValueTask ForwardWorkflowEventAsync(WorkflowEvent workflowEvent, CancellationToken cancellation = default);
-    ValueTask SendMessageAsync<TMessage>(string senderId, [DisallowNull] TMessage message, CancellationToken cancellation = default);
+    ValueTask ForwardWorkflowEventAsync(WorkflowEvent workflowEvent, CancellationToken cancellationToken = default);
+    ValueTask SendMessageAsync<TMessage>(string senderId, [DisallowNull] TMessage message, CancellationToken cancellationToken = default);
 
-    ValueTask AttachSuperstepAsync(ISuperStepRunner superStepRunner, CancellationToken cancellation = default);
+    ValueTask AttachSuperstepAsync(ISuperStepRunner superStepRunner, CancellationToken cancellationToken = default);
 }

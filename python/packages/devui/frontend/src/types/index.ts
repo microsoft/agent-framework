@@ -31,6 +31,12 @@ export interface AgentInfo {
   has_env: boolean;
   module_path?: string;
   required_env_vars?: EnvVarRequirement[];
+  // Agent-specific fields
+  instructions?: string;
+  model?: string;
+  chat_client_type?: string;
+  context_providers?: string[];
+  middleware?: string[];
 }
 
 // JSON Schema types for workflow input
@@ -66,28 +72,22 @@ export interface WorkflowInfo extends Omit<AgentInfo, "tools"> {
   start_executor_id: string; // Entry point executor ID
 }
 
-export interface ThreadInfo {
+// OpenAI Conversations API (standard)
+export interface Conversation {
   id: string;
-  agent_id: string;
-  created_at: string;
-  message_count: number;
-}
-
-export interface SessionInfo {
-  thread_id: string;
-  agent_id: string;
-  created_at: string;
-  messages: Array<Record<string, unknown>>;
-  metadata: Record<string, unknown>;
+  object: "conversation";
+  created_at: number;
+  metadata?: Record<string, string>;
 }
 
 export interface RunAgentRequest {
   input: import("./agent-framework").ResponseInputParam;
-  thread_id?: string;
+  conversation_id?: string; // OpenAI standard conversation parameter
 }
 
 export interface RunWorkflowRequest {
   input_data: Record<string, unknown>;
+  conversation_id?: string;
 }
 
 // Legacy types - DEPRECATED - use new structured events from openai.ts instead
@@ -101,9 +101,10 @@ export type {
   // New structured event types
   ExtendedResponseStreamEvent,
   ResponseWorkflowEventComplete,
-  ResponseFunctionResultComplete,
   ResponseTraceEventComplete,
-  ResponseUsageEventComplete,
+  ResponseOutputItemAddedEvent,
+  ResponseFunctionResultComplete,
+  ResponseCompletedEvent,
   StructuredEvent,
 } from "./openai";
 
@@ -133,12 +134,17 @@ export interface ChatMessage {
   author_name?: string;
   message_id?: string;
   error?: boolean; // Flag to indicate this is an error message
+  usage?: {
+    total_tokens: number;
+    prompt_tokens: number;
+    completion_tokens: number;
+  };
 }
 
 // UI State types
 export interface AppState {
   selectedAgent?: AgentInfo | WorkflowInfo;
-  currentThread?: ThreadInfo;
+  currentConversation?: Conversation;
   agents: AgentInfo[];
   workflows: WorkflowInfo[];
   isLoading: boolean;
@@ -149,4 +155,14 @@ export interface ChatState {
   messages: ChatMessage[];
   isStreaming: boolean;
   // streamEvents removed - use OpenAI events directly instead
+}
+
+// DevUI-specific: Pending approval state
+export interface PendingApproval {
+  request_id: string;
+  function_call: {
+    id: string;
+    name: string;
+    arguments: Record<string, unknown>;
+  };
 }

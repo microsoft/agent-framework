@@ -7,6 +7,8 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
+using Microsoft.Agents.AI.Workflows.InProc;
+using Microsoft.Agents.AI.Workflows.UnitTests;
 
 namespace Microsoft.Agents.AI.Workflows.Sample;
 
@@ -26,7 +28,7 @@ internal static class Step8EntryPoint
             "   Spaces   around   text   ",
         ];
 
-    public static async ValueTask<List<TextProcessingResult>> RunAsync(TextWriter writer, List<string> textsToProcess)
+    public static async ValueTask<List<TextProcessingResult>> RunAsync(TextWriter writer, ExecutionMode executionMode, List<string> textsToProcess)
     {
         Func<TextProcessingRequest, IWorkflowContext, CancellationToken, ValueTask> processTextAsyncFunc = ProcessTextAsync;
         ExecutorIsh processText = processTextAsyncFunc.AsExecutor("TextProcessor");
@@ -41,7 +43,8 @@ internal static class Step8EntryPoint
             .AddEdge(textProcessor, orchestrator)
             .Build();
 
-        Run workflowRun = await InProcessExecution.RunAsync(workflow, textsToProcess);
+        InProcessExecutionEnvironment env = executionMode.GetEnvironment();
+        Run workflowRun = await env.RunAsync(workflow, textsToProcess);
 
         RunStatus status = await workflowRun.GetStatusAsync();
         status.Should().Be(RunStatus.Idle);
@@ -53,7 +56,7 @@ internal static class Step8EntryPoint
         return results;
     }
 
-    private static ValueTask ProcessTextAsync(TextProcessingRequest request, IWorkflowContext context, CancellationToken cancellation = default)
+    private static ValueTask ProcessTextAsync(TextProcessingRequest request, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         int wordCount = 0;
         int charCount = 0;
@@ -64,7 +67,7 @@ internal static class Step8EntryPoint
             charCount = request.Text.Length;
         }
 
-        return context.YieldOutputAsync(new TextProcessingResult(request.TaskId, request.Text, wordCount, charCount));
+        return context.YieldOutputAsync(new TextProcessingResult(request.TaskId, request.Text, wordCount, charCount), cancellationToken);
     }
 
     private sealed class TextProcessingOrchestrator() : Executor("TextOrchestrator")
