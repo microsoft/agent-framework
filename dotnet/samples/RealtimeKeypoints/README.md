@@ -22,7 +22,6 @@ This architecture ensures zero interruption to audio capture while providing int
 - An Azure OpenAI resource with:
   - A **realtime** deployment that supports `gpt-4o-realtime-preview` (or later) for audio transcription.
   - A **chat** deployment (for example `gpt-4o-mini`) that will be used to extract key points.
-- An API key with access to both deployments.
 - A working microphone on the machine running the sample.
 
 > [!TIP]
@@ -35,7 +34,6 @@ Configure these environment variables before running the sample:
 | Variable | Description |
 | --- | --- |
 | `AZURE_OPENAI_ENDPOINT` | Base endpoint for the Azure OpenAI resource (e.g. `https://contoso.openai.azure.com/`). |
-| `AZURE_OPENAI_API_KEY` | API key authorised for both deployments. |
 | `AZURE_OPENAI_REALTIME_DEPLOYMENT` | Deployment name for the GPT-Realtime audio model. |
 | `AZURE_OPENAI_CHAT_DEPLOYMENT` | Deployment name used for key point extraction. Optional – defaults to the realtime deployment. |
 
@@ -43,7 +41,6 @@ Configure these environment variables before running the sample:
 
 ```powershell
 $env:AZURE_OPENAI_ENDPOINT = "https://your-endpoint.openai.azure.com/"
-$env:AZURE_OPENAI_API_KEY = "<your-api-key>"
 $env:AZURE_OPENAI_REALTIME_DEPLOYMENT = "gpt-realtime"
 $env:AZURE_OPENAI_CHAT_DEPLOYMENT = "gpt-4o-mini"
 ```
@@ -52,7 +49,6 @@ $env:AZURE_OPENAI_CHAT_DEPLOYMENT = "gpt-4o-mini"
 
 ```bash
 export AZURE_OPENAI_ENDPOINT="https://your-endpoint.openai.azure.com/"
-export AZURE_OPENAI_API_KEY="<your-api-key>"
 export AZURE_OPENAI_REALTIME_DEPLOYMENT="gpt-realtime"
 export AZURE_OPENAI_CHAT_DEPLOYMENT="gpt-4o-mini"
 ```
