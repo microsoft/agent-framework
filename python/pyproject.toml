@@ -29,6 +29,7 @@ dependencies = [
     "agent-framework-mem0",
     "agent-framework-redis",
     "agent-framework-devui",
+    "agent-framework-cua",
 ]
 
 [dependency-groups]
@@ -81,6 +82,7 @@ agent-framework-lab = { workspace = true }
 agent-framework-mem0 = { workspace = true }
 agent-framework-redis = { workspace = true }
 agent-framework-devui = { workspace = true }
+agent-framework-cua = { workspace = true }
 
 [tool.ruff]
 line-length = 120
