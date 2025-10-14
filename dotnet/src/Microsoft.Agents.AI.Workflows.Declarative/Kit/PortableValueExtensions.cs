@@ -3,6 +3,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.PowerFx.Types;
 using Microsoft.Shared.Diagnostics;
@@ -46,6 +47,7 @@ public static class PortableValueExtensions
         Throw.IfNull(value, nameof(value)) switch
         {
             null => null,
+            JsonElement jsonValue => jsonValue.GetValue(),
             PortableValue portableValue => portableValue.Normalize(),
             _ => value,
         };
@@ -87,4 +89,17 @@ public static class PortableValueExtensions
 
     private static object?[] NormalizePortableValues(this IEnumerable source) =>
         source.Cast<object?>().Select(NormalizePortableValue).ToArray();
+
+    private static object? GetValue(this JsonElement element) =>
+        element.ValueKind switch
+        {
+            JsonValueKind.String => element.GetString(),
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.Null => null,
+            JsonValueKind.Number => element.TryGetInt64(out long longValue) ? longValue : element.GetDouble(),
+            JsonValueKind.Object => element.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetValue()),
+            JsonValueKind.Array => element.EnumerateArray().Select(e => e.GetValue()).ToArray(),
+            _ => throw new DeclarativeActionException($"Unsupported JSON value kind: {element.ValueKind}"),
+        };
 }
