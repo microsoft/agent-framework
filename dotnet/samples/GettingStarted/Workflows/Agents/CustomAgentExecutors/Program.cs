@@ -6,7 +6,6 @@ using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
-using Microsoft.Agents.AI.Workflows.Reflection;
 using Microsoft.Extensions.AI;
 
 namespace WorkflowCustomAgentExecutorsSample;
@@ -107,10 +106,7 @@ internal sealed class SloganGeneratedEvent(SloganResult sloganResult) : Workflow
 /// 1. HandleAsync(string message): Handles the initial task to create a slogan.
 /// 2. HandleAsync(Feedback message): Handles feedback to improve the slogan.
 /// </summary>
-internal sealed class SloganWriterExecutor
-    : ReflectingExecutor<SloganWriterExecutor>,
-      IMessageHandler<string, SloganResult>,
-      IMessageHandler<FeedbackResult, SloganResult>
+internal sealed class SloganWriterExecutor : Executor
 {
     private readonly AIAgent _agent;
     private readonly AgentThread _thread;
@@ -134,13 +130,20 @@ internal sealed class SloganWriterExecutor
         this._thread = this._agent.GetNewThread();
     }
 
+    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
+    {
+        routeBuilder.AddHandler<string, SloganResult>(this.HandleAsync);
+        routeBuilder.AddHandler<FeedbackResult, SloganResult>(this.HandleAsync);
+        return routeBuilder;
+    }
+
     public async ValueTask<SloganResult> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        var result = await this._agent.RunAsync(message, this._thread, cancellationToken: cancellationToken);
+        var result = await this._agent.RunAsync(message, this._thread, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         var sloganResult = JsonSerializer.Deserialize<SloganResult>(result.Text) ?? throw new InvalidOperationException("Failed to deserialize slogan result.");
 
-        await context.AddEventAsync(new SloganGeneratedEvent(sloganResult), cancellationToken);
+        await context.AddEventAsync(new SloganGeneratedEvent(sloganResult), cancellationToken).ConfigureAwait(false);
         return sloganResult;
     }
 
@@ -155,10 +158,10 @@ internal sealed class SloganWriterExecutor
             Please use this feedback to improve your slogan.
             """;
 
-        var result = await this._agent.RunAsync(feedbackMessage, this._thread, cancellationToken: cancellationToken);
+        var result = await this._agent.RunAsync(feedbackMessage, this._thread, cancellationToken: cancellationToken).ConfigureAwait(false);
         var sloganResult = JsonSerializer.Deserialize<SloganResult>(result.Text) ?? throw new InvalidOperationException("Failed to deserialize slogan result.");
 
-        await context.AddEventAsync(new SloganGeneratedEvent(sloganResult), cancellationToken);
+        await context.AddEventAsync(new SloganGeneratedEvent(sloganResult), cancellationToken).ConfigureAwait(false);
         return sloganResult;
     }
 }
@@ -175,7 +178,7 @@ internal sealed class FeedbackEvent(FeedbackResult feedbackResult) : WorkflowEve
 /// <summary>
 /// A custom executor that uses an AI agent to provide feedback on a slogan.
 /// </summary>
-internal sealed class FeedbackExecutor : ReflectingExecutor<FeedbackExecutor>, IMessageHandler<SloganResult>
+internal sealed class FeedbackExecutor : Executor<SloganResult>
 {
     private readonly AIAgent _agent;
     private readonly AgentThread _thread;
@@ -205,7 +208,7 @@ internal sealed class FeedbackExecutor : ReflectingExecutor<FeedbackExecutor>, I
         this._thread = this._agent.GetNewThread();
     }
 
-    public async ValueTask HandleAsync(SloganResult message, IWorkflowContext context, CancellationToken cancellationToken = default)
+    public override async ValueTask HandleAsync(SloganResult message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         var sloganMessage = $"""
             Here is a slogan for the task '{message.Task}':
@@ -213,24 +216,24 @@ internal sealed class FeedbackExecutor : ReflectingExecutor<FeedbackExecutor>, I
             Please provide feedback on this slogan, including comments, a rating from 1 to 10, and suggested actions for improvement.
             """;
 
-        var response = await this._agent.RunAsync(sloganMessage, this._thread, cancellationToken: cancellationToken);
+        var response = await this._agent.RunAsync(sloganMessage, this._thread, cancellationToken: cancellationToken).ConfigureAwait(false);
         var feedback = JsonSerializer.Deserialize<FeedbackResult>(response.Text) ?? throw new InvalidOperationException("Failed to deserialize feedback.");
 
-        await context.AddEventAsync(new FeedbackEvent(feedback), cancellationToken);
+        await context.AddEventAsync(new FeedbackEvent(feedback), cancellationToken).ConfigureAwait(false);
 
         if (feedback.Rating >= this.MinimumRating)
         {
-            await context.YieldOutputAsync($"The following slogan was accepted:\n\n{message.Slogan}", cancellationToken);
+            await context.YieldOutputAsync($"The following slogan was accepted:\n\n{message.Slogan}", cancellationToken).ConfigureAwait(false);
             return;
         }
 
         if (this._attempts >= this.MaxAttempts)
         {
-            await context.YieldOutputAsync($"The slogan was rejected after {this.MaxAttempts} attempts. Final slogan:\n\n{message.Slogan}", cancellationToken);
+            await context.YieldOutputAsync($"The slogan was rejected after {this.MaxAttempts} attempts. Final slogan:\n\n{message.Slogan}", cancellationToken).ConfigureAwait(false);
             return;
         }
 
-        await context.SendMessageAsync(feedback, cancellationToken: cancellationToken);
+        await context.SendMessageAsync(feedback, cancellationToken: cancellationToken).ConfigureAwait(false);
         this._attempts++;
     }
 }

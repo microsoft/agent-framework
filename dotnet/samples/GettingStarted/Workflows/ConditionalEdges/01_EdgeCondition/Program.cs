@@ -6,7 +6,6 @@ using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
-using Microsoft.Agents.AI.Workflows.Reflection;
 using Microsoft.Extensions.AI;
 
 namespace WorkflowEdgeConditionSample;
@@ -147,7 +146,7 @@ internal sealed class Email
 /// <summary>
 /// Executor that detects spam using an AI agent.
 /// </summary>
-internal sealed class SpamDetectionExecutor : ReflectingExecutor<SpamDetectionExecutor>, IMessageHandler<ChatMessage, DetectionResult>
+internal sealed class SpamDetectionExecutor : Executor<ChatMessage, DetectionResult>
 {
     private readonly AIAgent _spamDetectionAgent;
 
@@ -160,7 +159,7 @@ internal sealed class SpamDetectionExecutor : ReflectingExecutor<SpamDetectionEx
         this._spamDetectionAgent = spamDetectionAgent;
     }
 
-    public async ValueTask<DetectionResult> HandleAsync(ChatMessage message, IWorkflowContext context, CancellationToken cancellationToken = default)
+    public override async ValueTask<DetectionResult> HandleAsync(ChatMessage message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         // Generate a random email ID and store the email content to the shared state
         var newEmail = new Email
@@ -168,10 +167,10 @@ internal sealed class SpamDetectionExecutor : ReflectingExecutor<SpamDetectionEx
             EmailId = Guid.NewGuid().ToString("N"),
             EmailContent = message.Text
         };
-        await context.QueueStateUpdateAsync(newEmail.EmailId, newEmail, scopeName: EmailStateConstants.EmailStateScope, cancellationToken);
+        await context.QueueStateUpdateAsync(newEmail.EmailId, newEmail, scopeName: EmailStateConstants.EmailStateScope, cancellationToken).ConfigureAwait(false);
 
         // Invoke the agent
-        var response = await this._spamDetectionAgent.RunAsync(message, cancellationToken: cancellationToken);
+        var response = await this._spamDetectionAgent.RunAsync(message, cancellationToken: cancellationToken).ConfigureAwait(false);
         var detectionResult = JsonSerializer.Deserialize<DetectionResult>(response.Text);
 
         detectionResult!.EmailId = newEmail.EmailId;
@@ -192,7 +191,7 @@ public sealed class EmailResponse
 /// <summary>
 /// Executor that assists with email responses using an AI agent.
 /// </summary>
-internal sealed class EmailAssistantExecutor : ReflectingExecutor<EmailAssistantExecutor>, IMessageHandler<DetectionResult, EmailResponse>
+internal sealed class EmailAssistantExecutor : Executor<DetectionResult, EmailResponse>
 {
     private readonly AIAgent _emailAssistantAgent;
 
@@ -205,7 +204,7 @@ internal sealed class EmailAssistantExecutor : ReflectingExecutor<EmailAssistant
         this._emailAssistantAgent = emailAssistantAgent;
     }
 
-    public async ValueTask<EmailResponse> HandleAsync(DetectionResult message, IWorkflowContext context, CancellationToken cancellationToken = default)
+    public override async ValueTask<EmailResponse> HandleAsync(DetectionResult message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         if (message.IsSpam)
         {
@@ -213,11 +212,11 @@ internal sealed class EmailAssistantExecutor : ReflectingExecutor<EmailAssistant
         }
 
         // Retrieve the email content from the shared state
-        var email = await context.ReadStateAsync<Email>(message.EmailId, scopeName: EmailStateConstants.EmailStateScope, cancellationToken)
+        var email = await context.ReadStateAsync<Email>(message.EmailId, scopeName: EmailStateConstants.EmailStateScope, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidOperationException("Email not found.");
 
         // Invoke the agent
-        var response = await this._emailAssistantAgent.RunAsync(email.EmailContent, cancellationToken: cancellationToken);
+        var response = await this._emailAssistantAgent.RunAsync(email.EmailContent, cancellationToken: cancellationToken).ConfigureAwait(false);
         var emailResponse = JsonSerializer.Deserialize<EmailResponse>(response.Text);
 
         return emailResponse!;
@@ -227,28 +226,28 @@ internal sealed class EmailAssistantExecutor : ReflectingExecutor<EmailAssistant
 /// <summary>
 /// Executor that sends emails.
 /// </summary>
-internal sealed class SendEmailExecutor() : ReflectingExecutor<SendEmailExecutor>("SendEmailExecutor"), IMessageHandler<EmailResponse>
+internal sealed class SendEmailExecutor() : Executor<EmailResponse>("SendEmailExecutor")
 {
     /// <summary>
     /// Simulate the sending of an email.
     /// </summary>
-    public async ValueTask HandleAsync(EmailResponse message, IWorkflowContext context, CancellationToken cancellationToken = default) =>
-        await context.YieldOutputAsync($"Email sent: {message.Response}", cancellationToken);
+    public override async ValueTask HandleAsync(EmailResponse message, IWorkflowContext context, CancellationToken cancellationToken = default) =>
+        await context.YieldOutputAsync($"Email sent: {message.Response}", cancellationToken).ConfigureAwait(false);
 }
 
 /// <summary>
 /// Executor that handles spam messages.
 /// </summary>
-internal sealed class HandleSpamExecutor() : ReflectingExecutor<HandleSpamExecutor>("HandleSpamExecutor"), IMessageHandler<DetectionResult>
+internal sealed class HandleSpamExecutor() : Executor<DetectionResult>("HandleSpamExecutor")
 {
     /// <summary>
     /// Simulate the handling of a spam message.
     /// </summary>
-    public async ValueTask HandleAsync(DetectionResult message, IWorkflowContext context, CancellationToken cancellationToken = default)
+    public override async ValueTask HandleAsync(DetectionResult message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         if (message.IsSpam)
         {
-            await context.YieldOutputAsync($"Email marked as spam: {message.Reason}", cancellationToken);
+            await context.YieldOutputAsync($"Email marked as spam: {message.Reason}", cancellationToken).ConfigureAwait(false);
         }
         else
         {

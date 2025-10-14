@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.AI.Workflows;
-using Microsoft.Agents.AI.Workflows.Reflection;
 
 namespace WorkflowLoopSample;
 
@@ -57,7 +56,7 @@ internal enum NumberSignal
 /// <summary>
 /// Executor that makes a guess based on the current bounds.
 /// </summary>
-internal sealed class GuessNumberExecutor : ReflectingExecutor<GuessNumberExecutor>, IMessageHandler<NumberSignal>
+internal sealed class GuessNumberExecutor : Executor<NumberSignal>
 {
     /// <summary>
     /// The lower bound of the guessing range.
@@ -83,7 +82,7 @@ internal sealed class GuessNumberExecutor : ReflectingExecutor<GuessNumberExecut
 
     private int NextGuess => (this.LowerBound + this.UpperBound) / 2;
 
-    public async ValueTask HandleAsync(NumberSignal message, IWorkflowContext context, CancellationToken cancellationToken = default)
+    public override async ValueTask HandleAsync(NumberSignal message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         switch (message)
         {
@@ -105,7 +104,7 @@ internal sealed class GuessNumberExecutor : ReflectingExecutor<GuessNumberExecut
 /// <summary>
 /// Executor that judges the guess and provides feedback.
 /// </summary>
-internal sealed class JudgeExecutor : ReflectingExecutor<JudgeExecutor>, IMessageHandler<int>
+internal sealed class JudgeExecutor : Executor<int>
 {
     private readonly int _targetNumber;
     private int _tries;
@@ -120,7 +119,7 @@ internal sealed class JudgeExecutor : ReflectingExecutor<JudgeExecutor>, IMessag
         this._targetNumber = targetNumber;
     }
 
-    public async ValueTask HandleAsync(int message, IWorkflowContext context, CancellationToken cancellationToken = default)
+    public override async ValueTask HandleAsync(int message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         this._tries++;
         if (message == this._targetNumber)
