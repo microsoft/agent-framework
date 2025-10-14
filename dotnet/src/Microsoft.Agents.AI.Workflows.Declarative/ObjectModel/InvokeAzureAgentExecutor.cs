@@ -63,13 +63,13 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
 
         if (string.IsNullOrEmpty(agentResponse.Text))
         {
-            HashSet<FunctionCallContent> toolCalls = [.. agentResponse.Messages.SelectMany(m => m.Contents.OfType<FunctionCallContent>())];
-
-            isComplete = toolCalls.Count == 0;
+            // Identify function calls that have no associated result.
+            List<FunctionCallContent> functionCalls = this.GetOrphanedFunctionCalls(agentResponse);
+            isComplete = functionCalls.Count == 0;
 
             if (!isComplete)
             {
-                AgentToolRequest toolRequest = new(agentName, toolCalls);
+                AgentToolRequest toolRequest = new(agentName, functionCalls);
                 await context.SendMessageAsync(toolRequest, targetId: null, cancellationToken).ConfigureAwait(false);
             }
         }
@@ -93,6 +93,29 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
         }
 
         return userInput?.ToChatMessages();
+    }
+
+    private List<FunctionCallContent> GetOrphanedFunctionCalls(AgentRunResponse agentResponse)
+    {
+        HashSet<string> functionResultIds =
+            agentResponse.Messages
+                .SelectMany(
+                    m =>
+                        m.Contents
+                            .OfType<FunctionResultContent>()
+                            .Select(functionCall => functionCall.CallId))
+                .ToHashSet();
+
+        List<FunctionCallContent> functionCalls = [];
+        foreach (FunctionCallContent functionCall in agentResponse.Messages.SelectMany(m => m.Contents.OfType<FunctionCallContent>()))
+        {
+            if (!functionResultIds.Contains(functionCall.CallId))
+            {
+                functionCalls.Add(functionCall);
+            }
+        }
+
+        return functionCalls;
     }
 
     private string? GetConversationId()
