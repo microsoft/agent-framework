@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import functools
 import hashlib
 import json
 import logging
@@ -21,6 +22,7 @@ from ._edge import (
     EdgeGroup,
     FanInEdgeGroup,
     FanOutEdgeGroup,
+    InternalEdgeGroup,
     SingleEdgeGroup,
     SwitchCaseEdgeGroup,
     SwitchCaseEdgeGroupCase,
@@ -503,33 +505,8 @@ class Workflow(DictConvertible):
         """
         self._ensure_not_running()
         try:
-
-            async def send_responses() -> None:
-                request_info_executor = self._find_request_info_executor()
-                if not request_info_executor:
-                    raise ValueError("No RequestInfoExecutor found in workflow.")
-
-                async def _handle_response(response: Any, request_id: str) -> None:
-                    """Handle the response from the RequestInfoExecutor."""
-                    await request_info_executor.handle_response(
-                        response,
-                        request_id,
-                        WorkflowContext(
-                            request_info_executor.id,
-                            [self.__class__.__name__],
-                            self._shared_state,
-                            self._runner.context,
-                            trace_contexts=None,  # No parent trace context for new workflow span
-                            source_span_ids=None,  # No source span for response handling
-                        ),
-                    )
-
-                await asyncio.gather(*[
-                    _handle_response(response, request_id) for request_id, response in responses.items()
-                ])
-
             async for event in self._run_workflow_with_tracing(
-                initial_executor_fn=send_responses,
+                initial_executor_fn=functools.partial(self._send_responses_internal, responses),
                 reset_context=False,  # Don't reset context when sending responses
                 streaming=True,
             ):
@@ -686,35 +663,10 @@ class Workflow(DictConvertible):
         """
         self._ensure_not_running()
         try:
-
-            async def send_responses_internal() -> None:
-                request_info_executor = self._find_request_info_executor()
-                if not request_info_executor:
-                    raise ValueError("No RequestInfoExecutor found in workflow.")
-
-                async def _handle_response(response: Any, request_id: str) -> None:
-                    """Handle the response from the RequestInfoExecutor."""
-                    await request_info_executor.handle_response(
-                        response,
-                        request_id,
-                        WorkflowContext(
-                            request_info_executor.id,
-                            [self.__class__.__name__],
-                            self._shared_state,
-                            self._runner.context,
-                            trace_contexts=None,  # No parent trace context for new workflow span
-                            source_span_ids=None,  # No source span for response handling
-                        ),
-                    )
-
-                await asyncio.gather(*[
-                    _handle_response(response, request_id) for request_id, response in responses.items()
-                ])
-
             events = [
                 event
                 async for event in self._run_workflow_with_tracing(
-                    initial_executor_fn=send_responses_internal,
+                    initial_executor_fn=functools.partial(self._send_responses_internal, responses),
                     reset_context=False,  # Don't reset context when sending responses
                 )
             ]
@@ -723,6 +675,28 @@ class Workflow(DictConvertible):
             return WorkflowRunResult(filtered_events, status_events)
         finally:
             self._reset_running_flag()
+
+    async def _send_responses_internal(self, responses: dict[str, Any]) -> None:
+        """Internal method to validate and send responses to the executors."""
+        pending_requests = await self._runner_context.get_pending_request_info_events()
+        if not pending_requests:
+            raise RuntimeError("No pending requests found in workflow context.")
+
+        # Validate responses against pending requests
+        for request_id, response in responses.items():
+            if request_id not in pending_requests:
+                raise ValueError(f"Response provided for unknown request ID: {request_id}")
+            pending_request = pending_requests[request_id]
+            if not isinstance(response, pending_request.response_type):
+                raise ValueError(
+                    f"Response type mismatch for request ID {request_id}: "
+                    f"expected {pending_request.response_type}, got {type(response)}"
+                )
+
+        await asyncio.gather(*[
+            self._runner_context.send_request_info_response(request_id, response)
+            for request_id, response in responses.items()
+        ])
 
     def _get_executor_by_id(self, executor_id: str) -> Executor:
         """Get an executor by its ID.
@@ -884,7 +858,6 @@ class WorkflowBuilder:
         """
         self._edge_groups: list[EdgeGroup] = []
         self._executors: dict[str, Executor] = {}
-        self._duplicate_executor_ids: set[str] = set()
         self._start_executor: Executor | str | None = None
         self._checkpoint_storage: CheckpointStorage | None = None
         self._max_iterations: int = max_iterations
@@ -901,10 +874,18 @@ class WorkflowBuilder:
     def _add_executor(self, executor: Executor) -> str:
         """Add an executor to the map and return its ID."""
         existing = self._executors.get(executor.id)
-        if existing is not None and existing is not executor:
-            self._duplicate_executor_ids.add(executor.id)
-        else:
-            self._executors[executor.id] = executor
+        if existing is not None:
+            if existing is executor:
+                # Already added
+                return executor.id
+            # ID conflict
+            raise ValueError(f"Duplicate executor ID '{executor.id}' detected in workflow.")
+
+        # New executor
+        self._executors[executor.id] = executor
+        # Add an internal edge group for each unique executor
+        self._edge_groups.append(InternalEdgeGroup(executor.id))
+
         return executor.id
 
     def _maybe_wrap_agent(
@@ -1236,7 +1217,6 @@ class WorkflowBuilder:
                     self._edge_groups,
                     self._executors,
                     self._start_executor,
-                    duplicate_executor_ids=tuple(self._duplicate_executor_ids),
                 )
 
                 # Add validation completed event

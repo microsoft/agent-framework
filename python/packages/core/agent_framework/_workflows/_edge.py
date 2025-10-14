@@ -6,6 +6,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
+from ._const import INTERNAL_SOURCE_ID
 from ._executor import Executor
 from ._model_utils import DictConvertible, encode_value
 
@@ -865,3 +866,27 @@ class SwitchCaseEdgeGroup(FanOutEdgeGroup):
         payload = super().to_dict()
         payload["cases"] = [encode_value(case) for case in self.cases]
         return payload
+
+
+class InternalEdgeGroup(EdgeGroup):
+    """Special edge group used to route internal messages to executors.
+
+    This group is not serialized and is only used at runtime to link internal
+    executors that should not be exposed as part of the public workflow graph.
+    """
+
+    def __init__(self, executor_id: str) -> None:
+        """Create an internal edge group from the given edges.
+
+        Parameters
+        ----------
+        executor_id:
+            Identifier of the internal executor that should receive messages.
+
+        Examples:
+            .. code-block:: python
+
+                edge_group = InternalEdgeGroup("executor_a")
+        """
+        edge = Edge(source_id=INTERNAL_SOURCE_ID(executor_id), target_id=executor_id)
+        super().__init__([edge])

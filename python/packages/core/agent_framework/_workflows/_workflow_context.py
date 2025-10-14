@@ -2,6 +2,7 @@
 
 import inspect
 import logging
+import uuid
 from collections.abc import Callable
 from types import UnionType
 from typing import Any, Generic, Union, cast, get_args, get_origin
@@ -12,6 +13,7 @@ from typing_extensions import Never, TypeVar
 
 from ..observability import OtelAttr, create_workflow_span
 from ._events import (
+    RequestInfoEvent,
     WorkflowEvent,
     WorkflowEventSource,
     WorkflowFailedEvent,
@@ -20,7 +22,7 @@ from ._events import (
     WorkflowStartedEvent,
     WorkflowStatusEvent,
     WorkflowWarningEvent,
-    _framework_event_origin,
+    _framework_event_origin,  # type: ignore
 )
 from ._runner_context import Message, RunnerContext
 from ._shared_state import SharedState
@@ -403,6 +405,30 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
             await self._runner_context.add_event(WorkflowWarningEvent(warning_msg))
             return
         await self._runner_context.add_event(event)
+
+    async def request_info(self, request_data: Any, request_type: type, response_type: type) -> None:
+        """Request information from outside of the workflow.
+
+        Calling this method will cause the workflow to emit a RequestInfoEvent, carrying the
+        provided request_data and request_type. External systems listening for such events
+        can then process the request and respond accordingly.
+
+        Executors must have the corresponding response handlers defined using the
+        @response_handler decorator to handle the incoming responses.
+
+        Args:
+            request_data: The data associated with the information request.
+            request_type: The type of the request, used to match with response handlers.
+            response_type: The expected type of the response, used for validation.
+        """
+        request_info_event = RequestInfoEvent(
+            request_id=str(uuid.uuid4()),
+            source_executor_id=self._executor_id,
+            request_type=request_type,
+            request_data=request_data,
+            response_type=response_type,
+        )
+        await self._runner_context.add_request_info_event(request_info_event)
 
     async def get_shared_state(self, key: str) -> Any:
         """Get a value from the shared state."""

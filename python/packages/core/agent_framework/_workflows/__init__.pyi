@@ -78,6 +78,7 @@ from ._request_info_executor import (
     RequestInfoMessage,
     RequestResponse,
 )
+from ._request_info_mixin import response_handler
 from ._runner import Runner
 from ._runner_context import (
     InProcRunnerContext,
@@ -88,7 +89,6 @@ from ._sequential import SequentialBuilder
 from ._shared_state import SharedState
 from ._validation import (
     EdgeDuplicationError,
-    ExecutorDuplicationError,
     GraphConnectivityError,
     TypeCompatibilityError,
     ValidationTypeEnum,
@@ -115,7 +115,6 @@ __all__ = [
     "EdgeDuplicationError",
     "Executor",
     "ExecutorCompletedEvent",
-    "ExecutorDuplicationError",
     "ExecutorEvent",
     "ExecutorFailedEvent",
     "ExecutorInvokedEvent",
@@ -185,5 +184,6 @@ __all__ = [
     "executor",
     "get_checkpoint_summary",
     "handler",
+    "response_handler",
     "validate_workflow_graph",
 ]

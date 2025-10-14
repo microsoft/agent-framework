@@ -26,6 +26,7 @@ from ._request_info_executor import (
     RequestInfoMessage,
     RequestResponse,
 )
+from ._runner_context import Message
 from ._typing_utils import is_instance_of
 from ._workflow_context import WorkflowContext
 
@@ -276,7 +277,7 @@ class WorkflowExecutor(Executor):
         data["workflow"] = self.workflow.to_dict()
         return data
 
-    def can_handle(self, message: Any) -> bool:
+    def can_handle(self, message: Message) -> bool:
         """Override can_handle to only accept messages that the wrapped workflow can handle.
 
         This prevents the WorkflowExecutor from accepting messages that should go to other
@@ -287,7 +288,7 @@ class WorkflowExecutor(Executor):
             return True
 
         # For other messages, only handle if the wrapped workflow can accept them as input
-        return any(is_instance_of(message, input_type) for input_type in self.workflow.input_types)
+        return any(is_instance_of(message.data, input_type) for input_type in self.workflow.input_types)
 
     @handler  # No output_types - can send any completion data type
     async def process_workflow(self, input_data: object, ctx: WorkflowContext[Any]) -> None:

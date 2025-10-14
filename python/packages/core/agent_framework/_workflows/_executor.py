@@ -16,7 +16,8 @@ from ._events import (
     _framework_event_origin,  # type: ignore[reportPrivateUsage]
 )
 from ._model_utils import DictConvertible
-from ._runner_context import Message, RunnerContext  # type: ignore
+from ._request_info_mixin import RequestInfoMixin
+from ._runner_context import Message, MessageType, RunnerContext
 from ._shared_state import SharedState
 from ._typing_utils import is_instance_of
 from ._workflow_context import WorkflowContext, validate_function_signature
@@ -25,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 # region Executor
-class Executor(DictConvertible):
+class Executor(RequestInfoMixin, DictConvertible):
     """Base class for all workflow executors that process messages and perform computations.
 
     ## Overview
@@ -204,6 +205,9 @@ class Executor(DictConvertible):
                     "Please define at least one handler using the @handler decorator."
                 )
 
+            # Initialize RequestInfoMixin to discover response handlers
+            self._discover_response_handlers()
+
     async def execute(
         self,
         message: Any,
@@ -229,12 +233,17 @@ class Executor(DictConvertible):
         Returns:
             An awaitable that resolves to the result of the execution.
         """
-        # Create processing span for tracing (gracefully handles disabled tracing)
+        # Default to find handler in regular handlers
+        target_handlers = self._handlers
 
         # Handle case where Message wrapper is passed instead of raw data
         if isinstance(message, Message):
+            if message.message_type == MessageType.RESPONSE:
+                # Switch to response handlers if message is a response
+                target_handlers = self._response_handlers
             message = message.data
 
+        # Create processing span for tracing (gracefully handles disabled tracing)
         with create_processing_span(
             self.id,
             self.__class__.__name__,
@@ -244,15 +253,9 @@ class Executor(DictConvertible):
         ):
             # Find the handler and handler spec that matches the message type.
             handler: Callable[[Any, WorkflowContext[Any, Any]], Awaitable[None]] | None = None
-            ctx_annotation = None
-            for message_type in self._handlers:
+            for message_type in target_handlers:
                 if is_instance_of(message, message_type):
-                    handler = self._handlers[message_type]
-                    # Find the corresponding handler spec for context annotation
-                    for spec in self._handler_specs:
-                        if spec.get("message_type") == message_type:
-                            ctx_annotation = spec.get("ctx_annotation")
-                            break
+                    handler = target_handlers[message_type]
                     break
 
             if handler is None:
@@ -263,7 +266,6 @@ class Executor(DictConvertible):
                 source_executor_ids=source_executor_ids,
                 shared_state=shared_state,
                 runner_context=runner_context,
-                ctx_annotation=ctx_annotation,
                 trace_contexts=trace_contexts,
                 source_span_ids=source_span_ids,
             )
@@ -289,7 +291,6 @@ class Executor(DictConvertible):
         source_executor_ids: list[str],
         shared_state: SharedState,
         runner_context: RunnerContext,
-        ctx_annotation: Any,
         trace_contexts: list[dict[str, str]] | None = None,
         source_span_ids: list[str] | None = None,
     ) -> WorkflowContext[Any]:
@@ -299,7 +300,6 @@ class Executor(DictConvertible):
             source_executor_ids: The IDs of the source executors that sent messages to this executor.
             shared_state: The shared state for the workflow.
             runner_context: The runner context that provides methods to send messages and events.
-            ctx_annotation: The context annotation from the handler spec to determine which context type to create.
             trace_contexts: Optional trace contexts from multiple sources for OpenTelemetry propagation.
             source_span_ids: Optional source span IDs from multiple sources for linking.
 
@@ -350,7 +350,7 @@ class Executor(DictConvertible):
                 # Skip attributes that may not be accessible
                 continue
 
-    def can_handle(self, message: Any) -> bool:
+    def can_handle(self, message: Message) -> bool:
         """Check if the executor can handle a given message type.
 
         Args:
@@ -359,7 +359,11 @@ class Executor(DictConvertible):
         Returns:
             True if the executor can handle the message type, False otherwise.
         """
-        return any(is_instance_of(message, message_type) for message_type in self._handlers)
+        if message.message_type == MessageType.REGULAR:
+            return any(is_instance_of(message.data, message_type) for message_type in self._handlers)
+        if message.message_type == MessageType.RESPONSE:
+            return any(is_instance_of(message.data, message_type) for message_type in self._response_handlers)
+        return False
 
     def _register_instance_handler(
         self,

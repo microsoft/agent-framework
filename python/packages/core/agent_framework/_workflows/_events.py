@@ -212,6 +212,7 @@ class RequestInfoEvent(WorkflowEvent):
         source_executor_id: str,
         request_type: type,
         request_data: "RequestInfoMessage",
+        response_type: type,
     ):
         """Initialize the request info event.
 
@@ -220,11 +221,13 @@ class RequestInfoEvent(WorkflowEvent):
             source_executor_id: ID of the executor that made the request.
             request_type: Type of the request (e.g., a specific data type).
             request_data: The data associated with the request.
+            response_type: Expected type of the response.
         """
         super().__init__(request_data)
         self.request_id = request_id
         self.source_executor_id = source_executor_id
         self.request_type = request_type
+        self.response_type = response_type
 
     def __repr__(self) -> str:
         """Return a string representation of the request info event."""
@@ -233,7 +236,8 @@ class RequestInfoEvent(WorkflowEvent):
             f"request_id={self.request_id}, "
             f"source_executor_id={self.source_executor_id}, "
             f"request_type={self.request_type.__name__}, "
-            f"data={self.data})"
+            f"data={self.data}, "
+            f"response_type={self.response_type.__name__})"
         )
 
 
