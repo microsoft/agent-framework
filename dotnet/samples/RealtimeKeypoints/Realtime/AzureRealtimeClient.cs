@@ -120,7 +120,7 @@ public sealed class AzureRealtimeClient : IAsyncDisposable
                     continue;
                 }
 
-                string payload = Encoding.UTF8.GetString(messageBuffer.ToArray());
+                string payload = Encoding.UTF8.GetString(messageBuffer.GetBuffer(), 0, (int)messageBuffer.Length);
                 messageBuffer.SetLength(0);
                 await this.ProcessMessageAsync(payload, writer, cancellationToken).ConfigureAwait(false);
             }

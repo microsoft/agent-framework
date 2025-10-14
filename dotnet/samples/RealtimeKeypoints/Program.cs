@@ -20,9 +20,9 @@ public static class Program
         string endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
             ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
         string realtimeDeployment = Environment.GetEnvironmentVariable("AZURE_OPENAI_REALTIME_DEPLOYMENT")
-            ?? throw new InvalidOperationException("AZURE_OPENAI_REALTIME_DEPLOYMENT is not set.");
+            ?? "gpt-realtime";
         string chatDeployment = Environment.GetEnvironmentVariable("AZURE_OPENAI_CHAT_DEPLOYMENT")
-            ?? realtimeDeployment;
+            ?? "gpt-4o-mini";
         string apiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_API_KEY")
             ?? throw new InvalidOperationException("AZURE_OPENAI_API_KEY is not set.");
 
