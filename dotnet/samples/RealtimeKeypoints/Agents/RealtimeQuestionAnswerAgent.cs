@@ -73,13 +73,13 @@ public sealed class RealtimeQuestionAnswerAgent
                 {
                     try
                     {
-                        await this.DetectAndAnswerQuestionsAsync(textToAnalyze, CancellationToken.None);
+                        await this.DetectAndAnswerQuestionsAsync(textToAnalyze, cancellationToken);
                     }
                     catch (Exception taskEx)
                     {
                         Console.WriteLine($"[ERROR Q&A] {taskEx.Message}");
                     }
-                }, CancellationToken.None);
+                }, cancellationToken);
             }
         }
     }
