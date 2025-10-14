@@ -9,14 +9,14 @@ namespace Microsoft.Agents.AI.Hosting;
 /// <summary>
 /// Provides extension methods for configuring <see cref="AIAgent"/>.
 /// </summary>
-public static class HostAgentBuilderExtensions
+public static class HostedAgentBuilderExtensions
 {
     /// <summary>
     /// Configures the host agent builder to use an in-memory thread store for agent thread management.
     /// </summary>
     /// <param name="builder">The host agent builder to configure with the in-memory thread store.</param>
     /// <returns>The same <paramref name="builder"/> instance, configured to use an in-memory thread store.</returns>
-    public static IHostAgentBuilder WithInMemoryThreadStore(this IHostAgentBuilder builder)
+    public static IHostedAgentBuilder WithInMemoryThreadStore(this IHostedAgentBuilder builder)
     {
         builder.HostApplicationBuilder.Services.AddKeyedSingleton<IAgentThreadStore>(builder.Name, new InMemoryAgentThreadStore());
         return builder;
@@ -29,7 +29,7 @@ public static class HostAgentBuilderExtensions
     /// <param name="builder">The host agent builder to configure with the thread store. Cannot be null.</param>
     /// <param name="store">The agent thread store instance to register. Cannot be null.</param>
     /// <returns>The same host agent builder instance, allowing for method chaining.</returns>
-    public static IHostAgentBuilder WithThreadStore(this IHostAgentBuilder builder, IAgentThreadStore store)
+    public static IHostedAgentBuilder WithThreadStore(this IHostedAgentBuilder builder, IAgentThreadStore store)
     {
         builder.HostApplicationBuilder.Services.AddKeyedSingleton(builder.Name, store);
         return builder;
@@ -42,7 +42,7 @@ public static class HostAgentBuilderExtensions
     /// <param name="createAgentThreadStore">A factory function that creates an agent thread store instance using the provided service provider and agent
     /// name.</param>
     /// <returns>The same host agent builder instance, enabling further configuration.</returns>
-    public static IHostAgentBuilder WithThreadStore(this IHostAgentBuilder builder, Func<IServiceProvider, string, IAgentThreadStore> createAgentThreadStore)
+    public static IHostedAgentBuilder WithThreadStore(this IHostedAgentBuilder builder, Func<IServiceProvider, string, IAgentThreadStore> createAgentThreadStore)
     {
         builder.HostApplicationBuilder.Services.AddKeyedSingleton(builder.Name, (sp, key) =>
         {
