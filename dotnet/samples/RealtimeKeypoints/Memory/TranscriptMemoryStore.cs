@@ -13,10 +13,12 @@ public sealed class TranscriptMemoryStore : InMemoryVectorStore, IDisposable
     private readonly List<TranscriptEntry> _entries = [];
     private readonly SemaphoreSlim _lock = new(1, 1);
     private readonly int _maxEntries;
+    private readonly int _contextWindowSize;
 
-    public TranscriptMemoryStore(int maxEntries = 1000)
+    public TranscriptMemoryStore(int maxEntries = 1000, int contextWindowSize = 200)
     {
         this._maxEntries = maxEntries;
+        this._contextWindowSize = contextWindowSize;
     }
 
     public void Dispose()
@@ -85,7 +87,7 @@ public sealed class TranscriptMemoryStore : InMemoryVectorStore, IDisposable
         await this._lock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var recent = this._entries.TakeLast(50).ToList();
+            var recent = this._entries.TakeLast(this._contextWindowSize).ToList();
             int charCount = 0;
             var contextParts = new List<string>();
 

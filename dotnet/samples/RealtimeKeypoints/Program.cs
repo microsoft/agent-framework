@@ -2,8 +2,8 @@
 
 using System.Text;
 using System.Threading.Channels;
-using Azure;
 using Azure.AI.OpenAI;
+using Azure.Identity;
 using Microsoft.Extensions.AI;
 using RealtimeKeypoints.Agents;
 using RealtimeKeypoints.Memory;
@@ -23,8 +23,6 @@ public static class Program
             ?? "gpt-realtime";
         string chatDeployment = Environment.GetEnvironmentVariable("AZURE_OPENAI_CHAT_DEPLOYMENT")
             ?? "gpt-4o-mini";
-        string apiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_API_KEY")
-            ?? throw new InvalidOperationException("AZURE_OPENAI_API_KEY is not set.");
 
         using var cancellationSource = new CancellationTokenSource();
         Console.CancelKeyPress += (_, args) =>
@@ -40,7 +38,7 @@ public static class Program
 
         try
         {
-            await RunAsync(endpoint, realtimeDeployment, chatDeployment, apiKey, cancellationSource.Token).ConfigureAwait(false);
+            await RunAsync(endpoint, realtimeDeployment, chatDeployment, cancellationSource.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -48,9 +46,10 @@ public static class Program
         }
     }
 
-    private static async Task RunAsync(string endpoint, string realtimeDeployment, string chatDeployment, string apiKey, CancellationToken cancellationToken)
+    private static async Task RunAsync(string endpoint, string realtimeDeployment, string chatDeployment, CancellationToken cancellationToken)
     {
         var endpointUri = new Uri(endpoint);
+        var credential = new AzureCliCredential();
 
         // Create memory store for transcript persistence
         var memoryStore = new TranscriptMemoryStore(maxEntries: 1000);
@@ -68,10 +67,10 @@ public static class Program
             SingleWriter = true
         });
 
-        await using var realtimeClient = new AzureRealtimeClient(endpointUri, realtimeDeployment, apiKey);
+        await using var realtimeClient = new AzureRealtimeClient(endpointUri, realtimeDeployment, credential);
         var transcriptionAgent = new RealtimeTranscriptionAgent(realtimeClient);
 
-        var chatClient = new AzureOpenAIClient(endpointUri, new AzureKeyCredential(apiKey))
+        var chatClient = new AzureOpenAIClient(endpointUri, credential)
             .GetChatClient(chatDeployment)
             .AsIChatClient();
         var keypointAgent = new RealtimeKeypointAgent(chatClient);
@@ -177,7 +176,7 @@ public static class Program
                             new[] { new ChatMessage(ChatRole.User, combinedText) },
                             keypointThread,
                             options: null,
-                            cancellationToken: CancellationToken.None).ConfigureAwait(false);
+                            cancellationToken: cancellationToken).ConfigureAwait(false);
 
                         foreach (var message in response.Messages)
                         {

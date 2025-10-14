@@ -5,6 +5,7 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
+using Azure.Core;
 
 namespace RealtimeKeypoints.Realtime;
 
@@ -17,7 +18,8 @@ public sealed class AzureRealtimeClient : IAsyncDisposable
     private static readonly string[] s_textOnlyModalities = ["text"];
     private readonly Uri _endpoint;
     private readonly string _deploymentName;
-    private readonly string _apiKey;
+    private readonly string? _apiKey;
+    private readonly TokenCredential? _tokenCredential;
     private readonly SemaphoreSlim _connectLock = new(1, 1);
     private ClientWebSocket? _socket;
     private bool _disposed;
@@ -27,6 +29,13 @@ public sealed class AzureRealtimeClient : IAsyncDisposable
         this._endpoint = endpoint ?? throw new ArgumentNullException(nameof(endpoint));
         this._deploymentName = deploymentName ?? throw new ArgumentNullException(nameof(deploymentName));
         this._apiKey = apiKey ?? throw new ArgumentNullException(nameof(apiKey));
+    }
+
+    public AzureRealtimeClient(Uri endpoint, string deploymentName, TokenCredential credential)
+    {
+        this._endpoint = endpoint ?? throw new ArgumentNullException(nameof(endpoint));
+        this._deploymentName = deploymentName ?? throw new ArgumentNullException(nameof(deploymentName));
+        this._tokenCredential = credential ?? throw new ArgumentNullException(nameof(credential));
     }
 
     /// <summary>
@@ -210,7 +219,19 @@ public sealed class AzureRealtimeClient : IAsyncDisposable
 
             this._socket?.Dispose();
             var socket = new ClientWebSocket();
-            socket.Options.SetRequestHeader("api-key", this._apiKey);
+
+            if (this._apiKey is not null)
+            {
+                socket.Options.SetRequestHeader("api-key", this._apiKey);
+            }
+            else if (this._tokenCredential is not null)
+            {
+                var token = await this._tokenCredential.GetTokenAsync(
+                    new TokenRequestContext(["https://cognitiveservices.azure.com/.default"]),
+                    cancellationToken).ConfigureAwait(false);
+                socket.Options.SetRequestHeader("Authorization", $"Bearer {token.Token}");
+            }
+
             socket.Options.SetRequestHeader("OpenAI-Beta", "realtime=v1");
             socket.Options.AddSubProtocol("realtime");
 
