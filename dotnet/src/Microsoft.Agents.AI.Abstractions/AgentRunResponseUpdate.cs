@@ -149,6 +149,7 @@ public class AgentRunResponseUpdate
     /// <summary>Gets or sets a timestamp for the response update.</summary>
     public DateTimeOffset? CreatedAt { get; set; }
 
+#pragma warning disable CA1200 // Avoid using cref tags with a prefix
     /// <summary>
     /// Gets or sets the continuation token for resuming the streamed agent response of which this update is a part.
     /// </summary>
@@ -158,11 +159,12 @@ public class AgentRunResponseUpdate
     /// except for the last update, for which the token will be <see langword="null"/>.
     /// <para>
     /// This property should be used for stream resumption, where the continuation token of the latest received update should be
-    /// passed to <see cref="AgentRunOptions.ContinuationToken"/> on subsequent calls to "AIAgent.RunAsync"
+    /// passed to <see cref="AgentRunOptions.ContinuationToken"/> on subsequent calls to <see cref="m:AIAgent.RunStreamingAsync"/>
     /// to resume streaming from the point of interruption.
     /// </para>
     /// </remarks>
     public object? ContinuationToken { get; set; }
+#pragma warning restore CA1200 // Avoid using cref tags with a prefix
 
     /// <inheritdoc/>
     public override string ToString() => this.Text;
