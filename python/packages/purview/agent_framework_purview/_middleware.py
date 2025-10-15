@@ -23,14 +23,15 @@ class PurviewPolicyMiddleware(AgentMiddleware):
 
     Usage:
 
-        from agent_framework_purview import PurviewPolicyMiddleware, PurviewSettings
+    .. code-block:: python
+        from agent_framework.microsoft import PurviewPolicyMiddleware, PurviewSettings
         from agent_framework import ChatAgent
 
         credential = ...  # TokenCredential or AsyncTokenCredential
         settings = PurviewSettings(app_name="My App")
-        agent = ChatAgent(chat_client=client, instructions="...", middleware=[
-            PurviewPolicyMiddleware(credential, settings)
-        ])
+        agent = ChatAgent(
+            chat_client=client, instructions="...", middleware=[PurviewPolicyMiddleware(credential, settings)]
+        )
     """
 
     def __init__(
@@ -40,6 +41,7 @@ class PurviewPolicyMiddleware(AgentMiddleware):
     ) -> None:
         self._client = PurviewClient(credential, settings)
         self._processor = ScopedContentProcessor(self._client, settings)
+        self._settings = settings
 
     async def process(
         self,
@@ -56,7 +58,7 @@ class PurviewPolicyMiddleware(AgentMiddleware):
                 from agent_framework import AgentRunResponse, ChatMessage, Role
 
                 context.result = AgentRunResponse(
-                    messages=[ChatMessage(role=Role.SYSTEM, text="Prompt blocked by policy")]
+                    messages=[ChatMessage(role=Role.SYSTEM, text=self._settings.blocked_prompt_message)]
                 )
                 context.terminate = True
                 return
@@ -69,7 +71,7 @@ class PurviewPolicyMiddleware(AgentMiddleware):
         try:
             # Post (response) check only if we have a normal AgentRunResponse
             # Use the same user_id from the request for the response evaluation
-            if context.result and hasattr(context.result, "messages"):
+            if context.result and not context.is_streaming:
                 should_block_response, _ = await self._processor.process_messages(
                     context.result.messages,  # type: ignore[attr-defined]
                     Activity.UPLOAD_TEXT,
@@ -79,8 +81,11 @@ class PurviewPolicyMiddleware(AgentMiddleware):
                     from agent_framework import AgentRunResponse, ChatMessage, Role
 
                     context.result = AgentRunResponse(
-                        messages=[ChatMessage(role=Role.SYSTEM, text="Response blocked by policy")]
+                        messages=[ChatMessage(role=Role.SYSTEM, text=self._settings.blocked_response_message)]
                     )
+            else:
+                # Streaming responses are not supported for post-checks
+                logger.debug("Streaming responses are not supported for Purview policy post-checks")
         except Exception as ex:
             # Log and continue if there's an error in the post-check
             logger.error(f"Error in Purview policy post-check: {ex}")
@@ -90,15 +95,23 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
     """Chat middleware variant for Purview policy evaluation.
 
     This allows users to attach Purview enforcement directly to a chat client
-    (e.g., when using a simple chat agent or invoking chat APIs without full
-    agent orchestration).
 
     Behavior:
       * Pre-chat: evaluates outgoing (user + context) messages as an upload activity
         and can terminate execution if blocked.
-      * Post-chat: evaluates the received response messages (non-streaming only currently)
+      * Post-chat: evaluates the received response messages (streaming is not presently supported)
         and can replace them with a blocked message. Uses the same user_id from the request
         to ensure consistent user identity throughout the evaluation.
+
+    Usage:
+
+    .. code-block:: python
+        from agent_framework.microsoft import PurviewChatPolicyMiddleware, PurviewSettings
+        from agent_framework import ChatClient
+
+        credential = ...  # TokenCredential or AsyncTokenCredential
+        settings = PurviewSettings(app_name="My App")
+        client = ChatClient(..., middleware=[PurviewChatPolicyMiddleware(credential, settings)])
     """
 
     def __init__(
@@ -108,6 +121,7 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
     ) -> None:
         self._client = PurviewClient(credential, settings)
         self._processor = ScopedContentProcessor(self._client, settings)
+        self._settings = settings
 
     async def process(
         self,
@@ -123,7 +137,7 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
                 from agent_framework import ChatMessage
 
                 context.result = [  # type: ignore[assignment]
-                    ChatMessage(role="system", text="Prompt blocked by policy")
+                    ChatMessage(role="system", text=self._settings.blocked_prompt_message)
                 ]
                 context.terminate = True
                 return
@@ -145,14 +159,10 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
                     if should_block_response:
                         from agent_framework import ChatMessage
 
-                        # Replace messages attribute if possible; otherwise overwrite result
-                        try:
-                            result_obj.messages = [  # type: ignore[union-attr]
-                                ChatMessage(role="system", text="Response blocked by policy")
-                            ]
-                        except Exception:
-                            context.result = [  # type: ignore[assignment]
-                                ChatMessage(role="system", text="Response blocked by policy")
-                            ]
+                        context.result = [  # type: ignore[assignment]
+                            ChatMessage(role="system", text=self._settings.blocked_response_message)
+                        ]
+            else:
+                logger.debug("Streaming responses are not supported for Purview policy post-checks")
         except Exception as ex:
             logger.error(f"Error in Purview policy post-check: {ex}")

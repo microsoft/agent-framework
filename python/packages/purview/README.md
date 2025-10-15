@@ -38,7 +38,7 @@ async def main():
 
 	purview_middleware = PurviewPolicyMiddleware(
 		credential=InteractiveBrowserCredential(),
-		settings=PurviewSettings(appName="My Sample App")
+		settings=PurviewSettings(app_name="My Sample App")
 	)
 
 	agent = ChatAgent(
@@ -69,6 +69,10 @@ The APIs require the following Graph Permissions:
 ### Scopes
 `PurviewSettings.get_scopes()` derives the Graph scope list (currently `https://graph.microsoft.com/.default` style).
 
+### Tenant Enablement for Purview
+- The tenant requires an e5 license and consumptive billing setup.
+- There need to be (Data Loss Prevention)[https://learn.microsoft.com/en-us/purview/dlp-create-deploy-policy] or (Data Collection Policies)[https://learn.microsoft.com/en-us/purview/collection-policies-policy-reference] that apply to the user to call Process Content API else it calls Content Activities API for auditing the message.
+
 ---
 
 ## Configuration
@@ -81,7 +85,9 @@ PurviewSettings(
     tenant_id=None,                    # Optional – used mainly for auth context
     purview_app_location=None,         # Optional PurviewAppLocation for scoping
     graph_base_uri="https://graph.microsoft.com/v1.0/",
-    process_inline=False               # Reserved for future inline processing optimizations
+    process_inline=False,              # Reserved for future inline processing optimizations
+    blocked_prompt_message="Prompt blocked by policy",    # Custom message for blocked prompts
+    blocked_response_message="Response blocked by policy" # Custom message for blocked responses
 )
 ```
 
@@ -95,13 +101,33 @@ from agent_framework.microsoft import (
 )
 
 settings = PurviewSettings(
-	appName="Contoso Support",
-	purviewAppLocation=PurviewAppLocation(
+	app_name="Contoso Support",
+	purview_app_location=PurviewAppLocation(
 		location_type=PurviewLocationType.APPLICATION,
 		location_value="<app-client-id>"
 	)
 )
 ```
+
+### Customizing Blocked Messages
+
+By default, when Purview blocks a prompt or response, the middleware returns a generic system message. You can customize these messages by providing your own text in the `PurviewSettings`:
+
+```python
+from agent_framework.microsoft import PurviewSettings
+
+settings = PurviewSettings(
+	app_name="My App",
+	blocked_prompt_message="Your request contains content that violates our policies. Please rephrase and try again.",
+	blocked_response_message="The response was blocked due to policy restrictions. Please contact support if you need assistance."
+)
+```
+
+This is useful for:
+- Providing more user-friendly error messages
+- Including support contact information
+- Localizing messages for different languages
+- Adding branding or specific guidance for your application
 
 ### Selecting Agent vs Chat Middleware
 
@@ -119,7 +145,7 @@ client = AzureOpenAIChatClient()
 agent = ChatAgent(
 	chat_client=client,
 	instructions="You are helpful.",
-	middleware=[PurviewPolicyMiddleware(credential, PurviewSettings(appName="My App"))]
+	middleware=[PurviewPolicyMiddleware(credential, PurviewSettings(app_name="My App"))]
 )
 ```
 
@@ -139,7 +165,7 @@ chat_client = AzureOpenAIChatClient(
 	endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
 	credential=credential,
 	middleware=[
-		PurviewChatPolicyMiddleware(credential, PurviewSettings(appName="My App (Chat)"))
+		PurviewChatPolicyMiddleware(credential, PurviewSettings(app_name="My App (Chat)"))
 	],
 )
 
@@ -159,7 +185,7 @@ The policy logic is identical; the difference is only the hook point in the pipe
 
 When a user identifier is discovered (e.g. in `ChatMessage.additional_properties['user_id']`) during the prompt phase it is reused for the response phase so both evaluations map consistently to the same user.
 
-You can customize your blocking messages by wrapping the middleware or post-processing `context.result` in later middleware.
+You can customize the blocking messages using the `blocked_prompt_message` and `blocked_response_message` fields in `PurviewSettings`. For more advanced scenarios, you can wrap the middleware or post-process `context.result` in later middleware.
 
 ---
 
@@ -191,7 +217,7 @@ except (PurviewAuthenticationError, PurviewRateLimitError, PurviewRequestError, 
 
 ## Notes
 - Provide a `user_id` per request (e.g. in `ChatMessage(..., additional_properties={"user_id": "<guid>"})`) when possible for per-user policy scoping; otherwise supply a default via settings or environment.
-- Blocking messages are currently static ("Prompt blocked by policy" / "Response blocked by policy"). 
+- Blocking messages can be customized via `blocked_prompt_message` and `blocked_response_message` in `PurviewSettings`. By default, they are "Prompt blocked by policy" and "Response blocked by policy" respectively.
 - Streaming responses: post-response policy evaluation presently applies only to non-streaming chat responses.
 - Errors during policy checks are logged and do not fail the run; they degrade gracefully.
 

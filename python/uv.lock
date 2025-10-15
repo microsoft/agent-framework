@@ -389,14 +389,14 @@ name = "agent-framework-purview"
 version = "0.1.0b1"
 source = { editable = "packages/purview" }
 dependencies = [
-    { name = "agent-framework", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "azure-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "httpx", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "agent-framework", virtual = "." },
+    { name = "agent-framework-core", editable = "packages/core" },
     { name = "azure-core", specifier = ">=1.30.0" },
     { name = "httpx", specifier = ">=0.27.0" },
 ]

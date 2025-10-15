@@ -94,7 +94,7 @@ async def run_with_agent_middleware() -> None:
     purview_agent_middleware = PurviewPolicyMiddleware(
         build_credential(),
         PurviewSettings(
-            appName="Agent Framework Sample App",
+            app_name="Agent Framework Sample App",
         ),
     )
 
@@ -130,7 +130,7 @@ async def run_with_chat_middleware() -> None:
             PurviewChatPolicyMiddleware(
                 build_credential(),
                 PurviewSettings(
-                    appName="Agent Framework Sample App (Chat)",
+                    app_name="Agent Framework Sample App (Chat)",
                 ),
             )
         ],
@@ -140,7 +140,6 @@ async def run_with_chat_middleware() -> None:
         chat_client=chat_client,
         instructions=JOKER_INSTRUCTIONS,
         name=JOKER_NAME,
-        middleware=[],
     )
 
     print("-- Chat Middleware Path --")

@@ -14,13 +14,13 @@ This getting-started sample shows how to attach Microsoft Purview policy evaluat
 |----------|----------|---------|
 | `AZURE_OPENAI_ENDPOINT` | Yes | Azure OpenAI endpoint (https://<name>.openai.azure.com) |
 | `AZURE_OPENAI_DEPLOYMENT_NAME` | Optional | Model deployment name (defaults inside SDK if omitted) |
-| `PURVIEW_CLIENT_APP_ID` | Yes* | Client (application) ID used for Purview auth |
+| `PURVIEW_CLIENT_APP_ID` | Yes* | Client (application) ID used for Purview authentication |
 | `PURVIEW_USE_CERT_AUTH` | Optional (`true`/`false`) | Switch between certificate and interactive auth |
 | `PURVIEW_TENANT_ID` | Yes (when cert auth on) | Tenant ID for certificate authentication |
 | `PURVIEW_CERT_PATH` | Yes (when cert auth on) | Path to your .pfx certificate |
 | `PURVIEW_CERT_PASSWORD` | Optional | Password for encrypted certs |
 
-*A demo default may exist in code for illustration only—always set your own value.
+*A demo default exists in code for illustration only—always set your own value.
 
 ### 2. Auth Modes Supported
 
@@ -80,7 +80,7 @@ agent = ChatAgent(
 	instructions="You are good at telling jokes.",
 	name="Joker",
 	middleware=[
-		PurviewPolicyMiddleware(credential, PurviewSettings(appName="Sample App", defaultUserId="<guid>"))
+		PurviewPolicyMiddleware(credential, PurviewSettings(app_name="Sample App", default_user_id="<guid>"))
 	],
 )
 ```

@@ -44,14 +44,22 @@ class PurviewSettings(AFBaseSettings):
         tenant_id: Optional tenant id (guid) of the user making the request.
         purview_app_location: Optional app location for policy evaluation.
         graph_base_uri: Base URI for Microsoft Graph.
+        blocked_prompt_message: Custom message to return when a prompt is blocked by policy.
+        blocked_response_message: Custom message to return when a response is blocked by policy.
     """
 
-    app_name: str = Field(..., alias="appName")
-    tenant_id: str | None = Field(default=None, alias="tenantId")
-    purview_app_location: PurviewAppLocation | None = Field(default=None, alias="purviewAppLocation")
-    graph_base_uri: str = Field(default="https://graph.microsoft.com/v1.0/", alias="graphBaseUri")
-    process_inline: bool = Field(
-        default=False, alias="processInline", description="Process content inline if supported."
+    app_name: str = Field(...)
+    tenant_id: str | None = Field(default=None)
+    purview_app_location: PurviewAppLocation | None = Field(default=None)
+    graph_base_uri: str = Field(default="https://graph.microsoft.com/v1.0/")
+    process_inline: bool = Field(default=False, description="Process content inline if supported.")
+    blocked_prompt_message: str = Field(
+        default="Prompt blocked by policy",
+        description="Message to return when a prompt is blocked by policy.",
+    )
+    blocked_response_message: str = Field(
+        default="Response blocked by policy",
+        description="Message to return when a response is blocked by policy.",
     )
 
     model_config = SettingsConfigDict(populate_by_name=True, validate_assignment=True)
