@@ -3,4 +3,3 @@
 # Bash scripts
 *.sh  text eol=lf
 *.cmd text eol=crlf
-python/docs/agent-framework/_static/images/logo/favicon-*.png filter=lfs diff=lfs merge=lfs -text
