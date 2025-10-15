@@ -37,7 +37,8 @@ public static class FunctionToolExtensions
             }
         }
 
-        var jsonSchema = tool.ExtensionData?.GetSchema() ?? new(); // TODO: Validate that this is a valid JSON schema
+        // TODO: Replace with actual schema from tool
+        var jsonSchema = new System.Text.Json.JsonElement(); // TODO: Validate that this is a valid JSON schema
 
         return AIFunctionFactory.CreateDeclaration(
             name: tool.Name,

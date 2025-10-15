@@ -13,6 +13,7 @@ namespace Microsoft.Bot.ObjectModel;
 /// </summary>
 public static class RecordDataValueExtensions
 {
+    /*
     /// <summary>
     /// Retrieves a 'string' property from a <see cref="RecordDataValue"/>
     /// </summary>
@@ -25,6 +26,7 @@ public static class RecordDataValueExtensions
         var stringValue = recordData.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create(propertyPath));
         return stringValue?.Value;
     }
+    */
 
     /// <summary>
     /// Retrieves a 'number' property from a <see cref="RecordDataValue"/>
@@ -52,6 +54,7 @@ public static class RecordDataValueExtensions
         return booleanValue?.Value;
     }
 
+    /*
     /// <summary>
     /// Retrieves a <see cref="RecordDataValue"/> property from a <see cref="RecordDataValue"/>
     /// </summary>
@@ -75,6 +78,7 @@ public static class RecordDataValueExtensions
 
         return recordData.GetPropertyOrNull<TableDataValue>(InitializablePropertyPath.Create(propertyPath));
     }
+    */
 
     /// <summary>
     /// Converts a <see cref="RecordDataValue"/> to a <see cref="IReadOnlyDictionary{TKey, TValue}"/>.

@@ -84,7 +84,7 @@ public static class ModelOptionsExtensions
     /// Retrieves the 'response_format' property from a <see cref="ModelOptions"/>.
     /// </summary>
     /// <param name="modelOptions">Instance of <see cref="ModelOptions"/></param>
-    public static ChatResponseFormat? AsResponseFormat(this ModelOptions modelOptions)
+    public static ChatResponseFormat? AsChatResponseFormat(this ModelOptions modelOptions)
     {
         Throw.IfNull(modelOptions);
 

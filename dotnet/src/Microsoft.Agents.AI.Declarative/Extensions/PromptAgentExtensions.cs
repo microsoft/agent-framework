@@ -61,7 +61,7 @@ public static class PromptAgentExtensions
             FrequencyPenalty = modelOptions?.GetFrequencyPenalty(),
             PresencePenalty = modelOptions?.GetPresencePenalty(),
             Seed = modelOptions?.GetSeed(),
-            ResponseFormat = outputSchema?.AsResponseFormat(),
+            ResponseFormat = outputSchema?.AsChatResponseFormat(),
             ModelId = model?.Id,
             StopSequences = modelOptions?.GetStopSequences(),
             AllowMultipleToolCalls = modelOptions?.GetAllowMultipleToolCalls(),

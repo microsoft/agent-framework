@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
@@ -16,24 +17,9 @@ public static class RecordDataTypeExtensions
     /// Creates a <see cref="ChatResponseFormat"/> from a <see cref="RecordDataType"/>.
     /// </summary>
     /// <param name="recordDataType">Instance of <see cref="RecordDataType"/></param>
-    public static ChatResponseFormat? AsChatResponseFormat(this RecordDataType recordDataType)
-    {
-        Throw.IfNull(recordDataType);
-
-        // TODO: Consider adding schemaName and schemaDescription parameters to this method.
-        return ChatResponseFormat.ForJsonSchema(
-            schema: recordDataType.GetSchema(),
-            schemaName: null,
-            schemaDescription: null);
-    }
-
-    /// <summary>
-    /// Converts a <see cref="RecordDataType"/> to a <see cref="JsonElement"/>.
-    /// </summary>
-    /// <param name="recordDataType">Instance of <see cref="RecordDataType"/></param>
 #pragma warning disable IL2026 // Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code
 #pragma warning disable IL3050 // Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
-    public static JsonElement GetSchema(this RecordDataType recordDataType)
+    public static BinaryData? AsBinaryData(this RecordDataType recordDataType)
     {
         Throw.IfNull(recordDataType);
 
@@ -45,7 +31,7 @@ public static class RecordDataTypeExtensions
         };
 
         var json = JsonSerializer.Serialize(schemaObject, ElementSerializer.CreateOptions());
-        return JsonSerializer.Deserialize<JsonElement>(json);
+        return new BinaryData(json);
     }
 #pragma warning restore IL3050 // Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
 #pragma warning restore IL2026 // Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code

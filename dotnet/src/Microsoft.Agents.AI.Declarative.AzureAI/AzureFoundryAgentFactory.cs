@@ -1,0 +1,110 @@
+﻿// Copyright (c) Microsoft. All rights reserved.
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+using Azure.AI.Agents.Persistent;
+using Azure.Core;
+using Microsoft.Bot.ObjectModel;
+using Microsoft.Shared.Diagnostics;
+
+namespace Microsoft.Agents.AI;
+
+/// <summary>
+/// Provides an <see cref="AgentFactory"/> which creates instances of <see cref="ChatClientAgent"/> using a <see cref="PersistentAgentsClient"/>.
+/// </summary>
+public sealed class AzureFoundryAgentFactory : AgentFactory
+{
+    /// <summary>
+    /// The type of the chat client agent.
+    /// </summary>
+    public const string AzureFoundryAgentType = "azure_foundry_agent";
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="AzureFoundryAgentFactory"/> class.
+    /// </summary>
+    public AzureFoundryAgentFactory()
+        : base([AzureFoundryAgentType])
+    {
+    }
+
+    /// <inheritdoc/>
+    public override async Task<AIAgent?> TryCreateAsync(PromptAgent promptAgent, AgentCreationOptions agentCreationOptions, CancellationToken cancellationToken = default)
+    {
+        Throw.IfNull(promptAgent);
+
+        ChatClientAgent? agent = null;
+        PersistentAgentsClient? persistentAgentsClient;
+        if (this.IsSupported(promptAgent))
+        {
+            persistentAgentsClient = agentCreationOptions.ServiceProvider?.GetService(typeof(PersistentAgentsClient)) as PersistentAgentsClient;
+            if (persistentAgentsClient is null)
+            {
+                var keyConnection = promptAgent.Model?.Connection as KeyConnection;
+                // TODO: Support OAuthConnection when PersistentAgentsClient supports it
+                //var oauthConnection = promptAgent.Model?.Connection as OAuthConnection;
+                if (keyConnection is not null)
+                {
+                    var endpoint = keyConnection.Endpoint?.LiteralValue;
+                    if (string.IsNullOrEmpty(endpoint))
+                    {
+                        throw new InvalidOperationException("The endpoint must be specified in the agent definition model connection to create an PersistentAgentsClient.");
+                    }
+                    if (agentCreationOptions.ServiceProvider?.GetService(typeof(TokenCredential)) is not TokenCredential tokenCredential)
+                    {
+                        throw new InvalidOperationException("A TokenCredential must be registered in the service provider to create an PersistentAgentsClient.");
+                    }
+                    persistentAgentsClient = new PersistentAgentsClient(endpoint, tokenCredential);
+                }
+                /* TODO: Support OAuthConnection when PersistentAgentsClient supports it
+                else if (oauthConnection is not null)
+                {
+                    var endpoint = oauthConnection.Endpoint?.LiteralValue;
+                    if (string.IsNullOrEmpty(endpoint))
+                    {
+                        throw new InvalidOperationException("The endpoint must be specified in the agent definition model connection to create an PersistentAgentsClient.");
+                    }
+                    var tokenCredential = new ClientSecretCredential
+                        (
+                        tenantId: "",
+                        clientId: oauthConnection.ClientId?.LiteralValue,
+                        clientSecret: oauthConnection.ClientSecret?.LiteralValue,
+                        options: new()
+                        {
+                            AuthorityHost = new Uri(oauthConnection.TokenUrl?.LiteralValue!),
+                        }
+                        );
+                    persistentAgentsClient = new PersistentAgentsClient(endpoint, tokenCredential);
+                }
+                */
+                else
+                {
+                    throw new InvalidOperationException("A PersistentAgentsClient must be registered in the service provider or a KeyConnection or OAuthConnection must be specified in the agent definition model connection to create an PersistentAgentsClient.");
+                }
+            }
+
+            var modelId = agentCreationOptions?.Model ?? promptAgent.Model?.Id;
+            if (string.IsNullOrEmpty(modelId))
+            {
+                throw new InvalidOperationException("The model id must be specified in the agent definition model to create a foundry agent.");
+            }
+
+            var outputSchema = promptAgent.OutputSchema;
+            OpenAIResponsesModel? model = promptAgent.Model as OpenAIResponsesModel;
+            var modelOptions = model?.Options;
+
+            agent = await persistentAgentsClient.CreateAIAgentAsync(
+                model: modelId,
+                name: promptAgent.Name,
+                instructions: promptAgent.Instructions?.ToTemplateString(),
+                tools: promptAgent.GetToolDefinitions(agentCreationOptions?.Tools),
+                toolResources: promptAgent.GetToolResources(),
+                temperature: (float?)modelOptions?.Temperature?.LiteralValue,
+                topP: (float?)modelOptions?.TopP?.LiteralValue,
+                responseFormat: outputSchema.AsBinaryData(),
+                metadata: promptAgent.Metadata?.ToDictionary(),
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+
+        return agent;
+    }
+}

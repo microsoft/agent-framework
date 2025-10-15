@@ -65,10 +65,8 @@ var runOptions = new ChatClientAgentRunOptions()
 };
 
 // Create the agent from the YAML definition.
-var agentFactory = new ChatClientAgentFactory(); //AzureFoundryAgentFactory();
+var agentFactory = new AzureFoundryAgentFactory();
 var agent = await agentFactory.CreateFromYamlAsync(text, new() { Model = model, ServiceProvider = serviceProvider, Tools = [AIFunctionFactory.Create(GetWeather, "GetWeather")] });
-
-// Tools = [AIFunctionFactory.Create(GetWeather, "GetWeather")]
 
 // Invoke the agent and output the text result.
 Console.WriteLine(await agent!.RunAsync(prompt));
