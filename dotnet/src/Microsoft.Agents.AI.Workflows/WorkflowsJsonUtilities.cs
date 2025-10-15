@@ -7,7 +7,6 @@ using System.Text.Json.Serialization;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Execution;
 using Microsoft.Extensions.AI;
-using static Microsoft.Agents.AI.Workflows.WorkflowMessageStore;
 
 namespace Microsoft.Agents.AI.Workflows;
 
@@ -80,7 +79,8 @@ internal static partial class WorkflowsJsonUtilities
     [JsonSerializable(typeof(EdgeConnection))]
 
     // Workflow-as-Agent
-    [JsonSerializable(typeof(StoreState))]
+    [JsonSerializable(typeof(WorkflowMessageStore.StoreState))]
+    [JsonSerializable(typeof(WorkflowThread.ThreadState))]
 
     // Message Types
     [JsonSerializable(typeof(ChatMessage))]
@@ -91,7 +91,7 @@ internal static partial class WorkflowsJsonUtilities
     // Event Types
     //[JsonSerializable(typeof(WorkflowEvent))]
     //   Currently cannot be serialized because it includes Exceptions.
-    //   We'll need a way to marshal this correct in the AgentRuntime case.
+    //   We'll need a way to marshal this correctly in the AgentRuntime case.
     //   For now this is okay, because we never serialize WorkflowEvents into
     //   checkpoints.
     [JsonSerializable(typeof(JsonElement))]
