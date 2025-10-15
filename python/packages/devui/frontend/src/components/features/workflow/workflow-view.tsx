@@ -201,7 +201,7 @@ function RunWorkflowButton({
 
       {/* Modal with proper Dialog component - matching WorkflowInputForm structure */}
       <Dialog open={showModal} onOpenChange={setShowModal}>
-        <DialogContent className="w-full max-w-md sm:max-w-lg md:max-w-2xl lg:max-w-4xl xl:max-w-5xl max-h-[90vh] flex flex-col">
+        <DialogContent className="w-full min-w-[400px] max-w-md sm:max-w-lg md:max-w-2xl lg:max-w-4xl xl:max-w-5xl max-h-[90vh] flex flex-col">
           <DialogHeader className="px-8 pt-6">
             <DialogTitle>Configure Workflow Inputs</DialogTitle>
             <DialogClose onClose={() => setShowModal(false)} />
