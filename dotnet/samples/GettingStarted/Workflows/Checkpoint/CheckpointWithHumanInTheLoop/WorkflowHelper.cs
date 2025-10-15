@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.AI.Workflows;
-using Microsoft.Agents.AI.Workflows.Reflection;
 
 namespace WorkflowCheckpointWithHumanInTheLoopSample;
 
@@ -54,7 +53,7 @@ internal sealed class SignalWithNumber
 /// <summary>
 /// Executor that judges the guess and provides feedback.
 /// </summary>
-internal sealed class JudgeExecutor() : ReflectingExecutor<JudgeExecutor>("Judge"), IMessageHandler<int>
+internal sealed class JudgeExecutor() : Executor<int>("Judge")
 {
     private readonly int _targetNumber;
     private int _tries;
@@ -69,21 +68,20 @@ internal sealed class JudgeExecutor() : ReflectingExecutor<JudgeExecutor>("Judge
         this._targetNumber = targetNumber;
     }
 
-    public async ValueTask HandleAsync(int message, IWorkflowContext context, CancellationToken cancellationToken = default)
+    public override async ValueTask HandleAsync(int message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         this._tries++;
         if (message == this._targetNumber)
         {
-            await context.YieldOutputAsync($"{this._targetNumber} found in {this._tries} tries!", cancellationToken)
-                         .ConfigureAwait(false);
+            await context.YieldOutputAsync($"{this._targetNumber} found in {this._tries} tries!", cancellationToken);
         }
         else if (message < this._targetNumber)
         {
-            await context.SendMessageAsync(new SignalWithNumber(NumberSignal.Below, message), cancellationToken: cancellationToken).ConfigureAwait(false);
+            await context.SendMessageAsync(new SignalWithNumber(NumberSignal.Below, message), cancellationToken: cancellationToken);
         }
         else
         {
-            await context.SendMessageAsync(new SignalWithNumber(NumberSignal.Above, message), cancellationToken: cancellationToken).ConfigureAwait(false);
+            await context.SendMessageAsync(new SignalWithNumber(NumberSignal.Above, message), cancellationToken: cancellationToken);
         }
     }
 
@@ -99,5 +97,5 @@ internal sealed class JudgeExecutor() : ReflectingExecutor<JudgeExecutor>("Judge
     /// This must be overridden to restore any state that was saved during checkpointing.
     /// </summary>
     protected override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default) =>
-        this._tries = await context.ReadStateAsync<int>(StateKey, cancellationToken: cancellationToken).ConfigureAwait(false);
+        this._tries = await context.ReadStateAsync<int>(StateKey, cancellationToken: cancellationToken);
 }

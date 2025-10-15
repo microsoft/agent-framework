@@ -21,7 +21,7 @@ public class AgentWorkflowBuilderTests
     [Fact]
     public void BuildSequential_InvalidArguments_Throws()
     {
-        Assert.Throws<ArgumentNullException>("agents", () => AgentWorkflowBuilder.BuildSequential(null!));
+        Assert.Throws<ArgumentNullException>("agents", () => AgentWorkflowBuilder.BuildSequential(workflowName: null!, null!));
         Assert.Throws<ArgumentException>("agents", () => AgentWorkflowBuilder.BuildSequential());
     }
 
