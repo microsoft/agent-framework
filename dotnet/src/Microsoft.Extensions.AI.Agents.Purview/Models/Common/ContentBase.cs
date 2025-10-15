@@ -1,0 +1,17 @@
+﻿// Copyright (c) Microsoft. All rights reserved.
+
+using System.Text.Json.Serialization;
+
+namespace Microsoft.Extensions.AI.Agents.Purview.Models.Common;
+
+/// <summary>
+/// Base class for content items to be processed by the Purview SDK.
+/// </summary>
+[JsonDerivedType(typeof(PurviewTextContent))]
+[JsonDerivedType(typeof(PurviewBinaryContent))]
+internal abstract class ContentBase : GraphDataTypeBase
+{
+    public ContentBase(string dataType) : base(dataType)
+    {
+    }
+}

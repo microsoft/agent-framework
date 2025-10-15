@@ -59,6 +59,9 @@
     <Project Path="samples/GettingStarted/AgentWithOpenAI/Agent_OpenAI_Step01_Running/Agent_OpenAI_Step01_Running.csproj" />
     <Project Path="samples/GettingStarted/AgentWithOpenAI/Agent_OpenAI_Step02_Reasoning/Agent_OpenAI_Step02_Reasoning.csproj" />
   </Folder>
+  <Folder Name="/Samples/GettingStarted/AgentWithPurview/">
+    <Project Path="samples/GettingStarted/AgentWithPurview/AgentWithPurview.csproj" Id="36a59e99-ac83-4a35-b5ae-8b60f009dc1e" />
+  </Folder>
   <Folder Name="/Samples/GettingStarted/ModelContextProtocol/">
     <Project Path="samples/GettingStarted/ModelContextProtocol/Agent_MCP_Server/Agent_MCP_Server.csproj" />
     <Project Path="samples/GettingStarted/ModelContextProtocol/Agent_MCP_Server_Auth/Agent_MCP_Server_Auth.csproj" />
@@ -303,6 +306,7 @@
     <Project Path="src/Microsoft.Agents.AI.Workflows.Declarative/Microsoft.Agents.AI.Workflows.Declarative.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Workflows/Microsoft.Agents.AI.Workflows.csproj" />
     <Project Path="src/Microsoft.Agents.AI/Microsoft.Agents.AI.csproj" />
+    <Project Path="src/Microsoft.Extensions.AI.Agents.Purview/Microsoft.Extensions.AI.Agents.Purview.csproj" Id="e2fa3f42-2062-44cc-9329-0d7899ce8578" />
   </Folder>
   <Folder Name="/Tests/" />
   <Folder Name="/Tests/IntegrationTests/">
