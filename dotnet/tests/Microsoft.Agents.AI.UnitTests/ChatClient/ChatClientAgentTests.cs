@@ -1926,6 +1926,259 @@ public partial class ChatClientAgentTests
 
     #endregion
 
+    #region Background Responses Tests
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task RunAsyncPropagatesBackgroundResponsesPropertiesToChatClientAsync(bool providePropsViaChatOptions)
+    {
+        // Arrange
+        object continuationToken = new();
+        ChatOptions? capturedChatOptions = null;
+        Mock<IChatClient> mockChatClient = new();
+        mockChatClient
+            .Setup(c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<ChatMessage>, ChatOptions, CancellationToken>((m, co, ct) => capturedChatOptions = co)
+            .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]) { ContinuationToken = null });
+
+        AgentRunOptions agentRunOptions;
+
+        if (providePropsViaChatOptions)
+        {
+            ChatOptions chatOptions = new()
+            {
+                AllowBackgroundResponses = true,
+                ContinuationToken = continuationToken
+            };
+
+            agentRunOptions = new ChatClientAgentRunOptions(chatOptions);
+        }
+        else
+        {
+            agentRunOptions = new AgentRunOptions()
+            {
+                AllowBackgroundResponses = true,
+                ContinuationToken = continuationToken
+            };
+        }
+
+        ChatClientAgent agent = new(mockChatClient.Object);
+
+        // Act
+        await agent.RunAsync([new(ChatRole.User, "hi")], options: agentRunOptions);
+
+        // Assert
+        Assert.NotNull(capturedChatOptions);
+        Assert.True(capturedChatOptions.AllowBackgroundResponses);
+        Assert.Same(continuationToken, capturedChatOptions.ContinuationToken);
+    }
+
+    [Fact]
+    public async Task RunAsyncPrioritizesBackgroundResponsesPropertiesFromAgentRunOptionsOverOnesFromChatOptionsAsync()
+    {
+        // Arrange
+        object continuationToken1 = new();
+        object continuationToken2 = new();
+        ChatOptions? capturedChatOptions = null;
+        Mock<IChatClient> mockChatClient = new();
+        mockChatClient
+            .Setup(c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<ChatMessage>, ChatOptions, CancellationToken>((m, co, ct) => capturedChatOptions = co)
+            .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]) { ContinuationToken = null });
+
+        ChatOptions chatOptions = new()
+        {
+            AllowBackgroundResponses = true,
+            ContinuationToken = continuationToken1
+        };
+
+        ChatClientAgentRunOptions agentRunOptions = new(chatOptions)
+        {
+            AllowBackgroundResponses = false,
+            ContinuationToken = continuationToken2
+        };
+
+        ChatClientAgent agent = new(mockChatClient.Object);
+
+        // Act
+        await agent.RunAsync([new(ChatRole.User, "hi")], options: agentRunOptions);
+
+        // Assert
+        Assert.NotNull(capturedChatOptions);
+        Assert.False(capturedChatOptions.AllowBackgroundResponses);
+        Assert.Same(continuationToken2, capturedChatOptions.ContinuationToken);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task RunStreamingAsyncPropagatesBackgroundResponsesPropertiesToChatClientAsync(bool providePropsViaChatOptions)
+    {
+        // Arrange
+        ChatResponseUpdate[] returnUpdates =
+        [
+            new ChatResponseUpdate(role: ChatRole.Assistant, content: "wh"),
+            new ChatResponseUpdate(role: ChatRole.Assistant, content: "at?"),
+        ];
+
+        object continuationToken = new();
+        ChatOptions? capturedChatOptions = null;
+        Mock<IChatClient> mockChatClient = new();
+        mockChatClient
+            .Setup(c => c.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<ChatMessage>, ChatOptions, CancellationToken>((m, co, ct) => capturedChatOptions = co)
+            .Returns(ToAsyncEnumerableAsync(returnUpdates));
+
+        AgentRunOptions agentRunOptions;
+
+        if (providePropsViaChatOptions)
+        {
+            ChatOptions chatOptions = new()
+            {
+                AllowBackgroundResponses = true,
+                ContinuationToken = continuationToken
+            };
+
+            agentRunOptions = new ChatClientAgentRunOptions(chatOptions);
+        }
+        else
+        {
+            agentRunOptions = new AgentRunOptions()
+            {
+                AllowBackgroundResponses = true,
+                ContinuationToken = continuationToken
+            };
+        }
+
+        ChatClientAgent agent = new(mockChatClient.Object);
+
+        // Act
+        await foreach (var _ in agent.RunStreamingAsync([new(ChatRole.User, "hi")], options: agentRunOptions))
+        {
+        }
+
+        // Assert
+        Assert.NotNull(capturedChatOptions);
+
+        Assert.True(capturedChatOptions.AllowBackgroundResponses);
+        Assert.Same(continuationToken, capturedChatOptions.ContinuationToken);
+    }
+
+    [Fact]
+    public async Task RunStreamingAsyncPrioritizesBackgroundResponsesPropertiesFromAgentRunOptionsOverOnesFromChatOptionsAsync()
+    {
+        // Arrange
+        ChatResponseUpdate[] returnUpdates =
+        [
+            new ChatResponseUpdate(role: ChatRole.Assistant, content: "wh"),
+        ];
+
+        object continuationToken1 = new();
+        object continuationToken2 = new();
+        ChatOptions? capturedChatOptions = null;
+        Mock<IChatClient> mockChatClient = new();
+        mockChatClient
+            .Setup(c => c.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<ChatMessage>, ChatOptions, CancellationToken>((m, co, ct) => capturedChatOptions = co)
+            .Returns(ToAsyncEnumerableAsync(returnUpdates));
+
+        ChatOptions chatOptions = new()
+        {
+            AllowBackgroundResponses = true,
+            ContinuationToken = continuationToken1
+        };
+
+        ChatClientAgentRunOptions agentRunOptions = new(chatOptions)
+        {
+            AllowBackgroundResponses = false,
+            ContinuationToken = continuationToken2
+        };
+
+        ChatClientAgent agent = new(mockChatClient.Object);
+
+        // Act
+        await foreach (var _ in agent.RunStreamingAsync([new(ChatRole.User, "hi")], options: agentRunOptions))
+        {
+        }
+
+        // Assert
+        Assert.NotNull(capturedChatOptions);
+        Assert.False(capturedChatOptions.AllowBackgroundResponses);
+        Assert.Same(continuationToken2, capturedChatOptions.ContinuationToken);
+    }
+
+    [Fact]
+    public async Task RunAsyncPropagatesContinuationTokenFromChatResponseToAgentRunResponseAsync()
+    {
+        // Arrange
+        object continuationToken = new();
+        Mock<IChatClient> mockChatClient = new();
+        mockChatClient
+            .Setup(c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "partial")]) { ContinuationToken = continuationToken });
+
+        ChatClientAgent agent = new(mockChatClient.Object);
+        var runOptions = new ChatClientAgentRunOptions(new ChatOptions { AllowBackgroundResponses = true });
+
+        // Act
+        var response = await agent.RunAsync([new(ChatRole.User, "hi")], options: runOptions);
+
+        // Assert
+        Assert.Same(continuationToken, response.ContinuationToken);
+    }
+
+    [Fact]
+    public async Task RunStreamingAsyncPropagatesContinuationTokensFromUpdatesAsync()
+    {
+        // Arrange
+        object token1 = new();
+        ChatResponseUpdate[] expectedUpdates =
+        [
+            new ChatResponseUpdate(ChatRole.Assistant, "pa") { ContinuationToken = token1 },
+            new ChatResponseUpdate(ChatRole.Assistant, "rt") { ContinuationToken = null } // terminal
+        ];
+
+        Mock<IChatClient> mockChatClient = new();
+        mockChatClient
+            .Setup(c => c.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions?>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(ToAsyncEnumerableAsync(expectedUpdates));
+
+        ChatClientAgent agent = new(mockChatClient.Object);
+
+        // Act
+        var actualUpdates = new List<AgentRunResponseUpdate>();
+        await foreach (var u in agent.RunStreamingAsync([new(ChatRole.User, "hi")], options: new ChatClientAgentRunOptions(new ChatOptions { AllowBackgroundResponses = true })))
+        {
+            actualUpdates.Add(u);
+        }
+
+        // Assert
+        Assert.Equal(2, actualUpdates.Count);
+        Assert.Same(token1, actualUpdates[0].ContinuationToken);
+        Assert.Null(actualUpdates[1].ContinuationToken); // last update has null token
+    }
+
+    #endregion
+
     private static async IAsyncEnumerable<T> ToAsyncEnumerableAsync<T>(IEnumerable<T> values)
     {
         await Task.Yield();

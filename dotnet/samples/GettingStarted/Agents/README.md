@@ -42,6 +42,7 @@ Before you begin, ensure you have the following prerequisites:
 |[Using middleware with an agent](./Agent_Step14_Middleware/)|This sample demonstrates how to use middleware with an agent|
 |[Using plugins with an agent](./Agent_Step15_Plugins/)|This sample demonstrates how to use plugins with an agent|
 |[Reducing chat history size](./Agent_Step16_ChatReduction/)|This sample demonstrates how to reduce the chat history to constrain its size, where chat history is maintained locally|
+|[Background responses](./Agent_Step17_BackgroundResponses/)|This sample demonstrates how to use background responses for long-running operations with polling and resumption support|
 
 ## Running the samples from the console
 

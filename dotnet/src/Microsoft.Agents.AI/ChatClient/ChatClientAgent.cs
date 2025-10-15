@@ -436,13 +436,13 @@ public sealed partial class ChatClientAgent : AIAgent
         // If no agent chat options were provided, return the request chat options as is.
         if (this._agentOptions?.ChatOptions is null)
         {
-            return requestChatOptions;
+            return ApplyBackgroundResponsesProperties(requestChatOptions, runOptions);
         }
 
         // If no request chat options were provided, use the agent's chat options clone.
         if (requestChatOptions is null)
         {
-            return this._agentOptions?.ChatOptions.Clone();
+            return ApplyBackgroundResponsesProperties(this._agentOptions?.ChatOptions.Clone(), runOptions);
         }
 
         // If both are present, we need to merge them.
@@ -532,7 +532,19 @@ public sealed partial class ChatClientAgent : AIAgent
             }
         }
 
-        return requestChatOptions;
+        return ApplyBackgroundResponsesProperties(requestChatOptions, runOptions);
+
+        static ChatOptions? ApplyBackgroundResponsesProperties(ChatOptions? chatOptions, AgentRunOptions? agentRunOptions)
+        {
+            if (agentRunOptions?.AllowBackgroundResponses is not null)
+            {
+                chatOptions ??= new ChatOptions();
+                chatOptions.AllowBackgroundResponses = agentRunOptions.AllowBackgroundResponses;
+                chatOptions.ContinuationToken = agentRunOptions.ContinuationToken;
+            }
+
+            return chatOptions;
+        }
     }
 
     /// <summary>

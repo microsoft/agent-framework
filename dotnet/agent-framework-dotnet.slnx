@@ -23,7 +23,7 @@
   </Folder>
   <Folder Name="/Samples/GettingStarted/A2A/">
     <File Path="samples/GettingStarted/A2A/README.md" />
-    <Project Path="samples/GettingStarted/A2A/A2AAgent_AsFunctionTools/A2AAgent_AsFunctionTools.csproj"/>
+    <Project Path="samples/GettingStarted/A2A/A2AAgent_AsFunctionTools/A2AAgent_AsFunctionTools.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/AgentProviders/">
     <File Path="samples/GettingStarted/AgentProviders/README.md" />
@@ -57,6 +57,7 @@
     <Project Path="samples/GettingStarted/Agents/Agent_Step14_Middleware/Agent_Step14_Middleware.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step15_Plugins/Agent_Step15_Plugins.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step16_ChatReduction/Agent_Step16_ChatReduction.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agent_Step17_BackgroundResponses/Agent_Step17_BackgroundResponses.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/AgentWithOpenAI/">
     <File Path="samples/GettingStarted/AgentWithOpenAI/README.md" />
@@ -208,8 +209,14 @@
   <Folder Name="/Solution Items/docs/" />
   <Folder Name="/Solution Items/docs/decisions/">
     <File Path="../docs/decisions/0001-agent-run-response.md" />
-    <File Path="../docs/decisions/0001-agent-tools.md" />
-    <File Path="../docs/decisions/0002-agent-opentelemetry-instrumentation.md" />
+    <File Path="../docs/decisions/0002-agent-tools.md" />
+    <File Path="../docs/decisions/0003-agent-opentelemetry-instrumentation.md" />
+    <File Path="../docs/decisions/0004-foundry-sdk-extensions.md" />
+    <File Path="../docs/decisions/0005-python-naming-conventions.md" />
+    <File Path="../docs/decisions/0006-userapproval.md" />
+    <File Path="../docs/decisions/0007-agent-filtering-middleware.md" />
+    <File Path="../docs/decisions/0008-python-subpackages.md" />
+    <File Path="../docs/decisions/0009-support-long-running-operations.md" />
     <File Path="../docs/decisions/adr-short-template.md" />
     <File Path="../docs/decisions/adr-template.md" />
     <File Path="../docs/decisions/README.md" />
