@@ -76,7 +76,7 @@ public static class Program
             }
         }
 
-        // Optional: Visualize the workflow structure - Note that sub-workflow are not rendered
+        // Optional: Visualize the workflow structure - Note that sub-workflows are not rendered
         Console.ForegroundColor = ConsoleColor.DarkGray;
         Console.WriteLine("\n=== Workflow Visualization ===\n");
         Console.WriteLine(mainWorkflow.ToMermaidString());
