@@ -98,7 +98,7 @@ from ._validation import (
 from ._viz import WorkflowViz
 from ._workflow import Workflow, WorkflowBuilder, WorkflowRunResult
 from ._workflow_context import WorkflowContext
-from ._workflow_executor import WorkflowExecutor
+from ._workflow_executor import SubWorkflowRequestMessage, SubWorkflowResponseMessage, WorkflowExecutor
 
 __all__ = [
     "DEFAULT_MAX_ITERATIONS",
@@ -156,6 +156,8 @@ __all__ = [
     "SharedState",
     "SingleEdgeGroup",
     "StandardMagenticManager",
+    "SubWorkflowRequestMessage",
+    "SubWorkflowResponseMessage",
     "SwitchCaseEdgeGroup",
     "SwitchCaseEdgeGroupCase",
     "SwitchCaseEdgeGroupDefault",

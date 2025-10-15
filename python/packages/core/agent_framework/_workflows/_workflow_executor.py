@@ -40,7 +40,52 @@ class ExecutionContext:
     execution_id: str
     collected_responses: dict[str, Any]  # request_id -> response_data
     expected_response_count: int
-    pending_requests: dict[str, Any]  # request_id -> original request data
+    pending_requests: dict[str, RequestInfoEvent]  # request_id -> request_info_event
+
+
+@dataclass
+class SubWorkflowResponseMessage:
+    """Message sent from a parent workflow to a sub-workflow via WorkflowExecutor to provide requested information.
+
+    This message wraps a RequestResponse emitted by the parent workflow.
+
+    Attributes:
+        response: The response to the original request.
+    """
+
+    data: Any
+    source_event: RequestInfoEvent
+
+
+@dataclass
+class SubWorkflowRequestMessage:
+    """Message sent from a sub-workflow to an executor in the parent workflow to request information.
+
+    This message wraps a RequestInfoEvent emitted by the executor in the sub-workflow.
+
+    Attributes:
+        source_event: The original RequestInfoEvent emitted by the sub-workflow executor.
+        executor_id: The ID of the WorkflowExecutor in the parent workflow that is
+            responsible for this sub-workflow. This can be used to ensure that the response
+            is sent back to the correct sub-workflow instance.
+    """
+
+    source_event: RequestInfoEvent
+    executor_id: str
+
+    def create_response(self, data: Any) -> SubWorkflowResponseMessage:
+        """Validate and wrap response data into a SubWorkflowResponseMessage.
+
+        Validation ensures the response data type matches the expected type from the original request.
+        """
+        expected_data_type = self.source_event.response_type
+        if not is_instance_of(data, expected_data_type):
+            raise TypeError(
+                f"Response data type {type(data)} does not match expected type {expected_data_type} "
+                f"for request_id {self.source_event.request_id}"
+            )
+
+        return SubWorkflowResponseMessage(data=data, source_event=self.source_event)
 
 
 class WorkflowExecutor(Executor):
@@ -236,9 +281,9 @@ class WorkflowExecutor(Executor):
         """
         input_types = list(self.workflow.input_types)
 
-        # WorkflowExecutor can also handle RequestResponse for sub-workflow responses
-        if RequestResponse not in input_types:
-            input_types.append(RequestResponse)
+        # WorkflowExecutor can also handle SubWorkflowResponseMessage for sub-workflow responses
+        if SubWorkflowResponseMessage not in input_types:
+            input_types.append(SubWorkflowResponseMessage)
 
         return input_types
 
@@ -281,10 +326,10 @@ class WorkflowExecutor(Executor):
         """Override can_handle to only accept messages that the wrapped workflow can handle.
 
         This prevents the WorkflowExecutor from accepting messages that should go to other
-        executors (like RequestInfoExecutor).
+        executors because the handler `process_workflow` has no type restrictions.
         """
-        # Always handle RequestResponse (for the handle_response handler)
-        if isinstance(message, RequestResponse):
+        # Always handle SubWorkflowResponseMessage
+        if isinstance(message.data, SubWorkflowResponseMessage):
             return True
 
         # For other messages, only handle if the wrapped workflow can accept them as input
@@ -372,15 +417,16 @@ class WorkflowExecutor(Executor):
         # Process request info events
         for event in request_info_events:
             # Track the pending request in execution context
-            execution_context.pending_requests[event.request_id] = event.data
+            execution_context.pending_requests[event.request_id] = event
             # Map request to execution for response routing
             self._request_to_execution[event.request_id] = execution_context.execution_id
-            # Set source_executor_id for response routing and send to parent
-            if not isinstance(event.data, RequestInfoMessage):
-                raise TypeError(f"Expected RequestInfoMessage, got {type(event.data)}")
-            # Set the source_executor_id to this WorkflowExecutor's ID for response routing
-            event.data.source_executor_id = self.id
-            await ctx.send_message(event.data)
+            # TODO(@taochen): There should be two ways a sub-workflow can make a request:
+            # 1. In a workflow where the parent workflow has an executor that may intercept the
+            #    request and handle it directly, a message should be sent.
+            # 2. In a workflow where the parent workflow does not handle the request, the request
+            #    should be propagated via the `request_info` mechanism to an external source. And
+            #    a @response_handler would be required in the WorkflowExecutor to handle the response.
+            await ctx.send_message(SubWorkflowRequestMessage(source_event=event, executor_id=self.id))
 
         # Update expected response count for this execution
         execution_context.expected_response_count = len(request_info_events)
@@ -429,11 +475,7 @@ class WorkflowExecutor(Executor):
         await self._persist_execution_state(ctx)
 
     @handler
-    async def handle_response(
-        self,
-        response: RequestResponse[RequestInfoMessage, Any],
-        ctx: WorkflowContext[Any],
-    ) -> None:
+    async def handle_response(self, response: SubWorkflowResponseMessage, ctx: WorkflowContext[Any]) -> None:
         """Handle response from parent for a forwarded request.
 
         This handler accumulates responses and only resumes the sub-workflow
@@ -446,29 +488,31 @@ class WorkflowExecutor(Executor):
         await self._ensure_state_loaded(ctx)
 
         # Find the execution context for this request
-        execution_id = self._request_to_execution.get(response.request_id)
+        original_request = response.source_event
+        execution_id = self._request_to_execution.get(original_request.request_id)
         if not execution_id or execution_id not in self._execution_contexts:
             logger.warning(
-                f"WorkflowExecutor {self.id} received response for unknown request_id: {response.request_id}, ignoring"
+                f"WorkflowExecutor {self.id} received response for unknown request_id: {original_request.request_id}. "
+                "This response will be ignored."
             )
             return
 
         execution_context = self._execution_contexts[execution_id]
 
         # Check if we have this pending request in the execution context
-        if response.request_id not in execution_context.pending_requests:
+        if original_request.request_id not in execution_context.pending_requests:
             logger.warning(
                 f"WorkflowExecutor {self.id} received response for unknown request_id: "
-                f"{response.request_id} in execution {execution_id}, ignoring"
+                f"{original_request.request_id} in execution {execution_id}, ignoring"
             )
             return
 
         # Remove the request from pending list and request mapping
-        execution_context.pending_requests.pop(response.request_id, None)
-        self._request_to_execution.pop(response.request_id, None)
+        execution_context.pending_requests.pop(original_request.request_id, None)
+        self._request_to_execution.pop(original_request.request_id, None)
 
         # Accumulate the response in this execution's context
-        execution_context.collected_responses[response.request_id] = response.data
+        execution_context.collected_responses[original_request.request_id] = response.data
 
         await self._persist_execution_state(ctx)
 
