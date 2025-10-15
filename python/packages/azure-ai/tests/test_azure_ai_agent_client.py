@@ -836,7 +836,7 @@ async def test_azure_ai_chat_client_create_run_options_mcp_with_headers(mock_ai_
     chat_client = create_test_azure_ai_chat_client(mock_ai_project_client)
 
     # Test with headers
-    headers = {"Authorization": "Bearer token123", "X-API-Key": "secret"}
+    headers = {"Authorization": "Bearer DUMMY_TOKEN", "X-API-Key": "DUMMY_KEY"}
     mcp_tool = HostedMCPTool(
         name="Test MCP Tool", url="https://example.com/mcp", headers=headers, approval_mode="never_require"
     )
