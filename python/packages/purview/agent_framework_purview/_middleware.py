@@ -73,7 +73,7 @@ class PurviewPolicyMiddleware(AgentMiddleware):
             # Use the same user_id from the request for the response evaluation
             if context.result and not context.is_streaming:
                 should_block_response, _ = await self._processor.process_messages(
-                    context.result.messages,  # type: ignore[attr-defined]
+                    context.result.messages,  # type: ignore[union-attr]
                     Activity.UPLOAD_TEXT,
                     user_id=resolved_user_id,
                 )
