@@ -498,6 +498,26 @@ def test_chat_message_contents():
     assert message.text == "Hello, how are you? I'm fine, thank you!"
 
 
+def test_chat_message_reasoning_contents():
+    """Test the ChatMessage class to ensure it initializes correctly with contents."""
+    # Create a ChatMessage with a role and multiple contents
+    content1 = TextReasoningContent("For this task, we need to consider the following...")
+    content2 = TextReasoningContent("And then we can proceed with the next steps.")
+    message = ChatMessage(role="user", contents=[content1, content2])
+
+    # Check the type and content
+    assert message.role == Role.USER
+    assert len(message.contents) == 2
+    assert isinstance(message.contents[0], TextReasoningContent)
+    assert isinstance(message.contents[1], TextReasoningContent)
+    assert message.contents[0].text == "For this task, we need to consider the following..."
+    assert message.contents[1].text == "And then we can proceed with the next steps."
+    assert (
+        message.reasoning
+        == "For this task, we need to consider the following... And then we can proceed with the next steps."
+    )
+
+
 def test_chat_message_with_chatrole_instance():
     m = ChatMessage(role=Role.USER, text="hi")
     assert m.role == Role.USER
@@ -646,6 +666,7 @@ def test_chat_response_updates_to_chat_response_multiple():
     # Check the type and content
     assert len(chat_response.messages) == 1
     assert chat_response.text == "I'm doing well,  thank you!"
+    assert chat_response.reasoning == "Additional context"
     assert isinstance(chat_response.messages[0], ChatMessage)
     assert len(chat_response.messages[0].contents) == 3
     assert chat_response.messages[0].message_id == "1"
