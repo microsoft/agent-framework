@@ -153,7 +153,12 @@ class OllamaChatClient(BaseChatClient):
 
     def _prepare_options(self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions) -> dict[str, Any]:
         # Preprocess web search tool if it exists
-        options_dict = chat_options.to_dict(exclude={"instructions"})
+        options_dict = chat_options.to_dict(exclude={"instructions", "type"})
+
+        # Promote additional_properties to the top level of options_dict
+        additional_props = options_dict.pop("additional_properties", {})
+        options_dict.update(additional_props)
+
         # Prepare Messages from Agent Framework format to Ollama format
         if messages and "messages" not in options_dict:
             options_dict["messages"] = self._prepare_chat_history_for_request(messages)
