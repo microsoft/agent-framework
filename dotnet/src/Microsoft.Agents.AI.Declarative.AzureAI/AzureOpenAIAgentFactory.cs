@@ -2,9 +2,6 @@
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Bot.ObjectModel;
-using Microsoft.Extensions.AI;
-using OpenAI.Assistants;
-using OpenAI.Responses;
 
 namespace Microsoft.Agents.AI;
 
@@ -34,6 +31,7 @@ public sealed class AzureOpenAIAgentFactory : AgentFactory
         ChatClientAgent? agent = null;
         if (this.IsSupported(promptAgent))
         {
+            /*
             var chatClient = agentCreationOptions.ServiceProvider?.GetService(typeof(ChatClient)) as OpenAI.Chat.ChatClient;
             var assistantClient = agentCreationOptions.ServiceProvider?.GetService(typeof(AssistantClient)) as AssistantClient;
             var responseClient = agentCreationOptions.ServiceProvider?.GetService(typeof(OpenAIResponseClient)) as OpenAIResponseClient;
@@ -57,7 +55,6 @@ public sealed class AzureOpenAIAgentFactory : AgentFactory
             }
             else
             {
-                /*
                 var deploymentName = promptAgent.Model?.Connection?.GetDeploymentName();
                 if (string.IsNullOrEmpty(deploymentName))
                 {
@@ -88,10 +85,8 @@ public sealed class AzureOpenAIAgentFactory : AgentFactory
                          .GetChatClient(deploymentName)
                          .AsIChatClient();
                 }
-                */
             }
-
-
+            */
         }
 
         return Task.FromResult<AIAgent?>(agent);
