@@ -64,28 +64,7 @@ internal static class PortableValueExtensions
             FormulaValue.NewSingleColumnTable(formulaValues.OfType<PrimitiveValue<TValue>>());
     }
 
-    private static RecordType ParseRecordType(this RecordValue record)
-    {
-        RecordType recordType = RecordType.Empty();
-        foreach (NamedValue property in record.Fields)
-        {
-            recordType = recordType.Add(property.Name, property.Value.Type);
-        }
-        return recordType;
-    }
-
-    private static bool IsParentType<TValue>(this PortableValue value, [NotNullWhen(true)] out TValue? typedValue)
-    {
-        if (value.TypeId.IsMatchPolymorphic(typeof(TValue)))
-        {
-            return value.Is(out typedValue);
-        }
-
-        typedValue = default;
-        return false;
-    }
-
-    private static bool IsSystemType<TValue>(this PortableValue value, [NotNullWhen(true)] out TValue? typedValue) where TValue : struct
+    public static bool IsSystemType<TValue>(this PortableValue value, [NotNullWhen(true)] out TValue? typedValue) where TValue : struct
     {
         if (value.TypeId.IsMatch<TValue>() || value.TypeId.IsMatch(typeof(TValue).UnderlyingSystemType))
         {
@@ -96,7 +75,7 @@ internal static class PortableValueExtensions
         return false;
     }
 
-    private static bool IsType<TValue>(this PortableValue value, [NotNullWhen(true)] out TValue? typedValue)
+    public static bool IsType<TValue>(this PortableValue value, [NotNullWhen(true)] out TValue? typedValue)
     {
         if (value.TypeId.IsMatch<TValue>())
         {
@@ -105,5 +84,26 @@ internal static class PortableValueExtensions
 
         typedValue = default;
         return false;
+    }
+
+    public static bool IsParentType<TValue>(this PortableValue value, [NotNullWhen(true)] out TValue? typedValue)
+    {
+        if (value.TypeId.IsMatchPolymorphic(typeof(TValue)))
+        {
+            return value.Is(out typedValue);
+        }
+
+        typedValue = default;
+        return false;
+    }
+
+    private static RecordType ParseRecordType(this RecordValue record)
+    {
+        RecordType recordType = RecordType.Empty();
+        foreach (NamedValue property in record.Fields)
+        {
+            recordType = recordType.Add(property.Name, property.Value.Type);
+        }
+        return recordType;
     }
 }
