@@ -26,6 +26,18 @@ public static partial class AgentWorkflowBuilder
     /// <param name="agents">The sequence of agents to compose into a sequential workflow.</param>
     /// <returns>The built workflow composed of the supplied <paramref name="agents"/>, in the order in which they were yielded from the source.</returns>
     public static Workflow BuildSequential(params IEnumerable<AIAgent> agents)
+        => BuildSequentialCore(workflowName: null, agents);
+
+    /// <summary>
+    /// Builds a <see cref="Workflow{T}"/> composed of a pipeline of agents where the output of one agent is the input to the next.
+    /// </summary>
+    /// <param name="workflowName">The name of workflow.</param>
+    /// <param name="agents">The sequence of agents to compose into a sequential workflow.</param>
+    /// <returns>The built workflow composed of the supplied <paramref name="agents"/>, in the order in which they were yielded from the source.</returns>
+    public static Workflow BuildSequential(string workflowName, params IEnumerable<AIAgent> agents)
+        => BuildSequentialCore(workflowName, agents);
+
+    private static Workflow BuildSequentialCore(string? workflowName, params IEnumerable<AIAgent> agents)
     {
         Throw.IfNull(agents);
 
@@ -60,9 +72,12 @@ public static partial class AgentWorkflowBuilder
         Debug.Assert(builder is not null);
 
         OutputMessagesExecutor end = new();
-        return builder.AddEdge(previous, end)
-                      .WithOutputFrom(end)
-                      .Build();
+        builder = builder.AddEdge(previous, end).WithOutputFrom(end);
+        if (workflowName is not null)
+        {
+            builder = builder.WithName(workflowName);
+        }
+        return builder.Build();
     }
 
     /// <summary>
@@ -77,6 +92,30 @@ public static partial class AgentWorkflowBuilder
     /// </param>
     /// <returns>The built workflow composed of the supplied concurrent <paramref name="agents"/>.</returns>
     public static Workflow BuildConcurrent(
+        IEnumerable<AIAgent> agents,
+        Func<IList<List<ChatMessage>>, List<ChatMessage>>? aggregator = null)
+        => BuildConcurrentCore(workflowName: null, agents, aggregator);
+
+    /// <summary>
+    /// Builds a <see cref="Workflow{T}"/> composed of agents that operate concurrently on the same input,
+    /// aggregating their outputs into a single collection.
+    /// </summary>
+    /// <param name="workflowName">The name of the workflow.</param>
+    /// <param name="agents">The set of agents to compose into a concurrent workflow.</param>
+    /// <param name="aggregator">
+    /// The aggregation function that accepts a list of the output messages from each <paramref name="agents"/> and produces
+    /// a single result list. If <see langword="null"/>, the default behavior is to return a list containing the last message
+    /// from each agent that produced at least one message.
+    /// </param>
+    /// <returns>The built workflow composed of the supplied concurrent <paramref name="agents"/>.</returns>
+    public static Workflow BuildConcurrent(
+        string workflowName,
+        IEnumerable<AIAgent> agents,
+        Func<IList<List<ChatMessage>>, List<ChatMessage>>? aggregator = null)
+        => BuildConcurrentCore(workflowName, agents, aggregator);
+
+    private static Workflow BuildConcurrentCore(
+        string? workflowName,
         IEnumerable<AIAgent> agents,
         Func<IList<List<ChatMessage>>, List<ChatMessage>>? aggregator = null)
     {
@@ -105,7 +144,12 @@ public static partial class AgentWorkflowBuilder
         ConcurrentEndExecutor end = new(agentExecutors.Length, aggregator);
         builder.AddFanInEdge(end, sources: accumulators);
 
-        return builder.WithOutputFrom(end).Build();
+        builder = builder.WithOutputFrom(end);
+        if (workflowName is not null)
+        {
+            builder = builder.WithName(workflowName);
+        }
+        return builder.Build();
     }
 
     /// <summary>Creates a new <see cref="HandoffsWorkflowBuilder"/> using <paramref name="initialAgent"/> as the starting agent in the workflow.</summary>
@@ -536,57 +580,57 @@ public static partial class AgentWorkflowBuilder
 
             protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
                 routeBuilder.AddHandler<HandoffState>(async (handoffState, context, cancellationToken) =>
+                {
+                    string? requestedHandoff = null;
+                    List<AgentRunResponseUpdate> updates = [];
+                    List<ChatMessage> allMessages = handoffState.Messages;
+
+                    List<ChatMessage>? roleChanges = ChangeAssistantToUserForOtherParticipants(this._agent.DisplayName, allMessages);
+
+                    await foreach (var update in this._agent.RunStreamingAsync(allMessages,
+                                                                               options: this._agentOptions,
+                                                                               cancellationToken: cancellationToken)
+                                                            .ConfigureAwait(false))
                     {
-                        string? requestedHandoff = null;
-                        List<AgentRunResponseUpdate> updates = [];
-                        List<ChatMessage> allMessages = handoffState.Messages;
+                        await AddUpdateAsync(update, cancellationToken).ConfigureAwait(false);
 
-                        List<ChatMessage>? roleChanges = ChangeAssistantToUserForOtherParticipants(this._agent.DisplayName, allMessages);
-
-                        await foreach (var update in this._agent.RunStreamingAsync(allMessages,
-                                                                                   options: this._agentOptions,
-                                                                                   cancellationToken: cancellationToken)
-                                                                .ConfigureAwait(false))
+                        foreach (var c in update.Contents)
                         {
-                            await AddUpdateAsync(update, cancellationToken).ConfigureAwait(false);
-
-                            foreach (var c in update.Contents)
+                            if (c is FunctionCallContent fcc && this._handoffFunctionNames.Contains(fcc.Name))
                             {
-                                if (c is FunctionCallContent fcc && this._handoffFunctionNames.Contains(fcc.Name))
-                                {
-                                    requestedHandoff = fcc.Name;
-                                    await AddUpdateAsync(
-                                        new AgentRunResponseUpdate
-                                        {
-                                            AgentId = this._agent.Id,
-                                            AuthorName = this._agent.DisplayName,
-                                            Contents = [new FunctionResultContent(fcc.CallId, "Transferred.")],
-                                            CreatedAt = DateTimeOffset.UtcNow,
-                                            MessageId = Guid.NewGuid().ToString("N"),
-                                            Role = ChatRole.Tool,
-                                        },
-                                        cancellationToken
-                                     )
-                                    .ConfigureAwait(false);
-                                }
+                                requestedHandoff = fcc.Name;
+                                await AddUpdateAsync(
+                                    new AgentRunResponseUpdate
+                                    {
+                                        AgentId = this._agent.Id,
+                                        AuthorName = this._agent.DisplayName,
+                                        Contents = [new FunctionResultContent(fcc.CallId, "Transferred.")],
+                                        CreatedAt = DateTimeOffset.UtcNow,
+                                        MessageId = Guid.NewGuid().ToString("N"),
+                                        Role = ChatRole.Tool,
+                                    },
+                                    cancellationToken
+                                 )
+                                .ConfigureAwait(false);
                             }
                         }
+                    }
 
-                        allMessages.AddRange(updates.ToAgentRunResponse().Messages);
+                    allMessages.AddRange(updates.ToAgentRunResponse().Messages);
 
-                        ResetUserToAssistantForChangedRoles(roleChanges);
+                    ResetUserToAssistantForChangedRoles(roleChanges);
 
-                        await context.SendMessageAsync(new HandoffState(handoffState.TurnToken, requestedHandoff, allMessages), cancellationToken: cancellationToken).ConfigureAwait(false);
+                    await context.SendMessageAsync(new HandoffState(handoffState.TurnToken, requestedHandoff, allMessages), cancellationToken: cancellationToken).ConfigureAwait(false);
 
-                        async Task AddUpdateAsync(AgentRunResponseUpdate update, CancellationToken cancellationToken)
+                    async Task AddUpdateAsync(AgentRunResponseUpdate update, CancellationToken cancellationToken)
+                    {
+                        updates.Add(update);
+                        if (handoffState.TurnToken.EmitEvents is true)
                         {
-                            updates.Add(update);
-                            if (handoffState.TurnToken.EmitEvents is true)
-                            {
-                                await context.AddEventAsync(new AgentRunUpdateEvent(this.Id, update), cancellationToken).ConfigureAwait(false);
-                            }
+                            await context.AddEventAsync(new AgentRunUpdateEvent(this.Id, update), cancellationToken).ConfigureAwait(false);
                         }
-                    });
+                    }
+                });
 
             public ValueTask ResetAsync() => default;
         }
