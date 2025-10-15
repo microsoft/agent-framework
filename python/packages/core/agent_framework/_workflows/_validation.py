@@ -180,8 +180,8 @@ class WorkflowGraphValidator:
         decorator is applied. This method is kept minimal for any edge cases.
         """
         # The comprehensive validation is already done during handler registration:
-        # 1. @handler decorator calls validate_function_signature()
-        # 2. FunctionExecutor constructor calls validate_function_signature()
+        # 1. @handler and @response_handler decorators already have validation logic
+        # 2. FunctionExecutor constructor also has validation logic
         # 3. Both use validate_workflow_context_annotation() for WorkflowContext validation
         #
         # All executors in the workflow must have gone through one of these paths,

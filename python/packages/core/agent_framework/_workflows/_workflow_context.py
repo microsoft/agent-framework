@@ -3,7 +3,6 @@
 import inspect
 import logging
 import uuid
-from collections.abc import Callable
 from types import UnionType
 from typing import Any, Generic, Union, cast, get_args, get_origin
 
@@ -197,68 +196,6 @@ def validate_workflow_context_annotation(
                     )
 
     return infer_output_types_from_ctx_annotation(annotation)
-
-
-def validate_function_signature(
-    func: Callable[..., Any], context_description: str
-) -> tuple[type, Any, list[type[Any]], list[type[Any]]]:
-    """Validate function signature for executor functions.
-
-    Args:
-        func: The function to validate
-        context_description: Description for error messages (e.g., "Function", "Handler method")
-
-    Returns:
-        Tuple of (message_type, ctx_annotation, output_types, workflow_output_types)
-
-    Raises:
-        ValueError: If the function signature is invalid
-    """
-    signature = inspect.signature(func)
-    params = list(signature.parameters.values())
-
-    # Determine expected parameter count based on context
-    expected_counts: tuple[int, ...]
-    if context_description.startswith("Function"):
-        # Function executor: (message) or (message, ctx)
-        expected_counts = (1, 2)
-        param_description = "(message: T) or (message: T, ctx: WorkflowContext[U])"
-    else:
-        # Handler method: (self, message, ctx)
-        expected_counts = (3,)
-        param_description = "(self, message: T, ctx: WorkflowContext[U])"
-
-    if len(params) not in expected_counts:
-        raise ValueError(
-            f"{context_description} {func.__name__} must have {param_description}. Got {len(params)} parameters."
-        )
-
-    # Extract message parameter (index 0 for functions, index 1 for methods)
-    message_param_idx = 0 if context_description.startswith("Function") else 1
-    message_param = params[message_param_idx]
-
-    # Check message parameter has type annotation
-    if message_param.annotation == inspect.Parameter.empty:
-        raise ValueError(f"{context_description} {func.__name__} must have a type annotation for the message parameter")
-
-    message_type = message_param.annotation
-
-    # Check if there's a context parameter
-    ctx_param_idx = message_param_idx + 1
-    if len(params) > ctx_param_idx:
-        ctx_param = params[ctx_param_idx]
-        output_types, workflow_output_types = validate_workflow_context_annotation(
-            ctx_param.annotation, f"parameter '{ctx_param.name}'", context_description
-        )
-        ctx_annotation = ctx_param.annotation
-    else:
-        # No context parameter (only valid for function executors)
-        if not context_description.startswith("Function"):
-            raise ValueError(f"{context_description} {func.__name__} must have a WorkflowContext parameter")
-        output_types, workflow_output_types = [], []
-        ctx_annotation = None
-
-    return message_type, ctx_annotation, output_types, workflow_output_types
 
 
 _FRAMEWORK_LIFECYCLE_EVENT_TYPES: tuple[type[WorkflowEvent], ...] = cast(

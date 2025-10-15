@@ -17,10 +17,10 @@ from ._events import (
 )
 from ._model_utils import DictConvertible
 from ._request_info_mixin import RequestInfoMixin
-from ._runner_context import Message, MessageType, RunnerContext
+from ._runner_context import Message, ResponseMessage, RunnerContext
 from ._shared_state import SharedState
 from ._typing_utils import is_instance_of
-from ._workflow_context import WorkflowContext, validate_function_signature
+from ._workflow_context import WorkflowContext, validate_workflow_context_annotation
 
 logger = logging.getLogger(__name__)
 
@@ -236,11 +236,14 @@ class Executor(RequestInfoMixin, DictConvertible):
         # Default to find handler in regular handlers
         target_handlers = self._handlers
 
+        if isinstance(message, ResponseMessage):
+            # Wrap the response handlers to include original_request parameter
+            target_handlers = {
+                message_type: functools.partial(handler, message.original_request)
+                for message_type, handler in self._response_handlers.items()
+            }
         # Handle case where Message wrapper is passed instead of raw data
         if isinstance(message, Message):
-            if message.message_type == MessageType.RESPONSE:
-                # Switch to response handlers if message is a response
-                target_handlers = self._response_handlers
             message = message.data
 
         # Create processing span for tracing (gracefully handles disabled tracing)
@@ -359,11 +362,10 @@ class Executor(RequestInfoMixin, DictConvertible):
         Returns:
             True if the executor can handle the message type, False otherwise.
         """
-        if message.message_type == MessageType.REGULAR:
-            return any(is_instance_of(message.data, message_type) for message_type in self._handlers)
-        if message.message_type == MessageType.RESPONSE:
+        if isinstance(message, ResponseMessage):
             return any(is_instance_of(message.data, message_type) for message_type in self._response_handlers)
-        return False
+
+        return any(is_instance_of(message.data, message_type) for message_type in self._handlers)
 
     def _register_instance_handler(
         self,
@@ -484,7 +486,7 @@ def handler(
     ) -> Callable[[ExecutorT, Any, ContextT], Awaitable[Any]]:
         # Extract the message type and validate using unified validation
         message_type, ctx_annotation, inferred_output_types, inferred_workflow_output_types = (
-            validate_function_signature(func, "Handler method")
+            _validate_handler_signature(func)
         )
 
         # Get signature for preservation
@@ -514,3 +516,45 @@ def handler(
 
 
 # endregion: Handler Decorator
+
+# region Handler Validation
+
+
+def _validate_handler_signature(func: Callable[..., Any]) -> tuple[type, Any, list[type[Any]], list[type[Any]]]:
+    """Validate function signature for executor functions.
+
+    Args:
+        func: The function to validate
+
+    Returns:
+        Tuple of (message_type, ctx_annotation, output_types, workflow_output_types)
+
+    Raises:
+        ValueError: If the function signature is invalid
+    """
+    signature = inspect.signature(func)
+    params = list(signature.parameters.values())
+
+    expected_counts = 3  # self, message, ctx
+    param_description = "(self, message: T, ctx: WorkflowContext[U, V])"
+    if len(params) != expected_counts:
+        raise ValueError(f"Handler {func.__name__} must have {param_description}. Got {len(params)} parameters.")
+
+    # Check message parameter has type annotation
+    message_param = params[1]
+    if message_param.annotation == inspect.Parameter.empty:
+        raise ValueError(f"Handler {func.__name__} must have a type annotation for the message parameter")
+
+    # Validate ctx parameter is WorkflowContext and extract type args
+    ctx_param = params[2]
+    output_types, workflow_output_types = validate_workflow_context_annotation(
+        ctx_param.annotation, f"parameter '{ctx_param.name}'", "Handler"
+    )
+
+    message_type = message_param.annotation
+    ctx_annotation = ctx_param.annotation
+
+    return message_type, ctx_annotation, output_types, workflow_output_types
+
+
+# endregion: Handler Validation

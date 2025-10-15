@@ -8,7 +8,6 @@ import sys
 import uuid
 from copy import copy
 from dataclasses import dataclass, fields, is_dataclass
-from enum import Enum
 from typing import Any, Protocol, TypedDict, TypeVar, cast, runtime_checkable
 
 from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
@@ -21,16 +20,6 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 
-class MessageType(Enum):
-    """Enum representing different types of messages in the workflow."""
-
-    RESPONSE = "response"
-    """A response message for a pending request."""
-
-    REGULAR = "regular"
-    """A regular message between executors."""
-
-
 @dataclass
 class Message:
     """A class representing a message in the workflow."""
@@ -38,7 +27,6 @@ class Message:
     data: Any
     source_id: str
     target_id: str | None = None
-    message_type: MessageType = MessageType.REGULAR
 
     # OpenTelemetry trace context fields for message propagation
     # These are plural to support fan-in scenarios where multiple messages are aggregated
@@ -55,6 +43,13 @@ class Message:
     def source_span_id(self) -> str | None:
         """Get the first source span ID for backward compatibility."""
         return self.source_span_ids[0] if self.source_span_ids else None
+
+
+@dataclass
+class ResponseMessage(Message):
+    """A message representing a response to a pending request."""
+
+    original_request: Any = None
 
 
 class CheckpointState(TypedDict):
@@ -724,11 +719,11 @@ class InProcRunnerContext:
             )
 
         await self.send_message(
-            Message(
+            ResponseMessage(
                 data=response,
                 source_id=INTERNAL_SOURCE_ID(event.source_executor_id),
                 target_id=event.source_executor_id,
-                message_type=MessageType.RESPONSE,
+                original_request=event.data,
             )
         )
 

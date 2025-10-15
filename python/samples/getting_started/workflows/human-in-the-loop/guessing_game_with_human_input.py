@@ -118,10 +118,13 @@ class TurnManager(Executor):
     @response_handler
     async def on_human_feedback(
         self,
+        original_request: HumanFeedbackRequest,
         feedback: str,
         ctx: WorkflowContext[AgentExecutorRequest, str],
     ) -> None:
         """Continue the game or finish based on human feedback."""
+        print(f"Feedback for prompt '{original_request.prompt}' received: {feedback}")
+
         reply = feedback.strip().lower()
 
         if reply == "correct":

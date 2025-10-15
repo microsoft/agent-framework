@@ -8,7 +8,7 @@ from builtins import type as builtin_type
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
-from ._workflow_context import WorkflowContext, validate_function_signature
+from ._workflow_context import WorkflowContext, validate_workflow_context_annotation
 
 if TYPE_CHECKING:
     from ._executor import Executor
@@ -27,7 +27,7 @@ class RequestInfoMixin:
         # Initialize handler storage if not already present
         if not hasattr(self, "_response_handlers"):
             self._response_handlers: dict[
-                builtin_type[Any], Callable[[Any, WorkflowContext[Any, Any]], Awaitable[None]]
+                builtin_type[Any], Callable[[Any, Any, WorkflowContext[Any, Any]], Awaitable[None]]
             ] = {}
         if not hasattr(self, "_response_handler_specs"):
             self._response_handler_specs: list[dict[str, Any]] = []
@@ -60,10 +60,12 @@ class RequestInfoMixin:
 ExecutorT = TypeVar("ExecutorT", bound="Executor")
 ContextT = TypeVar("ContextT", bound="WorkflowContext[Any, Any]")
 
+# region Handler Decorator
+
 
 def response_handler(
-    func: Callable[[ExecutorT, Any, ContextT], Awaitable[None]],
-) -> Callable[[ExecutorT, Any, ContextT], Awaitable[None]]:
+    func: Callable[[ExecutorT, Any, Any, ContextT], Awaitable[None]],
+) -> Callable[[ExecutorT, Any, Any, ContextT], Awaitable[None]]:
     """Decorator to register a handler to handle responses for a request.
 
     Args:
@@ -73,29 +75,48 @@ def response_handler(
         The decorated function with handler metadata.
 
     Example:
+        @handler
+        async def run(self, message: int, context: WorkflowContext[str]) -> None:
+            # Example of a handler that sends a request
+            ...
+            # Send a request with a `CustomRequest` payload and expect a `str` response.
+            await context.request_info(CustomRequest(...), CustomRequest, str)
+
         @response_handler
-        async def handle_response(self, response: str, context: WorkflowContext[str]) -> None:
+        async def handle_response(
+            self,
+            original_request: CustomRequest,
+            response: str,
+            context: WorkflowContext[str],
+        ) -> None:
+            # Example of a response handler for the above request
             ...
 
         @response_handler
-        async def handle_response(self, response: dict, context: WorkflowContext[int]) -> None:
+        async def handle_response(
+            self,
+            original_request: CustomRequest,
+            response: dict,
+            context: WorkflowContext[int],
+        ) -> None:
+            # Example of a response handler for a request expecting a dict response
             ...
     """
 
     def decorator(
-        func: Callable[[ExecutorT, Any, ContextT], Awaitable[None]],
-    ) -> Callable[[ExecutorT, Any, ContextT], Awaitable[None]]:
+        func: Callable[[ExecutorT, Any, Any, ContextT], Awaitable[None]],
+    ) -> Callable[[ExecutorT, Any, Any, ContextT], Awaitable[None]]:
         message_type, ctx_annotation, inferred_output_types, inferred_workflow_output_types = (
-            validate_function_signature(func, "Handler method")
+            _validate_response_handler_signature(func)
         )
 
         # Get signature for preservation
         sig = inspect.signature(func)
 
         @functools.wraps(func)
-        async def wrapper(self: ExecutorT, message: Any, ctx: ContextT) -> Any:
+        async def wrapper(self: ExecutorT, original_request: Any, message: Any, ctx: ContextT) -> Any:
             """Wrapper function to call the handler."""
-            return await func(self, message, ctx)
+            return await func(self, original_request, message, ctx)
 
         # Preserve the original function signature for introspection during validation
         with contextlib.suppress(AttributeError, TypeError):
@@ -113,3 +134,56 @@ def response_handler(
         return wrapper
 
     return decorator(func)
+
+
+# endregion: Handler Decorator
+
+# region Response Handler Validation
+
+
+def _validate_response_handler_signature(
+    func: Callable[..., Any],
+) -> tuple[type, Any, list[type[Any]], list[type[Any]]]:
+    """Validate function signature for executor functions.
+
+    Args:
+        func: The function to validate
+
+    Returns:
+        Tuple of (message_type, ctx_annotation, output_types, workflow_output_types)
+
+    Raises:
+        ValueError: If the function signature is invalid
+    """
+    signature = inspect.signature(func)
+    params = list(signature.parameters.values())
+
+    # Note that the original_request parameter must be the second parameter
+    # such that we can wrap the handler with functools.partial to bind it
+    # to the original request when registering the handler, while maintaining
+    # the order of parameters as if the response handler is a normal handler.
+    expected_counts = 4  # self, original_request, message, ctx
+    param_description = "(self, original_request: Any, message: T, ctx: WorkflowContext[U, V])"
+    if len(params) != expected_counts:
+        raise ValueError(
+            f"Response handler {func.__name__} must have {param_description}. Got {len(params)} parameters."
+        )
+
+    # Check message parameter has type annotation
+    message_param = params[2]
+    if message_param.annotation == inspect.Parameter.empty:
+        raise ValueError(f"Response handler {func.__name__} must have a type annotation for the message parameter")
+
+    # Validate ctx parameter is WorkflowContext and extract type args
+    ctx_param = params[3]
+    output_types, workflow_output_types = validate_workflow_context_annotation(
+        ctx_param.annotation, f"parameter '{ctx_param.name}'", "Response handler"
+    )
+
+    message_type = message_param.annotation
+    ctx_annotation = ctx_param.annotation
+
+    return message_type, ctx_annotation, output_types, workflow_output_types
+
+
+# endregion: Response Handler Validation

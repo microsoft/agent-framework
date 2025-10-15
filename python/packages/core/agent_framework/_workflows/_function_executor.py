@@ -11,11 +11,12 @@ This module provides:
 """
 
 import asyncio
+import inspect
 from collections.abc import Awaitable, Callable
 from typing import Any, overload
 
 from ._executor import Executor
-from ._workflow_context import WorkflowContext, validate_function_signature
+from ._workflow_context import WorkflowContext, validate_workflow_context_annotation
 
 
 class FunctionExecutor(Executor):
@@ -28,21 +29,6 @@ class FunctionExecutor(Executor):
     blocking the event loop.
     """
 
-    @staticmethod
-    def _validate_function(func: Callable[..., Any]) -> tuple[type, Any, list[type[Any]], list[type[Any]]]:
-        """Validate that the function has the correct signature for an executor.
-
-        Args:
-            func: The function to validate (can be sync or async)
-
-        Returns:
-            Tuple of (message_type, ctx_annotation, output_types, workflow_output_types)
-
-        Raises:
-            ValueError: If the function signature is incorrect
-        """
-        return validate_function_signature(func, "Function")
-
     def __init__(self, func: Callable[..., Any], id: str | None = None):
         """Initialize the FunctionExecutor with a user-defined function.
 
@@ -51,7 +37,7 @@ class FunctionExecutor(Executor):
             id: Optional executor ID. If None, uses the function name.
         """
         # Validate function signature and extract types
-        message_type, ctx_annotation, output_types, workflow_output_types = self._validate_function(func)
+        message_type, ctx_annotation, output_types, workflow_output_types = _validate_function_signature(func)
 
         # Determine if function has WorkflowContext parameter
         has_context = ctx_annotation is not None
@@ -112,6 +98,9 @@ class FunctionExecutor(Executor):
             )
 
 
+# region Decorator
+
+
 @overload
 def executor(func: Callable[..., Any]) -> FunctionExecutor: ...
 
@@ -164,3 +153,55 @@ def executor(
 
     # Otherwise, return the wrapper for @executor() or @executor(id="...")
     return wrapper
+
+
+# endregion: Decorator
+
+# region Function Validation
+
+
+def _validate_function_signature(func: Callable[..., Any]) -> tuple[type, Any, list[type[Any]], list[type[Any]]]:
+    """Validate function signature for executor functions.
+
+    Args:
+        func: The function to validate
+
+    Returns:
+        Tuple of (message_type, ctx_annotation, output_types, workflow_output_types)
+
+    Raises:
+        ValueError: If the function signature is invalid
+    """
+    signature = inspect.signature(func)
+    params = list(signature.parameters.values())
+
+    expected_counts = (1, 2)  # Function executor: (message) or (message, ctx)
+    param_description = "(message: T) or (message: T, ctx: WorkflowContext[U])"
+    if len(params) not in expected_counts:
+        raise ValueError(
+            f"Function instance {func.__name__} must have {param_description}. Got {len(params)} parameters."
+        )
+
+    # Check message parameter has type annotation
+    message_param = params[0]
+    if message_param.annotation == inspect.Parameter.empty:
+        raise ValueError(f"Function instance {func.__name__} must have a type annotation for the message parameter")
+
+    message_type = message_param.annotation
+
+    # Check if there's a context parameter
+    if len(params) == 2:
+        ctx_param = params[1]
+        output_types, workflow_output_types = validate_workflow_context_annotation(
+            ctx_param.annotation, f"parameter '{ctx_param.name}'", "Function instance"
+        )
+        ctx_annotation = ctx_param.annotation
+    else:
+        # No context parameter (only valid for function executors)
+        output_types, workflow_output_types = [], []
+        ctx_annotation = None
+
+    return message_type, ctx_annotation, output_types, workflow_output_types
+
+
+# endregion: Function Validation
