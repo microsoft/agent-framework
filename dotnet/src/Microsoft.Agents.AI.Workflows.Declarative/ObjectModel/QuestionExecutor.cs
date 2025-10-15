@@ -65,7 +65,7 @@ internal sealed class QuestionExecutor(Question model, WorkflowFormulaState stat
         }
         else
         {
-            await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
+            await context.SendResultMessageAsync(this.Id, cancellationToken).ConfigureAwait(false);
         }
 
         return default;
@@ -75,7 +75,7 @@ internal sealed class QuestionExecutor(Question model, WorkflowFormulaState stat
     {
         int count = await this._promptCount.ReadAsync(context).ConfigureAwait(false);
         InputRequest inputRequest = new(this.FormatPrompt(this.Model.Prompt));
-        await context.SendMessageAsync(inputRequest).ConfigureAwait(false);
+        await context.SendMessageAsync(inputRequest, targetId: null, cancellationToken).ConfigureAwait(false);
         await this._promptCount.WriteAsync(context, count + 1).ConfigureAwait(false);
     }
 
@@ -85,7 +85,7 @@ internal sealed class QuestionExecutor(Question model, WorkflowFormulaState stat
         if (string.IsNullOrWhiteSpace(message.Value))
         {
             string unrecognizedResponse = this.FormatPrompt(this.Model.UnrecognizedPrompt);
-            await context.AddEventAsync(new MessageActivityEvent(unrecognizedResponse.Trim())).ConfigureAwait(false);
+            await context.AddEventAsync(new MessageActivityEvent(unrecognizedResponse.Trim()), cancellationToken).ConfigureAwait(false);
         }
         else
         {
@@ -97,7 +97,7 @@ internal sealed class QuestionExecutor(Question model, WorkflowFormulaState stat
             else
             {
                 string invalidResponse = this.FormatPrompt(this.Model.InvalidPrompt);
-                await context.AddEventAsync(new MessageActivityEvent(invalidResponse.Trim())).ConfigureAwait(false);
+                await context.AddEventAsync(new MessageActivityEvent(invalidResponse.Trim()), cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -109,13 +109,13 @@ internal sealed class QuestionExecutor(Question model, WorkflowFormulaState stat
         {
             await this.AssignAsync(this.Model.Variable?.Path, extractedValue, context).ConfigureAwait(false);
             await this._hasExecuted.WriteAsync(context, true).ConfigureAwait(false);
-            await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
+            await context.SendResultMessageAsync(this.Id, cancellationToken).ConfigureAwait(false);
         }
     }
 
     public async ValueTask CompleteAsync(IWorkflowContext context, ActionExecutorResult message, CancellationToken cancellationToken)
     {
-        await context.RaiseCompletionEventAsync(this.Model).ConfigureAwait(false);
+        await context.RaiseCompletionEventAsync(this.Model, cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask PromptAsync(IWorkflowContext context, CancellationToken cancellationToken)
@@ -128,8 +128,8 @@ internal sealed class QuestionExecutor(Question model, WorkflowFormulaState stat
             DataValue defaultValue = this.Evaluator.GetValue(defaultValueExpression).Value;
             await this.AssignAsync(this.Model.Variable?.Path, defaultValue.ToFormula(), context).ConfigureAwait(false);
             string defaultValueResponse = this.FormatPrompt(this.Model.DefaultValueResponse);
-            await context.AddEventAsync(new MessageActivityEvent(defaultValueResponse.Trim())).ConfigureAwait(false);
-            await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
+            await context.AddEventAsync(new MessageActivityEvent(defaultValueResponse.Trim()), cancellationToken).ConfigureAwait(false);
+            await context.SendResultMessageAsync(this.Id, cancellationToken).ConfigureAwait(false);
         }
         else
         {

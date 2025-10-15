@@ -135,7 +135,9 @@ class Mem0Provider(ContextProvider):
 
         Args:
             messages: List of new messages in the thread.
-            kwargs: not used at present.
+
+        Keyword Args:
+            **kwargs: not used at present.
 
         Returns:
             Context: Context object containing instructions with memories.

@@ -24,8 +24,6 @@ public abstract class Executor : IIdentified
     /// </summary>
     public string Id { get; }
 
-    private readonly ExecutorOptions _options;
-
     private static readonly string s_namespace = typeof(Executor).Namespace!;
     private static readonly ActivitySource s_activitySource = new(s_namespace);
 
@@ -37,8 +35,13 @@ public abstract class Executor : IIdentified
     protected Executor(string id, ExecutorOptions? options = null)
     {
         this.Id = id;
-        this._options = options ?? ExecutorOptions.Default;
+        this.Options = options ?? ExecutorOptions.Default;
     }
+
+    /// <summary>
+    /// Gets the configuration options for the executor.
+    /// </summary>
+    protected ExecutorOptions Options { get; }
 
     /// <summary>
     /// Override this method to register handlers for the executor.
@@ -57,7 +60,7 @@ public abstract class Executor : IIdentified
     /// <returns></returns>
     protected virtual ISet<Type> ConfigureYieldTypes()
     {
-        if (this._options.AutoYieldOutputHandlerResultObject)
+        if (this.Options.AutoYieldOutputHandlerResultObject)
         {
             return this.Router.DefaultOutputTypes;
         }
@@ -87,10 +90,12 @@ public abstract class Executor : IIdentified
     /// <param name="messageType">The "declared" type of the message (captured when it was being sent). This is
     /// used to enable routing messages as their base types, in absence of true polymorphic type routing.</param>
     /// <param name="context">The workflow context in which the executor executes.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
+    /// The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A ValueTask representing the asynchronous operation, wrapping the output from the executor.</returns>
     /// <exception cref="NotSupportedException">No handler found for the message type.</exception>
     /// <exception cref="TargetInvocationException">An exception is generated while handling the message.</exception>
-    public async ValueTask<object?> ExecuteAsync(object message, TypeId messageType, IWorkflowContext context)
+    public async ValueTask<object?> ExecuteAsync(object message, TypeId messageType, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         using var activity = s_activitySource.StartActivity(ActivityNames.ExecutorProcess, ActivityKind.Internal);
         activity?.SetTag(Tags.ExecutorId, this.Id)
@@ -98,9 +103,9 @@ public abstract class Executor : IIdentified
             .SetTag(Tags.MessageType, messageType.TypeName)
             .CreateSourceLinks(context.TraceContext);
 
-        await context.AddEventAsync(new ExecutorInvokedEvent(this.Id, message)).ConfigureAwait(false);
+        await context.AddEventAsync(new ExecutorInvokedEvent(this.Id, message), cancellationToken).ConfigureAwait(false);
 
-        CallResult? result = await this.Router.RouteMessageAsync(message, context, requireRoute: true)
+        CallResult? result = await this.Router.RouteMessageAsync(message, context, requireRoute: true, cancellationToken)
                                               .ConfigureAwait(false);
 
         ExecutorEvent executionResult;
@@ -113,7 +118,7 @@ public abstract class Executor : IIdentified
             executionResult = new ExecutorFailedEvent(this.Id, result.Exception);
         }
 
-        await context.AddEventAsync(executionResult).ConfigureAwait(false);
+        await context.AddEventAsync(executionResult, cancellationToken).ConfigureAwait(false);
 
         if (result is null)
         {
@@ -132,13 +137,13 @@ public abstract class Executor : IIdentified
         }
 
         // If we had a real return type, raise it as a SendMessage; TODO: Should we have a way to disable this behaviour?
-        if (result.Result is not null && this._options.AutoSendMessageHandlerResultObject)
+        if (result.Result is not null && this.Options.AutoSendMessageHandlerResultObject)
         {
-            await context.SendMessageAsync(result.Result).ConfigureAwait(false);
+            await context.SendMessageAsync(result.Result, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
-        if (result.Result is not null && this._options.AutoYieldOutputHandlerResultObject)
+        if (result.Result is not null && this.Options.AutoYieldOutputHandlerResultObject)
         {
-            await context.YieldOutputAsync(result.Result).ConfigureAwait(false);
+            await context.YieldOutputAsync(result.Result, cancellationToken).ConfigureAwait(false);
         }
 
         return result.Result;
@@ -149,7 +154,8 @@ public abstract class Executor : IIdentified
     /// </summary>
     /// <param name="context">The workflow context.</param>
     /// <returns>A ValueTask representing the asynchronous operation.</returns>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
+    /// The default is <see cref="CancellationToken.None"/>.</param>
     protected internal virtual ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default) => default;
 
     /// <summary>
@@ -157,7 +163,8 @@ public abstract class Executor : IIdentified
     /// </summary>
     /// <param name="context">The workflow context.</param>
     /// <returns>A ValueTask representing the asynchronous operation.</returns>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
+    /// The default is <see cref="CancellationToken.None"/>.</param>
     protected internal virtual ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default) => default;
 
     /// <summary>
@@ -207,7 +214,7 @@ public abstract class Executor<TInput>(string id, ExecutorOptions? options = nul
         routeBuilder.AddHandler<TInput>(this.HandleAsync);
 
     /// <inheritdoc/>
-    public abstract ValueTask HandleAsync(TInput message, IWorkflowContext context);
+    public abstract ValueTask HandleAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -226,5 +233,5 @@ public abstract class Executor<TInput, TOutput>(string id, ExecutorOptions? opti
         routeBuilder.AddHandler<TInput, TOutput>(this.HandleAsync);
 
     /// <inheritdoc/>
-    public abstract ValueTask<TOutput> HandleAsync(TInput message, IWorkflowContext context);
+    public abstract ValueTask<TOutput> HandleAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken = default);
 }

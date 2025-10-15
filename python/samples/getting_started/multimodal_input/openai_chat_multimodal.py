@@ -3,36 +3,29 @@
 import asyncio
 import base64
 import struct
+from pathlib import Path
 
-import requests
 from agent_framework import ChatMessage, DataContent, Role, TextContent
 from agent_framework.openai import OpenAIChatClient
 
-
-async def test_image() -> None:
-    """Test image analysis with OpenAI."""
-    client = OpenAIChatClient(model_id="gpt-4o")
-
-    # Fetch image from httpbin
-    image_url = "https://httpbin.org/image/jpeg"
-    response = requests.get(image_url)
-    image_b64 = base64.b64encode(response.content).decode()
-    image_uri = f"data:image/jpeg;base64,{image_b64}"
-
-    message = ChatMessage(
-        role=Role.USER,
-        contents=[TextContent(text="What's in this image?"), DataContent(uri=image_uri, media_type="image/jpeg")],
-    )
-
-    response = await client.get_response(message)
-    print(f"Image Response: {response}")
+ASSETS_DIR = Path(__file__).resolve().parent.parent / "sample_assets"
 
 
-async def test_audio() -> None:
-    """Test audio analysis with OpenAI."""
-    client = OpenAIChatClient(model_id="gpt-4o-audio-preview")
+def load_sample_pdf() -> bytes:
+    """Read the bundled sample PDF for tests."""
+    pdf_path = ASSETS_DIR / "sample.pdf"
+    return pdf_path.read_bytes()
 
-    # Create minimal WAV file (0.1 seconds of silence)
+
+def create_sample_image() -> str:
+    """Create a simple 1x1 pixel PNG image for testing."""
+    # This is a tiny red pixel in PNG format
+    png_data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
+    return f"data:image/png;base64,{png_data}"
+
+
+def create_sample_audio() -> str:
+    """Create a minimal WAV file for testing (0.1 seconds of silence)."""
     wav_header = (
         b"RIFF"
         + struct.pack("<I", 44)  # file size
@@ -44,8 +37,28 @@ async def test_audio() -> None:
         + b"\x00" * 1600  # 0.1 sec silence
     )
     audio_b64 = base64.b64encode(wav_header).decode()
-    audio_uri = f"data:audio/wav;base64,{audio_b64}"
+    return f"data:audio/wav;base64,{audio_b64}"
 
+
+async def test_image() -> None:
+    """Test image analysis with OpenAI."""
+    client = OpenAIChatClient(model_id="gpt-4o")
+
+    image_uri = create_sample_image()
+    message = ChatMessage(
+        role=Role.USER,
+        contents=[TextContent(text="What's in this image?"), DataContent(uri=image_uri, media_type="image/png")],
+    )
+
+    response = await client.get_response(message)
+    print(f"Image Response: {response}")
+
+
+async def test_audio() -> None:
+    """Test audio analysis with OpenAI."""
+    client = OpenAIChatClient(model_id="gpt-4o-audio-preview")
+
+    audio_uri = create_sample_audio()
     message = ChatMessage(
         role=Role.USER,
         contents=[
@@ -58,10 +71,30 @@ async def test_audio() -> None:
     print(f"Audio Response: {response}")
 
 
+async def test_pdf() -> None:
+    """Test PDF document analysis with OpenAI."""
+    client = OpenAIChatClient(model_id="gpt-4o")
+
+    pdf_bytes = load_sample_pdf()
+    message = ChatMessage(
+        role=Role.USER,
+        contents=[
+            TextContent(text="What information can you extract from this document?"),
+            DataContent(
+                data=pdf_bytes, media_type="application/pdf", additional_properties={"filename": "employee_report.pdf"}
+            ),
+        ],
+    )
+
+    response = await client.get_response(message)
+    print(f"PDF Response: {response}")
+
+
 async def main() -> None:
     print("=== Testing OpenAI Multimodal ===")
     await test_image()
     await test_audio()
+    await test_pdf()
 
 
 if __name__ == "__main__":

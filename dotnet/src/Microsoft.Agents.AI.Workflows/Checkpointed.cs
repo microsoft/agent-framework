@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -14,11 +15,11 @@ namespace Microsoft.Agents.AI.Workflows;
 /// <typeparam name="TRun">The type of the underlying workflow run handle.</typeparam>
 /// <seealso cref="Run"/>
 /// <seealso cref="StreamingRun"/>
-public class Checkpointed<TRun>
+public sealed class Checkpointed<TRun> : IAsyncDisposable
 {
-    private readonly ICheckpointingRunner _runner;
+    private readonly ICheckpointingHandle _runner;
 
-    internal Checkpointed(TRun run, ICheckpointingRunner runner)
+    internal Checkpointed(TRun run, ICheckpointingHandle runner)
     {
         this.Run = Throw.IfNull(run);
         this._runner = Throw.IfNull(runner);
@@ -31,7 +32,7 @@ public class Checkpointed<TRun>
     /// <seealso cref="StreamingRun"/>
     public TRun Run { get; }
 
-    /// <inheritdoc cref="ICheckpointingRunner.Checkpoints"/>
+    /// <inheritdoc cref="ICheckpointingHandle.Checkpoints"/>
     public IReadOnlyList<CheckpointInfo> Checkpoints => this._runner.Checkpoints;
 
     /// <summary>
@@ -46,7 +47,20 @@ public class Checkpointed<TRun>
         }
     }
 
-    /// <inheritdoc cref="ICheckpointingRunner.RestoreCheckpointAsync"/>
+    /// <inheritdoc/>
+    public async ValueTask DisposeAsync()
+    {
+        if (this.Run is IAsyncDisposable asyncDisposable)
+        {
+            await asyncDisposable.DisposeAsync().ConfigureAwait(false);
+        }
+        else if (this.Run is IDisposable disposable)
+        {
+            disposable.Dispose();
+        }
+    }
+
+    /// <inheritdoc cref="ICheckpointingHandle.RestoreCheckpointAsync"/>
     public ValueTask RestoreCheckpointAsync(CheckpointInfo checkpointInfo, CancellationToken cancellationToken = default)
         => this._runner.RestoreCheckpointAsync(checkpointInfo, cancellationToken);
 }

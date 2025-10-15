@@ -2,6 +2,9 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -9,7 +12,7 @@ using Moq;
 
 namespace Microsoft.Agents.AI.UnitTests;
 
-public class ChatClientAgentTests
+public partial class ChatClientAgentTests
 {
     #region Constructor Tests
 
@@ -421,6 +424,66 @@ public class ChatClientAgentTests
     }
 
     /// <summary>
+    /// Verify that RunAsync uses the ChatMessageStore factory when the chat client returns no conversation id.
+    /// </summary>
+    [Fact]
+    public async Task RunAsyncUsesChatMessageStoreWhenNoConversationIdReturnedByChatClientAsync()
+    {
+        // Arrange
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
+        Mock<Func<ChatClientAgentOptions.ChatMessageStoreFactoryContext, ChatMessageStore>> mockFactory = new();
+        mockFactory.Setup(f => f(It.IsAny<ChatClientAgentOptions.ChatMessageStoreFactoryContext>())).Returns(new InMemoryChatMessageStore());
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            Instructions = "test instructions",
+            ChatMessageStoreFactory = mockFactory.Object
+        });
+
+        // Act
+        ChatClientAgentThread? thread = agent.GetNewThread() as ChatClientAgentThread;
+        await agent.RunAsync([new(ChatRole.User, "test")], thread);
+
+        // Assert
+        Assert.IsType<InMemoryChatMessageStore>(thread!.MessageStore);
+        mockFactory.Verify(f => f(It.IsAny<ChatClientAgentOptions.ChatMessageStoreFactoryContext>()), Times.Once);
+    }
+
+    /// <summary>
+    /// Verify that RunAsync doesn't use the ChatMessageStore factory when the chat client returns a conversation id.
+    /// </summary>
+    [Fact]
+    public async Task RunAsyncIgnoresChatMessageStoreWhenConversationIdReturnedByChatClientAsync()
+    {
+        // Arrange
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]) { ConversationId = "ConvId" });
+        Mock<Func<ChatClientAgentOptions.ChatMessageStoreFactoryContext, ChatMessageStore>> mockFactory = new();
+        mockFactory.Setup(f => f(It.IsAny<ChatClientAgentOptions.ChatMessageStoreFactoryContext>())).Returns(new InMemoryChatMessageStore());
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            Instructions = "test instructions",
+            ChatMessageStoreFactory = mockFactory.Object
+        });
+
+        // Act
+        ChatClientAgentThread? thread = agent.GetNewThread() as ChatClientAgentThread;
+        await agent.RunAsync([new(ChatRole.User, "test")], thread);
+
+        // Assert
+        Assert.Equal("ConvId", thread!.ConversationId);
+        mockFactory.Verify(f => f(It.IsAny<ChatClientAgentOptions.ChatMessageStoreFactoryContext>()), Times.Never);
+    }
+
+    /// <summary>
     /// Verify that RunAsync invokes any provided AIContextProvider and uses the result.
     /// </summary>
     [Fact]
@@ -563,6 +626,45 @@ public class ChatClientAgentTests
         Assert.Single(capturedTools);
         Assert.Contains(capturedTools, t => t.Name == "base function");
         mockProvider.Verify(p => p.InvokingAsync(It.IsAny<AIContextProvider.InvokingContext>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    #endregion
+
+    #region RunAsync Structured Output Tests
+
+    /// <summary>
+    /// Verify the invocation of <see cref="ChatClientAgent"/> with specified type parameter is
+    /// propagated to the underlying <see cref="IChatClient"/> call and the expected structured output is returned.
+    /// </summary>
+    [Fact]
+    public async Task RunAsyncWithTypeParameterInvokesChatClientMethodForStructuredOutputAsync()
+    {
+        // Arrange
+        Animal expectedSO = new() { Id = 1, FullName = "Tigger", Species = Species.Tiger };
+
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(s => s
+            .GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant, JsonSerializer.Serialize(expectedSO, JsonContext2.Default.Animal)))
+            {
+                ResponseId = "test",
+            });
+
+        ChatClientAgent agent = new(mockService.Object, options: new());
+
+        // Act
+        AgentRunResponse<Animal> agentRunResponse = await agent.RunAsync<Animal>(messages: [new(ChatRole.User, "Hello")], serializerOptions: JsonContext2.Default.Options);
+
+        // Assert
+        Assert.Single(agentRunResponse.Messages);
+
+        Assert.NotNull(agentRunResponse.Result);
+        Assert.Equal(expectedSO.Id, agentRunResponse.Result.Id);
+        Assert.Equal(expectedSO.FullName, agentRunResponse.Result.FullName);
+        Assert.Equal(expectedSO.Species, agentRunResponse.Result.Species);
     }
 
     #endregion
@@ -1721,37 +1823,79 @@ public class ChatClientAgentTests
             Times.Once);
     }
 
-    #endregion
-
-    #region GetNewThread Tests
-
+    /// <summary>
+    /// Verify that RunStreamingAsync uses the ChatMessageStore factory when the chat client returns no conversation id.
+    /// </summary>
     [Fact]
-    public void GetNewThreadUsesChatMessageStoreFactoryIfProvided()
+    public async Task RunStreamingAsyncUsesChatMessageStoreWhenNoConversationIdReturnedByChatClientAsync()
     {
         // Arrange
-        var mockChatClient = new Mock<IChatClient>();
-        var mockStore = new Mock<ChatMessageStore>();
-        var factoryCalled = false;
-
-        var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
+        Mock<IChatClient> mockService = new();
+        ChatResponseUpdate[] returnUpdates =
+            [
+                new ChatResponseUpdate(role: ChatRole.Assistant, content: "wh"),
+                new ChatResponseUpdate(role: ChatRole.Assistant, content: "at?"),
+            ];
+        mockService.Setup(
+            s => s.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>())).Returns(ToAsyncEnumerableAsync(returnUpdates));
+        Mock<Func<ChatClientAgentOptions.ChatMessageStoreFactoryContext, ChatMessageStore>> mockFactory = new();
+        mockFactory.Setup(f => f(It.IsAny<ChatClientAgentOptions.ChatMessageStoreFactoryContext>())).Returns(new InMemoryChatMessageStore());
+        ChatClientAgent agent = new(mockService.Object, options: new()
         {
-            Instructions = "Test instructions",
-            ChatMessageStoreFactory = _ =>
-            {
-                factoryCalled = true;
-                return mockStore.Object;
-            }
+            Instructions = "test instructions",
+            ChatMessageStoreFactory = mockFactory.Object
         });
 
         // Act
-        var thread = agent.GetNewThread();
+        ChatClientAgentThread? thread = agent.GetNewThread() as ChatClientAgentThread;
+        await agent.RunStreamingAsync([new(ChatRole.User, "test")], thread).ToListAsync();
 
         // Assert
-        Assert.True(factoryCalled, "ChatMessageStoreFactory was not called.");
-        Assert.IsType<ChatClientAgentThread>(thread);
-        var typedThread = (ChatClientAgentThread)thread;
-        Assert.Same(mockStore.Object, typedThread.MessageStore);
+        Assert.IsType<InMemoryChatMessageStore>(thread!.MessageStore);
+        mockFactory.Verify(f => f(It.IsAny<ChatClientAgentOptions.ChatMessageStoreFactoryContext>()), Times.Once);
     }
+
+    /// <summary>
+    /// Verify that RunStreamingAsync doesn't use the ChatMessageStore factory when the chat client returns a conversation id.
+    /// </summary>
+    [Fact]
+    public async Task RunStreamingAsyncIgnoresChatMessageStoreWhenConversationIdReturnedByChatClientAsync()
+    {
+        // Arrange
+        Mock<IChatClient> mockService = new();
+        ChatResponseUpdate[] returnUpdates =
+            [
+                new ChatResponseUpdate(role: ChatRole.Assistant, content: "wh") { ConversationId = "ConvId" },
+                new ChatResponseUpdate(role: ChatRole.Assistant, content: "at?") { ConversationId = "ConvId" },
+            ];
+        mockService.Setup(
+            s => s.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>())).Returns(ToAsyncEnumerableAsync(returnUpdates));
+        Mock<Func<ChatClientAgentOptions.ChatMessageStoreFactoryContext, ChatMessageStore>> mockFactory = new();
+        mockFactory.Setup(f => f(It.IsAny<ChatClientAgentOptions.ChatMessageStoreFactoryContext>())).Returns(new InMemoryChatMessageStore());
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            Instructions = "test instructions",
+            ChatMessageStoreFactory = mockFactory.Object
+        });
+
+        // Act
+        ChatClientAgentThread? thread = agent.GetNewThread() as ChatClientAgentThread;
+        await agent.RunStreamingAsync([new(ChatRole.User, "test")], thread).ToListAsync();
+
+        // Assert
+        Assert.Equal("ConvId", thread!.ConversationId);
+        mockFactory.Verify(f => f(It.IsAny<ChatClientAgentOptions.ChatMessageStoreFactoryContext>()), Times.Never);
+    }
+
+    #endregion
+
+    #region GetNewThread Tests
 
     [Fact]
     public void GetNewThreadUsesAIContextProviderFactoryIfProvided()
@@ -1790,4 +1934,22 @@ public class ChatClientAgentTests
             yield return update;
         }
     }
+
+    private sealed class Animal
+    {
+        public int Id { get; set; }
+        public string? FullName { get; set; }
+        public Species Species { get; set; }
+    }
+
+    private enum Species
+    {
+        Bear,
+        Tiger,
+        Walrus,
+    }
+
+    [JsonSourceGenerationOptions(UseStringEnumConverter = true, PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+    [JsonSerializable(typeof(Animal))]
+    private sealed partial class JsonContext2 : JsonSerializerContext;
 }

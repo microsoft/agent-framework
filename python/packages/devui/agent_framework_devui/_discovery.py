@@ -20,6 +20,10 @@ from .models._discovery_models import EntityInfo
 
 logger = logging.getLogger(__name__)
 
+# Constants for remote entity fetching
+REMOTE_FETCH_TIMEOUT_SECONDS = 30.0
+REMOTE_FETCH_MAX_SIZE_MB = 10
+
 
 class EntityDiscovery:
     """Discovery for Agent Framework entities - agents and workflows."""
@@ -116,16 +120,9 @@ class EntityDiscovery:
         # Extract metadata with improved fallback naming
         name = getattr(entity_object, "name", None)
         if not name:
-            # In-memory entities: use ID with entity type prefix since no directory name available
-            entity_id_raw = getattr(entity_object, "id", None)
-            if entity_id_raw:
-                # Truncate UUID to first 8 characters for readability
-                short_id = str(entity_id_raw)[:8] if len(str(entity_id_raw)) > 8 else str(entity_id_raw)
-                name = f"{entity_type.title()} {short_id}"
-            else:
-                # Fallback to class name with entity type
-                class_name = entity_object.__class__.__name__
-                name = f"{entity_type.title()} {class_name}"
+            # In-memory entities: use class name as it's more readable than UUID
+            class_name = entity_object.__class__.__name__
+            name = f"{entity_type.title()} {class_name}"
         description = getattr(entity_object, "description", "")
 
         # Generate entity ID using Agent Framework specific naming
@@ -133,6 +130,36 @@ class EntityDiscovery:
 
         # Extract tools/executors using Agent Framework specific logic
         tools_list = await self._extract_tools_from_object(entity_object, entity_type)
+
+        # Extract agent-specific fields (for agents only)
+        instructions = None
+        model = None
+        chat_client_type = None
+        context_providers_list = None
+        middleware_list = None
+
+        if entity_type == "agent":
+            from ._utils import extract_agent_metadata
+
+            agent_meta = extract_agent_metadata(entity_object)
+            instructions = agent_meta["instructions"]
+            model = agent_meta["model"]
+            chat_client_type = agent_meta["chat_client_type"]
+            context_providers_list = agent_meta["context_providers"]
+            middleware_list = agent_meta["middleware"]
+
+        # Log helpful info about agent capabilities (before creating EntityInfo)
+        if entity_type == "agent":
+            has_run_stream = hasattr(entity_object, "run_stream")
+            has_run = hasattr(entity_object, "run")
+
+            if not has_run_stream and has_run:
+                logger.info(
+                    f"Agent '{entity_id}' only has run() (non-streaming). "
+                    "DevUI will automatically convert to streaming."
+                )
+            elif not has_run_stream and not has_run:
+                logger.warning(f"Agent '{entity_id}' lacks both run() and run_stream() methods. May not work.")
 
         # Create EntityInfo with Agent Framework specifics
         return EntityInfo(
@@ -142,6 +169,11 @@ class EntityDiscovery:
             type=entity_type,
             framework="agent_framework",
             tools=[str(tool) for tool in (tools_list or [])],
+            instructions=instructions,
+            model_id=model,
+            chat_client_type=chat_client_type,
+            context_providers=context_providers_list,
+            middleware=middleware_list,
             executors=tools_list if entity_type == "workflow" else [],
             input_schema={"type": "string"},  # Default schema
             start_executor_id=tools_list[0] if tools_list and entity_type == "workflow" else None,
@@ -393,7 +425,9 @@ class EntityDiscovery:
                 pass
 
             # Fallback to duck typing for agent protocol
-            if hasattr(obj, "run_stream") and hasattr(obj, "id") and hasattr(obj, "name"):
+            # Agent must have either run_stream() or run() method, plus id and name
+            has_execution_method = hasattr(obj, "run_stream") or hasattr(obj, "run")
+            if has_execution_method and hasattr(obj, "id") and hasattr(obj, "name"):
                 return True
 
         except (TypeError, AttributeError):
@@ -431,13 +465,9 @@ class EntityDiscovery:
             # Extract metadata from the live object with improved fallback naming
             name = getattr(obj, "name", None)
             if not name:
-                entity_id_raw = getattr(obj, "id", None)
-                if entity_id_raw:
-                    # Truncate UUID to first 8 characters for readability
-                    short_id = str(entity_id_raw)[:8] if len(str(entity_id_raw)) > 8 else str(entity_id_raw)
-                    name = f"{obj_type.title()} {short_id}"
-                else:
-                    name = f"{obj_type.title()} {obj.__class__.__name__}"
+                # Use class name as it's more readable than UUID
+                class_name = obj.__class__.__name__
+                name = f"{obj_type.title()} {class_name}"
             description = getattr(obj, "description", None)
             tools = await self._extract_tools_from_object(obj, obj_type)
 
@@ -446,6 +476,23 @@ class EntityDiscovery:
             if tools:
                 tools_union = [tool for tool in tools]
 
+            # Extract agent-specific fields (for agents only)
+            instructions = None
+            model = None
+            chat_client_type = None
+            context_providers_list = None
+            middleware_list = None
+
+            if obj_type == "agent":
+                from ._utils import extract_agent_metadata
+
+                agent_meta = extract_agent_metadata(obj)
+                instructions = agent_meta["instructions"]
+                model = agent_meta["model"]
+                chat_client_type = agent_meta["chat_client_type"]
+                context_providers_list = agent_meta["context_providers"]
+                middleware_list = agent_meta["middleware"]
+
             entity_info = EntityInfo(
                 id=entity_id,
                 type=obj_type,
@@ -453,6 +500,11 @@ class EntityDiscovery:
                 framework="agent_framework",
                 description=description,
                 tools=tools_union,
+                instructions=instructions,
+                model_id=model,
+                chat_client_type=chat_client_type,
+                context_providers=context_providers_list,
+                middleware=middleware_list,
                 metadata={
                     "module_path": module_path,
                     "entity_type": obj_type,
@@ -530,7 +582,7 @@ class EntityDiscovery:
             source: Source of entity (directory, in_memory, remote)
 
         Returns:
-            Unique entity ID with format: {type}_{source}_{name}_{uuid8}
+            Unique entity ID with format: {type}_{source}_{name}_{uuid}
         """
         import re
 
@@ -546,10 +598,10 @@ class EntityDiscovery:
         else:
             base_name = "entity"
 
-        # Generate short UUID (8 chars = 4 billion combinations)
-        short_uuid = uuid.uuid4().hex[:8]
+        # Generate full UUID for guaranteed uniqueness
+        full_uuid = uuid.uuid4().hex
 
-        return f"{entity_type}_{source}_{base_name}_{short_uuid}"
+        return f"{entity_type}_{source}_{base_name}_{full_uuid}"
 
     async def fetch_remote_entity(
         self, url: str, metadata: dict[str, Any] | None = None
@@ -624,12 +676,10 @@ class EntityDiscovery:
 
         return url
 
-    async def _fetch_url_content(self, url: str, max_size_mb: int = 10) -> str | None:
+    async def _fetch_url_content(self, url: str, max_size_mb: int = REMOTE_FETCH_MAX_SIZE_MB) -> str | None:
         """Fetch content from URL with size and timeout limits."""
         try:
-            timeout = 30.0  # 30 second timeout
-
-            async with httpx.AsyncClient(timeout=timeout) as client:
+            async with httpx.AsyncClient(timeout=REMOTE_FETCH_TIMEOUT_SECONDS) as client:
                 response = await client.get(url)
 
                 if response.status_code != 200:

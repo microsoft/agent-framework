@@ -41,7 +41,7 @@ public sealed class PersistentAgentsClientExtensionsTests
 
         // Act & Assert - null agentId
         var exception1 = Assert.Throws<ArgumentException>(() =>
-            mockClient.Object.GetAIAgent(null!));
+            mockClient.Object.GetAIAgent((string)null!));
         Assert.Equal("agentId", exception1.ParamName);
 
         // Act & Assert - empty agentId

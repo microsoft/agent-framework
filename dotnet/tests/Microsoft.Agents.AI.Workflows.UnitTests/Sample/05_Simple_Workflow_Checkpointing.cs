@@ -6,12 +6,14 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
+using Microsoft.Agents.AI.Workflows.InProc;
+using Microsoft.Agents.AI.Workflows.UnitTests;
 
 namespace Microsoft.Agents.AI.Workflows.Sample;
 
 internal static class Step5EntryPoint
 {
-    public static async ValueTask<string> RunAsync(TextWriter writer, Func<string, int> userGuessCallback, bool rehydrateToRestore = false, CheckpointManager? checkpointManager = null)
+    public static async ValueTask<string> RunAsync(TextWriter writer, Func<string, int> userGuessCallback, ExecutionMode executionMode, bool rehydrateToRestore = false, CheckpointManager? checkpointManager = null)
     {
         Dictionary<CheckpointInfo, (NumberSignal signal, string? prompt)> checkpointedOutputs = [];
 
@@ -21,9 +23,11 @@ internal static class Step5EntryPoint
         checkpointManager ??= CheckpointManager.Default;
 
         Workflow workflow = Step4EntryPoint.CreateWorkflowInstance(out JudgeExecutor judge);
+
+        InProcessExecutionEnvironment env = executionMode.GetEnvironment();
         Checkpointed<StreamingRun> checkpointed =
-            await InProcessExecution.StreamAsync(workflow, NumberSignal.Init, checkpointManager)
-                                    .ConfigureAwait(false);
+            await env.StreamAsync(workflow, NumberSignal.Init, checkpointManager)
+                     .ConfigureAwait(false);
 
         List<CheckpointInfo> checkpoints = [];
         CancellationTokenSource cancellationSource = new();
@@ -37,12 +41,13 @@ internal static class Step5EntryPoint
 
         CheckpointInfo targetCheckpoint = checkpoints[2];
 
+        Console.WriteLine($"Restoring to checkpoint {targetCheckpoint} from run {targetCheckpoint.RunId}");
         if (rehydrateToRestore)
         {
-            await handle.EndRunAsync().ConfigureAwait(false);
+            await handle.DisposeAsync().ConfigureAwait(false);
 
-            checkpointed = await InProcessExecution.ResumeStreamAsync(workflow, targetCheckpoint, checkpointManager, runId: handle.RunId, cancellationToken: CancellationToken.None)
-                                                   .ConfigureAwait(false);
+            checkpointed = await env.ResumeStreamAsync(workflow, targetCheckpoint, checkpointManager, runId: handle.RunId, cancellationToken: CancellationToken.None)
+                                    .ConfigureAwait(false);
             handle = checkpointed.Run;
         }
         else
@@ -72,6 +77,7 @@ internal static class Step5EntryPoint
             List<ExternalRequest> requests = [];
             await foreach (WorkflowEvent evt in handle.WatchStreamAsync(cancellationSource.Token).ConfigureAwait(false))
             {
+                Console.WriteLine($"!!! Processing event: {evt}");
                 switch (evt)
                 {
                     case WorkflowOutputEvent outputEvent:
@@ -91,11 +97,14 @@ internal static class Step5EntryPoint
                         break;
 
                     case RequestInfoEvent requestInputEvt:
+                        Console.WriteLine($"!!! Queuing request: {requestInputEvt.Request}");
                         requests.Add(requestInputEvt.Request);
                         break;
 
                     case SuperStepCompletedEvent stepCompletedEvt:
+                        Console.WriteLine($"*** Step {stepCompletedEvt.StepNumber} completed.");
                         CheckpointInfo? checkpoint = stepCompletedEvt.CompletionInfo!.Checkpoint;
+                        Console.WriteLine($"*** Checkpoint: {checkpoint}");
                         if (checkpoint is not null)
                         {
                             checkpoints.Add(checkpoint);
@@ -105,24 +114,30 @@ internal static class Step5EntryPoint
 
                         if (maxStep.HasValue && stepCompletedEvt.StepNumber >= maxStep.Value - 1)
                         {
+                            Console.WriteLine($"*** Max step {maxStep} reached, cancelling.");
                             cancellationSource.Cancel();
+                            return null;
                         }
-                        else
-                        {
-                            foreach (ExternalRequest request in requests)
-                            {
-                                ExternalResponse response = ExecuteExternalRequest(request, userGuessCallback, prompt);
-                                await handle.SendResponseAsync(response).ConfigureAwait(false);
-                            }
 
-                            requests.Clear();
+                        Console.WriteLine($"*** Processing {requests.Count} queued requests.");
+                        foreach (ExternalRequest request in requests)
+                        {
+                            ExternalResponse response = ExecuteExternalRequest(request, userGuessCallback, prompt);
+                            Console.WriteLine($"!!! Sending response: {response}");
+                            await handle.SendResponseAsync(response).ConfigureAwait(false);
                         }
+
+                        requests.Clear();
+
+                        Console.WriteLine("*** Completed processing requests.");
+
                         break;
 
                     case ExecutorCompletedEvent executorCompleteEvt:
                         writer.WriteLine($"'{executorCompleteEvt.ExecutorId}: {executorCompleteEvt.Data}");
                         break;
                 }
+                Console.WriteLine($"!!! Completed processing event: {evt.GetType()}");
             }
 
             if (cancellationSource.IsCancellationRequested)

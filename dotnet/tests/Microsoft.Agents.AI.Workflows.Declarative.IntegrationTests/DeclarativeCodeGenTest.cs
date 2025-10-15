@@ -12,10 +12,10 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests;
 /// <summary>
 /// Tests execution of workflow created by <see cref="DeclarativeWorkflowBuilder"/>.
 /// </summary>
-[Collection("Global")]
 public sealed class DeclarativeCodeGenTest(ITestOutputHelper output) : WorkflowTest(output)
 {
     [Theory]
+    [InlineData("CheckSystem.yaml", "CheckSystem.json")]
     [InlineData("SendActivity.yaml", "SendActivity.json")]
     [InlineData("InvokeAgent.yaml", "InvokeAgent.json")]
     [InlineData("InvokeAgent.yaml", "InvokeAgent.json", true)]
@@ -29,11 +29,14 @@ public sealed class DeclarativeCodeGenTest(ITestOutputHelper output) : WorkflowT
     [InlineData("Marketing.yaml", "Marketing.json", true)]
     [InlineData("MathChat.yaml", "MathChat.json", true)]
     [InlineData("DeepResearch.yaml", "DeepResearch.json", Skip = "Long running")]
-    [InlineData("HumanInLoop.yaml", "HumanInLoop.json", Skip = "Needs test support")]
     public Task ValidateScenarioAsync(string workflowFileName, string testcaseFileName, bool externalConveration = false) =>
         this.RunWorkflowAsync(Path.Combine(GetRepoFolder(), "workflow-samples", workflowFileName), testcaseFileName, externalConveration);
 
-    protected override async Task RunAndVerifyAsync<TInput>(Testcase testcase, string workflowPath, DeclarativeWorkflowOptions workflowOptions)
+    [Fact(Skip = "Needs template support")]
+    public Task ValidateMultiTurnAsync() =>
+        this.RunWorkflowAsync(Path.Combine(GetRepoFolder(), "workflow-samples", "HumanInLoop.yaml"), "HumanInLoop.json", useJsonCheckpoint: true);
+
+    protected override async Task RunAndVerifyAsync<TInput>(Testcase testcase, string workflowPath, DeclarativeWorkflowOptions workflowOptions, TInput input, bool useJsonCheckpoint)
     {
         const string WorkflowNamespace = "Test.WorkflowProviders";
         const string WorkflowPrefix = "Test";
@@ -41,17 +44,25 @@ public sealed class DeclarativeCodeGenTest(ITestOutputHelper output) : WorkflowT
         string workflowProviderCode = DeclarativeWorkflowBuilder.Eject(workflowPath, DeclarativeWorkflowLanguage.CSharp, WorkflowNamespace, WorkflowPrefix);
         try
         {
-            WorkflowEvents workflowEvents = await WorkflowHarness.RunCodeAsync(workflowProviderCode, $"{WorkflowPrefix}WorkflowProvider", WorkflowNamespace, workflowOptions, (TInput)GetInput<TInput>(testcase));
-            foreach (ExecutorEvent invokeEvent in workflowEvents.ExecutorInvokeEvents)
-            {
-                this.Output.WriteLine($"EXEC: {invokeEvent.ExecutorId}");
-            }
+            WorkflowHarness harness = await WorkflowHarness.GenerateCodeAsync(
+                runId: Path.GetFileNameWithoutExtension(workflowPath),
+                workflowProviderCode,
+                workflowProviderName: $"{WorkflowPrefix}WorkflowProvider",
+                WorkflowNamespace,
+                workflowOptions,
+                input);
 
+            WorkflowEvents workflowEvents = await harness.RunTestcaseAsync(testcase, input, useJsonCheckpoint).ConfigureAwait(false);
+
+            // Verify no action events are present
             Assert.Empty(workflowEvents.ActionInvokeEvents);
             Assert.Empty(workflowEvents.ActionCompleteEvents);
-            AssertWorkflow.Conversation(workflowOptions.ConversationId, testcase.Validation.ConversationCount, workflowEvents.ConversationEvents);
+            // Verify the associated conversations
+            AssertWorkflow.Conversation(workflowEvents.ConversationEvents, testcase);
+            // Verify executor events
             AssertWorkflow.EventCounts(workflowEvents.ExecutorInvokeEvents.Count - 2, testcase);
             AssertWorkflow.EventCounts(workflowEvents.ExecutorCompleteEvents.Count - 2, testcase);
+            // Verify action sequences
             AssertWorkflow.EventSequence(workflowEvents.ExecutorInvokeEvents.Select(e => e.ExecutorId), testcase);
         }
         finally

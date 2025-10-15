@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Shared.Diagnostics;
@@ -29,7 +30,11 @@ internal sealed class DeliveryMapping
     {
         foreach (Executor target in this._targets)
         {
-            nextStep.MessagesFor(target.Id).AddRange(this._envelopes.Select(envelope => envelope));
+            ConcurrentQueue<MessageEnvelope> messageQueue = nextStep.MessagesFor(target.Id);
+            foreach (MessageEnvelope envelope in this._envelopes)
+            {
+                messageQueue.Enqueue(envelope);
+            }
         }
     }
 }

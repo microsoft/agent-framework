@@ -94,6 +94,9 @@ internal static class ChatMessageExtensions
 
     public static ChatMessage ToChatMessage(this StringDataValue message) => new(ChatRole.User, message.Value);
 
+    public static ChatMessage ToChatMessage(this IEnumerable<FunctionResultContent> functionResults) =>
+        new(ChatRole.Tool, [.. functionResults]);
+
     public static AdditionalPropertiesDictionary? ToMetadata(this RecordDataValue? metadata)
     {
         if (metadata is null)
@@ -131,7 +134,7 @@ internal static class ChatMessageExtensions
         return
             contentType switch
             {
-                AgentMessageContentType.ImageUrl => new UriContent(contentValue, "image/*"),
+                AgentMessageContentType.ImageUrl => GetImageContent(contentValue),
                 AgentMessageContentType.ImageFile => new HostedFileContent(contentValue),
                 _ => new TextContent(contentValue)
             };
@@ -169,13 +172,18 @@ internal static class ChatMessageExtensions
                 yield return
                     contentItem?.GetProperty<StringDataValue>(TypeSchema.Message.Fields.ContentType)?.Value switch
                     {
-                        TypeSchema.Message.ContentTypes.ImageUrl => new UriContent(contentValue.Value, "image/*"),
+                        TypeSchema.Message.ContentTypes.ImageUrl => GetImageContent(contentValue.Value),
                         TypeSchema.Message.ContentTypes.ImageFile => new HostedFileContent(contentValue.Value),
                         _ => new TextContent(contentValue.Value)
                     };
             }
         }
     }
+
+    private static AIContent GetImageContent(string uriText) =>
+        uriText.StartsWith("data:", StringComparison.OrdinalIgnoreCase) ?
+            new DataContent(uriText, "image/*") :
+            new UriContent(uriText, "image/*");
 
     private static TValue? GetProperty<TValue>(this RecordDataValue record, string name)
         where TValue : DataValue
