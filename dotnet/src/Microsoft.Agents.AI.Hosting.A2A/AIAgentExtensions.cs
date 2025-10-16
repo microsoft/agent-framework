@@ -42,7 +42,7 @@ public static class AIAgentExtensions
         async Task<A2AResponse> OnMessageReceivedAsync(MessageSendParams messageSendParams, CancellationToken cancellationToken)
         {
             var contextId = messageSendParams.Message.ContextId ?? Guid.NewGuid().ToString("N");
-            var thread = await hostAgent.RestoreThreadAsync(contextId, cancellationToken).ConfigureAwait(false);
+            var thread = await hostAgent.GetOrCreateThreadAsync(contextId, cancellationToken).ConfigureAwait(false);
 
             var response = await hostAgent.RunAsync(
                 messageSendParams.ToChatMessages(),

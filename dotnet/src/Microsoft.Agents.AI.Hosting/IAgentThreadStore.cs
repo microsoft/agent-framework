@@ -44,7 +44,7 @@ public interface IAgentThreadStore
     /// A task that represents the asynchronous retrieval operation.
     /// The task result contains the serialized thread state, or <see langword="null"/> if not found.
     /// </returns>
-    ValueTask<JsonElement?> GetOrCreateThreadAsync(
+    ValueTask<JsonElement?> GetThreadAsync(
         string conversationId,
         string agentId,
         CancellationToken cancellationToken = default);

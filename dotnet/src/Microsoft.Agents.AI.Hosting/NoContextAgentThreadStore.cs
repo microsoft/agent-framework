@@ -13,7 +13,7 @@ namespace Microsoft.Agents.AI.Hosting;
 public sealed class NoContextAgentThreadStore : IAgentThreadStore
 {
     /// <inheritdoc/>
-    public ValueTask<JsonElement?> GetOrCreateThreadAsync(string conversationId, string agentId, CancellationToken cancellationToken = default)
+    public ValueTask<JsonElement?> GetThreadAsync(string conversationId, string agentId, CancellationToken cancellationToken = default)
     {
         // this is OK, Agents should be prepared to handle null threads.
         return new ValueTask<JsonElement?>(result: null!);

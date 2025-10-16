@@ -42,14 +42,16 @@ public sealed class InMemoryAgentThreadStore : IAgentThreadStore
     }
 
     /// <inheritdoc/>
-    public ValueTask<JsonElement?> GetOrCreateThreadAsync(
+    public ValueTask<JsonElement?> GetThreadAsync(
         string conversationId,
         string agentId,
         CancellationToken cancellationToken = default)
     {
         var key = GetKey(conversationId, agentId);
-        var threadContent = this._threads.GetOrAdd(key, value: JsonDocument.Parse("{}").RootElement);
-        return new ValueTask<JsonElement?>(threadContent);
+        JsonElement? threadContent = this._threads.TryGetValue(key, out var existingThread)
+            ? existingThread : null!;
+
+        return new ValueTask<JsonElement?>(result: threadContent);
     }
 
     private static string GetKey(string conversationId, string agentId)

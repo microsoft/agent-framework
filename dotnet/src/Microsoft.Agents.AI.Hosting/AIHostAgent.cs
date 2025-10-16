@@ -64,32 +64,27 @@ public class AIHostAgent : AIAgent
         => this._innerAgent.DeserializeThread(serializedThread, jsonSerializerOptions);
 
     /// <summary>
-    /// Restores a conversation thread from the thread store using the specified conversation ID.
+    /// Gets an existing agent thread for the specified conversation, or creates a new one if none exists.
     /// </summary>
-    /// <param name="conversationId">The unique identifier of the conversation to restore.</param>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
-    /// <returns>
-    /// A task that represents the asynchronous operation. The task result contains the restored thread,
-    /// or <see langword="null"/> if no thread with the given ID exists in the store.
-    /// </returns>
-    /// <exception cref="ArgumentException"><paramref name="conversationId"/> is null or whitespace.</exception>
-    public async ValueTask<AgentThread?> RestoreThreadAsync(
+    /// <param name="conversationId">The unique identifier of the conversation for which to retrieve or create the agent thread. Cannot be null,
+    /// empty, or consist only of white-space characters.</param>
+    /// <param name="cancellationToken">A cancellation token that can be used to cancel the asynchronous operation.</param>
+    /// <returns>A task that represents the asynchronous operation. The task result contains the agent thread associated with the
+    /// specified conversation. If no thread exists, a new thread is created and returned.</returns>
+    public async ValueTask<AgentThread> GetOrCreateThreadAsync(
         string conversationId,
         CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNullOrWhitespace(conversationId);
 
-        var serializedThread = await this._threadStore.GetOrCreateThreadAsync(
+        var serializedThread = await this._threadStore.GetThreadAsync(
             conversationId,
             this.Id,
             cancellationToken).ConfigureAwait(false);
 
-        if (serializedThread is null)
-        {
-            return null;
-        }
-
-        return this._innerAgent.DeserializeThread(serializedThread.Value);
+        return serializedThread is null
+            ? this._innerAgent.GetNewThread()
+            : this._innerAgent.DeserializeThread(serializedThread.Value);
     }
 
     /// <summary>
