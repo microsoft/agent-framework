@@ -295,6 +295,438 @@ public sealed class PersistentAgentsClientExtensionsTests
     }
 
     /// <summary>
+    /// Verify that GetAIAgent with Response and options works correctly.
+    /// </summary>
+    [Fact]
+    public void GetAIAgent_WithResponseAndOptions_WorksCorrectly()
+    {
+        // Arrange
+        var client = CreateFakePersistentAgentsClient();
+        var persistentAgent = ModelReaderWriter.Read<PersistentAgent>(BinaryData.FromString("""{"id": "agent_abc123", "name": "Original Name", "description": "Original Description", "instructions": "Original Instructions"}"""))!;
+        var response = Response.FromValue(persistentAgent, new FakeResponse());
+
+        var options = new ChatClientAgentOptions
+        {
+            Name = "Override Name",
+            Description = "Override Description",
+            Instructions = "Override Instructions"
+        };
+
+        // Act
+        var agent = client.GetAIAgent(response, options);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Override Name", agent.Name);
+        Assert.Equal("Override Description", agent.Description);
+        Assert.Equal("Override Instructions", agent.Instructions);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgent with PersistentAgent and options works correctly.
+    /// </summary>
+    [Fact]
+    public void GetAIAgent_WithPersistentAgentAndOptions_WorksCorrectly()
+    {
+        // Arrange
+        var client = CreateFakePersistentAgentsClient();
+        var persistentAgent = ModelReaderWriter.Read<PersistentAgent>(BinaryData.FromString("""{"id": "agent_abc123", "name": "Original Name", "description": "Original Description", "instructions": "Original Instructions"}"""))!;
+
+        var options = new ChatClientAgentOptions
+        {
+            Name = "Override Name",
+            Description = "Override Description",
+            Instructions = "Override Instructions"
+        };
+
+        // Act
+        var agent = client.GetAIAgent(persistentAgent, options);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Override Name", agent.Name);
+        Assert.Equal("Override Description", agent.Description);
+        Assert.Equal("Override Instructions", agent.Instructions);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgent with PersistentAgent and options falls back to agent metadata when options are null.
+    /// </summary>
+    [Fact]
+    public void GetAIAgent_WithPersistentAgentAndOptionsWithNullFields_FallsBackToAgentMetadata()
+    {
+        // Arrange
+        var client = CreateFakePersistentAgentsClient();
+        var persistentAgent = ModelReaderWriter.Read<PersistentAgent>(BinaryData.FromString("""{"id": "agent_abc123", "name": "Original Name", "description": "Original Description", "instructions": "Original Instructions"}"""))!;
+
+        var options = new ChatClientAgentOptions(); // Empty options
+
+        // Act
+        var agent = client.GetAIAgent(persistentAgent, options);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Original Name", agent.Name);
+        Assert.Equal("Original Description", agent.Description);
+        Assert.Equal("Original Instructions", agent.Instructions);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgent with agentId and options works correctly.
+    /// </summary>
+    [Fact]
+    public void GetAIAgent_WithAgentIdAndOptions_WorksCorrectly()
+    {
+        // Arrange
+        var client = CreateFakePersistentAgentsClient();
+        const string AgentId = "agent_abc123";
+
+        var options = new ChatClientAgentOptions
+        {
+            Name = "Override Name",
+            Description = "Override Description",
+            Instructions = "Override Instructions"
+        };
+
+        // Act
+        var agent = client.GetAIAgent(AgentId, options);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Override Name", agent.Name);
+        Assert.Equal("Override Description", agent.Description);
+        Assert.Equal("Override Instructions", agent.Instructions);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgentAsync with agentId and options works correctly.
+    /// </summary>
+    [Fact]
+    public async Task GetAIAgentAsync_WithAgentIdAndOptions_WorksCorrectlyAsync()
+    {
+        // Arrange
+        var client = CreateFakePersistentAgentsClient();
+        const string AgentId = "agent_abc123";
+
+        var options = new ChatClientAgentOptions
+        {
+            Name = "Override Name",
+            Description = "Override Description",
+            Instructions = "Override Instructions"
+        };
+
+        // Act
+        var agent = await client.GetAIAgentAsync(AgentId, options);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Override Name", agent.Name);
+        Assert.Equal("Override Description", agent.Description);
+        Assert.Equal("Override Instructions", agent.Instructions);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgent with clientFactory parameter correctly applies the factory.
+    /// </summary>
+    [Fact]
+    public void GetAIAgent_WithOptionsAndClientFactory_AppliesFactoryCorrectly()
+    {
+        // Arrange
+        var client = CreateFakePersistentAgentsClient();
+        var persistentAgent = ModelReaderWriter.Read<PersistentAgent>(BinaryData.FromString("""{"id": "agent_abc123", "name": "Test Agent"}"""))!;
+        var testChatClient = new TestChatClient(client.AsIChatClient("agent_abc123"));
+
+        var options = new ChatClientAgentOptions
+        {
+            Name = "Test Agent"
+        };
+
+        // Act
+        var agent = client.GetAIAgent(
+            persistentAgent,
+            options,
+            clientFactory: (innerClient) => testChatClient);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Test Agent", agent.Name);
+
+        // Verify that the custom chat client can be retrieved from the agent's service collection
+        var retrievedTestClient = agent.GetService<TestChatClient>();
+        Assert.NotNull(retrievedTestClient);
+        Assert.Same(testChatClient, retrievedTestClient);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgent throws ArgumentNullException when response is null.
+    /// </summary>
+    [Fact]
+    public void GetAIAgent_WithNullResponse_ThrowsArgumentNullException()
+    {
+        // Arrange
+        var client = CreateFakePersistentAgentsClient();
+        var options = new ChatClientAgentOptions();
+
+        // Act & Assert
+        var exception = Assert.Throws<ArgumentNullException>(() =>
+            client.GetAIAgent((Response<PersistentAgent>)null!, options));
+
+        Assert.Equal("persistentAgentResponse", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgent throws ArgumentNullException when persistentAgent is null.
+    /// </summary>
+    [Fact]
+    public void GetAIAgent_WithNullPersistentAgent_ThrowsArgumentNullException()
+    {
+        // Arrange
+        var client = CreateFakePersistentAgentsClient();
+        var options = new ChatClientAgentOptions();
+
+        // Act & Assert
+        var exception = Assert.Throws<ArgumentNullException>(() =>
+            client.GetAIAgent((PersistentAgent)null!, options));
+
+        Assert.Equal("persistentAgentMetadata", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgent throws ArgumentNullException when options is null.
+    /// </summary>
+    [Fact]
+    public void GetAIAgent_WithNullOptions_ThrowsArgumentNullException()
+    {
+        // Arrange
+        var client = CreateFakePersistentAgentsClient();
+        var persistentAgent = ModelReaderWriter.Read<PersistentAgent>(BinaryData.FromString("""{"id": "agent_abc123"}"""))!;
+
+        // Act & Assert
+        var exception = Assert.Throws<ArgumentNullException>(() =>
+            client.GetAIAgent(persistentAgent, (ChatClientAgentOptions)null!));
+
+        Assert.Equal("options", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgent throws ArgumentException when agentId is empty.
+    /// </summary>
+    [Fact]
+    public void GetAIAgent_WithOptionsAndEmptyAgentId_ThrowsArgumentException()
+    {
+        // Arrange
+        var client = CreateFakePersistentAgentsClient();
+        var options = new ChatClientAgentOptions();
+
+        // Act & Assert
+        var exception = Assert.Throws<ArgumentException>(() =>
+            client.GetAIAgent(string.Empty, options));
+
+        Assert.Equal("agentId", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgentAsync throws ArgumentException when agentId is empty.
+    /// </summary>
+    [Fact]
+    public async Task GetAIAgentAsync_WithOptionsAndEmptyAgentId_ThrowsArgumentExceptionAsync()
+    {
+        // Arrange
+        var client = CreateFakePersistentAgentsClient();
+        var options = new ChatClientAgentOptions();
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<ArgumentException>(() =>
+            client.GetAIAgentAsync(string.Empty, options));
+
+        Assert.Equal("agentId", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgent with options works correctly.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithOptions_WorksCorrectly()
+    {
+        // Arrange
+        var client = CreateFakePersistentAgentsClient();
+        const string Model = "test-model";
+
+        var options = new ChatClientAgentOptions
+        {
+            Name = "Test Agent",
+            Description = "Test description",
+            Instructions = "Test instructions"
+        };
+
+        // Act
+        var agent = client.CreateAIAgent(Model, options);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Test Agent", agent.Name);
+        Assert.Equal("Test description", agent.Description);
+        Assert.Equal("Test instructions", agent.Instructions);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgentAsync with options works correctly.
+    /// </summary>
+    [Fact]
+    public async Task CreateAIAgentAsync_WithOptions_WorksCorrectlyAsync()
+    {
+        // Arrange
+        var client = CreateFakePersistentAgentsClient();
+        const string Model = "test-model";
+
+        var options = new ChatClientAgentOptions
+        {
+            Name = "Test Agent",
+            Description = "Test description",
+            Instructions = "Test instructions"
+        };
+
+        // Act
+        var agent = await client.CreateAIAgentAsync(Model, options);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Test Agent", agent.Name);
+        Assert.Equal("Test description", agent.Description);
+        Assert.Equal("Test instructions", agent.Instructions);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgent with options and clientFactory applies the factory correctly.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithOptionsAndClientFactory_AppliesFactoryCorrectly()
+    {
+        // Arrange
+        var client = CreateFakePersistentAgentsClient();
+        TestChatClient? testChatClient = null;
+        const string Model = "test-model";
+
+        var options = new ChatClientAgentOptions
+        {
+            Name = "Test Agent"
+        };
+
+        // Act
+        var agent = client.CreateAIAgent(
+            Model,
+            options,
+            clientFactory: (innerClient) => testChatClient = new TestChatClient(innerClient));
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Test Agent", agent.Name);
+
+        // Verify that the custom chat client can be retrieved from the agent's service collection
+        var retrievedTestClient = agent.GetService<TestChatClient>();
+        Assert.NotNull(retrievedTestClient);
+        Assert.Same(testChatClient, retrievedTestClient);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgentAsync with options and clientFactory applies the factory correctly.
+    /// </summary>
+    [Fact]
+    public async Task CreateAIAgentAsync_WithOptionsAndClientFactory_AppliesFactoryCorrectlyAsync()
+    {
+        // Arrange
+        var client = CreateFakePersistentAgentsClient();
+        TestChatClient? testChatClient = null;
+        const string Model = "test-model";
+
+        var options = new ChatClientAgentOptions
+        {
+            Name = "Test Agent"
+        };
+
+        // Act
+        var agent = await client.CreateAIAgentAsync(
+            Model,
+            options,
+            clientFactory: (innerClient) => testChatClient = new TestChatClient(innerClient));
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Test Agent", agent.Name);
+
+        // Verify that the custom chat client can be retrieved from the agent's service collection
+        var retrievedTestClient = agent.GetService<TestChatClient>();
+        Assert.NotNull(retrievedTestClient);
+        Assert.Same(testChatClient, retrievedTestClient);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgent throws ArgumentNullException when options is null.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithNullOptions_ThrowsArgumentNullException()
+    {
+        // Arrange
+        var client = CreateFakePersistentAgentsClient();
+
+        // Act & Assert
+        var exception = Assert.Throws<ArgumentNullException>(() =>
+            client.CreateAIAgent("test-model", (ChatClientAgentOptions)null!));
+
+        Assert.Equal("options", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgentAsync throws ArgumentNullException when options is null.
+    /// </summary>
+    [Fact]
+    public async Task CreateAIAgentAsync_WithNullOptions_ThrowsArgumentNullExceptionAsync()
+    {
+        // Arrange
+        var client = CreateFakePersistentAgentsClient();
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<ArgumentNullException>(() =>
+            client.CreateAIAgentAsync("test-model", (ChatClientAgentOptions)null!));
+
+        Assert.Equal("options", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgent throws ArgumentException when model is empty.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithEmptyModel_ThrowsArgumentException()
+    {
+        // Arrange
+        var client = CreateFakePersistentAgentsClient();
+        var options = new ChatClientAgentOptions();
+
+        // Act & Assert
+        var exception = Assert.Throws<ArgumentException>(() =>
+            client.CreateAIAgent(string.Empty, options));
+
+        Assert.Equal("model", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgentAsync throws ArgumentException when model is empty.
+    /// </summary>
+    [Fact]
+    public async Task CreateAIAgentAsync_WithEmptyModel_ThrowsArgumentExceptionAsync()
+    {
+        // Arrange
+        var client = CreateFakePersistentAgentsClient();
+        var options = new ChatClientAgentOptions();
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<ArgumentException>(() =>
+            client.CreateAIAgentAsync(string.Empty, options));
+
+        Assert.Equal("model", exception.ParamName);
+    }
+
+    /// <summary>
     /// Test custom chat client that can be used to verify clientFactory functionality.
     /// </summary>
     private sealed class TestChatClient : DelegatingChatClient

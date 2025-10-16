@@ -786,6 +786,10 @@ class AzureAIAgentClient(BaseChatClient):
                             server_label = mcp_tool.name.replace(" ", "_")
                             mcp_resource: dict[str, Any] = {"server_label": server_label}
 
+                            # Add headers if they exist
+                            if mcp_tool.headers:
+                                mcp_resource["headers"] = mcp_tool.headers
+
                             if mcp_tool.approval_mode is not None:
                                 match mcp_tool.approval_mode:
                                     case str():

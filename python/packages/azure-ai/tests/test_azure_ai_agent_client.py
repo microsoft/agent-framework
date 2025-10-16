@@ -831,6 +831,38 @@ async def test_azure_ai_chat_client_create_run_options_mcp_never_require(mock_ai
         assert mcp_resource["require_approval"] == "never"
 
 
+async def test_azure_ai_chat_client_create_run_options_mcp_with_headers(mock_ai_project_client: MagicMock) -> None:
+    """Test _create_run_options with HostedMCPTool having headers."""
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client)
+
+    # Test with headers
+    headers = {"Authorization": "Bearer DUMMY_TOKEN", "X-API-Key": "DUMMY_KEY"}
+    mcp_tool = HostedMCPTool(
+        name="Test MCP Tool", url="https://example.com/mcp", headers=headers, approval_mode="never_require"
+    )
+
+    messages = [ChatMessage(role=Role.USER, text="Hello")]
+    chat_options = ChatOptions(tools=[mcp_tool], tool_choice="auto")
+
+    with patch("agent_framework_azure_ai._chat_client.McpTool") as mock_mcp_tool_class:
+        # Mock _prep_tools to avoid actual tool preparation
+        mock_mcp_tool_instance = MagicMock()
+        mock_mcp_tool_instance.definitions = [{"type": "mcp", "name": "test_mcp"}]
+        mock_mcp_tool_class.return_value = mock_mcp_tool_instance
+
+        run_options, _ = await chat_client._create_run_options(messages, chat_options)  # type: ignore
+
+        # Verify tool_resources is created with headers
+        assert "tool_resources" in run_options
+        assert "mcp" in run_options["tool_resources"]
+        assert len(run_options["tool_resources"]["mcp"]) == 1
+
+        mcp_resource = run_options["tool_resources"]["mcp"][0]
+        assert mcp_resource["server_label"] == "Test_MCP_Tool"
+        assert mcp_resource["require_approval"] == "never"
+        assert mcp_resource["headers"] == headers
+
+
 async def test_azure_ai_chat_client_prep_tools_web_search_bing_grounding(mock_ai_project_client: MagicMock) -> None:
     """Test _prep_tools with HostedWebSearchTool using Bing Grounding."""
 

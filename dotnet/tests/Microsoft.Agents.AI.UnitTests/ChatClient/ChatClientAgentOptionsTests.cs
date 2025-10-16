@@ -61,9 +61,7 @@ public class ChatClientAgentOptionsTests
         Assert.Null(options.Name);
         Assert.Equal(Instructions, options.Instructions);
         Assert.Null(options.Description);
-        Assert.NotNull(options.ChatOptions);
-        Assert.Equal(Instructions, options.ChatOptions.Instructions);
-        Assert.Null(options.ChatOptions.Tools);
+        Assert.Null(options.ChatOptions);
     }
 
     [Fact]
@@ -107,7 +105,7 @@ public class ChatClientAgentOptionsTests
         Assert.Equal(Instructions, options.Instructions);
         Assert.Null(options.Description);
         Assert.NotNull(options.ChatOptions);
-        Assert.Equal(Instructions, options.ChatOptions.Instructions);
+        Assert.Null(options.ChatOptions.Instructions);
         Assert.Same(tools, options.ChatOptions.Tools);
     }
 
@@ -132,7 +130,7 @@ public class ChatClientAgentOptionsTests
         Assert.Equal(Instructions, options.Instructions);
         Assert.Equal(Description, options.Description);
         Assert.NotNull(options.ChatOptions);
-        Assert.Equal(Instructions, options.ChatOptions.Instructions);
+        Assert.Null(options.ChatOptions.Instructions);
         Assert.Same(tools, options.ChatOptions.Tools);
     }
 
@@ -165,8 +163,13 @@ public class ChatClientAgentOptionsTests
         const string Name = "Test name";
         const string Description = "Test description";
         var tools = new List<AITool> { AIFunctionFactory.Create(() => "test") };
-        static ChatMessageStore ChatMessageStoreFactory(ChatClientAgentOptions.ChatMessageStoreFactoryContext ctx) => new Mock<ChatMessageStore>().Object;
-        static AIContextProvider AIContextProviderFactory(ChatClientAgentOptions.AIContextProviderFactoryContext ctx) => new Mock<AIContextProvider>().Object;
+
+        static ChatMessageStore ChatMessageStoreFactory(
+            ChatClientAgentOptions.ChatMessageStoreFactoryContext ctx) => new Mock<ChatMessageStore>().Object;
+
+        static AIContextProvider AIContextProviderFactory(
+            ChatClientAgentOptions.AIContextProviderFactoryContext ctx) =>
+            new Mock<AIContextProvider>().Object;
 
         var original = new ChatClientAgentOptions(Instructions, Name, Description, tools)
         {
