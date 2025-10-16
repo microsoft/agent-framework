@@ -256,7 +256,7 @@ public static class WorkflowVisualizer
                 case EdgeKind.Direct when edgeGroup.DirectEdgeData != null:
                     var directData = edgeGroup.DirectEdgeData;
                     var isConditional = directData.Condition != null;
-                    var label = directData.Label ?? (isConditional ? "conditional" : null);
+                    var label = directData.Label;
                     edges.Add((directData.SourceId, directData.SinkId, isConditional, label));
                     break;
 
