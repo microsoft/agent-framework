@@ -14,6 +14,7 @@ from agent_framework import (
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
+    CitationAnnotation,
     Contents,
     DataContent,
     FunctionApprovalRequestContent,
@@ -28,6 +29,7 @@ from agent_framework import (
     HostedWebSearchTool,
     Role,
     TextContent,
+    TextSpanRegion,
     ToolMode,
     ToolProtocol,
     UriContent,
@@ -60,6 +62,8 @@ from azure.ai.agents.models import (
     ListSortOrder,
     McpTool,
     MessageDeltaChunk,
+    MessageDeltaTextContent,
+    MessageDeltaTextUrlCitationAnnotation,
     MessageImageUrlParam,
     MessageInputContentBlock,
     MessageInputImageUrlBlock,
@@ -480,6 +484,37 @@ class AzureAIAgentClient(BaseChatClient):
         # and remove until here.
         return thread_id
 
+    def _extract_url_citations(self, message_delta_chunk: MessageDeltaChunk) -> list[CitationAnnotation]:
+        """Extract URL citations from MessageDeltaChunk."""
+        url_citations: list[CitationAnnotation] = []
+
+        # Process each content item in the delta to find citations
+        for content in message_delta_chunk.delta.content:
+            if isinstance(content, MessageDeltaTextContent) and content.text and content.text.annotations:
+                for annotation in content.text.annotations:
+                    if isinstance(annotation, MessageDeltaTextUrlCitationAnnotation):
+                        # Create annotated regions only if both start and end indices are available
+                        annotated_regions = []
+                        if annotation.start_index and annotation.end_index:
+                            annotated_regions = [
+                                TextSpanRegion(
+                                    start_index=annotation.start_index,
+                                    end_index=annotation.end_index,
+                                )
+                            ]
+
+                        # Create CitationAnnotation from AzureAI annotation
+                        citation = CitationAnnotation(
+                            title=getattr(annotation.url_citation, "title", None),
+                            url=annotation.url_citation.url,
+                            snippet=None,
+                            annotated_regions=annotated_regions,
+                            raw_representation=annotation,
+                        )
+                        url_citations.append(citation)
+
+        return url_citations
+
     async def _process_stream(
         self, stream: AsyncAgentRunStream[AsyncAgentEventHandler[Any]] | AsyncAgentEventHandler[Any], thread_id: str
     ) -> AsyncIterable[ChatResponseUpdate]:
@@ -492,9 +527,21 @@ class AzureAIAgentClient(BaseChatClient):
                     case MessageDeltaChunk():
                         # only one event_type: AgentStreamEvent.THREAD_MESSAGE_DELTA
                         role = Role.USER if event_data.delta.role == MessageRole.USER else Role.ASSISTANT
+
+                        # Extract URL citations from the delta chunk
+                        url_citations = self._extract_url_citations(event_data)
+
+                        # Create contents with citations if any exist
+                        citation_content: list[Contents] = []
+                        if event_data.text or url_citations:
+                            text_content_obj = TextContent(text=event_data.text or "")
+                            if url_citations:
+                                text_content_obj.annotations = url_citations
+                            citation_content.append(text_content_obj)
+
                         yield ChatResponseUpdate(
                             role=role,
-                            text=event_data.text,
+                            contents=citation_content if citation_content else None,
                             conversation_id=thread_id,
                             message_id=response_id,
                             raw_representation=event_data,
@@ -518,11 +565,13 @@ class AzureAIAgentClient(BaseChatClient):
                                     "submit_tool_outputs",
                                     "submit_tool_approval",
                                 ]:
-                                    contents = self._create_function_call_contents(event_data, response_id)
-                                    if contents:
+                                    function_call_contents = self._create_function_call_contents(
+                                        event_data, response_id
+                                    )
+                                    if function_call_contents:
                                         yield ChatResponseUpdate(
                                             role=Role.ASSISTANT,
-                                            contents=contents,
+                                            contents=function_call_contents,
                                             conversation_id=thread_id,
                                             message_id=response_id,
                                             raw_representation=event_data,
@@ -589,22 +638,22 @@ class AzureAIAgentClient(BaseChatClient):
                                     tool_call.code_interpreter,
                                     RunStepDeltaCodeInterpreterDetailItemObject,
                                 ):
-                                    contents = []
+                                    code_contents: list[Contents] = []
                                     if tool_call.code_interpreter.input is not None:
                                         logger.debug(f"Code Interpreter Input: {tool_call.code_interpreter.input}")
                                     if tool_call.code_interpreter.outputs is not None:
                                         for output in tool_call.code_interpreter.outputs:
                                             if isinstance(output, RunStepDeltaCodeInterpreterLogOutput) and output.logs:
-                                                contents.append(TextContent(text=output.logs))
+                                                code_contents.append(TextContent(text=output.logs))
                                             if (
                                                 isinstance(output, RunStepDeltaCodeInterpreterImageOutput)
                                                 and output.image is not None
                                                 and output.image.file_id is not None
                                             ):
-                                                contents.append(HostedFileContent(file_id=output.image.file_id))
+                                                code_contents.append(HostedFileContent(file_id=output.image.file_id))
                                     yield ChatResponseUpdate(
                                         role=Role.ASSISTANT,
-                                        contents=contents,
+                                        contents=code_contents,
                                         conversation_id=thread_id,
                                         message_id=response_id,
                                         raw_representation=tool_call.code_interpreter,
@@ -737,6 +786,10 @@ class AzureAIAgentClient(BaseChatClient):
                             server_label = mcp_tool.name.replace(" ", "_")
                             mcp_resource: dict[str, Any] = {"server_label": server_label}
 
+                            # Add headers if they exist
+                            if mcp_tool.headers:
+                                mcp_resource["headers"] = mcp_tool.headers
+
                             if mcp_tool.approval_mode is not None:
                                 match mcp_tool.approval_mode:
                                     case str():
@@ -862,8 +915,9 @@ class AzureAIAgentClient(BaseChatClient):
                         config_args["market"] = market
                     if set_lang := additional_props.get("set_lang"):
                         config_args["set_lang"] = set_lang
-                    # Bing Grounding
+                    # Bing Grounding (support both connection_id and connection_name)
                     connection_id = additional_props.get("connection_id") or os.getenv("BING_CONNECTION_ID")
+                    connection_name = additional_props.get("connection_name") or os.getenv("BING_CONNECTION_NAME")
                     # Custom Bing Search
                     custom_connection_name = additional_props.get("custom_connection_name") or os.getenv(
                         "BING_CUSTOM_CONNECTION_NAME"
@@ -872,8 +926,26 @@ class AzureAIAgentClient(BaseChatClient):
                         "BING_CUSTOM_INSTANCE_NAME"
                     )
                     bing_search: BingGroundingTool | BingCustomSearchTool | None = None
-                    if connection_id and not custom_connection_name and not custom_configuration_name:
-                        bing_search = BingGroundingTool(connection_id=connection_id, **config_args)
+                    if (
+                        (connection_id or connection_name)
+                        and not custom_connection_name
+                        and not custom_configuration_name
+                    ):
+                        if connection_id:
+                            conn_id = connection_id
+                        elif connection_name:
+                            try:
+                                bing_connection = await self.project_client.connections.get(name=connection_name)
+                            except HttpResponseError as err:
+                                raise ServiceInitializationError(
+                                    f"Bing connection '{connection_name}' not found in the Azure AI Project.",
+                                    err,
+                                ) from err
+                            else:
+                                conn_id = bing_connection.id
+                        else:
+                            raise ServiceInitializationError("Neither connection_id nor connection_name provided.")
+                        bing_search = BingGroundingTool(connection_id=conn_id, **config_args)
                     if custom_connection_name and custom_configuration_name:
                         try:
                             bing_custom_connection = await self.project_client.connections.get(
@@ -892,10 +964,11 @@ class AzureAIAgentClient(BaseChatClient):
                             )
                     if not bing_search:
                         raise ServiceInitializationError(
-                            "Bing search tool requires either a 'connection_id' for Bing Grounding "
+                            "Bing search tool requires either 'connection_id' or 'connection_name' for Bing Grounding "
                             "or both 'custom_connection_name' and 'custom_instance_name' for Custom Bing Search. "
-                            "These can be provided via the tool's additional_properties or environment variables: "
-                            "'BING_CONNECTION_ID', 'BING_CUSTOM_CONNECTION_NAME', 'BING_CUSTOM_INSTANCE_NAME'"
+                            "These can be provided via additional_properties or environment variables: "
+                            "'BING_CONNECTION_ID', 'BING_CONNECTION_NAME', 'BING_CUSTOM_CONNECTION_NAME', "
+                            "'BING_CUSTOM_INSTANCE_NAME'"
                         )
                     tool_definitions.extend(bing_search.definitions)
                 case HostedCodeInterpreterTool():
@@ -929,7 +1002,7 @@ class AzureAIAgentClient(BaseChatClient):
                             azs_conn_id = await self.project_client.connections.get_default(
                                 ConnectionType.AZURE_AI_SEARCH
                             )
-                        except HttpResponseError as err:
+                        except ValueError as err:
                             raise ServiceInitializationError(
                                 "No default Azure AI Search connection found in the Azure AI Project. "
                                 "Please create one or provide vector store inputs for the file search tool.",

@@ -6,7 +6,6 @@ using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
-using Microsoft.Agents.AI.Workflows.Reflection;
 using Microsoft.Extensions.AI;
 
 namespace WorkflowCustomAgentExecutorsSample;
@@ -50,7 +49,7 @@ public static class Program
 
         // Execute the workflow
         await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, "Create a slogan for a new electric SUV that is affordable and fun to drive.");
-        await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync())
         {
             if (evt is SloganGeneratedEvent or FeedbackEvent)
             {
@@ -107,10 +106,7 @@ internal sealed class SloganGeneratedEvent(SloganResult sloganResult) : Workflow
 /// 1. HandleAsync(string message): Handles the initial task to create a slogan.
 /// 2. HandleAsync(Feedback message): Handles feedback to improve the slogan.
 /// </summary>
-internal sealed class SloganWriterExecutor
-    : ReflectingExecutor<SloganWriterExecutor>,
-      IMessageHandler<string, SloganResult>,
-      IMessageHandler<FeedbackResult, SloganResult>
+internal sealed class SloganWriterExecutor : Executor
 {
     private readonly AIAgent _agent;
     private readonly AgentThread _thread;
@@ -133,6 +129,10 @@ internal sealed class SloganWriterExecutor
         this._agent = new ChatClientAgent(chatClient, agentOptions);
         this._thread = this._agent.GetNewThread();
     }
+
+    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
+        routeBuilder.AddHandler<string, SloganResult>(this.HandleAsync)
+                    .AddHandler<FeedbackResult, SloganResult>(this.HandleAsync);
 
     public async ValueTask<SloganResult> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
@@ -175,7 +175,7 @@ internal sealed class FeedbackEvent(FeedbackResult feedbackResult) : WorkflowEve
 /// <summary>
 /// A custom executor that uses an AI agent to provide feedback on a slogan.
 /// </summary>
-internal sealed class FeedbackExecutor : ReflectingExecutor<FeedbackExecutor>, IMessageHandler<SloganResult>
+internal sealed class FeedbackExecutor : Executor<SloganResult>
 {
     private readonly AIAgent _agent;
     private readonly AgentThread _thread;
@@ -205,7 +205,7 @@ internal sealed class FeedbackExecutor : ReflectingExecutor<FeedbackExecutor>, I
         this._thread = this._agent.GetNewThread();
     }
 
-    public async ValueTask HandleAsync(SloganResult message, IWorkflowContext context, CancellationToken cancellationToken = default)
+    public override async ValueTask HandleAsync(SloganResult message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         var sloganMessage = $"""
             Here is a slogan for the task '{message.Task}':

@@ -1,8 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.ClientModel;
+using System.ClientModel.Primitives;
 using System.Runtime.CompilerServices;
-using A2A;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using OpenAI;
@@ -13,16 +13,9 @@ namespace AgentWebChat.Web;
 /// <summary>
 /// Is a simple frontend client which exercises the ability of exposed agent to communicate via OpenAI Responses protocol.
 /// </summary>
-internal sealed class OpenAIResponsesAgentClient : IAgentClient
+internal sealed class OpenAIResponsesAgentClient(HttpClient httpClient) : AgentClientBase
 {
-    private readonly Uri _baseUri;
-
-    public OpenAIResponsesAgentClient(string baseUri)
-    {
-        this._baseUri = new Uri(baseUri.TrimEnd('/'));
-    }
-
-    public async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    public async override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
         string agentName,
         IList<ChatMessage> messages,
         string? threadId = null,
@@ -30,7 +23,8 @@ internal sealed class OpenAIResponsesAgentClient : IAgentClient
     {
         OpenAIClientOptions options = new()
         {
-            Endpoint = new Uri(this._baseUri, $"/{agentName}/v1/")
+            Endpoint = new Uri(httpClient.BaseAddress!, $"/{agentName}/v1/"),
+            Transport = new HttpClientPipelineTransport(httpClient)
         };
 
         var openAiClient = new OpenAIResponseClient(model: "myModel!", credential: new ApiKeyCredential("dummy-key"), options: options).AsIChatClient();
@@ -44,7 +38,4 @@ internal sealed class OpenAIResponsesAgentClient : IAgentClient
             yield return new AgentRunResponseUpdate(update);
         }
     }
-
-    public Task<AgentCard?> GetAgentCardAsync(string agentName, CancellationToken cancellationToken = default)
-        => Task.FromResult<AgentCard?>(null!);
 }

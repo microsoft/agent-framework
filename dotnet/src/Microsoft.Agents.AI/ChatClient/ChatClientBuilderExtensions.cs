@@ -2,11 +2,11 @@
 
 using System;
 using System.Collections.Generic;
-using Microsoft.Extensions.AI;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Shared.Diagnostics;
 
-namespace Microsoft.Agents.AI.ChatClient;
+namespace Microsoft.Extensions.AI;
 
 /// <summary>
 /// Provides extension methods for building a <see cref="ChatClientAgent"/> from a <see cref="ChatClientBuilder"/>.
