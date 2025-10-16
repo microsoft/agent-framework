@@ -518,6 +518,9 @@ async def test_chat_agent_as_tool_name_sanitization(chat_client: ChatClientProto
         ("Travel & Logistics Agent", "Travel_Logistics_Agent"),
         ("Agent@Company.com", "Agent_Company_com"),
         ("Agent___Multiple___Underscores", "Agent_Multiple_Underscores"),
+        ("123Agent", "_123Agent"),  # Test digit prefix handling
+        ("9to5Helper", "_9to5Helper"),  # Another digit prefix case
+        ("@@@", "agent"),  # Test empty sanitization fallback
     ]
 
     for agent_name, expected_tool_name in test_cases:

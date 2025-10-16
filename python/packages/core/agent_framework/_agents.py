@@ -60,8 +60,9 @@ def _sanitize_agent_name(agent_name: str | None) -> str | None:
         agent_name: The agent name to sanitize.
 
     Returns:
-        The sanitized agent name with invalid characters replaced by underscores,
-        or None if the input is None.
+        The sanitized agent name with invalid characters replaced by underscores.
+        If the input is None, returns None.
+        If sanitization results in an empty string (e.g., agent_name="@@@"), returns "agent" as a default.
     """
     if agent_name is None:
         return None
@@ -75,7 +76,15 @@ def _sanitize_agent_name(agent_name: str | None) -> str | None:
     # Remove leading/trailing underscores
     sanitized = sanitized.strip("_")
 
-    return sanitized if sanitized else "agent"
+    # Handle empty string case
+    if not sanitized:
+        return "agent"
+
+    # Prefix with underscore if the sanitized name starts with a digit
+    if sanitized and sanitized[0].isdigit():
+        sanitized = f"_{sanitized}"
+
+    return sanitized
 
 
 __all__ = ["AgentProtocol", "BaseAgent", "ChatAgent"]
