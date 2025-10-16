@@ -199,13 +199,15 @@ public static class WorkflowVisualizer
         {
             if (isConditional)
             {
-                // Conditional edge with default label
-                lines.Add($"{indent}{MapId(src)} -. {label ?? "conditional"} .--> {MapId(target)};");
+                string effectiveLabel = label != null ? EscapeMermaidLabel(label) : "conditional";
+
+                // Conditional edge, with user label or default
+                lines.Add($"{indent}{MapId(src)} -. {effectiveLabel} .--> {MapId(target)};");
             }
             else if (label != null)
             {
                 // Regular edge with label
-                lines.Add($"{indent}{MapId(src)} -->|{label}| {MapId(target)};");
+                lines.Add($"{indent}{MapId(src)} -->|{EscapeMermaidLabel(label)}| {MapId(target)};");
             }
             else
             {
@@ -308,6 +310,19 @@ public static class WorkflowVisualizer
     private static string EscapeDotLabel(string label)
     {
         return label.Replace("\"", "\\\"").Replace("\n", "\\n");
+    }
+
+    // Helper method to escape special characters in Mermaid labels
+    private static string EscapeMermaidLabel(string label)
+    {
+        return label
+            .Replace("&", "&amp;")      // Must be first to avoid double-escaping
+            .Replace("|", "&#124;")     // Pipe breaks Mermaid delimiter syntax
+            .Replace("\"", "&quot;")    // Quote character
+            .Replace("<", "&lt;")       // Less than
+            .Replace(">", "&gt;")       // Greater than
+            .Replace("\n", "<br/>")     // Newline to HTML break
+            .Replace("\r", "");         // Remove carriage return
     }
 
     #endregion
