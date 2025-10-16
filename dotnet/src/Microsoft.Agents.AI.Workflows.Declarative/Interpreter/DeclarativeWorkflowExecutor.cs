@@ -40,9 +40,9 @@ internal sealed class DeclarativeWorkflowExecutor<TInput>(
         }
         await declarativeContext.QueueConversationUpdateAsync(conversationId, isExternal: true, cancellationToken).ConfigureAwait(false);
 
-        await options.AgentProvider.CreateMessageAsync(conversationId, input, cancellationToken).ConfigureAwait(false);
-        await declarativeContext.SetLastMessageAsync(input).ConfigureAwait(false);
+        ChatMessage inputMessage = await options.AgentProvider.CreateMessageAsync(conversationId, input, cancellationToken).ConfigureAwait(false);
+        await declarativeContext.SetLastMessageAsync(inputMessage).ConfigureAwait(false);
 
-        await context.SendResultMessageAsync(this.Id, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await context.SendResultMessageAsync(this.Id, cancellationToken).ConfigureAwait(false);
     }
 }

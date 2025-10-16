@@ -56,7 +56,12 @@ public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDispos
         {
             // read the lines of indexfile and parse them as CheckpointInfos
             this.CheckpointIndex = [];
-            using StreamReader reader = new(this._indexFile, encoding: Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: -1, leaveOpen: true);
+#if NET
+            const int BufferSize = -1;
+#else
+            const int BufferSize = 1024;
+#endif
+            using StreamReader reader = new(this._indexFile, encoding: Encoding.UTF8, detectEncodingFromByteOrderMarks: false, BufferSize, leaveOpen: true);
             while (reader.ReadLine() is string line)
             {
                 if (JsonSerializer.Deserialize(line, KeyTypeInfo) is { } info)
@@ -65,9 +70,9 @@ public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDispos
                 }
             }
         }
-        catch
+        catch (Exception exception)
         {
-            throw new InvalidOperationException($"Could not load store at '{directory.FullName}'. Index corrupted.");
+            throw new InvalidOperationException($"Could not load store at '{directory.FullName}'. Index corrupted.", exception);
         }
     }
 

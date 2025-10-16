@@ -4,7 +4,7 @@ import asyncio
 import inspect
 import json
 import sys
-from collections.abc import AsyncIterable, Awaitable, Callable, Collection, MutableMapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Collection, Mapping, MutableMapping, Sequence
 from functools import wraps
 from time import perf_counter, time_ns
 from typing import (
@@ -17,6 +17,7 @@ from typing import (
     Literal,
     Protocol,
     TypeVar,
+    cast,
     get_args,
     get_origin,
     runtime_checkable,
@@ -24,6 +25,7 @@ from typing import (
 
 from opentelemetry.metrics import Histogram
 from pydantic import AnyUrl, BaseModel, Field, ValidationError, create_model
+from pydantic.fields import FieldInfo
 
 from ._logging import get_logger
 from ._serialization import SerializationMixin
@@ -49,9 +51,15 @@ if TYPE_CHECKING:
     )
 
 if sys.version_info >= (3, 12):
-    from typing import TypedDict  # pragma: no cover
+    from typing import (
+        TypedDict,  # pragma: no cover
+        override,  # type: ignore # pragma: no cover
+    )
 else:
-    from typing_extensions import TypedDict  # pragma: no cover
+    from typing_extensions import (
+        TypedDict,  # pragma: no cover
+        override,  # type: ignore[import] # pragma: no cover
+    )
 
 if sys.version_info >= (3, 11):
     from typing import overload  # pragma: no cover
@@ -540,6 +548,9 @@ def _default_histogram() -> Histogram:
         )
 
 
+TClass = TypeVar("TClass", bound="SerializationMixin")
+
+
 class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
     """A tool that wraps a Python function to make it callable by AI models.
 
@@ -593,7 +604,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
         approval_mode: Literal["always_require", "never_require"] | None = None,
         additional_properties: dict[str, Any] | None = None,
         func: Callable[..., Awaitable[ReturnT] | ReturnT],
-        input_model: type[ArgsT],
+        input_model: type[ArgsT] | Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the AIFunction.
@@ -606,6 +617,8 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
             additional_properties: Additional properties to set on the function.
             func: The function to wrap.
             input_model: The Pydantic model that defines the input parameters for the function.
+                This can also be a JSON schema dictionary.
+                If not provided, it will be inferred from the function signature.
             **kwargs: Additional keyword arguments.
         """
         super().__init__(
@@ -615,9 +628,19 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
             **kwargs,
         )
         self.func = func
-        self.input_model = input_model
+        self.input_model = self._resolve_input_model(input_model)
         self.approval_mode = approval_mode or "never_require"
         self._invocation_duration_histogram = _default_histogram()
+        self.type: Literal["ai_function"] = "ai_function"
+
+    def _resolve_input_model(self, input_model: type[ArgsT] | Mapping[str, Any] | None) -> type[ArgsT]:
+        if input_model:
+            if inspect.isclass(input_model) and issubclass(input_model, BaseModel):
+                return input_model
+            if isinstance(input_model, Mapping):
+                return cast(type[ArgsT], _create_model_from_json_schema(self.name, input_model))
+            raise TypeError("input_model must be a Pydantic BaseModel subclass or a JSON schema dict.")
+        return cast(type[ArgsT], _create_input_model_from_func(self.func, self.name))
 
     def __call__(self, *args: Any, **kwargs: Any) -> ReturnT | Awaitable[ReturnT]:
         """Call the wrapped function with the provided arguments."""
@@ -725,6 +748,14 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
             },
         }
 
+    @override
+    def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
+        as_dict = super().to_dict(exclude=exclude, exclude_none=exclude_none)
+        if (exclude and "input_model" in exclude) or not self.input_model:
+            return as_dict
+        as_dict["input_model"] = self.input_model.model_json_schema()
+        return as_dict
+
 
 def _tools_to_dict(
     tools: (
@@ -800,6 +831,73 @@ def _parse_annotation(annotation: Any) -> Any:
                 return Annotated[args_list[0], Field(description=args_list[1])]
             return Annotated[args_list[0], Field(description=args_list[1]), tuple(args_list[2:])]
     return annotation
+
+
+def _create_input_model_from_func(func: Callable[..., Any], tool_name: str) -> type[BaseModel]:
+    """Create a Pydantic model from a function's signature."""
+    sig = inspect.signature(func)
+    fields = {
+        pname: (
+            _parse_annotation(param.annotation) if param.annotation is not inspect.Parameter.empty else str,
+            param.default if param.default is not inspect.Parameter.empty else ...,
+        )
+        for pname, param in sig.parameters.items()
+        if pname not in {"self", "cls"}
+    }
+    return create_model(f"{tool_name}_input", **fields)  # type: ignore[call-overload, no-any-return]
+
+
+# Map JSON Schema types to Pydantic types
+TYPE_MAPPING = {
+    "string": str,
+    "integer": int,
+    "number": float,
+    "boolean": bool,
+    "array": list,
+    "object": dict,
+    "null": type(None),
+}
+
+
+def _create_model_from_json_schema(tool_name: str, schema_json: Mapping[str, Any]) -> type[BaseModel]:
+    """Creates a Pydantic model from a given JSON Schema.
+
+    Args:
+      tool_name: The name of the model to be created.
+      schema_json: The JSON Schema definition.
+
+    Returns:
+      The dynamically created Pydantic model class.
+    """
+    # Validate that 'properties' exists and is a dict
+    if "properties" not in schema_json or not isinstance(schema_json["properties"], dict):
+        raise ValueError(
+            f"JSON schema for tool '{tool_name}' must contain a 'properties' key of type dict. "
+            f"Got: {schema_json.get('properties', None)}"
+        )
+    # Extract field definitions with type annotations
+    field_definitions: dict[str, tuple[type, FieldInfo]] = {}
+    for field_name, field_schema in schema_json["properties"].items():
+        field_args: dict[str, Any] = {}
+        if (field_description := field_schema.get("description", None)) is not None:
+            field_args["description"] = field_description
+        if (field_default := field_schema.get("default", None)) is not None:
+            field_args["default"] = field_default
+        field_type = field_schema.get("type", None)
+        if field_type is None:
+            raise ValueError(
+                f"Missing 'type' for field '{field_name}' in JSON schema. "
+                f"Got: {field_schema}, Supported types: {list(TYPE_MAPPING.keys())}"
+            )
+        python_type = TYPE_MAPPING.get(field_type)
+        if python_type is None:
+            raise ValueError(
+                f"Unsupported type '{field_type}' for field '{field_name}' in JSON schema. "
+                f"Got: {field_schema}, Supported types: {list(TYPE_MAPPING.keys())}"
+            )
+        field_definitions[field_name] = (python_type, Field(**field_args))
+
+    return create_model(f"{tool_name}_input", **field_definitions)  # type: ignore[call-overload, no-any-return]
 
 
 @overload
@@ -895,26 +993,12 @@ def ai_function(
         def wrapper(f: Callable[..., ReturnT | Awaitable[ReturnT]]) -> AIFunction[Any, ReturnT]:
             tool_name: str = name or getattr(f, "__name__", "unknown_function")  # type: ignore[assignment]
             tool_desc: str = description or (f.__doc__ or "")
-            sig = inspect.signature(f)
-            fields = {
-                pname: (
-                    _parse_annotation(param.annotation) if param.annotation is not inspect.Parameter.empty else str,
-                    param.default if param.default is not inspect.Parameter.empty else ...,
-                )
-                for pname, param in sig.parameters.items()
-                if pname not in {"self", "cls"}
-            }
-            input_model: Any = create_model(f"{tool_name}_input", **fields)  # type: ignore[call-overload]
-            if not issubclass(input_model, BaseModel):
-                raise TypeError(f"Input model for {tool_name} must be a subclass of BaseModel, got {input_model}")
-
             return AIFunction[Any, ReturnT](
                 name=tool_name,
                 description=tool_desc,
                 approval_mode=approval_mode,
                 additional_properties=additional_properties or {},
                 func=f,
-                input_model=input_model,
             )
 
         return wrapper(func)
@@ -1142,16 +1226,17 @@ def _extract_tools(kwargs: dict[str, Any]) -> Any:
     return tools
 
 
-def _collect_approval_todos(
+def _collect_approval_responses(
     messages: "list[ChatMessage]",
 ) -> dict[str, "FunctionApprovalResponseContent"]:
-    """Collect approved function calls from messages."""
+    """Collect approval responses (both approved and rejected) from messages."""
     from ._types import ChatMessage, FunctionApprovalResponseContent
 
     fcc_todo: dict[str, FunctionApprovalResponseContent] = {}
     for msg in messages:
         for content in msg.contents if isinstance(msg, ChatMessage) else []:
-            if isinstance(content, FunctionApprovalResponseContent) and content.approved:
+            # Collect BOTH approved and rejected responses
+            if isinstance(content, FunctionApprovalResponseContent):
                 fcc_todo[content.id] = content
     return fcc_todo
 
@@ -1162,26 +1247,52 @@ def _replace_approval_contents_with_results(
     approved_function_results: "list[Contents]",
 ) -> None:
     """Replace approval request/response contents with function call/result contents in-place."""
-    from ._types import FunctionApprovalRequestContent, FunctionApprovalResponseContent, FunctionResultContent
+    from ._types import (
+        FunctionApprovalRequestContent,
+        FunctionApprovalResponseContent,
+        FunctionCallContent,
+        FunctionResultContent,
+        Role,
+    )
 
     result_idx = 0
     for msg in messages:
+        # First pass - collect existing function call IDs to avoid duplicates
+        existing_call_ids = {
+            content.call_id for content in msg.contents if isinstance(content, FunctionCallContent) and content.call_id
+        }
+
+        # Track approval requests that should be removed (duplicates)
+        contents_to_remove = []
+
         for content_idx, content in enumerate(msg.contents):
             if isinstance(content, FunctionApprovalRequestContent):
-                # put back the function call content
-                msg.contents[content_idx] = content.function_call
-            if isinstance(content, FunctionApprovalResponseContent):
+                # Don't add the function call if it already exists (would create duplicate)
+                if content.function_call.call_id in existing_call_ids:
+                    # Just mark for removal - the function call already exists
+                    contents_to_remove.append(content_idx)
+                else:
+                    # Put back the function call content only if it doesn't exist
+                    msg.contents[content_idx] = content.function_call
+            elif isinstance(content, FunctionApprovalResponseContent):
                 if content.approved and content.id in fcc_todo:
                     # Replace with the corresponding result
                     if result_idx < len(approved_function_results):
                         msg.contents[content_idx] = approved_function_results[result_idx]
                         result_idx += 1
+                        msg.role = Role.TOOL
                 else:
                     # Create a "not approved" result for rejected calls
+                    # Use function_call.call_id (the function's ID), not content.id (approval's ID)
                     msg.contents[content_idx] = FunctionResultContent(
-                        call_id=content.id,
+                        call_id=content.function_call.call_id,
                         result="Error: Tool call invocation was rejected by user.",
                     )
+                    msg.role = Role.TOOL
+
+        # Remove approval requests that were duplicates (in reverse order to preserve indices)
+        for idx in reversed(contents_to_remove):
+            msg.contents.pop(idx)
 
 
 def _handle_function_calls_response(
@@ -1234,16 +1345,20 @@ def _handle_function_calls_response(
             response: "ChatResponse | None" = None
             fcc_messages: "list[ChatMessage]" = []
             for attempt_idx in range(instance_max_iterations):
-                fcc_todo = _collect_approval_todos(prepped_messages)
+                fcc_todo = _collect_approval_responses(prepped_messages)
                 if fcc_todo:
                     tools = _extract_tools(kwargs)
-                    approved_function_results: list[Contents] = await _execute_function_calls(
-                        custom_args=kwargs,
-                        attempt_idx=attempt_idx,
-                        function_calls=list(fcc_todo.values()),
-                        tools=tools,  # type: ignore
-                        middleware_pipeline=stored_middleware_pipeline,
-                    )
+                    # Only execute APPROVED function calls, not rejected ones
+                    approved_responses = [resp for resp in fcc_todo.values() if resp.approved]
+                    approved_function_results: list[Contents] = []
+                    if approved_responses:
+                        approved_function_results = await _execute_function_calls(
+                            custom_args=kwargs,
+                            attempt_idx=attempt_idx,
+                            function_calls=approved_responses,
+                            tools=tools,  # type: ignore
+                            middleware_pipeline=stored_middleware_pipeline,
+                        )
                     _replace_approval_contents_with_results(prepped_messages, fcc_todo, approved_function_results)
 
                 response = await func(self, messages=prepped_messages, **kwargs)
@@ -1273,6 +1388,21 @@ def _handle_function_calls_response(
                         tools=tools,  # type: ignore
                         middleware_pipeline=stored_middleware_pipeline,
                     )
+
+                    # Check if we have approval requests in the results
+                    if any(isinstance(fccr, FunctionApprovalRequestContent) for fccr in function_call_results):
+                        # Add approval requests to the existing assistant message (with tool_calls)
+                        # instead of creating a separate tool message
+                        from ._types import Role
+
+                        if response.messages and response.messages[0].role == Role.ASSISTANT:
+                            response.messages[0].contents.extend(function_call_results)
+                        else:
+                            # Fallback: create new assistant message (shouldn't normally happen)
+                            result_message = ChatMessage(role="assistant", contents=function_call_results)
+                            response.messages.append(result_message)
+                        return response
+
                     # add a single ChatMessage to the response with the results
                     result_message = ChatMessage(role="tool", contents=function_call_results)
                     response.messages.append(result_message)
@@ -1283,9 +1413,6 @@ def _handle_function_calls_response(
                     # this runs in every but the first run
                     # we need to keep track of all function call messages
                     fcc_messages.extend(response.messages)
-                    # and add them as additional context to the messages
-                    if any(isinstance(fccr, FunctionApprovalRequestContent) for fccr in function_call_results):
-                        return response
                     if getattr(kwargs.get("chat_options"), "store", False):
                         prepped_messages.clear()
                         prepped_messages.append(result_message)
@@ -1365,16 +1492,20 @@ def _handle_function_calls_streaming_response(
             prepped_messages = prepare_messages(messages)
             fcc_messages: "list[ChatMessage]" = []
             for attempt_idx in range(instance_max_iterations):
-                fcc_todo = _collect_approval_todos(prepped_messages)
+                fcc_todo = _collect_approval_responses(prepped_messages)
                 if fcc_todo:
                     tools = _extract_tools(kwargs)
-                    approved_function_results: list[Contents] = await _execute_function_calls(
-                        custom_args=kwargs,
-                        attempt_idx=attempt_idx,
-                        function_calls=list(fcc_todo.values()),
-                        tools=tools,  # type: ignore
-                        middleware_pipeline=stored_middleware_pipeline,
-                    )
+                    # Only execute APPROVED function calls, not rejected ones
+                    approved_responses = [resp for resp in fcc_todo.values() if resp.approved]
+                    approved_function_results: list[Contents] = []
+                    if approved_responses:
+                        approved_function_results = await _execute_function_calls(
+                            custom_args=kwargs,
+                            attempt_idx=attempt_idx,
+                            function_calls=approved_responses,
+                            tools=tools,  # type: ignore
+                            middleware_pipeline=stored_middleware_pipeline,
+                        )
                     _replace_approval_contents_with_results(prepped_messages, fcc_todo, approved_function_results)
 
                 all_updates: list["ChatResponseUpdate"] = []
@@ -1427,6 +1558,24 @@ def _handle_function_calls_streaming_response(
                         tools=tools,  # type: ignore
                         middleware_pipeline=stored_middleware_pipeline,
                     )
+
+                    # Check if we have approval requests in the results
+                    if any(isinstance(fccr, FunctionApprovalRequestContent) for fccr in function_call_results):
+                        # Add approval requests to the existing assistant message (with tool_calls)
+                        # instead of creating a separate tool message
+                        from ._types import Role
+
+                        if response.messages and response.messages[0].role == Role.ASSISTANT:
+                            response.messages[0].contents.extend(function_call_results)
+                            # Yield the approval requests as part of the assistant message
+                            yield ChatResponseUpdate(contents=function_call_results, role="assistant")
+                        else:
+                            # Fallback: create new assistant message (shouldn't normally happen)
+                            result_message = ChatMessage(role="assistant", contents=function_call_results)
+                            yield ChatResponseUpdate(contents=function_call_results, role="assistant")
+                            response.messages.append(result_message)
+                        return
+
                     # add a single ChatMessage to the response with the results
                     result_message = ChatMessage(role="tool", contents=function_call_results)
                     yield ChatResponseUpdate(contents=function_call_results, role="tool")
@@ -1438,9 +1587,6 @@ def _handle_function_calls_streaming_response(
                     # this runs in every but the first run
                     # we need to keep track of all function call messages
                     fcc_messages.extend(response.messages)
-                    # and add them as additional context to the messages
-                    if any(isinstance(fccr, FunctionApprovalRequestContent) for fccr in function_call_results):
-                        return
                     if getattr(kwargs.get("chat_options"), "store", False):
                         prepped_messages.clear()
                         prepped_messages.append(result_message)

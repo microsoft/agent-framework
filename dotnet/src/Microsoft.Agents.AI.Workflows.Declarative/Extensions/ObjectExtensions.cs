@@ -7,6 +7,7 @@ using System.Linq;
 using System.Text.Json;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Bot.ObjectModel;
+using Microsoft.Extensions.AI;
 using Microsoft.PowerFx.Types;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.Extensions;
@@ -42,6 +43,56 @@ internal static class ObjectExtensions
                 }
 
                 yield return element;
+            }
+        }
+    }
+
+    public static object AsPortable(this object? value) =>
+        value switch
+        {
+            null => UnassignedValue.Instance,
+            string or
+            bool or
+            int or
+            float or
+            long or
+            decimal or
+            double or
+            DateTime or
+            TimeSpan =>
+                value,
+            ChatMessage messageValue => messageValue.ToRecord().AsPortable(),
+            IDictionary<string, object?> objectValue => objectValue.AsPortable(),
+            IDictionary recordValue => recordValue.AsPortable(),
+            IEnumerable tableValue => tableValue.AsPortable(),
+            _ => throw new DeclarativeModelException($"Unsupported data type: {value.GetType().Name}"),
+        };
+
+    public static object AsPortable(this IDictionary<string, object?> value) => value.ToDictionary(kvp => kvp.Key, kvp => new PortableValue(kvp.Value.AsPortable()));
+
+    public static object AsPortable(this IDictionary value)
+    {
+        return GetEntries().ToDictionary(kvp => kvp.Key, kvp => new PortableValue(kvp.Value.AsPortable()));
+
+        IEnumerable<KeyValuePair<string, object?>> GetEntries()
+        {
+            foreach (DictionaryEntry entry in value)
+            {
+                yield return new KeyValuePair<string, object?>((string)entry.Key, entry.Value);
+            }
+        }
+    }
+
+    public static object AsPortable(this IEnumerable value)
+    {
+        return GetValues().ToArray();
+
+        IEnumerable<PortableValue> GetValues()
+        {
+            IEnumerator enumerator = value.GetEnumerator();
+            while (enumerator.MoveNext())
+            {
+                yield return new PortableValue(enumerator.Current.AsPortable());
             }
         }
     }

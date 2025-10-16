@@ -70,7 +70,7 @@ public static class Program
 
             case "groupchat":
                 await RunWorkflowAsync(
-                    AgentWorkflowBuilder.CreateGroupChatBuilderWith(agents => new AgentWorkflowBuilder.RoundRobinGroupChatManager(agents) { MaximumIterationCount = 5 })
+                    AgentWorkflowBuilder.CreateGroupChatBuilderWith(agents => new RoundRobinGroupChatManager(agents) { MaximumIterationCount = 5 })
                         .AddParticipants(from lang in (string[])["French", "Spanish", "English"] select GetTranslationAgent(lang, client))
                         .Build(),
                     [new(ChatRole.User, "Hello, world!")]);
@@ -86,7 +86,7 @@ public static class Program
 
             await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, messages);
             await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
-            await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
+            await foreach (WorkflowEvent evt in run.WatchStreamAsync())
             {
                 if (evt is AgentRunUpdateEvent e)
                 {

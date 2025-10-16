@@ -21,7 +21,7 @@ public class AgentWorkflowBuilderTests
     [Fact]
     public void BuildSequential_InvalidArguments_Throws()
     {
-        Assert.Throws<ArgumentNullException>("agents", () => AgentWorkflowBuilder.BuildSequential(null!));
+        Assert.Throws<ArgumentNullException>("agents", () => AgentWorkflowBuilder.BuildSequential(workflowName: null!, null!));
         Assert.Throws<ArgumentException>("agents", () => AgentWorkflowBuilder.BuildSequential());
     }
 
@@ -57,24 +57,24 @@ public class AgentWorkflowBuilderTests
     {
         Assert.Throws<ArgumentNullException>("managerFactory", () => AgentWorkflowBuilder.CreateGroupChatBuilderWith(null!));
 
-        var groupChat = AgentWorkflowBuilder.CreateGroupChatBuilderWith(_ => new AgentWorkflowBuilder.RoundRobinGroupChatManager([new DoubleEchoAgent("a1")]));
+        var groupChat = AgentWorkflowBuilder.CreateGroupChatBuilderWith(_ => new RoundRobinGroupChatManager([new DoubleEchoAgent("a1")]));
         Assert.NotNull(groupChat);
         Assert.Throws<ArgumentNullException>("agents", () => groupChat.AddParticipants(null!));
         Assert.Throws<ArgumentNullException>("agents", () => groupChat.AddParticipants([null!]));
         Assert.Throws<ArgumentNullException>("agents", () => groupChat.AddParticipants(new DoubleEchoAgent("a1"), null!));
 
-        Assert.Throws<ArgumentNullException>("agents", () => new AgentWorkflowBuilder.RoundRobinGroupChatManager(null!));
+        Assert.Throws<ArgumentNullException>("agents", () => new RoundRobinGroupChatManager(null!));
     }
 
     [Fact]
     public void GroupChatManager_MaximumIterationCount_Invalid_Throws()
     {
-        var manager = new AgentWorkflowBuilder.RoundRobinGroupChatManager([new DoubleEchoAgent("a1")]);
+        var manager = new RoundRobinGroupChatManager([new DoubleEchoAgent("a1")]);
 
         const int DefaultMaxIterations = 40;
         Assert.Equal(DefaultMaxIterations, manager.MaximumIterationCount);
-        Assert.Throws<ArgumentOutOfRangeException>("value", () => manager.MaximumIterationCount = 0);
-        Assert.Throws<ArgumentOutOfRangeException>("value", () => manager.MaximumIterationCount = -1);
+        Assert.Throws<ArgumentOutOfRangeException>("value", void () => manager.MaximumIterationCount = 0);
+        Assert.Throws<ArgumentOutOfRangeException>("value", void () => manager.MaximumIterationCount = -1);
         Assert.Equal(DefaultMaxIterations, manager.MaximumIterationCount);
 
         manager.MaximumIterationCount = 30;
@@ -344,7 +344,7 @@ public class AgentWorkflowBuilderTests
     public async Task BuildGroupChat_AgentsRunInOrderAsync(int maxIterations)
     {
         const int NumAgents = 3;
-        var workflow = AgentWorkflowBuilder.CreateGroupChatBuilderWith(agents => new AgentWorkflowBuilder.RoundRobinGroupChatManager(agents) { MaximumIterationCount = maxIterations })
+        var workflow = AgentWorkflowBuilder.CreateGroupChatBuilderWith(agents => new RoundRobinGroupChatManager(agents) { MaximumIterationCount = maxIterations })
             .AddParticipants(new DoubleEchoAgent("agent1"), new DoubleEchoAgent("agent2"))
             .AddParticipants(new DoubleEchoAgent("agent3"))
             .Build();
@@ -386,7 +386,7 @@ public class AgentWorkflowBuilderTests
     {
         StringBuilder sb = new();
 
-        await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, input);
+        await using StreamingRun run = await InProcessExecution.Lockstep.StreamAsync(workflow, input);
         await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
 
         WorkflowOutputEvent? output = null;

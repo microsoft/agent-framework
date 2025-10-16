@@ -17,7 +17,7 @@ internal sealed class CreateConversationExecutor(CreateConversation model, Workf
     {
         string conversationId = await agentProvider.CreateConversationAsync(cancellationToken).ConfigureAwait(false);
         await this.AssignAsync(this.Model.ConversationId?.Path, FormulaValue.New(conversationId), context).ConfigureAwait(false);
-        await context.QueueConversationUpdateAsync(conversationId, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await context.QueueConversationUpdateAsync(conversationId, cancellationToken).ConfigureAwait(false);
 
         return default;
     }

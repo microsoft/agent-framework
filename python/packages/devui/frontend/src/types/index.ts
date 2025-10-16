@@ -31,6 +31,7 @@ export interface AgentInfo {
   has_env: boolean;
   module_path?: string;
   required_env_vars?: EnvVarRequirement[];
+  metadata?: Record<string, unknown>; // Backend metadata including lazy_loaded flag
   // Agent-specific fields
   instructions?: string;
   model?: string;
@@ -103,8 +104,8 @@ export type {
   ResponseWorkflowEventComplete,
   ResponseTraceEventComplete,
   ResponseOutputItemAddedEvent,
-  ResponseFunctionResultComplete,
   ResponseCompletedEvent,
+  ResponseFunctionResultComplete,
   StructuredEvent,
 } from "./openai";
 
