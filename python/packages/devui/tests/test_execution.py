@@ -73,7 +73,11 @@ async def test_executor_entity_discovery(executor):
     for entity in entities:
         assert entity.id, "Entity should have an ID"
         assert entity.name, "Entity should have a name"
-        assert entity.type in ["agent", "workflow"], "Entity should have valid type"
+        # Entities with only an `__init__.py` file cannot have their type determined
+        # until the module is imported during lazy loading. This is why 'unknown' type exists.
+        assert entity.type in ["agent", "workflow", "unknown"], (
+            "Entity should have valid type (unknown allowed during discovery phase)"
+        )
 
 
 async def test_executor_get_entity_info(executor):
@@ -84,7 +88,7 @@ async def test_executor_get_entity_info(executor):
     entity_info = executor.get_entity_info(entity_id)
     assert entity_info is not None
     assert entity_info.id == entity_id
-    assert entity_info.type in ["agent", "workflow"]
+    assert entity_info.type in ["agent", "workflow", "unknown"]
 
 
 @pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="requires OpenAI API key")

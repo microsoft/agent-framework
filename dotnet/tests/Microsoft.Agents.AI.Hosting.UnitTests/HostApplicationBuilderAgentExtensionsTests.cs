@@ -20,25 +20,6 @@ public class HostApplicationBuilderAgentExtensionsTests
             () => HostApplicationBuilderAgentExtensions.AddAIAgent(null!, "agent", "instructions"));
 
     /// <summary>
-    /// Verifies that AddAIAgent with valid parameters returns the same builder instance.
-    /// </summary>
-    /// <param name="chatClientKey">The chat client key to use, or null to use the default service.</param>
-    [Theory]
-    [InlineData(null)]
-    [InlineData("customKey")]
-    public void AddAIAgent_ValidParameters_ReturnsBuilder(string? chatClientKey)
-    {
-        // Arrange
-        var builder = new HostApplicationBuilder();
-
-        // Act
-        var result = builder.AddAIAgent("agentName", "instructions", chatClientKey);
-
-        // Assert
-        Assert.Same(builder, result);
-    }
-
-    /// <summary>
     /// Verifies that AddAIAgent without chat client key throws ArgumentNullException for null name.
     /// </summary>
     [Fact]
@@ -59,14 +40,9 @@ public class HostApplicationBuilderAgentExtensionsTests
     [Fact]
     public void AddAIAgent_NullInstructions_AllowsNull()
     {
-        // Arrange
         var builder = new HostApplicationBuilder();
-
-        // Act
         var result = builder.AddAIAgent("agentName", (string)null!);
-
-        // Assert
-        Assert.Same(builder, result);
+        Assert.NotNull(result);
     }
 
     /// <summary>
@@ -90,14 +66,9 @@ public class HostApplicationBuilderAgentExtensionsTests
     [Fact]
     public void AddAIAgentWithKey_NullInstructions_AllowsNull()
     {
-        // Arrange
         var builder = new HostApplicationBuilder();
-
-        // Act
         var result = builder.AddAIAgent("agentName", null!, "key");
-
-        // Assert
-        Assert.Same(builder, result);
+        Assert.NotNull(result);
     }
 
     /// <summary>
@@ -148,15 +119,11 @@ public class HostApplicationBuilderAgentExtensionsTests
     [Fact]
     public void AddAIAgentWithFactory_ValidParameters_ReturnsBuilder()
     {
-        // Arrange
         var builder = new HostApplicationBuilder();
         var mockAgent = new Mock<AIAgent>();
-
-        // Act
         var result = builder.AddAIAgent("agentName", (sp, key) => mockAgent.Object);
 
-        // Assert
-        Assert.Same(builder, result);
+        Assert.NotNull(result);
     }
 
     /// <summary>
@@ -192,9 +159,9 @@ public class HostApplicationBuilderAgentExtensionsTests
         var builder = new HostApplicationBuilder();
 
         // Act
-        builder.AddAIAgent("agent1", "instructions1")
-               .AddAIAgent("agent2", "instructions2")
-               .AddAIAgent("agent3", "instructions3");
+        builder.AddAIAgent("agent1", "instructions1");
+        builder.AddAIAgent("agent2", "instructions2");
+        builder.AddAIAgent("agent3", "instructions3");
 
         // Assert
         var agentDescriptors = builder.Services
@@ -227,14 +194,9 @@ public class HostApplicationBuilderAgentExtensionsTests
     [Fact]
     public void AddAIAgent_EmptyInstructions_Succeeds()
     {
-        // Arrange
         var builder = new HostApplicationBuilder();
-
-        // Act
         var result = builder.AddAIAgent("agentName", "");
-
-        // Assert
-        Assert.Same(builder, result);
+        Assert.NotNull(result);
     }
     /// <summary>
     /// Verifies that AddAIAgent without chat client key calls the overload with null key.
@@ -242,14 +204,9 @@ public class HostApplicationBuilderAgentExtensionsTests
     [Fact]
     public void AddAIAgent_WithoutKey_CallsOverloadWithNullKey()
     {
-        // Arrange
         var builder = new HostApplicationBuilder();
-
-        // Act
         var result = builder.AddAIAgent("agentName", "instructions");
 
-        // Assert
-        Assert.Same(builder, result);
         // The agent should be registered (proving the method chain worked)
         var descriptor = builder.Services.FirstOrDefault(
             d => d.ServiceKey is "agentName" &&
@@ -270,14 +227,9 @@ public class HostApplicationBuilderAgentExtensionsTests
     [InlineData("my.agent_1:type-name")] // complex valid name
     public void AddAIAgent_ValidSpecialCharactersInName_Succeeds(string name)
     {
-        // Arrange
         var builder = new HostApplicationBuilder();
-
-        // Act
         var result = builder.AddAIAgent(name, "instructions");
 
-        // Assert
-        Assert.Same(builder, result);
         var descriptor = builder.Services.FirstOrDefault(
             d => (d.ServiceKey as string) == name &&
                  d.ServiceType == typeof(AIAgent));

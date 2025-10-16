@@ -148,9 +148,9 @@ internal static class DataValueExtensions
 
         IEnumerable<KeyValuePair<string, DataValue>> GetFields()
         {
-            foreach (string key in value.Keys)
+            foreach (DictionaryEntry entry in value)
             {
-                yield return new KeyValuePair<string, DataValue>(key, value[key].ToDataValue());
+                yield return new KeyValuePair<string, DataValue>((string)entry.Key, entry.Value.ToDataValue());
             }
         }
     }

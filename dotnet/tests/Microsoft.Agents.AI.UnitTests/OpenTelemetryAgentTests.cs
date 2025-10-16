@@ -568,6 +568,9 @@ public class OpenTelemetryAgentTests
                     }
                   },
                   {
+                    "type": "web_search"
+                  },
+                  {
                     "type": "function",
                     "name": "GetCurrentWeather",
                     "description": "Gets the current weather for a location.",

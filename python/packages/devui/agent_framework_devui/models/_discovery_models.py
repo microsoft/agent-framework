@@ -31,8 +31,7 @@ class EntityInfo(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     # Source information
-    source: str = "directory"  # "directory", "in_memory", "remote_gallery"
-    original_url: str | None = None
+    source: str = "directory"  # "directory" or "in_memory"
 
     # Environment variable requirements
     required_env_vars: list[EnvVarRequirement] | None = None

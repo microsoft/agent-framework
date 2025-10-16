@@ -24,6 +24,7 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
     private readonly ExecutorOptions _options;
 
     private ISuperStepJoinContext? _joinContext;
+    private string? _joinId;
     private StreamingRun? _run;
 
     [MemberNotNullWhen(true, nameof(_checkpointManager))]
@@ -81,7 +82,11 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
                 this._checkpointManager = new InMemoryCheckpointManager();
             }
 
-            this._activeRunner = new(this._workflow, this._checkpointManager, this._runId, this._ownershipToken, subworkflow: true);
+            this._activeRunner = InProcessRunner.CreateSubworkflowRunner(this._workflow,
+                                                                         this._checkpointManager,
+                                                                         this._runId,
+                                                                         this._ownershipToken,
+                                                                         this.JoinContext.ConcurrentRunsEnabled);
         }
 
         return this._activeRunner;
@@ -143,7 +148,7 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
 
         this._run = new(runHandle);
 
-        await this._joinContext.AttachSuperstepAsync(activeRunner, cancellationToken).ConfigureAwait(false);
+        this._joinId = await this._joinContext.AttachSuperstepAsync(activeRunner, cancellationToken).ConfigureAwait(false);
         activeRunner.OutgoingEvents.EventRaised += this.ForwardWorkflowEventAsync;
 
         return this._run;
@@ -265,7 +270,18 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
             this._activeRunner.OutgoingEvents.EventRaised -= this.ForwardWorkflowEventAsync;
             await this._activeRunner.RequestEndRunAsync().ConfigureAwait(false);
 
-            this._activeRunner = new(this._workflow, this._checkpointManager, this._runId);
+            this._activeRunner = null;
+        }
+
+        if (this._joinContext != null)
+        {
+            if (this._joinId != null)
+            {
+                await this._joinContext.DetachSuperstepAsync(this._joinId).ConfigureAwait(false);
+                this._joinId = null;
+            }
+
+            this._joinContext = null;
         }
     }
 

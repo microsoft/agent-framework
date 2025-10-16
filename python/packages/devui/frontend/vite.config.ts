@@ -16,19 +16,9 @@ export default defineConfig({
     emptyOutDir: true,
     rollupOptions: {
       output: {
-        // Minimize to just 2 files: main app + CSS
         manualChunks: undefined,
-        // Ensure everything goes into a single JS file
         inlineDynamicImports: true,
       },
     },
-  },
-  // Ensure proper tree-shaking
-  optimizeDeps: {
-    include: ["lucide-react", "@xyflow/react"],
-  },
-  // Enable aggressive tree-shaking
-  esbuild: {
-    treeShaking: true,
   },
 });

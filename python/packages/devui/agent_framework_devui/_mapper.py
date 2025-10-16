@@ -524,21 +524,15 @@ class MessageMapper:
     async def _map_function_result_content(
         self, content: Any, context: dict[str, Any]
     ) -> ResponseFunctionResultComplete:
-        """Map FunctionResultContent to custom DevUI event.
+        """Map FunctionResultContent to DevUI custom event.
 
-        This is a DevUI extension - OpenAI doesn't stream function execution results
-        because in their model, applications execute functions, not the API.
-        Agent Framework executes functions, so we emit this event for debugging visibility.
-
-        IMPORTANT: Always use Agent Framework's call_id from the content.
-        Do NOT generate a new call_id - it must match the one from the function call event.
+        DevUI extension: The OpenAI Responses API doesn't stream function execution results
+        (in OpenAI's model, the application executes functions, not the API).
         """
-        # Get call_id from content - this MUST match the call_id from the function call
+        # Get call_id from content
         call_id = getattr(content, "call_id", None)
-
         if not call_id:
-            logger.warning("FunctionResultContent missing call_id - this will break call/result pairing")
-            call_id = f"call_{uuid.uuid4().hex[:8]}"  # Fallback only if truly missing
+            call_id = f"call_{uuid.uuid4().hex[:8]}"
 
         # Extract result
         result = getattr(content, "result", None)
@@ -547,16 +541,19 @@ class MessageMapper:
         # Convert result to string
         output = result if isinstance(result, str) else json.dumps(result) if result is not None else ""
 
-        # Determine status
+        # Determine status based on exception
         status = "incomplete" if exception else "completed"
 
-        # Return custom DevUI event
+        # Generate item_id
+        item_id = f"item_{uuid.uuid4().hex[:8]}"
+
+        # Return DevUI custom event
         return ResponseFunctionResultComplete(
             type="response.function_result.complete",
             call_id=call_id,
             output=output,
             status=status,
-            item_id=context["item_id"],
+            item_id=item_id,
             output_index=context["output_index"],
             sequence_number=self._next_sequence(context),
         )
@@ -663,15 +660,24 @@ class MessageMapper:
 
     async def _map_approval_request_content(self, content: Any, context: dict[str, Any]) -> dict[str, Any]:
         """Map FunctionApprovalRequestContent to custom event."""
+        # Parse arguments to ensure they're always a dict, not a JSON string
+        # This prevents double-escaping when the frontend calls JSON.stringify()
+        arguments: dict[str, Any] = {}
+        if hasattr(content, "function_call"):
+            if hasattr(content.function_call, "parse_arguments"):
+                # Use parse_arguments() to convert string arguments to dict
+                arguments = content.function_call.parse_arguments() or {}
+            else:
+                # Fallback to direct access if parse_arguments doesn't exist
+                arguments = getattr(content.function_call, "arguments", {})
+
         return {
             "type": "response.function_approval.requested",
             "request_id": getattr(content, "id", "unknown"),
             "function_call": {
                 "id": getattr(content.function_call, "call_id", "") if hasattr(content, "function_call") else "",
                 "name": getattr(content.function_call, "name", "") if hasattr(content, "function_call") else "",
-                "arguments": getattr(content.function_call, "arguments", {})
-                if hasattr(content, "function_call")
-                else {},
+                "arguments": arguments,
             },
             "item_id": context["item_id"],
             "output_index": context["output_index"],

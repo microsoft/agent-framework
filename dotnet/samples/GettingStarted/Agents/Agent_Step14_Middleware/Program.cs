@@ -10,7 +10,6 @@ using System.Text.RegularExpressions;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.ChatClient;
 using Microsoft.Extensions.AI;
 
 // Get Azure AI Foundry configuration from environment variables

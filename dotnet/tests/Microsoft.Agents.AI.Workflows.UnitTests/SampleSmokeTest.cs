@@ -11,16 +11,24 @@ using Microsoft.Agents.AI.Workflows.Sample;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
+internal enum ExecutionEnvironment
+{
+    InProcess_Lockstep,
+    InProcess_OffThread,
+    InProcess_Concurrent
+}
+
 public class SampleSmokeTest
 {
     [Theory]
-    [InlineData(ExecutionMode.Lockstep)]
-    [InlineData(ExecutionMode.OffThread)]
-    internal async Task Test_RunSample_Step1Async(ExecutionMode executionMode)
+    [InlineData(ExecutionEnvironment.InProcess_Lockstep)]
+    [InlineData(ExecutionEnvironment.InProcess_OffThread)]
+    [InlineData(ExecutionEnvironment.InProcess_Concurrent)]
+    internal async Task Test_RunSample_Step1Async(ExecutionEnvironment environment)
     {
         using StringWriter writer = new();
 
-        await Step1EntryPoint.RunAsync(writer, executionMode);
+        await Step1EntryPoint.RunAsync(writer, environment.ToWorkflowExecutionEnvironment());
 
         string result = writer.ToString();
         string[] lines = result.Split([Environment.NewLine], StringSplitOptions.RemoveEmptyEntries);
@@ -34,13 +42,14 @@ public class SampleSmokeTest
     }
 
     [Theory]
-    [InlineData(ExecutionMode.Lockstep)]
-    [InlineData(ExecutionMode.OffThread)]
-    internal async Task Test_RunSample_Step1aAsync(ExecutionMode executionMode)
+    [InlineData(ExecutionEnvironment.InProcess_Lockstep)]
+    [InlineData(ExecutionEnvironment.InProcess_OffThread)]
+    [InlineData(ExecutionEnvironment.InProcess_Concurrent)]
+    internal async Task Test_RunSample_Step1aAsync(ExecutionEnvironment environment)
     {
         using StringWriter writer = new();
 
-        await Step1aEntryPoint.RunAsync(writer, executionMode);
+        await Step1aEntryPoint.RunAsync(writer, environment.ToWorkflowExecutionEnvironment());
 
         string result = writer.ToString();
         string[] lines = result.Split([Environment.NewLine], StringSplitOptions.RemoveEmptyEntries);
@@ -54,37 +63,40 @@ public class SampleSmokeTest
     }
 
     [Theory]
-    [InlineData(ExecutionMode.Lockstep)]
-    [InlineData(ExecutionMode.OffThread)]
-    internal async Task Test_RunSample_Step2Async(ExecutionMode executionMode)
+    [InlineData(ExecutionEnvironment.InProcess_Lockstep)]
+    [InlineData(ExecutionEnvironment.InProcess_OffThread)]
+    [InlineData(ExecutionEnvironment.InProcess_Concurrent)]
+    internal async Task Test_RunSample_Step2Async(ExecutionEnvironment environment)
     {
         using StringWriter writer = new();
 
-        string spamResult = await Step2EntryPoint.RunAsync(writer, executionMode);
+        string spamResult = await Step2EntryPoint.RunAsync(writer, environment.ToWorkflowExecutionEnvironment());
 
         Assert.Equal(RemoveSpamExecutor.ActionResult, spamResult);
 
-        string nonSpamResult = await Step2EntryPoint.RunAsync(writer, executionMode, "This is a valid message.");
+        string nonSpamResult = await Step2EntryPoint.RunAsync(writer, environment.ToWorkflowExecutionEnvironment(), "This is a valid message.");
 
         Assert.Equal(RespondToMessageExecutor.ActionResult, nonSpamResult);
     }
 
     [Theory]
-    [InlineData(ExecutionMode.Lockstep)]
-    [InlineData(ExecutionMode.OffThread)]
-    internal async Task Test_RunSample_Step3Async(ExecutionMode executionMode)
+    [InlineData(ExecutionEnvironment.InProcess_Lockstep)]
+    [InlineData(ExecutionEnvironment.InProcess_OffThread)]
+    [InlineData(ExecutionEnvironment.InProcess_Concurrent)]
+    internal async Task Test_RunSample_Step3Async(ExecutionEnvironment environment)
     {
         using StringWriter writer = new();
 
-        string guessResult = await Step3EntryPoint.RunAsync(writer, executionMode);
+        string guessResult = await Step3EntryPoint.RunAsync(writer, environment.ToWorkflowExecutionEnvironment());
 
         Assert.Equal("Guessed the number: 42", guessResult);
     }
 
     [Theory]
-    [InlineData(ExecutionMode.Lockstep)]
-    [InlineData(ExecutionMode.OffThread)]
-    internal async Task Test_RunSample_Step4Async(ExecutionMode executionMode)
+    [InlineData(ExecutionEnvironment.InProcess_Lockstep)]
+    [InlineData(ExecutionEnvironment.InProcess_OffThread)]
+    [InlineData(ExecutionEnvironment.InProcess_Concurrent)]
+    internal async Task Test_RunSample_Step4Async(ExecutionEnvironment environment)
     {
         using StringWriter writer = new();
 
@@ -93,14 +105,15 @@ public class SampleSmokeTest
             ("Your guess was too high. Try again.", 23),
             ("Your guess was too low. Try again.", 42));
 
-        string guessResult = await Step4EntryPoint.RunAsync(writer, userGuessCallback: responder.InvokeNext, executionMode);
+        string guessResult = await Step4EntryPoint.RunAsync(writer, userGuessCallback: responder.InvokeNext, environment.ToWorkflowExecutionEnvironment());
         Assert.Equal("You guessed correctly! You Win!", guessResult);
     }
 
     [Theory]
-    [InlineData(ExecutionMode.Lockstep)]
-    [InlineData(ExecutionMode.OffThread)]
-    internal async Task Test_RunSample_Step5Async(ExecutionMode executionMode)
+    [InlineData(ExecutionEnvironment.InProcess_Lockstep)]
+    [InlineData(ExecutionEnvironment.InProcess_OffThread)]
+    [InlineData(ExecutionEnvironment.InProcess_Concurrent)]
+    internal async Task Test_RunSample_Step5Async(ExecutionEnvironment environment)
     {
         using StringWriter writer = new();
 
@@ -114,14 +127,15 @@ public class SampleSmokeTest
             ("Your guess was too low. Try again.", 42)
          );
 
-        string guessResult = await Step5EntryPoint.RunAsync(writer, userGuessCallback: responder.InvokeNext, executionMode);
+        string guessResult = await Step5EntryPoint.RunAsync(writer, userGuessCallback: responder.InvokeNext, environment.ToWorkflowExecutionEnvironment());
         Assert.Equal("You guessed correctly! You Win!", guessResult);
     }
 
     [Theory]
-    [InlineData(ExecutionMode.Lockstep)]
-    [InlineData(ExecutionMode.OffThread)]
-    internal async Task Test_RunSample_Step5aAsync(ExecutionMode executionMode)
+    [InlineData(ExecutionEnvironment.InProcess_Lockstep)]
+    [InlineData(ExecutionEnvironment.InProcess_OffThread)]
+    [InlineData(ExecutionEnvironment.InProcess_Concurrent)]
+    internal async Task Test_RunSample_Step5aAsync(ExecutionEnvironment environment)
     {
         using StringWriter writer = new();
 
@@ -135,14 +149,15 @@ public class SampleSmokeTest
             ("Your guess was too low. Try again.", 42)
          );
 
-        string guessResult = await Step5EntryPoint.RunAsync(writer, userGuessCallback: responder.InvokeNext, executionMode, rehydrateToRestore: true);
+        string guessResult = await Step5EntryPoint.RunAsync(writer, userGuessCallback: responder.InvokeNext, environment.ToWorkflowExecutionEnvironment(), rehydrateToRestore: true);
         Assert.Equal("You guessed correctly! You Win!", guessResult);
     }
 
     [Theory]
-    [InlineData(ExecutionMode.Lockstep)]
-    [InlineData(ExecutionMode.OffThread)]
-    internal async Task Test_RunSample_Step5bAsync(ExecutionMode executionMode)
+    [InlineData(ExecutionEnvironment.InProcess_Lockstep)]
+    [InlineData(ExecutionEnvironment.InProcess_OffThread)]
+    [InlineData(ExecutionEnvironment.InProcess_Concurrent)]
+    internal async Task Test_RunSample_Step5bAsync(ExecutionEnvironment environment)
     {
         using StringWriter writer = new();
 
@@ -160,18 +175,19 @@ public class SampleSmokeTest
         options.MakeReadOnly();
 
         CheckpointManager memoryJsonManager = CheckpointManager.CreateJson(new InMemoryJsonStore(), options);
-        string guessResult = await Step5EntryPoint.RunAsync(writer, userGuessCallback: responder.InvokeNext, executionMode, rehydrateToRestore: true, checkpointManager: memoryJsonManager);
+        string guessResult = await Step5EntryPoint.RunAsync(writer, userGuessCallback: responder.InvokeNext, environment.ToWorkflowExecutionEnvironment(), rehydrateToRestore: true, checkpointManager: memoryJsonManager);
         Assert.Equal("You guessed correctly! You Win!", guessResult);
     }
 
     [Theory]
-    [InlineData(ExecutionMode.Lockstep)]
-    [InlineData(ExecutionMode.OffThread)]
-    internal async Task Test_RunSample_Step6Async(ExecutionMode executionMode)
+    [InlineData(ExecutionEnvironment.InProcess_Lockstep)]
+    [InlineData(ExecutionEnvironment.InProcess_OffThread)]
+    [InlineData(ExecutionEnvironment.InProcess_Concurrent)]
+    internal async Task Test_RunSample_Step6Async(ExecutionEnvironment environment)
     {
         using StringWriter writer = new();
 
-        await Step6EntryPoint.RunAsync(writer, executionMode);
+        await Step6EntryPoint.RunAsync(writer, environment.ToWorkflowExecutionEnvironment());
 
         string result = writer.ToString();
         string[] lines = result.Split([Environment.NewLine], StringSplitOptions.RemoveEmptyEntries);
@@ -199,9 +215,10 @@ public class SampleSmokeTest
     }
 
     [Theory]
-    [InlineData(ExecutionMode.Lockstep)]
-    [InlineData(ExecutionMode.OffThread)]
-    internal async Task Test_RunSample_Step8Async(ExecutionMode executionMode)
+    [InlineData(ExecutionEnvironment.InProcess_Lockstep)]
+    [InlineData(ExecutionEnvironment.InProcess_OffThread)]
+    [InlineData(ExecutionEnvironment.InProcess_Concurrent)]
+    internal async Task Test_RunSample_Step8Async(ExecutionEnvironment environment)
     {
         List<string> textsToProcess = [
             "Hello world! This is a simple test.",
@@ -214,7 +231,7 @@ public class SampleSmokeTest
 
         using StringWriter writer = new();
 
-        List<TextProcessingResult> results = await Step8EntryPoint.RunAsync(writer, executionMode, textsToProcess);
+        List<TextProcessingResult> results = await Step8EntryPoint.RunAsync(writer, environment.ToWorkflowExecutionEnvironment(), textsToProcess);
         Assert.Equal(textsToProcess.Count, results.Count);
 
         Assert.Collection(results,
@@ -237,12 +254,13 @@ public class SampleSmokeTest
     }
 
     [Theory]
-    [InlineData(ExecutionMode.Lockstep)]
-    [InlineData(ExecutionMode.OffThread)]
-    internal async Task Test_RunSample_Step9Async(ExecutionMode executionMode)
+    [InlineData(ExecutionEnvironment.InProcess_Lockstep)]
+    [InlineData(ExecutionEnvironment.InProcess_OffThread)]
+    [InlineData(ExecutionEnvironment.InProcess_Concurrent)]
+    internal async Task Test_RunSample_Step9Async(ExecutionEnvironment environment)
     {
         using StringWriter writer = new();
-        _ = await Step9EntryPoint.RunAsync(writer, executionMode);
+        _ = await Step9EntryPoint.RunAsync(writer, environment.ToWorkflowExecutionEnvironment());
     }
 }
 

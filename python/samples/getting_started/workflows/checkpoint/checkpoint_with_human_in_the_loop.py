@@ -23,6 +23,7 @@ from agent_framework import (
     WorkflowOutputEvent,
     WorkflowRunState,
     WorkflowStatusEvent,
+    get_checkpoint_summary,
     handler,
 )
 from agent_framework.azure import AzureOpenAIChatClient
@@ -246,14 +247,12 @@ def _render_checkpoint_summary(checkpoints: list["WorkflowCheckpoint"]) -> None:
     """Pretty-print saved checkpoints with the new framework summaries."""
 
     print("\nCheckpoint summary:")
-    for summary in [
-        RequestInfoExecutor.checkpoint_summary(cp) for cp in sorted(checkpoints, key=lambda c: c.timestamp)
-    ]:
+    for summary in [get_checkpoint_summary(cp) for cp in sorted(checkpoints, key=lambda c: c.timestamp)]:
         # Compose a single line per checkpoint so the user can scan the output
         # and pick the resume point that still has outstanding human work.
         line = (
             f"- {summary.checkpoint_id} | iter={summary.iteration_count} "
-            f"| targets={summary.targets} | states={summary.executor_states}"
+            f"| targets={summary.targets} | states={summary.executor_ids}"
         )
         if summary.status:
             line += f" | status={summary.status}"
@@ -312,7 +311,7 @@ def _prompt_for_responses(requests: list[tuple[str, HumanApprovalRequest]]) -> d
 def _maybe_pre_supply_responses(cp: "WorkflowCheckpoint") -> dict[str, str] | None:
     """Offer to collect responses before resuming a checkpoint."""
 
-    pending = RequestInfoExecutor.pending_requests_from_checkpoint(cp)
+    pending = get_checkpoint_summary(cp).pending_requests
     if not pending:
         return None
 
@@ -468,7 +467,7 @@ async def main() -> None:
         return
 
     chosen = sorted_cps[idx]
-    summary = RequestInfoExecutor.checkpoint_summary(chosen)
+    summary = get_checkpoint_summary(chosen)
     if summary.status == "completed":
         print("Selected checkpoint already reflects a completed workflow; nothing to resume.")
         return

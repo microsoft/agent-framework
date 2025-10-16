@@ -68,7 +68,11 @@ async def test_empty_directory():
 
 
 async def test_discovery_accepts_agents_with_only_run():
-    """Test that discovery accepts agents with only run() method."""
+    """Test that discovery accepts agents with only run() method.
+
+    With lazy loading, entities with only __init__.py are discovered
+    but marked as "unknown" type until loaded.
+    """
     import tempfile
     from pathlib import Path
 
@@ -110,13 +114,224 @@ agent = NonStreamingAgent()
         discovery = EntityDiscovery(str(temp_path))
         entities = await discovery.discover_entities()
 
-        # Should discover the non-streaming agent
-        agents = [e for e in entities if e.type == "agent"]
-        assert len(agents) == 1
-        # ID is auto-generated, just check it exists and starts with agent_
-        assert agents[0].id.startswith("agent_")
-        assert agents[0].name == "Non-Streaming Agent"
-        assert not agents[0].metadata.get("has_run_stream")
+        # With lazy loading, entity is discovered but type is "unknown"
+        # (no agent.py or workflow.py to detect type from)
+        assert len(entities) == 1
+        entity = entities[0]
+        assert entity.id == "non_streaming_agent"
+        assert entity.type == "unknown"  # Type not yet determined
+        assert entity.tools == []  # Sparse metadata
+
+        # Trigger lazy loading to get full metadata
+        agent_obj = await discovery.load_entity(entity.id)
+        assert agent_obj is not None
+
+        # Now check enriched metadata after loading
+        enriched = discovery.get_entity_info(entity.id)
+        assert enriched.type == "agent"  # Now correctly identified
+        assert enriched.name == "Non-Streaming Agent"
+        assert not enriched.metadata.get("has_run_stream")
+
+
+async def test_lazy_loading():
+    """Test that entities are loaded on-demand, not at discovery time."""
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir)
+
+        # Create test workflow
+        workflow_dir = temp_path / "test_workflow"
+        workflow_dir.mkdir()
+        (workflow_dir / "workflow.py").write_text("""
+from agent_framework import WorkflowBuilder, FunctionExecutor
+
+# Create a simple workflow with a start executor
+def test_func(input: str) -> str:
+    return f"Processed: {input}"
+
+builder = WorkflowBuilder()
+executor = FunctionExecutor(id="test_executor", func=test_func)
+builder.set_start_executor(executor)
+workflow = builder.build()
+""")
+
+        discovery = EntityDiscovery(str(temp_path))
+
+        # Discovery should NOT import module
+        entities = await discovery.discover_entities()
+        assert len(entities) == 1
+        assert entities[0].id == "test_workflow"
+        assert entities[0].type == "workflow"  # Type detected from filename
+        assert entities[0].tools == []  # Sparse metadata (not loaded yet)
+
+        # Entity should NOT be in loaded_objects yet
+        assert discovery.get_entity_object("test_workflow") is None
+
+        # Trigger lazy load
+        workflow_obj = await discovery.load_entity("test_workflow")
+        assert workflow_obj is not None
+
+        # Now in cache
+        assert discovery.get_entity_object("test_workflow") is workflow_obj
+
+        # Second load is instant (from cache)
+        workflow_obj2 = await discovery.load_entity("test_workflow")
+        assert workflow_obj2 is workflow_obj  # Same object
+
+
+async def test_type_detection():
+    """Test that entity types are detected from filenames."""
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir)
+
+        # Create workflow with workflow.py
+        workflow_dir = temp_path / "my_workflow"
+        workflow_dir.mkdir()
+        (workflow_dir / "workflow.py").write_text("""
+from agent_framework import WorkflowBuilder, FunctionExecutor
+
+def test_func(input: str) -> str:
+    return f"Processed: {input}"
+
+builder = WorkflowBuilder()
+executor = FunctionExecutor(id="test_executor", func=test_func)
+builder.set_start_executor(executor)
+workflow = builder.build()
+""")
+
+        # Create agent with agent.py
+        agent_dir = temp_path / "my_agent"
+        agent_dir.mkdir()
+        (agent_dir / "agent.py").write_text("""
+from agent_framework import AgentRunResponse, AgentThread, ChatMessage, Role, TextContent
+
+class TestAgent:
+    name = "Test Agent"
+
+    async def run(self, messages=None, *, thread=None, **kwargs):
+        return AgentRunResponse(
+            messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text="test")])],
+            response_id="test"
+        )
+
+    def get_new_thread(self, **kwargs):
+        return AgentThread()
+
+agent = TestAgent()
+""")
+
+        # Create ambiguous entity with __init__.py only
+        unknown_dir = temp_path / "my_thing"
+        unknown_dir.mkdir()
+        (unknown_dir / "__init__.py").write_text("# thing")
+
+        discovery = EntityDiscovery(str(temp_path))
+        entities = await discovery.discover_entities()
+
+        # Check types detected correctly
+        by_id = {e.id: e for e in entities}
+
+        assert by_id["my_workflow"].type == "workflow"
+        assert by_id["my_agent"].type == "agent"
+        assert by_id["my_thing"].type == "unknown"
+
+
+async def test_hot_reload():
+    """Test that invalidate_entity() enables hot reload."""
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir)
+
+        # Create workflow
+        workflow_dir = temp_path / "test_workflow"
+        workflow_dir.mkdir()
+        workflow_file = workflow_dir / "workflow.py"
+        workflow_file.write_text("""
+from agent_framework import WorkflowBuilder, FunctionExecutor
+
+def test_func(input: str) -> str:
+    return "v1"
+
+builder = WorkflowBuilder()
+executor = FunctionExecutor(id="test_executor", func=test_func)
+builder.set_start_executor(executor)
+workflow = builder.build()
+""")
+
+        discovery = EntityDiscovery(str(temp_path))
+        await discovery.discover_entities()
+
+        # Load entity
+        workflow1 = await discovery.load_entity("test_workflow")
+        assert workflow1 is not None
+
+        # Modify file to create a different workflow
+        workflow_file.write_text("""
+from agent_framework import WorkflowBuilder, FunctionExecutor
+
+def test_func(input: str) -> str:
+    return "v2"
+
+def test_func2(input: str) -> str:
+    return "v2_extra"
+
+builder = WorkflowBuilder()
+executor1 = FunctionExecutor(id="test_executor", func=test_func)
+executor2 = FunctionExecutor(id="test_executor2", func=test_func2)
+builder.set_start_executor(executor1)
+builder.add_edge(executor1, executor2)
+workflow = builder.build()
+""")
+
+        # Without invalidation, gets cached version
+        workflow2 = await discovery.load_entity("test_workflow")
+        assert workflow2 is workflow1  # Same object (cached)
+        # Old workflow has 1 executor
+        assert len(workflow2.get_executors_list()) == 1
+
+        # Invalidate cache
+        discovery.invalidate_entity("test_workflow")
+
+        # Now reloads from disk
+        workflow3 = await discovery.load_entity("test_workflow")
+        assert workflow3 is not workflow1  # Different object
+        # New workflow has 2 executors
+        assert len(workflow3.get_executors_list()) == 2
+
+
+async def test_in_memory_entities_bypass_lazy_loading():
+    """Test that in-memory entities work as before (no lazy loading needed)."""
+    from agent_framework import FunctionExecutor, WorkflowBuilder
+
+    # Create in-memory workflow
+    def test_func(input: str) -> str:
+        return f"Processed: {input}"
+
+    builder = WorkflowBuilder()
+    executor = FunctionExecutor(id="test_executor", func=test_func)
+    builder.set_start_executor(executor)
+    workflow = builder.build()
+
+    discovery = EntityDiscovery()
+
+    # Register in-memory entity
+    entity_info = await discovery.create_entity_info_from_object(workflow, entity_type="workflow", source="in_memory")
+    discovery.register_entity(entity_info.id, entity_info, workflow)
+
+    # Should be immediately available (no lazy loading)
+    loaded = discovery.get_entity_object(entity_info.id)
+    assert loaded is workflow
+
+    # load_entity() should return immediately from cache
+    loaded2 = await discovery.load_entity(entity_info.id)
+    assert loaded2 is workflow  # Same object (cache hit)
 
 
 if __name__ == "__main__":

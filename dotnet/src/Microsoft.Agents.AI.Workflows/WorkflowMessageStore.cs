@@ -1,11 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows;
 
@@ -18,22 +18,22 @@ internal sealed class WorkflowMessageStore : ChatMessageStore
     {
     }
 
-    public WorkflowMessageStore(JsonElement serializedStoreState, JsonSerializerOptions? jsonSerializerOptions = null)
+    public WorkflowMessageStore(StoreState state)
     {
-        if (serializedStoreState.ValueKind is not JsonValueKind.Object)
-        {
-            throw new ArgumentException("The provided JsonElement must be a json object", nameof(serializedStoreState));
-        }
+        this.ImportStoreState(Throw.IfNull(state));
+    }
 
-        StoreState? state =
-            serializedStoreState.Deserialize(
-                AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(StoreState))) as StoreState;
+    private void ImportStoreState(StoreState state, bool clearMessages = false)
+    {
+        if (clearMessages)
+        {
+            this._chatMessages.Clear();
+        }
 
         if (state?.Messages is not null)
         {
             this._chatMessages.AddRange(state.Messages);
         }
-
         this._bookmark = state?.Bookmark ?? 0;
     }
 
@@ -66,13 +66,11 @@ internal sealed class WorkflowMessageStore : ChatMessageStore
 
     public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
     {
-        StoreState state = new()
-        {
-            Bookmark = this._bookmark,
-            Messages = this._chatMessages,
-        };
+        StoreState state = this.ExportStoreState();
 
         return JsonSerializer.SerializeToElement(state,
             WorkflowsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(StoreState)));
     }
+
+    internal StoreState ExportStoreState() => new() { Bookmark = this._bookmark, Messages = this._chatMessages };
 }

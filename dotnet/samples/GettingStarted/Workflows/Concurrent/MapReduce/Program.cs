@@ -8,7 +8,6 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows;
-using Microsoft.Agents.AI.Workflows.Reflection;
 
 namespace WorkflowMapReduceSample;
 
@@ -130,8 +129,7 @@ public static class Program
 /// Splits data into roughly equal chunks based on the number of mapper nodes.
 /// </summary>
 internal sealed class Split(string[] mapperIds, string id) :
-    ReflectingExecutor<Split>(id),
-    IMessageHandler<string>
+    Executor<string>(id)
 {
     private readonly string[] _mapperIds = mapperIds;
     private static readonly string[] s_lineSeparators = ["\r\n", "\r", "\n"];
@@ -139,7 +137,7 @@ internal sealed class Split(string[] mapperIds, string id) :
     /// <summary>
     /// Tokenize input and assign contiguous index ranges to each mapper via shared state.
     /// </summary>
-    public async ValueTask HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
+    public override async ValueTask HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         // Ensure temp directory exists
         Directory.CreateDirectory(MapReduceConstants.TempDir);
@@ -188,12 +186,12 @@ internal sealed class Split(string[] mapperIds, string id) :
 /// <summary>
 /// Maps each token to a count of 1 and writes pairs to a per-mapper file.
 /// </summary>
-internal sealed class Mapper(string id) : ReflectingExecutor<Mapper>(id), IMessageHandler<SplitComplete>
+internal sealed class Mapper(string id) : Executor<SplitComplete>(id)
 {
     /// <summary>
     /// Read the assigned slice, emit (word, 1) pairs, and persist to disk.
     /// </summary>
-    public async ValueTask HandleAsync(SplitComplete message, IWorkflowContext context, CancellationToken cancellationToken = default)
+    public override async ValueTask HandleAsync(SplitComplete message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         var dataToProcess = await context.ReadStateAsync<string[]>(MapReduceConstants.DataToProcessKey, scopeName: MapReduceConstants.StateScope, cancellationToken);
         var chunk = await context.ReadStateAsync<(int start, int end)>(this.Id, scopeName: MapReduceConstants.StateScope, cancellationToken);
@@ -215,8 +213,7 @@ internal sealed class Mapper(string id) : ReflectingExecutor<Mapper>(id), IMessa
 /// Groups intermediate pairs by key and partitions them across reducers.
 /// </summary>
 internal sealed class Shuffler(string[] reducerIds, string[] mapperIds, string id) :
-    ReflectingExecutor<Shuffler>(id),
-    IMessageHandler<MapComplete>
+    Executor<MapComplete>(id)
 {
     private readonly string[] _reducerIds = reducerIds;
     private readonly string[] _mapperIds = mapperIds;
@@ -225,7 +222,7 @@ internal sealed class Shuffler(string[] reducerIds, string[] mapperIds, string i
     /// <summary>
     /// Aggregate mapper outputs and write one partition file per reducer.
     /// </summary>
-    public async ValueTask HandleAsync(MapComplete message, IWorkflowContext context, CancellationToken cancellationToken = default)
+    public override async ValueTask HandleAsync(MapComplete message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         this._mapResults.Add(message);
 
@@ -314,12 +311,12 @@ internal sealed class Shuffler(string[] reducerIds, string[] mapperIds, string i
 /// <summary>
 /// Sums grouped counts per key for its assigned partition.
 /// </summary>
-internal sealed class Reducer(string id) : ReflectingExecutor<Reducer>(id), IMessageHandler<ShuffleComplete>
+internal sealed class Reducer(string id) : Executor<ShuffleComplete>(id)
 {
     /// <summary>
     /// Read one shuffle partition and reduce it to totals.
     /// </summary>
-    public async ValueTask HandleAsync(ShuffleComplete message, IWorkflowContext context, CancellationToken cancellationToken = default)
+    public override async ValueTask HandleAsync(ShuffleComplete message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         if (message.ReducerId != this.Id)
         {
@@ -356,13 +353,12 @@ internal sealed class Reducer(string id) : ReflectingExecutor<Reducer>(id), IMes
 /// Joins all reducer outputs and yields the final output.
 /// </summary>
 internal sealed class CompletionExecutor(string id) :
-    ReflectingExecutor<CompletionExecutor>(id),
-    IMessageHandler<List<ReduceComplete>>
+    Executor<List<ReduceComplete>>(id)
 {
     /// <summary>
     /// Collect reducer output file paths and yield final output.
     /// </summary>
-    public async ValueTask HandleAsync(List<ReduceComplete> message, IWorkflowContext context, CancellationToken cancellationToken = default)
+    public override async ValueTask HandleAsync(List<ReduceComplete> message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         var filePaths = message.ConvertAll(r => r.FilePath);
         await context.YieldOutputAsync(filePaths, cancellationToken);

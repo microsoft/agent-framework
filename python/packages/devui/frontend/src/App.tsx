@@ -3,90 +3,105 @@
  * Features: Entity selection, layout management, debug coordination
  */
 
-import { useState, useEffect, useCallback } from "react";
-import { AppHeader, DebugPanel, SettingsModal } from "@/components/layout";
+import { useEffect, useCallback } from "react";
+import { AppHeader, DebugPanel, SettingsModal, DeploymentModal } from "@/components/layout";
 import { GalleryView } from "@/components/features/gallery";
 import { AgentView } from "@/components/features/agent";
 import { WorkflowView } from "@/components/features/workflow";
-import { LoadingState } from "@/components/ui/loading-state";
 import { Toast } from "@/components/ui/toast";
 import { apiClient } from "@/services/api";
-import { PanelRightOpen, ChevronDown, ServerOff } from "lucide-react";
-import type { SampleEntity } from "@/data/gallery";
+import { PanelRightOpen, ChevronDown, ServerOff, Rocket } from "lucide-react";
 import type {
   AgentInfo,
   WorkflowInfo,
-  AppState,
   ExtendedResponseStreamEvent,
 } from "@/types";
 import { Button } from "./components/ui/button";
+import { useDevUIStore } from "@/stores";
 
 export default function App() {
-  const [appState, setAppState] = useState<AppState>({
-    agents: [],
-    workflows: [],
-    isLoading: true,
-  });
+  // Entity state from Zustand
+  const agents = useDevUIStore((state) => state.agents);
+  const workflows = useDevUIStore((state) => state.workflows);
+  const selectedAgent = useDevUIStore((state) => state.selectedAgent);
+  const isLoadingEntities = useDevUIStore((state) => state.isLoadingEntities);
+  const entityError = useDevUIStore((state) => state.entityError);
 
-  const [debugEvents, setDebugEvents] = useState<ExtendedResponseStreamEvent[]>(
-    []
-  );
-  const [showDebugPanel, setShowDebugPanel] = useState(() => {
-    const saved = localStorage.getItem("showDebugPanel");
-    return saved !== null ? saved === "true" : true;
-  });
-  const [debugPanelWidth, setDebugPanelWidth] = useState(() => {
-    const savedWidth = localStorage.getItem("debugPanelWidth");
-    return savedWidth ? parseInt(savedWidth, 10) : 320;
-  });
-  const [isResizing, setIsResizing] = useState(false);
-  const [showAboutModal, setShowAboutModal] = useState(false);
-  const [showGallery, setShowGallery] = useState(false);
-  const [addingEntityId, setAddingEntityId] = useState<string | null>(null);
-  const [errorEntityId, setErrorEntityId] = useState<string | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [showEntityNotFoundToast, setShowEntityNotFoundToast] = useState(false);
+  // Entity actions
+  const setAgents = useDevUIStore((state) => state.setAgents);
+  const setWorkflows = useDevUIStore((state) => state.setWorkflows);
+  const selectEntity = useDevUIStore((state) => state.selectEntity);
+  const updateAgent = useDevUIStore((state) => state.updateAgent);
+  const updateWorkflow = useDevUIStore((state) => state.updateWorkflow);
+  const setIsLoadingEntities = useDevUIStore((state) => state.setIsLoadingEntities);
+  const setEntityError = useDevUIStore((state) => state.setEntityError);
+
+  // UI state from Zustand
+  const showDebugPanel = useDevUIStore((state) => state.showDebugPanel);
+  const debugPanelWidth = useDevUIStore((state) => state.debugPanelWidth);
+  const debugEvents = useDevUIStore((state) => state.debugEvents);
+  const isResizing = useDevUIStore((state) => state.isResizing);
+
+  // UI actions
+  const setShowDebugPanel = useDevUIStore((state) => state.setShowDebugPanel);
+  const setDebugPanelWidth = useDevUIStore((state) => state.setDebugPanelWidth);
+  const addDebugEvent = useDevUIStore((state) => state.addDebugEvent);
+  const clearDebugEvents = useDevUIStore((state) => state.clearDebugEvents);
+  const setIsResizing = useDevUIStore((state) => state.setIsResizing);
+
+  // Modal state
+  const showAboutModal = useDevUIStore((state) => state.showAboutModal);
+  const showGallery = useDevUIStore((state) => state.showGallery);
+  const showDeployModal = useDevUIStore((state) => state.showDeployModal);
+  const showEntityNotFoundToast = useDevUIStore((state) => state.showEntityNotFoundToast);
+
+  // Modal actions
+  const setShowAboutModal = useDevUIStore((state) => state.setShowAboutModal);
+  const setShowGallery = useDevUIStore((state) => state.setShowGallery);
+  const setShowDeployModal = useDevUIStore((state) => state.setShowDeployModal);
+  const setShowEntityNotFoundToast = useDevUIStore((state) => state.setShowEntityNotFoundToast);
 
   // Initialize app - load agents and workflows
   useEffect(() => {
     const loadData = async () => {
       try {
-        const [agents, workflows] = await Promise.all([
-          apiClient.getAgents(),
-          apiClient.getWorkflows(),
-        ]);
+        // Single API call instead of two parallel calls to same endpoint
+        const { agents: agentList, workflows: workflowList } = await apiClient.getEntities();
+
+        setAgents(agentList);
+        setWorkflows(workflowList);
 
         // Check if there's an entity_id in the URL
         const urlParams = new URLSearchParams(window.location.search);
         const entityId = urlParams.get("entity_id");
 
-        let selectedAgent: AgentInfo | WorkflowInfo | undefined;
+        let selectedEntity: AgentInfo | WorkflowInfo | undefined;
 
         // Try to find entity from URL parameter first
         if (entityId) {
-          selectedAgent =
-            agents.find((a) => a.id === entityId) ||
-            workflows.find((w) => w.id === entityId);
+          selectedEntity =
+            agentList.find((a) => a.id === entityId) ||
+            workflowList.find((w) => w.id === entityId);
 
           // If entity not found but was requested, show notification
-          if (!selectedAgent) {
+          if (!selectedEntity) {
             setShowEntityNotFoundToast(true);
           }
         }
 
         // Fallback to first available entity if URL entity not found
-        if (!selectedAgent) {
-          selectedAgent =
-            agents.length > 0
-              ? agents[0]
-              : workflows.length > 0
-              ? workflows[0]
+        if (!selectedEntity) {
+          selectedEntity =
+            agentList.length > 0
+              ? agentList[0]
+              : workflowList.length > 0
+              ? workflowList[0]
               : undefined;
 
           // Update URL to match actual selected entity (or clear if none)
-          if (selectedAgent) {
+          if (selectedEntity) {
             const url = new URL(window.location.href);
-            url.searchParams.set("entity_id", selectedAgent.id);
+            url.searchParams.set("entity_id", selectedEntity.id);
             window.history.replaceState({}, "", url);
           } else {
             // Clear entity_id if no entities available
@@ -96,34 +111,44 @@ export default function App() {
           }
         }
 
-        setAppState((prev) => ({
-          ...prev,
-          agents,
-          workflows,
-          selectedAgent,
-          isLoading: false,
-        }));
+        if (selectedEntity) {
+          selectEntity(selectedEntity);
+
+          // Load full info for the first entity immediately
+          if (selectedEntity.metadata?.lazy_loaded === false) {
+            try {
+              if (selectedEntity.type === "agent") {
+                const fullAgent = await apiClient.getAgentInfo(
+                  selectedEntity.id
+                );
+                updateAgent(fullAgent);
+              } else {
+                const fullWorkflow = await apiClient.getWorkflowInfo(
+                  selectedEntity.id
+                );
+                updateWorkflow(fullWorkflow);
+              }
+            } catch (error) {
+              console.error(
+                `Failed to load full info for first entity ${selectedEntity.id}:`,
+                error
+              );
+            }
+          }
+        }
+
+        setIsLoadingEntities(false);
       } catch (error) {
         console.error("Failed to load agents/workflows:", error);
-        setAppState((prev) => ({
-          ...prev,
-          error: error instanceof Error ? error.message : "Failed to load data",
-          isLoading: false,
-        }));
+        setEntityError(
+          error instanceof Error ? error.message : "Failed to load data"
+        );
+        setIsLoadingEntities(false);
       }
     };
 
     loadData();
-  }, []);
-
-  // Save debug panel state to localStorage
-  useEffect(() => {
-    localStorage.setItem("showDebugPanel", showDebugPanel.toString());
-  }, [showDebugPanel]);
-
-  useEffect(() => {
-    localStorage.setItem("debugPanelWidth", debugPanelWidth.toString());
-  }, [debugPanelWidth]);
+  }, [setAgents, setWorkflows, selectEntity, updateAgent, updateWorkflow, setIsLoadingEntities, setEntityError, setShowEntityNotFoundToast]);
 
   // Handle resize drag
   const handleMouseDown = useCallback(
@@ -155,161 +180,43 @@ export default function App() {
     [debugPanelWidth]
   );
 
-  // Handle entity selection
-  const handleEntitySelect = useCallback((item: AgentInfo | WorkflowInfo) => {
-    setAppState((prev) => ({
-      ...prev,
-      selectedAgent: item,
-      currentThread: undefined,
-    }));
+  // Handle entity selection - uses Zustand's selectEntity which handles ALL side effects
+  const handleEntitySelect = useCallback(
+    async (item: AgentInfo | WorkflowInfo) => {
+      selectEntity(item); // This clears conversation state, debug events, and updates URL!
 
-    // Update URL with selected entity ID
-    const url = new URL(window.location.href);
-    url.searchParams.set("entity_id", item.id);
-    window.history.pushState({}, "", url);
-
-    // Clear debug events when switching entities
-    setDebugEvents([]);
-  }, []);
+      // If entity is sparse (not fully loaded), load full details
+      if (item.metadata?.lazy_loaded === false) {
+        try {
+          if (item.type === "agent") {
+            const fullAgent = await apiClient.getAgentInfo(item.id);
+            updateAgent(fullAgent);
+          } else {
+            const fullWorkflow = await apiClient.getWorkflowInfo(item.id);
+            updateWorkflow(fullWorkflow);
+          }
+        } catch (error) {
+          console.error(`Failed to load full info for ${item.id}:`, error);
+        }
+      }
+    },
+    [selectEntity, updateAgent, updateWorkflow]
+  );
 
   // Handle debug events from active view
   const handleDebugEvent = useCallback(
     (event: ExtendedResponseStreamEvent | "clear") => {
       if (event === "clear") {
-        setDebugEvents([]);
+        clearDebugEvents();
       } else {
-        setDebugEvents((prev) => [...prev, event]);
+        addDebugEvent(event);
       }
     },
-    []
-  );
-
-  // Handle adding sample entity
-  const handleAddSample = useCallback(async (sample: SampleEntity) => {
-    setAddingEntityId(sample.id);
-    setErrorEntityId(null);
-    setErrorMessage(null);
-
-    try {
-      // Call backend to fetch and add entity
-      const newEntity = await apiClient.addEntity(sample.url, {
-        source: "remote_gallery",
-        originalUrl: sample.url,
-        sampleId: sample.id,
-      });
-
-      // Convert backend entity to frontend format
-      const convertedEntity = {
-        id: newEntity.id,
-        name: newEntity.name,
-        description: newEntity.description,
-        type: newEntity.type,
-        source:
-          (newEntity.source as "directory" | "in_memory" | "remote_gallery") ||
-          "remote_gallery",
-        has_env: false,
-        module_path: undefined,
-      };
-
-      // Update app state
-      if (newEntity.type === "agent") {
-        const agentEntity = {
-          ...convertedEntity,
-          tools: (newEntity.tools || []).map((tool) =>
-            typeof tool === "string" ? tool : JSON.stringify(tool)
-          ),
-        } as AgentInfo;
-
-        setAppState((prev) => ({
-          ...prev,
-          agents: [...prev.agents, agentEntity],
-          selectedAgent: agentEntity,
-        }));
-
-        // Update URL with new entity
-        const url = new URL(window.location.href);
-        url.searchParams.set("entity_id", agentEntity.id);
-        window.history.pushState({}, "", url);
-      } else {
-        const workflowEntity = {
-          ...convertedEntity,
-          executors: (newEntity.tools || []).map((tool) =>
-            typeof tool === "string" ? tool : JSON.stringify(tool)
-          ),
-          input_schema: { type: "string" },
-          input_type_name: "Input",
-          start_executor_id:
-            newEntity.tools && newEntity.tools.length > 0
-              ? typeof newEntity.tools[0] === "string"
-                ? newEntity.tools[0]
-                : JSON.stringify(newEntity.tools[0])
-              : "unknown",
-        } as WorkflowInfo;
-
-        setAppState((prev) => ({
-          ...prev,
-          workflows: [...prev.workflows, workflowEntity],
-          selectedAgent: workflowEntity,
-        }));
-
-        // Update URL with new entity
-        const url = new URL(window.location.href);
-        url.searchParams.set("entity_id", workflowEntity.id);
-        window.history.pushState({}, "", url);
-      }
-
-      // Close gallery and clear debug events
-      setShowGallery(false);
-      setDebugEvents([]);
-    } catch (error) {
-      const errMsg =
-        error instanceof Error ? error.message : "Failed to add sample entity";
-      console.error("Failed to add sample entity:", errMsg);
-      setErrorEntityId(sample.id);
-      setErrorMessage(errMsg);
-    } finally {
-      setAddingEntityId(null);
-    }
-  }, []);
-
-  const handleClearError = useCallback(() => {
-    setErrorEntityId(null);
-    setErrorMessage(null);
-  }, []);
-
-  // Handle removing entity
-  const handleRemoveEntity = useCallback(
-    async (entityId: string) => {
-      try {
-        await apiClient.removeEntity(entityId);
-
-        // Update app state
-        setAppState((prev) => ({
-          ...prev,
-          agents: prev.agents.filter((a) => a.id !== entityId),
-          workflows: prev.workflows.filter((w) => w.id !== entityId),
-          selectedAgent:
-            prev.selectedAgent?.id === entityId
-              ? undefined
-              : prev.selectedAgent,
-        }));
-
-        // Update URL - clear entity_id if we removed the selected entity
-        if (appState.selectedAgent?.id === entityId) {
-          const url = new URL(window.location.href);
-          url.searchParams.delete("entity_id");
-          window.history.pushState({}, "", url);
-          setDebugEvents([]);
-        }
-      } catch (error) {
-        console.error("Failed to remove entity:", error);
-      }
-    },
-    [appState.selectedAgent?.id]
+    [addDebugEvent, clearDebugEvents]
   );
 
   // Show loading state while initializing
-  if (appState.isLoading) {
+  if (isLoadingEntities) {
     return (
       <div className="h-screen flex flex-col bg-background">
         {/* Top Bar - Skeleton */}
@@ -322,17 +229,18 @@ export default function App() {
         </header>
 
         {/* Loading Content */}
-        <LoadingState
-          message="Initializing DevUI..."
-          description="Loading agents and workflows from your configuration"
-          fullPage={true}
-        />
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center">
+            <div className="text-lg font-medium">Initializing DevUI...</div>
+            <div className="text-sm text-muted-foreground mt-2">Loading agents and workflows from your configuration</div>
+          </div>
+        </div>
       </div>
     );
   }
 
   // Show error state if loading failed
-  if (appState.error) {
+  if (entityError) {
     return (
       <div className="h-screen flex flex-col bg-background">
         <AppHeader
@@ -340,7 +248,6 @@ export default function App() {
           workflows={[]}
           selectedItem={undefined}
           onSelect={() => {}}
-          onRemove={handleRemoveEntity}
           isLoading={false}
           onSettingsClick={() => setShowAboutModal(true)}
         />
@@ -388,14 +295,14 @@ export default function App() {
             </div>
 
             {/* Error Details (Collapsible) */}
-            {appState.error && (
+            {entityError && (
               <details className="text-left group">
                 <summary className="text-sm text-muted-foreground cursor-pointer hover:text-foreground flex items-center gap-2">
                   <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" />
                   Error details
                 </summary>
                 <p className="mt-2 text-xs text-muted-foreground font-mono bg-muted/30 p-3 rounded border">
-                  {appState.error}
+                  {entityError}
                 </p>
               </details>
             )}
@@ -420,13 +327,12 @@ export default function App() {
   return (
     <div className="h-screen flex flex-col bg-background max-h-screen">
       <AppHeader
-        agents={appState.agents}
-        workflows={appState.workflows}
-        selectedItem={appState.selectedAgent}
+        agents={agents}
+        workflows={workflows}
+        selectedItem={selectedAgent}
         onSelect={handleEntitySelect}
-        onRemove={handleRemoveEntity}
         onBrowseGallery={() => setShowGallery(true)}
-        isLoading={appState.isLoading}
+        isLoading={isLoadingEntities}
         onSettingsClick={() => setShowAboutModal(true)}
       />
 
@@ -437,40 +343,28 @@ export default function App() {
           <div className="flex-1 w-full">
             <GalleryView
               variant="route"
-              onAdd={handleAddSample}
-              addingEntityId={addingEntityId}
-              errorEntityId={errorEntityId}
-              errorMessage={errorMessage}
-              onClearError={handleClearError}
               onClose={() => setShowGallery(false)}
               hasExistingEntities={
-                appState.agents.length > 0 || appState.workflows.length > 0
+                agents.length > 0 || workflows.length > 0
               }
             />
           </div>
-        ) : appState.agents.length === 0 && appState.workflows.length === 0 ? (
+        ) : agents.length === 0 && workflows.length === 0 ? (
           // Empty state - show gallery inline (full width, no debug panel)
-          <GalleryView
-            variant="inline"
-            onAdd={handleAddSample}
-            addingEntityId={addingEntityId}
-            errorEntityId={errorEntityId}
-            errorMessage={errorMessage}
-            onClearError={handleClearError}
-          />
+          <GalleryView variant="inline" />
         ) : (
           <>
             {/* Left Panel - Main View */}
             <div className="flex-1 min-w-0">
-              {appState.selectedAgent ? (
-                appState.selectedAgent.type === "agent" ? (
+              {selectedAgent ? (
+                selectedAgent.type === "agent" ? (
                   <AgentView
-                    selectedAgent={appState.selectedAgent as AgentInfo}
+                    selectedAgent={selectedAgent as AgentInfo}
                     onDebugEvent={handleDebugEvent}
                   />
                 ) : (
                   <WorkflowView
-                    selectedWorkflow={appState.selectedAgent as WorkflowInfo}
+                    selectedWorkflow={selectedAgent as WorkflowInfo}
                     onDebugEvent={handleDebugEvent}
                   />
                 )
@@ -503,7 +397,7 @@ export default function App() {
 
                 {/* Right Panel - Debug */}
                 <div
-                  className="flex-shrink-0"
+                  className="flex-shrink-0 flex flex-col h-[calc(100vh-3.7rem)]"
                   style={{ width: `${debugPanelWidth}px` }}
                 >
                   <DebugPanel
@@ -511,6 +405,21 @@ export default function App() {
                     isStreaming={false} // Each view manages its own streaming state
                     onClose={() => setShowDebugPanel(false)}
                   />
+
+                  {/* Deploy Footer - Pinned to bottom */}
+                  <div className="border-t bg-muted/30 px-3 py-2.5 flex-shrink-0">
+                    <Button
+                      onClick={() => setShowDeployModal(true)}
+                      className="w-full"
+                      variant="outline"
+                      size="sm"
+                    >
+                      <Rocket className="h-3 w-3 mr-2 flex-shrink-0" />
+                      <span className="truncate text-xs">
+                        Deployment Guide for {selectedAgent?.name || "Agent"}
+                      </span>
+                    </Button>
+                  </div>
                 </div>
               </>
             ) : (
@@ -533,6 +442,13 @@ export default function App() {
 
       {/* Settings Modal */}
       <SettingsModal open={showAboutModal} onOpenChange={setShowAboutModal} />
+
+      {/* Deployment Modal */}
+      <DeploymentModal
+        open={showDeployModal}
+        onClose={() => setShowDeployModal(false)}
+        agentName={selectedAgent?.name}
+      />
 
       {/* Toast Notification */}
       {showEntityNotFoundToast && (

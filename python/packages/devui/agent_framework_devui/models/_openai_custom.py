@@ -38,11 +38,16 @@ class ResponseTraceEventComplete(BaseModel):
 
 
 class ResponseFunctionResultComplete(BaseModel):
-    """Custom DevUI event for function execution results.
+    """DevUI extension: Stream function execution results.
 
-    This is a DevUI extension - OpenAI doesn't stream function execution results
-    because in their model, the application executes functions, not the API.
-    Agent Framework executes functions, so we emit this event for debugging visibility.
+    This is a DevUI extension because:
+    - OpenAI Responses API doesn't stream function results (clients execute functions)
+    - Agent Framework executes functions server-side, so we stream results for debugging visibility
+    - ResponseFunctionToolCallOutputItem exists in OpenAI SDK but isn't in ResponseOutputItem union
+      (it's for Conversations API input, not Responses API streaming output)
+
+    This event provides the same structure as OpenAI's function output items but wrapped
+    in a custom event type since standard events don't support streaming function results.
     """
 
     type: Literal["response.function_result.complete"] = "response.function_result.complete"

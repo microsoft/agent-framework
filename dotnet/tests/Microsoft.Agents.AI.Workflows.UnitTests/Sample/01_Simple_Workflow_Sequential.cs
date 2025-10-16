@@ -5,9 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.AI.Workflows.InProc;
 using Microsoft.Agents.AI.Workflows.Reflection;
-using Microsoft.Agents.AI.Workflows.UnitTests;
 
 namespace Microsoft.Agents.AI.Workflows.Sample;
 
@@ -27,11 +25,9 @@ internal static class Step1EntryPoint
         }
     }
 
-    public static async ValueTask RunAsync(TextWriter writer, ExecutionMode executionMode)
+    public static async ValueTask RunAsync(TextWriter writer, IWorkflowExecutionEnvironment environment)
     {
-        InProcessExecutionEnvironment env = executionMode.GetEnvironment();
-
-        StreamingRun run = await env.StreamAsync(WorkflowInstance, "Hello, World!").ConfigureAwait(false);
+        StreamingRun run = await environment.StreamAsync(WorkflowInstance, "Hello, World!").ConfigureAwait(false);
 
         await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
         {
@@ -43,13 +39,13 @@ internal static class Step1EntryPoint
     }
 }
 
-internal sealed class UppercaseExecutor() : ReflectingExecutor<UppercaseExecutor>("UppercaseExecutor"), IMessageHandler<string, string>
+internal sealed class UppercaseExecutor() : ReflectingExecutor<UppercaseExecutor>("UppercaseExecutor", declareCrossRunShareable: true), IMessageHandler<string, string>
 {
     public async ValueTask<string> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default) =>
         message.ToUpperInvariant();
 }
 
-internal sealed class ReverseTextExecutor() : ReflectingExecutor<ReverseTextExecutor>("ReverseTextExecutor"), IMessageHandler<string, string>
+internal sealed class ReverseTextExecutor() : ReflectingExecutor<ReverseTextExecutor>("ReverseTextExecutor", declareCrossRunShareable: true), IMessageHandler<string, string>
 {
     public async ValueTask<string> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {

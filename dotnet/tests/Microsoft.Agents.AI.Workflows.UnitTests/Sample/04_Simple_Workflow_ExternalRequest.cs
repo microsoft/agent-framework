@@ -4,8 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
-using Microsoft.Agents.AI.Workflows.InProc;
-using Microsoft.Agents.AI.Workflows.UnitTests;
 
 namespace Microsoft.Agents.AI.Workflows.Sample;
 
@@ -39,14 +37,13 @@ internal static class Step4EntryPoint
         }
     }
 
-    public static async ValueTask<string> RunAsync(TextWriter writer, Func<string, int> userGuessCallback, ExecutionMode executionMode)
+    public static async ValueTask<string> RunAsync(TextWriter writer, Func<string, int> userGuessCallback, IWorkflowExecutionEnvironment environment)
     {
         NumberSignal signal = NumberSignal.Init;
         string? prompt = UpdatePrompt(null, signal);
 
         Workflow workflow = WorkflowInstance;
-        InProcessExecutionEnvironment env = executionMode.GetEnvironment();
-        StreamingRun handle = await env.StreamAsync(workflow, NumberSignal.Init).ConfigureAwait(false);
+        StreamingRun handle = await environment.StreamAsync(workflow, NumberSignal.Init).ConfigureAwait(false);
 
         List<ExternalRequest> requests = [];
         await foreach (WorkflowEvent evt in handle.WatchStreamAsync().ConfigureAwait(false))
@@ -57,13 +54,15 @@ internal static class Step4EntryPoint
                     switch (outputEvent.SourceId)
                     {
                         case JudgeId:
-                            if (!outputEvent.Is<NumberSignal>())
+                            if (outputEvent.Is(out NumberSignal newSignal))
+                            {
+                                prompt = UpdatePrompt(prompt, signal = newSignal);
+                            }
+                            else if (!outputEvent.Is<TryCount>())
                             {
                                 throw new InvalidOperationException($"Unexpected output type {outputEvent.Data!.GetType()}");
                             }
 
-                            signal = outputEvent.As<NumberSignal?>()!.Value;
-                            prompt = UpdatePrompt(prompt, signal);
                             break;
                     }
 

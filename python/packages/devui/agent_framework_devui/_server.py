@@ -174,7 +174,7 @@ class DevServer:
 
         @app.get("/v1/entities/{entity_id}/info", response_model=EntityInfo)
         async def get_entity_info(entity_id: str) -> EntityInfo:
-            """Get detailed information about a specific entity."""
+            """Get detailed information about a specific entity (triggers lazy loading)."""
             try:
                 executor = await self._ensure_executor()
                 entity_info = executor.get_entity_info(entity_id)
@@ -182,90 +182,96 @@ class DevServer:
                 if not entity_info:
                     raise HTTPException(status_code=404, detail=f"Entity {entity_id} not found")
 
+                # Trigger lazy loading if entity not yet loaded
+                # This will import the module and enrich metadata
+                entity_obj = await executor.entity_discovery.load_entity(entity_id)
+
+                # Get updated entity info (may have been enriched during load)
+                entity_info = executor.get_entity_info(entity_id) or entity_info
+
                 # For workflows, populate additional detailed information
-                if entity_info.type == "workflow":
-                    entity_obj = executor.entity_discovery.get_entity_object(entity_id)
-                    if entity_obj:
-                        # Get workflow structure
-                        workflow_dump = None
-                        if hasattr(entity_obj, "to_dict") and callable(getattr(entity_obj, "to_dict", None)):
-                            try:
-                                workflow_dump = entity_obj.to_dict()  # type: ignore[attr-defined]
-                            except Exception:
-                                workflow_dump = None
-                        elif hasattr(entity_obj, "to_json") and callable(getattr(entity_obj, "to_json", None)):
-                            try:
-                                raw_dump = entity_obj.to_json()  # type: ignore[attr-defined]
-                            except Exception:
-                                workflow_dump = None
-                            else:
-                                if isinstance(raw_dump, (bytes, bytearray)):
-                                    try:
-                                        raw_dump = raw_dump.decode()
-                                    except Exception:
-                                        raw_dump = raw_dump.decode(errors="replace")
-                                if isinstance(raw_dump, str):
-                                    try:
-                                        parsed_dump = json.loads(raw_dump)
-                                    except Exception:
-                                        workflow_dump = raw_dump
-                                    else:
-                                        workflow_dump = parsed_dump if isinstance(parsed_dump, dict) else raw_dump
-                                else:
-                                    workflow_dump = raw_dump
-                        elif hasattr(entity_obj, "__dict__"):
-                            workflow_dump = {k: v for k, v in entity_obj.__dict__.items() if not k.startswith("_")}
-
-                        # Get input schema information
-                        input_schema = {}
-                        input_type_name = "Unknown"
-                        start_executor_id = ""
-
+                if entity_info.type == "workflow" and entity_obj:
+                    # Entity object already loaded by load_entity() above
+                    # Get workflow structure
+                    workflow_dump = None
+                    if hasattr(entity_obj, "to_dict") and callable(getattr(entity_obj, "to_dict", None)):
                         try:
-                            from ._utils import (
-                                extract_executor_message_types,
-                                generate_input_schema,
-                                select_primary_input_type,
+                            workflow_dump = entity_obj.to_dict()  # type: ignore[attr-defined]
+                        except Exception:
+                            workflow_dump = None
+                    elif hasattr(entity_obj, "to_json") and callable(getattr(entity_obj, "to_json", None)):
+                        try:
+                            raw_dump = entity_obj.to_json()  # type: ignore[attr-defined]
+                        except Exception:
+                            workflow_dump = None
+                        else:
+                            if isinstance(raw_dump, (bytes, bytearray)):
+                                try:
+                                    raw_dump = raw_dump.decode()
+                                except Exception:
+                                    raw_dump = raw_dump.decode(errors="replace")
+                            if isinstance(raw_dump, str):
+                                try:
+                                    parsed_dump = json.loads(raw_dump)
+                                except Exception:
+                                    workflow_dump = raw_dump
+                                else:
+                                    workflow_dump = parsed_dump if isinstance(parsed_dump, dict) else raw_dump
+                            else:
+                                workflow_dump = raw_dump
+                    elif hasattr(entity_obj, "__dict__"):
+                        workflow_dump = {k: v for k, v in entity_obj.__dict__.items() if not k.startswith("_")}
+
+                    # Get input schema information
+                    input_schema = {}
+                    input_type_name = "Unknown"
+                    start_executor_id = ""
+
+                    try:
+                        from ._utils import (
+                            extract_executor_message_types,
+                            generate_input_schema,
+                            select_primary_input_type,
+                        )
+
+                        start_executor = entity_obj.get_start_executor()
+                    except Exception as e:
+                        logger.debug(f"Could not extract input info for workflow {entity_id}: {e}")
+                    else:
+                        if start_executor:
+                            start_executor_id = getattr(start_executor, "executor_id", "") or getattr(
+                                start_executor, "id", ""
                             )
 
-                            start_executor = entity_obj.get_start_executor()
-                        except Exception as e:
-                            logger.debug(f"Could not extract input info for workflow {entity_id}: {e}")
-                        else:
-                            if start_executor:
-                                start_executor_id = getattr(start_executor, "executor_id", "") or getattr(
-                                    start_executor, "id", ""
-                                )
+                            message_types = extract_executor_message_types(start_executor)
+                            input_type = select_primary_input_type(message_types)
 
-                                message_types = extract_executor_message_types(start_executor)
-                                input_type = select_primary_input_type(message_types)
+                            if input_type:
+                                input_type_name = getattr(input_type, "__name__", str(input_type))
 
-                                if input_type:
-                                    input_type_name = getattr(input_type, "__name__", str(input_type))
+                                # Generate schema using comprehensive schema generation
+                                input_schema = generate_input_schema(input_type)
 
-                                    # Generate schema using comprehensive schema generation
-                                    input_schema = generate_input_schema(input_type)
+                    if not input_schema:
+                        input_schema = {"type": "string"}
+                        if input_type_name == "Unknown":
+                            input_type_name = "string"
 
-                        if not input_schema:
-                            input_schema = {"type": "string"}
-                            if input_type_name == "Unknown":
-                                input_type_name = "string"
+                    # Get executor list
+                    executor_list = []
+                    if hasattr(entity_obj, "executors") and entity_obj.executors:
+                        executor_list = [getattr(ex, "executor_id", str(ex)) for ex in entity_obj.executors]
 
-                        # Get executor list
-                        executor_list = []
-                        if hasattr(entity_obj, "executors") and entity_obj.executors:
-                            executor_list = [getattr(ex, "executor_id", str(ex)) for ex in entity_obj.executors]
-
-                        # Create copy of entity info and populate workflow-specific fields
-                        update_payload: dict[str, Any] = {
-                            "workflow_dump": workflow_dump,
-                            "input_schema": input_schema,
-                            "input_type_name": input_type_name,
-                            "start_executor_id": start_executor_id,
-                        }
-                        if executor_list:
-                            update_payload["executors"] = executor_list
-                        return entity_info.model_copy(update=update_payload)
+                    # Create copy of entity info and populate workflow-specific fields
+                    update_payload: dict[str, Any] = {
+                        "workflow_dump": workflow_dump,
+                        "input_schema": input_schema,
+                        "input_type_name": input_type_name,
+                        "start_executor_id": start_executor_id,
+                    }
+                    if executor_list:
+                        update_payload["executors"] = executor_list
+                    return entity_info.model_copy(update=update_payload)
 
                 # For non-workflow entities, return as-is
                 return entity_info
@@ -276,70 +282,34 @@ class DevServer:
                 logger.error(f"Error getting entity info for {entity_id}: {e}")
                 raise HTTPException(status_code=500, detail=f"Failed to get entity info: {e!s}") from e
 
-        @app.post("/v1/entities/add")
-        async def add_entity(request: dict[str, Any]) -> dict[str, Any]:
-            """Add entity from URL."""
+        @app.post("/v1/entities/{entity_id}/reload")
+        async def reload_entity(entity_id: str) -> dict[str, Any]:
+            """Hot reload entity (clears cache, will reimport on next access).
+
+            This enables hot reload during development - edit entity code, call this endpoint,
+            and the next execution will use the updated code without server restart.
+            """
             try:
-                url = request.get("url")
-                metadata = request.get("metadata", {})
-
-                if not url:
-                    raise HTTPException(status_code=400, detail="URL is required")
-
-                logger.info(f"Attempting to add entity from URL: {url}")
                 executor = await self._ensure_executor()
-                entity_info, error_msg = await executor.entity_discovery.fetch_remote_entity(url, metadata)
 
+                # Check if entity exists
+                entity_info = executor.get_entity_info(entity_id)
                 if not entity_info:
-                    # Sanitize error message - only return safe, user-friendly errors
-                    logger.error(f"Failed to fetch or validate entity from {url}: {error_msg}")
-                    safe_error = error_msg if error_msg else "Failed to fetch or validate entity"
-                    raise HTTPException(status_code=400, detail=safe_error)
+                    raise HTTPException(status_code=404, detail=f"Entity {entity_id} not found")
 
-                logger.info(f"Successfully added entity: {entity_info.id}")
-                return {"success": True, "entity": entity_info.model_dump()}
+                # Invalidate cache
+                executor.entity_discovery.invalidate_entity(entity_id)
 
-            except HTTPException:
-                raise
-            except Exception as e:
-                logger.error(f"Error adding entity: {e}", exc_info=True)
-                # Don't expose internal error details to client
-                raise HTTPException(
-                    status_code=500, detail="An unexpected error occurred while adding the entity"
-                ) from e
-
-        @app.delete("/v1/entities/{entity_id}")
-        async def remove_entity(entity_id: str) -> dict[str, Any]:
-            """Remove entity by ID."""
-            try:
-                executor = await self._ensure_executor()
-
-                # Cleanup entity resources before removal
-                try:
-                    entity_obj = executor.entity_discovery.get_entity_object(entity_id)
-                    if entity_obj and hasattr(entity_obj, "chat_client"):
-                        client = entity_obj.chat_client
-                        if hasattr(client, "close") and callable(client.close):
-                            if inspect.iscoroutinefunction(client.close):
-                                await client.close()
-                            else:
-                                client.close()
-                            logger.info(f"Closed client for entity: {entity_id}")
-                except Exception as e:
-                    logger.warning(f"Error closing entity {entity_id} during removal: {e}")
-
-                # Remove entity from registry
-                success = executor.entity_discovery.remove_remote_entity(entity_id)
-
-                if success:
-                    return {"success": True}
-                raise HTTPException(status_code=404, detail="Entity not found or cannot be removed")
+                return {
+                    "success": True,
+                    "message": f"Entity '{entity_id}' cache cleared. Will reload on next access.",
+                }
 
             except HTTPException:
                 raise
             except Exception as e:
-                logger.error(f"Error removing entity {entity_id}: {e}")
-                raise HTTPException(status_code=500, detail=f"Failed to remove entity: {e!s}") from e
+                logger.error(f"Error reloading entity {entity_id}: {e}")
+                raise HTTPException(status_code=500, detail=f"Failed to reload entity: {e!s}") from e
 
         @app.post("/v1/responses")
         async def create_response(request: AgentFrameworkRequest, raw_request: Request) -> Any:

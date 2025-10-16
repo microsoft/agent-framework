@@ -499,7 +499,7 @@ We need to decide what AIContent types, each agent response type will be mapped 
 | AWS (Strands) | **Approach 2** Supports a special invocation method called [structured_output](https://strandsagents.com/latest/api-reference/agent/#strands.agent.agent.Agent.structured_output) |
 | LangGraph | **Approach 1** Supports [configuring an agent](https://langchain-ai.github.io/langgraph/agents/agents/?h=structured#6-configure-structured-output) at agent construction time, and a [structured response](https://langchain-ai.github.io/langgraph/agents/run_agents/#output-format) can be retrieved as a special property on the agent response |
 | Agno | **Approach 1** Supports [configuring an agent](https://docs.agno.com/examples/getting-started/structured-output) at agent construction time |
-| A2A | **Informal Approach 2** Doesn't formally support schema negotiation, but [hints can be provided via metadata](https://a2aproject.github.io/A2A/v0.2.5/specification/#97-structured-data-exchange-requesting-and-providing-json) at invocation time |
+| A2A | **Informal Approach 2** Doesn't formally support schema negotiation, but [hints can be provided via metadata](https://a2a-protocol.org/latest/specification/#97-structured-data-exchange-requesting-and-providing-json) at invocation time |
 | Protocol Activity | Supports returning [Complex types](https://github.com/microsoft/Agents/blob/main/specs/activity/protocol-activity.md#complex-types) but no support for requesting a type |
 
 ### Response Reason Support
@@ -511,5 +511,5 @@ We need to decide what AIContent types, each agent response type will be mapped 
 | AWS (Strands) | Exposes a [stop_reason](https://strandsagents.com/latest/api-reference/types/#strands.types.event_loop.StopReason) property on the [AgentResult](https://strandsagents.com/latest/api-reference/agent/#strands.agent.agent_result.AgentResult) class with options that are tied closely to LLM operations. |
 | LangGraph | No equivalent present, output contains only [messages](https://langchain-ai.github.io/langgraph/agents/run_agents/#output-format) |
 | Agno | [No equivalent present](https://docs.agno.com/reference/agents/run-response) |
-| A2A | No equivalent present, response only contains a [message](https://a2aproject.github.io/A2A/v0.2.5/specification/#64-message-object) or [task](https://a2aproject.github.io/A2A/v0.2.5/specification/#61-task-object). |
+| A2A | No equivalent present, response only contains a [message](https://a2a-protocol.org/latest/specification/#64-message-object) or [task](https://a2a-protocol.org/latest/specification/#61-task-object). |
 | Protocol Activity | [No equivalent present.](https://github.com/microsoft/Agents/blob/main/specs/activity/protocol-activity.md) |

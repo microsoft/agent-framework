@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -13,62 +13,73 @@ internal class ChatProtocolExecutorOptions
     public ChatRole? StringMessageChatRole { get; set; }
 }
 
-internal abstract class ChatProtocolExecutor(string id, ChatProtocolExecutorOptions? options = null) : Executor(id)
+// TODO: Make this a public type (in a later PR; todo: make an issue)
+internal abstract class ChatProtocolExecutor : StatefulExecutor<List<ChatMessage>>
 {
-    private List<ChatMessage> _pendingMessages = [];
-    private readonly ChatRole? _stringMessageChatRole = options?.StringMessageChatRole;
+    private readonly static Func<List<ChatMessage>> s_initFunction = () => [];
+    private readonly ChatRole? _stringMessageChatRole;
 
-    // Note that we explicitly do not implement IResettableExecutor here, as we want to allow derived classes to
-    // implement it if they want to be resettable, but do not want to opt them into it.
-    protected ValueTask ResetAsync()
+    internal ChatProtocolExecutor(string id, ChatProtocolExecutorOptions? options = null, bool declareCrossRunShareable = false)
+        : base(id, () => [], declareCrossRunShareable: declareCrossRunShareable)
     {
-        this._pendingMessages = [];
-        return default;
+        this._stringMessageChatRole = options?.StringMessageChatRole;
     }
 
     protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
     {
         if (this._stringMessageChatRole.HasValue)
         {
-            routeBuilder = routeBuilder.AddHandler<string>((message, _, __) => this._pendingMessages.Add(new(this._stringMessageChatRole.Value, message)));
+            routeBuilder = routeBuilder.AddHandler<string>(
+                (message, context) => this.AddMessageAsync(new(this._stringMessageChatRole.Value, message), context));
         }
 
-        // Routing requires exact type matches. The runtime may dispatch either List<ChatMessage> or ChatMessage[].
-        return routeBuilder.AddHandler<ChatMessage>((message, _, __) => this._pendingMessages.Add(message))
-                           .AddHandler<List<ChatMessage>>((messages, _, __) => this._pendingMessages.AddRange(messages))
-                           .AddHandler<ChatMessage[]>((messages, _, __) => this._pendingMessages.AddRange(messages))
+        return routeBuilder.AddHandler<ChatMessage>(this.AddMessageAsync)
+                           .AddHandler<IEnumerable<ChatMessage>>(this.AddMessagesAsync)
+                           .AddHandler<ChatMessage[]>(this.AddMessagesAsync)
+                           .AddHandler<List<ChatMessage>>(this.AddMessagesAsync)
                            .AddHandler<TurnToken>(this.TakeTurnAsync);
     }
 
-    public async ValueTask TakeTurnAsync(TurnToken token, IWorkflowContext context, CancellationToken cancellationToken = default)
+    protected ValueTask AddMessageAsync(ChatMessage message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        await this.TakeTurnAsync(this._pendingMessages, context, token.EmitEvents, cancellationToken).ConfigureAwait(false);
-        this._pendingMessages = [];
-        await context.SendMessageAsync(token, cancellationToken: cancellationToken).ConfigureAwait(false);
+        return this.InvokeWithStateAsync(ForwardMessageAsync, context, cancellationToken: cancellationToken);
+
+        ValueTask<List<ChatMessage>?> ForwardMessageAsync(List<ChatMessage>? maybePendingMessages, IWorkflowContext context, CancellationToken cancelationToken)
+        {
+            maybePendingMessages ??= s_initFunction();
+            maybePendingMessages.Add(message);
+            return new(maybePendingMessages);
+        }
+    }
+
+    protected ValueTask AddMessagesAsync(IEnumerable<ChatMessage> messages, IWorkflowContext context, CancellationToken cancellationToken = default)
+    {
+        return this.InvokeWithStateAsync(ForwardMessageAsync, context, cancellationToken: cancellationToken);
+
+        ValueTask<List<ChatMessage>?> ForwardMessageAsync(List<ChatMessage>? maybePendingMessages, IWorkflowContext context, CancellationToken cancelationToken)
+        {
+            maybePendingMessages ??= s_initFunction();
+            maybePendingMessages.AddRange(messages);
+            return new(maybePendingMessages);
+        }
+    }
+
+    public ValueTask TakeTurnAsync(TurnToken token, IWorkflowContext context, CancellationToken cancellationToken = default)
+    {
+        return this.InvokeWithStateAsync(InvokeTakeTurnAsync, context, cancellationToken: cancellationToken);
+
+        async ValueTask<List<ChatMessage>?> InvokeTakeTurnAsync(List<ChatMessage>? maybePendingMessages, IWorkflowContext context, CancellationToken cancellationToken)
+        {
+            await this.TakeTurnAsync(maybePendingMessages ?? s_initFunction(), context, token.EmitEvents, cancellationToken)
+                      .ConfigureAwait(false);
+
+            await context.SendMessageAsync(token, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+            // Rerun the initialStateFactory to reset the state to empty list. (We could return the empty list directly,
+            // but this is more consistent if the initial state factory becomes more complex.)
+            return s_initFunction();
+        }
     }
 
     protected abstract ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellationToken = default);
-
-    private const string PendingMessagesStateKey = nameof(_pendingMessages);
-    protected internal override async ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
-    {
-        Task messagesTask = Task.CompletedTask;
-        if (this._pendingMessages.Count > 0)
-        {
-            JsonElement messagesValue = this._pendingMessages.Serialize();
-            messagesTask = context.QueueStateUpdateAsync(PendingMessagesStateKey, messagesValue, cancellationToken: cancellationToken).AsTask();
-        }
-
-        await messagesTask.ConfigureAwait(false);
-    }
-
-    protected internal override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
-    {
-        JsonElement? messagesValue = await context.ReadStateAsync<JsonElement?>(PendingMessagesStateKey, cancellationToken: cancellationToken).ConfigureAwait(false);
-        if (messagesValue.HasValue)
-        {
-            List<ChatMessage> messages = messagesValue.Value.DeserializeMessages();
-            this._pendingMessages.AddRange(messages);
-        }
-    }
 }

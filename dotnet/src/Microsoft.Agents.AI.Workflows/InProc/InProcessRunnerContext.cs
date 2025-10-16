@@ -32,7 +32,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
 
     private readonly ConcurrentDictionary<string, Task<Executor>> _executors = new();
     private readonly ConcurrentQueue<Func<ValueTask>> _queuedExternalDeliveries = new();
-    private readonly ConcurrentQueue<ISuperStepRunner> _joinedSubworkflowRunners = new();
+    private readonly ConcurrentDictionary<string, ISuperStepRunner> _joinedSubworkflowRunners = new();
 
     private readonly ConcurrentDictionary<string, ExternalRequest> _externalRequests = new();
 
@@ -42,11 +42,19 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         bool withCheckpointing,
         IEventSink outgoingEvents,
         IStepTracer? stepTracer,
-        object? workflowOwnership = null,
+        object? existingOwnershipSignoff = null,
         bool subworkflow = false,
+        bool enableConcurrentRuns = false,
         ILogger? logger = null)
     {
-        workflow.TakeOwnership(this, existingOwnershipSignoff: workflowOwnership);
+        if (enableConcurrentRuns)
+        {
+            workflow.CheckOwnership(existingOwnershipSignoff: existingOwnershipSignoff);
+        }
+        else
+        {
+            workflow.TakeOwnership(this, existingOwnershipSignoff: existingOwnershipSignoff);
+        }
         this._workflow = workflow;
         this._runId = runId;
 
@@ -54,6 +62,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         this._outputFilter = new(workflow);
 
         this.WithCheckpointing = withCheckpointing;
+        this.ConcurrentRunsEnabled = enableConcurrentRuns;
         this.OutgoingEvents = outgoingEvents;
     }
 
@@ -70,6 +79,9 @@ internal sealed class InProcessRunnerContext : IRunnerContext
             }
 
             Executor executor = await registration.CreateInstanceAsync(this._runId).ConfigureAwait(false);
+            await executor.InitializeAsync(this.Bind(executorId), cancellationToken: cancellationToken)
+                          .ConfigureAwait(false);
+
             tracer?.TraceActivated(executorId);
 
             if (executor is RequestInfoExecutor requestInputExecutor)
@@ -138,12 +150,13 @@ internal sealed class InProcessRunnerContext : IRunnerContext
     }
 
     public bool HasQueuedExternalDeliveries => !this._queuedExternalDeliveries.IsEmpty;
-    public bool JoinedRunnersHaveActions => this._joinedSubworkflowRunners.Any(joinedRunner => joinedRunner.HasUnprocessedMessages);
+    public bool JoinedRunnersHaveActions => this._joinedSubworkflowRunners.Values.Any(runner => runner.HasUnprocessedMessages);
+
     public bool NextStepHasActions => this._nextStep.HasMessages ||
                                       this.HasQueuedExternalDeliveries ||
                                       this.JoinedRunnersHaveActions;
     public bool HasUnservicedRequests => !this._externalRequests.IsEmpty ||
-                                      this._joinedSubworkflowRunners.Any(joinedRunner => joinedRunner.HasUnservicedRequests);
+                                         this._joinedSubworkflowRunners.Values.Any(runner => runner.HasUnservicedRequests);
 
     public async ValueTask<StepContext> AdvanceAsync(CancellationToken cancellationToken = default)
     {
@@ -260,6 +273,10 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         public ValueTask<T?> ReadStateAsync<T>(string key, string? scopeName = null, CancellationToken cancellationToken = default)
             => RunnerContext.StateManager.ReadStateAsync<T>(ExecutorId, scopeName, key);
 
+        [return: NotNull]
+        public ValueTask<T> ReadOrInitStateAsync<T>(string key, Func<T> initialStateFactory, string? scopeName = null, CancellationToken cancellationToken = default)
+            => RunnerContext.StateManager.ReadOrInitStateAsync(ExecutorId, scopeName, key, initialStateFactory);
+
         public ValueTask<HashSet<string>> ReadStateKeysAsync(string? scopeName = null, CancellationToken cancellationToken = default)
             => RunnerContext.StateManager.ReadKeysAsync(ExecutorId, scopeName);
 
@@ -270,9 +287,12 @@ internal sealed class InProcessRunnerContext : IRunnerContext
             => RunnerContext.StateManager.ClearStateAsync(ExecutorId, scopeName);
 
         public IReadOnlyDictionary<string, string>? TraceContext => traceContext;
+
+        public bool ConcurrentRunsEnabled => RunnerContext.ConcurrentRunsEnabled;
     }
 
     public bool WithCheckpointing { get; }
+    public bool ConcurrentRunsEnabled { get; }
 
     internal Task PrepareForCheckpointAsync(CancellationToken cancellationToken = default)
     {
@@ -380,19 +400,29 @@ internal sealed class InProcessRunnerContext : IRunnerContext
                 }
             }
 
-            await this._workflow.ReleaseOwnershipAsync(this).ConfigureAwait(false);
+            if (!this.ConcurrentRunsEnabled)
+            {
+                await this._workflow.ReleaseOwnershipAsync(this).ConfigureAwait(false);
+            }
         }
     }
 
-    public IEnumerable<ISuperStepRunner> JoinedSubworkflowRunners => this._joinedSubworkflowRunners;
+    public IEnumerable<ISuperStepRunner> JoinedSubworkflowRunners => this._joinedSubworkflowRunners.Values;
 
-    public ValueTask AttachSuperstepAsync(ISuperStepRunner superStepRunner, CancellationToken cancellationToken = default)
+    public ValueTask<string> AttachSuperstepAsync(ISuperStepRunner superStepRunner, CancellationToken cancellationToken = default)
     {
         // This needs to be a thread-safe ordered collection because we can potentially instantiate executors
         // in parallel, which means multiple sub-workflows could be attaching at the same time.
-        this._joinedSubworkflowRunners.Enqueue(superStepRunner);
+        string joinId;
+        do
+        {
+            joinId = Guid.NewGuid().ToString("N");
+        } while (!this._joinedSubworkflowRunners.TryAdd(joinId, superStepRunner));
+
         return default;
     }
+
+    public ValueTask<bool> DetachSuperstepAsync(string joinId) => new(this._joinedSubworkflowRunners.TryRemove(joinId, out _));
 
     ValueTask ISuperStepJoinContext.ForwardWorkflowEventAsync(WorkflowEvent workflowEvent, CancellationToken cancellationToken)
         => this.AddEventAsync(workflowEvent, cancellationToken);

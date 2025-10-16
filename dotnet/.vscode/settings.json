@@ -1,4 +1,5 @@
 {
     "dotnet.defaultSolution": "agent-framework-dotnet.slnx",
-    "git.openRepositoryInParentFolders": "always"
+    "git.openRepositoryInParentFolders": "always",
+    "chat.agent.enabled": true
 }

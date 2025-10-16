@@ -24,7 +24,7 @@ public static class Program
     private static async Task Main()
     {
         // Create the workflow
-        var workflow = await WorkflowHelper.GetWorkflowAsync().ConfigureAwait(false);
+        var workflow = await WorkflowHelper.GetWorkflowAsync();
 
         // Create checkpoint manager
         var checkpointManager = CheckpointManager.Default;
@@ -33,8 +33,8 @@ public static class Program
         // Execute the workflow and save checkpoints
         await using Checkpointed<StreamingRun> checkpointedRun = await InProcessExecution
             .StreamAsync(workflow, NumberSignal.Init, checkpointManager)
-            .ConfigureAwait(false);
-        await foreach (WorkflowEvent evt in checkpointedRun.Run.WatchStreamAsync().ConfigureAwait(false))
+            ;
+        await foreach (WorkflowEvent evt in checkpointedRun.Run.WatchStreamAsync())
         {
             if (evt is ExecutorCompletedEvent executorCompletedEvt)
             {
@@ -70,8 +70,8 @@ public static class Program
         Console.WriteLine($"\n\nRestoring from the {CheckpointIndex + 1}th checkpoint.");
         CheckpointInfo savedCheckpoint = checkpoints[CheckpointIndex];
         // Note that we are restoring the state directly to the same run instance.
-        await checkpointedRun.RestoreCheckpointAsync(savedCheckpoint, CancellationToken.None).ConfigureAwait(false);
-        await foreach (WorkflowEvent evt in checkpointedRun.Run.WatchStreamAsync().ConfigureAwait(false))
+        await checkpointedRun.RestoreCheckpointAsync(savedCheckpoint, CancellationToken.None);
+        await foreach (WorkflowEvent evt in checkpointedRun.Run.WatchStreamAsync())
         {
             if (evt is ExecutorCompletedEvent executorCompletedEvt)
             {

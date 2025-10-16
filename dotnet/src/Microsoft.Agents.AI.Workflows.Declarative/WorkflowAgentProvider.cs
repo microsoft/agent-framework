@@ -3,6 +3,7 @@
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.Declarative.Events;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative;
@@ -12,6 +13,49 @@ namespace Microsoft.Agents.AI.Workflows.Declarative;
 /// </summary>
 public abstract class WorkflowAgentProvider
 {
+    /// <summary>
+    /// Gets or sets a collection of additional tools an agent is able to automatically invoke.
+    /// If an agent is configured with a function tool that is not available, a <see cref="RequestPort"/> is executed
+    /// that provides an <see cref="AgentToolRequest"/> that describes the function calls requested.  The caller may
+    /// then respond with a corrsponding <see cref="AgentToolResponse"/> that includes the results of the function calls.
+    /// </summary>
+    /// <remarks>
+    /// These will not impact the requests sent to the model by the <see cref="FunctionInvokingChatClient"/>.
+    /// </remarks>
+    public IEnumerable<AIFunction>? Functions { get; init; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether to allow concurrent invocation of functions.
+    /// </summary>
+    /// <value>
+    /// <see langword="true"/> if multiple function calls can execute in parallel.
+    /// <see langword="false"/> if function calls are processed serially.
+    /// The default value is <see langword="false"/>.
+    /// </value>
+    /// <remarks>
+    /// An individual response from the inner client might contain multiple function call requests.
+    /// By default, such function calls are processed serially. Set <see cref="AllowConcurrentInvocation"/> to
+    /// <see langword="true"/> to enable concurrent invocation such that multiple function calls can execute in parallel.
+    /// </remarks>
+    public bool AllowConcurrentInvocation { get; init; }
+
+    /// <summary>
+    /// Gets or sets a flag to indicate whether a single response is allowed to include multiple tool calls.
+    /// If <see langword="false"/>, the <see cref="IChatClient"/> is asked to return a maximum of one tool call per request.
+    /// If <see langword="true"/>, there is no limit.
+    /// If <see langword="null"/>, the provider may select its own default.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// When used with function calling middleware, this does not affect the ability to perform multiple function calls in sequence.
+    /// It only affects the number of function calls within a single iteration of the function calling loop.
+    /// </para>
+    /// <para>
+    /// The underlying provider is not guaranteed to support or honor this flag. For example it may choose to ignore it and return multiple tool calls regardless.
+    /// </para>
+    /// </remarks>
+    public bool AllowMultipleToolCalls { get; init; }
+
     /// <summary>
     /// Asynchronously retrieves an AI agent by its unique identifier.
     /// </summary>

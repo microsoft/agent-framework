@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
@@ -29,11 +28,9 @@ public static class A2ACardResolverExtensions
     /// Retrieves an instance of <see cref="AIAgent"/> for an existing A2A agent.
     /// </summary>
     /// <remarks>
-    /// Creates an AI agent for an A2A agent whose host supports one of the A2A discovery mechanisms:
-    /// <list type="bullet">
-    /// <item><description><see href="https://github.com/a2aproject/A2A/blob/main/docs/topics/agent-discovery.md#1-well-known-uri">Well-Known URI</see></description></item>
-    /// <item><description><see href="https://github.com/a2aproject/A2A/blob/main/docs/topics/agent-discovery.md#2-curated-registries-catalog-based-discovery">Curated Registries (Catalog-Based Discovery)</see></description></item>
-    /// </list>
+    /// This method can be used to access A2A agents that support the
+    /// <see href="https://github.com/a2aproject/A2A/blob/main/docs/topics/agent-discovery.md#1-well-known-uri">Well-Known URI</see>
+    /// discovery mechanism.
     /// </remarks>
     /// <param name="resolver">The <see cref="A2ACardResolver" /> to use for the agent creation.</param>
     /// <param name="httpClient">The <see cref="HttpClient"/> to use for HTTP requests.</param>
@@ -45,9 +42,6 @@ public static class A2ACardResolverExtensions
         // Obtain the agent card from the resolver.
         var agentCard = await resolver.GetAgentCardAsync(cancellationToken).ConfigureAwait(false);
 
-        // Create the A2A client using the agent URL from the card.
-        var a2aClient = new A2AClient(new Uri(agentCard.Url), httpClient);
-
-        return a2aClient.GetAIAgent(name: agentCard.Name, description: agentCard.Description, loggerFactory: loggerFactory);
+        return await agentCard.GetAIAgentAsync(httpClient, loggerFactory).ConfigureAwait(false);
     }
 }

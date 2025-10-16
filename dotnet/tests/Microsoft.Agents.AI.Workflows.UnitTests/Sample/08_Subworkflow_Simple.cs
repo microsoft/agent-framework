@@ -7,15 +7,13 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
-using Microsoft.Agents.AI.Workflows.InProc;
-using Microsoft.Agents.AI.Workflows.UnitTests;
 
 namespace Microsoft.Agents.AI.Workflows.Sample;
 
 internal sealed record class TextProcessingRequest(string Text, string TaskId);
 internal sealed record class TextProcessingResult(string TaskId, string Text, int WordCount, int ChatCount);
 
-internal sealed class AllTasksCompletedEvent(IEnumerable<TextProcessingResult> results) : WorkflowEvent(results);
+//internal sealed class AllTasksCompletedEvent(IEnumerable<TextProcessingResult> results) : WorkflowEvent(results);
 
 internal static class Step8EntryPoint
 {
@@ -28,31 +26,39 @@ internal static class Step8EntryPoint
             "   Spaces   around   text   ",
         ];
 
-    public static async ValueTask<List<TextProcessingResult>> RunAsync(TextWriter writer, ExecutionMode executionMode, List<string> textsToProcess)
+    public static async ValueTask<List<TextProcessingResult>> RunAsync(TextWriter writer, IWorkflowExecutionEnvironment environment, List<string> textsToProcess)
     {
         Func<TextProcessingRequest, IWorkflowContext, CancellationToken, ValueTask> processTextAsyncFunc = ProcessTextAsync;
-        ExecutorIsh processText = processTextAsyncFunc.AsExecutor("TextProcessor");
+        ExecutorIsh processText = processTextAsyncFunc.AsExecutor("TextProcessor", threadsafe: true);
 
         Workflow subWorkflow = new WorkflowBuilder(processText).WithOutputFrom(processText).Build();
 
         ExecutorIsh textProcessor = subWorkflow.ConfigureSubWorkflow("TextProcessor");
-        TextProcessingOrchestrator orchestrator = new();
+        Func<string, string, ValueTask<Executor>> createOrchestrator = (id, _) => new(new TextProcessingOrchestrator(id));
+        var orchestrator = createOrchestrator.ConfigureFactory();
 
         Workflow workflow = new WorkflowBuilder(orchestrator)
             .AddEdge(orchestrator, textProcessor)
             .AddEdge(textProcessor, orchestrator)
+            .WithOutputFrom(orchestrator)
             .Build();
 
-        InProcessExecutionEnvironment env = executionMode.GetEnvironment();
-        Run workflowRun = await env.RunAsync(workflow, textsToProcess);
+        Run workflowRun = await environment.RunAsync(workflow, textsToProcess);
 
         RunStatus status = await workflowRun.GetStatusAsync();
         status.Should().Be(RunStatus.Idle);
 
-        List<TextProcessingResult> results = orchestrator.Results;
+        WorkflowOutputEvent? maybeOutput = workflowRun.OutgoingEvents.OfType<WorkflowOutputEvent>()
+                                                                     .SingleOrDefault();
+
+        maybeOutput.Should().NotBeNull("the workflow should have produced an output event");
+        List<TextProcessingResult>? maybeResults = maybeOutput.As<List<TextProcessingResult>>();
+
+        maybeResults.Should().NotBeNull("the output event should contain the results");
+        List<TextProcessingResult> results = maybeResults;
+
         results.Sort((left, right) => StringComparer.Ordinal.Compare(left.TaskId, right.TaskId));
 
-        // This is a placeholder for the entry point of Step 8.
         return results;
     }
 
@@ -70,10 +76,19 @@ internal static class Step8EntryPoint
         return context.YieldOutputAsync(new TextProcessingResult(request.TaskId, request.Text, wordCount, charCount), cancellationToken);
     }
 
-    private sealed class TextProcessingOrchestrator() : Executor("TextOrchestrator")
+    private sealed class TextProcessingOrchestrator(string id)
+        : StatefulExecutor<TextProcessingOrchestrator.State>(id, () => new(), declareCrossRunShareable: false)
     {
-        public List<TextProcessingResult> Results { get; } = new();
-        public HashSet<string> PendingTaskIds { get; } = new();
+        internal sealed class State
+        {
+            public List<TextProcessingResult> Results { get; } = new();
+            public HashSet<string> PendingTaskIds { get; } = new();
+
+            public bool IsComplete => this.PendingTaskIds.Count == 0;
+
+            public void AddPending(string taskId) => this.PendingTaskIds.Add(taskId);
+            public bool CompletePending(string taskId) => this.PendingTaskIds.Remove(taskId);
+        }
 
         protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
         {
@@ -81,28 +96,40 @@ internal static class Step8EntryPoint
                                .AddHandler<TextProcessingResult>(this.CollectResultAsync);
         }
 
-        private async ValueTask StartProcessingAsync(List<string> texts, IWorkflowContext context)
+        private async ValueTask StartProcessingAsync(List<string> texts, IWorkflowContext context, CancellationToken cancellationToken)
         {
-            foreach (TextProcessingRequest request in texts.Select((string value, int index) => new TextProcessingRequest(Text: value, TaskId: $"Task{index}")))
+            await this.InvokeWithStateAsync(QueueProcessingTasksAsync, context, cancellationToken: cancellationToken);
+
+            async ValueTask<State?> QueueProcessingTasksAsync(State state, IWorkflowContext context, CancellationToken cancellationToken)
             {
-                this.PendingTaskIds.Add(request.TaskId);
-                await context.SendMessageAsync(request).ConfigureAwait(false);
+                foreach (TextProcessingRequest request in texts.Select((string value, int index) => new TextProcessingRequest(Text: value, TaskId: $"Task{index}")))
+                {
+                    state.PendingTaskIds.Add(request.TaskId);
+                    await context.SendMessageAsync(request, cancellationToken: cancellationToken).ConfigureAwait(false);
+                }
+
+                return state;
             }
         }
 
-        private ValueTask CollectResultAsync(TextProcessingResult result, IWorkflowContext context)
+        private async ValueTask CollectResultAsync(TextProcessingResult result, IWorkflowContext context, CancellationToken cancellationToken = default)
         {
-            if (this.PendingTaskIds.Remove(result.TaskId))
-            {
-                this.Results.Add(result);
-            }
+            await this.InvokeWithStateAsync(CollectResultAndCheckCompletionAsync, context, cancellationToken: cancellationToken);
 
-            if (this.PendingTaskIds.Count == 0)
+            async ValueTask<State?> CollectResultAndCheckCompletionAsync(State state, IWorkflowContext context, CancellationToken cancellationToken)
             {
-                return context.AddEventAsync(new AllTasksCompletedEvent(this.Results));
-            }
+                if (state.PendingTaskIds.Remove(result.TaskId))
+                {
+                    state.Results.Add(result);
+                }
 
-            return default;
+                if (state.PendingTaskIds.Count == 0)
+                {
+                    await context.YieldOutputAsync(state.Results, cancellationToken).ConfigureAwait(false);
+                }
+
+                return state;
+            }
         }
     }
 }

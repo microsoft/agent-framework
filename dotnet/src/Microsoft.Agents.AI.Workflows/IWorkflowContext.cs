@@ -1,10 +1,65 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace Microsoft.Agents.AI.Workflows;
+
+/// <summary>
+/// Provides extension methods for working with <see cref="IWorkflowContext"/> instances.
+/// </summary>
+public static class WorkflowContextExtensions
+{
+    /// <summary>
+    /// Invokes an asynchronous operation that reads, updates, and persists workflow state associated with the specified
+    /// key.
+    /// </summary>
+    /// <typeparam name="TState">The type of the state object to read, update, and persist.</typeparam>
+    /// <param name="context">The workflow context used to access and update state.</param>
+    /// <param name="invocation">A delegate that receives the current state, workflow context, and cancellation token, and returns the updated
+    /// state asynchronously.</param>
+    /// <param name="key">The key identifying the state to read and update. Cannot be null or empty.</param>
+    /// <param name="scopeName">An optional scope name that further qualifies the state key. If null, the default scope is used.</param>
+    /// <param name="cancellationToken">A cancellation token that can be used to cancel the asynchronous operation.</param>
+    /// <returns>A ValueTask that represents the asynchronous operation.</returns>
+    public static async ValueTask InvokeWithStateAsync<TState>(this IWorkflowContext context,
+                                                               Func<TState?, IWorkflowContext, CancellationToken, ValueTask<TState?>> invocation,
+                                                               string key,
+                                                               string? scopeName = null,
+                                                               CancellationToken cancellationToken = default)
+    {
+        TState? state = await context.ReadStateAsync<TState>(key, scopeName, cancellationToken).ConfigureAwait(false);
+        state = await invocation(state, context, cancellationToken).ConfigureAwait(false);
+        await context.QueueStateUpdateAsync(key, state, scopeName, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Invokes an asynchronous operation that reads, updates, and persists workflow state associated with the specified
+    /// key.
+    /// </summary>
+    /// <typeparam name="TState">The type of the state object to read, update, and persist.</typeparam>
+    /// <param name="context">The workflow context used to access and update state.</param>
+    /// <param name="invocation">A delegate that receives the current state, workflow context, and cancellation token, and returns the updated
+    /// state asynchronously.</param>
+    /// <param name="key">The key identifying the state to read and update. Cannot be null or empty.</param>
+    /// <param name="initialStateFactory">A factory to initialize state to if it is not set at the provided key.</param>
+    /// <param name="scopeName">An optional scope name that further qualifies the state key. If null, the default scope is used.</param>
+    /// <param name="cancellationToken">A cancellation token that can be used to cancel the asynchronous operation.</param>
+    /// <returns>A ValueTask that represents the asynchronous operation.</returns>
+    public static async ValueTask InvokeWithStateAsync<TState>(this IWorkflowContext context,
+                                                               Func<TState, IWorkflowContext, CancellationToken, ValueTask<TState?>> invocation,
+                                                               string key,
+                                                               Func<TState> initialStateFactory,
+                                                               string? scopeName = null,
+                                                               CancellationToken cancellationToken = default)
+    {
+        TState? state = await context.ReadOrInitStateAsync(key, initialStateFactory, scopeName, cancellationToken).ConfigureAwait(false);
+        state = await invocation(state, context, cancellationToken).ConfigureAwait(false);
+        await context.QueueStateUpdateAsync(key, state ?? initialStateFactory(), scopeName, cancellationToken).ConfigureAwait(false);
+    }
+}
 
 /// <summary>
 /// Provides services for an <see cref="Executor"/> during the execution of a workflow.
@@ -78,6 +133,24 @@ public interface IWorkflowContext
     /// <returns>A <see cref="ValueTask{T}"/> representing the asynchronous operation.</returns>
     ValueTask<T?> ReadStateAsync<T>(string key, string? scopeName = null, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Reads or initialized a state value from the workflow's state store. If no scope is provided, the executor's
+    /// default scope is used.
+    /// </summary>
+    /// <remarks>
+    /// When initializing the state, the state will be queued as an update. If multiple initializations are done in the same
+    /// SuperStep from different executors, an error will be generated at the end of the SuperStep.
+    /// </remarks>
+    /// <typeparam name="T">The type of the state value.</typeparam>
+    /// <param name="key">The key of the state value.</param>
+    /// <param name="initialStateFactory">A factory to initialize the state if the key has no value associated with it.</param>
+    /// <param name = "scopeName" > An optional name that specifies the scope to read. If null, the default scope is
+    /// used.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
+    /// The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A <see cref="ValueTask{T}"/> representing the asynchronous operation.</returns>
+    ValueTask<T> ReadOrInitStateAsync<T>(string key, Func<T> initialStateFactory, string? scopeName = null, CancellationToken cancellationToken = default);
+
 #if NET // See above for musings about this construction
     /// <summary>
     /// Reads a state value from the workflow's state store. If no scope is provided, the executor's
@@ -87,8 +160,21 @@ public interface IWorkflowContext
     /// <param name="key">The key of the state value.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
     /// <returns>A <see cref="ValueTask{T}"/> representing the asynchronous operation.</returns>
-    ValueTask<T?> ReadStateAsync<T>(string key, CancellationToken cancellationToken) => this.ReadStateAsync<T>(key, null, cancellationToken);
+    ValueTask<T?> ReadStateAsync<T>(string key, CancellationToken cancellationToken)
+        => this.ReadStateAsync<T>(key, null, cancellationToken);
 
+    /// <summary>
+    /// Reads a state value from the workflow's state store. If no scope is provided, the executor's
+    /// default scope is used.
+    /// </summary>
+    /// <typeparam name="T">The type of the state value.</typeparam>
+    /// <param name="key">The key of the state value.</param>
+    /// <param name="initialStateFactory">A factory to initialize the state if the key has no value associated with it.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
+    /// The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A <see cref="ValueTask{T}"/> representing the asynchronous operation.</returns>
+    ValueTask<T> ReadOrInitStateAsync<T>(string key, Func<T> initialStateFactory, CancellationToken cancellationToken)
+        => this.ReadOrInitStateAsync(key, initialStateFactory, null, cancellationToken);
 #endif
 
     /// <summary>
@@ -169,4 +255,9 @@ public interface IWorkflowContext
     /// The trace context associated with the current message about to be processed by the executor, if any.
     /// </summary>
     IReadOnlyDictionary<string, string>? TraceContext { get; }
+
+    /// <summary>
+    /// Whether the current execution environment support concurrent runs against the same workflow instance.
+    /// </summary>
+    bool ConcurrentRunsEnabled { get; }
 }

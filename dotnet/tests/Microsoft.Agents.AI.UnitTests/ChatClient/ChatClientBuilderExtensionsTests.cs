@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using Microsoft.Agents.AI.ChatClient;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Moq;

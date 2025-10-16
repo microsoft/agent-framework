@@ -5,9 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.AI.Workflows.InProc;
 using Microsoft.Agents.AI.Workflows.Reflection;
-using Microsoft.Agents.AI.Workflows.UnitTests;
 
 namespace Microsoft.Agents.AI.Workflows.Sample;
 
@@ -31,10 +29,9 @@ internal static class Step2EntryPoint
         }
     }
 
-    public static async ValueTask<string> RunAsync(TextWriter writer, ExecutionMode executionMode, string input = "This is a spam message.")
+    public static async ValueTask<string> RunAsync(TextWriter writer, IWorkflowExecutionEnvironment environment, string input = "This is a spam message.")
     {
-        InProcessExecutionEnvironment env = executionMode.GetEnvironment();
-        StreamingRun handle = await env.StreamAsync(WorkflowInstance, input).ConfigureAwait(false);
+        StreamingRun handle = await environment.StreamAsync(WorkflowInstance, input).ConfigureAwait(false);
         await foreach (WorkflowEvent evt in handle.WatchStreamAsync().ConfigureAwait(false))
         {
             switch (evt)
@@ -55,13 +52,13 @@ internal static class Step2EntryPoint
 }
 
 internal sealed class DetectSpamExecutor(string id, params string[] spamKeywords) :
-    ReflectingExecutor<DetectSpamExecutor>(id), IMessageHandler<string, bool>
+    ReflectingExecutor<DetectSpamExecutor>(id, declareCrossRunShareable: true), IMessageHandler<string, bool>
 {
     public async ValueTask<bool> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default) =>
         spamKeywords.Any(keyword => message.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0);
 }
 
-internal sealed class RespondToMessageExecutor(string id) : ReflectingExecutor<RespondToMessageExecutor>(id), IMessageHandler<bool>
+internal sealed class RespondToMessageExecutor(string id) : ReflectingExecutor<RespondToMessageExecutor>(id, declareCrossRunShareable: true), IMessageHandler<bool>
 {
     public const string ActionResult = "Message processed successfully.";
 
@@ -80,7 +77,7 @@ internal sealed class RespondToMessageExecutor(string id) : ReflectingExecutor<R
     }
 }
 
-internal sealed class RemoveSpamExecutor(string id) : ReflectingExecutor<RemoveSpamExecutor>(id), IMessageHandler<bool>
+internal sealed class RemoveSpamExecutor(string id) : ReflectingExecutor<RemoveSpamExecutor>(id, declareCrossRunShareable: true), IMessageHandler<bool>
 {
     public const string ActionResult = "Spam message removed.";
 

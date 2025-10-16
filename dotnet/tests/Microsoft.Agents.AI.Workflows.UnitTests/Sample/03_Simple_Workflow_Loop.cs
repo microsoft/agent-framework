@@ -4,9 +4,7 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.AI.Workflows.InProc;
 using Microsoft.Agents.AI.Workflows.Reflection;
-using Microsoft.Agents.AI.Workflows.UnitTests;
 
 namespace Microsoft.Agents.AI.Workflows.Sample;
 
@@ -27,10 +25,9 @@ internal static class Step3EntryPoint
         }
     }
 
-    public static async ValueTask<string> RunAsync(TextWriter writer, ExecutionMode executionMode)
+    public static async ValueTask<string> RunAsync(TextWriter writer, IWorkflowExecutionEnvironment environment)
     {
-        InProcessExecutionEnvironment env = executionMode.GetEnvironment();
-        StreamingRun run = await env.StreamAsync(WorkflowInstance, NumberSignal.Init).ConfigureAwait(false);
+        StreamingRun run = await environment.StreamAsync(WorkflowInstance, NumberSignal.Init).ConfigureAwait(false);
 
         await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
         {
@@ -51,6 +48,16 @@ internal static class Step3EntryPoint
     }
 }
 
+internal sealed record TryCount(int Tries);
+
+internal sealed record NumberBounds(int LowerBound, int UpperBound)
+{
+    public int CurrGuess => (this.LowerBound + this.UpperBound) / 2;
+
+    public NumberBounds ForAboveHint() => this with { UpperBound = this.CurrGuess - 1 };
+    public NumberBounds ForBelowHint() => this with { LowerBound = this.CurrGuess + 1 };
+}
+
 internal enum NumberSignal
 {
     Init,
@@ -61,74 +68,65 @@ internal enum NumberSignal
 
 internal sealed class GuessNumberExecutor : ReflectingExecutor<GuessNumberExecutor>, IMessageHandler<NumberSignal, int>
 {
-    public int LowerBound { get; private set; }
-    public int UpperBound { get; private set; }
+    private readonly int _initialLowerBound;
+    private readonly int _initialUpperBound;
 
-    public GuessNumberExecutor(string id, int lowerBound, int upperBound) : base(id, new ExecutorOptions { AutoYieldOutputHandlerResultObject = false })
+    public GuessNumberExecutor(string id, int lowerBound, int upperBound) : base(id, new ExecutorOptions { AutoYieldOutputHandlerResultObject = false }, declareCrossRunShareable: true)
     {
-        this.LowerBound = lowerBound;
-        this.UpperBound = upperBound;
+        if (lowerBound >= upperBound)
+        {
+            throw new ArgumentOutOfRangeException(nameof(lowerBound), "Lower bound must be less than upper bound.");
+        }
+
+        this._initialLowerBound = lowerBound;
+        this._initialUpperBound = upperBound;
     }
 
-    private int NextGuess => (this.LowerBound + this.UpperBound) / 2;
-
-    private int _currGuess = -1;
     public async ValueTask<int> HandleAsync(NumberSignal message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
+        NumberBounds bounds = await context.ReadStateAsync<NumberBounds>(nameof(NumberBounds), cancellationToken: cancellationToken)
+                                           .ConfigureAwait(false)
+                              ?? new NumberBounds(this._initialLowerBound, this._initialUpperBound);
+
         switch (message)
         {
             case NumberSignal.Matched:
-                await context.YieldOutputAsync($"Guessed the number: {this._currGuess}", cancellationToken)
+                await context.YieldOutputAsync($"Guessed the number: {bounds.CurrGuess}", cancellationToken)
                              .ConfigureAwait(false);
                 break;
 
             case NumberSignal.Above:
-                this.UpperBound = this._currGuess - 1;
+                bounds = bounds.ForAboveHint();
                 break;
             case NumberSignal.Below:
-                this.LowerBound = this._currGuess + 1;
+                bounds = bounds.ForBelowHint();
                 break;
         }
 
-        this._currGuess = this.NextGuess;
-        return this._currGuess;
+        await context.QueueStateUpdateAsync(nameof(NumberBounds), bounds, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        return bounds.CurrGuess;
     }
 }
 
-internal sealed class JudgeExecutor : ReflectingExecutor<JudgeExecutor>, IMessageHandler<int, NumberSignal>, IResettableExecutor
+internal sealed class JudgeExecutor : ReflectingExecutor<JudgeExecutor>, IMessageHandler<int, NumberSignal>
 {
     private readonly int _targetNumber;
 
-    internal int? Tries { get; private set; }
-
-    public JudgeExecutor(string id, int targetNumber) : base(id)
+    public JudgeExecutor(string id, int targetNumber) : base(id, declareCrossRunShareable: true)
     {
         this._targetNumber = targetNumber;
     }
 
     public async ValueTask<NumberSignal> HandleAsync(int message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        this.Tries = this.Tries is int tries ? tries + 1 : 1;
+        // This works properly because the default when unset is 0, and we increment before use.
+        int tries = await context.ReadStateAsync<int>("TryCount", cancellationToken: cancellationToken).ConfigureAwait(false) + 1;
+        await context.YieldOutputAsync(new TryCount(tries), cancellationToken);
 
         return
             message == this._targetNumber ? NumberSignal.Matched :
             message < this._targetNumber ? NumberSignal.Below :
             NumberSignal.Above;
-    }
-
-    protected internal override ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
-    {
-        return context.QueueStateUpdateAsync("TryCount", this.Tries, cancellationToken: cancellationToken);
-    }
-
-    protected internal override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
-    {
-        this.Tries = await context.ReadStateAsync<int?>("TryCount", cancellationToken: cancellationToken).ConfigureAwait(false) ?? 0;
-    }
-
-    public ValueTask ResetAsync()
-    {
-        this.Tries = null;
-        return default;
     }
 }

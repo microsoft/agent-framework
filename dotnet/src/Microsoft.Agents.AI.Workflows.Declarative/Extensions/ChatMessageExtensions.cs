@@ -94,6 +94,9 @@ internal static class ChatMessageExtensions
 
     public static ChatMessage ToChatMessage(this StringDataValue message) => new(ChatRole.User, message.Value);
 
+    public static ChatMessage ToChatMessage(this IEnumerable<FunctionResultContent> functionResults) =>
+        new(ChatRole.Tool, [.. functionResults]);
+
     public static AdditionalPropertiesDictionary? ToMetadata(this RecordDataValue? metadata)
     {
         if (metadata is null)

@@ -17,15 +17,13 @@ import {
 import {
   Bot,
   Workflow,
-  Plus,
-  Loader2,
   User,
   TriangleAlert,
-  AlertCircle,
-  X,
   Key,
   ChevronDown,
   ArrowLeft,
+  Download,
+  BookOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -33,13 +31,9 @@ import {
   type SampleEntity,
   getDifficultyColor,
 } from "@/data/gallery";
+import { SetupInstructionsModal } from "./setup-instructions-modal";
 
 interface GalleryViewProps {
-  onAdd: (sample: SampleEntity) => Promise<void>;
-  addingEntityId?: string | null;
-  errorEntityId?: string | null;
-  errorMessage?: string | null;
-  onClearError?: (sampleId: string) => void;
   onClose?: () => void;
   variant?: "inline" | "route" | "modal";
   hasExistingEntities?: boolean;
@@ -48,91 +42,41 @@ interface GalleryViewProps {
 // Internal: Sample Entity Card Component
 function SampleEntityCard({
   sample,
-  onAdd,
-  isAdding = false,
-  hasError = false,
-  errorMessage,
-  onClearError,
 }: {
   sample: SampleEntity;
-  onAdd: (sample: SampleEntity) => Promise<void>;
-  isAdding?: boolean;
-  hasError?: boolean;
-  errorMessage?: string | null;
-  onClearError?: (sampleId: string) => void;
 }) {
-  const [isLoading, setIsLoading] = useState(false);
-
-  const handleAdd = async () => {
-    if (isLoading || isAdding) return;
-
-    setIsLoading(true);
-    try {
-      await onAdd(sample);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
+  const [showInstructions, setShowInstructions] = useState(false);
   const TypeIcon = sample.type === "workflow" ? Workflow : Bot;
-  const isDisabled = isLoading || isAdding;
 
   return (
-    <Card
-      className={cn(
-        "hover:shadow-md transition-shadow duration-200 h-full flex flex-col overflow-hidden w-full",
-        hasError && "border-destructive"
-      )}
-    >
-      <CardHeader className="pb-3 min-w-0">
-        <div className="flex items-start justify-between mb-2">
-          <div className="flex items-center gap-2">
-            <TypeIcon className="h-5 w-5" />
-            <Badge variant="secondary" className="text-xs">
-              {sample.type}
+    <>
+      <Card className="hover:shadow-md transition-shadow duration-200 h-full flex flex-col overflow-hidden w-full">
+        <CardHeader className="pb-3 min-w-0">
+          <div className="flex items-start justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <TypeIcon className="h-5 w-5" />
+              <Badge variant="secondary" className="text-xs">
+                {sample.type}
+              </Badge>
+            </div>
+            <Badge
+              variant="outline"
+              className={cn(
+                "text-xs border",
+                getDifficultyColor(sample.difficulty)
+              )}
+            >
+              {sample.difficulty}
             </Badge>
           </div>
-          <Badge
-            variant="outline"
-            className={cn(
-              "text-xs border",
-              getDifficultyColor(sample.difficulty)
-            )}
-          >
-            {sample.difficulty}
-          </Badge>
-        </div>
 
-        <CardTitle className="text-lg leading-tight">{sample.name}</CardTitle>
-        <CardDescription className="text-sm line-clamp-3">
-          {sample.description}
-        </CardDescription>
-      </CardHeader>
+          <CardTitle className="text-lg leading-tight">{sample.name}</CardTitle>
+          <CardDescription className="text-sm line-clamp-3">
+            {sample.description}
+          </CardDescription>
+        </CardHeader>
 
-      <CardContent className="pt-0 flex-1 min-w-0 overflow-hidden">
-        {/* Error Banner */}
-        {hasError && errorMessage && (
-          <div className="mb-3 p-3 bg-destructive/10 border border-destructive/20 rounded-md">
-            <div className="flex items-start gap-2">
-              <AlertCircle className="h-4 w-4 text-destructive flex-shrink-0 mt-0.5" />
-              <div className="flex-1 min-w-0">
-                <p className="text-xs text-destructive font-medium mb-1">
-                  Failed to add
-                </p>
-                <p className="text-xs text-muted-foreground">{errorMessage}</p>
-              </div>
-              {onClearError && (
-                <button
-                  onClick={() => onClearError(sample.id)}
-                  className="text-muted-foreground hover:text-foreground"
-                  aria-label="Dismiss error"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              )}
-            </div>
-          </div>
-        )}
+        <CardContent className="pt-0 flex-1 min-w-0 overflow-hidden">
 
         <div className="space-y-3 min-w-0">
           {/* Tags */}
@@ -199,73 +143,57 @@ function SampleEntityCard({
         </div>
       </CardContent>
 
-      <CardFooter className="pt-3 flex-col gap-3">
-        {/* Metadata */}
-        <div className="w-full flex items-center justify-between text-xs text-muted-foreground">
-          <div className="flex items-center gap-1">
-            <User className="h-3 w-3" />
-            <span>{sample.author}</span>
+        <CardFooter className="pt-3 flex-col gap-3">
+          {/* Metadata */}
+          <div className="w-full flex items-center justify-between text-xs text-muted-foreground">
+            <div className="flex items-center gap-1">
+              <User className="h-3 w-3" />
+              <span>{sample.author}</span>
+            </div>
           </div>
-        </div>
 
-        {/* Add Button - Full width on its own line */}
-        <Button
-          onClick={handleAdd}
-          disabled={isDisabled}
-          className="w-full"
-          size="sm"
-          variant={hasError ? "outline" : "default"}
-        >
-          {isDisabled ? (
-            <>
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              Adding...
-            </>
-          ) : hasError ? (
-            <>
-              <Plus className="h-4 w-4 mr-2" />
-              Retry
-            </>
-          ) : (
-            <>
-              <Plus className="h-4 w-4 mr-2" />
-              Add Sample
-            </>
-          )}
-        </Button>
-      </CardFooter>
-    </Card>
+          {/* Action Buttons */}
+          <div className="w-full flex gap-2">
+            <Button asChild className="flex-1" size="sm">
+              <a
+                href={sample.url}
+                download={`${sample.id}.py`}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <Download className="h-4 w-4 mr-2" />
+                Download
+              </a>
+            </Button>
+            <Button
+              variant="outline"
+              className="flex-1"
+              size="sm"
+              onClick={() => setShowInstructions(true)}
+            >
+              <BookOpen className="h-4 w-4 mr-2" />
+              Setup Guide
+            </Button>
+          </div>
+        </CardFooter>
+      </Card>
+
+      <SetupInstructionsModal
+        sample={sample}
+        open={showInstructions}
+        onOpenChange={setShowInstructions}
+      />
+    </>
   );
 }
 
 // Internal: Sample Entity Grid Component
-function SampleEntityGrid({
-  samples,
-  onAdd,
-  addingEntityId,
-  errorEntityId,
-  errorMessage,
-  onClearError,
-}: {
-  samples: SampleEntity[];
-  onAdd: (sample: SampleEntity) => Promise<void>;
-  addingEntityId?: string | null;
-  errorEntityId?: string | null;
-  errorMessage?: string | null;
-  onClearError?: (sampleId: string) => void;
-}) {
+function SampleEntityGrid({ samples }: { samples: SampleEntity[] }) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
       {samples.map((sample) => (
         <div key={sample.id} className="min-w-0">
-          <SampleEntityCard
-            sample={sample}
-            onAdd={onAdd}
-            isAdding={addingEntityId === sample.id}
-            hasError={errorEntityId === sample.id}
-            errorMessage={errorMessage}
-            onClearError={onClearError}
-          />
+          <SampleEntityCard sample={sample} />
         </div>
       ))}
     </div>
@@ -274,11 +202,6 @@ function SampleEntityGrid({
 
 // Main: Gallery View Component
 export function GalleryView({
-  onAdd,
-  addingEntityId,
-  errorEntityId,
-  errorMessage,
-  onClearError,
   onClose,
   variant = "inline",
   hasExistingEntities = false,
@@ -304,8 +227,8 @@ export function GalleryView({
                   in a directory containing them.
                 </p>
                 <p className="text-sm text-muted-foreground">
-                  You can also import any of the sample agents and workflows
-                  below to get started quickly.
+                  Browse the sample agents and workflows below. Download them,
+                  review the code, and run them locally to get started quickly.
                 </p>
               </div>
             </div>
@@ -314,14 +237,7 @@ export function GalleryView({
           {/* Sample Gallery */}
           <div className="mb-6">
             <h3 className="text-lg font-semibold mb-4">Sample Gallery</h3>
-            <SampleEntityGrid
-              samples={SAMPLE_ENTITIES}
-              onAdd={onAdd}
-              addingEntityId={addingEntityId}
-              errorEntityId={errorEntityId}
-              errorMessage={errorMessage}
-              onClearError={onClearError}
-            />
+            <SampleEntityGrid samples={SAMPLE_ENTITIES} />
           </div>
 
           {/* Footer */}
@@ -362,22 +278,15 @@ export function GalleryView({
             <div className="text-center">
               <h2 className="text-2xl font-semibold mb-2">Sample Gallery</h2>
               <p className="text-muted-foreground max-w-2xl mx-auto">
-                Browse and add sample agents and workflows to learn the Agent
-                Framework. These are curated examples ranging from beginner to
-                advanced.
+                Browse sample agents and workflows to learn the Agent
+                Framework. Download these curated examples and run them locally.
+                Examples range from beginner to advanced.
               </p>
             </div>
           </div>
 
           {/* Sample Gallery */}
-          <SampleEntityGrid
-            samples={SAMPLE_ENTITIES}
-            onAdd={onAdd}
-            addingEntityId={addingEntityId}
-            errorEntityId={errorEntityId}
-            errorMessage={errorMessage}
-            onClearError={onClearError}
-          />
+          <SampleEntityGrid samples={SAMPLE_ENTITIES} />
 
           {/* Footer */}
           <div className="text-center mt-12 pt-8 border-t">
@@ -399,14 +308,5 @@ export function GalleryView({
   }
 
   // Modal variant - for dropdown trigger (simplified, just the grid)
-  return (
-    <SampleEntityGrid
-      samples={SAMPLE_ENTITIES}
-      onAdd={onAdd}
-      addingEntityId={addingEntityId}
-      errorEntityId={errorEntityId}
-      errorMessage={errorMessage}
-      onClearError={onClearError}
-    />
-  );
+  return <SampleEntityGrid samples={SAMPLE_ENTITIES} />;
 }

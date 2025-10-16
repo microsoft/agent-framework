@@ -76,7 +76,7 @@ internal sealed class Program
 
         string? messageId = null;
 
-        await foreach (WorkflowEvent workflowEvent in run.WatchStreamAsync().ConfigureAwait(false))
+        await foreach (WorkflowEvent workflowEvent in run.WatchStreamAsync())
         {
             switch (workflowEvent)
             {

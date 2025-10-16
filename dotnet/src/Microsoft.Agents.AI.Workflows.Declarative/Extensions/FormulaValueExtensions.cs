@@ -157,9 +157,9 @@ internal static class FormulaValueExtensions
 
         IEnumerable<NamedValue> GetFields()
         {
-            foreach (string key in value.Keys)
+            foreach (DictionaryEntry entry in value)
             {
-                yield return new NamedValue(key, value[key].ToFormula());
+                yield return new NamedValue((string)entry.Key, entry.Value.ToFormula());
             }
         }
     }
