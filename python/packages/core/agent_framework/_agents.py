@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import inspect
+import re
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
@@ -47,6 +48,35 @@ else:
 logger = get_logger("agent_framework")
 
 TThreadType = TypeVar("TThreadType", bound="AgentThread")
+
+
+def _sanitize_agent_name(agent_name: str | None) -> str | None:
+    """Sanitize agent name for use as a function name.
+
+    Replaces spaces and special characters with underscores to create
+    a valid Python identifier.
+
+    Args:
+        agent_name: The agent name to sanitize.
+
+    Returns:
+        The sanitized agent name with invalid characters replaced by underscores,
+        or None if the input is None.
+    """
+    if agent_name is None:
+        return None
+
+    # Replace any character that is not alphanumeric or underscore with underscore
+    sanitized = re.sub(r"[^a-zA-Z0-9_]", "_", agent_name)
+
+    # Replace multiple consecutive underscores with a single underscore
+    sanitized = re.sub(r"_+", "_", sanitized)
+
+    # Remove leading/trailing underscores
+    sanitized = sanitized.strip("_")
+
+    return sanitized if sanitized else "agent"
+
 
 __all__ = ["AgentProtocol", "BaseAgent", "ChatAgent"]
 
@@ -396,7 +426,7 @@ class BaseAgent(SerializationMixin):
         if not isinstance(self, AgentProtocol):
             raise TypeError(f"Agent {self.__class__.__name__} must implement AgentProtocol to be used as a tool")
 
-        tool_name = name or self.name
+        tool_name = name or _sanitize_agent_name(self.name)
         if tool_name is None:
             raise ValueError("Agent tool name cannot be None. Either provide a name parameter or set the agent's name.")
         tool_description = description or self.description or ""
@@ -404,7 +434,8 @@ class BaseAgent(SerializationMixin):
 
         # Create dynamic input model with the specified argument name
         field_info = Field(..., description=argument_description)
-        input_model = create_model(f"{name or self.name or 'agent'}_task", **{arg_name: (str, field_info)})  # type: ignore[call-overload]
+        model_name = f"{name or _sanitize_agent_name(self.name) or 'agent'}_task"
+        input_model = create_model(model_name, **{arg_name: (str, field_info)})  # type: ignore[call-overload]
 
         # Check if callback is async once, outside the wrapper
         is_async_callback = stream_callback is not None and inspect.iscoroutinefunction(stream_callback)
