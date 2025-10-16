@@ -348,6 +348,11 @@ public class WorkflowBuilder
     /// <param name="label"></param>
     /// <param name="sources">One or more source executors that provide input to the target. Cannot be null or empty.</param>
     /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
+    // Overload for backward compatibility: original signature without label
+    public WorkflowBuilder AddFanInEdge(ExecutorIsh target, params IEnumerable<ExecutorIsh> sources)
+    {
+        return AddFanInEdge(target, null, sources);
+    }
     public WorkflowBuilder AddFanInEdge(ExecutorIsh target, string? label = null, params IEnumerable<ExecutorIsh> sources)
     {
         Throw.IfNull(target);
