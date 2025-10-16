@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Bot.ObjectModel;
@@ -15,26 +14,13 @@ namespace Microsoft.Agents.AI;
 public abstract class AgentFactory
 {
     /// <summary>
-    /// Gets the types of agents this factory can create.
-    /// </summary>
-    public IReadOnlyList<string> Types { get; }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="AgentFactory"/> class.
-    /// </summary>
-    /// <param name="types">Types of agent this factory can create</param>
-    protected AgentFactory(IEnumerable<string> types)
-    {
-        this.Types = [.. types];
-    }
-
-    /// <summary>
     /// Return true if this instance of <see cref="AgentFactory"/> supports creating agents from the provided <see cref="PromptAgent"/>
     /// </summary>
     /// <param name="promptAgent">Definition of the agent to check is supported.</param>
     public bool IsSupported(PromptAgent promptAgent)
     {
-        return true; // this.Types.Any(s => string.Equals(s, promptAgent.Kind.ToString(), StringComparison.OrdinalIgnoreCase));
+        // TODO: Make this abstract and implement in derived classes
+        return true;
     }
 
     /// <summary>

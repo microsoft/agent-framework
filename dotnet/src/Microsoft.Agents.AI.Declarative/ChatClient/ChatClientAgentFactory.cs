@@ -14,19 +14,6 @@ namespace Microsoft.Agents.AI;
 /// </summary>
 public sealed class ChatClientAgentFactory : AgentFactory
 {
-    /// <summary>
-    /// The type of the chat client agent.
-    /// </summary>
-    public const string ChatClientAgentType = "chat_client_agent";
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="ChatClientAgentFactory"/> class.
-    /// </summary>
-    public ChatClientAgentFactory()
-        : base([ChatClientAgentType])
-    {
-    }
-
     /// <inheritdoc/>
     public override Task<AIAgent?> TryCreateAsync(PromptAgent promptAgent, AgentCreationOptions agentCreationOptions, CancellationToken cancellationToken = default)
     {

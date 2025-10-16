@@ -14,19 +14,6 @@ namespace Microsoft.Agents.AI;
 /// </summary>
 public sealed class AzureFoundryAgentFactory : AgentFactory
 {
-    /// <summary>
-    /// The type of the chat client agent.
-    /// </summary>
-    public const string AzureFoundryAgentType = "azure_foundry_agent";
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="AzureFoundryAgentFactory"/> class.
-    /// </summary>
-    public AzureFoundryAgentFactory()
-        : base([AzureFoundryAgentType])
-    {
-    }
-
     /// <inheritdoc/>
     public override async Task<AIAgent?> TryCreateAsync(PromptAgent promptAgent, AgentCreationOptions agentCreationOptions, CancellationToken cancellationToken = default)
     {
@@ -39,12 +26,10 @@ public sealed class AzureFoundryAgentFactory : AgentFactory
             persistentAgentsClient = agentCreationOptions.ServiceProvider?.GetService(typeof(PersistentAgentsClient)) as PersistentAgentsClient;
             if (persistentAgentsClient is null)
             {
-                var keyConnection = promptAgent.Model?.Connection as KeyConnection;
-                // TODO: Support OAuthConnection when PersistentAgentsClient supports it
-                //var oauthConnection = promptAgent.Model?.Connection as OAuthConnection;
-                if (keyConnection is not null)
+                var foundryConnection = promptAgent.Model?.Connection as FoundryConnection;
+                if (foundryConnection is not null)
                 {
-                    var endpoint = keyConnection.Endpoint?.LiteralValue;
+                    var endpoint = foundryConnection.Type; // TODO: Change to Endpoint when available in FoundryConnection
                     if (string.IsNullOrEmpty(endpoint))
                     {
                         throw new InvalidOperationException("The endpoint must be specified in the agent definition model connection to create an PersistentAgentsClient.");
@@ -55,27 +40,6 @@ public sealed class AzureFoundryAgentFactory : AgentFactory
                     }
                     persistentAgentsClient = new PersistentAgentsClient(endpoint, tokenCredential);
                 }
-                /* TODO: Support OAuthConnection when PersistentAgentsClient supports it
-                else if (oauthConnection is not null)
-                {
-                    var endpoint = oauthConnection.Endpoint?.LiteralValue;
-                    if (string.IsNullOrEmpty(endpoint))
-                    {
-                        throw new InvalidOperationException("The endpoint must be specified in the agent definition model connection to create an PersistentAgentsClient.");
-                    }
-                    var tokenCredential = new ClientSecretCredential
-                        (
-                        tenantId: "",
-                        clientId: oauthConnection.ClientId?.LiteralValue,
-                        clientSecret: oauthConnection.ClientSecret?.LiteralValue,
-                        options: new()
-                        {
-                            AuthorityHost = new Uri(oauthConnection.TokenUrl?.LiteralValue!),
-                        }
-                        );
-                    persistentAgentsClient = new PersistentAgentsClient(endpoint, tokenCredential);
-                }
-                */
                 else
                 {
                     throw new InvalidOperationException("A PersistentAgentsClient must be registered in the service provider or a KeyConnection or OAuthConnection must be specified in the agent definition model connection to create an PersistentAgentsClient.");

@@ -23,7 +23,7 @@
   </Folder>
   <Folder Name="/Samples/GettingStarted/A2A/">
     <File Path="samples/GettingStarted/A2A/README.md" />
-    <Project Path="samples/GettingStarted/A2A/A2AAgent_AsFunctionTools/A2AAgent_AsFunctionTools.csproj"/>
+    <Project Path="samples/GettingStarted/A2A/A2AAgent_AsFunctionTools/A2AAgent_AsFunctionTools.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/AgentProviders/">
     <File Path="samples/GettingStarted/AgentProviders/README.md" />
@@ -65,8 +65,10 @@
     <Project Path="samples/GettingStarted/AgentWithOpenAI/Agent_OpenAI_Step02_Reasoning/Agent_OpenAI_Step02_Reasoning.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/DeclarativeAgents/">
+    <Project Path="samples/GettingStarted/DeclarativeAgents/Azure/DeclarativeAzureAgents.csproj" />
     <Project Path="samples/GettingStarted/DeclarativeAgents/ChatClient/DeclarativeChatClientAgents.csproj" />
     <Project Path="samples/GettingStarted/DeclarativeAgents/Foundry/DeclarativeFoundryAgents.csproj" />
+    <Project Path="samples/GettingStarted/DeclarativeAgents/OpenAI/DeclarativeOpenAIAgents.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/ModelContextProtocol/">
     <Project Path="samples/GettingStarted/ModelContextProtocol/Agent_MCP_Server/Agent_MCP_Server.csproj" />

@@ -104,20 +104,19 @@ public class AgentBotElementYamlTests
                     description: The answer text.
         """;
 
-    private const string AgentWithConnection =
+    private const string AgentWithKeyConnection =
         """
         kind: Prompt
         name: AgentName
         description: Agent description
         instructions: You are a helpful assistant.
         model:
+          kind: OpenAIResponsesModel
           id: gpt-4o
           connection:
-            type: azure_openai
-            provider: azure_openai
+            kind: Key
             endpoint: https://my-azure-openai-endpoint.openai.azure.com/
-            options:
-              deployment_name: gpt-4o-deployment
+            key: my-api-key
         """;
 
     private const string AgentWithEnvironmentVariables =
@@ -127,21 +126,49 @@ public class AgentBotElementYamlTests
         description: Agent description
         instructions: You are a helpful assistant.
         model:
-          id: =Env.AzureOpenAIModelId
+          id: =Env.OpenAIModelId
           connection:
-            type: azure_openai
-            provider: azure_openai
-            endpoint: =Env.AzureOpenAIEndpoint
+            kind: Key
+            endpoint: =Env.OpenAIEndpoint
+            key: =Env.OpenAIApiKey
+        """;
+
+    private const string OpenAIChatAgent =
+        """
+        kind: Prompt
+        name: Assistant
+        description: Helpful assistant
+        instructions: You are a helpful assistant. You answer questions is the language specified by the user. You return your answers in a JSON format.
+        model:
+            kind: OpenAIResponsesModel
+            id: =Env.OPENAI_MODEL
             options:
-              deployment_name: =Env.AzureOpenAIDeploymentName
+                temperature: 0.9
+                topP: 0.95
+            connection:
+                kind: Key
+                key: =Env.OPENAI_APIKEY
+        outputSchema:
+            properties:
+                language:
+                    type: string
+                    required: true
+                    description: The language of the answer.
+                answer:
+                    type: string
+                    required: true
+                    description: The answer text.
+        
         """;
 
     private static readonly string[] s_stopSequences = ["###", "END", "STOP"];
 
     [Theory]
     [InlineData(AgentWithEverything)]
-    [InlineData(AgentWithConnection)]
+    [InlineData(AgentWithKeyConnection)]
     [InlineData(AgentWithEnvironmentVariables)]
+    [InlineData(AgentWithOutputSchema)]
+    [InlineData(OpenAIChatAgent)]
     public void FromYaml_DoesNotThrow(string text)
     {
         // Arrange & Act
@@ -295,27 +322,31 @@ public class AgentBotElementYamlTests
     }
 
     [Fact]
-    public void FromYaml_Connection()
+    public void FromYaml_KeyConnection()
     {
         // Arrange & Act
-        var agent = AgentBotElementYaml.FromYaml(AgentWithConnection);
+        var agent = AgentBotElementYaml.FromYaml(AgentWithKeyConnection);
 
         // Assert
         Assert.NotNull(agent);
-        // TODO: Re-enable when connections are supported.
-        // Assert.Equal("gpt-4o", agent.Model.Id);
-        // Assert.Equal("https://my-azure-openai-endpoint.openai.azure.com/", agent.Model.Connection?.GetEndpoint());
+        OpenAIResponsesModel? model = agent.Model as OpenAIResponsesModel;
+        Assert.NotNull(model);
+        Assert.NotNull(model.Connection);
+        KeyConnection? connection = model.Connection as KeyConnection;
+        Assert.NotNull(connection);
+        Assert.Equal("https://my-azure-openai-endpoint.openai.azure.com/", connection.Endpoint?.LiteralValue);
+        Assert.Equal("my-api-key", connection.Key?.LiteralValue);
     }
 
     [Fact]
-    public void FromYaml_Connection_With_Configuration()
+    public void FromYaml_WithEnvironmentVariables()
     {
         // Arrange
         Environment.SetEnvironmentVariable("AzureOpenAIEndpoint", "endpoint");
         Environment.SetEnvironmentVariable("AzureOpenAIModelId", "modelId");
 
         // Act
-        var agent = AgentBotElementYaml.FromYaml(AgentWithConnection);
+        var agent = AgentBotElementYaml.FromYaml(AgentWithEnvironmentVariables);
 
         // Assert
         Assert.NotNull(agent);
