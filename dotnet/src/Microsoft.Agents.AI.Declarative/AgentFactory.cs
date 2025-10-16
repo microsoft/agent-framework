@@ -14,16 +14,6 @@ namespace Microsoft.Agents.AI;
 public abstract class AgentFactory
 {
     /// <summary>
-    /// Return true if this instance of <see cref="AgentFactory"/> supports creating agents from the provided <see cref="PromptAgent"/>
-    /// </summary>
-    /// <param name="promptAgent">Definition of the agent to check is supported.</param>
-    public bool IsSupported(PromptAgent promptAgent)
-    {
-        // TODO: Make this abstract and implement in derived classes
-        return true;
-    }
-
-    /// <summary>
     /// Create a <see cref="AIAgent"/> from the specified <see cref="PromptAgent"/>.
     /// </summary>
     /// <param name="promptAgent">Definition of the agent to create.</param>

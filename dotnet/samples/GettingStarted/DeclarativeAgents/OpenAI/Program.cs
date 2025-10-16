@@ -44,7 +44,7 @@ static string GetWeather(
 
 // Create the agent from the YAML definition.
 var agentFactory = new OpenAIAgentFactory();
-var agent = await agentFactory.CreateFromYamlAsync(text, new() { Model = model, Tools = [AIFunctionFactory.Create(GetWeather, "GetWeather")] });
+var agent = await agentFactory.CreateFromYamlAsync(text, new() { Tools = [AIFunctionFactory.Create(GetWeather, "GetWeather")] });
 
 // Invoke the agent and output the text result.
 Console.WriteLine(await agent!.RunAsync(prompt));

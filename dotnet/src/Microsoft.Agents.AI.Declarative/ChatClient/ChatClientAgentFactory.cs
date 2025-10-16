@@ -19,29 +19,25 @@ public sealed class ChatClientAgentFactory : AgentFactory
     {
         Throw.IfNull(promptAgent);
 
-        ChatClientAgent? agent = null;
-        if (this.IsSupported(promptAgent))
+        IChatClient? chatClient = agentCreationOptions.ChatClient;
+        if (chatClient == null && agentCreationOptions.ServiceProvider != null)
         {
-            IChatClient? chatClient = agentCreationOptions.ChatClient;
-            if (chatClient == null && agentCreationOptions.ServiceProvider != null)
-            {
-                chatClient = agentCreationOptions.ServiceProvider.GetService(typeof(IChatClient)) as IChatClient;
-            }
-            if (chatClient == null)
-            {
-                throw new ArgumentException("A chat client must be provided via the AgentCreationOptions.", nameof(agentCreationOptions));
-            }
-
-            var options = new ChatClientAgentOptions()
-            {
-                Name = promptAgent.Name,
-                Description = promptAgent.Description,
-                Instructions = promptAgent.Instructions?.ToTemplateString(),
-                ChatOptions = promptAgent.GetChatOptions(agentCreationOptions),
-            };
-
-            agent = new ChatClientAgent(chatClient, options, agentCreationOptions.LoggerFactory);
+            chatClient = agentCreationOptions.ServiceProvider.GetService(typeof(IChatClient)) as IChatClient;
         }
+        if (chatClient == null)
+        {
+            throw new ArgumentException("A chat client must be provided via the AgentCreationOptions.", nameof(agentCreationOptions));
+        }
+
+        var options = new ChatClientAgentOptions()
+        {
+            Name = promptAgent.Name,
+            Description = promptAgent.Description,
+            Instructions = promptAgent.Instructions?.ToTemplateString(),
+            ChatOptions = promptAgent.GetChatOptions(agentCreationOptions),
+        };
+
+        var agent = new ChatClientAgent(chatClient, options, agentCreationOptions.LoggerFactory);
 
         return Task.FromResult<AIAgent?>(agent);
     }

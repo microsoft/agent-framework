@@ -19,56 +19,48 @@ public sealed class AzureFoundryAgentFactory : AgentFactory
     {
         Throw.IfNull(promptAgent);
 
-        ChatClientAgent? agent = null;
-        PersistentAgentsClient? persistentAgentsClient;
-        if (this.IsSupported(promptAgent))
+        if (agentCreationOptions.ServiceProvider?.GetService(typeof(PersistentAgentsClient)) is not PersistentAgentsClient persistentAgentsClient)
         {
-            persistentAgentsClient = agentCreationOptions.ServiceProvider?.GetService(typeof(PersistentAgentsClient)) as PersistentAgentsClient;
-            if (persistentAgentsClient is null)
+            var foundryConnection = promptAgent.Model?.Connection as FoundryConnection;
+            if (foundryConnection is not null)
             {
-                var foundryConnection = promptAgent.Model?.Connection as FoundryConnection;
-                if (foundryConnection is not null)
+                var endpoint = foundryConnection.Type; // TODO: Change to Endpoint when available in FoundryConnection
+                if (string.IsNullOrEmpty(endpoint))
                 {
-                    var endpoint = foundryConnection.Type; // TODO: Change to Endpoint when available in FoundryConnection
-                    if (string.IsNullOrEmpty(endpoint))
-                    {
-                        throw new InvalidOperationException("The endpoint must be specified in the agent definition model connection to create an PersistentAgentsClient.");
-                    }
-                    if (agentCreationOptions.ServiceProvider?.GetService(typeof(TokenCredential)) is not TokenCredential tokenCredential)
-                    {
-                        throw new InvalidOperationException("A TokenCredential must be registered in the service provider to create an PersistentAgentsClient.");
-                    }
-                    persistentAgentsClient = new PersistentAgentsClient(endpoint, tokenCredential);
+                    throw new InvalidOperationException("The endpoint must be specified in the agent definition model connection to create an PersistentAgentsClient.");
                 }
-                else
+                if (agentCreationOptions.ServiceProvider?.GetService(typeof(TokenCredential)) is not TokenCredential tokenCredential)
                 {
-                    throw new InvalidOperationException("A PersistentAgentsClient must be registered in the service provider or a KeyConnection or OAuthConnection must be specified in the agent definition model connection to create an PersistentAgentsClient.");
+                    throw new InvalidOperationException("A TokenCredential must be registered in the service provider to create an PersistentAgentsClient.");
                 }
+                persistentAgentsClient = new PersistentAgentsClient(endpoint, tokenCredential);
             }
-
-            var modelId = agentCreationOptions?.Model ?? promptAgent.Model?.Id;
-            if (string.IsNullOrEmpty(modelId))
+            else
             {
-                throw new InvalidOperationException("The model id must be specified in the agent definition model to create a foundry agent.");
+                throw new InvalidOperationException("A PersistentAgentsClient must be registered in the service provider or a KeyConnection or OAuthConnection must be specified in the agent definition model connection to create an PersistentAgentsClient.");
             }
-
-            var outputSchema = promptAgent.OutputSchema;
-            OpenAIResponsesModel? model = promptAgent.Model as OpenAIResponsesModel;
-            var modelOptions = model?.Options;
-
-            agent = await persistentAgentsClient.CreateAIAgentAsync(
-                model: modelId,
-                name: promptAgent.Name,
-                instructions: promptAgent.Instructions?.ToTemplateString(),
-                tools: promptAgent.GetToolDefinitions(agentCreationOptions?.Tools),
-                toolResources: promptAgent.GetToolResources(),
-                temperature: (float?)modelOptions?.Temperature?.LiteralValue,
-                topP: (float?)modelOptions?.TopP?.LiteralValue,
-                responseFormat: outputSchema.AsBinaryData(),
-                metadata: promptAgent.Metadata?.ToDictionary(),
-                cancellationToken: cancellationToken).ConfigureAwait(false);
         }
 
-        return agent;
+        var modelId = agentCreationOptions?.Model ?? promptAgent.Model?.Id;
+        if (string.IsNullOrEmpty(modelId))
+        {
+            throw new InvalidOperationException("The model id must be specified in the agent definition model to create a foundry agent.");
+        }
+
+        var outputSchema = promptAgent.OutputSchema;
+        OpenAIResponsesModel? model = promptAgent.Model as OpenAIResponsesModel;
+        var modelOptions = model?.Options;
+
+        return await persistentAgentsClient.CreateAIAgentAsync(
+            model: modelId,
+            name: promptAgent.Name,
+            instructions: promptAgent.Instructions?.ToTemplateString(),
+            tools: promptAgent.GetToolDefinitions(agentCreationOptions?.Tools),
+            toolResources: promptAgent.GetToolResources(),
+            temperature: (float?)modelOptions?.Temperature?.LiteralValue,
+            topP: (float?)modelOptions?.TopP?.LiteralValue,
+            responseFormat: outputSchema.AsBinaryData(),
+            metadata: promptAgent.Metadata?.ToDictionary(),
+            cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 }
