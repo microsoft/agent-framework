@@ -34,7 +34,7 @@
     <PackageVersion Include="Microsoft.Bcl.AsyncInterfaces" Version="9.0.10" />
     <!-- OpenTelemetry -->
     <PackageVersion Include="OpenTelemetry" Version="1.12.0" />
-    <PackageVersion Include="OpenTelemetry.Api" Version="1.12.0" />
+    <PackageVersion Include="OpenTelemetry.Api" Version="1.13.1" />
     <PackageVersion Include="OpenTelemetry.Exporter.Console" Version="1.12.0" />
     <PackageVersion Include="OpenTelemetry.Exporter.InMemory" Version="1.12.0" />
     <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.12.0" />
