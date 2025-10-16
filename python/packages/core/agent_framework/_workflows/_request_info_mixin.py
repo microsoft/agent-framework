@@ -56,6 +56,11 @@ class RequestInfoMixin:
             except AttributeError:
                 continue  # Skip non-callable attributes or those without handler spec
 
+        # A request sent via `request_info` must be handled by a response handler inside the same executor.
+        # It is safe to assume that an executor is request-response capable if it has at least one response
+        # handler, and that the executor could send a request.
+        self.is_request_response_capable = bool(self._response_handlers)
+
 
 ExecutorT = TypeVar("ExecutorT", bound="Executor")
 ContextT = TypeVar("ContextT", bound="WorkflowContext[Any, Any]")

@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import contextlib
-import inspect
 import logging
 import uuid
 from collections.abc import Mapping
@@ -50,7 +49,8 @@ class SubWorkflowResponseMessage:
     This message wraps a RequestResponse emitted by the parent workflow.
 
     Attributes:
-        response: The response to the original request.
+        data: The response data to the original request.
+        source_event: The original RequestInfoEvent emitted by the sub-workflow executor.
     """
 
     data: Any
@@ -297,23 +297,12 @@ class WorkflowExecutor(Executor):
         """
         output_types = list(self.workflow.output_types)
 
-        # Check if the sub-workflow contains a RequestInfoExecutor
-        # If so, collect the specific RequestInfoMessage subtypes from all executors
-        has_request_info_executor = any(
-            isinstance(executor, RequestInfoExecutor) for executor in self.workflow.executors.values()
+        is_request_response_capable = any(
+            executor.is_request_response_capable for executor in self.workflow.executors.values()
         )
 
-        if has_request_info_executor:
-            # Collect all RequestInfoMessage subtypes from executor output types
-            for executor in self.workflow.executors.values():
-                for output_type in executor.output_types:
-                    # Check if this is a RequestInfoMessage subclass
-                    if (
-                        inspect.isclass(output_type)
-                        and issubclass(output_type, RequestInfoMessage)
-                        and output_type not in output_types
-                    ):
-                        output_types.append(output_type)
+        if is_request_response_capable:
+            output_types.append(SubWorkflowRequestMessage)
 
         return output_types
 
@@ -412,6 +401,7 @@ class WorkflowExecutor(Executor):
 
         # Process outputs
         for output in outputs:
+            # TODO(@taochen): Allow the sub-workflow to output directly
             await ctx.send_message(output)
 
         # Process request info events
