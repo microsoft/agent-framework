@@ -66,6 +66,11 @@ public class Workflow
     /// </summary>
     public string? Description { get; internal init; }
 
+    internal bool AllowConcurrent => this.Registrations.Values.All(registration => registration.SupportsConcurrent);
+
+    internal IEnumerable<string> NonConcurrentExecutorIds =>
+        this.Registrations.Values.Where(r => !r.SupportsConcurrent).Select(r => r.Id);
+
     /// <summary>
     /// Initializes a new instance of the <see cref="Workflow"/> class with the specified starting executor identifier
     /// and input type.
@@ -140,6 +145,23 @@ public class Workflow
 
     private object? _ownerToken;
     private bool _ownedAsSubworkflow;
+
+    internal void CheckOwnership(object? existingOwnershipSignoff = null)
+    {
+        object? maybeOwned = Volatile.Read(ref this._ownerToken);
+        if (!ReferenceEquals(maybeOwned, existingOwnershipSignoff))
+        {
+            throw new InvalidOperationException($"Existing ownership does not match check value. {Summarize(maybeOwned)} vs. {Summarize(existingOwnershipSignoff)}");
+        }
+
+        string Summarize(object? maybeOwnerToken) => maybeOwnerToken switch
+        {
+            string s => $"'{s}'",
+            null => "<null>",
+            _ => $"{maybeOwnerToken.GetType().Name}@{maybeOwnerToken.GetHashCode()}",
+        };
+    }
+
     internal void TakeOwnership(object ownerToken, bool subworkflow = false, object? existingOwnershipSignoff = null)
     {
         object? maybeToken = Interlocked.CompareExchange(ref this._ownerToken, ownerToken, existingOwnershipSignoff);
@@ -180,19 +202,18 @@ public class Workflow
             Justification = "Does not exist in NetFx 4.7.2")]
     internal async ValueTask ReleaseOwnershipAsync(object ownerToken)
     {
-        if (this._ownerToken == null)
+        object? originalToken = Interlocked.CompareExchange(ref this._ownerToken, null, ownerToken);
+        if (originalToken == null)
         {
             throw new InvalidOperationException("Attempting to release ownership of a Workflow that is not owned.");
         }
 
-        if (!ReferenceEquals(this._ownerToken, this._ownerToken))
+        if (!ReferenceEquals(originalToken, ownerToken))
         {
             throw new InvalidOperationException("Attempt to release ownership of a Workflow by non-owner.");
         }
 
         await this.TryResetExecutorRegistrationsAsync().ConfigureAwait(false);
-
-        Interlocked.CompareExchange(ref this._ownerToken, null, ownerToken);
     }
 }
 

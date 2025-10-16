@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Execution;
+using Microsoft.Agents.AI.Workflows.Specialized;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows;
@@ -87,6 +88,9 @@ internal static partial class WorkflowsJsonUtilities
     [JsonSerializable(typeof(ExternalRequest))]
     [JsonSerializable(typeof(ExternalResponse))]
     [JsonSerializable(typeof(TurnToken))]
+
+    // Built-in Executor State Types
+    [JsonSerializable(typeof(AIAgentHostExecutor))]
 
     // Event Types
     //[JsonSerializable(typeof(WorkflowEvent))]

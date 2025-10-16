@@ -70,7 +70,7 @@ public static class Program
 
             case "groupchat":
                 await RunWorkflowAsync(
-                    AgentWorkflowBuilder.CreateGroupChatBuilderWith(agents => new AgentWorkflowBuilder.RoundRobinGroupChatManager(agents) { MaximumIterationCount = 5 })
+                    AgentWorkflowBuilder.CreateGroupChatBuilderWith(agents => new RoundRobinGroupChatManager(agents) { MaximumIterationCount = 5 })
                         .AddParticipants(from lang in (string[])["French", "Spanish", "English"] select GetTranslationAgent(lang, client))
                         .Build(),
                     [new(ChatRole.User, "Hello, world!")]);

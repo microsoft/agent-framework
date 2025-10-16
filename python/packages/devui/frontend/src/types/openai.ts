@@ -36,17 +36,6 @@ export interface ResponseWorkflowEventComplete {
   sequence_number: number;
 }
 
-// Custom DevUI: Function result event
-// This is a DevUI extension - OpenAI doesn't stream function execution results
-export interface ResponseFunctionResultComplete {
-  type: "response.function_result.complete";
-  call_id: string;
-  output: string;
-  status: "in_progress" | "completed" | "incomplete";
-  item_id: string;
-  output_index: number;
-  sequence_number: number;
-}
 
 // Function call event types - matching actual backend output
 export interface ResponseFunctionCallComplete {
@@ -173,6 +162,24 @@ export interface ResponseFunctionApprovalRespondedEvent {
   sequence_number: number;
 }
 
+// DevUI Extension: Function Result Complete
+export interface ResponseFunctionResultComplete {
+  type: "response.function_result.complete";
+  call_id: string;
+  output: string;
+  status: "in_progress" | "completed" | "incomplete";
+  item_id: string;
+  output_index: number;
+  sequence_number: number;
+}
+
+// DevUI Extension: Turn Separator (UI-only event for grouping)
+export interface TurnSeparatorEvent {
+  type: "debug.turn_separator";
+  timestamp: string;
+  collapsed?: boolean;
+}
+
 // Union type for all structured events
 export type StructuredEvent =
   | ResponseCompletedEvent
@@ -180,13 +187,14 @@ export type StructuredEvent =
   | ResponseTraceEventComplete
   | ResponseTraceComplete
   | ResponseOutputItemAddedEvent
-  | ResponseFunctionResultComplete
   | ResponseFunctionCallComplete
   | ResponseFunctionCallDelta
   | ResponseFunctionCallArgumentsDelta
+  | ResponseFunctionResultComplete
   | ResponseErrorEvent
   | ResponseFunctionApprovalRequestedEvent
-  | ResponseFunctionApprovalRespondedEvent;
+  | ResponseFunctionApprovalRespondedEvent
+  | TurnSeparatorEvent;
 
 // Extended stream event that includes our structured events
 export type ExtendedResponseStreamEvent = ResponseStreamEvent | StructuredEvent;
