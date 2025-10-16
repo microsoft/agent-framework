@@ -84,7 +84,7 @@ public sealed class RealtimeQuestionAnswerAgent
         }
     }
 
-    private async Task DetectAndAnswerQuestionsAsync(string text, CancellationToken cancellationToken)
+    public async Task DetectAndAnswerQuestionsAsync(string text, CancellationToken cancellationToken)
     {
         try
         {

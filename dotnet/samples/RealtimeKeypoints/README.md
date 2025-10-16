@@ -1,27 +1,97 @@
 # Realtime Transcription with Key Points and Q&A
 
-This sample demonstrates how to connect the Agent Framework to the Azure OpenAI GPT-Realtime audio API to capture speech from the default microphone, transcribe it in real time, extract concise key points, and answer questions detected in the conversation. Three agents work in parallel for low-latency, highly available processing:
+This sample demonstrates how to use the **Agent Framework Workflows** to orchestrate multiple agents for real-time speech processing. The application captures speech from the microphone, transcribes it using Azure OpenAI GPT-Realtime, extracts key points, and answers questions—all running concurrently and independently.
 
-- **RealtimeTranscriptionAgent** (Priority: HIGHEST) – captures PCM audio through NAudio, streams it to Azure OpenAI GPT-Realtime over WebSocket, and produces structured transcript segments using server-side Voice Activity Detection (VAD). This agent has the highest priority and must never be interrupted.
-- **RealtimeKeypointAgent** – maintains a rolling transcript window with in-memory storage, calls a chat deployment for intelligent summarization, and emits newly discovered key points without repeating earlier ones.
-- **RealtimeQuestionAnswerAgent** – monitors transcripts for questions, detects them using AI, and answers them with support for tool calling (e.g., web search for current information). Each question is processed in parallel to avoid blocking.
+## Architecture
 
-The `Program` entry point orchestrates parallel execution using channels with a broadcast pattern:
+The sample uses **concurrent independent executors** coordinated through shared memory to create three agents that process audio in parallel:
 
-1. **Audio capture thread** – continuously streams microphone input to GPT-Realtime (zero interruption guaranteed)
-2. **Broadcast thread** – distributes transcripts to multiple consumers without blocking
-3. **Display and memory thread** – shows transcripts (yellow) and stores them in `TranscriptMemoryStore`
-4. **Keypoint extraction thread** – processes transcript batches, extracts key points (green with 💡), leverages memory for context
-5. **Q&A detection thread** – monitors for questions and answers them (magenta/cyan with ❓ and 💬), uses tool calling for web search
+### Executors
 
-This architecture ensures zero interruption to audio capture while providing intelligent, batched keypoint extraction and real-time question answering with tool support.
+- **TranscriptionExecutor** – Continuously captures PCM audio and streams to Azure OpenAI GPT-Realtime API. Stores final transcript segments to the shared `TranscriptMemoryStore`.
+
+- **KeypointProcessorExecutor** – Polls the memory store every 3 seconds for new transcripts. Extracts key points using the Keypoint Agent and emits concise, deduplicated insights.
+
+- **QuestionAnsweringExecutor** – Polls the memory store every 2 seconds for new transcripts. Detects questions and answers them in parallel background tasks with tool calling support.
+
+### Concurrency Model
+
+All three executors run concurrently via `Task.WhenAll`:
+
+```csharp
+var stubContext = new StubWorkflowContext();
+var transcriptionTask = transcriptionExecutor.HandleAsync(new object(), stubContext, cancellationToken);
+var keypointTask = keypointProcessorExecutor.HandleAsync(new object(), stubContext, cancellationToken);
+var qaTask = questionAnsweringExecutor.HandleAsync(new object(), stubContext, cancellationToken);
+
+await Task.WhenAll(transcriptionTask.AsTask(), keypointTask.AsTask(), qaTask.AsTask());
+```
+
+**Key Benefits:**
+
+- ✅ **Independent Coordination** – Each executor runs independently and coordinates through shared memory
+- ✅ **Asynchronous Processing** – All three agents execute concurrently without blocking each other
+- ✅ **Shared State** – `TranscriptMemoryStore` is the single source of truth for transcripts
+- ✅ **Scalability** – Easy to add more executors (e.g., Sentiment Analysis, Summarization) using the same pattern
+
+### Architecture Diagram
+
+```text
+┌─────────────────────────────────────────────────────────────────┐
+│                      Task.WhenAll (Main)                        │
+└─────────────────────────────────────────────────────────────────┘
+         ↓                           ↓                       ↓
+┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐
+│ Transcription    │    │ Keypoint         │    │ Question         │
+│ Executor         │    │ Processor        │    │ Answering        │
+│                  │    │ Executor         │    │ Executor         │
+│ • Continuous     │    │ • Polls every 3s │    │ • Polls every 2s │
+│   audio capture  │    │ • Detects new    │    │ • Detects new    │
+│ • Streams to     │    │   transcripts    │    │   transcripts    │
+│   GPT-Realtime   │    │ • Extracts       │    │ • Answers        │
+│ • Stores in      │    │   keypoints      │    │   questions      │
+│   memory         │    │ • Displays 💡    │    │ • Displays ❓❓💬 │
+└──────────────────┘    └──────────────────┘    └──────────────────┘
+         ↓                           ↓                       ↓
+         └───────────────┬──────────────────┬────────────────┘
+                         ↓
+         ┌────────────────────────────────────┐
+         │   TranscriptMemoryStore (Shared)   │
+         │ • Circular buffer (5000 entries)   │
+         │ • Deduplication via embeddings     │
+         │ • Time-windowed queries            │
+         └────────────────────────────────────┘
+```
+
+## Directory Structure
+
+```text
+RealtimeKeypoints/
+├── Program.cs                           # Entry point with Workflow orchestration
+├── Agents/                              # Individual agents
+│   ├── RealtimeTranscriptionAgent.cs   # Captures audio and streams transcripts
+│   ├── RealtimeKeypointAgent.cs        # Extracts key points from transcripts
+│   └── RealtimeQuestionAnswerAgent.cs  # Detects and answers questions
+├── Executors/                           # Workflow executors (NEW)
+│   ├── TranscriptionExecutor.cs        # Wraps transcription in workflow executor
+│   ├── KeypointProcessorExecutor.cs    # Wraps keypoint extraction in workflow executor
+│   └── QuestionAnsweringExecutor.cs    # Wraps Q&A in workflow executor
+├── Memory/                              # Shared state management
+│   ├── TranscriptMemoryStore.cs        # In-memory transcript storage
+│   └── InMemoryVectorStore.cs          # Vector storage for embeddings
+├── Audio/                               # Audio processing
+│   └── MicrophoneAudioSource.cs        # Microphone input via NAudio
+└── Realtime/                            # Real-time API integration
+    ├── AzureRealtimeClient.cs          # Azure GPT-Realtime client
+    └── RealtimeTranscriptSegment.cs    # Transcript data model
+```
 
 ## Prerequisites
 
 - .NET 9 SDK (RC or later).
 - An Azure OpenAI resource with:
   - A **realtime** deployment that supports `gpt-4o-realtime-preview` (or later) for audio transcription.
-  - A **chat** deployment (for example `gpt-4o-mini`) that will be used to extract key points.
+  - A **chat** deployment (for example `gpt-4o-mini`) that will be used to extract key points and answer questions.
 - A working microphone on the machine running the sample.
 
 > [!TIP]
@@ -64,30 +134,71 @@ Speak into your microphone. You'll see:
 
 Press Ctrl+C to stop the capture.
 
-## Key components
+## Execution Flow
 
-- `Audio/MicrophoneAudioSource.cs` – wraps NAudio to expose microphone audio as a `Channel<byte[]>`.
-- `Realtime/AzureRealtimeClient.cs` – low-level WebSocket client that handles GPT-Realtime session management, audio buffering, and response streaming.
-- `Memory/TranscriptMemoryStore.cs` – in-memory store that deduplicates transcripts using GPT embeddings and cosine similarity.
-- `Agents/RealtimeTranscriptionAgent.cs` – turns microphone audio into transcript segments consumable by other agents.
-- `Agents/RealtimeKeypointAgent.cs` – maintains transcript context, calls a chat deployment via `IChatClient`, and filters out duplicate key points.
-- `Agents/RealtimeQuestionAnswerAgent.cs` – monitors transcripts for questions, detects them using AI, and answers them with tool calling support (e.g., web_search).
-- `Program.cs` – orchestrates all three agents and renders console output with a broadcast pattern.
+### How Concurrent Execution Works
 
-## Customisation ideas
+The three executors coordinate through the shared `TranscriptMemoryStore`:
 
-- Tune the audio commit interval in `AzureRealtimeClient` if you need more/less frequent transcription updates.
-- Adjust the `RealtimeKeypointAgent` system prompt to focus on specific insight types (risks, questions, action items, etc.).
-- Replace the simulated `web_search` tool in `RealtimeQuestionAnswerAgent` with a real web search API (e.g., Bing Search, Google Custom Search) for live web results.
-- Swap the chat deployment for a local or hosted model that implements the `IChatClient` interface.
-- Extend the console app to push transcripts, key points, and Q&A to a UI, dashboard, or storage service.
-- Add additional agents that consume the transcript channel for other purposes (sentiment analysis, entity extraction, etc.).
+1. **TranscriptionExecutor** (Primary)
+   - Continuously captures audio and stores transcript segments to memory
+   - Runs continuously without blocking
+   - Updates to memory trigger polling in other executors
+
+2. **KeypointProcessorExecutor** (Concurrent)
+   - Polls memory store every 3 seconds for new transcripts
+   - Tracks processed transcripts to avoid redundant processing
+   - Sends unprocessed transcripts to Keypoint Agent
+   - Extracts and displays key points
+
+3. **QuestionAnsweringExecutor** (Concurrent)
+   - Polls memory store every 2 seconds for new transcripts
+   - Detects questions in transcript segments
+   - Answers questions in parallel background tasks
+   - Supports tool calling for extended capabilities
+
+### Shared State Management
+
+All executors read from and write to a single `TranscriptMemoryStore` instance that:
+- Maintains a circular buffer of recent transcripts (5000 entries)
+- Deduplicates transcripts using embeddings
+- Provides time-windowed queries for context-aware processing
+
+## Key Components
+
+- `Executors/TranscriptionExecutor.cs` – Captures audio and stores transcripts
+- `Executors/KeypointProcessorExecutor.cs` – Polls and extracts key points
+- `Executors/QuestionAnsweringExecutor.cs` – Polls and answers questions
+- `Agents/RealtimeTranscriptionAgent.cs` – Audio-to-text via GPT-Realtime
+- `Agents/RealtimeKeypointAgent.cs` – Key point extraction from transcripts
+- `Agents/RealtimeQuestionAnswerAgent.cs` – Question detection and answering
+- `Memory/TranscriptMemoryStore.cs` – Shared in-memory transcript storage with deduplication
+- `Audio/MicrophoneAudioSource.cs` – Microphone capture via NAudio
+- `Realtime/AzureRealtimeClient.cs` – WebSocket client for GPT-Realtime API
+
+## Customisation Ideas
+
+- **Add more agents**: Use the Executor pattern to add new agents (Sentiment Analysis, Entity Extraction, Summarization) that poll the memory store independently
+- **Adjust polling intervals**: Change the polling intervals in executors to optimize for your use case
+- **Tune the keypoint system prompt**: Modify the system prompt in `RealtimeKeypointAgent` to focus on specific insight types
+- **Implement real web search**: Replace the simulated `web_search` tool in `QuestionAnsweringExecutor` with a real API (Bing Search, Google Custom Search)
+- **Change chat models**: Swap the chat deployment for a local or hosted model implementing `IChatClient`
+- **Export results**: Push transcripts, key points, and Q&A to a UI, dashboard, or storage service
+- **Customize memory store**: Replace `TranscriptMemoryStore` with a persistent database or vector store for longer retention
+
+## Learning Resources
+
+- [Agent Framework Workflows Documentation](https://learn.microsoft.com/agent-framework/user-guide/workflows/)
+- [Workflow with Branching Logic Tutorial](https://learn.microsoft.com/agent-framework/tutorials/workflows/workflow-with-branching-logic)
+- [Orchestrations Overview](https://learn.microsoft.com/agent-framework/user-guide/workflows/orchestrations/overview)
+- [Azure OpenAI Realtime API](https://learn.microsoft.com/azure/ai-services/openai/how-to/realtime-audio-api)
 
 ## Troubleshooting
 
 - **No audio captured** – ensure that the application has microphone access and that the default input device matches your recording device.
 - **401/403 errors** – verify the API key and deployment names, and confirm the key has access to both the realtime and chat deployments.
-- **High latency** – reduce the `commitInterval` passed to `AzureRealtimeClient` or lower the sampling rate in `MicrophoneAudioSource`.
+- **High latency** – reduce the commit interval in `AzureRealtimeClient` or lower the sampling rate in `MicrophoneAudioSource`.
+- **Workflow not starting** – ensure the Workflows package is properly installed via the updated .csproj file.
 
 ## License
 

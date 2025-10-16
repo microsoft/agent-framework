@@ -1,11 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Text;
-using System.Threading.Channels;
 using Azure.AI.OpenAI;
 using Azure.Identity;
+using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 using RealtimeKeypoints.Agents;
+using RealtimeKeypoints.Executors;
 using RealtimeKeypoints.Memory;
 using RealtimeKeypoints.Realtime;
 
@@ -13,6 +14,8 @@ namespace RealtimeKeypoints;
 
 public static class Program
 {
+    public static readonly object ConsoleLock = new();
+
     public static async Task Main()
     {
         Console.OutputEncoding = Encoding.UTF8;
@@ -42,30 +45,20 @@ public static class Program
         }
         catch (OperationCanceledException)
         {
-            // Graceful shutdown.
+            Console.WriteLine("Workflow completed.");
         }
     }
 
-    private static async Task RunAsync(string endpoint, string realtimeDeployment, string chatDeployment, CancellationToken cancellationToken)
+    private static async Task RunAsync(
+        string endpoint,
+        string realtimeDeployment,
+        string chatDeployment,
+        CancellationToken cancellationToken)
     {
         var endpointUri = new Uri(endpoint);
         var credential = new AzureCliCredential();
 
-        // Create memory store for transcript persistence
-        var memoryStore = new TranscriptMemoryStore(maxEntries: 1000);
-
-        // Create separate channels for each consumer to avoid competition
-        var displayChannel = Channel.CreateUnbounded<RealtimeTranscriptSegment>(new UnboundedChannelOptions
-        {
-            SingleReader = true,
-            SingleWriter = true
-        });
-
-        var keypointChannel = Channel.CreateUnbounded<RealtimeTranscriptSegment>(new UnboundedChannelOptions
-        {
-            SingleReader = true,
-            SingleWriter = true
-        });
+        var memoryStore = new TranscriptMemoryStore(maxEntries: 5000);
 
         await using var realtimeClient = new AzureRealtimeClient(endpointUri, realtimeDeployment, credential);
         var transcriptionAgent = new RealtimeTranscriptionAgent(realtimeClient);
@@ -73,187 +66,41 @@ public static class Program
         var chatClient = new AzureOpenAIClient(endpointUri, credential)
             .GetChatClient(chatDeployment)
             .AsIChatClient();
+
         var keypointAgent = new RealtimeKeypointAgent(chatClient);
         var keypointThread = (RealtimeKeypointAgent.KeypointThread)keypointAgent.GetNewThread();
 
         var questionAnswerAgent = new RealtimeQuestionAnswerAgent(chatClient, memoryStore);
 
-        Console.WriteLine("🎙️  Listening for speech. Press Ctrl+C to stop.");
+        var transcriptionExecutor = new TranscriptionExecutor(transcriptionAgent, memoryStore);
+        var keypointProcessorExecutor = new KeypointProcessorExecutor(keypointAgent, memoryStore, keypointThread);
+        var questionAnsweringExecutor = new QuestionAnsweringExecutor(questionAnswerAgent, memoryStore);
+
+        Console.WriteLine("🎙️  RealtimeKeypoints Orchestration Started");
         Console.WriteLine("📝 Transcription Agent: ACTIVE (Yellow)");
         Console.WriteLine("💡 Keypoint Agent: ACTIVE (Green)");
         Console.WriteLine("❓ Q&A Agent: ACTIVE (Magenta/Cyan)");
         Console.WriteLine();
 
-        // Run five parallel tasks:
-        // 1. Capture and broadcast transcripts to multiple channels
-        // 2. Display transcripts and store in memory
-        // 3. Extract and display keypoints
-        // 4. Detect questions and answer them with web search
-        var captureTask = CaptureAndBroadcastTranscriptsAsync(transcriptionAgent, displayChannel.Writer, keypointChannel.Writer, cancellationToken);
-        var displayTask = DisplayAndStoreTranscriptsAsync(displayChannel.Reader, memoryStore, cancellationToken);
-        var keypointTask = ExtractKeyPointsAsync(keypointChannel.Reader, keypointAgent, keypointThread, memoryStore, cancellationToken);
-        var questionAnswerTask = questionAnswerAgent.RunAsync(cancellationToken);
+        // Run all three executors concurrently
+        var stubContext = new StubWorkflowContext();
+        var transcriptionTask = transcriptionExecutor.HandleAsync(new object(), stubContext, cancellationToken);
+        var keypointTask = keypointProcessorExecutor.HandleAsync(new object(), stubContext, cancellationToken);
+        var qaTask = questionAnsweringExecutor.HandleAsync(new object(), stubContext, cancellationToken);
 
-        await Task.WhenAll(captureTask, displayTask, keypointTask, questionAnswerTask).ConfigureAwait(false);
-    }
-
-    private static async Task CaptureAndBroadcastTranscriptsAsync(
-        RealtimeTranscriptionAgent transcriptionAgent,
-        ChannelWriter<RealtimeTranscriptSegment> displayWriter,
-        ChannelWriter<RealtimeTranscriptSegment> keypointWriter,
-        CancellationToken cancellationToken)
-    {
         try
         {
-            await foreach (var segment in transcriptionAgent.StreamSegmentsAsync(cancellationToken).ConfigureAwait(false))
-            {
-                if (string.IsNullOrWhiteSpace(segment.Text))
-                {
-                    continue;
-                }
-
-                if (!segment.IsFinal)
-                {
-                    continue;
-                }
-
-                // Broadcast to both channels - this is FAST (no blocking)
-                await displayWriter.WriteAsync(segment, cancellationToken).ConfigureAwait(false);
-                await keypointWriter.WriteAsync(segment, cancellationToken).ConfigureAwait(false);
-            }
+            await Task.WhenAll(transcriptionTask.AsTask(), keypointTask.AsTask(), qaTask.AsTask()).ConfigureAwait(false);
         }
-        finally
+        catch (OperationCanceledException)
         {
-            displayWriter.Complete();
-            keypointWriter.Complete();
-        }
-    }
-
-    private static async Task DisplayAndStoreTranscriptsAsync(
-        ChannelReader<RealtimeTranscriptSegment> reader,
-        TranscriptMemoryStore memoryStore,
-        CancellationToken cancellationToken)
-    {
-        await foreach (var segment in reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
-        {
-            WriteTranscript(segment);
-            await memoryStore.AddAsync(segment.Text, segment.Timestamp, cancellationToken: cancellationToken).ConfigureAwait(false);
-        }
-    }
-
-    private static async Task ExtractKeyPointsAsync(
-        ChannelReader<RealtimeTranscriptSegment> reader,
-        RealtimeKeypointAgent keypointAgent,
-        RealtimeKeypointAgent.KeypointThread keypointThread,
-        TranscriptMemoryStore memoryStore,
-        CancellationToken cancellationToken)
-    {
-        // Buffer transcripts briefly before processing to reduce API calls
-        var buffer = new List<string>();
-        var lastProcessTime = DateTimeOffset.UtcNow;
-        const int MinBufferSize = 2;
-        var processingInterval = TimeSpan.FromSeconds(5);
-
-        await foreach (var segment in reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
-        {
-            buffer.Add(segment.Text);
-
-            var now = DateTimeOffset.UtcNow;
-            bool shouldProcess = buffer.Count >= MinBufferSize || (now - lastProcessTime) >= processingInterval;
-
-            if (shouldProcess && buffer.Count > 0)
-            {
-                string combinedText = string.Join(" ", buffer);
-                buffer.Clear();
-                lastProcessTime = now;
-
-                // Fire-and-forget: Process keypoints in background to avoid blocking
-                _ = Task.Run(async () =>
-                {
-                    try
-                    {
-                        var response = await keypointAgent.RunAsync(
-                            new[] { new ChatMessage(ChatRole.User, combinedText) },
-                            keypointThread,
-                            options: null,
-                            cancellationToken: cancellationToken).ConfigureAwait(false);
-
-                        foreach (var message in response.Messages)
-                        {
-                            if (string.IsNullOrWhiteSpace(message.Text))
-                            {
-                                continue;
-                            }
-
-                            WriteKeyPoint(message.Text, message.CreatedAt);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"[ERROR Keypoint] {ex.Message}");
-                    }
-                }, CancellationToken.None);
-            }
-        }
-
-        // Process remaining buffer in background
-        if (buffer.Count > 0)
-        {
-            string combinedText = string.Join(" ", buffer);
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    var response = await keypointAgent.RunAsync(
-                        new[] { new ChatMessage(ChatRole.User, combinedText) },
-                        keypointThread,
-                        options: null,
-                        cancellationToken: CancellationToken.None).ConfigureAwait(false);
-
-                    foreach (var message in response.Messages)
-                    {
-                        if (!string.IsNullOrWhiteSpace(message.Text))
-                        {
-                            WriteKeyPoint(message.Text, message.CreatedAt);
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[ERROR Keypoint] {ex.Message}");
-                }
-            }, CancellationToken.None);
-        }
-    }
-
-    private static readonly object s_consoleLock = new();
-
-    private static void WriteTranscript(RealtimeTranscriptSegment segment)
-    {
-        lock (s_consoleLock)
-        {
-            var previousColor = Console.ForegroundColor;
-            Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.WriteLine($"[Transcript {segment.Timestamp:HH:mm:ss}] {segment.Text}");
-            Console.ForegroundColor = previousColor;
-        }
-    }
-
-    private static void WriteKeyPoint(string keyPoint, DateTimeOffset? createdAt)
-    {
-        lock (s_consoleLock)
-        {
-            var previousColor = Console.ForegroundColor;
-            Console.ForegroundColor = ConsoleColor.Green;
-            var timestamp = createdAt ?? DateTimeOffset.UtcNow;
-            Console.WriteLine($"    💡 [Key Point {timestamp:HH:mm:ss}] {keyPoint}");
-            Console.ForegroundColor = previousColor;
+            // Expected when user presses Ctrl+C
         }
     }
 
     public static void WriteQuestionAnswer(string question, string answer)
     {
-        lock (s_consoleLock)
+        lock (ConsoleLock)
         {
             var previousColor = Console.ForegroundColor;
             Console.ForegroundColor = ConsoleColor.Magenta;
@@ -262,5 +109,25 @@ public static class Program
             Console.WriteLine($"    💬 [Answer] {answer}");
             Console.ResetColor();
         }
+    }
+
+    /// <summary>
+    /// Stub implementation of IWorkflowContext for running executors outside of a workflow.
+    /// This minimal stub follows Microsoft best practices for test doubles by returning default values.
+    /// </summary>
+    private sealed class StubWorkflowContext : Microsoft.Agents.AI.Workflows.IWorkflowContext
+    {
+        public bool ConcurrentRunsEnabled => false;
+        public IReadOnlyDictionary<string, string>? TraceContext => null;
+
+        public ValueTask AddEventAsync(Microsoft.Agents.AI.Workflows.WorkflowEvent workflowEvent, CancellationToken cancellationToken = default) => default;
+        public ValueTask SendMessageAsync(object message, string? targetId = null, CancellationToken cancellationToken = default) => default;
+        public ValueTask YieldOutputAsync(object output, CancellationToken cancellationToken = default) => default;
+        public ValueTask RequestHaltAsync() => default;
+        public ValueTask<T?> ReadStateAsync<T>(string key, string? scopeName = null, CancellationToken cancellationToken = default) => default;
+        public ValueTask<T> ReadOrInitStateAsync<T>(string key, Func<T> initialStateFactory, string? scopeName = null, CancellationToken cancellationToken = default) => new(initialStateFactory());
+        public ValueTask<HashSet<string>> ReadStateKeysAsync(string? scopeName = null, CancellationToken cancellationToken = default) => new(new HashSet<string>());
+        public ValueTask QueueStateUpdateAsync<T>(string key, T? value, string? scopeName = null, CancellationToken cancellationToken = default) => default;
+        public ValueTask QueueClearScopeAsync(string? scopeName = null, CancellationToken cancellationToken = default) => default;
     }
 }
