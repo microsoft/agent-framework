@@ -1,0 +1,14 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <AssemblyName>Azure.AI.AgentsHosting.AgentFramework</AssemblyName>
+        <RootNamespace>Azure.AI.AgentsHosting.AgentFramework</RootNamespace>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Microsoft.Agents.AI" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\Ingress\Ingress.csproj" />
+    </ItemGroup>
+</Project>

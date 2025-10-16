@@ -1,0 +1,1 @@
+The contract models in this folder was generated using typespec compiler with @azure-tools/typespec-csharp package from the typespec defined here: https://github.com/Azure/agent-first-sdk/tree/rapida/workflow-api-spec/typespec

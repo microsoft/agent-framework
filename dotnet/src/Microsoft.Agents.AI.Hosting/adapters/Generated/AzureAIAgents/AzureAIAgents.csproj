@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>Azure.AI.AgentsHosting.GeneratedModels</AssemblyName>
+
+    <Description>This is the AzureAIAgents client library for developing .NET applications with rich experience.</Description>
+    <AssemblyTitle>SDK Code Generation AzureAIAgents</AssemblyTitle>
+    <PackageTags>AzureAIAgents</PackageTags>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.ClientModel" Version="1.4.1" />
+  </ItemGroup>
+</Project>
