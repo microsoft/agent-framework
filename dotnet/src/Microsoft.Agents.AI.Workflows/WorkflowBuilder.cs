@@ -274,11 +274,21 @@ public class WorkflowBuilder
     /// <remarks>If a partitioner function is provided, it will be used to distribute input across the target
     /// executors. The order of targets determines their mapping in the partitioning process.</remarks>
     /// <param name="source">The source executor from which the fan-out edge originates. Cannot be null.</param>
-    /// <param name="label"></param>
     /// <param name="targets">One or more target executors that will receive the fan-out edge. Cannot be null or empty.</param>
     /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
     public WorkflowBuilder AddFanOutEdge(ExecutorIsh source, params IEnumerable<ExecutorIsh> targets)
         => this.AddFanOutEdge(source, null, targets);
+
+    /// <summary>
+    /// Adds a fan-out edge from the specified source executor to one or more target executors, optionally using a
+    /// custom partitioning function.
+    /// </summary>
+    /// <remarks>If a partitioner function is provided, it will be used to distribute input across the target
+    /// executors. The order of targets determines their mapping in the partitioning process.</remarks>
+    /// <param name="source">The source executor from which the fan-out edge originates. Cannot be null.</param>
+    /// <param name="label"></param>
+    /// <param name="targets">One or more target executors that will receive the fan-out edge. Cannot be null or empty.</param>
+    /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
     public WorkflowBuilder AddFanOutEdge(ExecutorIsh source, string? label, params IEnumerable<ExecutorIsh> targets)
         => this.AddFanOutEdge<object>(source, null, label, targets);
 
@@ -345,14 +355,26 @@ public class WorkflowBuilder
     /// based on the completion or state of multiple sources. The trigger parameter can be used to customize activation
     /// behavior.</remarks>
     /// <param name="target">The target executor that receives input from the specified source executors. Cannot be null.</param>
-    /// <param name="label"></param>
     /// <param name="sources">One or more source executors that provide input to the target. Cannot be null or empty.</param>
     /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
     // Overload for backward compatibility: original signature without label
     public WorkflowBuilder AddFanInEdge(ExecutorIsh target, params IEnumerable<ExecutorIsh> sources)
     {
-        return AddFanInEdge(target, null, sources);
+        return this.AddFanInEdge(target, null, sources);
     }
+
+    /// <summary>
+    /// Adds a fan-in edge to the workflow, connecting multiple source executors to a single target executor with an
+    /// optional trigger condition.
+    /// </summary>
+    /// <remarks>This method establishes a fan-in relationship, allowing the target executor to be activated
+    /// based on the completion or state of multiple sources. The trigger parameter can be used to customize activation
+    /// behavior.</remarks>
+    /// <param name="target">The target executor that receives input from the specified source executors. Cannot be null.</param>
+    /// <param name="label"></param>
+    /// <param name="sources">One or more source executors that provide input to the target. Cannot be null or empty.</param>
+    /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
+    // Overload for backward compatibility: original signature without label
     public WorkflowBuilder AddFanInEdge(ExecutorIsh target, string? label = null, params IEnumerable<ExecutorIsh> sources)
     {
         Throw.IfNull(target);
