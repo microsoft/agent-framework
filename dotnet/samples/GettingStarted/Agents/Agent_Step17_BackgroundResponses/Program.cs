@@ -31,7 +31,7 @@ while (response.ContinuationToken is { } token)
     // Continue with the token.
     options.ContinuationToken = token;
 
-    response = await agent.RunAsync([], options: options);
+    response = await agent.RunAsync(options: options);
 }
 
 // Display the result.
@@ -60,7 +60,7 @@ await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync("Tell me
 // Resume from interruption point.
 options.ContinuationToken = lastReceivedUpdate?.ContinuationToken;
 
-await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync([], options: options))
+await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(options: options))
 {
     // Output each update.
     Console.Write(update.Text);
