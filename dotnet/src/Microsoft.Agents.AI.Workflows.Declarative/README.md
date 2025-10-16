@@ -33,7 +33,7 @@ Please refer to the [README](../../samples/GettingStarted/Workflows/Declarative/
 |-|-|
 |**Question**|Presents a query or prompt requiring human input. Integrates human decision-making into automated processes.
 
-## 🧩 State Management
+### 🧩 State Management
 
 |Action|Description|
 |-|-|
