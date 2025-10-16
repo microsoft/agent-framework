@@ -3,16 +3,16 @@
 // This sample shows how to create and use a simple AI agent with a multi-turn conversation.
 
 using Azure.AI.OpenAI;
-using Azure.Identity;
 using Microsoft.Agents.AI;
 using OpenAI;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+var apiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_KEY") ?? throw new InvalidOperationException("AZURE_OPENAI_API_KEY is not set.");
 
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
-    new AzureCliCredential())
+    new Azure.AzureKeyCredential(apiKey))
     .GetChatClient(deploymentName)
     .CreateAIAgent(instructions: "You are good at telling jokes.", name: "Joker");
 
@@ -25,9 +25,11 @@ Console.WriteLine(await agent.RunAsync("Now add some emojis to the joke and tell
 thread = agent.GetNewThread();
 await foreach (var update in agent.RunStreamingAsync("Tell me a joke about a pirate.", thread))
 {
-    Console.WriteLine(update);
+    Console.Write(update);
 }
+Console.WriteLine();
 await foreach (var update in agent.RunStreamingAsync("Now add some emojis to the joke and tell it in the voice of a pirate's parrot.", thread))
 {
-    Console.WriteLine(update);
+    Console.Write(update);
 }
+Console.WriteLine();

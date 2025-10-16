@@ -18,10 +18,11 @@ using SampleApp;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+var apiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_KEY") ?? throw new InvalidOperationException("AZURE_OPENAI_API_KEY is not set.");
 
 ChatClient chatClient = new AzureOpenAIClient(
     new Uri(endpoint),
-    new AzureCliCredential())
+    new Azure.AzureKeyCredential(apiKey))
     .GetChatClient(deploymentName);
 
 // Create the agent and provide a factory to add our custom memory component to

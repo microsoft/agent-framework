@@ -34,7 +34,8 @@ public static class Program
         // Set up the Azure OpenAI client
         var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
         var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
-        var chatClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName).AsIChatClient();
+        var apiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_KEY") ?? throw new InvalidOperationException("AZURE_OPENAI_API_KEY is not set.");
+        var chatClient = new AzureOpenAIClient(new Uri(endpoint), new Azure.AzureKeyCredential(apiKey)).GetChatClient(deploymentName).AsIChatClient();
 
         // Create the executors
         var sloganWriter = new SloganWriterExecutor("SloganWriter", chatClient);

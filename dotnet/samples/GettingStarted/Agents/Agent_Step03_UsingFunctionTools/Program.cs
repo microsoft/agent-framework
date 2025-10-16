@@ -12,15 +12,16 @@ using OpenAI;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+var apiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_KEY") ?? throw new InvalidOperationException("AZURE_OPENAI_API_KEY is not set.");
 
 [Description("Get the weather for a given location.")]
 static string GetWeather([Description("The location to get the weather for.")] string location)
-    => $"The weather in {location} is cloudy with a high of 15°C.";
+    => $"The weather in {location} is cloudy with a high of {Random.Shared.Next(10, 20)}°C.";
 
 // Create the chat client and agent, and provide the function tool to the agent.
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
-    new AzureCliCredential())
+    new Azure.AzureKeyCredential(apiKey))
     .GetChatClient(deploymentName)
     .CreateAIAgent(instructions: "You are a helpful assistant", tools: [AIFunctionFactory.Create(GetWeather)]);
 
@@ -30,5 +31,6 @@ Console.WriteLine(await agent.RunAsync("What is the weather like in Amsterdam?")
 // Streaming agent interaction with function tools.
 await foreach (var update in agent.RunStreamingAsync("What is the weather like in Amsterdam?"))
 {
-    Console.WriteLine(update);
+    Console.Write(update);
 }
+Console.WriteLine();
