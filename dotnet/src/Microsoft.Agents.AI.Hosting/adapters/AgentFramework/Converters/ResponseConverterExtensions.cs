@@ -15,10 +15,20 @@ using Microsoft.Agents.AI;
 
 namespace Microsoft.Agents.AI.Hosting.Converters;
 
+/// <summary>
+/// Extension methods for converting agent responses to Response models.
+/// </summary>
 public static class ResponseConverterExtensions
 {
     private static readonly JsonSerializerOptions Json = JsonExtensions.DefaultJsonSerializerOptions;
 
+    /// <summary>
+    /// Converts an AgentRunResponse to a Response model.
+    /// </summary>
+    /// <param name="agentRunResponse">The agent run response to convert.</param>
+    /// <param name="request">The original create response request.</param>
+    /// <param name="context">The agent invocation context.</param>
+    /// <returns>A Response model.</returns>
     public static AzureAIAgents.Models.Response ToResponse(this AgentRunResponse agentRunResponse, CreateResponse request,
         AgentInvocationContext context)
     {
@@ -39,6 +49,12 @@ public static class ResponseConverterExtensions
         );
     }
 
+    /// <summary>
+    /// Converts a ChatMessage to ItemResource objects.
+    /// </summary>
+    /// <param name="message">The chat message to convert.</param>
+    /// <param name="idGenerator">The ID generator to use for creating IDs.</param>
+    /// <returns>An enumerable of ItemResource objects.</returns>
     public static IEnumerable<ItemResource> ToItemResource(this ChatMessage message, IIdGenerator idGenerator)
     {
         IList<ItemContent> contents = [];
@@ -77,10 +93,17 @@ public static class ResponseConverterExtensions
         }
     }
 
+    /// <summary>
+    /// Converts FunctionCallContent to a FunctionToolCallItemResource.
+    /// </summary>
+    /// <param name="functionCallContent">The function call content to convert.</param>
+    /// <param name="id">The ID to assign to the resource.</param>
+    /// <returns>A FunctionToolCallItemResource.</returns>
     public static FunctionToolCallItemResource ToFunctionToolCallItemResource(
         this FunctionCallContent functionCallContent,
         string id)
     {
+#pragma warning disable IL2026, IL3050 // JSON serialization requires dynamic access
         return AzureAIAgentsModelFactory.FunctionToolCallItemResource(
             id: id,
             status: FunctionToolCallItemResourceStatus.Completed,
@@ -88,8 +111,15 @@ public static class ResponseConverterExtensions
             name: functionCallContent.Name,
             arguments: JsonSerializer.Serialize(functionCallContent.Arguments, Json)
         );
+#pragma warning restore IL2026, IL3050
     }
 
+    /// <summary>
+    /// Converts FunctionResultContent to a FunctionToolCallOutputItemResource.
+    /// </summary>
+    /// <param name="functionResultContent">The function result content to convert.</param>
+    /// <param name="id">The ID to assign to the resource.</param>
+    /// <returns>A FunctionToolCallOutputItemResource.</returns>
     public static FunctionToolCallOutputItemResource ToFunctionToolCallOutputItemResource(
         this FunctionResultContent functionResultContent,
         string id)
@@ -105,6 +135,11 @@ public static class ResponseConverterExtensions
         );
     }
 
+    /// <summary>
+    /// Converts UsageDetails to ResponseUsage.
+    /// </summary>
+    /// <param name="usage">The usage details to convert.</param>
+    /// <returns>A ResponseUsage object, or null if usage is null.</returns>
     public static ResponseUsage? ToResponseUsage(this UsageDetails? usage)
     {
         if (usage == null)
@@ -131,6 +166,11 @@ public static class ResponseConverterExtensions
         );
     }
 
+    /// <summary>
+    /// Converts AIContent to ItemContent.
+    /// </summary>
+    /// <param name="content">The AI content to convert.</param>
+    /// <returns>An ItemContent object, or null if the content cannot be converted.</returns>
     public static ItemContent? ToItemContent(this AIContent content)
     {
         switch (content)

@@ -13,30 +13,39 @@ using Microsoft.AspNetCore.Http;
 
 namespace Azure.AI.AgentsHosting.Ingress.Common.Http.ServerSentEvent;
 
+/// <summary>
+/// Represents a Server-Sent Events (SSE) result for ASP.NET Core.
+/// </summary>
+/// <param name="source">The source of SSE frames.</param>
+/// <param name="keepAliveInterval">The keep-alive interval.</param>
 public sealed class SseResult(
     IAsyncEnumerable<SseFrame> source,
     TimeSpan? keepAliveInterval = null)
     : IResult, IStatusCodeHttpResult, IContentTypeHttpResult
 {
-    private static readonly SseFrame KeepAliveFrame = new()
+    private static readonly SseFrame s_keepAliveFrame = new()
     {
         Comments = ["keep-alive"]
     };
 
-    private static readonly string KeepAliveString = SerializeFrame(KeepAliveFrame);
+    private static readonly string s_keepAliveString = SerializeFrame(s_keepAliveFrame);
 
     private readonly TimeSpan _keepAliveInterval = keepAliveInterval ?? TimeSpan.FromSeconds(15);
 
+    /// <inheritdoc/>
     public int? StatusCode => StatusCodes.Status200OK;
+
+    /// <inheritdoc/>
     public string? ContentType => "text/event-stream; charset=utf-8";
 
-    public async Task ExecuteAsync(HttpContext ctx)
+    /// <inheritdoc/>
+    public async Task ExecuteAsync(HttpContext httpContext)
     {
-        var res = ctx.Response;
-        var ct = ctx.RequestAborted;
+        var res = httpContext.Response;
+        var ct = httpContext.RequestAborted;
 
-        res.StatusCode = StatusCode!.Value;
-        res.ContentType = ContentType!;
+        res.StatusCode = this.StatusCode!.Value;
+        res.ContentType = this.ContentType!;
         res.Headers.CacheControl = "no-cache";
         res.Headers["X-Accel-Buffering"] = "no";
         res.Headers.Connection = "keep-alive";
@@ -53,11 +62,11 @@ public sealed class SseResult(
             CancellationToken = ct,
         });
 
-        var json = ctx.GetJsonSerializerOptions();
+        var json = httpContext.GetJsonSerializerOptions();
         await res.StartAsync(ct).ConfigureAwait(false);
-        await foreach (var frame in GetSourceWithKeepAlive(ct))
+        await foreach (var frame in this.GetSourceWithKeepAliveAsync(ct).ConfigureAwait(false))
         {
-            var frameStr = frame == KeepAliveFrame ? KeepAliveString : SerializeFrame(frame, json);
+            var frameStr = frame == s_keepAliveFrame ? s_keepAliveString : SerializeFrame(frame, json);
             if (!string.IsNullOrEmpty(frameStr))
             {
                 await sseWritingQueue.SendAsync(frameStr, ct).ConfigureAwait(false);
@@ -68,9 +77,11 @@ public sealed class SseResult(
         await sseWritingQueue.Completion.ConfigureAwait(false);
     }
 
-    private async IAsyncEnumerable<SseFrame> GetSourceWithKeepAlive([EnumeratorCancellation] CancellationToken ct)
+    private async IAsyncEnumerable<SseFrame> GetSourceWithKeepAliveAsync([EnumeratorCancellation] CancellationToken ct)
     {
+#pragma warning disable CA2007 // Consider calling ConfigureAwait on the awaited task
         await using var src = source.GetAsyncEnumerator(ct);
+#pragma warning restore CA2007
         var fetching = src.MoveNextAsync().AsTask();
 
         while (true)
@@ -78,7 +89,7 @@ public sealed class SseResult(
             var timeout = false;
             try
             {
-                if (!await fetching.WaitAsync(_keepAliveInterval, ct).ConfigureAwait(false))
+                if (!await fetching.WaitAsync(this._keepAliveInterval, ct).ConfigureAwait(false))
                 {
                     yield break;
                 }
@@ -90,7 +101,7 @@ public sealed class SseResult(
 
             if (timeout)
             {
-                yield return KeepAliveFrame;
+                yield return s_keepAliveFrame;
                 continue;
             }
             yield return src.Current!;
@@ -113,11 +124,13 @@ public sealed class SseResult(
 
         if (json != null && frame.Data?.Count > 0)
         {
+#pragma warning disable IL2026, IL3050 // JSON serialization requires dynamic access
             foreach (var data in frame.Data)
             {
                 var line = JsonSerializer.Serialize(data, json);
                 sb.Append("data: ").Append(line).Append('\n');
             }
+#pragma warning restore IL2026, IL3050
         }
 
         if (frame.Comments?.Count > 0)

@@ -15,24 +15,34 @@ using Microsoft.Extensions.Logging;
 
 namespace Azure.AI.AgentsHosting.AgentFramework;
 
+/// <summary>
+/// Agent Framework invocation implementation for handling agent requests.
+/// </summary>
+/// <param name="agent">The AI agent to invoke.</param>
+/// <param name="logger">The logger instance for diagnostics.</param>
 public class AfInvocation(AIAgent agent, ILogger<AfInvocation> logger) : AgentInvocationBase
 {
+    /// <inheritdoc/>
     protected override async Task<AzureAIAgents.Models.Response> DoInvokeAsync(CreateResponse createResponse,
         AgentInvocationContext context,
         CancellationToken cancellationToken)
     {
-        Activity.Current?.SetServiceNamespace("agentframework");
+        _ = logger; // Reserved for future use
+        // TODO: Add SetServiceNamespace extension method
+        // Activity.Current?.SetServiceNamespace("agentframework");
 
         var messages = createResponse.GetInputMessages();
         var response = await agent.RunAsync(messages, cancellationToken: cancellationToken).ConfigureAwait(false);
         return response.ToResponse(createResponse, context);
     }
 
-    protected override INestedStreamEventGenerator<AzureAIAgents.Models.Response> DoInvokeStreamAsync(CreateResponse createResponse,
+    /// <inheritdoc/>
+    protected override INestedStreamEventGenerator<AzureAIAgents.Models.Response> DoInvokeStream(CreateResponse createResponse,
         AgentInvocationContext context,
         CancellationToken cancellationToken)
     {
-        Activity.Current?.SetServiceNamespace("agentframework");
+        // TODO: Add SetServiceNamespace extension method
+        // Activity.Current?.SetServiceNamespace("agentframework");
 
         var messages = createResponse.GetInputMessages();
         var updates = agent.RunStreamingAsync(messages, cancellationToken: cancellationToken);

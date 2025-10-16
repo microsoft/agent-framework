@@ -13,6 +13,9 @@ using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Hosting.Converters;
 
+/// <summary>
+/// Generates item resources from agent run response updates.
+/// </summary>
 public class AfItemResourceGenerator
     : NestedChunkedUpdatingGeneratorBase<IEnumerable<ItemResource>, AgentRunResponseUpdate>
 {
@@ -62,7 +65,7 @@ public class AfItemResourceGenerator
         IAsyncEnumerable<AgentRunResponseUpdate> updates,
         Action<ItemResource> onItemResource)
     {
-        var p = await this.FlattenContentsAsync(updates).Peek(this.CancellationToken);
+        var p = await this.FlattenContentsAsync(updates).PeekAsync(this.CancellationToken).ConfigureAwait(false);
         if (!p.HasValue)
         {
             yield break;
@@ -125,29 +128,29 @@ public class AfItemResourceGenerator
                 continue;
             }
 
-            var groupSeq = this.GroupSeq.Next();
+            var groupSeq = this.GroupSeq.GetNext();
             var item = functionCallContent.ToFunctionToolCallItemResource(this.Context.IdGenerator.GenerateFunctionCallId());
             onItemResource(item);
 
             yield return AzureAIAgentsModelFactory.ResponseOutputItemAddedEvent(
-                sequenceNumber: this.Seq.Next(),
+                sequenceNumber: this.Seq.GetNext(),
                 outputIndex: groupSeq,
                 item: item);
 
             yield return AzureAIAgentsModelFactory.ResponseFunctionCallArgumentsDeltaEvent(
-                sequenceNumber: this.Seq.Next(),
+                sequenceNumber: this.Seq.GetNext(),
                 itemId: item.Id,
                 outputIndex: this.GroupSeq.Current(),
                 delta: item.Arguments);
 
             yield return AzureAIAgentsModelFactory.ResponseFunctionCallArgumentsDoneEvent(
-                sequenceNumber: this.Seq.Next(),
+                sequenceNumber: this.Seq.GetNext(),
                 itemId: item.Id,
                 outputIndex: this.GroupSeq.Current(),
                 arguments: item.Arguments);
 
             yield return AzureAIAgentsModelFactory.ResponseOutputItemDoneEvent(
-                sequenceNumber: this.Seq.Next(),
+                sequenceNumber: this.Seq.GetNext(),
                 outputIndex: groupSeq,
                 item: item);
         }
@@ -164,17 +167,17 @@ public class AfItemResourceGenerator
                 continue;
             }
 
-            var groupSeq = this.GroupSeq.Next();
+            var groupSeq = this.GroupSeq.GetNext();
             var item = functionResultContent.ToFunctionToolCallOutputItemResource(this.Context.IdGenerator.GenerateFunctionOutputId());
             onItemResource(item);
 
             yield return AzureAIAgentsModelFactory.ResponseOutputItemAddedEvent(
-                sequenceNumber: this.Seq.Next(),
+                sequenceNumber: this.Seq.GetNext(),
                 outputIndex: groupSeq,
                 item: item);
 
             yield return AzureAIAgentsModelFactory.ResponseOutputItemDoneEvent(
-                sequenceNumber: this.Seq.Next(),
+                sequenceNumber: this.Seq.GetNext(),
                 outputIndex: groupSeq,
                 item: item);
         }
@@ -184,7 +187,7 @@ public class AfItemResourceGenerator
         IAsyncEnumerable<AIContent> source,
         Action<ItemResource> onItemResource)
     {
-        var groupSeq = this.GroupSeq.Next();
+        var groupSeq = this.GroupSeq.GetNext();
         var itemId = this.Context.IdGenerator.GenerateMessageId();
         var incompleteItem = new ResponsesAssistantMessageItemResource(
             id: itemId,
@@ -193,12 +196,12 @@ public class AfItemResourceGenerator
         );
 
         yield return AzureAIAgentsModelFactory.ResponseOutputItemAddedEvent(
-            sequenceNumber: this.Seq.Next(),
+            sequenceNumber: this.Seq.GetNext(),
             outputIndex: groupSeq,
             item: incompleteItem);
 
         yield return AzureAIAgentsModelFactory.ResponseContentPartAddedEvent(
-            sequenceNumber: this.Seq.Next(),
+            sequenceNumber: this.Seq.GetNext(),
             itemId: itemId,
             outputIndex: groupSeq,
             contentIndex: 0,
@@ -214,7 +217,7 @@ public class AfItemResourceGenerator
 
             text.Append(textContent.Text);
             yield return AzureAIAgentsModelFactory.ResponseTextDeltaEvent(
-                sequenceNumber: this.Seq.Next(),
+                sequenceNumber: this.Seq.GetNext(),
                 itemId: itemId,
                 outputIndex: groupSeq,
                 contentIndex: 0,
@@ -224,7 +227,7 @@ public class AfItemResourceGenerator
 
         var itemContent = new ItemContentOutputText(text.ToString(), []);
         yield return AzureAIAgentsModelFactory.ResponseContentPartDoneEvent(
-            sequenceNumber: this.Seq.Next(),
+            sequenceNumber: this.Seq.GetNext(),
             itemId: itemId,
             outputIndex: groupSeq,
             contentIndex: 0,
@@ -237,7 +240,7 @@ public class AfItemResourceGenerator
         );
         onItemResource(itemResource);
         yield return AzureAIAgentsModelFactory.ResponseOutputItemDoneEvent(
-            sequenceNumber: this.Seq.Next(),
+            sequenceNumber: this.Seq.GetNext(),
             outputIndex: groupSeq,
             item: itemResource);
     }

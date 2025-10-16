@@ -1,11 +1,26 @@
+﻿using System;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace Azure.AI.AgentsHosting.Ingress.Common;
 
+/// <summary>
+/// Extension methods for IAsyncEnumerable.
+/// </summary>
 public static class AsyncEnumerableExtensions
 {
-    public static IAsyncEnumerable<IAsyncEnumerable<TSource>> ChunkOnChange<TSource>(
+    /// <summary>
+    /// Chunks the source based on when items change.
+    /// </summary>
+    /// <typeparam name="TSource">The source item type.</typeparam>
+    /// <param name="source">The async enumerable source.</param>
+    /// <param name="isChanged">Function to determine if items changed.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>Chunked async enumerable.</returns>
+    public static IAsyncEnumerable<IAsyncEnumerable<TSource>> ChunkOnChangeAsync<TSource>(
         this IAsyncEnumerable<TSource> source,
         Func<TSource?, TSource?, bool>? isChanged = null,
         CancellationToken cancellationToken = default)
@@ -14,10 +29,20 @@ public static class AsyncEnumerableExtensions
             ? EqualityComparer<TSource>.Default
             : EqualityComparer<TSource>.Create((x, y) => !isChanged(x, y), t => t?.GetHashCode() ?? 0);
 
-        return source.ChunkByKey(x => x, c, cancellationToken);
+        return source.ChunkByKeyAsync(x => x, c, cancellationToken);
     }
 
-    public static async IAsyncEnumerable<IAsyncEnumerable<TSource>> ChunkByKey<TSource, TKey>(
+    /// <summary>
+    /// Chunks the source by key selector.
+    /// </summary>
+    /// <typeparam name="TSource">The source item type.</typeparam>
+    /// <typeparam name="TKey">The key type.</typeparam>
+    /// <param name="source">The async enumerable source.</param>
+    /// <param name="keySelector">Function to select the key.</param>
+    /// <param name="comparer">Optional key comparer.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>Chunked async enumerable by key.</returns>
+    public static async IAsyncEnumerable<IAsyncEnumerable<TSource>> ChunkByKeyAsync<TSource, TKey>(
         this IAsyncEnumerable<TSource> source,
         Func<TSource, TKey> keySelector,
         IEqualityComparer<TKey>? comparer = null,
@@ -25,7 +50,9 @@ public static class AsyncEnumerableExtensions
     {
         comparer ??= EqualityComparer<TKey>.Default;
 
+#pragma warning disable CA2007 // Consider calling ConfigureAwait on the awaited task
         await using var e = source.GetAsyncEnumerator(cancellationToken);
+#pragma warning restore CA2007
         if (!await e.MoveNextAsync().ConfigureAwait(false))
         {
             yield break;
@@ -39,11 +66,11 @@ public static class AsyncEnumerableExtensions
         {
             var currentKey = pendingKey;
 
-            yield return Inner(cancellationToken);
+            yield return InnerAsync(cancellationToken);
             continue;
 
             [SuppressMessage("ReSharper", "AccessToDisposedClosure")]
-            async IAsyncEnumerable<TSource> Inner([EnumeratorCancellation] CancellationToken ct = default)
+            async IAsyncEnumerable<TSource> InnerAsync([EnumeratorCancellation] CancellationToken ct = default)
             {
                 ct.ThrowIfCancellationRequested();
                 yield return pending; // first of the group
@@ -72,7 +99,14 @@ public static class AsyncEnumerableExtensions
         }
     }
 
-    public static async ValueTask<(bool HasValue, T First, IAsyncEnumerable<T> Source)> Peek<T>(
+    /// <summary>
+    /// Peeks at the first item of an async enumerable without consuming it.
+    /// </summary>
+    /// <typeparam name="T">The item type.</typeparam>
+    /// <param name="source">The async enumerable source.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A tuple indicating if there's a value, the first item, and the source.</returns>
+    public static async ValueTask<(bool HasValue, T First, IAsyncEnumerable<T> Source)> PeekAsync<T>(
         this IAsyncEnumerable<T> source,
         CancellationToken cancellationToken = default)
     {
@@ -83,7 +117,7 @@ public static class AsyncEnumerableExtensions
             moveNextSucceeded = await e.MoveNextAsync().ConfigureAwait(false);
             if (!moveNextSucceeded)
             {
-                return (false, default!, Empty<T>());
+                return (false, default!, EmptyAsync<T>());
             }
         }
         finally
@@ -94,12 +128,11 @@ public static class AsyncEnumerableExtensions
             }
         }
 
-
         var first = e.Current;
 
-        return (true, first, Sequence(first, e));
+        return (true, first, SequenceAsync(first, e));
 
-        static async IAsyncEnumerable<T> Sequence(T first, IAsyncEnumerator<T> e)
+        static async IAsyncEnumerable<T> SequenceAsync(T first, IAsyncEnumerator<T> e)
         {
             try
             {
@@ -117,7 +150,7 @@ public static class AsyncEnumerableExtensions
     }
 
 #pragma warning disable CS1998
-    private static async IAsyncEnumerable<T> Empty<T>()
+    private static async IAsyncEnumerable<T> EmptyAsync<T>()
     {
         yield break;
     }

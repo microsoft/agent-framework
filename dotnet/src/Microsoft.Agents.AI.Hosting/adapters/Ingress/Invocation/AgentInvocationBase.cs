@@ -13,23 +13,41 @@ using AzureAIAgents.Models;
 
 namespace Azure.AI.AgentsHosting.Ingress.Invocation;
 
+/// <summary>
+/// Base class for agent invocation implementations.
+/// </summary>
 public abstract class AgentInvocationBase : IAgentInvocation
 {
+    /// <summary>
+    /// When overridden in a derived class, performs the actual agent invocation.
+    /// </summary>
+    /// <param name="createResponse">The create response request.</param>
+    /// <param name="context">The agent invocation context.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task representing the response.</returns>
     protected abstract Task<AzureAIAgents.Models.Response> DoInvokeAsync(CreateResponse createResponse,
         AgentInvocationContext context,
         CancellationToken cancellationToken);
 
-    protected abstract INestedStreamEventGenerator<AzureAIAgents.Models.Response> DoInvokeStreamAsync(CreateResponse createResponse,
+    /// <summary>
+    /// When overridden in a derived class, performs the actual streaming agent invocation.
+    /// </summary>
+    /// <param name="createResponse">The create response request.</param>
+    /// <param name="context">The agent invocation context.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A nested stream event generator.</returns>
+    protected abstract INestedStreamEventGenerator<AzureAIAgents.Models.Response> DoInvokeStream(CreateResponse createResponse,
         AgentInvocationContext context,
         CancellationToken cancellationToken);
 
+    /// <inheritdoc/>
     public async Task<AzureAIAgents.Models.Response> InvokeAsync(CreateResponse createResponse,
         AgentInvocationContext context,
         CancellationToken cancellationToken = default)
     {
         try
         {
-            return await DoInvokeAsync(createResponse, context, cancellationToken).ConfigureAwait(false);
+            return await this.DoInvokeAsync(createResponse, context, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception e)
         {
@@ -47,12 +65,13 @@ public abstract class AgentInvocationBase : IAgentInvocation
         }
     }
 
+    /// <inheritdoc/>
     public async IAsyncEnumerable<ResponseStreamEvent> InvokeStreamAsync(CreateResponse createResponse,
         AgentInvocationContext context,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var generator = DoInvokeStreamAsync(createResponse, context, cancellationToken);
-        await foreach (var group in generator.Generate().WithCancellation(cancellationToken).ConfigureAwait(false))
+        var generator = this.DoInvokeStream(createResponse, context, cancellationToken);
+        await foreach (var group in generator.GenerateAsync().WithCancellation(cancellationToken).ConfigureAwait(false))
         {
             await foreach (var e in group.Events.WithCancellation(cancellationToken).ConfigureAwait(false))
             {

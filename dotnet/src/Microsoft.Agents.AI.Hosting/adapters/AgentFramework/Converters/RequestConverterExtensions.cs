@@ -11,10 +11,16 @@ using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Hosting.Converters;
 
+/// <summary>
+/// Extension methods for converting CreateResponse to input messages.
+/// </summary>
 public static class RequestConverterExtensions
 {
-    private static readonly JsonSerializerOptions Json = JsonExtensions.DefaultJsonSerializerOptions;
-
+    /// <summary>
+    /// Extracts input messages from the CreateResponse.
+    /// </summary>
+    /// <param name="createResponse">The CreateResponse to extract messages from.</param>
+    /// <returns>A collection of ChatMessage objects.</returns>
     public static IReadOnlyCollection<ChatMessage> GetInputMessages(this CreateResponse createResponse)
     {
         var items = createResponse.Input.ToObject<IList<ItemParam>>();

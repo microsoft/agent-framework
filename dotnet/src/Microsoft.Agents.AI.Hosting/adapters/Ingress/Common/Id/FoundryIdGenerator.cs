@@ -1,10 +1,15 @@
-﻿using System.Security.Cryptography;
+﻿using System;
+using System.Linq;
+using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 
 using AzureAIAgents.Models;
 
 namespace Azure.AI.AgentsHosting.Ingress.Common.Id;
 
+/// <summary>
+/// Generates Foundry-style IDs with partition keys.
+/// </summary>
 public partial class FoundryIdGenerator : IIdGenerator
 {
     private readonly string _partitionId;
@@ -17,27 +22,44 @@ public partial class FoundryIdGenerator : IIdGenerator
     private static Regex WatermarkRegex() => s_watermarkRegex;
 #endif
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="FoundryIdGenerator"/> class.
+    /// </summary>
+    /// <param name="responseId">The response ID.</param>
+    /// <param name="conversationId">The conversation ID.</param>
     public FoundryIdGenerator(string? responseId, string? conversationId)
     {
-        ResponseId = responseId ?? NewId("resp");
-        ConversationId = conversationId ?? NewId("conv");
-        _partitionId = ExtractPartitionId(ConversationId);
+        this.ResponseId = responseId ?? NewId("resp");
+        this.ConversationId = conversationId ?? NewId("conv");
+        this._partitionId = ExtractPartitionId(this.ConversationId);
     }
 
+    /// <summary>
+    /// Creates a new ID generator from a create response request.
+    /// </summary>
+    /// <param name="request">The create response request.</param>
+    /// <returns>A new ID generator.</returns>
     public static FoundryIdGenerator From(CreateResponse request)
     {
         request.Metadata.TryGetValue("response_id", out var responseId);
         return new FoundryIdGenerator(responseId, request.Conversation?.Id);
     }
 
+    /// <summary>
+    /// Gets the response ID.
+    /// </summary>
     public string ResponseId { get; }
 
+    /// <summary>
+    /// Gets the conversation ID.
+    /// </summary>
     public string ConversationId { get; }
 
+    /// <inheritdoc/>
     public string Generate(string? category = null)
     {
         var prefix = string.IsNullOrEmpty(category) ? "id" : category;
-        return NewId(prefix, partitionKey: _partitionId);
+        return NewId(prefix, partitionKey: this._partitionId);
     }
 
     /// <summary>
@@ -130,7 +152,6 @@ public partial class FoundryIdGenerator : IIdGenerator
         }
 
         // get last partitionKeyLength characters from the last part as the partition key
-        var partitionId = parts[1][^partitionKeyLength..];
-        return partitionId;
+        return parts[1][^partitionKeyLength..];
     }
 }
