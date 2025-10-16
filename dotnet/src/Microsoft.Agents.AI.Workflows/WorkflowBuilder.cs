@@ -178,7 +178,8 @@ public class WorkflowBuilder
     /// <param name="target">The executor that acts as the target node of the edge. Cannot be null.</param>
     /// <param name="idempotent">If set to <see langword="true"/>, adding the same edge multiple times will be a NoOp,
     /// rather than an error.</param>
-    /// <param name="label"></param>
+    /// <param name="label">An optional text label to describe the edge. This label will appear in workflow visualizations
+    /// (DOT and Mermaid formats) to document the purpose or condition of the edge.</param>
     /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
     /// <exception cref="InvalidOperationException">Thrown if an unconditional edge between the specified source and target
     /// executors already exists.</exception>
@@ -232,10 +233,11 @@ public class WorkflowBuilder
     /// <param name="source">The executor that acts as the source node of the edge. Cannot be null.</param>
     /// <param name="target">The executor that acts as the target node of the edge. Cannot be null.</param>
     /// <param name="condition">An optional predicate that determines whether the edge should be followed based on the input.
+    /// If null, the edge is always activated when the source sends a message.</param>
     /// <param name="idempotent">If set to <see langword="true"/>, adding the same edge multiple times will be a NoOp,
     /// rather than an error.</param>
-    /// If null, the edge is always activated when the source sends a message.</param>
-    /// <param name="label"></param>
+    /// <param name="label">An optional text label to describe the edge. This label will appear in workflow visualizations
+    /// (DOT and Mermaid formats) to document the purpose or condition of the edge.</param>
     /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
     /// <exception cref="InvalidOperationException">Thrown if an unconditional edge between the specified source and target
     /// executors already exists.</exception>
@@ -286,7 +288,8 @@ public class WorkflowBuilder
     /// <remarks>If a partitioner function is provided, it will be used to distribute input across the target
     /// executors. The order of targets determines their mapping in the partitioning process.</remarks>
     /// <param name="source">The source executor from which the fan-out edge originates. Cannot be null.</param>
-    /// <param name="label"></param>
+    /// <param name="label">An optional text label to describe the edge. This label will appear in workflow visualizations
+    /// (DOT and Mermaid formats) to document the purpose or condition of the edge.</param>
     /// <param name="targets">One or more target executors that will receive the fan-out edge. Cannot be null or empty.</param>
     /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
     public WorkflowBuilder AddFanOutEdge(ExecutorIsh source, string? label, params IEnumerable<ExecutorIsh> targets)
@@ -319,7 +322,8 @@ public class WorkflowBuilder
     /// <param name="source">The source executor from which the fan-out edge originates. Cannot be null.</param>
     /// <param name="partitioner">An optional function that determines how input is partitioned among the target executors.
     /// If null, messages will route to all targets.</param>
-    /// <param name="label"></param>
+    /// <param name="label">An optional text label to describe the edge. This label will appear in workflow visualizations
+    /// (DOT and Mermaid formats) to document the purpose or condition of the edge.</param>
     /// <param name="targets">One or more target executors that will receive the fan-out edge. Cannot be null or empty.</param>
     /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
     public WorkflowBuilder AddFanOutEdge<T>(ExecutorIsh source, Func<T?, int, IEnumerable<int>>? partitioner = null, string? label = null, params IEnumerable<ExecutorIsh> targets)
@@ -371,7 +375,8 @@ public class WorkflowBuilder
     /// based on the completion or state of multiple sources. The trigger parameter can be used to customize activation
     /// behavior.</remarks>
     /// <param name="target">The target executor that receives input from the specified source executors. Cannot be null.</param>
-    /// <param name="label"></param>
+    /// <param name="label">An optional text label to describe the edge. This label will appear in workflow visualizations
+    /// (DOT and Mermaid formats) to document the purpose or condition of the edge.</param>
     /// <param name="sources">One or more source executors that provide input to the target. Cannot be null or empty.</param>
     /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
     // Overload for backward compatibility: original signature without label
