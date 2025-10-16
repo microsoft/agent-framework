@@ -15,13 +15,16 @@ namespace Microsoft.Agents.AI.Workflows;
 
 internal sealed class WorkflowThread : AgentThread
 {
+    private readonly Workflow _workflow;
+    private readonly IWorkflowExecutionEnvironment _executionEnvironment;
+
     private readonly CheckpointManager _checkpointManager;
     private readonly InMemoryCheckpointManager? _inMemoryCheckpointManager;
-    private readonly Workflow _workflow;
 
-    public WorkflowThread(Workflow workflow, string runId, CheckpointManager? checkpointManager = null)
+    public WorkflowThread(Workflow workflow, string runId, IWorkflowExecutionEnvironment executionEnvironment, CheckpointManager? checkpointManager = null)
     {
         this._workflow = Throw.IfNull(workflow);
+        this._executionEnvironment = Throw.IfNull(executionEnvironment);
 
         // If the user provided an external checkpoint manager, use that, otherwise rely on an in-memory one.
         // TODO: Implement persist-only-last functionality for in-memory checkpoint manager, to avoid unbounded
@@ -32,9 +35,10 @@ internal sealed class WorkflowThread : AgentThread
         this.MessageStore = new WorkflowMessageStore();
     }
 
-    public WorkflowThread(Workflow workflow, JsonElement serializedThread, CheckpointManager? checkpointManager = null, JsonSerializerOptions? jsonSerializerOptions = null)
+    public WorkflowThread(Workflow workflow, JsonElement serializedThread, IWorkflowExecutionEnvironment executionEnvironment, CheckpointManager? checkpointManager = null, JsonSerializerOptions? jsonSerializerOptions = null)
     {
         this._workflow = Throw.IfNull(workflow);
+        this._executionEnvironment = Throw.IfNull(executionEnvironment);
 
         JsonMarshaller marshaller = new(jsonSerializerOptions);
         ThreadState threadState = marshaller.Marshal<ThreadState>(serializedThread);
@@ -101,23 +105,25 @@ internal sealed class WorkflowThread : AgentThread
         if (this.LastCheckpoint is not null)
         {
             Checkpointed<StreamingRun> checkpointed =
-                await InProcessExecution.ResumeStreamAsync(this._workflow,
-                                                           this.LastCheckpoint,
-                                                           this._checkpointManager,
-                                                           this.RunId,
-                                                           cancellationToken)
-                                        .ConfigureAwait(false);
+                await this._executionEnvironment
+                            .ResumeStreamAsync(this._workflow,
+                                               this.LastCheckpoint,
+                                               this._checkpointManager,
+                                               this.RunId,
+                                               cancellationToken)
+                            .ConfigureAwait(false);
 
             await checkpointed.Run.TrySendMessageAsync(messages).ConfigureAwait(false);
             return checkpointed;
         }
 
-        return await InProcessExecution.StreamAsync(this._workflow,
-                                                    messages,
-                                                    this._checkpointManager,
-                                                    this.RunId,
-                                                    cancellationToken)
-                                       .ConfigureAwait(false);
+        return await this._executionEnvironment
+                            .StreamAsync(this._workflow,
+                                         messages,
+                                         this._checkpointManager,
+                                         this.RunId,
+                                         cancellationToken)
+                            .ConfigureAwait(false);
     }
 
     internal async
