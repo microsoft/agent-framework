@@ -172,7 +172,7 @@ public class AgentRunResponse
     /// <para>
     /// This property should be used in conjunction with <see cref="AgentRunOptions.ContinuationToken"/> to
     /// continue to poll for the completion of the response. Pass this token to
-    /// <see cref="AgentRunOptions.ContinuationToken"/> on subsequent calls to <see cref="m:AIAgent.RunAsync"/>
+    /// <see cref="AgentRunOptions.ContinuationToken"/> on subsequent calls to <see cref="AIAgent.RunAsync(AgentThread?, AgentRunOptions?, System.Threading.CancellationToken)"/>
     /// to poll for completion.
     /// </para>
     /// </remarks>

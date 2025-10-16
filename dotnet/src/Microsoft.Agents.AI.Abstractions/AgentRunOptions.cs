@@ -44,12 +44,12 @@ public class AgentRunOptions
     /// <remarks>
     /// This property is used for background responses that can be activated via the <see cref="AllowBackgroundResponses"/>
     /// property if the <see cref="AIAgent"/> implementation supports them.
-    /// Streamed background responses, such as those returned by default by <see cref="m:AIAgent.RunStreamingAsync"/>
+    /// Streamed background responses, such as those returned by default by <see cref="AIAgent.RunStreamingAsync(AgentThread?, AgentRunOptions?, System.Threading.CancellationToken)"/>
     /// can be resumed if interrupted. This means that a continuation token obtained from the <see cref="AgentRunResponse.ContinuationToken"/>
     /// of an update just before the interruption occurred can be passed to this property to resume the stream from the point of interruption.
-    /// Non-streamed background responses, such as those returned by <see cref="m:AIAgent.RunAsync"/>,
+    /// Non-streamed background responses, such as those returned by <see cref="AIAgent.RunAsync(AgentThread?, AgentRunOptions?, System.Threading.CancellationToken)"/>,
     /// can be polled for completion by obtaining the token from the <see cref="AgentRunResponse.ContinuationToken"/> property
-    /// and passing it to this property on subsequent calls to <see cref="m:AIAgent.RunAsync"/>.
+    /// and passing it to this property on subsequent calls to <see cref="AIAgent.RunAsync(AgentThread?, AgentRunOptions?, System.Threading.CancellationToken)"/>.
     /// </remarks>
     public object? ContinuationToken { get; set; }
 #pragma warning restore CA1200 // Avoid using cref tags with a prefix
