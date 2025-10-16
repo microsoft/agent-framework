@@ -31,6 +31,7 @@ members = [
     "agent-framework-devui",
     "agent-framework-lab",
     "agent-framework-mem0",
+    "agent-framework-purview",
     "agent-framework-redis",
 ]
 
@@ -381,6 +382,23 @@ dependencies = [
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "mem0ai", specifier = ">=0.1.117" },
+]
+
+[[package]]
+name = "agent-framework-purview"
+version = "0.1.0b1"
+source = { editable = "packages/purview" }
+dependencies = [
+    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "azure-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "httpx", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agent-framework-core", editable = "packages/core" },
+    { name = "azure-core", specifier = ">=1.30.0" },
+    { name = "httpx", specifier = ">=0.27.0" },
 ]
 
 [[package]]
