@@ -26,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Enhanced documentation for dependency injection and serialization features ([#1324](https://github.com/microsoft/agent-framework/pull/1324))
 - Update README to list all available examples ([#1394](https://github.com/microsoft/agent-framework/pull/1394))
 - Reorganize workflows modules ([#1282](https://github.com/microsoft/agent-framework/pull/1282))
-- Improved thread serialization and deser with better tests ([#1316](https://github.com/microsoft/agent-framework/pull/1316))
+- Improved thread serialization and deserialization with better tests ([#1316](https://github.com/microsoft/agent-framework/pull/1316))
 - Included existing agent definition in requests to Azure AI ([#1285](https://github.com/microsoft/agent-framework/pull/1285))
 - DevUI - Internal Refactor, Conversations API support, and performance improvements ([#1235](https://github.com/microsoft/agent-framework/pull/1235))
 - Refactor `RequestInfoExecutor` ([#1403](https://github.com/microsoft/agent-framework/pull/1403))
