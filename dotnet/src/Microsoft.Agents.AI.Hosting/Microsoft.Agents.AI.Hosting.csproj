@@ -1,9 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <!-- Only build for .NET Core for now since adapters require ASP.NET Core -->
-    <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">net9.0</TargetFrameworks>
-    <TargetFrameworks Condition="'$(Configuration)' != 'Debug'">net9.0;net472</TargetFrameworks>
+    <TargetFrameworks>$(ProjectsCoreTargetFrameworks)</TargetFrameworks>
+    <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugCoreTargetFrameworks)</TargetFrameworks>
     <VersionSuffix>preview</VersionSuffix>
   </PropertyGroup>
 
@@ -23,7 +22,6 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting" />
-    <PackageReference Include="System.Threading.Tasks.Dataflow" />
     <PackageReference Include="System.ClientModel" />
   </ItemGroup>
   
@@ -38,17 +36,6 @@
     <PackageReference Include="System.Threading.Channels" />
     <PackageReference Include="System.Threading.Tasks.Extensions" />
     <PackageReference Include="System.Diagnostics.DiagnosticSource" />
-    <PackageReference Include="Nullable" PrivateAssets="all" />
-    <PackageReference Include="PolySharp" PrivateAssets="all" />
-  </ItemGroup>
-
-  <ItemGroup Condition="'$(TargetFrameworkIdentifier)' == '.NETCoreApp'">
-    <FrameworkReference Include="Microsoft.AspNetCore.App" />
-  </ItemGroup>
-
-  <!--  Exclude ASP.NET Core hosting files from .NET Framework builds -->
-  <ItemGroup Condition="'$(TargetFrameworkIdentifier)' != '.NETCoreApp'">
-    <Compile Remove="adapters\**\*.cs" />
   </ItemGroup>
 
   <ItemGroup>

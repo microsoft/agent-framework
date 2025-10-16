@@ -1,16 +1,14 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.ClientModel.Primitives;
-using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Threading;
+using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Generated.Models;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses;
 using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
-using OpenAI.Responses;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI;
 
@@ -55,24 +53,10 @@ public static partial class EndpointRouteBuilderExtensions
     private static void MapResponses(IEndpointRouteBuilder routeGroup, AIAgent agent)
     {
         var endpointAgentName = agent.DisplayName;
-        var responsesProcessor = new AIAgentResponsesProcessor(agent);
 
-        routeGroup.MapPost("/", async (HttpContext requestContext, CancellationToken cancellationToken) =>
-        {
-            var requestBinary = await BinaryData.FromStreamAsync(requestContext.Request.Body, cancellationToken).ConfigureAwait(false);
-
-            var responseOptions = new ResponseCreationOptions();
-            var responseOptionsJsonModel = responseOptions as IJsonModel<ResponseCreationOptions>;
-            Debug.Assert(responseOptionsJsonModel is not null);
-
-            responseOptions = responseOptionsJsonModel.Create(requestBinary, ModelReaderWriterOptions.Json);
-            if (responseOptions is null)
-            {
-                return Results.BadRequest("Invalid request payload.");
-            }
-
-            return await responsesProcessor.CreateModelResponseAsync(responseOptions, cancellationToken).ConfigureAwait(false);
-        }).WithName(endpointAgentName + "/CreateResponse");
+        routeGroup.MapPost("/", async ([FromBody] CreateResponse createResponse, CancellationToken cancellationToken)
+            => await AIAgentResponsesProcessor.CreateModelResponseAsync(agent, createResponse, cancellationToken).ConfigureAwait(false))
+            .WithName(endpointAgentName + "/CreateResponse");
     }
 
 #pragma warning disable IDE0051 // Remove unused private members

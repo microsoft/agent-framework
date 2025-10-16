@@ -3,7 +3,7 @@
   <PropertyGroup>
     <TargetFrameworks>$(ProjectsCoreTargetFrameworks)</TargetFrameworks>
     <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugCoreTargetFrameworks)</TargetFrameworks>
-    <NoWarn>$(NoWarn);IDE1006;IDE0130;NU1504;OPENAI001</NoWarn>
+    <NoWarn>$(NoWarn);OPENAI001</NoWarn>
     <RootNamespace>Microsoft.Agents.AI.Hosting.OpenAI</RootNamespace>
     <VersionSuffix>alpha</VersionSuffix>
     <InterceptorsNamespaces>$(InterceptorsNamespaces);Microsoft.AspNetCore.Http.Generated</InterceptorsNamespaces>
@@ -11,22 +11,16 @@
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
+
   <PropertyGroup>
     <InjectSharedThrow>true</InjectSharedThrow>
   </PropertyGroup>
   
-
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
-    <PackageReference Include="Microsoft.VisualStudio.Threading.Analyzers">
-      <PrivateAssets>all</PrivateAssets>
-      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
-    </PackageReference>
-  </ItemGroup>
-
-  <ItemGroup>
     <PackageReference Include="System.Net.ServerSentEvents" VersionOverride="10.0.0-rc.2.25502.107" />
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" />
+    <PackageReference Include="System.ClientModel" />
   </ItemGroup>
   
   <ItemGroup>
