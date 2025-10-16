@@ -71,6 +71,7 @@ dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-devui", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-mem0", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-purview", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-redis", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
@@ -108,6 +109,7 @@ requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "agent-framework-devui", editable = "packages/devui" },
     { name = "agent-framework-mem0", editable = "packages/mem0" },
+    { name = "agent-framework-purview", editable = "packages/purview" },
     { name = "agent-framework-redis", editable = "packages/redis" },
 ]
 
@@ -386,7 +388,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-purview"
-version = "0.1.0b1"
+version = "1.0.0b251016"
 source = { editable = "packages/purview" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },

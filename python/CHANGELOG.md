@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add Purview Middleware ([#1142](https://github.com/microsoft/agent-framework/pull/1142))
 - Added URL Citation Support to Azure AI Agent ([#1397](https://github.com/microsoft/agent-framework/pull/1397))
 - Added MCP headers for AzureAI ([#1506](https://github.com/microsoft/agent-framework/pull/1506))
 - Add Function Approval UI to DevUI ([#1401](https://github.com/microsoft/agent-framework/pull/1401))
