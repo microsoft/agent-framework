@@ -107,24 +107,6 @@ public static partial class AgentWorkflowBuilder
         string workflowName,
         IEnumerable<AIAgent> agents,
         Func<IList<List<ChatMessage>>, List<ChatMessage>>? aggregator = null)
-        => BuildConcurrentCore(workflowName: null, agents, aggregator);
-
-    /// <summary>
-    /// Builds a <see cref="Workflow{T}"/> composed of agents that operate concurrently on the same input,
-    /// aggregating their outputs into a single collection.
-    /// </summary>
-    /// <param name="workflowName">The name of the workflow.</param>
-    /// <param name="agents">The set of agents to compose into a concurrent workflow.</param>
-    /// <param name="aggregator">
-    /// The aggregation function that accepts a list of the output messages from each <paramref name="agents"/> and produces
-    /// a single result list. If <see langword="null"/>, the default behavior is to return a list containing the last message
-    /// from each agent that produced at least one message.
-    /// </param>
-    /// <returns>The built workflow composed of the supplied concurrent <paramref name="agents"/>.</returns>
-    public static Workflow BuildConcurrent(
-        string workflowName,
-        IEnumerable<AIAgent> agents,
-        Func<IList<List<ChatMessage>>, List<ChatMessage>>? aggregator = null)
         => BuildConcurrentCore(workflowName, agents, aggregator);
 
     private static Workflow BuildConcurrentCore(
