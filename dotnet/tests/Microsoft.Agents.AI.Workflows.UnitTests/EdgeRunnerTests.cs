@@ -155,7 +155,7 @@ public class EdgeRunnerTests
         runContext.Executors["executor2"] = new ForwardMessageExecutor<string>("executor2");
         runContext.Executors["executor3"] = new ForwardMessageExecutor<string>("executor3");
 
-        FanInEdgeData edgeData = new(["executor1", "executor2"], "executor3", new EdgeId(0));
+        FanInEdgeData edgeData = new(["executor1", "executor2"], "executor3", new EdgeId(0), null);
         FanInEdgeRunner runner = new(runContext, edgeData);
 
         // Step 1: Send message from executor1, should not forward yet.

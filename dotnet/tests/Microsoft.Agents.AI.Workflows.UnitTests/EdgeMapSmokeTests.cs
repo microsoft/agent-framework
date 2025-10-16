@@ -21,7 +21,7 @@ public class EdgeMapSmokeTests
 
         Dictionary<string, HashSet<Edge>> workflowEdges = [];
 
-        FanInEdgeData edgeData = new(["executor1", "executor2"], "executor3", new EdgeId(0));
+        FanInEdgeData edgeData = new(["executor1", "executor2"], "executor3", new EdgeId(0), null);
         Edge fanInEdge = new(edgeData);
 
         workflowEdges["executor1"] = [fanInEdge];

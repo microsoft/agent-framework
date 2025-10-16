@@ -10,11 +10,12 @@ namespace Microsoft.Agents.AI.Workflows;
 /// </summary>
 internal sealed class FanInEdgeData : EdgeData
 {
-    internal FanInEdgeData(List<string> sourceIds, string sinkId, EdgeId id) : base(id)
+    internal FanInEdgeData(List<string> sourceIds, string sinkId, EdgeId id, string? label) : base(id)
     {
         this.SourceIds = sourceIds;
         this.SinkId = sinkId;
         this.Connection = new(sourceIds, [sinkId]);
+        this.Label = label;
     }
 
     /// <summary>
@@ -26,6 +27,11 @@ internal sealed class FanInEdgeData : EdgeData
     /// The Id of the destination <see cref="Executor"/> node.
     /// </summary>
     public string SinkId { get; }
+
+    /// <summary>
+    /// Optional label for the edge.
+    /// </summary>
+    public string? Label { get; init; }
 
     /// <inheritdoc />
     internal override EdgeConnection Connection { get; }

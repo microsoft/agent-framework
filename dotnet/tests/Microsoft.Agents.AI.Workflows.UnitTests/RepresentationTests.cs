@@ -137,17 +137,17 @@ public class RepresentationTests
         RunEdgeInfoMatchTest(fanOutEdgeWithAssigner);
 
         // FanIn Edges
-        Edge fanInEdge = new(new FanInEdgeData([Source(1), Source(2), Source(3)], Sink(1), TakeEdgeId()));
+        Edge fanInEdge = new(new FanInEdgeData([Source(1), Source(2), Source(3)], Sink(1), TakeEdgeId(), null));
         RunEdgeInfoMatchTest(fanInEdge);
 
-        Edge fanInEdge2 = new(new FanInEdgeData([Source(1), Source(2), Source(3)], Sink(1), TakeEdgeId()));
+        Edge fanInEdge2 = new(new FanInEdgeData([Source(1), Source(2), Source(3)], Sink(1), TakeEdgeId(), null));
         RunEdgeInfoMatchTest(fanInEdge, fanInEdge2);
 
-        Edge fanInEdge3 = new(new FanInEdgeData([Source(2), Source(3), Source(1)], Sink(1), TakeEdgeId()));
+        Edge fanInEdge3 = new(new FanInEdgeData([Source(2), Source(3), Source(1)], Sink(1), TakeEdgeId(), null));
         RunEdgeInfoMatchTest(fanInEdge, fanInEdge3, expect: false); // Order matters (though for FanIn maybe it shouldn't?)
 
-        Edge fanInEdge4 = new(new FanInEdgeData([Source(1), Source(2), Source(4)], Sink(1), TakeEdgeId()));
-        Edge fanInEdge5 = new(new FanInEdgeData([Source(1), Source(2), Source(3)], Sink(2), TakeEdgeId()));
+        Edge fanInEdge4 = new(new FanInEdgeData([Source(1), Source(2), Source(4)], Sink(1), TakeEdgeId(), null));
+        Edge fanInEdge5 = new(new FanInEdgeData([Source(1), Source(2), Source(3)], Sink(2), TakeEdgeId(), null));
         RunEdgeInfoMatchTest(fanInEdge, fanInEdge4, expect: false); // Identity matters
         RunEdgeInfoMatchTest(fanInEdge, fanInEdge5, expect: false);
 

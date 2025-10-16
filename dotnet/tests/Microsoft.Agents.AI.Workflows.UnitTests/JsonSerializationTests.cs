@@ -118,7 +118,7 @@ public class JsonSerializationTests
         RunJsonRoundtrip(TestFanOutEdgeInfo_Assigner, predicate: TestFanOutEdgeInfo_Assigner.CreateValidator());
     }
 
-    private static FanInEdgeData TestFanInEdgeData => new(["SourceExecutor1", "SourceExecutor2"], "TargetExecutor", TakeEdgeId());
+    private static FanInEdgeData TestFanInEdgeData => new(["SourceExecutor1", "SourceExecutor2"], "TargetExecutor", TakeEdgeId(), null);
     private static FanInEdgeInfo TestFanInEdgeInfo => new(TestFanInEdgeData);
 
     [Fact]
