@@ -277,6 +277,8 @@ public class WorkflowBuilder
     /// <param name="label"></param>
     /// <param name="targets">One or more target executors that will receive the fan-out edge. Cannot be null or empty.</param>
     /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
+    public WorkflowBuilder AddFanOutEdge(ExecutorIsh source, params IEnumerable<ExecutorIsh> targets)
+        => this.AddFanOutEdge(source, null, targets);
     public WorkflowBuilder AddFanOutEdge(ExecutorIsh source, string? label, params IEnumerable<ExecutorIsh> targets)
         => this.AddFanOutEdge<object>(source, null, label, targets);
 
