@@ -47,7 +47,7 @@ devui ./agents --port 8080
 # → API: http://localhost:8080/v1/*
 ```
 
-When DevUI starts with no discovered entities, it displays a **sample entity gallery** with curated examples from the Agent Framework repository to help you get started quickly.
+When DevUI starts with no discovered entities, it displays a **sample entity gallery** with curated examples from the Agent Framework repository. You can download these samples, review them, and run them locally to get started quickly.
 
 ## Directory Structure
 
@@ -160,31 +160,37 @@ Given that DevUI offers an OpenAI Responses API, it internally maps messages and
 | Agent Framework Content         | OpenAI Event/Type                        | Status   |
 | ------------------------------- | ---------------------------------------- | -------- |
 | `TextContent`                   | `response.output_text.delta`             | Standard |
-| `TextReasoningContent`          | `response.reasoning.delta`               | Standard |
+| `TextReasoningContent`          | `response.reasoning_text.delta`          | Standard |
 | `FunctionCallContent` (initial) | `response.output_item.added`             | Standard |
 | `FunctionCallContent` (args)    | `response.function_call_arguments.delta` | Standard |
 | `FunctionResultContent`         | `response.function_result.complete`      | DevUI    |
-| `ErrorContent`                  | `response.error`                         | Standard |
+| `FunctionApprovalRequestContent`| `response.function_approval.requested`   | DevUI    |
+| `FunctionApprovalResponseContent`| `response.function_approval.responded`  | DevUI    |
+| `ErrorContent`                  | `error`                                  | Standard |
 | `UsageContent`                  | Final `Response.usage` field (not streamed) | Standard |
 | `WorkflowEvent`                 | `response.workflow_event.complete`       | DevUI    |
-| `DataContent`, `UriContent`     | `response.trace.complete`                | DevUI    |
+| `DataContent`                   | `response.trace.complete`                | DevUI    |
+| `UriContent`                    | `response.trace.complete`                | DevUI    |
+| `HostedFileContent`             | `response.trace.complete`                | DevUI    |
+| `HostedVectorStoreContent`      | `response.trace.complete`                | DevUI    |
 
 - **Standard** = OpenAI Responses API spec
-- **DevUI** = Custom extensions for Agent Framework features (workflows, traces, function results)
+- **DevUI** = Custom extensions for Agent Framework features (workflows, traces, function approvals)
 
 ### OpenAI Responses API Compliance
 
 DevUI follows the OpenAI Responses API specification for maximum compatibility:
 
 **Standard OpenAI Types Used:**
-- `ResponseOutputItemAddedEvent` - Output item notifications (function calls)
+- `ResponseOutputItemAddedEvent` - Output item notifications (function calls and results)
 - `Response.usage` - Token usage (in final response, not streamed)
 - All standard text, reasoning, and function call events
 
 **Custom DevUI Extensions:**
-- `response.function_result.complete` - Function execution results (DevUI executes functions, OpenAI doesn't)
+- `response.function_approval.requested` - Function approval requests (for interactive approval workflows)
+- `response.function_approval.responded` - Function approval responses (user approval/rejection)
 - `response.workflow_event.complete` - Agent Framework workflow events
-- `response.trace.complete` - Execution traces for debugging
+- `response.trace.complete` - Execution traces and internal content (DataContent, UriContent, hosted files/stores)
 
 These custom extensions are clearly namespaced and can be safely ignored by standard OpenAI clients.
 
@@ -192,8 +198,7 @@ These custom extensions are clearly namespaced and can be safely ignored by stan
 
 - `GET /v1/entities` - List discovered agents/workflows
 - `GET /v1/entities/{entity_id}/info` - Get detailed entity information
-- `POST /v1/entities/add` - Add entity from URL (for gallery samples)
-- `DELETE /v1/entities/{entity_id}` - Remove remote entity
+- `POST /v1/entities/{entity_id}/reload` - Hot reload entity (for development)
 
 ### Execution (OpenAI Responses API)
 
@@ -213,6 +218,22 @@ These custom extensions are clearly namespaced and can be safely ignored by stan
 ### Health
 
 - `GET /health` - Health check
+
+## Security
+
+DevUI is designed as a **sample application for local development** and should not be exposed to untrusted networks or used in production environments.
+
+**Security features:**
+- Only loads entities from local directories or in-memory registration
+- No remote code execution capabilities
+- Binds to localhost (127.0.0.1) by default
+- All samples must be manually downloaded and reviewed before running
+
+**Best practices:**
+- Never expose DevUI to the internet
+- Review all agent/workflow code before running
+- Only load entities from trusted sources
+- Use `.env` files for sensitive credentials (never commit them)
 
 ## Implementation
 

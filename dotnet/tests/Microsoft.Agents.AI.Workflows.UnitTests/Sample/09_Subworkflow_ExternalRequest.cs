@@ -7,8 +7,6 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
-using Microsoft.Agents.AI.Workflows.InProc;
-using Microsoft.Agents.AI.Workflows.UnitTests;
 
 namespace Microsoft.Agents.AI.Workflows.Sample;
 
@@ -16,13 +14,26 @@ internal sealed record class UserRequest(string RequestType, string Type, int Am
 {
     internal static int RequestCount;
 
-    public static string CreateId() => Interlocked.Increment(ref RequestCount).ToString();
+    public static string CreateId()
+    {
+        string result = Interlocked.Increment(ref RequestCount).ToString();
+        Console.Error.WriteLine($"Got Id: {result}");
+        return result;
+    }
 
-    public static UserRequest CreateResourceRequest(string resourceType = "cpu", int amount = 1, string priority = "normal") =>
-        new("resource", resourceType, amount, Priority: priority, Id: CreateId());
+    public static UserRequest CreateResourceRequest(string resourceType = "cpu", int amount = 1, string priority = "normal")
+    {
+        UserRequest request = new("resource", resourceType, amount, Priority: priority, Id: CreateId());
+        Console.Error.WriteLine($"\t{request}");
+        return request;
+    }
 
-    public static UserRequest CreatePolicyCheckRequest(string resourceType = "cpu", int amount = 1, string policyType = "quota") =>
-        new("policy", resourceType, amount, PolicyType: policyType, Id: CreateId());
+    public static UserRequest CreatePolicyCheckRequest(string resourceType = "cpu", int amount = 1, string policyType = "quota")
+    {
+        UserRequest request = new("policy", resourceType, amount, PolicyType: policyType, Id: CreateId());
+        Console.Error.WriteLine($"\t{request}");
+        return request;
+    }
 
     public ResourceResponse CreateResourceResponse(int allocated, string source)
         => new(this.Id, this.Type, allocated, source);
@@ -155,7 +166,7 @@ internal static class Step9EntryPoint
     public static UserRequest[] RequestsToProcess => [
             ResourceHitRequest1,
             PolicyHitRequest1,
-            ResourceHitRequest1,
+            ResourceHitRequest2,
             PolicyMissRequest1, // miss
             ResourceMissRequest, // miss
             PolicyHitRequest2,
@@ -172,13 +183,12 @@ internal static class Step9EntryPoint
                              .Select(request => Part2FinishedResponses[request.Id])
                              .OrderBy(request => request.Id)];
 
-    public static async ValueTask<List<RequestFinished>> RunAsync(TextWriter writer, ExecutionMode executionMode)
+    public static async ValueTask<List<RequestFinished>> RunAsync(TextWriter writer, IWorkflowExecutionEnvironment environment)
     {
         RunStatus runStatus;
         List<RequestFinished> results = [];
 
-        InProcessExecutionEnvironment env = executionMode.GetEnvironment();
-        Run workflowRun = await env.RunAsync(WorkflowInstance, RequestsToProcess.ToList());
+        Run workflowRun = await environment.RunAsync(WorkflowInstance, RequestsToProcess.ToList());
 
         RunStatus part1Status = ExpectedResponsesPart2.Length > 0 ? RunStatus.PendingRequests : RunStatus.Idle;
         runStatus = await workflowRun.GetStatusAsync();
@@ -204,6 +214,11 @@ internal static class Step9EntryPoint
                 {
                     policyRequests.Add(requestInfoEvent.Request);
                 }
+            }
+            else if (evt is WorkflowErrorEvent error)
+            {
+                Assert.Fail(((Exception)error.Data!).ToString());
+                Console.Error.WriteLine(error.Data);
             }
         }
 
@@ -260,7 +275,7 @@ internal static class Step9EntryPoint
     }
 }
 
-internal sealed class ResourceRequestor() : Executor(nameof(ResourceRequestor))
+internal sealed class ResourceRequestor() : Executor(nameof(ResourceRequestor), declareCrossRunShareable: true)
 {
     protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
     {
@@ -304,17 +319,18 @@ internal sealed class ResourceRequestor() : Executor(nameof(ResourceRequestor))
         await context.YieldOutputAsync(new RequestFinished(response.Id, RequestType: "policy", PolicyResponse: response));
     }
 }
-
-internal sealed class ResourceCache() : Executor(nameof(ResourceCache))
+internal sealed class ResourceCache()
+    : StatefulExecutor<Dictionary<string, int>>(nameof(ResourceCache),
+                                                InitializeResourceCache,
+                                                declareCrossRunShareable: true)
 {
-    private readonly Dictionary<string, int> _availableResources = new()
-    {
-        ["cpu"] = 10,
-        ["memory"] = 50,
-        ["disk"] = 100,
-    };
-
-    internal List<ResourceResponse> Responses { get; } = [];
+    private static Dictionary<string, int> InitializeResourceCache()
+        => new()
+        {
+            ["cpu"] = 10,
+            ["memory"] = 50,
+            ["disk"] = 100,
+        };
 
     protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
     {
@@ -324,45 +340,60 @@ internal sealed class ResourceCache() : Executor(nameof(ResourceCache))
                            .AddHandler<ExternalResponse>(this.CollectResultAsync);
     }
 
-    private async ValueTask UnwrapAndHandleRequestAsync(ExternalRequest request, IWorkflowContext context)
+    private async ValueTask UnwrapAndHandleRequestAsync(ExternalRequest request, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         if (request.DataIs(out ResourceRequest? resourceRequest))
         {
-            ResourceResponse? response = await this.TryHandleResourceRequestAsync(resourceRequest, context)
+            ResourceResponse? response = await this.TryHandleResourceRequestAsync(resourceRequest, context, cancellationToken)
                                                    .ConfigureAwait(false);
 
             if (response != null)
             {
-                await context.SendMessageAsync(request.CreateResponse(response)).ConfigureAwait(false);
+                await context.SendMessageAsync(request.CreateResponse(response), cancellationToken: cancellationToken).ConfigureAwait(false);
             }
             else
             {
                 // Cache does not have enough resources, forward the request to the external system
-                await context.SendMessageAsync(request).ConfigureAwait(false);
+                await context.SendMessageAsync(request, cancellationToken: cancellationToken).ConfigureAwait(false);
             }
         }
     }
 
-    private async ValueTask<ResourceResponse?> TryHandleResourceRequestAsync(ResourceRequest request, IWorkflowContext context)
+    private async ValueTask<ResourceResponse?> TryHandleResourceRequestAsync(ResourceRequest request, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        if (this._availableResources.TryGetValue(request.ResourceType, out int available) && available >= request.Amount)
+        Console.Error.WriteLine($"Handling Resource Request {request.Id}");
+
+        Dictionary<string, int> availableResources = await this.ReadStateAsync(context, cancellationToken: cancellationToken)
+                                                               .ConfigureAwait(false);
+
+        Console.Error.WriteLine($"Available Resources: {availableResources}");
+
+        try
         {
-            // Cache has enough resources, allocate from cache
-            this._availableResources[request.ResourceType] -= request.Amount;
-            ResourceResponse resourceResponse = new(request.Id, request.ResourceType, request.Amount, Source: "cache");
-            this.Responses.Add(resourceResponse);
-            return resourceResponse;
+            if (availableResources.TryGetValue(request.ResourceType, out int available) && available >= request.Amount)
+            {
+                // Cache has enough resources, allocate from cache
+                availableResources[request.ResourceType] -= request.Amount;
+
+                Console.Error.WriteLine($"Handled Resource Request {request.Id}");
+                return new(request.Id, request.ResourceType, request.Amount, Source: "cache");
+            }
+        }
+        finally
+        {
+            await this.QueueStateUpdateAsync(availableResources, context, cancellationToken)
+                      .ConfigureAwait(false);
         }
 
+        Console.Error.WriteLine($"Could not handle Resource Request {request.Id}");
         return null;
     }
 
     private ValueTask CollectResultAsync(ExternalResponse response, IWorkflowContext context)
     {
-        if (response.DataIs(out ResourceResponse? resourceResponse))
+        if (response.DataIs<ResourceResponse>())
         {
             // Normally we'd update the cache according to whatever logic we want here.
-            this.Responses.Add(resourceResponse);
             return context.SendMessageAsync(response);
         }
 
@@ -370,16 +401,18 @@ internal sealed class ResourceCache() : Executor(nameof(ResourceCache))
     }
 }
 
-internal sealed class QuotaPolicyEngine() : Executor(nameof(QuotaPolicyEngine))
+internal sealed class QuotaPolicyEngine()
+    : StatefulExecutor<Dictionary<string, int>>(nameof(QuotaPolicyEngine),
+                                                InitializePolicyQuotas,
+                                                declareCrossRunShareable: true)
 {
-    private readonly Dictionary<string, int> _quotas = new()
-    {
-        ["cpu"] = 5,
-        ["memory"] = 20,
-        ["disk"] = 1000,
-    };
-
-    internal List<PolicyResponse> Responses { get; } = [];
+    private static Dictionary<string, int> InitializePolicyQuotas()
+        => new()
+        {
+            ["cpu"] = 5,
+            ["memory"] = 20,
+            ["disk"] = 1000,
+        };
 
     protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
     {
@@ -406,25 +439,39 @@ internal sealed class QuotaPolicyEngine() : Executor(nameof(QuotaPolicyEngine))
         }
     }
 
-    private async ValueTask<PolicyResponse?> TryHandlePolicyCheckRequestAsync(PolicyCheckRequest request, IWorkflowContext context)
+    private async ValueTask<PolicyResponse?> TryHandlePolicyCheckRequestAsync(PolicyCheckRequest request, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        if (request.PolicyType == "quota" &&
-            this._quotas.TryGetValue(request.ResourceType, out int quota) &&
-            request.Amount <= quota)
+        Console.Error.WriteLine($"Handling Policy Request {request.Id}");
+
+        Dictionary<string, int> quotas = await this.ReadStateAsync(context, cancellationToken: cancellationToken)
+                                                   .ConfigureAwait(false);
+
+        Console.Error.WriteLine($"Policy Quotas: {quotas}");
+
+        try
         {
-            PolicyResponse policyResponse = new(request.Id, Approved: true, Reason: $"Within quota ({quota})");
-            this.Responses.Add(policyResponse);
+            if (request.PolicyType == "quota" &&
+                quotas.TryGetValue(request.ResourceType, out int quota) &&
+                request.Amount <= quota)
+            {
+                Console.Error.WriteLine($"Handled Policy Request {request.Id}");
 
-            return policyResponse;
+                return new(request.Id, Approved: true, Reason: $"Within quota ({quota})");
+            }
+
+            Console.Error.WriteLine($"Could not handle Policy Request {request.Id}");
+
+            return null;
         }
-
-        return null;
+        finally
+        {
+            await this.QueueStateUpdateAsync(quotas, context, cancellationToken).ConfigureAwait(false);
+        }
     }
     private ValueTask CollectAndForwardAsync(ExternalResponse response, IWorkflowContext context)
     {
-        if (response.DataIs(out PolicyResponse? policyResponse))
+        if (response.DataIs<PolicyResponse>())
         {
-            this.Responses.Add(policyResponse);
             return context.SendMessageAsync(response);
         }
 
@@ -432,11 +479,9 @@ internal sealed class QuotaPolicyEngine() : Executor(nameof(QuotaPolicyEngine))
     }
 }
 
-internal sealed class Coordinator() : Executor(nameof(Coordinator))
+internal sealed class Coordinator() : Executor(nameof(Coordinator), declareCrossRunShareable: true)
 {
-    private int _inflightRequests;
-
-    internal List<RequestFinished> Results { get; } = [];
+    private const string StateKey = nameof(StateKey);
 
     protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
     {
@@ -447,24 +492,34 @@ internal sealed class Coordinator() : Executor(nameof(Coordinator))
         // For some reason, using a lambda here causes the analyzer to generate a spurious
         // VSTHRD110: "Observe the awaitable result of this method call by awaiting it, assigning
         // to a variable, or passing it to another method"
-        ValueTask InvokeStartAsync(UserRequest request, IWorkflowContext context)
-            => this.StartAsync([request], context);
+        ValueTask InvokeStartAsync(UserRequest request, IWorkflowContext context, CancellationToken cancellationToken)
+            => this.StartAsync([request], context, cancellationToken);
     }
 
-    private ValueTask HandleFinishedRequestAsync(RequestFinished finished, IWorkflowContext context)
+    private ValueTask HandleFinishedRequestAsync(RequestFinished finished, IWorkflowContext context, CancellationToken cancellationToken)
     {
-        this.Results.Add(finished);
-        Interlocked.Decrement(ref this._inflightRequests);
+        return context.InvokeWithStateAsync<int>(CountFinishedRequestAndYieldResultAsync, StateKey, cancellationToken: cancellationToken);
 
-        return context.YieldOutputAsync(finished);
-    }
-
-    private async ValueTask StartAsync(List<UserRequest> request, IWorkflowContext context)
-    {
-        Interlocked.Add(ref this._inflightRequests, request.Count);
-        foreach (UserRequest req in request)
+        async ValueTask<int> CountFinishedRequestAndYieldResultAsync(int state, IWorkflowContext context, CancellationToken cancellationToken)
         {
-            await context.SendMessageAsync(req).ConfigureAwait(false);
+            await context.YieldOutputAsync(finished, cancellationToken).ConfigureAwait(false);
+
+            return state - 1;
+        }
+    }
+
+    private ValueTask StartAsync(List<UserRequest> requests, IWorkflowContext context, CancellationToken cancellationToken)
+    {
+        return context.InvokeWithStateAsync<int>(CountFinishedRequestAndYieldResultAsync, StateKey, cancellationToken: cancellationToken);
+
+        async ValueTask<int> CountFinishedRequestAndYieldResultAsync(int state, IWorkflowContext context, CancellationToken cancellationToken)
+        {
+            foreach (UserRequest req in requests)
+            {
+                await context.SendMessageAsync(req, cancellationToken: cancellationToken).ConfigureAwait(false);
+            }
+
+            return state + requests.Count;
         }
     }
 }

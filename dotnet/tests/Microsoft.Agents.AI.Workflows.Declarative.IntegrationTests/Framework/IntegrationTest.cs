@@ -2,11 +2,13 @@
 
 using System;
 using System.Collections.Frozen;
+using System.Collections.Generic;
 using System.Reflection;
 using System.Threading.Tasks;
 using Azure.Identity;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Shared.IntegrationTests;
 using Xunit.Abstractions;
@@ -66,7 +68,7 @@ public abstract class IntegrationTest : IDisposable
 
     internal static string FormatVariablePath(string variableName, string? scope = null) => $"{scope ?? WorkflowFormulaState.DefaultScopeName}.{variableName}";
 
-    protected async ValueTask<DeclarativeWorkflowOptions> CreateOptionsAsync(bool externalConversation = false)
+    protected async ValueTask<DeclarativeWorkflowOptions> CreateOptionsAsync(bool externalConversation = false, params IEnumerable<AIFunction> functionTools)
     {
         FrozenDictionary<string, string?> agentMap = await AgentFactory.GetAgentsAsync(this.FoundryConfiguration, this.Configuration);
 
@@ -75,7 +77,11 @@ public abstract class IntegrationTest : IDisposable
                 .AddInMemoryCollection(agentMap)
                 .Build();
 
-        AzureAgentProvider agentProvider = new(this.FoundryConfiguration.Endpoint, new AzureCliCredential());
+        AzureAgentProvider agentProvider =
+            new(this.FoundryConfiguration.Endpoint, new AzureCliCredential())
+            {
+                Functions = functionTools,
+            };
 
         string? conversationId = null;
         if (externalConversation)
