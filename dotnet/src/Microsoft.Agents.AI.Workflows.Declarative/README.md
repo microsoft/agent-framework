@@ -11,7 +11,7 @@ Please refer to the [README](../../../workflow-samples/README.md) for setup inst
 As part of our [Getting Started with Declarative Workflows](../../samples/GettingStarted/Workflows/Declarative/README.md),
 we've provided a console application that is able to execute any declarative workflow.
 
-Please refer to the [README](../../samples/GettingStarted/Workflows/Declarative/ExecuteWorkflow) for configuration instructions.
+Please refer to the [README](../../samples/GettingStarted/Workflows/Declarative/ExecuteWorkflow/README.md) for configuration instructions.
 
 ## Actions
 
