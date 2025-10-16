@@ -25,57 +25,54 @@ public sealed class OpenAIAgentFactory : AgentFactory
     {
         Throw.IfNull(promptAgent);
 
-        ChatClientAgent? agent = null;
-        if (this.IsSupported(promptAgent))
+        var options = new ChatClientAgentOptions()
         {
-            var options = new ChatClientAgentOptions()
-            {
-                Name = promptAgent.Name,
-                Description = promptAgent.Description,
-                Instructions = promptAgent.Instructions?.ToTemplateString(),
-                ChatOptions = promptAgent.GetChatOptions(agentCreationOptions),
-            };
+            Name = promptAgent.Name,
+            Description = promptAgent.Description,
+            Instructions = promptAgent.Instructions?.ToTemplateString(),
+            ChatOptions = promptAgent.GetChatOptions(agentCreationOptions),
+        };
 
-            var chatClient = agentCreationOptions.ServiceProvider?.GetService(typeof(ChatClient)) as ChatClient;
-            var assistantClient = agentCreationOptions.ServiceProvider?.GetService(typeof(AssistantClient)) as AssistantClient;
-            var responseClient = agentCreationOptions.ServiceProvider?.GetService(typeof(OpenAIResponseClient)) as OpenAIResponseClient;
-            var modelId = promptAgent.Model?.Id;
-            var publisher = promptAgent.Model?.Publisher ?? PUBLISHER_OPENAI;
-            if (chatClient is not null)
-            {
-                agent = new ChatClientAgent(
-                    chatClient.AsIChatClient(),
-                    options,
-                    agentCreationOptions.LoggerFactory);
-            }
-            else if (assistantClient is not null)
-            {
-                Throw.IfNullOrEmpty(modelId, "The model id must be specified in the agent definition to create an OpenAI Assistant.");
-                var instructions = promptAgent.Instructions?.ToTemplateString();
-                Throw.IfNullOrEmpty(instructions, "The instructions must be specified in the agent definition to create an OpenAI Assistant.");
+        var chatClient = agentCreationOptions.ServiceProvider?.GetService(typeof(ChatClient)) as ChatClient;
+        var assistantClient = agentCreationOptions.ServiceProvider?.GetService(typeof(AssistantClient)) as AssistantClient;
+        var responseClient = agentCreationOptions.ServiceProvider?.GetService(typeof(OpenAIResponseClient)) as OpenAIResponseClient;
+        var modelId = promptAgent.Model?.Id;
+        var publisher = promptAgent.Model?.Publisher ?? PUBLISHER_OPENAI;
+        ChatClientAgent? agent = null;
+        if (chatClient is not null)
+        {
+            agent = new ChatClientAgent(
+                chatClient.AsIChatClient(),
+                options,
+                agentCreationOptions.LoggerFactory);
+        }
+        else if (assistantClient is not null)
+        {
+            Throw.IfNullOrEmpty(modelId, "The model id must be specified in the agent definition to create an OpenAI Assistant.");
+            var instructions = promptAgent.Instructions?.ToTemplateString();
+            Throw.IfNullOrEmpty(instructions, "The instructions must be specified in the agent definition to create an OpenAI Assistant.");
 
-                agent = await assistantClient.CreateAIAgentAsync(
-                    model: modelId,
-                    name: promptAgent.Name,
-                    instructions: instructions,
-                    tools: options.ChatOptions?.Tools
-                ).ConfigureAwait(false);
-            }
-            else if (responseClient is not null)
-            {
-                agent = new ChatClientAgent(
-                    responseClient.AsIChatClient(),
-                    options,
-                    agentCreationOptions.LoggerFactory);
-            }
-            else if (publisher.Equals(PUBLISHER_OPENAI, StringComparison.OrdinalIgnoreCase))
-            {
-                agent = CreateOpenAIAgent(promptAgent, agentCreationOptions, options);
-            }
-            else if (publisher.Equals(PUBLISHER_AZURE, StringComparison.OrdinalIgnoreCase))
-            {
-                agent = CreateAzureOpenAIAgent(promptAgent, agentCreationOptions, options);
-            }
+            agent = await assistantClient.CreateAIAgentAsync(
+                model: modelId,
+                name: promptAgent.Name,
+                instructions: instructions,
+                tools: options.ChatOptions?.Tools
+            ).ConfigureAwait(false);
+        }
+        else if (responseClient is not null)
+        {
+            agent = new ChatClientAgent(
+                responseClient.AsIChatClient(),
+                options,
+                agentCreationOptions.LoggerFactory);
+        }
+        else if (publisher.Equals(PUBLISHER_OPENAI, StringComparison.OrdinalIgnoreCase))
+        {
+            agent = CreateOpenAIAgent(promptAgent, agentCreationOptions, options);
+        }
+        else if (publisher.Equals(PUBLISHER_AZURE, StringComparison.OrdinalIgnoreCase))
+        {
+            agent = CreateAzureOpenAIAgent(promptAgent, agentCreationOptions, options);
         }
 
         return agent;

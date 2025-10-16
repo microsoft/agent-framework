@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
@@ -72,21 +71,6 @@ internal static class AgentBotElementYaml
                     }
                 }
             };
-
-        for (int i = 0; i < 5; i++)
-        {
-            botBuilder.EnvironmentVariables.Add(new EnvironmentVariableDefinition.Builder()
-            {
-                SchemaName = $"Variable-{i}",
-                Id = Guid.NewGuid(),
-                DisplayName = $"Variable-{i}",
-                DefaultValue = $"DefaultValue-{i}",
-                ValueComponent = new EnvironmentVariableValue.Builder()
-                {
-                    Value = $"Value-{i}"
-                }
-            });
-        }
 
         return botBuilder.Build();
     }

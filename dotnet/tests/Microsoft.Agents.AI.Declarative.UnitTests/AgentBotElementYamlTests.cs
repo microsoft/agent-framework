@@ -126,6 +126,7 @@ public class AgentBotElementYamlTests
         description: Agent description
         instructions: You are a helpful assistant.
         model:
+          kind: OpenAIResponsesModel
           id: =Env.OpenAIModelId
           connection:
             kind: Key
@@ -342,17 +343,23 @@ public class AgentBotElementYamlTests
     public void FromYaml_WithEnvironmentVariables()
     {
         // Arrange
-        Environment.SetEnvironmentVariable("AzureOpenAIEndpoint", "endpoint");
-        Environment.SetEnvironmentVariable("AzureOpenAIModelId", "modelId");
+        Environment.SetEnvironmentVariable("OpenAIEndpoint", "endpoint");
+        Environment.SetEnvironmentVariable("OpenAIModelId", "modelId");
+        Environment.SetEnvironmentVariable("OpenAIApiKey", "apiKey");
 
         // Act
         var agent = AgentBotElementYaml.FromYaml(AgentWithEnvironmentVariables);
 
         // Assert
         Assert.NotNull(agent);
-        // TODO: Re-enable when environment variables are supported.
-        // Assert.Equal("=Env.AzureOpenAIModelId", agent.Model.Id);
-        // Assert.Equal("=Env.AzureOpenAIEndpoint", agent.Model?.Connection?.GetEndpoint());
+        OpenAIResponsesModel? model = agent.Model as OpenAIResponsesModel;
+        Assert.NotNull(model);
+        Assert.Equal("modelId", model.Id);
+        Assert.NotNull(model.Connection);
+        KeyConnection? connection = model.Connection as KeyConnection;
+        Assert.NotNull(connection);
+        Assert.Equal("endpoint", connection.Endpoint?.LiteralValue);
+        Assert.Equal("apiKey", connection.Key?.LiteralValue);
     }
 
     /// <summary>
