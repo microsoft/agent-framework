@@ -115,12 +115,12 @@ public static class Program
     /// Stub implementation of IWorkflowContext for running executors outside of a workflow.
     /// This minimal stub follows Microsoft best practices for test doubles by returning default values.
     /// </summary>
-    private sealed class StubWorkflowContext : Microsoft.Agents.AI.Workflows.IWorkflowContext
+    private sealed class StubWorkflowContext : IWorkflowContext
     {
         public bool ConcurrentRunsEnabled => false;
         public IReadOnlyDictionary<string, string>? TraceContext => null;
 
-        public ValueTask AddEventAsync(Microsoft.Agents.AI.Workflows.WorkflowEvent workflowEvent, CancellationToken cancellationToken = default) => default;
+        public ValueTask AddEventAsync(WorkflowEvent workflowEvent, CancellationToken cancellationToken = default) => default;
         public ValueTask SendMessageAsync(object message, string? targetId = null, CancellationToken cancellationToken = default) => default;
         public ValueTask YieldOutputAsync(object output, CancellationToken cancellationToken = default) => default;
         public ValueTask RequestHaltAsync() => default;
