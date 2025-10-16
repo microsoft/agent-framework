@@ -17,5 +17,6 @@ Before you begin, ensure you have the following prerequisites:
 Set the following environment variables:
 
 ```powershell
-$env:OPENAI_APIKEY="*****" # Replace with your OpenAI api key
-$env:OPENAI_MODEL="gpt-4o-mini"  # Optional, defaults to gpt-4o-mini
+$env:AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/" # Replace with your Azure OpenAI resource endpoint
+$env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini"  # Optional, defaults to gpt-4o-mini
+```
