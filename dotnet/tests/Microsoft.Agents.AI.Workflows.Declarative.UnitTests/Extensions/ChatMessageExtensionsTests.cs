@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Linq;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
@@ -25,7 +26,7 @@ public sealed class ChatMessageExtensionsTests
         Assert.NotNull(result);
         Assert.Contains(result.Fields, f => f.Name == TypeSchema.Message.Fields.Role);
         Assert.Contains(result.Fields, f => f.Name == TypeSchema.Message.Fields.Text);
-        
+
         Dictionary<string, FormulaValue> fields = result.Fields.ToDictionary(f => f.Name, f => f.Value);
         StringValue roleValue = Assert.IsType<StringValue>(fields[TypeSchema.Message.Fields.Role]);
         Assert.Equal("user", roleValue.Value);
@@ -194,7 +195,7 @@ public sealed class ChatMessageExtensionsTests
     {
         // Arrange
         RecordDataValue record = DataValue.RecordFromFields(
-            new KeyValuePair<string, DataValue>(TypeSchema.Message.Fields.Role, StringDataValue.Create("Assistant")),
+            new KeyValuePair<string, DataValue>(TypeSchema.Message.Fields.Role, StringDataValue.Create("Agent")),
             new KeyValuePair<string, DataValue>(TypeSchema.Message.Fields.Content, DataValue.EmptyTable));
 
         // Act
@@ -293,10 +294,10 @@ public sealed class ChatMessageExtensionsTests
     {
         // Arrange
         const AgentMessageContentType ContentType = AgentMessageContentType.Text;
-        string? contentValue = null;
+        const string? ContentValue = null;
 
         // Act
-        AIContent? result = ContentType.ToContent(contentValue);
+        AIContent? result = ContentType.ToContent(ContentValue);
 
         // Assert
         Assert.Null(result);
@@ -360,7 +361,7 @@ public sealed class ChatMessageExtensionsTests
         // Assert
         Assert.NotNull(result);
         DataContent dataContent = Assert.IsType<DataContent>(result);
-        Assert.Contains("data:", dataContent.Data);
+        Assert.False(dataContent.Data.IsEmpty);
     }
 
     [Fact]
@@ -402,9 +403,9 @@ public sealed class ChatMessageExtensionsTests
     public void ToChatMessagesFromTableDataValueWithStrings()
     {
         // Arrange
-        TableDataValue table = DataValue.TableFromValues(
+        TableDataValue table = DataValue.TableFromValues(ImmutableArray.Create<DataValue>(
             StringDataValue.Create("Message 1"),
-            StringDataValue.Create("Message 2"));
+            StringDataValue.Create("Message 2")));
 
         // Act
         IEnumerable<ChatMessage> result = table.ToChatMessages();
@@ -422,7 +423,7 @@ public sealed class ChatMessageExtensionsTests
         RecordDataValue record1 = DataValue.RecordFromFields(
             new KeyValuePair<string, DataValue>(TypeSchema.Message.Fields.Role, StringDataValue.Create("User")),
             new KeyValuePair<string, DataValue>(TypeSchema.Message.Fields.Content, DataValue.EmptyTable));
-        
+
         RecordDataValue record2 = DataValue.RecordFromFields(
             new KeyValuePair<string, DataValue>(TypeSchema.Message.Fields.Role, StringDataValue.Create("Assistant")),
             new KeyValuePair<string, DataValue>(TypeSchema.Message.Fields.Content, DataValue.EmptyTable));
@@ -444,7 +445,7 @@ public sealed class ChatMessageExtensionsTests
         RecordDataValue innerRecord = DataValue.RecordFromFields(
             new KeyValuePair<string, DataValue>(TypeSchema.Message.Fields.Role, StringDataValue.Create("User")),
             new KeyValuePair<string, DataValue>(TypeSchema.Message.Fields.Content, DataValue.EmptyTable));
-        
+
         RecordDataValue wrappedRecord = DataValue.RecordFromFields(
             new KeyValuePair<string, DataValue>("Value", innerRecord));
 

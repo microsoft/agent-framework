@@ -736,7 +736,7 @@ public sealed class DataValueExtensionsTests
         // Assert
         Assert.NotNull(result);
         Assert.Equal(2, result.Fields.Count());
-        
+
         Dictionary<string, FormulaValue> fields = result.Fields.ToDictionary(f => f.Name, f => f.Value);
         Assert.True(fields.ContainsKey("Field1"));
         Assert.True(fields.ContainsKey("Field2"));
@@ -769,11 +769,11 @@ public sealed class DataValueExtensionsTests
         IEnumerable<NamedFormulaType> fieldTypes = result.GetFieldTypes();
         List<NamedFormulaType> fieldTypesList = fieldTypes.ToList();
         Assert.Equal(2, fieldTypesList.Count);
-        
+
         IEnumerable<string> fieldNames = fieldTypesList.Select(f => f.Name.Value);
         Assert.Contains("Name", fieldNames);
         Assert.Contains("Count", fieldNames);
-        
+
         NamedFormulaType nameField = fieldTypesList.First(f => f.Name.Value == "Name");
         NamedFormulaType countField = fieldTypesList.First(f => f.Name.Value == "Count");
         Assert.Equal(FormulaType.String, nameField.Type);
