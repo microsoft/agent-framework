@@ -72,3 +72,10 @@ export BING_CONNECTION_ID="your-bing-connection-id"  # Alternative to BING_CONNE
 ### Optional Variables
 
 - `BING_CONNECTION_NAME` or `BING_CONNECTION_ID`: Your Bing connection name or ID (required for `azure_ai_with_bing_grounding.py` and `azure_ai_with_multiple_tools.py`)
+- `AZURE_SEARCH_ENDPOINT`: Azure AI Search endpoint (required for `azure_ai_with_search_context.py`)
+- `AZURE_SEARCH_API_KEY`: Azure AI Search API key (required for `azure_ai_with_search_context.py`)
+- `AZURE_SEARCH_INDEX_NAME`: Azure AI Search index name (required for `azure_ai_with_search_context.py`)
+- `AZURE_SEARCH_KNOWLEDGE_BASE_NAME`: Knowledge Base name (required for agentic mode in `azure_ai_with_search_context.py`)
+- `USE_AGENTIC_MODE`: Set to "true" to enable agentic mode in `azure_ai_with_search_context.py` (default: "false")
+
+Note: Agentic mode in `azure_ai_with_search_context.py` reuses `AZURE_AI_PROJECT_ENDPOINT` and `AZURE_AI_MODEL_DEPLOYMENT_NAME` from the base configuration above.

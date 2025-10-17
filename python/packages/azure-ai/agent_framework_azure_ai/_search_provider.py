@@ -12,7 +12,6 @@ reasoning across documents with Knowledge Bases.
 
 import sys
 from collections.abc import MutableSequence
-from contextlib import AbstractAsyncContextManager
 from typing import Any, Literal
 
 from agent_framework import ChatMessage, Context, ContextProvider
@@ -107,8 +106,9 @@ class AzureAISearchContextProvider(ContextProvider):
                 index_name="my-index",
                 credential=DefaultAzureCredential(),
                 mode="agentic",  # Multi-hop reasoning
-                azure_openai_endpoint="https://myopenai.openai.azure.com",
-                azure_openai_deployment_name="gpt-4o",
+                azure_ai_project_endpoint="https://myproject.services.ai.azure.com",
+                model_deployment_name="gpt-4o",
+                knowledge_base_name="my-knowledge-base",  # Required for agentic mode
             )
     """
 
@@ -129,11 +129,14 @@ class AzureAISearchContextProvider(ContextProvider):
         embedding_function: Any | None = None,
         context_prompt: str | None = None,
         # Agentic mode parameters (Knowledge Base)
+        azure_ai_project_endpoint: str | None = None,
+        model_deployment_name: str | None = None,
+        knowledge_base_name: str | None = None,
+        retrieval_instructions: str | None = None,
+        # Deprecated parameters (for backwards compatibility)
         azure_openai_endpoint: str | None = None,
         azure_openai_deployment_name: str | None = None,
         azure_openai_api_version: str | None = None,
-        knowledge_base_name: str | None = None,
-        retrieval_instructions: str | None = None,
     ) -> None:
         """Initialize Azure AI Search Context Provider.
 
@@ -153,14 +156,16 @@ class AzureAISearchContextProvider(ContextProvider):
                 Required if vector_field_name is specified.
             context_prompt: Custom prompt to prepend to retrieved context.
                 Default: Uses DEFAULT_CONTEXT_PROMPT.
-            azure_openai_endpoint: Azure OpenAI endpoint URL. Required for agentic mode.
-            azure_openai_deployment_name: Azure OpenAI deployment name (e.g., "gpt-4o").
+            azure_ai_project_endpoint: Azure AI Foundry project endpoint URL.
+                Required for agentic mode. Example: "https://myproject.services.ai.azure.com"
+            model_deployment_name: Model deployment name in the Azure AI project (e.g., "gpt-4o").
                 Required for agentic mode.
-            azure_openai_api_version: Azure OpenAI API version. Default: "2024-06-01".
-            knowledge_base_name: Name for the Knowledge Base. If not provided,
-                defaults to "{index_name}-kb". Only used in agentic mode.
+            knowledge_base_name: Name for the Knowledge Base. Required for agentic mode.
             retrieval_instructions: Custom instructions for the Knowledge Base's
                 retrieval planning. Only used in agentic mode.
+            azure_openai_endpoint: (Deprecated) Use azure_ai_project_endpoint instead.
+            azure_openai_deployment_name: (Deprecated) Use model_deployment_name instead.
+            azure_openai_api_version: (Deprecated) No longer used.
         """
         self.endpoint = endpoint
         self.index_name = index_name
@@ -173,10 +178,21 @@ class AzureAISearchContextProvider(ContextProvider):
         self.context_prompt = context_prompt or self.DEFAULT_CONTEXT_PROMPT
 
         # Agentic mode parameters (Knowledge Base)
-        self.azure_openai_endpoint = azure_openai_endpoint
-        self.azure_openai_deployment_name = azure_openai_deployment_name
-        self.azure_openai_api_version = azure_openai_api_version or "2024-06-01"
-        self.knowledge_base_name = knowledge_base_name or f"{index_name}-kb"
+        # Handle both new and deprecated parameter names for backwards compatibility
+        if azure_ai_project_endpoint:
+            # Extract Azure OpenAI endpoint from project endpoint
+            # Project endpoint format: https://<project>.services.ai.azure.com
+            # OpenAI endpoint format: https://<resource>.openai.azure.com
+            # For now, use the project endpoint directly as Knowledge Base accepts it
+            self.azure_openai_endpoint = azure_ai_project_endpoint
+        elif azure_openai_endpoint:
+            # Deprecated parameter for backwards compatibility
+            self.azure_openai_endpoint = azure_openai_endpoint
+        else:
+            self.azure_openai_endpoint = None
+
+        self.azure_openai_deployment_name = model_deployment_name or azure_openai_deployment_name
+        self.knowledge_base_name = knowledge_base_name
         self.retrieval_instructions = retrieval_instructions
 
         # Validation
@@ -189,10 +205,16 @@ class AzureAISearchContextProvider(ContextProvider):
                     "Agentic retrieval requires azure-search-documents >= 11.7.0b1 with Knowledge Base support. "
                     "Please upgrade: pip install azure-search-documents>=11.7.0b1"
                 )
-            if not azure_openai_endpoint:
-                raise ValueError("azure_openai_endpoint is required for agentic mode")
-            if not azure_openai_deployment_name:
-                raise ValueError("azure_openai_deployment_name is required for agentic mode")
+            if not self.azure_openai_endpoint:
+                raise ValueError(
+                    "azure_ai_project_endpoint (or deprecated azure_openai_endpoint) is required for agentic mode"
+                )
+            if not self.azure_openai_deployment_name:
+                raise ValueError(
+                    "model_deployment_name (or deprecated azure_openai_deployment_name) is required for agentic mode"
+                )
+            if not knowledge_base_name:
+                raise ValueError("knowledge_base_name is required for agentic mode")
 
         # Create search client for semantic mode
         self._search_client = SearchClient(
@@ -201,26 +223,19 @@ class AzureAISearchContextProvider(ContextProvider):
             credential=credential,
         )
 
-        # Create clients for agentic mode (Knowledge Base)
+        # Create index client for agentic mode (Knowledge Base)
+        # Note: Retrieval client is created fresh for each query to avoid transport issues
         self._index_client: SearchIndexClient | None = None
-        self._knowledge_base_client: KnowledgeAgentRetrievalClient | None = None
         if mode == "agentic":
             self._index_client = SearchIndexClient(
                 endpoint=endpoint,
                 credential=credential,
             )
 
-        self._should_close_clients = True
         self._knowledge_base_initialized = False
 
     async def __aenter__(self) -> Self:
         """Async context manager entry."""
-        if isinstance(self._search_client, AbstractAsyncContextManager):
-            await self._search_client.__aenter__()
-        if self._index_client and isinstance(self._index_client, AbstractAsyncContextManager):
-            await self._index_client.__aenter__()
-        if self._knowledge_base_client and isinstance(self._knowledge_base_client, AbstractAsyncContextManager):
-            await self._knowledge_base_client.__aenter__()
         return self
 
     async def __aexit__(
@@ -229,14 +244,20 @@ class AzureAISearchContextProvider(ContextProvider):
         exc_val: BaseException | None,
         exc_tb: Any,
     ) -> None:
-        """Async context manager exit."""
-        if self._should_close_clients:
-            if isinstance(self._search_client, AbstractAsyncContextManager):
-                await self._search_client.__aexit__(exc_type, exc_val, exc_tb)
-            if self._index_client and isinstance(self._index_client, AbstractAsyncContextManager):
-                await self._index_client.__aexit__(exc_type, exc_val, exc_tb)
-            if self._knowledge_base_client and isinstance(self._knowledge_base_client, AbstractAsyncContextManager):
-                await self._knowledge_base_client.__aexit__(exc_type, exc_val, exc_tb)
+        """Async context manager exit - cleanup handled by client destructors.
+
+        Args:
+            exc_type: Exception type if an error occurred.
+            exc_val: Exception value if an error occurred.
+            exc_tb: Exception traceback if an error occurred.
+
+        Note:
+            We don't explicitly close the Azure SDK clients here because doing so
+            can cause "transport already closed" errors on subsequent uses within
+            the same context. The clients will clean up their resources when they
+            are garbage collected.
+        """
+        pass
 
     @override
     async def invoking(
@@ -400,16 +421,6 @@ class AzureAISearchContextProvider(ContextProvider):
             )
             await self._index_client.create_agent(knowledge_base)
 
-        # Step 3: Create retrieval client for Knowledge Base
-        if not _AGENTIC_RETRIEVAL_AVAILABLE:
-            raise ImportError("KnowledgeAgentRetrievalClient not available")
-
-        self._knowledge_base_client = KnowledgeAgentRetrievalClient(
-            endpoint=self.endpoint,
-            agent_name=self.knowledge_base_name,
-            credential=self.credential,
-        )
-
         self._knowledge_base_initialized = True
 
     async def _agentic_search(self, query: str) -> str:
@@ -433,9 +444,6 @@ class AzureAISearchContextProvider(ContextProvider):
         # Ensure Knowledge Base is initialized
         await self._ensure_knowledge_base()
 
-        if not self._knowledge_base_client:
-            raise RuntimeError("Knowledge Base client not initialized")
-
         # Create retrieval request with query as a conversation message
         # Note: SDK uses KnowledgeAgent class names, but represents Knowledge Base operations
         retrieval_request = KnowledgeAgentRetrievalRequest(
@@ -447,10 +455,22 @@ class AzureAISearchContextProvider(ContextProvider):
             ]
         )
 
-        # Perform retrieval via Knowledge Base
-        retrieval_result = await self._knowledge_base_client.retrieve(
-            retrieval_request=retrieval_request
+        # Create a fresh retrieval client for each query to avoid transport closure issues
+        if not _AGENTIC_RETRIEVAL_AVAILABLE:
+            raise ImportError("KnowledgeAgentRetrievalClient not available")
+
+        retrieval_client = KnowledgeAgentRetrievalClient(
+            endpoint=self.endpoint,
+            agent_name=self.knowledge_base_name,
+            credential=self.credential,
         )
+
+        try:
+            # Perform retrieval via Knowledge Base
+            retrieval_result = await retrieval_client.retrieve(retrieval_request=retrieval_request)
+        finally:
+            # Ensure client is closed after use
+            await retrieval_client.close()
 
         # Extract synthesized answer from response
         if retrieval_result.response and len(retrieval_result.response) > 0:

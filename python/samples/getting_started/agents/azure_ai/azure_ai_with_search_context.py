@@ -29,8 +29,9 @@ AzureAISearchContextProvider supports two modes:
 
 Prerequisites:
 1. An Azure AI Search service with a search index
-2. An Azure AI Foundry project
-3. Set the following environment variables:
+2. An Azure AI Foundry project with a model deployment
+3. Ensure the model deployment name exists in your Azure AI Foundry project
+4. Set the following environment variables:
 
    For both modes:
    - AZURE_SEARCH_ENDPOINT: Your Azure AI Search endpoint
@@ -41,7 +42,7 @@ Prerequisites:
    Additional for agentic mode (Knowledge Bases):
    - USE_AGENTIC_MODE: Set to "true" to use agentic retrieval
    - AZURE_OPENAI_ENDPOINT: Your Azure OpenAI endpoint
-   - AZURE_OPENAI_DEPLOYMENT_NAME: Your GPT-4 deployment name (e.g., "gpt-4o")
+   - AZURE_OPENAI_DEPLOYMENT_NAME: Your deployment name (e.g., "gpt-4o")
 """
 
 # Sample queries to demonstrate RAG
@@ -59,6 +60,8 @@ async def main() -> None:
     search_endpoint = os.environ["AZURE_SEARCH_ENDPOINT"]
     search_key = os.environ.get("AZURE_SEARCH_API_KEY")
     index_name = os.environ["AZURE_SEARCH_INDEX_NAME"]
+    project_endpoint = os.environ["AZURE_AI_PROJECT_ENDPOINT"]
+    model_deployment = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o")
 
     # Check if agentic mode is requested
     use_agentic = os.environ.get("USE_AGENTIC_MODE", "false").lower() == "true"
@@ -70,13 +73,16 @@ async def main() -> None:
     if use_agentic:
         # Agentic mode: Multi-hop reasoning with Knowledge Bases (slower)
         print("Using AGENTIC mode (Knowledge Bases with multi-hop reasoning, slower)\n")
+        knowledge_base_name = os.environ["AZURE_SEARCH_KNOWLEDGE_BASE_NAME"]
         search_provider = AzureAISearchContextProvider(
             endpoint=search_endpoint,
             index_name=index_name,
             credential=search_credential,
             mode="agentic",
-            azure_openai_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
-            azure_openai_deployment_name=os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+            # Agentic mode uses Azure AI Foundry project for model inference
+            azure_ai_project_endpoint=project_endpoint,
+            model_deployment_name=model_deployment,
+            knowledge_base_name=knowledge_base_name,
             top_k=3,
         )
     else:
@@ -89,10 +95,6 @@ async def main() -> None:
             mode="semantic",
             top_k=3,  # Retrieve top 3 most relevant documents
         )
-
-    # Get Azure AI configuration
-    project_endpoint = os.environ["AZURE_AI_PROJECT_ENDPOINT"]
-    model_deployment = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o")
 
     # Create agent with search context provider
     async with (
