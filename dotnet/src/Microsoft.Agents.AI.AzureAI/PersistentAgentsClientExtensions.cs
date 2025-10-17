@@ -55,12 +55,17 @@ public static class PersistentAgentsClientExtensions
             chatClient = clientFactory(chatClient);
         }
 
+        if (!string.IsNullOrWhiteSpace(persistentAgentMetadata.Instructions) && chatOptions?.Instructions is null)
+        {
+            chatOptions ??= new ChatOptions();
+            chatOptions.Instructions = persistentAgentMetadata.Instructions;
+        }
+
         return new ChatClientAgent(chatClient, options: new()
         {
             Id = persistentAgentMetadata.Id,
             Name = persistentAgentMetadata.Name,
             Description = persistentAgentMetadata.Description,
-            Instructions = persistentAgentMetadata.Instructions,
             ChatOptions = chatOptions
         });
     }
@@ -179,12 +184,17 @@ public static class PersistentAgentsClientExtensions
             chatClient = clientFactory(chatClient);
         }
 
+        if (!string.IsNullOrWhiteSpace(persistentAgentMetadata.Instructions) && options.ChatOptions?.Instructions is null)
+        {
+            options.ChatOptions ??= new ChatOptions();
+            options.ChatOptions.Instructions = persistentAgentMetadata.Instructions;
+        }
+
         var agentOptions = new ChatClientAgentOptions()
         {
             Id = persistentAgentMetadata.Id,
             Name = options.Name ?? persistentAgentMetadata.Name,
             Description = options.Description ?? persistentAgentMetadata.Description,
-            Instructions = options.Instructions ?? persistentAgentMetadata.Instructions,
             ChatOptions = options.ChatOptions,
             AIContextProviderFactory = options.AIContextProviderFactory,
             ChatMessageStoreFactory = options.ChatMessageStoreFactory,
@@ -415,7 +425,7 @@ public static class PersistentAgentsClientExtensions
             model: model,
             name: options.Name,
             description: options.Description,
-            instructions: options.Instructions,
+            instructions: options.ChatOptions?.Instructions,
             tools: toolDefinitionsAndResources.ToolDefinitions,
             toolResources: toolDefinitionsAndResources.ToolResources,
             temperature: null,
@@ -473,7 +483,7 @@ public static class PersistentAgentsClientExtensions
             model: model,
             name: options.Name,
             description: options.Description,
-            instructions: options.Instructions,
+            instructions: options.ChatOptions?.Instructions,
             tools: toolDefinitionsAndResources.ToolDefinitions,
             toolResources: toolDefinitionsAndResources.ToolResources,
             temperature: null,
