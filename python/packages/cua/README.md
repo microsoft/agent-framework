@@ -2,9 +2,14 @@
 
 Computer use integration for Microsoft Agent Framework powered by [Cua](https://github.com/trycua/cua).
 
+> [!IMPORTANT]
+> **Experimental Feature**: This integration is experimental and **not recommended for production use**. It is designed for development, testing, and exploration of computer-use capabilities. For production deployments, thoroughly evaluate security, reliability, and specific requirements for your use case.
+
 ## Overview
 
 This package provides seamless integration between Microsoft Agent Framework and Cua, enabling AI agents to control desktop applications across Windows, macOS, and Linux.
+
+`CuaAgentMiddleware` wraps Cua's `ComputerAgent`, which handles the complete agent loop (model inference → parsing → computer actions → multi-step execution). Learn more about [Cua Agent Loops](https://docs.cua.ai/docs/agent-sdk/agent-loops).
 
 ### Key Features
 
@@ -18,10 +23,28 @@ This package provides seamless integration between Microsoft Agent Framework and
 
 ```bash
 pip install agent-framework-cua
-
-# With all model support
-pip install agent-framework-cua[all]
 ```
+
+## Configuration
+
+Set API keys for the models you plan to use. Cua delegates to the underlying model providers:
+
+```bash
+# For Anthropic models (Claude)
+export ANTHROPIC_API_KEY="your-anthropic-key"
+
+# For OpenAI models (GPT-4o, GPT-4o-mini)
+export OPENAI_API_KEY="your-openai-key"
+
+# For Azure OpenAI
+export AZURE_API_KEY="your-azure-key"
+export AZURE_API_BASE="https://your-resource.openai.azure.com"
+export AZURE_API_VERSION="2024-02-01"
+```
+
+**Notes:**
+- Only set keys for the models you'll actually use. For example, if using `model="anthropic/claude-sonnet-4-5-20250929"`, you only need `ANTHROPIC_API_KEY`.
+- Local models (e.g., `huggingface-local/ByteDance/OpenCUA-7B`) don't require API keys.
 
 ## Quick Start
 
@@ -33,23 +56,23 @@ from agent_framework_cua import CuaAgentMiddleware
 from computer import Computer
 
 async def main():
-    # Initialize Cua computer (local macOS VM)
+    # Initialize Cua computer (Linux Docker - cross-platform)
     async with Computer(
-        os_type="macos",
-        provider_type="lume"
+        os_type="linux",
+        provider_type="docker"
     ) as computer:
 
         # Create middleware with Anthropic Claude
         cua_middleware = CuaAgentMiddleware(
             computer=computer,
-            model="anthropic/claude-3-5-sonnet-20241022",
+            model="anthropic/claude-sonnet-4-5-20250929",
             require_approval=True,
         )
 
         # Create Agent Framework agent with Cua middleware
-        # Note: chat_client is required but won't be used since
-        # CuaAgentMiddleware delegates all execution to Cua
-        dummy_client = OpenAIChatClient(model_id="gpt-4o-mini")
+        # Note: chat_client and instructions are required but won't be used.
+        # CuaAgentMiddleware terminates execution and delegates to Cua's ComputerAgent.
+        dummy_client = OpenAIChatClient(model_id="gpt-4o-mini", api_key="dummy-not-used")
         agent = ChatAgent(
             chat_client=dummy_client,
             middleware=[cua_middleware],
@@ -58,7 +81,7 @@ async def main():
 
         # Run agent
         response = await agent.run(
-            "Open Safari and search for 'Python tutorials'"
+            "Open Firefox and search for 'Python tutorials'"
         )
 
         print(response)
@@ -116,67 +139,151 @@ CuaAgentMiddleware(
 
 ## Integration with Workflows
 
+Agent Framework provides orchestration while Cua handles execution:
+
 ```python
-from agent_framework.workflows import Workflow, workflow
-
-@workflow
-def automation_workflow(task: str) -> str:
-    # Step 1: Research with standard agent
+async def multi_agent_workflow(task: str) -> str:
+    # Step 1: Research Agent (Pure Agent Framework)
     research_agent = ChatAgent(
-        chat_client=OpenAIChatClient(),
-        instructions="Research the task",
+        chat_client=OpenAIChatClient(model_id="gpt-4o-mini"),
+        instructions="Create a detailed automation plan",
     )
-    research = research_agent.run(task)
+    plan = await research_agent.run(f"Create plan for: {task}")
 
-    # Step 2: Automation with Cua
-    automation_agent = ChatAgent(
-        middleware=[cua_middleware],
-        instructions="Execute based on research",
+    # Step 2: Cua Automation (Agent Framework + Cua)
+    async with Computer(os_type="linux", provider_type="docker") as computer:
+        cua_middleware = CuaAgentMiddleware(
+            computer=computer,
+            model="anthropic/claude-sonnet-4-5-20250929",
+            require_approval=True,  # Agent Framework approval workflows
+        )
+
+        dummy_client = OpenAIChatClient(model_id="gpt-4o-mini", api_key="dummy-not-used")
+        automation_agent = ChatAgent(
+            chat_client=dummy_client,
+            middleware=[cua_middleware],
+            instructions="Execute the plan carefully",
+        )
+        result = await automation_agent.run(f"Execute: {plan}")
+
+    # Step 3: Verification Agent (Pure Agent Framework)
+    verify_agent = ChatAgent(
+        chat_client=OpenAIChatClient(model_id="gpt-4o"),
+        instructions="Verify and summarize results",
     )
-    result = automation_agent.run(research)
-
-    return result
+    return await verify_agent.run(f"Verify: {result}")
 ```
+
+See the [Workflow Orchestration sample](../../samples/getting_started/cua/workflow_orchestration/) for a complete example.
 
 ## VM Provider Options
 
-### macOS (Lume)
+For more details on Cua computer configuration, see [Cua Computers documentation](https://docs.cua.ai/docs/computer-sdk/computers).
+
+### Linux on Docker (Cross-platform)
+
+**Recommended** - Works on macOS, Windows, and Linux hosts.
+
 ```python
-computer = Computer(os_type="macos", provider_type="lume")
+from computer import Computer
+from agent_framework_cua import CuaAgentMiddleware
+
+async with Computer(os_type="linux", provider_type="docker") as computer:
+    cua_middleware = CuaAgentMiddleware(
+        computer=computer,
+        model="anthropic/claude-sonnet-4-5-20250929",
+    )
+    # Use with ChatAgent...
+```
+
+**Prerequisites:**
+```bash
+# Install Docker Desktop or Docker Engine
+docker pull --platform=linux/amd64 trycua/cua-xfce:latest
+```
+
+### macOS VM (Lume)
+
+**macOS hosts only** - Native macOS virtualization with 97% native CPU performance.
+
+```python
+from computer import Computer
+from agent_framework_cua import CuaAgentMiddleware
+
+async with Computer(os_type="macos", provider_type="lume") as computer:
+    cua_middleware = CuaAgentMiddleware(
+        computer=computer,
+        model="anthropic/claude-sonnet-4-5-20250929",
+    )
+    # Use with ChatAgent...
+```
+
+**Prerequisites:**
+```bash
+# Install Lume CLI
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
+
+# Start macOS VM
+lume run macos-sequoia-cua:latest
 ```
 
 ### Windows Sandbox
+
+**Windows hosts only** - Requires Windows 10 Pro/Enterprise or Windows 11.
+
 ```python
-computer = Computer(os_type="windows", provider_type="winsandbox")
+from computer import Computer
+from agent_framework_cua import CuaAgentMiddleware
+
+async with Computer(os_type="windows", provider_type="winsandbox") as computer:
+    cua_middleware = CuaAgentMiddleware(
+        computer=computer,
+        model="anthropic/claude-sonnet-4-5-20250929",
+    )
+    # Use with ChatAgent...
 ```
 
-### Docker (Linux)
-```python
-computer = Computer(os_type="linux", provider_type="docker")
+**Prerequisites:**
+```bash
+# Enable Windows Sandbox in Windows Features
+# Install pywinsandbox dependency
+pip install -U git+git://github.com/karkason/pywinsandbox.git
 ```
 
 ### Cloud Sandbox
+
+**Any host** - Managed Cua cloud infrastructure.
+
 ```python
-computer = Computer(
+from computer import Computer
+from agent_framework_cua import CuaAgentMiddleware
+
+async with Computer(
     os_type="linux",
     provider_type="cloud",
     name="your-sandbox-name",
     api_key="your-api-key",
-)
+) as computer:
+    cua_middleware = CuaAgentMiddleware(
+        computer=computer,
+        model="anthropic/claude-sonnet-4-5-20250929",
+    )
+    # Use with ChatAgent...
 ```
 
 ## Examples
 
-See the [examples](./examples/) directory for more usage patterns:
-- Basic computer use
-- Multi-model workflows
-- Human-in-the-loop approval
-- Composite agents
-- Integration with Agent Framework workflows
+See [samples/getting_started/cua](../../samples/getting_started/cua/) for complete working examples:
+
+- **[Basic Example](../../samples/getting_started/cua/basic_example/)** - Getting started with Cua + Agent Framework
+- **[Composite Agent](../../samples/getting_started/cua/composite_agent/)** - Combining grounding + planning models
+- **[Workflow Orchestration](../../samples/getting_started/cua/workflow_orchestration/)** - Multi-agent workflows showing Agent Framework synergies
 
 ## Resources
 
-- [Cua Documentation](https://docs.trycua.com)
+- [Cua Documentation](https://docs.cua.ai)
+  - [Agent Loops](https://docs.cua.ai/docs/agent-sdk/agent-loops) - How Cua's ComputerAgent works
+  - [Computers](https://docs.cua.ai/docs/computer-sdk/computers) - Platform-specific setup guides
 - [Cua GitHub](https://github.com/trycua/cua)
 - [Agent Framework Documentation](https://learn.microsoft.com/agent-framework/)
 

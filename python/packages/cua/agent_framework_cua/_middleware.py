@@ -88,7 +88,7 @@ class CuaAgentMiddleware(ChatMiddleware):
             approval_interval: Steps between approval requests
         """
         if not CUA_AVAILABLE:
-            raise ImportError("Cua packages not installed. Install with: pip install agent-framework-cua[all]")
+            raise ImportError("Cua packages not installed. Install with: pip install agent-framework-cua")
 
         self.computer = computer
         self.model = model
