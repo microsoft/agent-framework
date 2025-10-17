@@ -103,14 +103,14 @@ Configure these environment variables before running the sample:
 
 | Variable | Description |
 | --- | --- |
-| `AZURE_OPENAI_ENDPOINT` | Base endpoint for the Azure OpenAI resource (e.g. `https://contoso.openai.azure.com/`). |
+| `AZURE_OPENAI_ENDPOINT` | Base endpoint for the Azure OpenAI resource |
 | `AZURE_OPENAI_REALTIME_DEPLOYMENT` | Deployment name for the GPT-Realtime audio model. |
 | `AZURE_OPENAI_CHAT_DEPLOYMENT` | Deployment name used for key point extraction. Optional – defaults to the realtime deployment. |
 
 ### PowerShell
 
 ```powershell
-$env:AZURE_OPENAI_ENDPOINT = "https://your-endpoint.openai.azure.com/"
+$env:AZURE_OPENAI_ENDPOINT = "https://{your-endpoint}.openai.azure.com/"
 $env:AZURE_OPENAI_REALTIME_DEPLOYMENT = "gpt-realtime"
 $env:AZURE_OPENAI_CHAT_DEPLOYMENT = "gpt-4o-mini"
 ```
@@ -118,7 +118,7 @@ $env:AZURE_OPENAI_CHAT_DEPLOYMENT = "gpt-4o-mini"
 ### Bash
 
 ```bash
-export AZURE_OPENAI_ENDPOINT="https://your-endpoint.openai.azure.com/"
+export AZURE_OPENAI_ENDPOINT="https://{your-endpoint}.openai.azure.com/"
 export AZURE_OPENAI_REALTIME_DEPLOYMENT="gpt-realtime"
 export AZURE_OPENAI_CHAT_DEPLOYMENT="gpt-4o-mini"
 ```
