@@ -24,7 +24,8 @@ async def main():
             require_approval=False,  # Disable approval for demo
         )
 
-        # Note: chat_client is required but won't be used
+        # Note: chat_client and instructions are required by ChatAgent but won't be used.
+        # CuaAgentMiddleware terminates execution and delegates everything to Cua's ComputerAgent.
         dummy_client = OpenAIChatClient(model_id="gpt-4o-mini", api_key="dummy-not-used")
         agent = ChatAgent(
             chat_client=dummy_client,

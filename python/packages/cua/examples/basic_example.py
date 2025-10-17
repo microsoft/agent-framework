@@ -28,9 +28,8 @@ async def main():
         )
 
         # Create Agent Framework agent with Cua middleware
-        # Note: chat_client is required by ChatAgent but won't be used because
-        # CuaAgentMiddleware terminates execution and delegates everything to Cua
-        # Pass a dummy API key since it won't be called
+        # Note: chat_client and instructions are required by ChatAgent but won't be used.
+        # CuaAgentMiddleware terminates execution and delegates everything to Cua's ComputerAgent.
         dummy_client = OpenAIChatClient(model_id="gpt-4o-mini", api_key="dummy-not-used")
         agent = ChatAgent(
             chat_client=dummy_client,
