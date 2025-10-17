@@ -7,21 +7,21 @@ namespace Microsoft.Agents.AI.Purview.Exceptions;
 /// <summary>
 /// General base exception type for Purview service errors.
 /// </summary>
-public class PurviewServiceException : Exception
+public class PurviewException : Exception
 {
     /// <inheritdoc />
-    public PurviewServiceException(string message)
+    public PurviewException(string message)
         : base(message)
     {
     }
 
     /// <inheritdoc />
-    public PurviewServiceException() : base()
+    public PurviewException() : base()
     {
     }
 
     /// <inheritdoc />
-    public PurviewServiceException(string? message, Exception? innerException) : base(message, innerException)
+    public PurviewException(string? message, Exception? innerException) : base(message, innerException)
     {
     }
 }

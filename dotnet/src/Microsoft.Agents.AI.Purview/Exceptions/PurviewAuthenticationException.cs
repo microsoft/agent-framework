@@ -7,7 +7,7 @@ namespace Microsoft.Agents.AI.Purview.Exceptions;
 /// <summary>
 /// Exception for authentication errors related to Purview.
 /// </summary>
-public class PurviewAuthenticationException : PurviewServiceException
+public class PurviewAuthenticationException : PurviewException
 {
     /// <inheritdoc />
     public PurviewAuthenticationException(string message)

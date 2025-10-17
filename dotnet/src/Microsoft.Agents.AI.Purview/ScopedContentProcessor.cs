@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Purview.Exceptions;
 using Microsoft.Agents.AI.Purview.Models.Common;
 using Microsoft.Agents.AI.Purview.Models.Requests;
 using Microsoft.Agents.AI.Purview.Models.Responses;
@@ -125,7 +126,7 @@ internal sealed class ScopedContentProcessor
             }
         }
 
-        string tenantId = settings.TenantId ?? tokenInfo?.TenantId ?? throw new InvalidOperationException("No tenant id provided or inferred for Purview request. Please provide a tenant id in PurviewSettings or configure the TokenCredential to authenticate to a tenant.");
+        string tenantId = settings.TenantId ?? tokenInfo?.TenantId ?? throw new PurviewException("No tenant id provided or inferred for Purview request. Please provide a tenant id in PurviewSettings or configure the TokenCredential to authenticate to a tenant.");
 
         foreach (ChatMessage message in messages)
         {
@@ -148,19 +149,22 @@ internal sealed class ScopedContentProcessor
             }
             else
             {
-                throw new InvalidOperationException("No app location provided or inferred for Purview request. Please provide an app location in PurviewSettings or configure the TokenCredential to authenticate to an entra app.");
+                throw new PurviewException("No app location provided or inferred for Purview request. Please provide an app location in PurviewSettings or configure the TokenCredential to authenticate to an entra app.");
             }
+
+            string appVersion = !string.IsNullOrEmpty(settings.AppVersion) ? settings.AppVersion : "Unknown";
 
             ProtectedAppMetadata protectedAppMetadata = new(policyLocation)
             {
                 Name = settings.AppName,
-                Version = "1.0",
+                Version = appVersion
             };
             IntegratedAppMetadata integratedAppMetadata = new()
             {
                 Name = settings.AppName,
-                Version = "1.0"
+                Version = appVersion
             };
+
             DeviceMetadata deviceMetadata = new()
             {
                 OperatingSystemSpecifications = new()
@@ -179,7 +183,7 @@ internal sealed class ScopedContentProcessor
 
             if (string.IsNullOrEmpty(userId))
             {
-                throw new InvalidOperationException("No user id provided or inferred for Purview request. Please provide an Entra user id in each message's AuthorName, set a default Entra user id in PurviewSettings, or configure the TokenCredential to authenticate to an Entra user.");
+                throw new PurviewException("No user id provided or inferred for Purview request. Please provide an Entra user id in each message's AuthorName, set a default Entra user id in PurviewSettings, or configure the TokenCredential to authenticate to an Entra user.");
             }
 
             ProcessContentRequest pcRequest = new(contentToProcess, userId, tenantId);

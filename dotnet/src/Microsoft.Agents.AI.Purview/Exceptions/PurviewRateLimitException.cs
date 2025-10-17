@@ -7,7 +7,7 @@ namespace Microsoft.Agents.AI.Purview.Exceptions;
 /// <summary>
 /// Exception for rate limit exceeded errors from Purview service.
 /// </summary>
-public class PurviewRateLimitException : PurviewServiceException
+public class PurviewRateLimitException : PurviewException
 {
     /// <inheritdoc />
     public PurviewRateLimitException(string message)

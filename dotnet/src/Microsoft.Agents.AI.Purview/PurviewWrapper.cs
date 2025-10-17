@@ -79,6 +79,11 @@ public sealed class PurviewWrapper
         catch (Exception ex)
         {
             this._logger.LogError(ex, "Error processing prompt: {ExceptionMessage}", ex.Message);
+
+            if (!this._purviewSettings.IgnoreExceptions)
+            {
+                throw;
+            }
         }
 
         ChatResponse response = await innerChatClient.GetResponseAsync(messages, options, cancellationToken).ConfigureAwait(false);
@@ -95,6 +100,11 @@ public sealed class PurviewWrapper
         catch (Exception ex)
         {
             this._logger.LogError(ex, "Error processing response: {ExceptionMessage}", ex.Message);
+
+            if (!this._purviewSettings.IgnoreExceptions)
+            {
+                throw;
+            }
         }
 
         return response;
@@ -128,6 +138,11 @@ public sealed class PurviewWrapper
         catch (Exception ex)
         {
             this._logger.LogError(ex, "Error processing prompt: {ExceptionMessage}", ex.Message);
+
+            if (!this._purviewSettings.IgnoreExceptions)
+            {
+                throw;
+            }
         }
 
         AgentRunResponse response = await innerAgent.RunAsync(messages, thread, options, cancellationToken).ConfigureAwait(false);
@@ -145,6 +160,11 @@ public sealed class PurviewWrapper
         catch (Exception ex)
         {
             this._logger.LogError(ex, "Error processing response: {ExceptionMessage}", ex.Message);
+
+            if (!this._purviewSettings.IgnoreExceptions)
+            {
+                throw;
+            }
         }
 
         return response;

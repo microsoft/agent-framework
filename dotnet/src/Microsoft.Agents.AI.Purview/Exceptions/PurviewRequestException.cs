@@ -8,7 +8,7 @@ namespace Microsoft.Agents.AI.Purview.Exceptions;
 /// <summary>
 /// Exception for general http request errors from Purview.
 /// </summary>
-public class PurviewRequestException : PurviewServiceException
+public class PurviewRequestException : PurviewException
 {
     /// <summary>
     /// HTTP status code returned by the Purview service.

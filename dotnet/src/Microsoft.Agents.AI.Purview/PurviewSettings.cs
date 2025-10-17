@@ -28,6 +28,11 @@ public class PurviewSettings
     public string AppName { get; set; }
 
     /// <summary>
+    /// The version string of the application.
+    /// </summary>
+    public string? AppVersion { get; set; }
+
+    /// <summary>
     /// The tenant id of the user making the request.
     /// If this is not provided, the tenant id will be inferred from the token.
     /// </summary>
@@ -38,6 +43,12 @@ public class PurviewSettings
     /// If this is not provided, a location containing the client id will be used instead.
     /// </summary>
     public PurviewAppLocation? PurviewAppLocation { get; set; }
+
+    /// <summary>
+    /// Gets or sets a flag indicating whether to ignore exceptions when processing Purview requests. False by default.
+    /// If set to true, exceptions calling Purview will be logged but not thrown.
+    /// </summary>
+    public bool IgnoreExceptions { get; set; }
 
     /// <summary>
     /// Gets or sets the base URI for the Microsoft Graph API.

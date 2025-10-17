@@ -1,8 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 using Azure.Core;
-using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Purview;
@@ -36,6 +38,30 @@ public static class PurviewExtensions
     {
         PurviewWrapper purviewWrapper = new(tokenCredential, purviewSettings);
         return builder.Use(purviewWrapper.ProcessChatContentAsync, null);
+    }
+
+    /// <summary>
+    /// Creates a Purview middleware function for use with a <see cref="IChatClient"/>.
+    /// </summary>
+    /// <param name="tokenCredential">The token credential used to authenticate with Purview.</param>
+    /// <param name="purviewSettings">The settings for communication with Purview.</param>
+    /// <returns>A chat middleware delegate.</returns>
+    public static Func<IEnumerable<ChatMessage>, ChatOptions?, IChatClient, CancellationToken, Task<ChatResponse>> PurviewChatMiddleware(TokenCredential tokenCredential, PurviewSettings purviewSettings)
+    {
+        PurviewWrapper purviewWrapper = new(tokenCredential, purviewSettings);
+        return purviewWrapper.ProcessChatContentAsync;
+    }
+
+    /// <summary>
+    /// Creates a Purview middleware function for use with an <see cref="AIAgent"/>.
+    /// </summary>
+    /// <param name="tokenCredential">The token credential used to authenticate with Purview.</param>
+    /// <param name="purviewSettings">The settings for communication with Purview.</param>
+    /// <returns>An agent middleware delegate.</returns>
+    public static Func<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, AIAgent, CancellationToken, Task<AgentRunResponse>> PurviewAgentMiddleware(TokenCredential tokenCredential, PurviewSettings purviewSettings)
+    {
+        PurviewWrapper purviewWrapper = new(tokenCredential, purviewSettings);
+        return purviewWrapper.ProcessAgentContentAsync;
     }
 
     /// <summary>
