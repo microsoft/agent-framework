@@ -323,7 +323,7 @@ public sealed class DataValueExtensionsTests
     public void ToFormulaWithDateDataValue()
     {
         // Arrange
-        DateTime date = new DateTime(2025, 10, 17);
+        DateTime date = new(2025, 10, 17);
         DataValue value = DateDataValue.Create(date);
 
         // Act
