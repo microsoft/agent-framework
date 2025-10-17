@@ -737,9 +737,8 @@ public sealed class DataValueExtensionsTests
         Assert.NotNull(result);
         Assert.Equal(2, result.Fields.Count());
 
-        Dictionary<string, FormulaValue> fields = result.Fields.ToDictionary(f => f.Name, f => f.Value);
-        Assert.True(fields.ContainsKey("Field1"));
-        Assert.True(fields.ContainsKey("Field2"));
+        Assert.NotNull(result.GetField("Field1"));
+        Assert.NotNull(result.GetField("Field2"));
     }
 
     [Fact]

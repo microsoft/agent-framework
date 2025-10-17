@@ -25,12 +25,10 @@ public sealed class ExpandoObjectExtensionsTests
         Assert.Empty(recordType.GetFieldTypes());
     }
 
-    [Fact(Skip = "Bug: ExpandoObjectExtensions.ToRecordType line 18 - recordType.Add() result not assigned")]
+    [Fact]
     public void ToRecordTypeWithStringProperty()
     {
         // Arrange
-        // Bug: ToRecordType doesn't capture recordType.Add() return value (immutable pattern)
-        // Fix: recordType = recordType.Add(property.Key, property.Value.GetFormulaType())
         dynamic expando = new ExpandoObject();
         expando.Name = "John Doe";
 
@@ -46,12 +44,10 @@ public sealed class ExpandoObjectExtensionsTests
         Assert.Equal(FormulaType.String, field.Type);
     }
 
-    [Fact(Skip = "Bug: ExpandoObjectExtensions.ToRecordType line 18 - recordType.Add() result not assigned")]
+    [Fact]
     public void ToRecordTypeWithMultipleProperties()
     {
         // Arrange
-        // Bug: ToRecordType doesn't capture recordType.Add() return value (immutable pattern)
-        // Fix: recordType = recordType.Add(property.Key, property.Value.GetFormulaType())
         dynamic expando = new ExpandoObject();
         expando.Name = "Alice";
         expando.Age = 30;
@@ -70,12 +66,10 @@ public sealed class ExpandoObjectExtensionsTests
         Assert.Contains("IsActive", fieldNames);
     }
 
-    [Fact(Skip = "Bug: ExpandoObjectExtensions.ToRecordType line 18 - recordType.Add() result not assigned")]
+    [Fact]
     public void ToRecordTypeWithNullProperty()
     {
         // Arrange
-        // Bug: ToRecordType doesn't capture recordType.Add() return value (immutable pattern)
-        // Fix: recordType = recordType.Add(property.Key, property.Value.GetFormulaType())
         dynamic expando = new ExpandoObject();
         expando.Name = "Test";
         expando.NullValue = null;
@@ -141,18 +135,16 @@ public sealed class ExpandoObjectExtensionsTests
         Assert.NotNull(recordValue);
         Assert.Equal(3, recordValue.Fields.Count());
 
-        Dictionary<string, FormulaValue> fields = recordValue.Fields.ToDictionary(f => f.Name, f => f.Value);
-
-        Assert.True(fields.ContainsKey("Name"));
-        StringValue nameValue = Assert.IsType<StringValue>(fields["Name"]);
+        FormulaValue nameField = recordValue.GetField("Name");
+        StringValue nameValue = Assert.IsType<StringValue>(nameField);
         Assert.Equal("Bob", nameValue.Value);
 
-        Assert.True(fields.ContainsKey("Count"));
-        DecimalValue countValue = Assert.IsType<DecimalValue>(fields["Count"]);
+        FormulaValue countField = recordValue.GetField("Count");
+        DecimalValue countValue = Assert.IsType<DecimalValue>(countField);
         Assert.Equal(42, countValue.Value);
 
-        Assert.True(fields.ContainsKey("Active"));
-        BooleanValue activeValue = Assert.IsType<BooleanValue>(fields["Active"]);
+        FormulaValue activeField = recordValue.GetField("Active");
+        BooleanValue activeValue = Assert.IsType<BooleanValue>(activeField);
         Assert.True(activeValue.Value);
     }
 
@@ -174,11 +166,11 @@ public sealed class ExpandoObjectExtensionsTests
         Assert.NotNull(recordValue);
         Assert.Equal(2, recordValue.Fields.Count());
 
-        Dictionary<string, FormulaValue> fields = recordValue.Fields.ToDictionary(f => f.Name, f => f.Value);
-        Assert.True(fields.ContainsKey("Outer"));
-        Assert.True(fields.ContainsKey("Nested"));
+        Assert.NotNull(recordValue.GetField("Outer"));
+        FormulaValue nestedField = recordValue.GetField("Nested");
+        Assert.NotNull(nestedField);
 
-        RecordValue nestedRecord = Assert.IsType<RecordValue>(fields["Nested"], exactMatch: false);
+        RecordValue nestedRecord = Assert.IsType<RecordValue>(nestedField, exactMatch: false);
         Assert.Single(nestedRecord.Fields);
     }
 
@@ -197,17 +189,14 @@ public sealed class ExpandoObjectExtensionsTests
         Assert.NotNull(recordValue);
         Assert.Equal(2, recordValue.Fields.Count());
 
-        Dictionary<string, FormulaValue> fields = recordValue.Fields.ToDictionary(f => f.Name, f => f.Value);
-        Assert.True(fields.ContainsKey("NullValue"));
-        Assert.IsType<BlankValue>(fields["NullValue"]);
+        FormulaValue nullField = recordValue.GetField("NullValue");
+        Assert.IsType<BlankValue>(nullField);
     }
 
-    [Fact(Skip = "Bug: ExpandoObjectExtensions.ToRecordType line 18 - recordType.Add() result not assigned")]
+    [Fact]
     public void ToRecordTypeAndToRecordAreConsistent()
     {
         // Arrange
-        // Bug: ToRecordType doesn't capture recordType.Add() return value (immutable pattern)
-        // Fix: recordType = recordType.Add(property.Key, property.Value.GetFormulaType())
         dynamic expando = new ExpandoObject();
         expando.StringField = "Value";
         expando.IntField = 123;

@@ -27,8 +27,8 @@ public sealed class ChatMessageExtensionsTests
         Assert.Contains(result.Fields, f => f.Name == TypeSchema.Message.Fields.Role);
         Assert.Contains(result.Fields, f => f.Name == TypeSchema.Message.Fields.Text);
 
-        Dictionary<string, FormulaValue> fields = result.Fields.ToDictionary(f => f.Name, f => f.Value);
-        StringValue roleValue = Assert.IsType<StringValue>(fields[TypeSchema.Message.Fields.Role]);
+        FormulaValue roleField = result.GetField(TypeSchema.Message.Fields.Role);
+        StringValue roleValue = Assert.IsType<StringValue>(roleField);
         Assert.Equal("user", roleValue.Value);
     }
 
@@ -43,8 +43,8 @@ public sealed class ChatMessageExtensionsTests
 
         // Assert
         Assert.NotNull(result);
-        Dictionary<string, FormulaValue> fields = result.Fields.ToDictionary(f => f.Name, f => f.Value);
-        StringValue roleValue = Assert.IsType<StringValue>(fields[TypeSchema.Message.Fields.Role]);
+        FormulaValue roleField = result.GetField(TypeSchema.Message.Fields.Role);
+        StringValue roleValue = Assert.IsType<StringValue>(roleField);
         Assert.Equal("assistant", roleValue.Value);
     }
 
@@ -61,13 +61,12 @@ public sealed class ChatMessageExtensionsTests
         RecordValue result = message.ToRecord();
 
         // Assert
-        Dictionary<string, FormulaValue> fields = result.Fields.ToDictionary(f => f.Name, f => f.Value);
-        Assert.Contains(TypeSchema.Discriminator, fields.Keys);
-        Assert.Contains(TypeSchema.Message.Fields.Id, fields.Keys);
-        Assert.Contains(TypeSchema.Message.Fields.Role, fields.Keys);
-        Assert.Contains(TypeSchema.Message.Fields.Content, fields.Keys);
-        Assert.Contains(TypeSchema.Message.Fields.Text, fields.Keys);
-        Assert.Contains(TypeSchema.Message.Fields.Metadata, fields.Keys);
+        Assert.NotNull(result.GetField(TypeSchema.Discriminator));
+        Assert.NotNull(result.GetField(TypeSchema.Message.Fields.Id));
+        Assert.NotNull(result.GetField(TypeSchema.Message.Fields.Role));
+        Assert.NotNull(result.GetField(TypeSchema.Message.Fields.Content));
+        Assert.NotNull(result.GetField(TypeSchema.Message.Fields.Text));
+        Assert.NotNull(result.GetField(TypeSchema.Message.Fields.Metadata));
     }
 
     [Fact]
@@ -476,8 +475,8 @@ public sealed class ChatMessageExtensionsTests
 
         // Assert
         Assert.NotNull(result);
-        Dictionary<string, FormulaValue> fields = result.Fields.ToDictionary(f => f.Name, f => f.Value);
-        TableValue contentTable = Assert.IsType<TableValue>(fields[TypeSchema.Message.Fields.Content], exactMatch: false);
+        FormulaValue contentField = result.GetField(TypeSchema.Message.Fields.Content);
+        TableValue contentTable = Assert.IsType<TableValue>(contentField, exactMatch: false);
         Assert.Equal(2, contentTable.Rows.Count());
     }
 
@@ -495,8 +494,8 @@ public sealed class ChatMessageExtensionsTests
 
         // Assert
         Assert.NotNull(result);
-        Dictionary<string, FormulaValue> fields = result.Fields.ToDictionary(f => f.Name, f => f.Value);
-        TableValue contentTable = Assert.IsType<TableValue>(fields[TypeSchema.Message.Fields.Content], exactMatch: false);
+        FormulaValue contentField = result.GetField(TypeSchema.Message.Fields.Content);
+        TableValue contentTable = Assert.IsType<TableValue>(contentField, exactMatch: false);
         Assert.Single(contentTable.Rows);
     }
 
@@ -514,8 +513,8 @@ public sealed class ChatMessageExtensionsTests
 
         // Assert
         Assert.NotNull(result);
-        Dictionary<string, FormulaValue> fields = result.Fields.ToDictionary(f => f.Name, f => f.Value);
-        TableValue contentTable = Assert.IsType<TableValue>(fields[TypeSchema.Message.Fields.Content], exactMatch: false);
+        FormulaValue contentField = result.GetField(TypeSchema.Message.Fields.Content);
+        TableValue contentTable = Assert.IsType<TableValue>(contentField, exactMatch: false);
         Assert.Single(contentTable.Rows);
     }
 
@@ -537,8 +536,8 @@ public sealed class ChatMessageExtensionsTests
 
         // Assert
         Assert.NotNull(result);
-        Dictionary<string, FormulaValue> fields = result.Fields.ToDictionary(f => f.Name, f => f.Value);
-        RecordValue metadataRecord = Assert.IsType<RecordValue>(fields[TypeSchema.Message.Fields.Metadata], exactMatch: false);
+        FormulaValue metadataField = result.GetField(TypeSchema.Message.Fields.Metadata);
+        RecordValue metadataRecord = Assert.IsType<RecordValue>(metadataField, exactMatch: false);
         Assert.Equal(2, metadataRecord.Fields.Count());
     }
 }
