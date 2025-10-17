@@ -179,6 +179,10 @@ class Runner:
 
             # Route all messages through normal workflow edges
             associated_edge_runners = self._edge_runner_map.get(source_executor_id, [])
+            if not associated_edge_runners:
+                logger.warning(f"No outgoing edges found for executor {source_executor_id}; dropping messages.")
+                return
+
             for message in messages:
                 _normalize_message_payload(message)
                 # Deliver a message through all edge runners associated with the source executor concurrently.

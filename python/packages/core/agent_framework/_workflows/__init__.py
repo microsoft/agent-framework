@@ -80,6 +80,7 @@ from ._request_info_executor import (
     RequestInfoMessage,
     RequestResponse,
 )
+from ._request_info_mixin import response_handler
 from ._runner import Runner
 from ._runner_context import (
     InProcRunnerContext,
@@ -90,7 +91,6 @@ from ._sequential import SequentialBuilder
 from ._shared_state import SharedState
 from ._validation import (
     EdgeDuplicationError,
-    ExecutorDuplicationError,
     GraphConnectivityError,
     TypeCompatibilityError,
     ValidationTypeEnum,
@@ -100,7 +100,7 @@ from ._validation import (
 from ._viz import WorkflowViz
 from ._workflow import Workflow, WorkflowBuilder, WorkflowRunResult
 from ._workflow_context import WorkflowContext
-from ._workflow_executor import WorkflowExecutor
+from ._workflow_executor import SubWorkflowRequestMessage, SubWorkflowResponseMessage, WorkflowExecutor
 
 __all__ = [
     "DEFAULT_MAX_ITERATIONS",
@@ -117,7 +117,6 @@ __all__ = [
     "EdgeDuplicationError",
     "Executor",
     "ExecutorCompletedEvent",
-    "ExecutorDuplicationError",
     "ExecutorEvent",
     "ExecutorFailedEvent",
     "ExecutorInvokedEvent",
@@ -159,6 +158,8 @@ __all__ = [
     "SharedState",
     "SingleEdgeGroup",
     "StandardMagenticManager",
+    "SubWorkflowRequestMessage",
+    "SubWorkflowResponseMessage",
     "SwitchCaseEdgeGroup",
     "SwitchCaseEdgeGroupCase",
     "SwitchCaseEdgeGroupDefault",
@@ -187,5 +188,6 @@ __all__ = [
     "executor",
     "get_checkpoint_summary",
     "handler",
+    "response_handler",
     "validate_workflow_graph",
 ]
