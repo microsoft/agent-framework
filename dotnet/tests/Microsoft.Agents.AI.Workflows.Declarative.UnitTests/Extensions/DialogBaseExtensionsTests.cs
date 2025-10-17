@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Bot.ObjectModel;
@@ -18,26 +18,6 @@ public sealed class DialogBaseExtensionsTests
         {
             BeginDialog = new OnActivity.Builder()
             {
-                Id = "wrapped_dialog",
-            }
-        }.Build();
-
-        // Act
-        AdaptiveDialog wrappedDialog = dialog.WrapWithBot();
-
-        // Assert
-        Assert.NotNull(wrappedDialog);
-        Assert.NotNull(wrappedDialog.BeginDialog);
-    }
-
-    [Fact]
-    public void WrapWithBotPreservesDialogProperties()
-    {
-        // Arrange
-        AdaptiveDialog dialog = new AdaptiveDialog.Builder()
-        {
-            BeginDialog = new OnActivity.Builder()
-            {
                 Id = "test_dialog",
             }
         }.Build();
@@ -47,6 +27,7 @@ public sealed class DialogBaseExtensionsTests
 
         // Assert
         Assert.NotNull(wrappedDialog);
-        Assert.Equal("test_dialog", wrappedDialog.BeginDialog?.Id);
+        Assert.NotNull(wrappedDialog.BeginDialog);
+        Assert.Equal("test_dialog", wrappedDialog.BeginDialog.Id);
     }
 }
