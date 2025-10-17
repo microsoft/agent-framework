@@ -19,8 +19,10 @@ AIAgent agent = new AzureOpenAIClient(
 // Enable background responses (only supported by OpenAI Responses at this time).
 AgentRunOptions options = new() { AllowBackgroundResponses = true };
 
+AgentThread thread = agent.GetNewThread();
+
 // Start the initial run.
-AgentRunResponse response = await agent.RunAsync("Tell me a joke about a pirate.", options: options);
+AgentRunResponse response = await agent.RunAsync("Tell me a joke about a pirate.", thread, options);
 
 // Poll until the response is complete.
 while (response.ContinuationToken is { } token)
@@ -31,18 +33,19 @@ while (response.ContinuationToken is { } token)
     // Continue with the token.
     options.ContinuationToken = token;
 
-    response = await agent.RunAsync(options: options);
+    response = await agent.RunAsync(thread, options);
 }
 
 // Display the result.
 Console.WriteLine(response.Text);
 
-// Reset options for streaming.
+// Reset options and thread for streaming.
 options = new() { AllowBackgroundResponses = true };
+thread = agent.GetNewThread();
 
 AgentRunResponseUpdate? lastReceivedUpdate = null;
 // Start streaming.
-await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync("Tell me a joke about a pirate.", options: options))
+await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync("Tell me a joke about a pirate.", thread, options))
 {
     // Output each update.
     Console.Write(update.Text);
@@ -60,7 +63,7 @@ await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync("Tell me
 // Resume from interruption point.
 options.ContinuationToken = lastReceivedUpdate?.ContinuationToken;
 
-await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(options: options))
+await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(thread, options))
 {
     // Output each update.
     Console.Write(update.Text);
