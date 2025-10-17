@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Generated.Models;
+using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses.Invocation;
 

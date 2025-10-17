@@ -1,9 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.ClientModel.Primitives;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Net.ServerSentEvents;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
@@ -11,9 +11,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Common.Id;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Converters;
-using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Generated.Models;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Invocation;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Invocation.Stream;
+using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 
@@ -41,7 +41,7 @@ internal static class AIAgentResponsesProcessor
 
         try
         {
-            var messages = request.GetInputMessages(context.JsonSerializerOptions);
+            var messages = request.Input.GetInputMessages().Select(i => i.ToChatMessage());
             var response = await agent.RunAsync(messages, cancellationToken: cancellationToken).ConfigureAwait(false);
             return Results.Ok(response.ToResponse(request, context));
         }
@@ -53,7 +53,7 @@ internal static class AIAgentResponsesProcessor
                 throw;
             }
 
-            throw new AgentInvocationException(AzureAIAgentsModelFactory.ResponseError(message: e.Message));
+            throw new AgentInvocationException(new ResponseError { Code = "server_error", Message = e.Message });
         }
     }
 
@@ -76,15 +76,14 @@ internal static class AIAgentResponsesProcessor
                 destination: response.Body,
                 itemFormatter: (sseItem, bufferWriter) =>
                 {
-                    var streamEventJsonModel = (IJsonModel<ResponseStreamEvent>)sseItem.Data;
                     using var writer = new Utf8JsonWriter(bufferWriter);
-                    streamEventJsonModel.Write(writer, ModelReaderWriterOptions.Json);
+                    JsonSerializer.Serialize(writer, sseItem.Data, ResponsesJsonContext.Default.StreamingResponseEvent);
                     writer.Flush();
                 },
                 cancellationToken);
         }
 
-        private async IAsyncEnumerable<SseItem<ResponseStreamEvent>> GetStreamingResponsesAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
+        private async IAsyncEnumerable<SseItem<StreamingResponseEvent>> GetStreamingResponsesAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             var messages = createResponse.GetInputMessages(context.JsonSerializerOptions);
             var updates = agent.RunStreamingAsync(messages, cancellationToken: cancellationToken);
@@ -120,8 +119,8 @@ internal static class AIAgentResponsesProcessor
                                               .ConfigureAwait(false))
                 {
                     // Determine the event type string for SSE
-                    var eventType = e.Type.ToString();
-                    yield return new SseItem<ResponseStreamEvent>(e, eventType);
+                    var eventType = e.Type;
+                    yield return new SseItem<StreamingResponseEvent>(e, eventType);
                 }
             }
         }

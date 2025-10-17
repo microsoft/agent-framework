@@ -1,9 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Common.Id;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses.Invocation;
@@ -20,20 +17,6 @@ internal sealed class AgentInvocationContext(IIdGenerator idGenerator,
     string conversationId,
     JsonSerializerOptions? jsonSerializerOptions = null)
 {
-    private static readonly AsyncLocal<AgentInvocationContext?> _current = new();
-
-    /// <summary>
-    /// Gets the current agent invocation context.
-    /// </summary>
-    public static AgentInvocationContext? Current => _current.Value;
-
-    internal static IAsyncDisposable Setup(AgentInvocationContext context)
-    {
-        var previous = _current.Value;
-        _current.Value = context;
-        return new ScopedContext(previous);
-    }
-
     /// <summary>
     /// Gets the ID generator for this context.
     /// </summary>
@@ -52,14 +35,5 @@ internal sealed class AgentInvocationContext(IIdGenerator idGenerator,
     /// <summary>
     /// Gets the JSON serializer options.
     /// </summary>
-    public JsonSerializerOptions JsonSerializerOptions { get; } = jsonSerializerOptions ?? JsonExtensions.DefaultJsonSerializerOptions;
-
-    private sealed class ScopedContext(AgentInvocationContext? previous) : IAsyncDisposable
-    {
-        public ValueTask DisposeAsync()
-        {
-            _current.Value = previous;
-            return ValueTask.CompletedTask;
-        }
-    }
+    public JsonSerializerOptions JsonSerializerOptions { get; } = jsonSerializerOptions ?? ResponsesJsonSerializerOptions.Default;
 }

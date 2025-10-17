@@ -6,8 +6,8 @@ using System.Linq;
 using System.Text.Json;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Common;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Common.Id;
-using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Generated.Models;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Invocation;
+using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses.Converters;
@@ -30,18 +30,20 @@ internal static class ResponseConverterExtensions
         var output = agentRunResponse.Messages
             .SelectMany(msg => msg.ToItemResource(context.IdGenerator, context.JsonSerializerOptions));
 
-        return AzureAIAgentsModelFactory.Response(
-            @object: "response",
-            id: context.ResponseId,
-            conversationId: context.ConversationId,
-            metadata: request.Metadata as IReadOnlyDictionary<string, string>,
-            agent: request.Agent.ToAgentId(),
-            createdAt: agentRunResponse.CreatedAt ?? DateTimeOffset.UtcNow,
-            parallelToolCalls: true,
-            status: ResponseStatus.Completed,
-            output: output,
-            usage: agentRunResponse.Usage.ToResponseUsage()
-        );
+        return new Response
+        {
+            Id = context.ResponseId,
+            CreatedAt = (agentRunResponse.CreatedAt ?? DateTimeOffset.UtcNow).ToUnixTimeSeconds(),
+            Model = request.Agent?.Name ?? request.Model ?? "unknown",
+            Status = ResponseStatus.Completed,
+            Agent = request.Agent?.ToAgentId(),
+            Conversation = new ConversationReference { Id = context.ConversationId },
+            Metadata = request.Metadata is IReadOnlyDictionary<string, string> metadata ? new Dictionary<string, string>(metadata) : null,
+            Output = output.ToList(),
+            Usage = agentRunResponse.Usage.ToResponseUsage(),
+            ParallelToolCalls = true,
+            Tools = []
+        };
     }
 
     /// <summary>
@@ -102,7 +104,7 @@ internal static class ResponseConverterExtensions
         JsonSerializerOptions jsonSerializerOptions)
     {
 #pragma warning disable IL2026, IL3050 // JSON serialization requires dynamic access
-        return AzureAIAgentsModelFactory.FunctionToolCallItemResource(
+        return new FunctionToolCallItemResource(
             id: id,
             status: FunctionToolCallItemResourceStatus.Completed,
             callId: functionCallContent.CallId,
@@ -125,7 +127,7 @@ internal static class ResponseConverterExtensions
         var output = functionResultContent.Exception is not null
             ? $"{functionResultContent.Exception.GetType().Name}(\"{functionResultContent.Exception.Message}\")"
             : $"{functionResultContent.Result?.ToString() ?? "(null)"}";
-        return AzureAIAgentsModelFactory.FunctionToolCallOutputItemResource(
+        return new FunctionToolCallOutputItemResource(
             id: id,
             status: FunctionToolCallOutputItemResourceStatus.Completed,
             callId: functionResultContent.CallId,
@@ -145,23 +147,22 @@ internal static class ResponseConverterExtensions
             return null;
         }
 
-        var inputTokensDetails =
-            usage.AdditionalCounts?.TryGetValue("InputTokenDetails.CachedTokenCount", out var cachedInputToken) ?? false
-                ? AzureAIAgentsModelFactory.ResponseUsageInputTokensDetails((int)cachedInputToken)
-                : null;
-        var outputTokensDetails =
-            usage.AdditionalCounts?.TryGetValue("OutputTokenDetails.ReasoningTokenCount", out var reasoningToken) ??
-            false
-                ? AzureAIAgentsModelFactory.ResponseUsageOutputTokensDetails((int)reasoningToken)
-                : null;
+        var cachedTokens = usage.AdditionalCounts?.TryGetValue("InputTokenDetails.CachedTokenCount", out var cachedInputToken) ?? false
+            ? (int)cachedInputToken
+            : 0;
+        var reasoningTokens =
+            usage.AdditionalCounts?.TryGetValue("OutputTokenDetails.ReasoningTokenCount", out var reasoningToken) ?? false
+                ? (int)reasoningToken
+                : 0;
 
-        return AzureAIAgentsModelFactory.ResponseUsage(
-            inputTokens: (int)(usage.InputTokenCount ?? 0),
-            inputTokensDetails: inputTokensDetails,
-            outputTokens: (int)(usage.OutputTokenCount ?? 0),
-            outputTokensDetails: outputTokensDetails,
-            totalTokens: (int)(usage.TotalTokenCount ?? 0)
-        );
+        return new ResponseUsage
+        {
+            InputTokens = (int)(usage.InputTokenCount ?? 0),
+            InputTokensDetails = new InputTokensDetails { CachedTokens = cachedTokens },
+            OutputTokens = (int)(usage.OutputTokenCount ?? 0),
+            OutputTokensDetails = new OutputTokensDetails { ReasoningTokens = reasoningTokens },
+            TotalTokens = (int)(usage.TotalTokenCount ?? 0)
+        };
     }
 
     /// <summary>
@@ -183,7 +184,7 @@ internal static class ResponseConverterExtensions
                               (!string.IsNullOrWhiteSpace(errorContent.Details)
                                   ? $" - \"{errorContent.Details}\""
                                   : string.Empty);
-                var error = AzureAIAgentsModelFactory.ResponseError(message: message);
+                var error = new ResponseError { Code = errorContent.ErrorCode ?? "error", Message = message };
                 throw new AgentInvocationException(error);
             default:
                 return null;

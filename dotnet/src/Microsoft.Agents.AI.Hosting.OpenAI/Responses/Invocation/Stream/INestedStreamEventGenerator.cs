@@ -3,7 +3,8 @@
 using System;
 using System.Collections.Generic;
 using System.Threading;
-using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Generated.Models;
+using System.Threading.Tasks;
+using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses.Invocation.Stream;
 
@@ -33,7 +34,7 @@ internal sealed class NestedEventsGroup<T> where T : class
     public required Func<T> CreateAggregate { get; init; }
 
     /// <summary>
-    /// Gets or sets the events for this group.
+    /// Gets the events that will be generated.
     /// </summary>
-    public required IAsyncEnumerable<ResponseStreamEvent> Events { get; init; }
+    public required IAsyncEnumerable<StreamingResponseEvent> Events { get; init; }
 }

@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Generated.Models;
+using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses.Common;
 
@@ -18,8 +18,9 @@ internal static class ModelConversionExtensions
     {
         return agent == null
             ? null
-            : AzureAIAgentsModelFactory.AgentId(type: new AgentIdType(agent.Type.ToString()),
+            : new AgentId(
+                type: new AgentIdType(agent.Type),
                 name: agent.Name,
-                version: agent.Version);
+                version: agent.Version ?? "latest");
     }
 }

@@ -5,7 +5,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 
-using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Generated.Models;
+using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses.Common.Id;
 
@@ -43,7 +43,8 @@ internal sealed partial class DefaultIdGenerator : IIdGenerator
     /// <returns>A new ID generator.</returns>
     public static DefaultIdGenerator From(CreateResponse request)
     {
-        request.Metadata.TryGetValue("response_id", out var responseId);
+        string? responseId = null;
+        request.Metadata?.TryGetValue("response_id", out responseId);
         return new DefaultIdGenerator(responseId, request.Conversation?.Id);
     }
 
@@ -109,7 +110,7 @@ internal sealed partial class DefaultIdGenerator : IIdGenerator
     /// <exception cref="ArgumentException">Thrown when stringLength is less than 1.</exception>
     private static string SecureEntropy(int stringLength)
     {
-        ArgumentOutOfRangeException.ThrowIfLessThan(1, stringLength);
+        ArgumentOutOfRangeException.ThrowIfLessThan(stringLength, 1);
         var entropy = "";
         while (entropy.Length != stringLength)
         {

@@ -7,7 +7,7 @@ using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Common;
-using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Generated.Models;
+using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses.Invocation.Stream;
 
@@ -84,10 +84,10 @@ internal sealed class NestedResponseGenerator : INestedStreamEventGenerator<Resp
     }
 #pragma warning restore CS1998
 
-    private async IAsyncEnumerable<ResponseStreamEvent> GenerateEventsAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
+    private async IAsyncEnumerable<StreamingResponseEvent> GenerateEventsAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        yield return AzureAIAgentsModelFactory.ResponseCreatedEvent(this.Seq.GetNext(), this.ToResponse(status: ResponseStatus.InProgress));
-        yield return AzureAIAgentsModelFactory.ResponseInProgressEvent(this.Seq.GetNext(), this.ToResponse(status: ResponseStatus.InProgress));
+        yield return new StreamingResponseCreated { SequenceNumber = this.Seq.GetNext(), Response = this.ToResponse(status: ResponseStatus.InProgress) };
+        yield return new StreamingResponseInProgress { SequenceNumber = this.Seq.GetNext(), Response = this.ToResponse(status: ResponseStatus.InProgress) };
 
         IList<Func<IEnumerable<ItemResource>>> outputFactories = [];
         await foreach (var group in this.OutputGenerator.GenerateAsync(cancellationToken).ConfigureAwait(false))
@@ -103,22 +103,25 @@ internal sealed class NestedResponseGenerator : INestedStreamEventGenerator<Resp
 
         var outputs = outputFactories.SelectMany(f => f());
         this.CompletedResponse = this.ToResponse(status: ResponseStatus.Completed, outputs);
-        yield return AzureAIAgentsModelFactory.ResponseCompletedEvent(this.Seq.GetNext(), this.CompletedResponse);
+        yield return new StreamingResponseCompleted { SequenceNumber = this.Seq.GetNext(), Response = this.CompletedResponse };
     }
 
     private Response ToResponse(ResponseStatus status = ResponseStatus.Completed, IEnumerable<ItemResource>? outputs = null)
     {
-        return AzureAIAgentsModelFactory.Response(
-            @object: "response",
-            id: this.ResponseId,
-            conversationId: this.ConversationId,
-            metadata: this.Request.Metadata as IReadOnlyDictionary<string, string>,
-            agent: this.Request.Agent.ToAgentId(),
-            createdAt: this._createdAt,
-            status: status,
-            output: outputs ?? Array.Empty<ItemResource>(),
-            usage: this._latestUsage
-        );
+        return new Response
+        {
+            Id = this.ResponseId,
+            CreatedAt = this._createdAt.ToUnixTimeSeconds(),
+            Model = this.Request.Agent?.Name ?? this.Request.Model ?? "unknown",
+            Status = status,
+            Agent = this.Request.Agent?.ToAgentId(),
+            Conversation = new ConversationReference { Id = this.ConversationId },
+            Metadata = this.Request.Metadata != null ? new Dictionary<string, string>(this.Request.Metadata) : null,
+            Output = outputs?.ToList() ?? [],
+            Usage = this._latestUsage,
+            ParallelToolCalls = true,
+            Tools = []
+        };
     }
 
     private void SetUsage(ResponseUsage usage)
@@ -129,13 +132,19 @@ internal sealed class NestedResponseGenerator : INestedStreamEventGenerator<Resp
             return;
         }
 
-        this._latestUsage = AzureAIAgentsModelFactory.ResponseUsage(
-            inputTokens: usage.InputTokens + this._latestUsage.InputTokens,
-            inputTokensDetails: AzureAIAgentsModelFactory.ResponseUsageInputTokensDetails(
-                cachedTokens: usage.InputTokensDetails.CachedTokens + this._latestUsage.InputTokensDetails.CachedTokens),
-            outputTokens: usage.OutputTokens + this._latestUsage.OutputTokens,
-            outputTokensDetails: AzureAIAgentsModelFactory.ResponseUsageOutputTokensDetails(
-                reasoningTokens: usage.OutputTokensDetails.ReasoningTokens + this._latestUsage.OutputTokensDetails.ReasoningTokens),
-            totalTokens: usage.TotalTokens + this._latestUsage.TotalTokens);
+        this._latestUsage = new ResponseUsage
+        {
+            InputTokens = usage.InputTokens + this._latestUsage.InputTokens,
+            InputTokensDetails = new InputTokensDetails
+            {
+                CachedTokens = usage.InputTokensDetails.CachedTokens + this._latestUsage.InputTokensDetails.CachedTokens
+            },
+            OutputTokens = usage.OutputTokens + this._latestUsage.OutputTokens,
+            OutputTokensDetails = new OutputTokensDetails
+            {
+                ReasoningTokens = usage.OutputTokensDetails.ReasoningTokens + this._latestUsage.OutputTokensDetails.ReasoningTokens
+            },
+            TotalTokens = usage.TotalTokens + this._latestUsage.TotalTokens
+        };
     }
 }

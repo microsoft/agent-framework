@@ -8,9 +8,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Common;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Common.Id;
-using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Generated.Models;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Invocation;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Invocation.Stream;
+using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses.Converters;
@@ -90,7 +90,7 @@ internal sealed class AfItemResourceGenerator
         };
     }
 
-    private async IAsyncEnumerable<ResponseStreamEvent> GenerateEventsAsync(
+    private async IAsyncEnumerable<StreamingResponseEvent> GenerateEventsAsync(
         IAsyncEnumerable<AgentRunResponseUpdate> updates,
         Action<ItemResource> onItemResource,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -152,7 +152,7 @@ internal sealed class AfItemResourceGenerator
         }
     }
 
-    private async IAsyncEnumerable<ResponseStreamEvent> GenerateFunctionCallEventsAsync(
+    private async IAsyncEnumerable<StreamingResponseEvent> GenerateFunctionCallEventsAsync(
         IAsyncEnumerable<AIContent> source,
         Action<ItemResource> onItemResource,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -168,31 +168,39 @@ internal sealed class AfItemResourceGenerator
             var item = functionCallContent.ToFunctionToolCallItemResource(this.Context.IdGenerator.GenerateFunctionCallId(), this.Context.JsonSerializerOptions);
             onItemResource(item);
 
-            yield return AzureAIAgentsModelFactory.ResponseOutputItemAddedEvent(
-                sequenceNumber: this.Seq.GetNext(),
-                outputIndex: groupSeq,
-                item: item);
+            yield return new StreamingOutputItemAdded
+            {
+                SequenceNumber = this.Seq.GetNext(),
+                OutputIndex = groupSeq,
+                Item = item
+            };
 
-            yield return AzureAIAgentsModelFactory.ResponseFunctionCallArgumentsDeltaEvent(
-                sequenceNumber: this.Seq.GetNext(),
-                itemId: item.Id,
-                outputIndex: this.GroupSeq.Current(),
-                delta: item.Arguments);
+            yield return new StreamingFunctionCallArgumentsDelta
+            {
+                SequenceNumber = this.Seq.GetNext(),
+                ItemId = item.Id,
+                OutputIndex = this.GroupSeq.Current(),
+                Delta = item.Arguments
+            };
 
-            yield return AzureAIAgentsModelFactory.ResponseFunctionCallArgumentsDoneEvent(
-                sequenceNumber: this.Seq.GetNext(),
-                itemId: item.Id,
-                outputIndex: this.GroupSeq.Current(),
-                arguments: item.Arguments);
+            yield return new StreamingFunctionCallArgumentsDone
+            {
+                SequenceNumber = this.Seq.GetNext(),
+                ItemId = item.Id,
+                OutputIndex = this.GroupSeq.Current(),
+                Arguments = item.Arguments
+            };
 
-            yield return AzureAIAgentsModelFactory.ResponseOutputItemDoneEvent(
-                sequenceNumber: this.Seq.GetNext(),
-                outputIndex: groupSeq,
-                item: item);
+            yield return new StreamingOutputItemDone
+            {
+                SequenceNumber = this.Seq.GetNext(),
+                OutputIndex = groupSeq,
+                Item = item
+            };
         }
     }
 
-    private async IAsyncEnumerable<ResponseStreamEvent> GenerateFunctionCallOutputEventsAsync(
+    private async IAsyncEnumerable<StreamingResponseEvent> GenerateFunctionCallOutputEventsAsync(
         IAsyncEnumerable<AIContent> source,
         Action<ItemResource> onItemResource,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -208,19 +216,23 @@ internal sealed class AfItemResourceGenerator
             var item = functionResultContent.ToFunctionToolCallOutputItemResource(this.Context.IdGenerator.GenerateFunctionOutputId());
             onItemResource(item);
 
-            yield return AzureAIAgentsModelFactory.ResponseOutputItemAddedEvent(
-                sequenceNumber: this.Seq.GetNext(),
-                outputIndex: groupSeq,
-                item: item);
+            yield return new StreamingOutputItemAdded
+            {
+                SequenceNumber = this.Seq.GetNext(),
+                OutputIndex = groupSeq,
+                Item = item
+            };
 
-            yield return AzureAIAgentsModelFactory.ResponseOutputItemDoneEvent(
-                sequenceNumber: this.Seq.GetNext(),
-                outputIndex: groupSeq,
-                item: item);
+            yield return new StreamingOutputItemDone
+            {
+                SequenceNumber = this.Seq.GetNext(),
+                OutputIndex = groupSeq,
+                Item = item
+            };
         }
     }
 
-    private async IAsyncEnumerable<ResponseStreamEvent> GenerateAssistantMessageEventsAsync(
+    private async IAsyncEnumerable<StreamingResponseEvent> GenerateAssistantMessageEventsAsync(
         IAsyncEnumerable<AIContent> source,
         Action<ItemResource> onItemResource,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -229,21 +241,25 @@ internal sealed class AfItemResourceGenerator
         var itemId = this.Context.IdGenerator.GenerateMessageId();
         var incompleteItem = new ResponsesAssistantMessageItemResource(
             id: itemId,
-            status: ResponsesMessageItemResourceStatus.Completed,
+            status: ResponsesMessageItemResourceStatus.InProgress,
             content: []
         );
 
-        yield return AzureAIAgentsModelFactory.ResponseOutputItemAddedEvent(
-            sequenceNumber: this.Seq.GetNext(),
-            outputIndex: groupSeq,
-            item: incompleteItem);
+        yield return new StreamingOutputItemAdded
+        {
+            SequenceNumber = this.Seq.GetNext(),
+            OutputIndex = groupSeq,
+            Item = incompleteItem
+        };
 
-        yield return AzureAIAgentsModelFactory.ResponseContentPartAddedEvent(
-            sequenceNumber: this.Seq.GetNext(),
-            itemId: itemId,
-            outputIndex: groupSeq,
-            contentIndex: 0,
-            part: new ItemContentOutputText(string.Empty, []));
+        yield return new StreamingContentPartAdded
+        {
+            SequenceNumber = this.Seq.GetNext(),
+            ItemId = itemId,
+            OutputIndex = groupSeq,
+            ContentIndex = 0,
+            Part = new ItemContentOutputText(string.Empty, [])
+        };
 
         var text = new StringBuilder();
         await foreach (var content in source.WithCancellation(cancellationToken).ConfigureAwait(false))
@@ -254,22 +270,25 @@ internal sealed class AfItemResourceGenerator
             }
 
             text.Append(textContent.Text);
-            yield return AzureAIAgentsModelFactory.ResponseTextDeltaEvent(
-                sequenceNumber: this.Seq.GetNext(),
-                itemId: itemId,
-                outputIndex: groupSeq,
-                contentIndex: 0,
-                delta: textContent.Text
-            );
+            yield return new StreamingOutputTextDelta
+            {
+                SequenceNumber = this.Seq.GetNext(),
+                ItemId = itemId,
+                OutputIndex = groupSeq,
+                ContentIndex = 0,
+                Delta = textContent.Text
+            };
         }
 
         var itemContent = new ItemContentOutputText(text.ToString(), []);
-        yield return AzureAIAgentsModelFactory.ResponseContentPartDoneEvent(
-            sequenceNumber: this.Seq.GetNext(),
-            itemId: itemId,
-            outputIndex: groupSeq,
-            contentIndex: 0,
-            part: itemContent);
+        yield return new StreamingContentPartDone
+        {
+            SequenceNumber = this.Seq.GetNext(),
+            ItemId = itemId,
+            OutputIndex = groupSeq,
+            ContentIndex = 0,
+            Part = itemContent
+        };
 
         var itemResource = new ResponsesAssistantMessageItemResource(
             id: itemId,
@@ -277,9 +296,11 @@ internal sealed class AfItemResourceGenerator
             content: [itemContent]
         );
         onItemResource(itemResource);
-        yield return AzureAIAgentsModelFactory.ResponseOutputItemDoneEvent(
-            sequenceNumber: this.Seq.GetNext(),
-            outputIndex: groupSeq,
-            item: itemResource);
+        yield return new StreamingOutputItemDone
+        {
+            SequenceNumber = this.Seq.GetNext(),
+            OutputIndex = groupSeq,
+            Item = itemResource
+        };
     }
 }
