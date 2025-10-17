@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI.Agents.Purview.Models.Common;
 using Microsoft.Extensions.AI.Agents.Purview.Models.Requests;
 using Microsoft.Extensions.AI.Agents.Purview.Models.Responses;
@@ -32,59 +31,88 @@ internal sealed class ScopedContentProcessor
     /// The list of messages should be a prompt or response.
     /// </summary>
     /// <param name="messages">A list of <see cref="ChatMessage"/> objects sent to the agent or received from the agent..</param>
-    /// <param name="thread">The thread where the messages were sent.</param>
+    /// <param name="threadId">The thread where the messages were sent.</param>
     /// <param name="activity">An activity to indicate prompt or response.</param>
     /// <param name="purviewSettings">Purview settings containing tenant id, app name, etc.</param>
+    /// <param name="userId">The user who sent the prompt or is receiving the response.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns></returns>
-    public async Task<bool> ProcessMessagesAsync(IEnumerable<ChatMessage> messages, AgentThread? thread, Activity activity, PurviewSettings purviewSettings, CancellationToken cancellationToken)
+    public async Task<(bool shouldBlock, string? userId)> ProcessMessagesAsync(IEnumerable<ChatMessage> messages, string? threadId, Activity activity, PurviewSettings purviewSettings, string? userId, CancellationToken cancellationToken)
     {
-        List<ProcessContentRequest> pcRequests = await this.MapMessageToPCRequestsAsync(messages, thread, activity, purviewSettings, cancellationToken).ConfigureAwait(false);
-        return await this.ProcessBatchAsync(pcRequests, cancellationToken).ConfigureAwait(false);
+        List<ProcessContentRequest> pcRequests = await this.MapMessageToPCRequestsAsync(messages, threadId, activity, purviewSettings, userId, cancellationToken).ConfigureAwait(false);
+
+        bool shouldBlock = false;
+        string? resolvedUserId = null;
+
+        foreach (ProcessContentRequest pcRequest in pcRequests)
+        {
+            resolvedUserId = pcRequest.UserId;
+            ProcessContentResponse processContentResponse = await this.ProcessContentWithProtectionScopesAsync(pcRequest, cancellationToken).ConfigureAwait(false);
+            if (processContentResponse.PolicyActions?.Count > 0)
+            {
+                foreach (DlpActionInfo policyAction in processContentResponse.PolicyActions)
+                {
+                    // We need to process all data before blocking, so set the flag and return it outside of this loop.
+                    if (policyAction.Action == DlpAction.BlockAccess)
+                    {
+                        shouldBlock = true;
+                    }
+
+                    if (policyAction.RestrictionAction == RestrictionAction.Block)
+                    {
+                        shouldBlock = true;
+                    }
+                }
+            }
+        }
+
+        return (shouldBlock, resolvedUserId);
     }
 
-    private static string GetThreadId(AgentThread? thread, ChatMessage message)
+    private static bool TryGetUserIdFromPayload(IEnumerable<ChatMessage> messages, out string? userId)
     {
-        if (thread == null)
+        userId = null;
+
+        foreach (ChatMessage message in messages)
         {
-            return Guid.NewGuid().ToString();
+            if (message.AdditionalProperties != null &&
+                message.AdditionalProperties.TryGetValue(Constants.UserId, out userId) &&
+                !string.IsNullOrEmpty(userId))
+            {
+                return true;
+            }
+            else if (Guid.TryParse(message.AuthorName, out Guid _))
+            {
+                userId = message.AuthorName;
+                return true;
+            }
         }
 
-        if (message.AdditionalProperties != null &&
-            message.AdditionalProperties.TryGetValue(Constants.ConversationId, out string? conversationId) &&
-            conversationId is string conversationIdString &&
-            !string.IsNullOrEmpty(conversationIdString))
-        {
-            return conversationIdString;
-        }
-
-        if (thread is ChatClientAgentThread chatClientAgentThread &&
-            chatClientAgentThread.ConversationId != null)
-        {
-            return chatClientAgentThread.ConversationId ?? Guid.NewGuid().ToString();
-        }
-
-        return Guid.NewGuid().ToString();
+        return false;
     }
 
     /// <summary>
     /// Transform a list of ChatMessages into a list of ProcessContentRequests.
     /// </summary>
     /// <param name="messages"></param>
-    /// <param name="thread"></param>
+    /// <param name="threadId"></param>
     /// <param name="activity"></param>
     /// <param name="settings"></param>
+    /// <param name="userId"></param>
     /// <param name="cancellationToken"></param>
     /// <returns></returns>
-    private async Task<List<ProcessContentRequest>> MapMessageToPCRequestsAsync(IEnumerable<ChatMessage> messages, AgentThread? thread, Activity activity, PurviewSettings settings, CancellationToken cancellationToken)
+    public async Task<List<ProcessContentRequest>> MapMessageToPCRequestsAsync(IEnumerable<ChatMessage> messages, string? threadId, Activity activity, PurviewSettings settings, string? userId, CancellationToken cancellationToken)
     {
         List<ProcessContentRequest> pcRequests = new();
         TokenInfo? tokenInfo = null;
 
+        bool needUserId = userId == null && TryGetUserIdFromPayload(messages, out userId);
+
         // Only get user info if the tenant id is null or if there's no location.
         // If location is missing, we will create a new location using the client id.
         if (settings.TenantId == null ||
-            settings.PurviewAppLocation == null)
+            settings.PurviewAppLocation == null ||
+            needUserId)
         {
             if (settings.TenantId != null)
             {
@@ -104,7 +132,7 @@ internal sealed class ScopedContentProcessor
             ContentBase content = new PurviewTextContent(message.Text);
             ProcessConversationMetadata conversationmetadata = new(content, messageId, false, $"Agent Framework Message {messageId}")
             {
-                CorrelationId = GetThreadId(thread, message)
+                CorrelationId = threadId ?? Guid.NewGuid().ToString()
             };
             ActivityMetadata activityMetadata = new(activity);
             PolicyLocation policyLocation;
@@ -142,20 +170,10 @@ internal sealed class ScopedContentProcessor
             };
             ContentToProcess contentToProcess = new(new List<ProcessContentMetadataBase> { conversationmetadata }, activityMetadata, deviceMetadata, integratedAppMetadata, protectedAppMetadata);
 
-            string? userId = null;
-            if (tokenInfo?.UserId != null)
+            if (userId == null &&
+                tokenInfo?.UserId != null)
             {
                 userId = tokenInfo.UserId;
-            }
-            else if (message.AdditionalProperties != null &&
-                message.AdditionalProperties.TryGetValue(Constants.UserId, out string? userIdString) &&
-                !string.IsNullOrEmpty(userIdString))
-            {
-                userId = userIdString;
-            }
-            else if (Guid.TryParse(message.AuthorName, out Guid _))
-            {
-                userId = message.AuthorName;
             }
 
             if (string.IsNullOrEmpty(userId))
@@ -168,37 +186,6 @@ internal sealed class ScopedContentProcessor
         }
 
         return pcRequests;
-    }
-
-    /// <summary>
-    /// Processes a batch of content requests.
-    /// </summary>
-    /// <param name="pcRequests"></param>
-    /// <param name="cancellationToken"></param>
-    /// <returns></returns>
-    private async Task<bool> ProcessBatchAsync(List<ProcessContentRequest> pcRequests, CancellationToken cancellationToken)
-    {
-        foreach (ProcessContentRequest pcRequest in pcRequests)
-        {
-            ProcessContentResponse processContentResponse = await this.ProcessContentWithProtectionScopesAsync(pcRequest, cancellationToken).ConfigureAwait(false);
-            if (processContentResponse.PolicyActions?.Count > 0)
-            {
-                foreach (DlpActionInfo policyAction in processContentResponse.PolicyActions)
-                {
-                    if (policyAction.Action == DlpAction.BlockAccess)
-                    {
-                        return true;
-                    }
-
-                    if (policyAction.RestrictionAction == RestrictionAction.Block)
-                    {
-                        return true;
-                    }
-                }
-            }
-        }
-
-        return false;
     }
 
     /// <summary>

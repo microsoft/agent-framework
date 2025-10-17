@@ -44,4 +44,14 @@ public class PurviewSettings
     /// Set to graph v1.0 by default.
     /// </summary>
     public Uri GraphBaseUri { get; set; } = new Uri("https://graph.microsoft.com/v1.0/");
+
+    /// <summary>
+    /// Gets or sets the message to display when a prompt is blocked by Purview policies.
+    /// </summary>
+    public string BlockedPromptMessage { get; set; } = "Prompt blocked by policies";
+
+    /// <summary>
+    /// Gets or sets the message to display when a response is blocked by Purview policies.
+    /// </summary>
+    public string BlockedResponseMessage { get; set; } = "Response blocked by policies";
 }

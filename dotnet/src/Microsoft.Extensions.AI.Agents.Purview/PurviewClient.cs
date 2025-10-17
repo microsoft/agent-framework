@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Net;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
@@ -8,6 +9,7 @@ using System.Text.Json.Serialization.Metadata;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.Core;
+using Microsoft.Extensions.AI.Agents.Purview.Exceptions;
 using Microsoft.Extensions.AI.Agents.Purview.Models.Common;
 using Microsoft.Extensions.AI.Agents.Purview.Models.Requests;
 using Microsoft.Extensions.AI.Agents.Purview.Models.Responses;
@@ -27,6 +29,21 @@ internal sealed class PurviewClient : IDisposable
     private readonly string[] _scopes;
     private readonly string _graphUri;
     private readonly ILogger _logger;
+
+    private static PurviewServiceException CreateExceptionForStatusCode(HttpStatusCode statusCode, string endpointName)
+    {
+        // .net framework does not support TooManyRequests, so we have to convert to an int.
+        switch ((int)statusCode)
+        {
+            case 429:
+                return new PurviewRateLimitException($"Rate limit exceeded for {endpointName}.");
+            case 401:
+            case 403:
+                return new PurviewAuthenticationException($"Unauthorized access to {endpointName}. Status code: {statusCode}");
+            default:
+                return new PurviewRequestException($"Failed to call {endpointName}. Status code: {statusCode}");
+        }
+    }
 
     /// <summary>
     /// Creates a new <see cref="PurviewClient"/> instance.
@@ -105,8 +122,7 @@ internal sealed class PurviewClient : IDisposable
     /// <param name="request"></param>
     /// <param name="cancellationToken"></param>
     /// <returns></returns>
-    /// <exception cref="JsonException"></exception>
-    /// <exception cref="HttpRequestException"></exception>
+    /// <exception cref="PurviewServiceException"></exception>
     public async Task<ProcessContentResponse> ProcessContentAsync(ProcessContentRequest request, CancellationToken cancellationToken)
     {
         var token = await this._tokenCredential.GetTokenAsync(new TokenRequestContext(this._scopes, tenantId: request.TenantId), cancellationToken).ConfigureAwait(false);
@@ -129,7 +145,7 @@ internal sealed class PurviewClient : IDisposable
             string responseContent = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
 #endif
 
-            if (response.StatusCode == System.Net.HttpStatusCode.OK || response.StatusCode == System.Net.HttpStatusCode.Accepted)
+            if (response.StatusCode == HttpStatusCode.OK || response.StatusCode == HttpStatusCode.Accepted)
             {
                 JsonTypeInfo<ProcessContentResponse> typeInfo = (JsonTypeInfo<ProcessContentResponse>)PurviewSerializationUtils.SerializationSettings.GetTypeInfo(typeof(ProcessContentResponse));
                 ProcessContentResponse? deserializedResponse = JsonSerializer.Deserialize(responseContent, typeInfo);
@@ -141,11 +157,11 @@ internal sealed class PurviewClient : IDisposable
 
                 const string DeserializeError = "Failed to deserialize ProcessContent response.";
                 this._logger.LogError(DeserializeError);
-                throw new JsonException(DeserializeError);
+                throw new PurviewServiceException(DeserializeError);
             }
 
             this._logger.LogError("Failed to process content. Status code: {StatusCode}", response.StatusCode);
-            throw new HttpRequestException($"Failed to process content. Status code: {response.StatusCode}");
+            throw CreateExceptionForStatusCode(response.StatusCode, "processContent");
         }
     }
 
@@ -155,8 +171,7 @@ internal sealed class PurviewClient : IDisposable
     /// <param name="request"></param>
     /// <param name="cancellationToken"></param>
     /// <returns></returns>
-    /// <exception cref="JsonException"></exception>
-    /// <exception cref="HttpRequestException"></exception>
+    /// <exception cref="PurviewServiceException"></exception>
     public async Task<ProtectionScopesResponse> GetProtectionScopesAsync(ProtectionScopesRequest request, CancellationToken cancellationToken)
     {
         var token = await this._tokenCredential.GetTokenAsync(new TokenRequestContext(this._scopes), cancellationToken).ConfigureAwait(false);
@@ -174,7 +189,7 @@ internal sealed class PurviewClient : IDisposable
             message.Content = new StringContent(content, Encoding.UTF8, "application/json");
             HttpResponseMessage response = await this._httpClient.SendAsync(message, cancellationToken).ConfigureAwait(false);
 
-            if (response.StatusCode == System.Net.HttpStatusCode.OK)
+            if (response.StatusCode == HttpStatusCode.OK)
             {
 #if NET5_0_OR_GREATER
                 // Pass the cancellation token if that method is available.
@@ -192,11 +207,11 @@ internal sealed class PurviewClient : IDisposable
 
                 const string DeserializeError = "Failed to deserialize ProtectionScopes response.";
                 this._logger.LogError(DeserializeError);
-                throw new JsonException(DeserializeError);
+                throw new PurviewServiceException(DeserializeError);
             }
 
             this._logger.LogError("Failed to retrieve protection scopes. Status code: {StatusCode}", response.StatusCode);
-            throw new HttpRequestException($"Failed to retrieve protection scopes. Status code: {response.StatusCode}");
+            throw CreateExceptionForStatusCode(response.StatusCode, "protectionScopes/compute");
         }
     }
 
@@ -206,8 +221,7 @@ internal sealed class PurviewClient : IDisposable
     /// <param name="request"></param>
     /// <param name="cancellationToken"></param>
     /// <returns></returns>
-    /// <exception cref="JsonException"></exception>
-    /// <exception cref="HttpRequestException"></exception>
+    /// <exception cref="PurviewServiceException"></exception>
     public async Task<ContentActivitiesResponse> SendContentActivitiesAsync(ContentActivitiesRequest request, CancellationToken cancellationToken)
     {
         var token = await this._tokenCredential.GetTokenAsync(new TokenRequestContext(this._scopes), cancellationToken).ConfigureAwait(false);
@@ -223,7 +237,7 @@ internal sealed class PurviewClient : IDisposable
             message.Content = new StringContent(content, Encoding.UTF8, "application/json");
             HttpResponseMessage response = await this._httpClient.SendAsync(message, cancellationToken).ConfigureAwait(false);
 
-            if (response.StatusCode == System.Net.HttpStatusCode.Created)
+            if (response.StatusCode == HttpStatusCode.Created)
             {
 #if NET5_0_OR_GREATER
                 // Pass the cancellation token if that method is available.
@@ -242,11 +256,11 @@ internal sealed class PurviewClient : IDisposable
 
                 const string DeserializeError = "Failed to deserialize ContentActivities response.";
                 this._logger.LogError(DeserializeError);
-                throw new JsonException(DeserializeError);
+                throw new PurviewServiceException(DeserializeError);
             }
 
             this._logger.LogError("Failed to create content activities. Status code: {StatusCode}", response.StatusCode);
-            throw new HttpRequestException($"Failed to process content activities. Status code: {response.StatusCode}");
+            throw CreateExceptionForStatusCode(response.StatusCode, "contentActivities");
         }
     }
 
