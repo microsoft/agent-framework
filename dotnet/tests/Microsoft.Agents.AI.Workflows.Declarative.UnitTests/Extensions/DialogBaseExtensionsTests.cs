@@ -1,7 +1,6 @@
 // Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
-using Microsoft.Bot.ObjectModel;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.Extensions;
 
