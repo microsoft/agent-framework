@@ -188,10 +188,10 @@ All executors read from and write to a single `TranscriptMemoryStore` instance t
 
 ## Learning Resources
 
-- [Agent Framework Workflows Documentation](https://learn.microsoft.com/agent-framework/user-guide/workflows/)
-- [Workflow with Branching Logic Tutorial](https://learn.microsoft.com/agent-framework/tutorials/workflows/workflow-with-branching-logic)
-- [Orchestrations Overview](https://learn.microsoft.com/agent-framework/user-guide/workflows/orchestrations/overview)
-- [Azure OpenAI Realtime API](https://learn.microsoft.com/azure/ai-services/openai/how-to/realtime-audio-api)
+- [Azure OpenAI Service Documentation](https://learn.microsoft.com/azure/ai-services/openai/)
+- [Azure OpenAI Chat Completions API](https://learn.microsoft.com/azure/ai-services/openai/reference)
+- [GPT-4o Realtime Audio API Guide](https://learn.microsoft.com/azure/ai-services/openai/concepts/realtime-audio-sdk)
+- [Agent Framework Repository](https://github.com/microsoft/agent-framework)
 
 ## Troubleshooting
 
