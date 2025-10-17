@@ -77,8 +77,14 @@ jobs:
           UV_CACHE_DIR: /tmp/.uv-cache
       - name: Test with pytest
         timeout-minutes: 10
-        run: uv run poe all-tests -n logical --dist loadfile --dist worksteal --timeout 300 --retries 3 --retry-delay 10
+        run: |
+          if [[ "${{ matrix.python-version }}" == "3.10" ]]; then
+            uv run poe all-tests --ignore-glob=packages/chatkit/** -n logical --dist loadfile --dist worksteal --timeout 300 --retries 3 --retry-delay 10
+          else
+            uv run poe all-tests -n logical --dist loadfile --dist worksteal --timeout 300 --retries 3 --retry-delay 10
+          fi
         working-directory: ./python
+        shell: bash
       - name: Test main samples
         timeout-minutes: 10
         if: env.RUN_SAMPLES_TESTS == 'true'
@@ -137,8 +143,14 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       - name: Test with pytest
         timeout-minutes: 10
-        run: uv run poe all-tests -n logical --dist loadfile --dist worksteal --timeout 300 --retries 3 --retry-delay 10
+        run: |
+          if [[ "${{ matrix.python-version }}" == "3.10" ]]; then
+            uv run poe all-tests --ignore-glob=packages/chatkit/** -n logical --dist loadfile --dist worksteal --timeout 300 --retries 3 --retry-delay 10
+          else
+            uv run poe all-tests -n logical --dist loadfile --dist worksteal --timeout 300 --retries 3 --retry-delay 10
+          fi
         working-directory: ./python
+        shell: bash
       - name: Test azure samples
         timeout-minutes: 10
         if: env.RUN_SAMPLES_TESTS == 'true'
