@@ -42,7 +42,7 @@ internal static class SequenceNumberFactory
 /// <summary>
 /// Implements a non-atomic sequence number generator.
 /// </summary>
-internal class DefaultSequenceNumber : ISequenceNumber
+internal sealed class DefaultSequenceNumber : ISequenceNumber
 {
     private volatile int _sequenceNumber;
 
@@ -57,7 +57,7 @@ internal class DefaultSequenceNumber : ISequenceNumber
 /// <summary>
 /// Implements a thread-safe atomic sequence number generator.
 /// </summary>
-internal class AtomicSequenceNumber : ISequenceNumber
+internal sealed class AtomicSequenceNumber : ISequenceNumber
 {
     private volatile int _sequenceNumber;
 

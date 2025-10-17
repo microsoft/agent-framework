@@ -12,7 +12,7 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses;
 /// <summary>
 /// Extension methods for JSON serialization.
 /// </summary>
-public static partial class JsonExtensions
+internal static partial class JsonExtensions
 {
     /// <summary>
     /// Gets the default JSON serializer options.

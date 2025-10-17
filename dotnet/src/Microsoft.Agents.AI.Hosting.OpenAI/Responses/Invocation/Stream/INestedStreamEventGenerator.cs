@@ -25,7 +25,7 @@ internal interface INestedStreamEventGenerator<TAggregate> where TAggregate : cl
 /// Represents a group of nested stream events with an aggregate.
 /// </summary>
 /// <typeparam name="T">The type of aggregate.</typeparam>
-internal class NestedEventsGroup<T> where T : class
+internal sealed class NestedEventsGroup<T> where T : class
 {
     /// <summary>
     /// Gets or sets the function to create the aggregate.

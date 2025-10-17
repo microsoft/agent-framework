@@ -16,8 +16,7 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI;
 public static class HostApplicationBuilderExtensions
 {
     /// <summary>
-    /// Adds OpenAI Responses support to the application, configuring JSON serialization options
-    /// to include the <see cref="JsonModelConverter"/> from System.ClientModel.
+    /// Adds support for exposing <see cref="AIAgent"/> instances via OpenAI Responses.
     /// </summary>
     /// <param name="builder">The <see cref="IHostApplicationBuilder"/> to configure.</param>
     /// <returns>The <see cref="IHostApplicationBuilder"/> for method chaining.</returns>

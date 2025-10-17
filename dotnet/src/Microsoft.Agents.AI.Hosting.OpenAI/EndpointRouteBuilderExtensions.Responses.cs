@@ -42,12 +42,6 @@ public static partial class EndpointRouteBuilderExtensions
         responsesPath ??= $"/{agentName}/v1/responses";
         var responsesRouteGroup = endpoints.MapGroup(responsesPath);
         MapResponses(responsesRouteGroup, agent);
-
-        // Will be included once we obtain the API to operate with thread (conversation).
-
-        // conversationsPath ??= $"/{agentName}/v1/conversations";
-        // var conversationsRouteGroup = endpoints.MapGroup(conversationsPath);
-        // MapConversations(conversationsRouteGroup, agent, loggerFactory);
     }
 
     private static void MapResponses(IEndpointRouteBuilder routeGroup, AIAgent agent)
@@ -57,18 +51,6 @@ public static partial class EndpointRouteBuilderExtensions
         routeGroup.MapPost("/", async ([FromBody] CreateResponse createResponse, CancellationToken cancellationToken)
             => await AIAgentResponsesProcessor.CreateModelResponseAsync(agent, createResponse, cancellationToken).ConfigureAwait(false))
             .WithName(endpointAgentName + "/CreateResponse");
-    }
-
-#pragma warning disable IDE0051 // Remove unused private members
-    private static void MapConversations(IEndpointRouteBuilder routeGroup, AIAgent agent)
-#pragma warning restore IDE0051 // Remove unused private members
-    {
-        var endpointAgentName = agent.DisplayName;
-        var conversationsProcessor = new AIAgentConversationsProcessor(agent);
-
-        routeGroup.MapGet("/{conversation_id}", (string conversationId, CancellationToken cancellationToken)
-            => conversationsProcessor.GetConversationAsync(conversationId, cancellationToken)
-        ).WithName(endpointAgentName + "/RetrieveConversation");
     }
 
     private static void ValidateAgentName([NotNull] string agentName)

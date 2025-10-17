@@ -12,7 +12,7 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses.Common.Id;
 /// <summary>
 /// Generates Foundry-style IDs with partition keys.
 /// </summary>
-internal partial class DefaultIdGenerator : IIdGenerator
+internal sealed partial class DefaultIdGenerator : IIdGenerator
 {
     private readonly string _partitionId;
 
