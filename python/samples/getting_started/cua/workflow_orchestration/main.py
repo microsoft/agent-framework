@@ -38,6 +38,7 @@ async def main():
         cua_middleware = CuaAgentMiddleware(
             computer=computer,
             model="anthropic/claude-sonnet-4-5-20250929",
+            instructions="You are an automation assistant. Execute the plan carefully.",
             require_approval=True,  # Human-in-the-loop via Agent Framework
             approval_interval=3,
         )
@@ -46,7 +47,6 @@ async def main():
         automation_agent = ChatAgent(
             chat_client=dummy_client,
             middleware=[cua_middleware],
-            instructions="You are an automation assistant. Execute the plan carefully.",
         )
 
         # Agent Framework manages the thread and context

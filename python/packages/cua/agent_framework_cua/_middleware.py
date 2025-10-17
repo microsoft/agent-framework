@@ -69,6 +69,7 @@ class CuaAgentMiddleware(ChatMiddleware):
         computer: "Computer",
         *,
         model: CuaModelId = "anthropic/claude-3-5-sonnet-20241022",
+        instructions: str | None = None,
         max_trajectory_budget: float = 5.0,
         require_approval: bool = True,
         approval_interval: int = 5,
@@ -83,6 +84,7 @@ class CuaAgentMiddleware(ChatMiddleware):
                 - "huggingface-local/ByteDance/OpenCUA-7B"
                 - "huggingface-local/OpenGVLab/InternVL2-8B"
                 - Composite: "ui-model+planning-model"
+            instructions: Optional system instructions for the agent
             max_trajectory_budget: Max cost budget for Cua agent loop
             require_approval: Whether to require human approval
             approval_interval: Steps between approval requests
@@ -92,6 +94,7 @@ class CuaAgentMiddleware(ChatMiddleware):
 
         self.computer = computer
         self.model = model
+        self.instructions = instructions
         self.max_trajectory_budget = max_trajectory_budget
         self.require_approval = require_approval
         self.approval_interval = approval_interval
@@ -100,6 +103,7 @@ class CuaAgentMiddleware(ChatMiddleware):
         self.cua_agent = ComputerAgent(
             model=model,
             tools=[computer],
+            instructions=instructions,
             max_trajectory_budget=max_trajectory_budget,
         )
 
