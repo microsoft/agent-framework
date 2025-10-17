@@ -15,7 +15,6 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses.Model;
 [JsonDerivedType(typeof(StreamingInProgressResponse), StreamingInProgressResponse.EventType)]
 [JsonDerivedType(typeof(StreamingOutputTextDeltaResponse), StreamingOutputTextDeltaResponse.EventType)]
 [JsonDerivedType(typeof(StreamingOutputTextDoneResponse), StreamingOutputTextDoneResponse.EventType)]
-[JsonDerivedType(typeof(StreamingInProgressResponse), StreamingInProgressResponse.EventType)]
 [JsonDerivedType(typeof(StreamingContentPartAddedResponse), StreamingContentPartAddedResponse.EventType)]
 [JsonDerivedType(typeof(StreamingContentPartDoneResponse), StreamingContentPartDoneResponse.EventType)]
 [JsonDerivedType(typeof(StreamingCreatedResponse), StreamingCreatedResponse.EventType)]
@@ -61,7 +60,7 @@ internal sealed class StreamingContentPartAddedResponse : StreamingResponseEvent
     public required int ContentIndex { get; set; }
 
     [JsonPropertyName("item_id")]
-    public required string? ItemId { get; set; }
+    public string? ItemId { get; set; }
 
     [JsonPropertyName("output_index")]
     public required int OutputIndex { get; set; }
@@ -82,7 +81,7 @@ internal sealed class StreamingContentPartDoneResponse : StreamingResponseEventB
     public required int ContentIndex { get; set; }
 
     [JsonPropertyName("item_id")]
-    public required string ItemId { get; set; }
+    public string? ItemId { get; set; }
 
     [JsonPropertyName("output_index")]
     public required int OutputIndex { get; set; }
@@ -140,7 +139,7 @@ internal sealed class StreamingOutputTextDoneResponse : StreamingResponseEventBa
     public required int ContentIndex { get; set; }
 
     [JsonPropertyName("item_id")]
-    public required string ItemId { get; set; }
+    public string? ItemId { get; set; }
 
     [JsonPropertyName("output_index")]
     public int OutputIndex { get; set; }

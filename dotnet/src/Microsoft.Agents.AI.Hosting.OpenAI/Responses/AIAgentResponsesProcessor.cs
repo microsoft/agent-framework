@@ -169,6 +169,13 @@ internal sealed class AIAgentResponsesProcessor
                             Part = null!
                         };
                         yield return new(responseContentPartAdded, responseContentPartAdded.Type);
+
+                        var responseOutputItemAddedResponse = new StreamingOutputItemAddedResponse(sequenceNumber++)
+                        {
+                            OutputIndex = index++,
+                            Item = openAIResponseItem
+                        };
+                        yield return new(responseOutputItemAddedResponse, responseOutputItemAddedResponse.Type);
                     }
 
                     lastResponseItem = openAIResponseItem;
@@ -190,7 +197,7 @@ internal sealed class AIAgentResponsesProcessor
                 // here goes a sequence of completions for earlier started events:
 
                 // "response.output_text.delta" should be completed with "response.output_text.done"
-                var index = messageIdOutputIndexes[lastResponseItem.Id];
+                var index = messageIdOutputIndexes[lastResponseItem.Id ?? "<null>"];
                 var responseOutputTextDeltaResponse = new StreamingOutputTextDoneResponse(sequenceNumber++)
                 {
                     ItemId = lastResponseItem.Id,
