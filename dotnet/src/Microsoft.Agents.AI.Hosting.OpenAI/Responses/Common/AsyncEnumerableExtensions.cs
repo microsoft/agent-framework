@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -67,7 +68,6 @@ internal static class AsyncEnumerableExtensions
             var currentKey = pendingKey;
 
             yield return InnerAsync(cancellationToken);
-            continue;
 
             [SuppressMessage("ReSharper", "AccessToDisposedClosure")]
             async IAsyncEnumerable<TSource> InnerAsync([EnumeratorCancellation] CancellationToken ct = default)
@@ -117,7 +117,7 @@ internal static class AsyncEnumerableExtensions
             moveNextSucceeded = await e.MoveNextAsync().ConfigureAwait(false);
             if (!moveNextSucceeded)
             {
-                return (false, default!, EmptyAsync<T>());
+                return (false, default!, AsyncEnumerable.Empty<T>());
             }
         }
         finally
@@ -148,11 +148,4 @@ internal static class AsyncEnumerableExtensions
             }
         }
     }
-
-#pragma warning disable CS1998
-    private static async IAsyncEnumerable<T> EmptyAsync<T>()
-    {
-        yield break;
-    }
-#pragma warning restore CS1998
 }
