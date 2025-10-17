@@ -39,14 +39,8 @@ jobs:
           UV_CACHE_DIR: /tmp/.uv-cache
       # Unit tests
       - name: Run all tests
-        run: |
-          if [[ "${{ matrix.python-version }}" == "3.10" ]]; then
-            uv run poe all-tests --ignore-glob=packages/chatkit/**
-          else
-            uv run poe all-tests
-          fi
+        run: uv run poe all-tests
         working-directory: ./python
-        shell: bash
 
       # Surface failing tests
       - name: Surface failing tests
