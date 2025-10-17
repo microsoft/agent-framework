@@ -25,10 +25,12 @@ public sealed class ExpandoObjectExtensionsTests
         Assert.Empty(recordType.GetFieldTypes());
     }
 
-    [Fact(Skip = "Bug in ExpandoObjectExtensions.ToRecordType - Line 18: recordType.Add() returns new RecordType but result is not assigned. Should be: recordType = recordType.Add(property.Key, property.Value.GetFormulaType());")]
+    [Fact(Skip = "Bug: ExpandoObjectExtensions.ToRecordType line 18 - recordType.Add() result not assigned")]
     public void ToRecordTypeWithStringProperty()
     {
         // Arrange
+        // Bug: ToRecordType doesn't capture recordType.Add() return value (immutable pattern)
+        // Fix: recordType = recordType.Add(property.Key, property.Value.GetFormulaType())
         dynamic expando = new ExpandoObject();
         expando.Name = "John Doe";
 
@@ -44,10 +46,12 @@ public sealed class ExpandoObjectExtensionsTests
         Assert.Equal(FormulaType.String, field.Type);
     }
 
-    [Fact(Skip = "Bug in ExpandoObjectExtensions.ToRecordType - Line 18: recordType.Add() returns new RecordType but result is not assigned. Should be: recordType = recordType.Add(property.Key, property.Value.GetFormulaType());")]
+    [Fact(Skip = "Bug: ExpandoObjectExtensions.ToRecordType line 18 - recordType.Add() result not assigned")]
     public void ToRecordTypeWithMultipleProperties()
     {
         // Arrange
+        // Bug: ToRecordType doesn't capture recordType.Add() return value (immutable pattern)
+        // Fix: recordType = recordType.Add(property.Key, property.Value.GetFormulaType())
         dynamic expando = new ExpandoObject();
         expando.Name = "Alice";
         expando.Age = 30;
@@ -66,10 +70,12 @@ public sealed class ExpandoObjectExtensionsTests
         Assert.Contains("IsActive", fieldNames);
     }
 
-    [Fact(Skip = "Bug in ExpandoObjectExtensions.ToRecordType - Line 18: recordType.Add() returns new RecordType but result is not assigned. Should be: recordType = recordType.Add(property.Key, property.Value.GetFormulaType());")]
+    [Fact(Skip = "Bug: ExpandoObjectExtensions.ToRecordType line 18 - recordType.Add() result not assigned")]
     public void ToRecordTypeWithNullProperty()
     {
         // Arrange
+        // Bug: ToRecordType doesn't capture recordType.Add() return value (immutable pattern)
+        // Fix: recordType = recordType.Add(property.Key, property.Value.GetFormulaType())
         dynamic expando = new ExpandoObject();
         expando.Name = "Test";
         expando.NullValue = null;
@@ -196,10 +202,12 @@ public sealed class ExpandoObjectExtensionsTests
         Assert.IsType<BlankValue>(fields["NullValue"]);
     }
 
-    [Fact(Skip = "Bug in ExpandoObjectExtensions.ToRecordType - Line 18: recordType.Add() returns new RecordType but result is not assigned. Should be: recordType = recordType.Add(property.Key, property.Value.GetFormulaType());")]
+    [Fact(Skip = "Bug: ExpandoObjectExtensions.ToRecordType line 18 - recordType.Add() result not assigned")]
     public void ToRecordTypeAndToRecordAreConsistent()
     {
         // Arrange
+        // Bug: ToRecordType doesn't capture recordType.Add() return value (immutable pattern)
+        // Fix: recordType = recordType.Add(property.Key, property.Value.GetFormulaType())
         dynamic expando = new ExpandoObject();
         expando.StringField = "Value";
         expando.IntField = 123;

@@ -194,6 +194,7 @@ public sealed class ChatMessageExtensionsTests
     public void ToChatMessageFromRecordDataValue()
     {
         // Arrange
+        // Note: Use "Agent" not "Assistant" - AgentMessageRole.Agent maps to ChatRole.Assistant
         RecordDataValue record = DataValue.RecordFromFields(
             new KeyValuePair<string, DataValue>(TypeSchema.Message.Fields.Role, StringDataValue.Create("Agent")),
             new KeyValuePair<string, DataValue>(TypeSchema.Message.Fields.Content, DataValue.EmptyTable));
