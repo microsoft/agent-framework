@@ -50,10 +50,10 @@ class CuaAgentMiddleware(ChatMiddleware):
             from agent_framework.cua import CuaAgentMiddleware
             from computer import Computer
 
-            async with Computer(os_type="macos", provider_type="lume") as computer:
+            async with Computer(os_type="linux", provider_type="docker") as computer:
                 middleware = CuaAgentMiddleware(
                     computer=computer,
-                    model="anthropic/claude-3-5-sonnet-20241022",
+                    model="anthropic/claude-sonnet-4-5-20250929",
                 )
 
                 agent = ChatAgent(
@@ -61,14 +61,14 @@ class CuaAgentMiddleware(ChatMiddleware):
                     instructions="You are a desktop automation assistant.",
                 )
 
-                response = await agent.run("Open Safari and search for Python")
+                response = await agent.run("Open Firefox and search for Python")
     """
 
     def __init__(
         self,
         computer: "Computer",
         *,
-        model: CuaModelId = "anthropic/claude-3-5-sonnet-20241022",
+        model: CuaModelId = "anthropic/claude-sonnet-4-5-20250929",
         instructions: str | None = None,
         max_trajectory_budget: float = 5.0,
         require_approval: bool = True,
@@ -79,7 +79,7 @@ class CuaAgentMiddleware(ChatMiddleware):
         Args:
             computer: Cua Computer instance for desktop automation
             model: Model identifier (supports 100+ configs):
-                - "anthropic/claude-3-5-sonnet-20241022"
+                - "anthropic/claude-sonnet-4-5-20250929"
                 - "openai/gpt-4o"
                 - "huggingface-local/ByteDance/OpenCUA-7B"
                 - "huggingface-local/OpenGVLab/InternVL2-8B"

@@ -6,12 +6,24 @@ Demonstrates Cua's composite agent feature, combining multiple models for better
 
 - **Composite agents**: UI-Tars (grounding) + GPT-4o (planning)
 - **Automatic coordination**: Cua handles model routing
-- **macOS platform**: Using native macOS VMs with Lume
+- **Cross-platform**: Works with Docker (Linux), macOS, or Windows
 
 ## Prerequisites
 
+### Option 1: Docker (Recommended - cross-platform)
+
 ```bash
-# Install Lume CLI (macOS only)
+# Install Docker Desktop or Docker Engine
+docker pull --platform=linux/amd64 trycua/cua-xfce:latest
+
+# Set API keys
+export OPENAI_API_KEY="your-key"  # For GPT-4o
+```
+
+### Option 2: macOS (macOS hosts only)
+
+```bash
+# Install Lume CLI
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
 
 # Start macOS VM

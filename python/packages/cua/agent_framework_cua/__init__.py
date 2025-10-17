@@ -18,18 +18,18 @@ Examples:
     >>> from agent_framework_cua import CuaAgentMiddleware
     >>> from computer import Computer
     >>>
-    >>> async with Computer(os_type="macos", provider_type="lume") as computer:
+    >>> async with Computer(os_type="linux", provider_type="docker") as computer:
     ...     middleware = CuaAgentMiddleware(
     ...         computer=computer,
-    ...         model="anthropic/claude-3-5-sonnet-20241022",
+    ...         model="anthropic/claude-sonnet-4-5-20250929",
+    ...         instructions="You are a desktop automation assistant.",
     ...     )
     ...
     ...     agent = ChatAgent(
     ...         middleware=[middleware],
-    ...         instructions="You are a desktop automation assistant.",
     ...     )
     ...
-    ...     response = await agent.run("Open Safari")
+    ...     response = await agent.run("Open Firefox")
 
     Using composite agents:
 

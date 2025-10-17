@@ -16,7 +16,10 @@ logger = logging.getLogger(__name__)
 
 async def main():
     """Run a composite agent example combining UI-Tars for grounding and GPT-4o for planning."""
-    async with Computer(os_type="macos", provider_type="lume") as computer:
+    # Use Docker (cross-platform), or change to:
+    # - Computer(os_type="macos", provider_type="lume") for macOS
+    # - Computer(os_type="windows", provider_type="winsandbox") for Windows
+    async with Computer(os_type="linux", provider_type="docker") as computer:
         # Create middleware with composite agent
         # Note: Instructions are passed to Cua's ComputerAgent through the middleware
         cua_middleware = CuaAgentMiddleware(

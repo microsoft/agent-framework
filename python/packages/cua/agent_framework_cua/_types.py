@@ -30,8 +30,8 @@ CuaModelId = str
 Model identifier for Cua agent.
 
 Supports 100+ model configurations:
+- Anthropic: "anthropic/claude-sonnet-4-5-20250929"
 - OpenAI: "openai/gpt-4o", "openai/gpt-4o-mini"
-- Anthropic: "anthropic/claude-3-5-sonnet-20241022"
 - OpenCUA: "huggingface-local/ByteDance/OpenCUA-7B"
 - InternVL: "huggingface-local/OpenGVLab/InternVL2-8B"
 - UI-Tars: "huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B"
@@ -39,20 +39,20 @@ Supports 100+ model configurations:
 - Composite: "grounding_model+planning_model"
 
 Examples:
-    >>> model = "anthropic/claude-3-5-sonnet-20241022"
+    >>> model = "anthropic/claude-sonnet-4-5-20250929"
     >>> model = "openai/gpt-4o"
     >>> model = "huggingface-local/ByteDance/OpenCUA-7B+openai/gpt-4o"
 """
 
-CuaProviderType = Literal["lume", "docker", "cloud", "lumier", "winsandbox"]
+CuaProviderType = Literal["docker", "lume", "winsandbox", "cloud", "lumier"]
 """
 VM provider type for Cua computer.
 
+- docker: Docker containers (cross-platform, recommended)
 - lume: Native macOS/Linux VMs (high performance)
-- docker: Docker containers (cross-platform)
+- winsandbox: Windows Sandbox
 - cloud: Cloud sandbox (managed service)
 - lumier: Docker-based Lume interface
-- winsandbox: Windows Sandbox
 """
 
 CuaOSType = Literal["macos", "linux", "windows"]

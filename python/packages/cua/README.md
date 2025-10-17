@@ -56,7 +56,7 @@ from agent_framework_cua import CuaAgentMiddleware
 from computer import Computer
 
 async def main():
-    # Initialize Cua computer (Linux Docker - cross-platform)
+    # Initialize Cua computer (Linux Docker - recommended, cross-platform)
     async with Computer(
         os_type="linux",
         provider_type="docker"
@@ -66,17 +66,17 @@ async def main():
         cua_middleware = CuaAgentMiddleware(
             computer=computer,
             model="anthropic/claude-sonnet-4-5-20250929",
+            instructions="You are a desktop automation assistant.",
             require_approval=True,
         )
 
         # Create Agent Framework agent with Cua middleware
-        # Note: chat_client and instructions are required but won't be used.
+        # Note: chat_client is required but won't be used.
         # CuaAgentMiddleware terminates execution and delegates to Cua's ComputerAgent.
         dummy_client = OpenAIChatClient(model_id="gpt-4o-mini", api_key="dummy-not-used")
         agent = ChatAgent(
             chat_client=dummy_client,
             middleware=[cua_middleware],
-            instructions="You are a desktop automation assistant.",
         )
 
         # Run agent
@@ -155,6 +155,7 @@ async def multi_agent_workflow(task: str) -> str:
         cua_middleware = CuaAgentMiddleware(
             computer=computer,
             model="anthropic/claude-sonnet-4-5-20250929",
+            instructions="Execute the plan carefully",
             require_approval=True,  # Agent Framework approval workflows
         )
 
@@ -162,7 +163,6 @@ async def multi_agent_workflow(task: str) -> str:
         automation_agent = ChatAgent(
             chat_client=dummy_client,
             middleware=[cua_middleware],
-            instructions="Execute the plan carefully",
         )
         result = await automation_agent.run(f"Execute: {plan}")
 
