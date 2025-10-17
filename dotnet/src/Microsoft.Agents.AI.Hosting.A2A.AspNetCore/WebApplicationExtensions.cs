@@ -22,9 +22,10 @@ public static class WebApplicationExtensions
     public static void MapA2A(this WebApplication app, string agentName, string path)
     {
         var agent = app.Services.GetRequiredKeyedService<AIAgent>(agentName);
+        var agentThreadStore = app.Services.GetKeyedService<IAgentThreadStore>(agentName);
         var loggerFactory = app.Services.GetRequiredService<ILoggerFactory>();
 
-        var taskManager = agent.MapA2A(loggerFactory: loggerFactory);
+        var taskManager = agent.MapA2A(loggerFactory: loggerFactory, agentThreadStore: agentThreadStore);
         app.MapA2A(taskManager, path);
     }
 
@@ -42,9 +43,10 @@ public static class WebApplicationExtensions
         AgentCard agentCard)
     {
         var agent = app.Services.GetRequiredKeyedService<AIAgent>(agentName);
+        var agentThreadStore = app.Services.GetKeyedService<IAgentThreadStore>(agentName);
         var loggerFactory = app.Services.GetRequiredService<ILoggerFactory>();
 
-        var taskManager = agent.MapA2A(agentCard: agentCard, loggerFactory: loggerFactory);
+        var taskManager = agent.MapA2A(agentCard: agentCard, loggerFactory: loggerFactory, agentThreadStore: agentThreadStore);
         app.MapA2A(taskManager, path);
     }
 
