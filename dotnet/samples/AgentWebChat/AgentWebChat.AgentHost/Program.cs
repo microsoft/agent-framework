@@ -60,10 +60,7 @@ builder.AddAIAgent("knights-and-knaves", (sp, key) =>
         If the user asks a general question about their surrounding, make something up which is consistent with the scenario.
         """, "Narrator");
 
-    // TODO: How to avoid sync-over-async here?
-#pragma warning disable VSTHRD002 // Avoid problematic synchronous waits
-    return AgentWorkflowBuilder.BuildConcurrent([knight, knave, narrator]).AsAgentAsync(name: key).AsTask().GetAwaiter().GetResult();
-#pragma warning restore VSTHRD002
+    return AgentWorkflowBuilder.BuildConcurrent([knight, knave, narrator]).AsAgent(name: key);
 });
 
 // Workflow consisting of multiple specialized agents

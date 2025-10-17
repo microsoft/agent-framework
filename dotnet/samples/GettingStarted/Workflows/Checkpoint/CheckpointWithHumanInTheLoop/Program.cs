@@ -27,7 +27,7 @@ public static class Program
     private static async Task Main()
     {
         // Create the workflow
-        var workflow = await WorkflowHelper.GetWorkflowAsync();
+        var workflow = WorkflowHelper.GetWorkflow();
 
         // Create checkpoint manager
         var checkpointManager = CheckpointManager.Default;

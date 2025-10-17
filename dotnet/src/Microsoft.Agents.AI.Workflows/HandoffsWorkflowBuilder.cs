@@ -139,7 +139,7 @@ public sealed class HandoffsWorkflowBuilder
     }
 
     /// <summary>
-    /// Builds a <see cref="Workflow{T}"/> composed of agents that operate via handoffs, with the next
+    /// Builds a <see cref="Workflow"/> composed of agents that operate via handoffs, with the next
     /// agent to process messages selected by the current agent.
     /// </summary>
     /// <returns>The workflow built based on the handoffs in the builder.</returns>

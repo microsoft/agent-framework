@@ -27,7 +27,7 @@ internal static class Step1EntryPoint
 
     public static async ValueTask RunAsync(TextWriter writer, IWorkflowExecutionEnvironment environment)
     {
-        StreamingRun run = await environment.StreamAsync(WorkflowInstance, "Hello, World!").ConfigureAwait(false);
+        StreamingRun run = await environment.StreamAsync(WorkflowInstance, input: "Hello, World!").ConfigureAwait(false);
 
         await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
         {

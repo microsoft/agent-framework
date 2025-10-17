@@ -21,9 +21,8 @@ public static class ExecutorIshConfigurationExtensions
     /// Note that Executor Ids must be unique within a workflow.
     ///
     /// Although this will generally result in a delay-instantiated <see cref="Executor"/> once messages are available
-    /// for it, if this is used as a start node of a typed <see cref="Workflow{TInput}"/> via <see cref="Workflow.TryPromoteAsync{TInput}"/>,
-    /// it will be instantiated as part of the workflow's construction, to validate that its input type matches the
-    /// demanded <c>TInput</c>.
+    /// for it, it will be instantiated if a <see cref="ProtocolDescriptor"/> for the <see cref="Workflow"/> is requested,
+    /// and it is the starting executor.
     /// </remarks>
     /// <typeparam name="TExecutor">The type of the resulting executor</typeparam>
     /// <param name="factoryAsync">The factory method.</param>
@@ -38,9 +37,8 @@ public static class ExecutorIshConfigurationExtensions
     /// </summary>
     /// <remarks>
     /// Although this will generally result in a delay-instantiated <see cref="Executor"/> once messages are available
-    /// for it, if this is used as a start node of a typed <see cref="Workflow{TInput}"/> via <see cref="Workflow.TryPromoteAsync{TInput}"/>,
-    /// it will be instantiated as part of the workflow's construction, to validate that its input type matches the
-    /// demanded <c>TInput</c>.
+    /// for it, it will be instantiated if a <see cref="ProtocolDescriptor"/> for the <see cref="Workflow"/> is requested,
+    /// and it is the starting executor.
     /// </remarks>
     /// <typeparam name="TExecutor">The type of the resulting executor</typeparam>
     /// <param name="factoryAsync">The factory method.</param>
@@ -56,9 +54,8 @@ public static class ExecutorIshConfigurationExtensions
     /// </summary>
     /// <remarks>
     /// Although this will generally result in a delay-instantiated <see cref="Executor"/> once messages are available
-    /// for it, if this is used as a start node of a typed <see cref="Workflow{TInput}"/> via <see cref="Workflow.TryPromoteAsync{TInput}"/>,
-    /// it will be instantiated as part of the workflow's construction, to validate that its input type matches the
-    /// demanded <c>TInput</c>.
+    /// for it, it will be instantiated if a <see cref="ProtocolDescriptor"/> for the <see cref="Workflow"/> is requested,
+    /// and it is the starting executor.
     /// </remarks>
     /// <typeparam name="TExecutor">The type of the resulting executor</typeparam>
     /// <typeparam name="TOptions">The type of options object to be passed to the factory method.</typeparam>
