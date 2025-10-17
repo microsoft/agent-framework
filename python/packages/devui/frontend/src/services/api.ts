@@ -26,7 +26,6 @@ interface BackendEntityInfo {
   tools?: (string | Record<string, unknown>)[];
   metadata: Record<string, unknown>;
   source?: string;
-  original_url?: string;
   // Agent-specific fields (present when type === "agent")
   instructions?: string;
   model?: string;
@@ -143,6 +142,7 @@ class ApiClient {
             typeof entity.metadata?.module_path === "string"
               ? entity.metadata.module_path
               : undefined,
+          metadata: entity.metadata, // Preserve metadata including lazy_loaded flag
           // Agent-specific fields
           instructions: entity.instructions,
           model: entity.model,
@@ -168,6 +168,7 @@ class ApiClient {
             typeof entity.metadata?.module_path === "string"
               ? entity.metadata.module_path
               : undefined,
+          metadata: entity.metadata, // Preserve metadata including lazy_loaded flag
           input_schema:
             (entity.input_schema as unknown as import("@/types").JSONSchema) || {
               type: "string",
@@ -503,31 +504,6 @@ class ApiClient {
       method: "POST",
       body: JSON.stringify(request),
     });
-  }
-
-  // Add entity from URL
-  async addEntity(url: string, metadata?: Record<string, unknown>): Promise<BackendEntityInfo> {
-    const response = await this.request<{ success: boolean; entity: BackendEntityInfo }>("/v1/entities/add", {
-      method: "POST",
-      body: JSON.stringify({ url, metadata }),
-    });
-
-    if (!response.success || !response.entity) {
-      throw new Error("Failed to add entity");
-    }
-
-    return response.entity;
-  }
-
-  // Remove entity by ID
-  async removeEntity(entityId: string): Promise<void> {
-    const response = await this.request<{ success: boolean }>(`/v1/entities/${entityId}`, {
-      method: "DELETE",
-    });
-
-    if (!response.success) {
-      throw new Error("Failed to remove entity");
-    }
   }
 }
 

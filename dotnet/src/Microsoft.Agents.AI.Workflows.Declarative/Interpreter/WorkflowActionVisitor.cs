@@ -237,7 +237,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         this.Trace(item);
 
         // Entry point for question
-        QuestionExecutor action = new(item, this._workflowState);
+        QuestionExecutor action = new(item, this._workflowOptions.AgentProvider, this._workflowState);
         this.ContinueWith(action);
         // Transition to post action if complete
         string postId = Steps.Post(action.Id);
