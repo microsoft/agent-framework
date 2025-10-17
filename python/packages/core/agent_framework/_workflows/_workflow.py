@@ -391,19 +391,19 @@ class Workflow(DictConvertible):
             WorkflowEvent: The events generated during the workflow execution.
         """
         self._ensure_not_running()
+
+        async def initial_execution() -> None:
+            executor = self.get_start_executor()
+            await executor.execute(
+                message,
+                [self.__class__.__name__],  # source_executor_ids
+                self._shared_state,  # shared_state
+                self._runner.context,  # runner_context
+                trace_contexts=None,  # No parent trace context for workflow start
+                source_span_ids=None,  # No source span for workflow start
+            )
+
         try:
-
-            async def initial_execution() -> None:
-                executor = self.get_start_executor()
-                await executor.execute(
-                    message,
-                    [self.__class__.__name__],  # source_executor_ids
-                    self._shared_state,  # shared_state
-                    self._runner.context,  # runner_context
-                    trace_contexts=None,  # No parent trace context for workflow start
-                    source_span_ids=None,  # No source span for workflow start
-                )
-
             async for event in self._run_workflow_with_tracing(
                 initial_executor_fn=initial_execution, reset_context=True, streaming=True
             ):

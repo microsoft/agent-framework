@@ -1,16 +1,15 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-import contextlib
-import importlib
 import logging
-import sys
 import uuid
 from copy import copy
-from dataclasses import dataclass, fields, is_dataclass
+from dataclasses import dataclass
+from enum import Enum
 from typing import Any, Protocol, TypedDict, TypeVar, cast, runtime_checkable
 
 from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
+from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
 from ._const import DEFAULT_MAX_ITERATIONS, INTERNAL_SOURCE_ID
 from ._events import RequestInfoEvent, WorkflowEvent
 from ._shared_state import SharedState
@@ -20,6 +19,16 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 
+class MessageType(Enum):
+    """Enumeration of message types in the workflow."""
+
+    STANDARD = "standard"
+    """A standard message between executors."""
+
+    RESPONSE = "response"
+    """A response message to a pending request."""
+
+
 @dataclass
 class Message:
     """A class representing a message in the workflow."""
@@ -27,11 +36,15 @@ class Message:
     data: Any
     source_id: str
     target_id: str | None = None
+    type: MessageType = MessageType.STANDARD
 
     # OpenTelemetry trace context fields for message propagation
     # These are plural to support fan-in scenarios where multiple messages are aggregated
     trace_contexts: list[dict[str, str]] | None = None  # W3C Trace Context headers from multiple sources
     source_span_ids: list[str] | None = None  # Publishing span IDs for linking from multiple sources
+
+    # For response messages, the original request data
+    original_request: Any = None
 
     # Backward compatibility properties
     @property
@@ -44,12 +57,30 @@ class Message:
         """Get the first source span ID for backward compatibility."""
         return self.source_span_ids[0] if self.source_span_ids else None
 
+    def to_dict(self) -> dict[str, Any]:
+        """Convert the Message to a dictionary for serialization."""
+        return {
+            "data": encode_checkpoint_value(self.data),
+            "source_id": self.source_id,
+            "target_id": self.target_id,
+            "type": self.type.value,
+            "trace_contexts": self.trace_contexts,
+            "source_span_ids": self.source_span_ids,
+            "original_request": self.original_request,
+        }
 
-@dataclass
-class ResponseMessage(Message):
-    """A message representing a response to a pending request."""
-
-    original_request: Any = None
+    @staticmethod
+    def from_dict(data: dict[str, Any]) -> "Message":
+        """Create a Message from a dictionary."""
+        return Message(
+            data=decode_checkpoint_value(data.get("data")),
+            source_id=data["source_id"],
+            target_id=data.get("target_id"),
+            type=MessageType(data.get("type", "standard")),
+            trace_contexts=data.get("trace_contexts"),
+            source_span_ids=data.get("source_span_ids"),
+            original_request=data.get("original_request"),
+        )
 
 
 class CheckpointState(TypedDict):
@@ -58,248 +89,7 @@ class CheckpointState(TypedDict):
     executor_states: dict[str, dict[str, Any]]
     iteration_count: int
     max_iterations: int
-
-
-# Checkpoint serialization helpers
-_MODEL_MARKER = "__af_model__"
-_DATACLASS_MARKER = "__af_dataclass__"
-_AF_MARKER = "__af__"
-
-# Guards to prevent runaway recursion while encoding arbitrary user data
-_MAX_ENCODE_DEPTH = 100
-_CYCLE_SENTINEL = "<cycle>"
-
-
-def _instantiate_checkpoint_dataclass(cls: type[Any], payload: Any) -> Any | None:
-    if not isinstance(cls, type):
-        logger.debug(f"Checkpoint decoder received non-type dataclass reference: {cls!r}")
-        return None
-
-    if isinstance(payload, dict):
-        try:
-            return cls(**payload)  # type: ignore[arg-type]
-        except TypeError as exc:
-            logger.debug(f"Checkpoint decoder could not call {cls.__name__}(**payload): {exc}")
-        except Exception as exc:
-            logger.warning(f"Checkpoint decoder encountered unexpected error calling {cls.__name__}(**payload): {exc}")
-        try:
-            instance = object.__new__(cls)
-        except Exception as exc:
-            logger.debug(f"Checkpoint decoder could not allocate {cls.__name__} without __init__: {exc}")
-            return None
-        for key, val in payload.items():  # type: ignore[attr-defined]
-            try:
-                setattr(instance, key, val)  # type: ignore[arg-type]
-            except Exception as exc:
-                logger.debug(f"Checkpoint decoder could not set attribute {key} on {cls.__name__}: {exc}")
-        return instance
-
-    try:
-        return cls(payload)  # type: ignore[call-arg]
-    except TypeError as exc:
-        logger.debug(f"Checkpoint decoder could not call {cls.__name__}({payload!r}): {exc}")
-    except Exception as exc:
-        logger.warning(f"Checkpoint decoder encountered unexpected error calling {cls.__name__}({payload!r}): {exc}")
-    return None
-
-
-def _supports_model_protocol(obj: object) -> bool:
-    """Detect objects that expose dictionary serialization hooks."""
-    try:
-        obj_type: type[Any] = type(obj)
-    except Exception:
-        return False
-
-    has_to_dict = hasattr(obj, "to_dict") and callable(getattr(obj, "to_dict", None))  # type: ignore[arg-type]
-    has_from_dict = hasattr(obj_type, "from_dict") and callable(getattr(obj_type, "from_dict", None))
-
-    has_to_json = hasattr(obj, "to_json") and callable(getattr(obj, "to_json", None))  # type: ignore[arg-type]
-    has_from_json = hasattr(obj_type, "from_json") and callable(getattr(obj_type, "from_json", None))
-
-    return (has_to_dict and has_from_dict) or (has_to_json and has_from_json)
-
-
-def _import_qualified_name(qualname: str) -> type[Any] | None:
-    if ":" not in qualname:
-        return None
-    module_name, class_name = qualname.split(":", 1)
-    module = sys.modules.get(module_name)
-    if module is None:
-        module = importlib.import_module(module_name)
-    attr: Any = module
-    for part in class_name.split("."):
-        attr = getattr(attr, part)
-    return attr if isinstance(attr, type) else None
-
-
-def _encode_checkpoint_value(value: Any) -> Any:
-    """Recursively encode values into JSON-serializable structures.
-
-    - Objects exposing to_dict/to_json -> { _MODEL_MARKER: "module:Class", value: encoded }
-    - dataclass instances -> { _DATACLASS_MARKER: "module:Class", value: {field: encoded} }
-    - dict -> encode keys as str and values recursively
-    - list/tuple/set -> list of encoded items
-    - other -> returned as-is if already JSON-serializable
-
-    Includes cycle and depth protection to avoid infinite recursion.
-    """
-
-    def _enc(v: Any, stack: set[int], depth: int) -> Any:
-        # Depth guard
-        if depth > _MAX_ENCODE_DEPTH:
-            logger.debug(f"Max encode depth reached at depth={depth} for type={type(v)}")
-            return "<max_depth>"
-
-        # Structured model handling (objects exposing to_dict/to_json)
-        if _supports_model_protocol(v):
-            cls = cast(type[Any], type(v))  # type: ignore
-            try:
-                if hasattr(v, "to_dict") and callable(getattr(v, "to_dict", None)):
-                    raw = v.to_dict()  # type: ignore[attr-defined]
-                    strategy = "to_dict"
-                elif hasattr(v, "to_json") and callable(getattr(v, "to_json", None)):
-                    serialized = v.to_json()  # type: ignore[attr-defined]
-                    if isinstance(serialized, (bytes, bytearray)):
-                        try:
-                            serialized = serialized.decode()
-                        except Exception:
-                            serialized = serialized.decode(errors="replace")
-                    raw = serialized
-                    strategy = "to_json"
-                else:
-                    raise AttributeError("Structured model lacks serialization hooks")
-                return {
-                    _MODEL_MARKER: f"{cls.__module__}:{cls.__name__}",
-                    "strategy": strategy,
-                    "value": _enc(raw, stack, depth + 1),
-                }
-            except Exception as exc:  # best-effort fallback
-                logger.debug(f"Structured model serialization failed for {cls}: {exc}")
-                return str(v)
-
-        # Dataclasses (instances only)
-        if is_dataclass(v) and not isinstance(v, type):
-            oid = id(v)
-            if oid in stack:
-                logger.debug("Cycle detected while encoding dataclass instance")
-                return _CYCLE_SENTINEL
-            stack.add(oid)
-            try:
-                # type(v) already narrows sufficiently; cast was redundant
-                dc_cls: type[Any] = type(v)
-                field_values: dict[str, Any] = {}
-                for f in fields(v):  # type: ignore[arg-type]
-                    field_values[f.name] = _enc(getattr(v, f.name), stack, depth + 1)
-                return {
-                    _DATACLASS_MARKER: f"{dc_cls.__module__}:{dc_cls.__name__}",
-                    "value": field_values,
-                }
-            finally:
-                stack.remove(oid)
-
-        # Collections
-        if isinstance(v, dict):
-            v_dict = cast("dict[object, object]", v)
-            oid = id(v_dict)
-            if oid in stack:
-                logger.debug("Cycle detected while encoding dict")
-                return _CYCLE_SENTINEL
-            stack.add(oid)
-            try:
-                json_dict: dict[str, Any] = {}
-                for k_any, val_any in v_dict.items():  # type: ignore[assignment]
-                    k_str: str = str(k_any)
-                    json_dict[k_str] = _enc(val_any, stack, depth + 1)
-                return json_dict
-            finally:
-                stack.remove(oid)
-
-        if isinstance(v, (list, tuple, set)):
-            iterable_v = cast("list[object] | tuple[object, ...] | set[object]", v)
-            oid = id(iterable_v)
-            if oid in stack:
-                logger.debug("Cycle detected while encoding iterable")
-                return _CYCLE_SENTINEL
-            stack.add(oid)
-            try:
-                seq: list[object] = list(iterable_v)
-                encoded_list: list[Any] = []
-                for item in seq:
-                    encoded_list.append(_enc(item, stack, depth + 1))
-                return encoded_list
-            finally:
-                stack.remove(oid)
-
-        # Primitives (or unknown objects): ensure JSON-serializable
-        if isinstance(v, (str, int, float, bool)) or v is None:
-            return v
-        # Fallback: stringify unknown objects to avoid JSON serialization errors
-        try:
-            return str(v)
-        except Exception:
-            return f"<{type(v).__name__}>"
-
-    return _enc(value, set(), 0)
-
-
-def _decode_checkpoint_value(value: Any) -> Any:
-    """Recursively decode values previously encoded by _encode_checkpoint_value."""
-    if isinstance(value, dict):
-        value_dict = cast(dict[str, Any], value)  # encoded form always uses string keys
-        # Structured model marker handling
-        if _MODEL_MARKER in value_dict and "value" in value_dict:
-            type_key: str | None = value_dict.get(_MODEL_MARKER)  # type: ignore[assignment]
-            strategy: str | None = value_dict.get("strategy")  # type: ignore[assignment]
-            raw_encoded: Any = value_dict.get("value")
-            decoded_payload = _decode_checkpoint_value(raw_encoded)
-            if isinstance(type_key, str):
-                try:
-                    cls = _import_qualified_name(type_key)
-                except Exception as exc:
-                    logger.debug(f"Failed to import structured model {type_key}: {exc}")
-                    cls = None
-
-                if cls is not None:
-                    if strategy == "to_dict" and hasattr(cls, "from_dict"):
-                        with contextlib.suppress(Exception):
-                            return cls.from_dict(decoded_payload)
-                    if strategy == "to_json" and hasattr(cls, "from_json"):
-                        if isinstance(decoded_payload, (str, bytes, bytearray)):
-                            with contextlib.suppress(Exception):
-                                return cls.from_json(decoded_payload)
-                        if isinstance(decoded_payload, dict) and hasattr(cls, "from_dict"):
-                            with contextlib.suppress(Exception):
-                                return cls.from_dict(decoded_payload)
-            return decoded_payload
-        # Dataclass marker handling
-        if _DATACLASS_MARKER in value_dict and "value" in value_dict:
-            type_key_dc: str | None = value_dict.get(_DATACLASS_MARKER)  # type: ignore[assignment]
-            raw_dc: Any = value_dict.get("value")
-            decoded_raw = _decode_checkpoint_value(raw_dc)
-            if isinstance(type_key_dc, str):
-                try:
-                    module_name, class_name = type_key_dc.split(":", 1)
-                    module = sys.modules.get(module_name)
-                    if module is None:
-                        module = importlib.import_module(module_name)
-                    cls_dc: Any = getattr(module, class_name)
-                    constructed = _instantiate_checkpoint_dataclass(cls_dc, decoded_raw)
-                    if constructed is not None:
-                        return constructed
-                except Exception as exc:
-                    logger.debug(f"Failed to decode dataclass {type_key_dc}: {exc}; returning raw value")
-            return decoded_raw
-
-        # Regular dict: decode recursively
-        decoded: dict[str, Any] = {}
-        for k_any, v_any in value_dict.items():
-            decoded[k_any] = _decode_checkpoint_value(v_any)
-        return decoded
-    if isinstance(value, list):
-        # After isinstance check, treat value as list[Any] for decoding
-        value_list: list[Any] = value  # type: ignore[assignment]
-        return [_decode_checkpoint_value(v_any) for v_any in value_list]
-    return value
+    pending_request_info_events: dict[str, dict[str, Any]]
 
 
 @runtime_checkable
@@ -619,6 +409,7 @@ class InProcRunnerContext:
             "executor_states": checkpoint.executor_states,
             "iteration_count": checkpoint.iteration_count,
             "max_iterations": checkpoint.max_iterations,
+            "pending_request_info_events": checkpoint.pending_request_info_events,
         }
         await self.set_checkpoint_state(state)
         self._workflow_id = checkpoint.workflow_id
@@ -631,49 +422,33 @@ class InProcRunnerContext:
         return await self._checkpoint_storage.load_checkpoint(checkpoint_id)
 
     async def get_checkpoint_state(self) -> CheckpointState:
-        serializable_messages: dict[str, list[dict[str, Any]]] = {}
-        for source_id, message_list in self._messages.items():
-            serializable_messages[source_id] = [
-                {
-                    "data": _encode_checkpoint_value(msg.data),
-                    "source_id": msg.source_id,
-                    "target_id": msg.target_id,
-                    "trace_contexts": msg.trace_contexts,
-                    "source_span_ids": msg.source_span_ids,
-                }
-                for msg in message_list
-            ]
         return {
-            "messages": serializable_messages,
-            "shared_state": _encode_checkpoint_value(self._shared_state),
-            "executor_states": _encode_checkpoint_value(self._executor_states),
+            "messages": {
+                source_id: [msg.to_dict() for msg in message_list] for source_id, message_list in self._messages.items()
+            },
+            "shared_state": encode_checkpoint_value(self._shared_state),
+            "executor_states": encode_checkpoint_value(self._executor_states),
             "iteration_count": self._iteration_count,
             "max_iterations": self._max_iterations,
+            "pending_request_info_events": encode_checkpoint_value(self._pending_request_info_events),
         }
 
     async def set_checkpoint_state(self, state: CheckpointState) -> None:
+        # Restore messages
         self._messages.clear()
         messages_data = state.get("messages", {})
         for source_id, message_list in messages_data.items():
-            self._messages[source_id] = [
-                Message(
-                    data=_decode_checkpoint_value(msg.get("data")),
-                    source_id=msg.get("source_id", ""),
-                    target_id=msg.get("target_id"),
-                    trace_contexts=msg.get("trace_contexts"),
-                    source_span_ids=msg.get("source_span_ids"),
-                )
-                for msg in message_list
-            ]
+            self._messages[source_id] = [Message.from_dict(msg_data) for msg_data in message_list]
+
         # Restore shared_state
-        decoded_shared_raw = _decode_checkpoint_value(state.get("shared_state", {}))
+        decoded_shared_raw = decode_checkpoint_value(state.get("shared_state", {}))
         if isinstance(decoded_shared_raw, dict):
             self._shared_state = cast(dict[str, Any], decoded_shared_raw)
         else:  # fallback to empty dict if corrupted
             self._shared_state = {}
 
         # Restore executor_states ensuring value types are dicts
-        decoded_exec_raw = _decode_checkpoint_value(state.get("executor_states", {}))
+        decoded_exec_raw = decode_checkpoint_value(state.get("executor_states", {}))
         if isinstance(decoded_exec_raw, dict):
             typed_exec: dict[str, dict[str, Any]] = {}
             for k_raw, v_raw in decoded_exec_raw.items():  # type: ignore[assignment]
@@ -690,6 +465,12 @@ class InProcRunnerContext:
 
         self._iteration_count = state.get("iteration_count", 0)
         self._max_iterations = state.get("max_iterations", 100)
+
+        # Pending request info events
+        self._pending_request_info_events = decode_checkpoint_value(state.get("pending_request_info_events", {}))
+        await asyncio.gather(
+            *(self.add_event(pending_request) for pending_request in self._pending_request_info_events.values())
+        )
 
     async def add_request_info_event(self, event: RequestInfoEvent) -> None:
         """Add a RequestInfoEvent to the context and track it for correlation.
@@ -718,14 +499,16 @@ class InProcRunnerContext:
                 f"expected {event.response_type.__name__}, got {type(response).__name__}"
             )
 
-        await self.send_message(
-            ResponseMessage(
-                data=response,
-                source_id=INTERNAL_SOURCE_ID(event.source_executor_id),
-                target_id=event.source_executor_id,
-                original_request=event.data,
-            )
+        # Create ResponseMessage instance
+        response_msg = Message(
+            data=response,
+            source_id=INTERNAL_SOURCE_ID(event.source_executor_id),
+            target_id=event.source_executor_id,
+            type=MessageType.RESPONSE,
+            original_request=event.data,
         )
+
+        await self.send_message(response_msg)
 
         # Clear the event from pending requests
         self._pending_request_info_events.pop(request_id, None)

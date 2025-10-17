@@ -7,17 +7,15 @@ from collections.abc import AsyncGenerator, Sequence
 from typing import TYPE_CHECKING, Any
 
 from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
+from ._checkpoint_encoding import DATACLASS_MARKER, MODEL_MARKER, decode_checkpoint_value
 from ._edge import EdgeGroup
 from ._edge_runner import EdgeRunner, create_edge_runner
 from ._events import WorkflowEvent
 from ._executor import Executor
 from ._runner_context import (
-    _DATACLASS_MARKER,  # type: ignore
-    _MODEL_MARKER,  # type: ignore
     CheckpointState,
     Message,
-    RunnerContext,
-    _decode_checkpoint_value,  # type: ignore
+    RunnerContext,  # type: ignore
 )
 from ._shared_state import SharedState
 
@@ -151,6 +149,8 @@ class Runner:
                 raise RuntimeError(f"Runner did not converge after {self._max_iterations} iterations.")
 
             logger.info(f"Workflow completed after {self._iteration} supersteps")
+            # TODO(@taochen): iteration is reset to zero, even in the event of a request info event.
+            # Should iteration be preserved in the event of a request info event?
             self._iteration = 0
             self._resumed_from_checkpoint = False  # Reset resume flag for next run
         finally:
@@ -168,10 +168,10 @@ class Runner:
                 data = message.data
                 if not isinstance(data, dict):
                     return
-                if _MODEL_MARKER not in data and _DATACLASS_MARKER not in data:
+                if MODEL_MARKER not in data and DATACLASS_MARKER not in data:
                     return
                 try:
-                    decoded = _decode_checkpoint_value(data)
+                    decoded = decode_checkpoint_value(data)
                 except Exception as exc:  # pragma: no cover - defensive
                     logger.debug("Failed to decode checkpoint payload during delivery: %s", exc)
                     return
@@ -374,6 +374,7 @@ class Runner:
             "executor_states": checkpoint.executor_states,
             "iteration_count": checkpoint.iteration_count,
             "max_iterations": checkpoint.max_iterations,
+            "pending_request_info_events": checkpoint.pending_request_info_events,
         }
 
     def _parse_edge_runners(self, edge_runners: list[EdgeRunner]) -> dict[str, list[EdgeRunner]]:

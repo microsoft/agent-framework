@@ -17,7 +17,7 @@ from ._events import (
 )
 from ._model_utils import DictConvertible
 from ._request_info_mixin import RequestInfoMixin
-from ._runner_context import Message, ResponseMessage, RunnerContext
+from ._runner_context import Message, MessageType, RunnerContext
 from ._shared_state import SharedState
 from ._typing_utils import is_instance_of
 from ._workflow_context import WorkflowContext, validate_workflow_context_annotation
@@ -236,14 +236,14 @@ class Executor(RequestInfoMixin, DictConvertible):
         # Default to find handler in regular handlers
         target_handlers = self._handlers
 
-        if isinstance(message, ResponseMessage):
-            # Wrap the response handlers to include original_request parameter
-            target_handlers = {
-                message_type: functools.partial(handler, message.original_request)
-                for message_type, handler in self._response_handlers.items()
-            }
-        # Handle case where Message wrapper is passed instead of raw data
         if isinstance(message, Message):
+            # Wrap the response handlers to include original_request parameter
+            if message.type == MessageType.RESPONSE:
+                target_handlers = {
+                    message_type: functools.partial(handler, message.original_request)
+                    for message_type, handler in self._response_handlers.items()
+                }
+            # Handle case where Message wrapper is passed instead of raw data
             message = message.data
 
         # Create processing span for tracing (gracefully handles disabled tracing)
@@ -362,7 +362,7 @@ class Executor(RequestInfoMixin, DictConvertible):
         Returns:
             True if the executor can handle the message type, False otherwise.
         """
-        if isinstance(message, ResponseMessage):
+        if message.type == MessageType.RESPONSE:
             return any(is_instance_of(message.data, message_type) for message_type in self._response_handlers)
 
         return any(is_instance_of(message.data, message_type) for message_type in self._handlers)
