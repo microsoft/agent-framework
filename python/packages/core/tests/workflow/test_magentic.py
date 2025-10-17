@@ -15,6 +15,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Executor,
+    MagenticAgentMessageEvent,
     MagenticBuilder,
     MagenticManagerBase,
     MagenticPlanReviewDecision,
@@ -328,13 +329,11 @@ async def test_magentic_checkpoint_resume_round_trip():
         .build()
     )
 
-    orchestrator = next(
-        exec for exec in wf_resume.workflow.executors.values() if isinstance(exec, MagenticOrchestratorExecutor)
-    )
+    orchestrator = next(exec for exec in wf_resume.executors.values() if isinstance(exec, MagenticOrchestratorExecutor))
 
     reply = MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.APPROVE)
     completed: WorkflowOutputEvent | None = None
-    async for event in wf_resume.workflow.run_stream_from_checkpoint(
+    async for event in wf_resume.run_stream_from_checkpoint(
         resume_checkpoint.checkpoint_id,
         responses={req_event.request_id: reply},
     ):
@@ -533,17 +532,10 @@ class StubAssistantsAgent(BaseAgent):
 async def _collect_agent_responses_setup(participant_obj: object):
     captured: list[ChatMessage] = []
 
-    async def sink(event) -> None:  # type: ignore[no-untyped-def]
-        from agent_framework._workflows._magentic import MagenticAgentMessageEvent
-
-        if isinstance(event, MagenticAgentMessageEvent) and event.message is not None:
-            captured.append(event.message)
-
     wf = (
         MagenticBuilder()
         .participants(agentA=participant_obj)  # type: ignore[arg-type]
         .with_standard_manager(InvokeOnceManager())
-        .on_event(sink)  # type: ignore
         .build()
     )
 
@@ -551,6 +543,10 @@ async def _collect_agent_responses_setup(participant_obj: object):
     events: list[WorkflowEvent] = []
     async for ev in wf.run_stream("task"):  # plan review disabled
         events.append(ev)
+        if isinstance(ev, WorkflowOutputEvent):
+            break
+        if isinstance(ev, MagenticAgentMessageEvent) and ev.message is not None:
+            captured.append(ev.message)
         if len(events) > 50:
             break
 
@@ -685,7 +681,7 @@ async def test_magentic_checkpoint_resume_rejects_participant_renames():
         .build()
     )
 
-    with pytest.raises(RuntimeError, match="participant names do not match"):
+    with pytest.raises(ValueError, match="Workflow graph has changed"):
         async for _ in renamed_workflow.run_stream_from_checkpoint(
             target_checkpoint.checkpoint_id,  # type: ignore[reportUnknownMemberType]
             responses={req_event.request_id: MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.APPROVE)},

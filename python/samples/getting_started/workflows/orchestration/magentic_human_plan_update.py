@@ -10,8 +10,6 @@ from agent_framework import (
     MagenticAgentDeltaEvent,
     MagenticAgentMessageEvent,
     MagenticBuilder,
-    MagenticCallbackEvent,
-    MagenticCallbackMode,
     MagenticFinalResultEvent,
     MagenticOrchestratorMessageEvent,
     MagenticPlanReviewDecision,
@@ -77,43 +75,11 @@ async def main() -> None:
     last_stream_agent_id: str | None = None
     stream_line_open: bool = False
 
-    # Unified callback
-    async def on_event(event: MagenticCallbackEvent) -> None:
-        nonlocal last_stream_agent_id, stream_line_open
-        if isinstance(event, MagenticOrchestratorMessageEvent):
-            print(f"\n[ORCH:{event.kind}]\n\n{getattr(event.message, 'text', '')}\n{'-' * 26}")
-        elif isinstance(event, MagenticAgentDeltaEvent):
-            if last_stream_agent_id != event.agent_id or not stream_line_open:
-                if stream_line_open:
-                    print()
-                print(f"\n[STREAM:{event.agent_id}]: ", end="", flush=True)
-                last_stream_agent_id = event.agent_id
-                stream_line_open = True
-            print(event.text, end="", flush=True)
-        elif isinstance(event, MagenticAgentMessageEvent):
-            if stream_line_open:
-                print(" (final)")
-                stream_line_open = False
-                print()
-            msg = event.message
-            if msg is not None:
-                response_text = (msg.text or "").replace("\n", " ")
-                print(f"\n[AGENT:{event.agent_id}] {msg.role.value}\n\n{response_text}\n{'-' * 26}")
-        elif isinstance(event, MagenticFinalResultEvent):
-            print("\n" + "=" * 50)
-            print("FINAL RESULT:")
-            print("=" * 50)
-            if event.message is not None:
-                print(event.message.text)
-            print("=" * 50)
-
     print("\nBuilding Magentic Workflow...")
 
     workflow = (
         MagenticBuilder()
         .participants(researcher=researcher_agent, coder=coder_agent)
-        .on_exception(on_exception)
-        .on_event(on_event, mode=MagenticCallbackMode.STREAMING)
         .with_standard_manager(
             chat_client=OpenAIChatClient(),
             max_round_count=10,
@@ -150,11 +116,34 @@ async def main() -> None:
                 stream = workflow.run_stream(task)
 
             # Collect events from the stream
-            events = [event async for event in stream]
-            pending_responses = None
-
-            # Process events to find request info events, outputs, and completion status
-            for event in events:
+            async for event in stream:
+                if isinstance(event, MagenticOrchestratorMessageEvent):
+                    print(f"\n[ORCH:{event.kind}]\n\n{getattr(event.message, 'text', '')}\n{'-' * 26}")
+                elif isinstance(event, MagenticAgentDeltaEvent):
+                    if last_stream_agent_id != event.agent_id or not stream_line_open:
+                        if stream_line_open:
+                            print()
+                        print(f"\n[STREAM:{event.agent_id}]: ", end="", flush=True)
+                        last_stream_agent_id = event.agent_id
+                        stream_line_open = True
+                    if event.text:
+                        print(event.text, end="", flush=True)
+                elif isinstance(event, MagenticAgentMessageEvent):
+                    if stream_line_open:
+                        print(" (final)")
+                        stream_line_open = False
+                        print()
+                    msg = event.message
+                    if msg is not None:
+                        response_text = (msg.text or "").replace("\n", " ")
+                        print(f"\n[AGENT:{event.agent_id}] {msg.role.value}\n\n{response_text}\n{'-' * 26}")
+                elif isinstance(event, MagenticFinalResultEvent):
+                    print("\n" + "=" * 50)
+                    print("FINAL RESULT:")
+                    print("=" * 50)
+                    if event.message is not None:
+                        print(event.message.text)
+                    print("=" * 50)
                 if isinstance(event, RequestInfoEvent) and event.request_type is MagenticPlanReviewRequest:
                     pending_request = event
                     review_req = cast(MagenticPlanReviewRequest, event.data)
@@ -162,8 +151,13 @@ async def main() -> None:
                         print(f"\n=== PLAN REVIEW REQUEST ===\n{review_req.plan_text}\n")
                 elif isinstance(event, WorkflowOutputEvent):
                     # Capture workflow output during streaming
-                    workflow_output = str(event.data)
+                    workflow_output = str(event.data) if event.data else None
                     completed = True
+
+            if stream_line_open:
+                print()
+                stream_line_open = False
+            pending_responses = None
 
             # Handle pending plan review request
             if pending_request is not None:

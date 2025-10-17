@@ -288,6 +288,7 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 | [`getting_started/workflows/orchestration/concurrent_agents.py`](./getting_started/workflows/orchestration/concurrent_agents.py) | Sample: Concurrent fan-out/fan-in (agent-only API) with default aggregator |
 | [`getting_started/workflows/orchestration/concurrent_custom_agent_executors.py`](./getting_started/workflows/orchestration/concurrent_custom_agent_executors.py) | Sample: Concurrent Orchestration with Custom Agent Executors |
 | [`getting_started/workflows/orchestration/concurrent_custom_aggregator.py`](./getting_started/workflows/orchestration/concurrent_custom_aggregator.py) | Sample: Concurrent Orchestration with Custom Aggregator |
+| [`getting_started/workflows/orchestration/group_chat.py`](./getting_started/workflows/orchestration/group_chat.py) | Sample: Group Chat Orchestration with LLM manager |
 | [`getting_started/workflows/orchestration/magentic.py`](./getting_started/workflows/orchestration/magentic.py) | Sample: Magentic Orchestration (multi-agent) |
 | [`getting_started/workflows/orchestration/magentic_checkpoint.py`](./getting_started/workflows/orchestration/magentic_checkpoint.py) | Sample: Magentic Orchestration + Checkpointing |
 | [`getting_started/workflows/orchestration/magentic_human_plan_update.py`](./getting_started/workflows/orchestration/magentic_human_plan_update.py) | Sample: Magentic Orchestration + Human Plan Review |
@@ -321,4 +322,3 @@ For information on creating new samples, see [SAMPLE_GUIDELINES.md](./SAMPLE_GUI
 ## More Information
 
 - [Python Package Documentation](../README.md)
-

@@ -19,24 +19,11 @@ logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 """
-Sample: Magentic Orchestration (multi-agent)
+Sample: Build a Magentic orchestration and wrap it as an agent.
 
-What it does:
-- Orchestrates multiple agents using `MagenticBuilder` with streaming callbacks.
-
-- ResearcherAgent (ChatAgent backed by an OpenAI chat client) for
-    finding information.
-- CoderAgent (ChatAgent backed by OpenAI Assistants with the hosted
-    code interpreter tool) for analysis and computation.
-
-The workflow is configured with:
-- A Standard Magentic manager (uses a chat client for planning and progress).
-- Callbacks for final results, per-message agent responses, and streaming
-    token updates.
-
-When run, the script builds the workflow, submits a task about estimating the
-energy efficiency and CO2 emissions of several ML models, streams intermediate
-events, and prints the final answer. The workflow completes when idle.
+The script configures a Magentic workflow with streaming callbacks, then invokes the
+orchestration through `workflow.as_agent(...)` so the entire Magentic loop can be reused
+like any other agent while still emitting callback telemetry.
 
 Prerequisites:
 - OpenAI credentials configured for `OpenAIChatClient` and `OpenAIResponsesClient`.
@@ -66,10 +53,6 @@ async def main() -> None:
 
     print("\nBuilding Magentic Workflow...")
 
-    # State used by on_agent_stream callback
-    last_stream_agent_id: str | None = None
-    stream_line_open: bool = False
-
     workflow = (
         MagenticBuilder()
         .participants(researcher=researcher_agent, coder=coder_agent)
@@ -95,7 +78,10 @@ async def main() -> None:
     print("\nStarting workflow execution...")
 
     try:
-        output: str | None = None
+        last_stream_agent_id: str | None = None
+        stream_line_open: bool = False
+        final_output: str | None = None
+
         async for event in workflow.run_stream(task):
             if isinstance(event, MagenticOrchestratorMessageEvent):
                 print(f"\n[ORCH:{event.kind}]\n\n{getattr(event.message, 'text', '')}\n{'-' * 26}")
@@ -125,14 +111,25 @@ async def main() -> None:
                     print(event.message.text)
                 print("=" * 50)
             elif isinstance(event, WorkflowOutputEvent):
-                output = str(event.data) if event.data is not None else None
+                final_output = str(event.data) if event.data is not None else None
 
         if stream_line_open:
             print()
             stream_line_open = False
 
-        if output is not None:
-            print(f"Workflow completed with result:\n\n{output}")
+        if final_output is not None:
+            print(f"\nWorkflow completed with result:\n\n{final_output}\n")
+
+        # Wrap the workflow as an agent for composition scenarios
+        workflow_agent = workflow.as_agent(name="MagenticWorkflowAgent")
+        agent_result = await workflow_agent.run(task)
+
+        if agent_result.messages:
+            print("\n===== as_agent() Transcript =====")
+            for i, msg in enumerate(agent_result.messages, start=1):
+                role_value = getattr(msg.role, "value", msg.role)
+                speaker = msg.author_name or role_value
+                print(f"{'-' * 50}\n{i:02d} [{speaker}]\n{msg.text}")
 
     except Exception as e:
         print(f"Workflow execution failed: {e}")
