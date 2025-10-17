@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
@@ -97,7 +98,10 @@ internal sealed class StateManager
     public ValueTask<T?> ReadStateAsync<T>(string executorId, string? scopeName, string key)
         => this.ReadStateAsync<T>(new ScopeId(Throw.IfNullOrEmpty(executorId), scopeName), key);
 
-    public ValueTask<T?> ReadStateAsync<T>(ScopeId scopeId, string key)
+    public ValueTask<T> ReadOrInitStateAsync<T>(string executorId, string? scopeName, string key, Func<T> initialStateFactory)
+        => this.ReadOrInitStateAsync(new ScopeId(Throw.IfNullOrEmpty(executorId), scopeName), key, initialStateFactory);
+
+    private async ValueTask<T?> ReadValueOrDefaultAsync<T>(ScopeId scopeId, string key, Func<T>? defaultValueFactory = default, bool initOnDefault = false)
     {
         if (typeof(T) == typeof(object))
         {
@@ -110,35 +114,65 @@ internal sealed class StateManager
 
         UpdateKey stateKey = new(scopeId, key);
 
+        T? result = defaultValueFactory != null ? defaultValueFactory() : default;
+        bool needsInit = false;
+
         // If there is executor-local state (from a queued update), read it first
-        if (this._queuedUpdates.TryGetValue(stateKey, out StateUpdate? result))
+        if (this._queuedUpdates.TryGetValue(stateKey, out StateUpdate? update))
         {
             // What's the right thing to do when we have a state object, but it is the wrong type?
-            if (result.IsDelete)
+            if (update.IsDelete || update.Value is null)
             {
-                return new((T?)default);
+                needsInit = initOnDefault;
             }
-
-            if (result.Value is T)
+            else if (update.Value is T typed)
             {
-                return new((T?)result.Value);
+                result = typed;
             }
-            else if (result.Value == null)
+            else if (typeof(T) == typeof(PortableValue) && update.Value != null)
             {
-                // Technically should only happen if T is nullable, but we don't have the ability to express that
-                // so we cannot `return new((T?)null);` directly.
-                return new((T?)default);
+                result = (T)(object)new PortableValue(update.Value);
             }
-            else if (typeof(T) == typeof(PortableValue))
+            else
             {
-                return new((T)(object)new PortableValue(result.Value));
+                throw new InvalidOperationException($"State for key '{key}' in scope '{scopeId}' is not of type '{typeof(T).Name}'.");
             }
-
-            throw new InvalidOperationException($"State for key '{key}' in scope '{scopeId}' is not of type '{typeof(T).Name}'.");
+        }
+        else
+        {
+            StateScope scope = this.GetOrCreateScope(scopeId);
+            if (scope.ContainsKey(key))
+            {
+                result = await scope.ReadStateAsync<T>(key).ConfigureAwait(false);
+            }
+            else if (initOnDefault)
+            {
+                needsInit = true;
+            }
         }
 
-        StateScope scope = this.GetOrCreateScope(scopeId);
-        return scope.ReadStateAsync<T>(key);
+        if (needsInit)
+        {
+            if (defaultValueFactory is null)
+            {
+                throw new ArgumentNullException(nameof(defaultValueFactory), "Default value must be provided when initializing state.");
+            }
+
+            Debug.Assert(initOnDefault);
+
+            await this.WriteStateAsync(scopeId, key, defaultValueFactory()).ConfigureAwait(false);
+        }
+
+        return result;
+    }
+
+    public ValueTask<T?> ReadStateAsync<T>(ScopeId scopeId, string key)
+        => this.ReadValueOrDefaultAsync<T>(scopeId, key);
+
+    public async ValueTask<T> ReadOrInitStateAsync<T>(ScopeId scopeId, string key, Func<T> initialStateFactory)
+    {
+        return (await this.ReadValueOrDefaultAsync(scopeId, key, initialStateFactory, initOnDefault: true)
+                          .ConfigureAwait(false))!;
     }
 
     public ValueTask WriteStateAsync<T>(string executorId, string? scopeName, string key, T value)
