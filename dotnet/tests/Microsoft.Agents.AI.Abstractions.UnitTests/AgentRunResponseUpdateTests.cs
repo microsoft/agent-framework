@@ -23,6 +23,7 @@ public class AgentRunResponseUpdateTests
         Assert.Null(update.MessageId);
         Assert.Null(update.CreatedAt);
         Assert.Equal(string.Empty, update.ToString());
+        Assert.Null(update.ContinuationToken);
     }
 
     [Fact]
@@ -41,6 +42,7 @@ public class AgentRunResponseUpdateTests
             RawRepresentation = new object(),
             ResponseId = "responseId",
             Role = ChatRole.Assistant,
+            ContinuationToken = new object(),
         };
 
         AgentRunResponseUpdate response = new(chatResponseUpdate);
@@ -52,6 +54,7 @@ public class AgentRunResponseUpdateTests
         Assert.Same(chatResponseUpdate, response.RawRepresentation as ChatResponseUpdate);
         Assert.Equal(chatResponseUpdate.ResponseId, response.ResponseId);
         Assert.Equal(chatResponseUpdate.Role, response.Role);
+        Assert.Same(chatResponseUpdate.ContinuationToken, response.ContinuationToken);
     }
 
     [Fact]
@@ -102,6 +105,10 @@ public class AgentRunResponseUpdateTests
         Assert.Null(update.CreatedAt);
         update.CreatedAt = new DateTimeOffset(2022, 1, 1, 0, 0, 0, TimeSpan.Zero);
         Assert.Equal(new DateTimeOffset(2022, 1, 1, 0, 0, 0, TimeSpan.Zero), update.CreatedAt);
+
+        Assert.Null(update.ContinuationToken);
+        update.ContinuationToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 });
+        Assert.Equivalent(ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 }), update.ContinuationToken);
     }
 
     [Fact]
@@ -152,11 +159,12 @@ public class AgentRunResponseUpdateTests
             MessageId = "messageid",
             CreatedAt = new DateTimeOffset(2022, 1, 1, 0, 0, 0, TimeSpan.Zero),
             AdditionalProperties = new() { ["key"] = "value" },
+            ContinuationToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 })
         };
 
-        string json = JsonSerializer.Serialize(original, TestJsonSerializerContext.Default.AgentRunResponseUpdate);
+        string json = JsonSerializer.Serialize(original, AgentAbstractionsJsonUtilities.DefaultOptions);
 
-        AgentRunResponseUpdate? result = JsonSerializer.Deserialize(json, TestJsonSerializerContext.Default.AgentRunResponseUpdate);
+        AgentRunResponseUpdate? result = JsonSerializer.Deserialize<AgentRunResponseUpdate>(json, AgentAbstractionsJsonUtilities.DefaultOptions);
 
         Assert.NotNull(result);
         Assert.Equal(5, result.Contents.Count);
@@ -187,5 +195,8 @@ public class AgentRunResponseUpdateTests
         Assert.True(result.AdditionalProperties.TryGetValue("key", out object? value));
         Assert.IsType<JsonElement>(value);
         Assert.Equal("value", ((JsonElement)value!).GetString());
+
+        Assert.NotNull(result.ContinuationToken);
+        Assert.Equivalent(ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 }), result.ContinuationToken);
     }
 }
