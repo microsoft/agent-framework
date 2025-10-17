@@ -1994,7 +1994,7 @@ public partial class ChatClientAgentTests
         ChatClientAgent agent = new(mockChatClient.Object);
 
         // Act
-        await agent.RunAsync([new(ChatRole.User, "hi")], options: agentRunOptions);
+        await agent.RunAsync(options: agentRunOptions);
 
         // Assert
         Assert.NotNull(capturedChatOptions);
@@ -2033,7 +2033,7 @@ public partial class ChatClientAgentTests
         ChatClientAgent agent = new(mockChatClient.Object);
 
         // Act
-        await agent.RunAsync([new(ChatRole.User, "hi")], options: agentRunOptions);
+        await agent.RunAsync(options: agentRunOptions);
 
         // Assert
         Assert.NotNull(capturedChatOptions);
@@ -2088,7 +2088,7 @@ public partial class ChatClientAgentTests
         ChatClientAgent agent = new(mockChatClient.Object);
 
         // Act
-        await foreach (var _ in agent.RunStreamingAsync([new(ChatRole.User, "hi")], options: agentRunOptions))
+        await foreach (var _ in agent.RunStreamingAsync(options: agentRunOptions))
         {
         }
 
@@ -2135,7 +2135,7 @@ public partial class ChatClientAgentTests
         ChatClientAgent agent = new(mockChatClient.Object);
 
         // Act
-        await foreach (var _ in agent.RunStreamingAsync([new(ChatRole.User, "hi")], options: agentRunOptions))
+        await foreach (var _ in agent.RunStreamingAsync(options: agentRunOptions))
         {
         }
 
@@ -2200,6 +2200,184 @@ public partial class ChatClientAgentTests
         Assert.Equal(2, actualUpdates.Count);
         Assert.Same(token1, actualUpdates[0].ContinuationToken);
         Assert.Null(actualUpdates[1].ContinuationToken); // last update has null token
+    }
+
+    [Fact]
+    public async Task RunAsyncThrowsWhenMessagesProvidedWithContinuationTokenAsync()
+    {
+        // Arrange
+        Mock<IChatClient> mockChatClient = new();
+
+        ChatClientAgent agent = new(mockChatClient.Object);
+
+        AgentRunOptions runOptions = new() { ContinuationToken = new() };
+
+        IEnumerable<ChatMessage> inputMessages = [new ChatMessage(ChatRole.User, "test message")];
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() => agent.RunAsync(inputMessages, options: runOptions));
+
+        // Verify that the IChatClient was never called due to early validation
+        mockChatClient.Verify(
+            c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task RunStreamingAsyncThrowsWhenMessagesProvidedWithContinuationTokenAsync()
+    {
+        // Arrange
+        Mock<IChatClient> mockChatClient = new();
+
+        ChatClientAgent agent = new(mockChatClient.Object);
+
+        AgentRunOptions runOptions = new() { ContinuationToken = new() };
+
+        IEnumerable<ChatMessage> inputMessages = [new ChatMessage(ChatRole.User, "test message")];
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await foreach (var update in agent.RunStreamingAsync(inputMessages, options: runOptions))
+            {
+                // Should not reach here
+            }
+        });
+
+        // Verify that the IChatClient was never called due to early validation
+        mockChatClient.Verify(
+            c => c.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task RunAsyncSkipsThreadMessagePopulationWithContinuationTokenAsync()
+    {
+        // Arrange
+        List<ChatMessage> capturedMessages = [];
+
+        // Create a mock message store that would normally provide messages
+        var mockMessageStore = new Mock<ChatMessageStore>();
+        mockMessageStore
+            .Setup(ms => ms.GetMessagesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new(ChatRole.User, "Message from message store")]);
+
+        // Create a mock AI context provider that would normally provide context
+        var mockContextProvider = new Mock<AIContextProvider>();
+        mockContextProvider
+            .Setup(p => p.InvokingAsync(It.IsAny<AIContextProvider.InvokingContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AIContext
+            {
+                Messages = [new(ChatRole.System, "Message from AI context")],
+                Instructions = "context instructions"
+            });
+
+        Mock<IChatClient> mockChatClient = new();
+        mockChatClient
+            .Setup(c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<ChatMessage>, ChatOptions, CancellationToken>((msgs, opts, ct) =>
+                capturedMessages.AddRange(msgs))
+            .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "continued response")]));
+
+        ChatClientAgent agent = new(mockChatClient.Object);
+
+        // Create a thread with both message store and AI context provider
+        ChatClientAgentThread thread = new()
+        {
+            MessageStore = mockMessageStore.Object,
+            AIContextProvider = mockContextProvider.Object
+        };
+
+        AgentRunOptions runOptions = new() { ContinuationToken = new() };
+
+        // Act
+        await agent.RunAsync([], thread, options: runOptions);
+
+        // Assert
+
+        // With continuation token, thread message population should be skipped
+        Assert.Empty(capturedMessages);
+
+        // Verify that message store was never called due to continuation token
+        mockMessageStore.Verify(
+            ms => ms.GetMessagesAsync(It.IsAny<CancellationToken>()),
+            Times.Never);
+
+        // Verify that AI context provider was never called due to continuation token
+        mockContextProvider.Verify(
+            p => p.InvokingAsync(It.IsAny<AIContextProvider.InvokingContext>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task RunStreamingAsyncSkipsThreadMessagePopulationWithContinuationTokenAsync()
+    {
+        // Arrange
+        List<ChatMessage> capturedMessages = [];
+
+        // Create a mock message store that would normally provide messages
+        var mockMessageStore = new Mock<ChatMessageStore>();
+        mockMessageStore
+            .Setup(ms => ms.GetMessagesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new(ChatRole.User, "Message from message store")]);
+
+        // Create a mock AI context provider that would normally provide context
+        var mockContextProvider = new Mock<AIContextProvider>();
+        mockContextProvider
+            .Setup(p => p.InvokingAsync(It.IsAny<AIContextProvider.InvokingContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AIContext
+            {
+                Messages = [new(ChatRole.System, "Message from AI context")],
+                Instructions = "context instructions"
+            });
+
+        Mock<IChatClient> mockChatClient = new();
+        mockChatClient
+            .Setup(c => c.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<ChatMessage>, ChatOptions, CancellationToken>((msgs, opts, ct) =>
+                capturedMessages.AddRange(msgs))
+            .Returns(ToAsyncEnumerableAsync([new ChatResponseUpdate(role: ChatRole.Assistant, content: "continued response")]));
+
+        ChatClientAgent agent = new(mockChatClient.Object);
+
+        // Create a thread with both message store and AI context provider
+        ChatClientAgentThread thread = new()
+        {
+            MessageStore = mockMessageStore.Object,
+            AIContextProvider = mockContextProvider.Object
+        };
+
+        AgentRunOptions runOptions = new() { ContinuationToken = new() };
+
+        // Act
+        await agent.RunStreamingAsync([], thread, options: runOptions).ToListAsync();
+
+        // Assert
+
+        // With continuation token, thread message population should be skipped
+        Assert.Empty(capturedMessages);
+
+        // Verify that message store was never called due to continuation token
+        mockMessageStore.Verify(
+            ms => ms.GetMessagesAsync(It.IsAny<CancellationToken>()),
+            Times.Never);
+
+        // Verify that AI context provider was never called due to continuation token
+        mockContextProvider.Verify(
+            p => p.InvokingAsync(It.IsAny<AIContextProvider.InvokingContext>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     #endregion

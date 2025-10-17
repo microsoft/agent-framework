@@ -570,43 +570,54 @@ public sealed partial class ChatClientAgent : AIAgent
             throw new InvalidOperationException("The provided thread is not compatible with the agent. Only threads created by the agent can be used.");
         }
 
-        // Add any existing messages from the thread to the messages to be sent to the chat client.
-        List<ChatMessage> threadMessages = [];
-        if (typedThread.MessageStore is not null)
+        // Supplying messages when continuing a background response is not allowed.
+        if (chatOptions?.ContinuationToken is not null && inputMessages.Any())
         {
-            threadMessages.AddRange(await typedThread.MessageStore.GetMessagesAsync(cancellationToken).ConfigureAwait(false));
+            throw new InvalidOperationException("Messages are not allowed when continuing a background response using a continuation token.");
         }
 
-        // If we have an AIContextProvider, we should get context from it, and update our
-        // messages and options with the additional context.
-        if (typedThread.AIContextProvider is not null)
+        List<ChatMessage> threadMessages = [];
+
+        // Populate the thread messages only if we are not continuing an existing response as it's not allowed
+        if (chatOptions?.ContinuationToken is null)
         {
-            var invokingContext = new AIContextProvider.InvokingContext(inputMessages);
-            var aiContext = await typedThread.AIContextProvider.InvokingAsync(invokingContext, cancellationToken).ConfigureAwait(false);
-            if (aiContext.Messages is { Count: > 0 })
+            // Add any existing messages from the thread to the messages to be sent to the chat client.
+            if (typedThread.MessageStore is not null)
             {
-                threadMessages.AddRange(aiContext.Messages);
+                threadMessages.AddRange(await typedThread.MessageStore.GetMessagesAsync(cancellationToken).ConfigureAwait(false));
             }
 
-            if (aiContext.Tools is { Count: > 0 })
+            // If we have an AIContextProvider, we should get context from it, and update our
+            // messages and options with the additional context.
+            if (typedThread.AIContextProvider is not null)
             {
-                chatOptions ??= new();
-                chatOptions.Tools ??= [];
-                foreach (AITool tool in aiContext.Tools)
+                var invokingContext = new AIContextProvider.InvokingContext(inputMessages);
+                var aiContext = await typedThread.AIContextProvider.InvokingAsync(invokingContext, cancellationToken).ConfigureAwait(false);
+                if (aiContext.Messages is { Count: > 0 })
                 {
-                    chatOptions.Tools.Add(tool);
+                    threadMessages.AddRange(aiContext.Messages);
+                }
+
+                if (aiContext.Tools is { Count: > 0 })
+                {
+                    chatOptions ??= new();
+                    chatOptions.Tools ??= [];
+                    foreach (AITool tool in aiContext.Tools)
+                    {
+                        chatOptions.Tools.Add(tool);
+                    }
+                }
+
+                if (aiContext.Instructions is not null)
+                {
+                    chatOptions ??= new();
+                    chatOptions.Instructions = string.IsNullOrWhiteSpace(chatOptions.Instructions) ? aiContext.Instructions : $"{chatOptions.Instructions}\n{aiContext.Instructions}";
                 }
             }
 
-            if (aiContext.Instructions is not null)
-            {
-                chatOptions ??= new();
-                chatOptions.Instructions = string.IsNullOrWhiteSpace(chatOptions.Instructions) ? aiContext.Instructions : $"{chatOptions.Instructions}\n{aiContext.Instructions}";
-            }
+            // Add the input messages to the end of thread messages.
+            threadMessages.AddRange(inputMessages);
         }
-
-        // Add the input messages to the end of thread messages.
-        threadMessages.AddRange(inputMessages);
 
         // If a user provided two different thread ids, via the thread object and options, we should throw
         // since we don't know which one to use.
