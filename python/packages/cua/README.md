@@ -51,8 +51,7 @@ export AZURE_API_VERSION="2024-02-01"
 ```python
 import asyncio
 from agent_framework import ChatAgent
-from agent_framework.openai import OpenAIChatClient
-from agent_framework_cua import CuaAgentMiddleware
+from agent_framework_cua import CuaChatClient, CuaAgentMiddleware
 from computer import Computer
 
 async def main():
@@ -62,20 +61,21 @@ async def main():
         provider_type="docker"
     ) as computer:
 
-        # Create middleware with Anthropic Claude
-        cua_middleware = CuaAgentMiddleware(
-            computer=computer,
+        # Create Cua chat client with model and instructions
+        chat_client = CuaChatClient(
             model="anthropic/claude-sonnet-4-5-20250929",
             instructions="You are a desktop automation assistant.",
+        )
+
+        # Create middleware
+        cua_middleware = CuaAgentMiddleware(
+            computer=computer,
             require_approval=True,
         )
 
-        # Create Agent Framework agent with Cua middleware
-        # Note: chat_client is required but won't be used.
-        # CuaAgentMiddleware terminates execution and delegates to Cua's ComputerAgent.
-        dummy_client = OpenAIChatClient(model_id="gpt-4o-mini", api_key="dummy-not-used")
+        # Create Agent Framework agent - no dummy variables!
         agent = ChatAgent(
-            chat_client=dummy_client,
+            chat_client=chat_client,
             middleware=[cua_middleware],
         )
 
@@ -94,48 +94,59 @@ if __name__ == "__main__":
 
 ### OpenAI Computer Use
 ```python
-from agent_framework_cua import CuaAgentMiddleware
+from agent_framework_cua import CuaChatClient, CuaAgentMiddleware
 
-cua_middleware = CuaAgentMiddleware(
-    computer=computer,
+chat_client = CuaChatClient(
     model="openai/gpt-4o",
 )
+middleware = CuaAgentMiddleware(computer=computer)
 ```
 
 ### OpenCUA (Local Model)
 ```python
-from agent_framework_cua import CuaAgentMiddleware
+from agent_framework_cua import CuaChatClient, CuaAgentMiddleware
 
-cua_middleware = CuaAgentMiddleware(
-    computer=computer,
+chat_client = CuaChatClient(
     model="huggingface-local/ByteDance/OpenCUA-7B",
+)
+middleware = CuaAgentMiddleware(
+    computer=computer,
     require_approval=False,  # No approval for local models
 )
 ```
 
 ### Composite Agent (Grounding + Planning)
 ```python
-from agent_framework_cua import CuaAgentMiddleware
+from agent_framework_cua import CuaChatClient, CuaAgentMiddleware
 
 # Combine UI-Tars (grounding) with GPT-4o (planning)
-cua_middleware = CuaAgentMiddleware(
-    computer=computer,
+chat_client = CuaChatClient(
     model="huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B+openai/gpt-4o",
 )
+middleware = CuaAgentMiddleware(computer=computer)
 ```
 
 ## Configuration Options
 
 ```python
+# CuaChatClient - stores model and instructions
+CuaChatClient(
+    model: str = "anthropic/claude-sonnet-4-5-20250929",  # Model identifier
+    instructions: str | None = None,                       # System instructions
+)
+
+# CuaAgentMiddleware - handles computer automation
 CuaAgentMiddleware(
     computer: Computer,                 # Cua Computer instance
-    model: str,                         # Model identifier (100+ supported)
+    model: str | None = None,           # Optional: override client model
+    instructions: str | None = None,    # Optional: override client instructions
     max_trajectory_budget: float = 5.0, # Max cost budget
     require_approval: bool = True,      # Human approval required
     approval_interval: int = 5,         # Steps between approvals
-    stream: bool = True,                # Stream responses
 )
 ```
+
+**Note**: Model and instructions are typically provided via `CuaChatClient`. You can optionally override them in `CuaAgentMiddleware`.
 
 ## Integration with Workflows
 
@@ -152,16 +163,18 @@ async def multi_agent_workflow(task: str) -> str:
 
     # Step 2: Cua Automation (Agent Framework + Cua)
     async with Computer(os_type="linux", provider_type="docker") as computer:
-        cua_middleware = CuaAgentMiddleware(
-            computer=computer,
+        cua_chat_client = CuaChatClient(
             model="anthropic/claude-sonnet-4-5-20250929",
             instructions="Execute the plan carefully",
+        )
+
+        cua_middleware = CuaAgentMiddleware(
+            computer=computer,
             require_approval=True,  # Agent Framework approval workflows
         )
 
-        dummy_client = OpenAIChatClient(model_id="gpt-4o-mini", api_key="dummy-not-used")
         automation_agent = ChatAgent(
-            chat_client=dummy_client,
+            chat_client=cua_chat_client,
             middleware=[cua_middleware],
         )
         result = await automation_agent.run(f"Execute: {plan}")

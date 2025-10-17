@@ -6,10 +6,9 @@ import asyncio
 import logging
 
 from agent_framework import ChatAgent
-from agent_framework.openai import OpenAIChatClient
 from computer import Computer
 
-from agent_framework_cua import CuaAgentMiddleware
+from agent_framework_cua import CuaAgentMiddleware, CuaChatClient
 
 logger = logging.getLogger(__name__)
 
@@ -18,22 +17,22 @@ async def main():
     """Run a basic computer use example with Claude."""
     # Initialize Cua computer (Linux Docker container)
     async with Computer(os_type="linux", provider_type="docker") as computer:
-        # Create middleware with Anthropic Claude
-        # Note: The middleware delegates to Cua's agent, so model and instructions are specified here
-        cua_middleware = CuaAgentMiddleware(
-            computer=computer,
+        # Create Cua chat client with model and instructions
+        chat_client = CuaChatClient(
             model="anthropic/claude-sonnet-4-5-20250929",
             instructions="You are a desktop automation assistant. Be precise and careful.",
+        )
+
+        # Create middleware
+        cua_middleware = CuaAgentMiddleware(
+            computer=computer,
             require_approval=True,
             approval_interval=5,
         )
 
-        # Create Agent Framework agent with Cua middleware
-        # Note: chat_client is required by ChatAgent but won't be used.
-        # CuaAgentMiddleware terminates execution and delegates everything to Cua's ComputerAgent.
-        dummy_client = OpenAIChatClient(model_id="gpt-4o-mini", api_key="dummy-not-used")
+        # Create Agent Framework agent
         agent = ChatAgent(
-            chat_client=dummy_client,
+            chat_client=chat_client,
             middleware=[cua_middleware],
         )
 

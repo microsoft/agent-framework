@@ -6,10 +6,9 @@ import asyncio
 import logging
 
 from agent_framework import ChatAgent
-from agent_framework.openai import OpenAIChatClient
 from computer import Computer
 
-from agent_framework_cua import CuaAgentMiddleware
+from agent_framework_cua import CuaAgentMiddleware, CuaChatClient
 
 logger = logging.getLogger(__name__)
 
@@ -20,23 +19,24 @@ async def main():
     # - Computer(os_type="macos", provider_type="lume") for macOS
     # - Computer(os_type="windows", provider_type="winsandbox") for Windows
     async with Computer(os_type="linux", provider_type="docker") as computer:
-        # Create middleware with composite agent
-        # Note: Instructions are passed to Cua's ComputerAgent through the middleware
-        cua_middleware = CuaAgentMiddleware(
-            computer=computer,
+        # Create Cua chat client with composite model
+        chat_client = CuaChatClient(
             model="huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B+openai/gpt-4o",
             instructions=(
                 "You are a desktop automation assistant. "
                 "Use UI-Tars for precise UI element detection and GPT-4o for planning."
             ),
+        )
+
+        # Create middleware
+        cua_middleware = CuaAgentMiddleware(
+            computer=computer,
             require_approval=False,  # Disable approval for demo
         )
 
-        # Note: chat_client is required by ChatAgent but won't be used.
-        # CuaAgentMiddleware terminates execution and delegates everything to Cua's ComputerAgent.
-        dummy_client = OpenAIChatClient(model_id="gpt-4o-mini", api_key="dummy-not-used")
+        # Create agent
         agent = ChatAgent(
-            chat_client=dummy_client,
+            chat_client=chat_client,
             middleware=[cua_middleware],
         )
 

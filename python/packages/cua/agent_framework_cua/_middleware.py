@@ -26,6 +26,12 @@ except ImportError:
 
 from ._types import CuaModelId, CuaResult, CuaStep
 
+# Import CuaChatClient for type checking
+try:
+    from ._chat_client import CuaChatClient
+except ImportError:
+    CuaChatClient = None  # type: ignore
+
 
 class CuaAgentMiddleware(ChatMiddleware):
     """Middleware that delegates to Cua's ComputerAgent for model execution.
@@ -47,18 +53,20 @@ class CuaAgentMiddleware(ChatMiddleware):
         .. code-block:: python
 
             from agent_framework import ChatAgent
-            from agent_framework.cua import CuaAgentMiddleware
+            from agent_framework.cua import CuaChatClient, CuaAgentMiddleware
             from computer import Computer
 
             async with Computer(os_type="linux", provider_type="docker") as computer:
-                middleware = CuaAgentMiddleware(
-                    computer=computer,
+                chat_client = CuaChatClient(
                     model="anthropic/claude-sonnet-4-5-20250929",
+                    instructions="You are a desktop automation assistant.",
                 )
 
+                middleware = CuaAgentMiddleware(computer=computer)
+
                 agent = ChatAgent(
+                    chat_client=chat_client,
                     middleware=[middleware],
-                    instructions="You are a desktop automation assistant.",
                 )
 
                 response = await agent.run("Open Firefox and search for Python")
@@ -68,7 +76,7 @@ class CuaAgentMiddleware(ChatMiddleware):
         self,
         computer: "Computer",
         *,
-        model: CuaModelId = "anthropic/claude-sonnet-4-5-20250929",
+        model: CuaModelId | None = None,
         instructions: str | None = None,
         max_trajectory_budget: float = 5.0,
         require_approval: bool = True,
@@ -78,16 +86,24 @@ class CuaAgentMiddleware(ChatMiddleware):
 
         Args:
             computer: Cua Computer instance for desktop automation
-            model: Model identifier (supports 100+ configs):
+            model: Model identifier (supports 100+ configs). If not provided,
+                will be extracted from CuaChatClient. Options:
                 - "anthropic/claude-sonnet-4-5-20250929"
                 - "openai/gpt-4o"
                 - "huggingface-local/ByteDance/OpenCUA-7B"
                 - "huggingface-local/OpenGVLab/InternVL2-8B"
                 - Composite: "ui-model+planning-model"
-            instructions: Optional system instructions for the agent
+            instructions: Optional system instructions for the agent.
+                If not provided, will be extracted from CuaChatClient.
             max_trajectory_budget: Max cost budget for Cua agent loop
             require_approval: Whether to require human approval
             approval_interval: Steps between approval requests
+
+        Note:
+            Model and instructions can be provided either:
+            1. Via CuaChatClient (recommended): Pass to chat_client parameter
+            2. Directly to middleware: Pass to this __init__ method
+            If both are provided, middleware parameters take precedence.
         """
         if not CUA_AVAILABLE:
             raise ImportError("Cua packages not installed. Install with: pip install agent-framework-cua")
@@ -99,13 +115,8 @@ class CuaAgentMiddleware(ChatMiddleware):
         self.require_approval = require_approval
         self.approval_interval = approval_interval
 
-        # Create Cua ComputerAgent
-        self.cua_agent = ComputerAgent(
-            model=model,
-            tools=[computer],
-            instructions=instructions,
-            max_trajectory_budget=max_trajectory_budget,
-        )
+        # Will be initialized in first process() call when we have access to chat_client
+        self.cua_agent: ComputerAgent | None = None
 
         self._step_count = 0
         self._trajectory: list[CuaStep] = []
@@ -118,17 +129,46 @@ class CuaAgentMiddleware(ChatMiddleware):
         """Process chat by delegating to Cua's ComputerAgent.
 
         Flow:
-        1. Extract messages from Agent Framework context
-        2. Check if approval needed (if steps >= approval_interval)
-        3. If approved, call Cua agent with messages
-        4. Cua handles entire model + computer execution loop
-        5. Transform Cua results back to Agent Framework format
-        6. Set context.result with ChatResponse
+        1. Extract model/instructions from CuaChatClient if needed
+        2. Initialize Cua agent on first call
+        3. Extract messages from Agent Framework context
+        4. Check if approval needed (if steps >= approval_interval)
+        5. If approved, call Cua agent with messages
+        6. Cua handles entire model + computer execution loop
+        7. Transform Cua results back to Agent Framework format
+        8. Set context.result with ChatResponse
 
         Args:
             context: Chat context containing messages and options
             next: Function to call next middleware (not used - we override execution)
         """
+        # Initialize Cua agent on first call
+        if self.cua_agent is None:
+            model = self.model
+            instructions = self.instructions
+
+            # Extract from CuaChatClient if not explicitly provided
+            if CuaChatClient is not None and hasattr(context, "chat_client"):
+                chat_client = context.chat_client
+                if isinstance(chat_client, CuaChatClient):
+                    # Use client values if middleware values not provided
+                    if model is None:
+                        model = chat_client.model
+                    if instructions is None:
+                        instructions = chat_client.instructions
+
+            # Default model if still not provided
+            if model is None:
+                model = "anthropic/claude-sonnet-4-5-20250929"
+
+            # Create Cua ComputerAgent
+            self.cua_agent = ComputerAgent(
+                model=model,
+                tools=[self.computer],
+                instructions=instructions,
+                max_trajectory_budget=self.max_trajectory_budget,
+            )
+
         # Check if we need approval before proceeding
         if self.require_approval and self._should_request_approval():
             approved = await self._request_approval(context, next)

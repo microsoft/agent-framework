@@ -15,17 +15,22 @@ Examples:
     Basic usage with Anthropic Claude:
 
     >>> from agent_framework import ChatAgent
-    >>> from agent_framework_cua import CuaAgentMiddleware
+    >>> from agent_framework_cua import CuaChatClient, CuaAgentMiddleware
     >>> from computer import Computer
     >>>
     >>> async with Computer(os_type="linux", provider_type="docker") as computer:
-    ...     middleware = CuaAgentMiddleware(
-    ...         computer=computer,
+    ...     # Create chat client with model and instructions
+    ...     chat_client = CuaChatClient(
     ...         model="anthropic/claude-sonnet-4-5-20250929",
     ...         instructions="You are a desktop automation assistant.",
     ...     )
     ...
+    ...     # Create middleware
+    ...     middleware = CuaAgentMiddleware(computer=computer)
+    ...
+    ...     # Create agent - no dummy variables!
     ...     agent = ChatAgent(
+    ...         chat_client=chat_client,
     ...         middleware=[middleware],
     ...     )
     ...
@@ -33,14 +38,16 @@ Examples:
 
     Using composite agents:
 
-    >>> middleware = CuaAgentMiddleware(
-    ...     computer=computer,
+    >>> chat_client = CuaChatClient(
     ...     model="huggingface-local/UI-TARS+openai/gpt-4o",
     ... )
+    >>> middleware = CuaAgentMiddleware(computer=computer)
 """
 
+from ._chat_client import CuaChatClient
 from ._middleware import CuaAgentMiddleware
 
 __all__ = [
     "CuaAgentMiddleware",
+    "CuaChatClient",
 ]

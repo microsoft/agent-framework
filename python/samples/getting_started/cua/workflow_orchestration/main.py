@@ -9,7 +9,7 @@ from agent_framework import ChatAgent
 from agent_framework.openai import OpenAIChatClient
 from computer import Computer
 
-from agent_framework_cua import CuaAgentMiddleware
+from agent_framework_cua import CuaAgentMiddleware, CuaChatClient
 
 logger = logging.getLogger(__name__)
 
@@ -35,17 +35,22 @@ async def main():
     # Step 2: Cua Automation Agent (Agent Framework Orchestration + Cua Execution)
     logger.info("\n🤖 Step 2: Cua Automation Agent")
     async with Computer(os_type="linux", provider_type="docker") as computer:
-        cua_middleware = CuaAgentMiddleware(
-            computer=computer,
+        # Create Cua chat client
+        cua_chat_client = CuaChatClient(
             model="anthropic/claude-sonnet-4-5-20250929",
             instructions="You are an automation assistant. Execute the plan carefully.",
+        )
+
+        # Create middleware
+        cua_middleware = CuaAgentMiddleware(
+            computer=computer,
             require_approval=True,  # Human-in-the-loop via Agent Framework
             approval_interval=3,
         )
 
-        dummy_client = OpenAIChatClient(model_id="gpt-4o-mini", api_key="dummy-not-used")
+        # Create automation agent
         automation_agent = ChatAgent(
-            chat_client=dummy_client,
+            chat_client=cua_chat_client,
             middleware=[cua_middleware],
         )
 
