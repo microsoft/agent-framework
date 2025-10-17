@@ -15,7 +15,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\..\src\Microsoft.Agents.AI.OpenAI\Microsoft.Agents.AI.OpenAI.csproj" />
-    <ProjectReference Include="..\..\..\src\Microsoft.Extensions.AI.Agents.Purview\Microsoft.Extensions.AI.Agents.Purview.csproj" />
+    <ProjectReference Include="..\..\..\src\Microsoft.Agents.AI.Purview\Microsoft.Agents.AI.Purview.csproj" />
   </ItemGroup>
 
 </Project>

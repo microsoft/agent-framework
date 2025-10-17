@@ -306,7 +306,7 @@
     <Project Path="src/Microsoft.Agents.AI.Workflows.Declarative/Microsoft.Agents.AI.Workflows.Declarative.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Workflows/Microsoft.Agents.AI.Workflows.csproj" />
     <Project Path="src/Microsoft.Agents.AI/Microsoft.Agents.AI.csproj" />
-    <Project Path="src/Microsoft.Extensions.AI.Agents.Purview/Microsoft.Extensions.AI.Agents.Purview.csproj" Id="e2fa3f42-2062-44cc-9329-0d7899ce8578" />
+    <Project Path="src/Microsoft.Agents.AI.Purview/Microsoft.Agents.AI.Purview.csproj" Id="e2fa3f42-2062-44cc-9329-0d7899ce8578" />
   </Folder>
   <Folder Name="/Tests/" />
   <Folder Name="/Tests/IntegrationTests/">
