@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using Microsoft.Agents.AI.Workflows.Declarative.Entities;
@@ -18,15 +18,15 @@ public sealed class EntityExtractorTest(ITestOutputHelper output) : WorkflowTest
     {
         // Arrange
         EntityReference? entity = null;
-        const string Value = "test value";
 
         // Act
-        EntityExtractionResult result = EntityExtractor.Parse(entity, Value);
+        EntityExtractionResult result = EntityExtractor.Parse(entity, "test value");
 
         // Assert
         Assert.True(result.IsValid);
         Assert.NotNull(result.Value);
-        Assert.Equal("test value", (result.Value as StringValue)?.Value);
+        StringValue stringValue = Assert.IsType<StringValue>(result.Value);
+        Assert.Equal("test value", stringValue.Value);
     }
 
     [Theory]
@@ -160,9 +160,9 @@ public sealed class EntityExtractorTest(ITestOutputHelper output) : WorkflowTest
 
         // Assert
         Assert.True(result.IsValid);
-        Assert.IsType<DateTimeValue>(result.Value);
-        DateTime dateTime = ((DateTimeValue)result.Value).GetConvertedValue(null);
-        Assert.Equal(DateTimeKind.Unspecified, dateTime.Kind);
+        DateTimeValue dateTimeValue = Assert.IsType<DateTimeValue>(result.Value);
+        DateTime dateTime = dateTimeValue.GetConvertedValue(null);
+        Assert.Equal(DateTime.Parse(value), dateTime);
     }
 
     [Theory]

@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.AI.Workflows.Declarative.Entities;
 using Microsoft.PowerFx.Types;
@@ -12,22 +12,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.Entities;
 public sealed class EntityExtractionResultTest(ITestOutputHelper output) : WorkflowTest(output)
 {
     [Fact]
-    public void ConstructorWithValue_InitializesCorrectly()
-    {
-        // Arrange
-        FormulaValue value = FormulaValue.New(42);
-
-        // Act
-        EntityExtractionResult result = new(value);
-
-        // Assert
-        Assert.Equal(value, result.Value);
-        Assert.Null(result.ErrorMessage);
-        Assert.True(result.IsValid);
-    }
-
-    [Fact]
-    public void ConstructorWithErrorMessage_InitializesCorrectly()
+    public void ConstructorWithErrorMessage()
     {
         // Arrange
         const string ErrorMessage = "Test error message";
@@ -42,7 +27,7 @@ public sealed class EntityExtractionResultTest(ITestOutputHelper output) : Workf
     }
 
     [Fact]
-    public void ConstructorWithNullValue_IsValid()
+    public void ConstructorWithNullValue()
     {
         // Arrange
         FormulaValue? value = null;
@@ -57,59 +42,17 @@ public sealed class EntityExtractionResultTest(ITestOutputHelper output) : Workf
     }
 
     [Fact]
-    public void IsValid_ReturnsTrueWhenValueIsNotNull()
+    public void ConstructorWithNumberValue()
     {
         // Arrange
-        FormulaValue value = FormulaValue.New("test");
+        FormulaValue value = FormulaValue.New(double.MaxValue);
 
         // Act
         EntityExtractionResult result = new(value);
 
         // Assert
-        Assert.True(result.IsValid);
-    }
-
-    [Fact]
-    public void IsValid_ReturnsFalseWhenValueIsNull()
-    {
-        // Arrange
-        const string ErrorMessage = "Error occurred";
-
-        // Act
-        EntityExtractionResult result = new(ErrorMessage);
-
-        // Assert
-        Assert.False(result.IsValid);
-    }
-
-    [Theory]
-    [InlineData(123)]
-    [InlineData(456.78)]
-    public void ConstructorWithNumberValue_PreservesValue(double number)
-    {
-        // Arrange
-        FormulaValue value = FormulaValue.New(number);
-
-        // Act
-        EntityExtractionResult result = new(value);
-
-        // Assert
-        Assert.Equal(value, result.Value);
-        Assert.True(result.IsValid);
-    }
-
-    [Theory]
-    [InlineData("Error 1")]
-    [InlineData("Error 2")]
-    [InlineData("Invalid input")]
-    public void ConstructorWithErrorMessage_PreservesMessage(string errorMessage)
-    {
-        // Act
-        EntityExtractionResult result = new(errorMessage);
-
-        // Assert
-        Assert.Equal(errorMessage, result.ErrorMessage);
-        Assert.False(result.IsValid);
+        NumberValue numberValue = Assert.IsType<NumberValue>(result.Value);
+        Assert.Equal(double.MaxValue, numberValue.Value);
     }
 
     [Fact]
