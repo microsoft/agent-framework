@@ -109,11 +109,7 @@ internal sealed partial class DefaultIdGenerator : IIdGenerator
     /// <exception cref="ArgumentException">Thrown when stringLength is less than 1.</exception>
     private static string SecureEntropy(int stringLength)
     {
-        if (stringLength < 1)
-        {
-            throw new ArgumentException("Must greater than or equal to 1", nameof(stringLength));
-        }
-
+        ArgumentOutOfRangeException.ThrowIfLessThan(1, stringLength);
         var entropy = "";
         while (entropy.Length != stringLength)
         {
@@ -137,10 +133,7 @@ internal sealed partial class DefaultIdGenerator : IIdGenerator
     private static string ExtractPartitionId(string id, int stringLength = 32, int partitionKeyLength = 16,
         string delimiter = "_")
     {
-        if (string.IsNullOrEmpty(id))
-        {
-            throw new ArgumentException("Id cannot be null or empty", nameof(id));
-        }
+        ArgumentException.ThrowIfNullOrEmpty(id);
 
         var parts = id.Split([delimiter], StringSplitOptions.RemoveEmptyEntries);
         if (parts.Length < 2)
