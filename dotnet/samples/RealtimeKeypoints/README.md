@@ -188,10 +188,7 @@ All executors read from and write to a single `TranscriptMemoryStore` instance t
 
 ## Learning Resources
 
-- [Azure OpenAI Service Documentation](https://learn.microsoft.com/azure/ai-services/openai/)
-- [Azure OpenAI Chat Completions API](https://learn.microsoft.com/azure/ai-services/openai/reference)
-- [GPT-4o Realtime Audio API Guide](https://learn.microsoft.com/azure/ai-services/openai/concepts/realtime-audio-sdk)
-- [Agent Framework Repository](https://github.com/microsoft/agent-framework)
+Refer to the [Agent Framework Repository](https://github.com/microsoft/agent-framework) for comprehensive documentation and samples on building agents and workflows.
 
 ## Troubleshooting
 
