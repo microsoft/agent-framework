@@ -31,6 +31,7 @@ members = [
     "agent-framework-devui",
     "agent-framework-lab",
     "agent-framework-mem0",
+    "agent-framework-purview",
     "agent-framework-redis",
 ]
 
@@ -61,7 +62,7 @@ wheels = [
 
 [[package]]
 name = "agent-framework"
-version = "1.0.0b251007"
+version = "1.0.0b251016"
 source = { virtual = "." }
 dependencies = [
     { name = "agent-framework-a2a", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -70,6 +71,7 @@ dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-devui", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-mem0", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-purview", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-redis", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
@@ -107,6 +109,7 @@ requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "agent-framework-devui", editable = "packages/devui" },
     { name = "agent-framework-mem0", editable = "packages/mem0" },
+    { name = "agent-framework-purview", editable = "packages/purview" },
     { name = "agent-framework-redis", editable = "packages/redis" },
 ]
 
@@ -138,7 +141,7 @@ docs = [
 
 [[package]]
 name = "agent-framework-a2a"
-version = "1.0.0b251007"
+version = "1.0.0b251016"
 source = { editable = "packages/a2a" }
 dependencies = [
     { name = "a2a-sdk", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -153,7 +156,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-azure-ai"
-version = "1.0.0b251007"
+version = "1.0.0b251016"
 source = { editable = "packages/azure-ai" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -172,7 +175,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-copilotstudio"
-version = "1.0.0b251007"
+version = "1.0.0b251016"
 source = { editable = "packages/copilotstudio" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -187,7 +190,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-core"
-version = "1.0.0b251007"
+version = "1.0.0b251016"
 source = { editable = "packages/core" }
 dependencies = [
     { name = "aiofiles", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -247,7 +250,7 @@ provides-extras = ["viz", "all"]
 
 [[package]]
 name = "agent-framework-devui"
-version = "1.0.0b251007"
+version = "1.0.0b251016"
 source = { editable = "packages/devui" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -370,7 +373,7 @@ dev = [
 
 [[package]]
 name = "agent-framework-mem0"
-version = "1.0.0b251007"
+version = "1.0.0b251016"
 source = { editable = "packages/mem0" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -384,8 +387,25 @@ requires-dist = [
 ]
 
 [[package]]
+name = "agent-framework-purview"
+version = "1.0.0b251016"
+source = { editable = "packages/purview" }
+dependencies = [
+    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "azure-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "httpx", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agent-framework-core", editable = "packages/core" },
+    { name = "azure-core", specifier = ">=1.30.0" },
+    { name = "httpx", specifier = ">=0.27.0" },
+]
+
+[[package]]
 name = "agent-framework-redis"
-version = "1.0.0b251007"
+version = "1.0.0b251016"
 source = { editable = "packages/redis" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },

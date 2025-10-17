@@ -1,20 +1,15 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from agent_framework_copilotstudio import CopilotStudioAgent, __version__, acquire_token
-from agent_framework_purview import (
-    PurviewAppLocation,
+from ._exceptions import (
     PurviewAuthenticationError,
-    PurviewChatPolicyMiddleware,
-    PurviewLocationType,
-    PurviewPolicyMiddleware,
     PurviewRateLimitError,
     PurviewRequestError,
     PurviewServiceError,
-    PurviewSettings,
 )
+from ._middleware import PurviewChatPolicyMiddleware, PurviewPolicyMiddleware
+from ._settings import PurviewAppLocation, PurviewLocationType, PurviewSettings
 
 __all__ = [
-    "CopilotStudioAgent",
     "PurviewAppLocation",
     "PurviewAuthenticationError",
     "PurviewChatPolicyMiddleware",
@@ -24,6 +19,4 @@ __all__ = [
     "PurviewRequestError",
     "PurviewServiceError",
     "PurviewSettings",
-    "__version__",
-    "acquire_token",
 ]
