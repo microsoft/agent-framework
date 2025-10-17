@@ -17,6 +17,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.AI;
 using OpenAI.Responses;
+using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses;
 
@@ -101,6 +102,7 @@ internal sealed class AIAgentResponsesProcessor
         {
             var sequenceNumber = 1;
             var outputIndex = 1;
+            Dictionary<string, int> messageIdOutputIndexes = new();
             AgentThread? agentThread = null;
 
             ResponseItem? lastResponseItem = null;
@@ -115,6 +117,8 @@ internal sealed class AIAgentResponsesProcessor
                     continue;
                 }
 
+                // response.created
+                // response.in_progress
                 if (sequenceNumber == 1)
                 {
                     lastOpenAIResponse = update.AsChatResponse().AsOpenAIResponse();
@@ -124,6 +128,12 @@ internal sealed class AIAgentResponsesProcessor
                         Response = lastOpenAIResponse
                     };
                     yield return new(responseCreated, responseCreated.Type);
+
+                    var inProgressResponse = new StreamingInProgressResponse(sequenceNumber++)
+                    {
+                        Response = lastOpenAIResponse
+                    };
+                    yield return new(inProgressResponse, inProgressResponse.Type);
                 }
 
                 if (update.Contents is not { Count: > 0 })
@@ -139,6 +149,7 @@ internal sealed class AIAgentResponsesProcessor
                     CreatedAt = update.CreatedAt,
                     RawRepresentation = update.RawRepresentation
                 };
+                var messageId = chatMessage.MessageId ?? "<null>";
 
                 foreach (var openAIResponseItem in MicrosoftExtensionsAIResponsesExtensions.AsOpenAIResponseItems([chatMessage]))
                 {
@@ -147,21 +158,57 @@ internal sealed class AIAgentResponsesProcessor
                         openAIResponseItem.SetId(chatMessage.MessageId);
                     }
 
-                    lastResponseItem = openAIResponseItem;
-
-                    var responseOutputItemAdded = new StreamingOutputItemAddedResponse(sequenceNumber++)
+                    if (!messageIdOutputIndexes.TryGetValue(messageId, out var index))
                     {
-                        OutputIndex = outputIndex++,
-                        Item = openAIResponseItem
+                        messageIdOutputIndexes[messageId] = index = 0;
+                        var responseContentPartAdded = new StreamingContentPartAddedResponse(sequenceNumber++)
+                        {
+                            ItemId = chatMessage.MessageId,
+                            ContentIndex = 0,
+                            OutputIndex = index++,
+                            Part = null!
+                        };
+                        yield return new(responseContentPartAdded, responseContentPartAdded.Type);
+                    }
+
+                    lastResponseItem = openAIResponseItem;
+                    var responseOutputTextDeltaResponse = new StreamingOutputTextDeltaResponse(sequenceNumber++)
+                    {
+                        ItemId = chatMessage.MessageId,
+                        ContentIndex = 0,
+                        OutputIndex = index++,
+                        Delta = chatMessage.Text
                     };
-                    yield return new(responseOutputItemAdded, responseOutputItemAdded.Type);
+                    yield return new(responseOutputTextDeltaResponse, responseOutputTextDeltaResponse.Type);
+
+                    messageIdOutputIndexes[messageId] = index;
                 }
             }
 
             if (lastResponseItem is not null)
             {
-                // we were streaming "response.output_item.added" before
-                // so we should complete it now via "response.output_item.done"
+                // here goes a sequence of completions for earlier started events:
+
+                // "response.output_text.delta" should be completed with "response.output_text.done"
+                var index = messageIdOutputIndexes[lastResponseItem.Id];
+                var responseOutputTextDeltaResponse = new StreamingOutputTextDoneResponse(sequenceNumber++)
+                {
+                    ItemId = lastResponseItem.Id,
+                    ContentIndex = 0,
+                    OutputIndex = index++,
+                };
+                yield return new(responseOutputTextDeltaResponse, responseOutputTextDeltaResponse.Type);
+
+                // then "response.content_part.added" should be completed with "response.content_part.done"
+                var streamingContentPartDoneResponse = new StreamingContentPartDoneResponse(sequenceNumber++)
+                {
+                    ItemId = lastResponseItem.Id,
+                    ContentIndex = 0,
+                    OutputIndex = index++,
+                };
+                yield return new(streamingContentPartDoneResponse, streamingContentPartDoneResponse.Type);
+
+                // then "response.output_item.added" should be completed with "response.output_item.done"
                 var responseOutputDoneAdded = new StreamingOutputItemDoneResponse(sequenceNumber++)
                 {
                     OutputIndex = outputIndex++,

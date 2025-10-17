@@ -12,6 +12,12 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses.Model;
 [JsonPolymorphic(UnknownDerivedTypeHandling = JsonUnknownDerivedTypeHandling.FailSerialization)]
 [JsonDerivedType(typeof(StreamingOutputItemAddedResponse), StreamingOutputItemAddedResponse.EventType)]
 [JsonDerivedType(typeof(StreamingOutputItemDoneResponse), StreamingOutputItemDoneResponse.EventType)]
+[JsonDerivedType(typeof(StreamingInProgressResponse), StreamingInProgressResponse.EventType)]
+[JsonDerivedType(typeof(StreamingOutputTextDeltaResponse), StreamingOutputTextDeltaResponse.EventType)]
+[JsonDerivedType(typeof(StreamingOutputTextDoneResponse), StreamingOutputTextDoneResponse.EventType)]
+[JsonDerivedType(typeof(StreamingInProgressResponse), StreamingInProgressResponse.EventType)]
+[JsonDerivedType(typeof(StreamingContentPartAddedResponse), StreamingContentPartAddedResponse.EventType)]
+[JsonDerivedType(typeof(StreamingContentPartDoneResponse), StreamingContentPartDoneResponse.EventType)]
 [JsonDerivedType(typeof(StreamingCreatedResponse), StreamingCreatedResponse.EventType)]
 [JsonDerivedType(typeof(StreamingCompletedResponse), StreamingCompletedResponse.EventType)]
 internal abstract class StreamingResponseEventBase
@@ -41,6 +47,106 @@ internal abstract class StreamingResponseEventBase
         this.Type = type;
         this.SequenceNumber = sequenceNumber;
     }
+}
+
+internal sealed class StreamingContentPartAddedResponse : StreamingResponseEventBase
+{
+    public const string EventType = "response.content_part.added";
+
+    public StreamingContentPartAddedResponse(int sequenceNumber) : base(EventType, sequenceNumber)
+    {
+    }
+
+    [JsonPropertyName("content_index")]
+    public required int ContentIndex { get; set; }
+
+    [JsonPropertyName("item_id")]
+    public required string? ItemId { get; set; }
+
+    [JsonPropertyName("output_index")]
+    public required int OutputIndex { get; set; }
+
+    [JsonPropertyName("part")]
+    public ResponseContentPart? Part { get; set; }
+}
+
+internal sealed class StreamingContentPartDoneResponse : StreamingResponseEventBase
+{
+    public const string EventType = "response.content_part.done";
+
+    public StreamingContentPartDoneResponse(int sequenceNumber) : base(EventType, sequenceNumber)
+    {
+    }
+
+    [JsonPropertyName("content_index")]
+    public required int ContentIndex { get; set; }
+
+    [JsonPropertyName("item_id")]
+    public required string ItemId { get; set; }
+
+    [JsonPropertyName("output_index")]
+    public required int OutputIndex { get; set; }
+
+    [JsonPropertyName("part")]
+    public ResponseContentPart? Part { get; set; }
+}
+
+internal sealed class StreamingInProgressResponse : StreamingResponseEventBase
+{
+    public const string EventType = "response.in_progress";
+
+    public StreamingInProgressResponse(int sequenceNumber) : base(EventType, sequenceNumber)
+    {
+    }
+
+    /// <summary>
+    /// Gets or sets the response item that was added to the output.
+    /// This contains the actual content or data produced by the AI agent.
+    /// </summary>
+    [JsonPropertyName("response")]
+    public required OpenAIResponse Response { get; set; }
+}
+
+internal sealed class StreamingOutputTextDeltaResponse : StreamingResponseEventBase
+{
+    public const string EventType = "response.output_text.delta";
+
+    public StreamingOutputTextDeltaResponse(int sequenceNumber) : base(EventType, sequenceNumber)
+    {
+    }
+
+    [JsonPropertyName("content_index")]
+    public required int ContentIndex { get; set; }
+
+    [JsonPropertyName("item_id")]
+    public string? ItemId { get; set; }
+
+    [JsonPropertyName("output_index")]
+    public int OutputIndex { get; set; }
+
+    [JsonPropertyName("delta")]
+    public required string Delta { get; set; }
+}
+
+internal sealed class StreamingOutputTextDoneResponse : StreamingResponseEventBase
+{
+    public const string EventType = "response.output_text.done";
+
+    public StreamingOutputTextDoneResponse(int sequenceNumber) : base(EventType, sequenceNumber)
+    {
+    }
+
+    [JsonPropertyName("content_index")]
+    public required int ContentIndex { get; set; }
+
+    [JsonPropertyName("item_id")]
+    public required string ItemId { get; set; }
+
+    [JsonPropertyName("output_index")]
+    public int OutputIndex { get; set; }
+
+    [JsonPropertyName("text")]
+    public string? Text { get; set; }
 }
 
 /// <summary>
