@@ -29,8 +29,8 @@ dependencies = [
     "opentelemetry-api>=1.24",
     "opentelemetry-sdk>=1.24",
     "mcp[ws]>=1.13",
-    "azure-monitor-opentelemetry>=1.7.0",
-    "azure-monitor-opentelemetry-exporter>=1.0.0b41",
+    # REMOVED: azure-monitor-opentelemetry - now optional
+    # REMOVED: azure-monitor-opentelemetry-exporter - now optional
     "opentelemetry-exporter-otlp-proto-grpc>=1.36.0",
     "opentelemetry-semantic-conventions-ai>=0.4.13",
     "aiofiles>=24.1.0",
@@ -38,6 +38,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# NEW: Azure Monitor is now optional
+azure-monitor = [
+    "azure-monitor-opentelemetry>=1.7.0",
+    "azure-monitor-opentelemetry-exporter>=1.0.0b41",
+]
 viz = [
     "graphviz>=0.20.0"
 ]
@@ -48,7 +53,9 @@ all = [
     "agent-framework-mem0",
     "agent-framework-redis",
     "agent-framework-devui",
-    "graphviz>=0.20.0"
+    "graphviz>=0.20.0",
+    "azure-monitor-opentelemetry>=1.7.0",
+    "azure-monitor-opentelemetry-exporter>=1.0.0b41",
 ]
 
 [tool.uv]
