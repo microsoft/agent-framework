@@ -47,7 +47,7 @@ internal sealed class HandoffAgentExecutor(
                 foreach (HandoffTarget handoff in handoffs)
                 {
                     index++;
-                    var handoffFunc = AIFunctionFactory.CreateDeclaration($"{FunctionPrefix}{index}", handoff.Reason, s_handoffSchema);
+                    var handoffFunc = AIFunctionFactory.CreateDeclaration($"{HandoffsWorkflowBuilder.FunctionPrefix}{index}", handoff.Reason, s_handoffSchema);
 
                     this._handoffFunctionNames.Add(handoffFunc.Name);
 
