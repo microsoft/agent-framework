@@ -22,4 +22,9 @@ runs:
       - name: Install the project
         shell: bash
         run: |
-          cd python && uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit
+          cd python
+          if [[ "${{ inputs.python-version }}" == "3.10" ]]; then
+            uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit --exclude agent-framework-chatkit
+          else
+            uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit
+          fi
