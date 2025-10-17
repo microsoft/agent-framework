@@ -2,8 +2,8 @@
 
 using System;
 using System.ClientModel.Primitives;
-using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Generated;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses;
+using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Generated;
 using Microsoft.AspNetCore.Http.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;

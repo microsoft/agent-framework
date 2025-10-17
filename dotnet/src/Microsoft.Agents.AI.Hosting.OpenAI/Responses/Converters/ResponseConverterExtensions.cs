@@ -4,9 +4,9 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
-using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Generated.Models;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Common;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Common.Id;
+using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Generated.Models;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Invocation;
 using Microsoft.Extensions.AI;
 

@@ -6,8 +6,8 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Generated.Models;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Common;
+using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Generated.Models;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses.Invocation.Stream;
 

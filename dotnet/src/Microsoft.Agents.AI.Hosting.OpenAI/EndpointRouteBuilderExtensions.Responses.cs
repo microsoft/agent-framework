@@ -3,8 +3,8 @@
 using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Threading;
-using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Generated.Models;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses;
+using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Generated.Models;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Routing;
