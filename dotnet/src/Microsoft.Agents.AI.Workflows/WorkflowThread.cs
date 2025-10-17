@@ -102,6 +102,7 @@ internal sealed class WorkflowThread : AgentThread
 
     private async ValueTask<Checkpointed<StreamingRun>> CreateOrResumeRunAsync(List<ChatMessage> messages, CancellationToken cancellationToken = default)
     {
+        // We can presume that if we ever ran the workflow, we would have run through the typecheck.
         if (this.LastCheckpoint is not null)
         {
             Checkpointed<StreamingRun> checkpointed =

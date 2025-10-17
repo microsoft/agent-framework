@@ -13,7 +13,7 @@ internal static class WorkflowHelper
     /// </summary>
     /// <param name="chatClient">The chat client to use for the agents</param>
     /// <returns>A workflow that processes input using two language agents</returns>
-    internal static ValueTask<Workflow<List<ChatMessage>>> GetWorkflowAsync(IChatClient chatClient)
+    internal static Workflow GetWorkflow(IChatClient chatClient)
     {
         // Create executors
         var startExecutor = new ConcurrentStartExecutor();
@@ -26,7 +26,7 @@ internal static class WorkflowHelper
             .AddFanOutEdge(startExecutor, targets: [frenchAgent, englishAgent])
             .AddFanInEdge(aggregationExecutor, sources: [frenchAgent, englishAgent])
             .WithOutputFrom(aggregationExecutor)
-            .BuildAsync<List<ChatMessage>>();
+            .Build();
     }
 
     /// <summary>
