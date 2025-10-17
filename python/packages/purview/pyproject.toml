@@ -1,29 +1,31 @@
 [project]
-name = "agent-framework-a2a"
-description = "A2A integration for Microsoft Agent Framework."
+name = "agent-framework-purview"
+description = "Microsoft Purview (Graph dataSecurityAndGovernance) integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
 version = "1.0.0b251016"
 license-files = ["LICENSE"]
-urls.homepage = "https://aka.ms/agent-framework"
+urls.homepage = "https://github.com/microsoft/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
-urls.release_notes = "https://github.com/microsoft/agent-framework/releases?q=tag%3Apython-1&expanded=true"
+urls.release_notes = "https://github.com/microsoft/agent-framework/releases"
 urls.issues = "https://github.com/microsoft/agent-framework/issues"
 classifiers = [
   "License :: OSI Approved :: MIT License",
-  "Development Status :: 4 - Beta",
+  "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Framework :: Pydantic :: 2",
   "Typing :: Typed",
 ]
 dependencies = [
     "agent-framework-core",
-    "a2a-sdk>=0.3.5",
+    "azure-core>=1.30.0",
+    "httpx>=0.27.0",
 ]
 
 [tool.uv]
@@ -41,10 +43,7 @@ testpaths = 'tests'
 addopts = "-ra -q -r fEX"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-filterwarnings = [
-    "ignore:Support for class-based `config` is deprecated:DeprecationWarning:pydantic.*"
-]
-timeout = 120
+filterwarnings = []
 
 [tool.ruff]
 extend = "../../pyproject.toml"
@@ -73,16 +72,16 @@ disallow_incomplete_defs = true
 disallow_untyped_decorators = true
 
 [tool.bandit]
-targets = ["agent_framework_a2a"]
+targets = ["agent_framework_purview"]
 exclude_dirs = ["tests"]
 
 [tool.poe]
 executor.type = "uv"
 include = "../../shared_tasks.toml"
 [tool.poe.tasks]
-mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_a2a"
-test = "pytest --cov=agent_framework_a2a --cov-report=term-missing:skip-covered tests"
+mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_purview"
+test = "pytest --cov=agent_framework_purview --cov-report=term-missing:skip-covered tests"
 
 [build-system]
-requires = ["flit-core >= 3.11,<4.0"]
+requires = ["flit-core >= 3.9,<4.0"]
 build-backend = "flit_core.buildapi"

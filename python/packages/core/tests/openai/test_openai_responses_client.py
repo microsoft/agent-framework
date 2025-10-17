@@ -439,7 +439,7 @@ async def test_get_streaming_response_with_all_parameters() -> None:
             instructions="Stream response test",
             max_tokens=50,
             parallel_tool_calls=False,
-            model="gpt-4",
+            model_id="gpt-4",
             previous_response_id="stream-prev-123",
             reasoning={"mode": "stream"},
             service_tier="default",
