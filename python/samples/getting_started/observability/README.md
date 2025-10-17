@@ -240,6 +240,44 @@ ENABLE_OTEL=true OTLP_ENDPOINT=http://localhost:4317 python 01-zero_code.py
 
 Once your sample finishes running, navigate to <http://localhost:18888> in a web browser to see the telemetry data. Follow the [Aspire Dashboard exploration guide](https://learn.microsoft.com/en-us/dotnet/aspire/fundamentals/dashboard/explore) to authenticate to the dashboard and start exploring your traces, logs, and metrics!
 
+## Langfuse Dashboard
+
+[Langfuse](https://langfuse.com/) is an open-source LLM and AI agent observability tool. The Microsoft Agent Framework can export OpenTelemetry spans to Langfuse for evaluation and debugging.
+
+### Configure Langfuse
+
+```bash
+pip install agent-framework langfuse
+```
+
+Next, set your Langfuse credentials as environment variables. You can retrieve your Langfuse API keys by [self-hosting Langfuse](https://langfuse.com/self-hosting) or using [Langfuse Cloud](https://cloud.langfuse.com/).
+
+```bash
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+LANGFUSE_HOST=https://cloud.langfuse.com
+```
+
+Next, initialize the Langfuse client and enable observability in the Agent Framework:
+
+```python
+from agent_framework.observability import setup_observability
+from langfuse import get_client
+ 
+langfuse = get_client()
+setup_observability(enable_sensitive_data=True)
+```
+
+For a complete integration guide, please take a look at the [Langfuse documentation](https://langfuse.com/integrations/frameworks/microsoft-agent-framework).
+
+### See traces in Langfuse
+
+Now, all agent executions can be viewed in the Langfuse UI:
+
+![Example trace in Langfuse](https://langfuse.com/images/cookbook/integration_microsoft-agent-framework/microsoft-agent-framework-example-race.png)
+
+[Example Trace in Langfuse](https://cloud.langfuse.com/project/cloramnkj0002jz088vzn1ja4/traces/232de211-7fcf-45c8-b415-6af0e8cd6eaa)
+
 ## Console output
 
 You won't have to deploy an Application Insights resource or install Docker to run Aspire Dashboard if you choose to inspect telemetry data in a console. However, it is difficult to navigate through all the spans and logs produced, so **this method is only recommended when you are just getting started**.
