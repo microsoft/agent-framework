@@ -236,32 +236,29 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     {
         this.Trace(item);
 
-        string parentId = GetParentId(item);
-        string actionId = item.GetId();
-        string postId = Steps.Post(actionId);
-
         // Entry point for question
-        QuestionExecutor action = new(item, this._workflowState);
+        QuestionExecutor action = new(item, this._workflowOptions.AgentProvider, this._workflowState);
         this.ContinueWith(action);
         // Transition to post action if complete
-        this._workflowModel.AddLink(actionId, postId, QuestionExecutor.IsComplete);
+        string postId = Steps.Post(action.Id);
+        this._workflowModel.AddLink(action.Id, postId, QuestionExecutor.IsComplete);
 
         // Perpare for input request if not complete
-        string prepareId = QuestionExecutor.Steps.Prepare(actionId);
-        this.ContinueWith(new DelegateActionExecutor(prepareId, this._workflowState, action.PrepareResponseAsync, emitResult: false), parentId, message => !QuestionExecutor.IsComplete(message));
+        string prepareId = QuestionExecutor.Steps.Prepare(action.Id);
+        this.ContinueWith(new DelegateActionExecutor(prepareId, this._workflowState, action.PrepareResponseAsync, emitResult: false), action.ParentId, message => !QuestionExecutor.IsComplete(message));
 
         // Define input action
-        string inputId = QuestionExecutor.Steps.Input(actionId);
+        string inputId = QuestionExecutor.Steps.Input(action.Id);
         RequestPortAction inputPort = new(RequestPort.Create<InputRequest, InputResponse>(inputId));
-        this._workflowModel.AddNode(inputPort, parentId);
-        this._workflowModel.AddLinkFromPeer(parentId, inputId);
+        this._workflowModel.AddNode(inputPort, action.ParentId);
+        this._workflowModel.AddLinkFromPeer(action.ParentId, inputId);
 
         // Capture input response
-        string captureId = QuestionExecutor.Steps.Capture(actionId);
-        this.ContinueWith(new DelegateActionExecutor<InputResponse>(captureId, this._workflowState, action.CaptureResponseAsync, emitResult: false), parentId);
+        string captureId = QuestionExecutor.Steps.Capture(action.Id);
+        this.ContinueWith(new DelegateActionExecutor<InputResponse>(captureId, this._workflowState, action.CaptureResponseAsync, emitResult: false), action.ParentId);
 
         // Transition to post action if complete
-        this.ContinueWith(new DelegateActionExecutor(postId, this._workflowState, action.CompleteAsync), parentId, QuestionExecutor.IsComplete);
+        this.ContinueWith(new DelegateActionExecutor(postId, this._workflowState, action.CompleteAsync), action.ParentId, QuestionExecutor.IsComplete);
         // Transition to prepare action if not complete
         this._workflowModel.AddLink(captureId, prepareId, message => !QuestionExecutor.IsComplete(message));
     }
@@ -313,7 +310,30 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     {
         this.Trace(item);
 
-        this.ContinueWith(new InvokeAzureAgentExecutor(item, this._workflowOptions.AgentProvider, this._workflowState));
+        // Entry point to invoke agent
+        InvokeAzureAgentExecutor action = new(item, this._workflowOptions.AgentProvider, this._workflowState);
+        this.ContinueWith(action);
+        // Transition to post action if complete
+        string postId = Steps.Post(action.Id);
+        this._workflowModel.AddLink(action.Id, postId, result => !InvokeAzureAgentExecutor.RequiresInput(result));
+
+        // Define input action
+        string inputId = InvokeAzureAgentExecutor.Steps.Input(action.Id);
+        RequestPortAction inputPort = new(RequestPort.Create<AgentToolRequest, AgentToolResponse>(inputId));
+        this._workflowModel.AddNode(inputPort, action.ParentId);
+        this._workflowModel.AddLink(action.Id, inputId, InvokeAzureAgentExecutor.RequiresInput);
+
+        // Input port always transitions to resume
+        string resumeId = InvokeAzureAgentExecutor.Steps.Resume(action.Id);
+        this._workflowModel.AddNode(new DelegateActionExecutor<AgentToolResponse>(resumeId, this._workflowState, action.ResumeAsync), action.ParentId);
+        this._workflowModel.AddLink(inputId, resumeId);
+        // Transition to request port if more input is required
+        this._workflowModel.AddLink(resumeId, inputId, InvokeAzureAgentExecutor.RequiresInput);
+        // Transition to post action if complete
+        this._workflowModel.AddLink(resumeId, postId, result => !InvokeAzureAgentExecutor.RequiresInput(result));
+
+        // Define post action
+        this._workflowModel.AddNode(new DelegateActionExecutor(postId, this._workflowState, action.CompleteAsync), action.ParentId);
     }
 
     protected override void Visit(RetrieveConversationMessage item)

@@ -9,10 +9,11 @@ import {
   FileText,
   Code,
   ChevronDown,
-  ChevronUp,
+  ChevronRight,
   Music,
 } from "lucide-react";
 import type { MessageContent } from "@/types/openai";
+import { MarkdownRenderer } from "@/components/ui/markdown-renderer";
 
 interface ContentRendererProps {
   content: MessageContent;
@@ -22,51 +23,15 @@ interface ContentRendererProps {
 
 // Text content renderer
 function TextContentRenderer({ content, className, isStreaming }: ContentRendererProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
-
   if (content.type !== "text") return null;
 
   const text = content.text;
-  const TRUNCATE_LENGTH = 1600;
-  const shouldTruncate = text.length > TRUNCATE_LENGTH;
-  const displayText =
-    shouldTruncate && !isExpanded
-      ? text.slice(0, TRUNCATE_LENGTH) + "..."
-      : text;
 
   return (
-    <div className={`whitespace-pre-wrap break-words ${className || ""}`}>
-      <div
-        className={
-          isExpanded && shouldTruncate ? "max-h-96 overflow-y-auto" : ""
-        }
-      >
-        {displayText}
-        {isStreaming && text.length > 0 && (
-          <span className="ml-1 inline-block h-2 w-2 animate-pulse rounded-full bg-current" />
-        )}
-      </div>
-      {shouldTruncate && (
-        <div className="flex justify-end mt-1">
-          <button
-            onClick={() => setIsExpanded(!isExpanded)}
-            className="inline-flex items-center gap-1 text-xs
-                       bg-background/80 hover:bg-background border border-border/50 hover:border-border
-                       text-muted-foreground hover:text-foreground
-                       transition-colors cursor-pointer px-2 py-1 rounded"
-          >
-            {isExpanded ? (
-              <>
-                less <ChevronUp className="h-3 w-3" />
-              </>
-            ) : (
-              <>
-                {(text.length - TRUNCATE_LENGTH).toLocaleString()} more{" "}
-                <ChevronDown className="h-3 w-3" />
-              </>
-            )}
-          </button>
-        </div>
+    <div className={`break-words ${className || ""}`}>
+      <MarkdownRenderer content={text} />
+      {isStreaming && text.length > 0 && (
+        <span className="ml-1 inline-block h-2 w-2 animate-pulse rounded-full bg-current" />
       )}
     </div>
   );
@@ -223,7 +188,7 @@ export function FunctionCallRenderer({ name, arguments: args, className }: Funct
   }
 
   return (
-    <div className={`my-2 p-3 border rounded-lg bg-blue-50 dark:bg-blue-950/20 ${className || ""}`}>
+    <div className={`my-2 p-3 border rounded bg-blue-50 dark:bg-blue-950/20 ${className || ""}`}>
       <div
         className="flex items-center gap-2 cursor-pointer"
         onClick={() => setIsExpanded(!isExpanded)}
@@ -232,7 +197,11 @@ export function FunctionCallRenderer({ name, arguments: args, className }: Funct
         <span className="text-sm font-medium text-blue-800 dark:text-blue-300">
           Function Call: {name}
         </span>
-        <span className="text-xs text-blue-600 dark:text-blue-400">{isExpanded ? "▼" : "▶"}</span>
+        {isExpanded ? (
+          <ChevronDown className="h-4 w-4 text-blue-600 dark:text-blue-400 ml-auto" />
+        ) : (
+          <ChevronRight className="h-4 w-4 text-blue-600 dark:text-blue-400 ml-auto" />
+        )}
       </div>
       {isExpanded && (
         <div className="mt-2 text-xs font-mono bg-white dark:bg-gray-900 p-2 rounded border">
@@ -264,7 +233,7 @@ export function FunctionResultRenderer({ output, call_id, className }: FunctionR
   }
 
   return (
-    <div className={`my-2 p-3 border rounded-lg bg-green-50 dark:bg-green-950/20 ${className || ""}`}>
+    <div className={`my-2 p-3 border rounded bg-green-50 dark:bg-green-950/20 ${className || ""}`}>
       <div
         className="flex items-center gap-2 cursor-pointer"
         onClick={() => setIsExpanded(!isExpanded)}
@@ -273,7 +242,11 @@ export function FunctionResultRenderer({ output, call_id, className }: FunctionR
         <span className="text-sm font-medium text-green-800 dark:text-green-300">
           Function Result
         </span>
-        <span className="text-xs text-green-600 dark:text-green-400">{isExpanded ? "▼" : "▶"}</span>
+        {isExpanded ? (
+          <ChevronDown className="h-4 w-4 text-green-600 dark:text-green-400 ml-auto" />
+        ) : (
+          <ChevronRight className="h-4 w-4 text-green-600 dark:text-green-400 ml-auto" />
+        )}
       </div>
       {isExpanded && (
         <div className="mt-2 text-xs font-mono bg-white dark:bg-gray-900 p-2 rounded border">

@@ -299,6 +299,48 @@ async def test_ai_function_invoke_invalid_pydantic_args():
         await invalid_args_test.invoke(arguments=wrong_args)
 
 
+def test_ai_function_serialization():
+    """Test AIFunction serialization and deserialization."""
+
+    def serialize_test(x: int, y: int) -> int:
+        """A function for testing serialization."""
+        return x - y
+
+    serialize_test_ai_function = ai_function(name="serialize_test", description="A test tool for serialization")(
+        serialize_test
+    )
+
+    # Serialize to dict
+    tool_dict = serialize_test_ai_function.to_dict()
+    assert tool_dict["type"] == "ai_function"
+    assert tool_dict["name"] == "serialize_test"
+    assert tool_dict["description"] == "A test tool for serialization"
+    assert tool_dict["input_model"] == {
+        "properties": {"x": {"title": "X", "type": "integer"}, "y": {"title": "Y", "type": "integer"}},
+        "required": ["x", "y"],
+        "title": "serialize_test_input",
+        "type": "object",
+    }
+
+    # Deserialize from dict
+    restored_tool = AIFunction.from_dict(tool_dict, dependencies={"ai_function": {"func": serialize_test}})
+    assert isinstance(restored_tool, AIFunction)
+    assert restored_tool.name == "serialize_test"
+    assert restored_tool.description == "A test tool for serialization"
+    assert restored_tool.parameters() == serialize_test_ai_function.parameters()
+    assert restored_tool(10, 4) == 6
+
+    # Deserialize from dict with instance name
+    restored_tool_2 = AIFunction.from_dict(
+        tool_dict, dependencies={"ai_function": {"name:serialize_test": {"func": serialize_test}}}
+    )
+    assert isinstance(restored_tool_2, AIFunction)
+    assert restored_tool_2.name == "serialize_test"
+    assert restored_tool_2.description == "A test tool for serialization"
+    assert restored_tool_2.parameters() == serialize_test_ai_function.parameters()
+    assert restored_tool_2(10, 4) == 6
+
+
 # region HostedCodeInterpreterTool and _parse_inputs
 
 

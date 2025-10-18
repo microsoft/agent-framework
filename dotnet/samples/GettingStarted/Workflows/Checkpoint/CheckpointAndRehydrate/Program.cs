@@ -25,7 +25,7 @@ public static class Program
     private static async Task Main()
     {
         // Create the workflow
-        var workflow = await WorkflowHelper.GetWorkflowAsync().ConfigureAwait(false);
+        var workflow = await WorkflowHelper.GetWorkflowAsync();
 
         // Create checkpoint manager
         var checkpointManager = CheckpointManager.Default;
@@ -33,9 +33,9 @@ public static class Program
 
         // Execute the workflow and save checkpoints
         await using Checkpointed<StreamingRun> checkpointedRun = await InProcessExecution
-            .StreamAsync(workflow, NumberSignal.Init, checkpointManager)
-            .ConfigureAwait(false);
-        await foreach (WorkflowEvent evt in checkpointedRun.Run.WatchStreamAsync().ConfigureAwait(false))
+            .StreamAsync(workflow, NumberSignal.Init, checkpointManager);
+
+        await foreach (WorkflowEvent evt in checkpointedRun.Run.WatchStreamAsync())
         {
             if (evt is ExecutorCompletedEvent executorCompletedEvt)
             {
@@ -67,16 +67,15 @@ public static class Program
         Console.WriteLine($"Number of checkpoints created: {checkpoints.Count}");
 
         // Rehydrate a new workflow instance from a saved checkpoint and continue execution
-        var newWorkflow = await WorkflowHelper.GetWorkflowAsync().ConfigureAwait(false);
+        var newWorkflow = await WorkflowHelper.GetWorkflowAsync();
         const int CheckpointIndex = 5;
         Console.WriteLine($"\n\nHydrating a new workflow instance from the {CheckpointIndex + 1}th checkpoint.");
         CheckpointInfo savedCheckpoint = checkpoints[CheckpointIndex];
 
         await using Checkpointed<StreamingRun> newCheckpointedRun =
-            await InProcessExecution.ResumeStreamAsync(newWorkflow, savedCheckpoint, checkpointManager, checkpointedRun.Run.RunId)
-                                    .ConfigureAwait(false);
+            await InProcessExecution.ResumeStreamAsync(newWorkflow, savedCheckpoint, checkpointManager, checkpointedRun.Run.RunId);
 
-        await foreach (WorkflowEvent evt in newCheckpointedRun.Run.WatchStreamAsync().ConfigureAwait(false))
+        await foreach (WorkflowEvent evt in newCheckpointedRun.Run.WatchStreamAsync())
         {
             if (evt is ExecutorCompletedEvent executorCompletedEvt)
             {

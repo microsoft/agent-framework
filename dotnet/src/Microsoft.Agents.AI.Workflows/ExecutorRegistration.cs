@@ -14,7 +14,13 @@ internal sealed class ExecutorRegistration(string id, Type executorType, Executo
     public Type ExecutorType { get; } = Throw.IfNull(executorType);
     private ExecutorFactoryF ProviderAsync { get; } = Throw.IfNull(provider);
     public bool IsNotExecutorInstance { get; } = rawData is not Executor;
-    public bool IsUnresettableSharedInstance { get; } = rawData is Executor && rawData is not IResettableExecutor;
+    public bool IsUnresettableSharedInstance { get; } = rawData is Executor executor &&
+                                                        // Cross-Run Shareable executors are "trivially" resettable, since they
+                                                        // have no on-object state.
+                                                        !executor.IsCrossRunShareable &&
+                                                        rawData is not IResettableExecutor;
+    public bool SupportsConcurrent { get; } = (rawData is not Executor executor || executor.IsCrossRunShareable) &&
+                                              (rawData is not Workflow workflow || workflow.AllowConcurrent);
 
     internal async ValueTask<bool> TryResetAsync()
     {
@@ -23,9 +29,8 @@ internal sealed class ExecutorRegistration(string id, Type executorType, Executo
             return false;
         }
 
-        // If this is not an executor instance, this is a factory, and the expectation is that the factory will
-        // create separate instances of executors.
-        if (this.IsNotExecutorInstance)
+        // If the executor supports concurrent use, then resetting is a no-op.
+        if (this.SupportsConcurrent)
         {
             return true;
         }
