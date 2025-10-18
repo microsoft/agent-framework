@@ -439,8 +439,8 @@ async def test_message_trace_context_serialization(span_exporter: InMemorySpanEx
 
     await ctx.send_message(message)
 
-    # Get checkpoint state (which serializes messages)
-    state = await ctx.get_checkpoint_state()
+    # Get context state (which serializes messages)
+    state = await ctx.get_workflow_state()
 
     # Check serialized message includes trace context
     serialized_msg = state["messages"]["source"][0]
@@ -448,7 +448,7 @@ async def test_message_trace_context_serialization(span_exporter: InMemorySpanEx
     assert serialized_msg["source_span_ids"] == ["span123"]
 
     # Test deserialization
-    await ctx.set_checkpoint_state(state)
+    await ctx.set_workflow_state(state)
     restored_messages = await ctx.drain_messages()
 
     restored_msg = list(restored_messages.values())[0][0]

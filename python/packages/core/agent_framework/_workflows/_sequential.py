@@ -51,7 +51,8 @@ from ._executor import (
     Executor,
     handler,
 )
-from ._workflow import Workflow, WorkflowBuilder
+from ._workflow import Workflow
+from ._workflow_builder import WorkflowBuilder
 from ._workflow_context import WorkflowContext
 
 logger = logging.getLogger(__name__)
