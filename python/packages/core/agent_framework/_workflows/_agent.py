@@ -14,6 +14,8 @@ from agent_framework import (
     AgentThread,
     BaseAgent,
     ChatMessage,
+    FunctionApprovalRequestContent,
+    FunctionApprovalResponseContent,
     FunctionCallContent,
     FunctionResultContent,
     Role,
@@ -266,16 +268,20 @@ class WorkflowAgent(BaseAgent):
                 # Store the pending request for later correlation
                 self.pending_requests[request_id] = event
 
-                # Convert to function call content
-                # TODO(ekzhu): update this to FunctionApprovalRequestContent
-                # monitor: https://github.com/microsoft/agent-framework/issues/285
+                args = self.RequestInfoFunctionArgs(request_id=request_id, data=event.data).to_dict()
+
                 function_call = FunctionCallContent(
                     call_id=request_id,
                     name=self.REQUEST_INFO_FUNCTION_NAME,
-                    arguments=self.RequestInfoFunctionArgs(request_id=request_id, data=event.data).to_dict(),
+                    arguments=args,
+                )
+                approval_request = FunctionApprovalRequestContent(
+                    id=request_id,
+                    function_call=function_call,
+                    additional_properties={"request_id": request_id},
                 )
                 return AgentRunResponseUpdate(
-                    contents=[function_call],
+                    contents=[function_call, approval_request],
                     role=Role.ASSISTANT,
                     author_name=self.name,
                     response_id=response_id,
@@ -293,26 +299,45 @@ class WorkflowAgent(BaseAgent):
         function_responses: dict[str, Any] = {}
         for message in input_messages:
             for content in message.contents:
-                # TODO(ekzhu): update this to FunctionApprovalResponseContent
-                # monitor: https://github.com/microsoft/agent-framework/issues/285
-                if isinstance(content, FunctionResultContent):
+                if isinstance(content, FunctionApprovalResponseContent):
+                    # Parse the function arguments to recover request payload
+                    arguments_payload = content.function_call.arguments
+                    if isinstance(arguments_payload, str):
+                        try:
+                            parsed_args = self.RequestInfoFunctionArgs.from_json(arguments_payload)
+                        except ValueError as exc:
+                            raise AgentExecutionException(
+                                "FunctionApprovalResponseContent arguments must decode to a mapping."
+                            ) from exc
+                    elif isinstance(arguments_payload, dict):
+                        parsed_args = self.RequestInfoFunctionArgs.from_dict(arguments_payload)
+                    else:
+                        raise AgentExecutionException(
+                            "FunctionApprovalResponseContent arguments must be a mapping or JSON string."
+                        )
+
+                    request_id = parsed_args.request_id or content.id
+                    if not content.approved:
+                        raise AgentExecutionException(f"Request '{request_id}' was not approved by the caller.")
+
+                    if request_id in self.pending_requests:
+                        function_responses[request_id] = parsed_args.data
+                    elif bool(self.pending_requests):
+                        raise AgentExecutionException(
+                            "Only responses for pending requests are allowed when there are outstanding approvals."
+                        )
+                elif isinstance(content, FunctionResultContent):
                     request_id = content.call_id
-                    # Check if we have a pending request for this call_id
                     if request_id in self.pending_requests:
                         response_data = content.result if hasattr(content, "result") else str(content)
                         function_responses[request_id] = response_data
                     elif bool(self.pending_requests):
-                        # Function result for unknown request when we have pending requests - this is an error
                         raise AgentExecutionException(
-                            "Only FunctionResultContent for pending requests is allowed in input messages "
-                            "when there are pending requests."
+                            "Only function responses for pending requests are allowed while requests are outstanding."
                         )
                 else:
                     if bool(self.pending_requests):
-                        # Non-function content when we have pending requests - this is an error
-                        raise AgentExecutionException(
-                            "Only FunctionResultContent is allowed in input messages when there are pending requests."
-                        )
+                        raise AgentExecutionException("Unexpected content type while awaiting request info responses.")
         return function_responses
 
     class _ResponseState(TypedDict):

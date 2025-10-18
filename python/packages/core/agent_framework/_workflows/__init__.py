@@ -52,6 +52,7 @@ from ._executor import (
     handler,
 )
 from ._function_executor import FunctionExecutor, executor
+from ._handoff import HandoffBuilder, HandoffUserInputRequest
 from ._magentic import (
     MagenticAgentDeltaEvent,
     MagenticAgentExecutor,
@@ -126,6 +127,8 @@ __all__ = [
     "FileCheckpointStorage",
     "FunctionExecutor",
     "GraphConnectivityError",
+    "HandoffBuilder",
+    "HandoffUserInputRequest",
     "InMemoryCheckpointStorage",
     "InProcRunnerContext",
     "MagenticAgentDeltaEvent",
