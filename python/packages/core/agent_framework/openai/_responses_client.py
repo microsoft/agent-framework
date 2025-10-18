@@ -401,7 +401,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                 case FunctionCallContent():
                     function_call = self._openai_content_parser(message.role, content, call_id_to_id)
                     all_messages.append(function_call)  # type: ignore
-                case FunctionApprovalResponseContent() | FunctionApprovalRequestContent():
+                case FunctionApprovalResponseContent() | FunctionApprovalRequestContent() | TextReasoningContent():
                     all_messages.append(self._openai_content_parser(message.role, content, call_id_to_id))  # type: ignore
                 case _:
                     if "content" not in args:
@@ -427,10 +427,12 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
             case TextReasoningContent():
                 ret: dict[str, Any] = {
                     "type": "reasoning",
-                    "summary": {
-                        "type": "summary_text",
-                        "text": content.text,
-                    },
+                    "summary": [
+                        {
+                            "type": "summary_text",
+                            "text": content.text,
+                        }
+                    ],
                 }
                 if content.additional_properties is not None:
                     if status := content.additional_properties.get("status"):
@@ -844,8 +846,8 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                 contents.append(TextReasoningContent(text=event.delta, raw_representation=event))
                 metadata.update(self._get_metadata_from_response(event))
             case "response.reasoning_summary_text.done":
-                contents.append(TextReasoningContent(text=event.text, raw_representation=event))
-                metadata.update(self._get_metadata_from_response(event))
+                # Skip .done event - contains complete text already streamed via .delta events
+                pass
             case "response.completed":
                 conversation_id = event.response.id if chat_options.store is True else None
                 model = event.response.model
