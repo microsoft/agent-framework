@@ -45,23 +45,17 @@ internal static class ChatMessageExtensions
 
     public static IEnumerable<ChatMessage> ToChatMessages(this TableDataValue messages)
     {
-        foreach (DataValue message in messages.Values)
+        foreach (RecordDataValue record in messages.Values)
         {
-            if (message is RecordDataValue record)
+            DataValue sourceRecord = record;
+            if (record.Properties.Count == 1 && record.Properties.TryGetValue("Value", out DataValue? singleColumn))
             {
-                if (record.Properties.Count == 1 && record.Properties.TryGetValue("Value", out DataValue? singleColumn))
-                {
-                    record = singleColumn as RecordDataValue ?? record;
-                }
-                ChatMessage? convertedMessage = record.ToChatMessage();
-                if (convertedMessage is not null)
-                {
-                    yield return convertedMessage;
-                }
+                sourceRecord = singleColumn;
             }
-            else if (message is StringDataValue text)
+            ChatMessage? convertedMessage = sourceRecord.ToChatMessage();
+            if (convertedMessage is not null)
             {
-                yield return ToChatMessage(text);
+                yield return convertedMessage;
             }
         }
     }
@@ -143,7 +137,7 @@ internal static class ChatMessageExtensions
     private static ChatRole GetRole(this RecordDataValue message)
     {
         StringDataValue? roleValue = message.GetProperty<StringDataValue>(TypeSchema.Message.Fields.Role);
-        if (roleValue is null || string.IsNullOrWhiteSpace(roleValue.Value))
+        if (string.IsNullOrWhiteSpace(roleValue?.Value))
         {
             return ChatRole.User;
         }
@@ -164,13 +158,13 @@ internal static class ChatMessageExtensions
         {
             foreach (RecordDataValue contentItem in content.Values)
             {
-                StringDataValue? contentValue = contentItem?.GetProperty<StringDataValue>(TypeSchema.Message.Fields.ContentValue);
+                StringDataValue? contentValue = contentItem.GetProperty<StringDataValue>(TypeSchema.Message.Fields.ContentValue);
                 if (contentValue is null || string.IsNullOrWhiteSpace(contentValue.Value))
                 {
                     continue;
                 }
                 yield return
-                    contentItem?.GetProperty<StringDataValue>(TypeSchema.Message.Fields.ContentType)?.Value switch
+                    contentItem.GetProperty<StringDataValue>(TypeSchema.Message.Fields.ContentType)?.Value switch
                     {
                         TypeSchema.Message.ContentTypes.ImageUrl => GetImageContent(contentValue.Value),
                         TypeSchema.Message.ContentTypes.ImageFile => new HostedFileContent(contentValue.Value),
@@ -218,6 +212,7 @@ internal static class ChatMessageExtensions
                 UriContent uriContent => CreateContentRecord(TypeSchema.Message.ContentTypes.ImageUrl, uriContent.Uri.ToString()),
                 HostedFileContent fileContent => CreateContentRecord(TypeSchema.Message.ContentTypes.ImageFile, fileContent.FileId),
                 TextContent textContent => CreateContentRecord(TypeSchema.Message.ContentTypes.Text, textContent.Text),
+                DataContent dataContent => CreateContentRecord(TypeSchema.Message.ContentTypes.ImageUrl, dataContent.Uri),
                 _ => []
             };
 

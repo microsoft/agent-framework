@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
-using System.Collections.Immutable;
 using System.Linq;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
@@ -29,7 +28,7 @@ public sealed class ChatMessageExtensionsTests
 
         FormulaValue roleField = result.GetField(TypeSchema.Message.Fields.Role);
         StringValue roleValue = Assert.IsType<StringValue>(roleField);
-        Assert.Equal("user", roleValue.Value);
+        Assert.Equal(ChatRole.User.Value, roleValue.Value);
     }
 
     [Fact]
@@ -43,9 +42,11 @@ public sealed class ChatMessageExtensionsTests
 
         // Assert
         Assert.NotNull(result);
+        Assert.Contains(result.Fields, f => f.Name == TypeSchema.Message.Fields.Role);
+
         FormulaValue roleField = result.GetField(TypeSchema.Message.Fields.Role);
         StringValue roleValue = Assert.IsType<StringValue>(roleField);
-        Assert.Equal("assistant", roleValue.Value);
+        Assert.Equal(ChatRole.Assistant.Value, roleValue.Value);
     }
 
     [Fact]
@@ -73,12 +74,12 @@ public sealed class ChatMessageExtensionsTests
     public void ToTableWithMultipleMessages()
     {
         // Arrange
-        IEnumerable<ChatMessage> messages = new List<ChatMessage>
-        {
+        IEnumerable<ChatMessage> messages =
+        [
             new(ChatRole.User, "First message"),
             new(ChatRole.Assistant, "Second message"),
             new(ChatRole.User, "Third message")
-        };
+        ];
 
         // Act
         TableValue result = messages.ToTable();
@@ -92,7 +93,7 @@ public sealed class ChatMessageExtensionsTests
     public void ToTableWithEmptyMessages()
     {
         // Arrange
-        IEnumerable<ChatMessage> messages = new List<ChatMessage>();
+        IEnumerable<ChatMessage> messages = [];
 
         // Act
         TableValue result = messages.ToTable();
@@ -148,9 +149,8 @@ public sealed class ChatMessageExtensionsTests
     public void ToChatMessagesWithRecordDataValue()
     {
         // Arrange
-        RecordDataValue record = DataValue.RecordFromFields(
-            new KeyValuePair<string, DataValue>(TypeSchema.Message.Fields.Role, StringDataValue.Create("User")),
-            new KeyValuePair<string, DataValue>(TypeSchema.Message.Fields.Content, DataValue.EmptyTable));
+        ChatMessage source = new(ChatRole.User, "Test");
+        DataValue record = source.ToRecord().ToDataValue();
 
         // Act
         IEnumerable<ChatMessage>? result = record.ToChatMessages();
@@ -158,7 +158,54 @@ public sealed class ChatMessageExtensionsTests
         // Assert
         Assert.NotNull(result);
         ChatMessage message = Assert.Single(result);
+        Assert.Equal(source.Role, message.Role);
+        Assert.Equal(source.Text, message.Text);
+    }
+
+    [Fact]
+    public void ToChatMessagesWithTableDataValue()
+    {
+        // Arrange
+        ChatMessage[] source = [new(ChatRole.User, "Test")];
+        DataValue table = source.ToTable().ToDataValue();
+
+        // Act
+        IEnumerable<ChatMessage>? result = table.ToChatMessages();
+
+        // Assert
+        Assert.NotNull(result);
+        ChatMessage message = Assert.Single(result);
+        Assert.Equal(source[0].Role, message.Role);
+        Assert.Equal(source[0].Text, message.Text);
+    }
+
+    [Fact]
+    public void ToChatMessagesWithTableOfDataValue()
+    {
+        // Arrange
+        TableDataValue table = DataValue.TableFromValues([new StringDataValue("test")]);
+
+        // Act
+        IEnumerable<ChatMessage>? result = table.ToChatMessages();
+
+        // Assert
+        Assert.NotNull(result);
+        ChatMessage message = Assert.Single(result);
         Assert.Equal(ChatRole.User, message.Role);
+        Assert.Equal("test", message.Text);
+    }
+
+    [Fact]
+    public void ToChatMessagesWithUnsupportedValue()
+    {
+        // Arrange
+        BooleanDataValue booleanValue = new(true);
+
+        // Act
+        IEnumerable<ChatMessage>? messages = booleanValue.ToChatMessages();
+
+        // Assert
+        Assert.Null(messages);
     }
 
     [Fact]
@@ -177,7 +224,37 @@ public sealed class ChatMessageExtensionsTests
     }
 
     [Fact]
-    public void ToChatMessageFromBlankDataValueReturnsNull()
+    public void ToChatMessageFromDataValueRecord()
+    {
+        // Arrange
+        ChatMessage source = new(ChatRole.User, "Test");
+        DataValue record = source.ToRecord().ToDataValue();
+
+        // Act
+        ChatMessage? result = record.ToChatMessage();
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(ChatRole.User, result.Role);
+        Assert.Equal("Test", result.Text);
+    }
+    [Fact]
+    public void ToChatMessageFromDataValueString()
+    {
+        // Arrange
+        DataValue value = StringDataValue.Create("Test message");
+
+        // Act
+        ChatMessage? result = value.ToChatMessage();
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(ChatRole.User, result.Role);
+        Assert.Equal("Test message", result.Text);
+    }
+
+    [Fact]
+    public void ToChatMessageFromBlankDataValue()
     {
         // Arrange
         DataValue value = DataValue.Blank();
@@ -187,6 +264,16 @@ public sealed class ChatMessageExtensionsTests
 
         // Assert
         Assert.Null(result);
+    }
+
+    [Fact]
+    public void ToChatMessageFromUnsupportedValue()
+    {
+        // Arrange
+        DataValue value = BooleanDataValue.Create(true);
+
+        // Act & Assert
+        Assert.Throws<DeclarativeActionException>(() => value.ToChatMessage());
     }
 
     [Fact]
@@ -204,6 +291,116 @@ public sealed class ChatMessageExtensionsTests
         // Assert
         Assert.NotNull(result);
         Assert.Equal(ChatRole.Assistant, result.Role);
+    }
+
+    [Fact]
+    public void ToChatMessageWithImpliedRole()
+    {
+        // Arrange
+        RecordValue source =
+            FormulaValue.NewRecordFromFields(
+            new NamedValue(TypeSchema.Message.Fields.Role, FormulaValue.New(string.Empty)),
+            new NamedValue(
+                TypeSchema.Message.Fields.Content,
+                FormulaValue.NewTable(
+                    TypeSchema.Message.ContentRecordType,
+                     FormulaValue.NewRecordFromFields(
+                        new NamedValue(TypeSchema.Message.Fields.ContentType, TypeSchema.Message.ContentTypes.Text.ToFormula()),
+                        new NamedValue(TypeSchema.Message.Fields.ContentValue, FormulaValue.New("Test"))))));
+        RecordDataValue record = source.ToRecord();
+
+        // Act
+        ChatMessage? result = record.ToChatMessage();
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(ChatRole.User, result.Role);
+        Assert.Equal("Test", result.Text);
+    }
+
+    [Fact]
+    public void ToChatMessageWithImageUrlContentType()
+    {
+        // Arrange
+        ChatMessage source = new(ChatRole.User, [AgentMessageContentType.ImageUrl.ToContent("https://example.com/image.jpg")!]);
+        DataValue record = source.ToRecord().ToDataValue();
+
+        // Act
+        ChatMessage? result = record.ToChatMessage();
+
+        // Assert
+        Assert.NotNull(result);
+        AIContent content = Assert.Single(result.Contents);
+        Assert.IsType<UriContent>(content);
+    }
+
+    [Fact]
+    public void ToChatMessageWithWithImageDataContentType()
+    {
+        // Arrange
+        ChatMessage source = new(ChatRole.User, [AgentMessageContentType.ImageUrl.ToContent("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA")!]);
+        DataValue record = source.ToRecord().ToDataValue();
+
+        // Act
+        ChatMessage? result = record.ToChatMessage();
+
+        // Assert
+        Assert.NotNull(result);
+        AIContent content = Assert.Single(result.Contents);
+        Assert.IsType<DataContent>(content);
+    }
+
+    [Fact]
+    public void ToChatMessageWithWithImageFileContentType()
+    {
+        // Arrange
+        ChatMessage source = new(ChatRole.User, [AgentMessageContentType.ImageFile.ToContent("file-id-123")!]);
+        DataValue record = source.ToRecord().ToDataValue();
+
+        // Act
+        ChatMessage? result = record.ToChatMessage();
+
+        // Assert
+        Assert.NotNull(result);
+        AIContent content = Assert.Single(result.Contents);
+        Assert.IsType<HostedFileContent>(content);
+    }
+
+    [Fact]
+    public void ToChatMessageWithUnsupportedContent()
+    {
+        // Arrange
+        ChatMessage source = new(ChatRole.User, "Test");
+        RecordDataValue record = source.ToRecord().ToRecord();
+        DataValue contentValue = record.Properties[TypeSchema.Message.Fields.Content];
+        TableDataValue contentValues = Assert.IsType<TableDataValue>(contentValue, exactMatch: false);
+        RecordDataValue badContent = DataValue.RecordFromFields(
+            new KeyValuePair<string, DataValue>(TypeSchema.Message.Fields.ContentType, StringDataValue.Create(TypeSchema.Message.ContentTypes.Text)),
+            new KeyValuePair<string, DataValue>(TypeSchema.Message.Fields.ContentValue, BooleanDataValue.Create(true)));
+        contentValues.Values.Add(badContent);
+
+        // Act
+        ChatMessage message = record.ToChatMessage();
+
+        // Assert
+        Assert.Single(message.Contents);
+        Assert.Equal("Test", message.Text);
+    }
+
+    [Fact]
+    public void ToChatMessageWithEmptyContent()
+    {
+        // Arrange
+        ChatMessage source = new(ChatRole.User, "Test");
+        source.Contents.Add(new TextContent(string.Empty));
+        RecordDataValue record = source.ToRecord().ToRecord();
+
+        // Act
+        ChatMessage message = record.ToChatMessage();
+
+        // Assert
+        Assert.Single(message.Contents);
+        Assert.Equal("Test", message.Text);
     }
 
     [Fact]
@@ -238,94 +435,28 @@ public sealed class ChatMessageExtensionsTests
     }
 
     [Fact]
-    public void ToChatRoleFromAgentMessageRoleAgent()
+    public void ToChatRoleFromAgentMessageRole()
     {
-        // Arrange
-        const AgentMessageRole Role = AgentMessageRole.Agent;
-
-        // Act
-        ChatRole result = Role.ToChatRole();
-
-        // Assert
-        Assert.Equal(ChatRole.Assistant, result);
+        // Act & Assert
+        Assert.Equal(ChatRole.Assistant, AgentMessageRole.Agent.ToChatRole());
+        Assert.Equal(ChatRole.User, AgentMessageRole.User.ToChatRole());
+        Assert.Equal(ChatRole.User, ((AgentMessageRole)99).ToChatRole());
+        Assert.Equal(ChatRole.User, ((AgentMessageRole?)null).ToChatRole());
     }
 
     [Fact]
-    public void ToChatRoleFromAgentMessageRoleUser()
+    public void AgentMessageContentTypeToContentMissing()
     {
-        // Arrange
-        const AgentMessageRole Role = AgentMessageRole.User;
-
-        // Act
-        ChatRole result = Role.ToChatRole();
-
-        // Assert
-        Assert.Equal(ChatRole.User, result);
+        // Act & Assert
+        Assert.Null(AgentMessageContentType.Text.ToContent(string.Empty));
+        Assert.Null(AgentMessageContentType.Text.ToContent(null));
     }
 
     [Fact]
-    public void ToChatRoleFromNullableAgentMessageRole()
+    public void AgentMessageContentTypeToContentText()
     {
-        // Arrange
-        AgentMessageRole? role = null;
-
-        // Act
-        ChatRole result = role.ToChatRole();
-
-        // Assert
-        Assert.Equal(ChatRole.User, result);
-    }
-
-    [Fact]
-    public void ToChatRoleFromNullableAgentMessageRoleWithValue()
-    {
-        // Arrange
-        AgentMessageRole? role = AgentMessageRole.Agent;
-
-        // Act
-        ChatRole result = role.ToChatRole();
-
-        // Assert
-        Assert.Equal(ChatRole.Assistant, result);
-    }
-
-    [Fact]
-    public void ToContentWithNullContentValue()
-    {
-        // Arrange
-        const AgentMessageContentType ContentType = AgentMessageContentType.Text;
-        const string? ContentValue = null;
-
-        // Act
-        AIContent? result = ContentType.ToContent(ContentValue);
-
-        // Assert
-        Assert.Null(result);
-    }
-
-    [Fact]
-    public void ToContentWithEmptyContentValue()
-    {
-        // Arrange
-        const AgentMessageContentType ContentType = AgentMessageContentType.Text;
-        const string ContentValue = "";
-
-        // Act
-        AIContent? result = ContentType.ToContent(ContentValue);
-
-        // Assert
-        Assert.Null(result);
-    }
-
-    [Fact]
-    public void ToContentWithTextContentType()
-    {
-        // Arrange
-        const AgentMessageContentType ContentType = AgentMessageContentType.Text;
-        const string ContentValue = "Sample text";
-
-        // Act
-        AIContent? result = ContentType.ToContent(ContentValue);
+        // Arrange & Act
+        AIContent? result = AgentMessageContentType.Text.ToContent("Sample text");
 
         // Assert
         Assert.NotNull(result);
@@ -336,27 +467,20 @@ public sealed class ChatMessageExtensionsTests
     [Fact]
     public void ToContentWithImageUrlContentType()
     {
-        // Arrange
-        const AgentMessageContentType ContentType = AgentMessageContentType.ImageUrl;
-        const string ContentValue = "https://example.com/image.jpg";
-
-        // Act
-        AIContent? result = ContentType.ToContent(ContentValue);
+        // Arrange & Act
+        AIContent? result = AgentMessageContentType.ImageUrl.ToContent("https://example.com/image.jpg");
 
         // Assert
         Assert.NotNull(result);
-        Assert.IsAssignableFrom<AIContent>(result);
+        UriContent uriContent = Assert.IsType<UriContent>(result);
+        Assert.Equal("https://example.com/image.jpg", uriContent.Uri.ToString());
     }
 
     [Fact]
     public void ToContentWithImageUrlContentTypeDataUri()
     {
-        // Arrange
-        const AgentMessageContentType ContentType = AgentMessageContentType.ImageUrl;
-        const string ContentValue = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA";
-
-        // Act
-        AIContent? result = ContentType.ToContent(ContentValue);
+        // Arrange & Act
+        AIContent? result = AgentMessageContentType.ImageUrl.ToContent("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA");
 
         // Assert
         Assert.NotNull(result);
@@ -367,12 +491,8 @@ public sealed class ChatMessageExtensionsTests
     [Fact]
     public void ToContentWithImageFileContentType()
     {
-        // Arrange
-        const AgentMessageContentType ContentType = AgentMessageContentType.ImageFile;
-        const string ContentValue = "file-id-123";
-
-        // Act
-        AIContent? result = ContentType.ToContent(ContentValue);
+        // Arrange & Act
+        AIContent? result = AgentMessageContentType.ImageFile.ToContent("file-id-123");
 
         // Assert
         Assert.NotNull(result);
@@ -384,11 +504,11 @@ public sealed class ChatMessageExtensionsTests
     public void ToChatMessageFromFunctionResultContents()
     {
         // Arrange
-        IEnumerable<FunctionResultContent> functionResults = new List<FunctionResultContent>
-        {
-            new(callId: "call1", result: "Result 1"),
-            new(callId: "call2", result: "Result 2")
-        };
+        IEnumerable<FunctionResultContent> functionResults =
+            [
+                new(callId: "call1", result: "Result 1"),
+                new(callId: "call2", result: "Result 2")
+            ];
 
         // Act
         ChatMessage result = functionResults.ToChatMessage();
@@ -403,9 +523,12 @@ public sealed class ChatMessageExtensionsTests
     public void ToChatMessagesFromTableDataValueWithStrings()
     {
         // Arrange
-        TableDataValue table = DataValue.TableFromValues(ImmutableArray.Create<DataValue>(
-            StringDataValue.Create("Message 1"),
-            StringDataValue.Create("Message 2")));
+        TableDataValue table =
+            DataValue.TableFromValues(
+                [
+                    StringDataValue.Create("Message 1"),
+                    StringDataValue.Create("Message 2")
+                ]);
 
         // Act
         IEnumerable<ChatMessage> result = table.ToChatMessages();
@@ -464,11 +587,12 @@ public sealed class ChatMessageExtensionsTests
     public void ToRecordWithMessageContainingMultipleContentItems()
     {
         // Arrange
-        ChatMessage message = new(ChatRole.User, new List<AIContent>
-        {
-            new TextContent("First part"),
-            new TextContent("Second part")
-        });
+        ChatMessage message =
+            new(ChatRole.User,
+                [
+                    new TextContent("First part"),
+                    new TextContent("Second part")
+                ]);
 
         // Act
         RecordValue result = message.ToRecord();
@@ -484,10 +608,11 @@ public sealed class ChatMessageExtensionsTests
     public void ToRecordWithMessageContainingUriContent()
     {
         // Arrange
-        ChatMessage message = new(ChatRole.User, new List<AIContent>
-        {
-            new UriContent("https://example.com/image.jpg", "image/*")
-        });
+        ChatMessage message =
+            new(ChatRole.User,
+                [
+                    new UriContent("https://example.com/image.jpg", "image/*")
+                ]);
 
         // Act
         RecordValue result = message.ToRecord();
@@ -503,10 +628,11 @@ public sealed class ChatMessageExtensionsTests
     public void ToRecordWithMessageContainingHostedFileContent()
     {
         // Arrange
-        ChatMessage message = new(ChatRole.User, new List<AIContent>
-        {
-            new HostedFileContent("file-123")
-        });
+        ChatMessage message =
+            new(ChatRole.User,
+                [
+                    new HostedFileContent("file-123")
+                ]);
 
         // Act
         RecordValue result = message.ToRecord();
