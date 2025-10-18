@@ -22,7 +22,7 @@ namespace Microsoft.Agents.AI.Purview;
 /// <summary>
 /// Client for calling Purview APIs.
 /// </summary>
-internal sealed class PurviewClient : IDisposable
+internal sealed class PurviewClient : IPurviewClient
 {
     private readonly TokenCredential _tokenCredential;
     private readonly HttpClient _httpClient;
@@ -52,11 +52,12 @@ internal sealed class PurviewClient : IDisposable
     /// </summary>
     /// <param name="tokenCredential"></param>
     /// <param name="purviewSettings"></param>
+    /// <param name="httpClient"></param>
     /// <param name="logger"></param>
-    public PurviewClient(TokenCredential tokenCredential, PurviewSettings purviewSettings, ILogger? logger = null)
+    public PurviewClient(TokenCredential tokenCredential, PurviewSettings purviewSettings, HttpClient httpClient, ILogger logger)
     {
         this._tokenCredential = tokenCredential;
-        this._httpClient = new HttpClient();
+        this._httpClient = httpClient;
 
         this._scopes = new string[] { $"https://{purviewSettings.GraphBaseUri.Host}/.default" };
         this._graphUri = purviewSettings.GraphBaseUri.ToString().TrimEnd('/');
@@ -101,13 +102,7 @@ internal sealed class PurviewClient : IDisposable
         };
     }
 
-    /// <summary>
-    /// Get user info from auth token.
-    /// </summary>
-    /// <param name="cancellationToken"></param>
-    /// <param name="tenantId"></param>
-    /// <returns></returns>
-    /// <exception cref="InvalidOperationException"></exception>
+    /// <inheritdoc/>
     public async Task<TokenInfo> GetUserInfoFromTokenAsync(CancellationToken cancellationToken, string? tenantId = default)
     {
         TokenRequestContext tokenRequestContext = tenantId == null ? new(this._scopes) : new(this._scopes, tenantId: tenantId);
@@ -118,13 +113,7 @@ internal sealed class PurviewClient : IDisposable
         return ExtractTokenInfo(tokenString);
     }
 
-    /// <summary>
-    /// Call ProcessContent API.
-    /// </summary>
-    /// <param name="request"></param>
-    /// <param name="cancellationToken"></param>
-    /// <returns></returns>
-    /// <exception cref="PurviewException"></exception>
+    /// <inheritdoc/>
     public async Task<ProcessContentResponse> ProcessContentAsync(ProcessContentRequest request, CancellationToken cancellationToken)
     {
         var token = await this._tokenCredential.GetTokenAsync(new TokenRequestContext(this._scopes, tenantId: request.TenantId), cancellationToken).ConfigureAwait(false);
@@ -136,6 +125,12 @@ internal sealed class PurviewClient : IDisposable
         {
             message.Headers.Add("Authorization", $"Bearer {token.Token}");
             message.Headers.Add("User-Agent", "agent-framework-dotnet");
+
+            if (request.ScopeIdentifier != null)
+            {
+                message.Headers.Add("If-None-Match", request.ScopeIdentifier);
+            }
+
             string content = JsonSerializer.Serialize(request, PurviewSerializationUtils.SerializationSettings.GetTypeInfo(typeof(ProcessContentRequest)));
             message.Content = new StringContent(content, Encoding.UTF8, "application/json");
             HttpResponseMessage response = await this._httpClient.SendAsync(message, cancellationToken).ConfigureAwait(false);
@@ -167,13 +162,7 @@ internal sealed class PurviewClient : IDisposable
         }
     }
 
-    /// <summary>
-    /// Call user ProtectionScope API.
-    /// </summary>
-    /// <param name="request"></param>
-    /// <param name="cancellationToken"></param>
-    /// <returns></returns>
-    /// <exception cref="PurviewException"></exception>
+    /// <inheritdoc/>
     public async Task<ProtectionScopesResponse> GetProtectionScopesAsync(ProtectionScopesRequest request, CancellationToken cancellationToken)
     {
         var token = await this._tokenCredential.GetTokenAsync(new TokenRequestContext(this._scopes), cancellationToken).ConfigureAwait(false);
@@ -204,6 +193,7 @@ internal sealed class PurviewClient : IDisposable
 
                 if (deserializedResponse != null)
                 {
+                    deserializedResponse.ScopeIdentifier = response.Headers.ETag?.Tag;
                     return deserializedResponse;
                 }
 
@@ -217,13 +207,7 @@ internal sealed class PurviewClient : IDisposable
         }
     }
 
-    /// <summary>
-    /// Call contentActivities API.
-    /// </summary>
-    /// <param name="request"></param>
-    /// <param name="cancellationToken"></param>
-    /// <returns></returns>
-    /// <exception cref="PurviewException"></exception>
+    /// <inheritdoc/>
     public async Task<ContentActivitiesResponse> SendContentActivitiesAsync(ContentActivitiesRequest request, CancellationToken cancellationToken)
     {
         var token = await this._tokenCredential.GetTokenAsync(new TokenRequestContext(this._scopes), cancellationToken).ConfigureAwait(false);
@@ -264,13 +248,5 @@ internal sealed class PurviewClient : IDisposable
             this._logger.LogError("Failed to create content activities. Status code: {StatusCode}", response.StatusCode);
             throw CreateExceptionForStatusCode(response.StatusCode, "contentActivities");
         }
-    }
-
-    /// <summary>
-    /// Dispose the client.
-    /// </summary>
-    public void Dispose()
-    {
-        this._httpClient.Dispose();
     }
 }

@@ -15,15 +15,15 @@ namespace Microsoft.Agents.AI.Purview;
 /// <summary>
 /// Processor class that combines protectionScopes, processContent, and contentActivities calls.
 /// </summary>
-internal sealed class ScopedContentProcessor
+internal sealed class ScopedContentProcessor : IScopedContentProcessor
 {
-    private readonly PurviewClient _purviewClient;
+    private readonly IPurviewClient _purviewClient;
 
     /// <summary>
     /// Create a new instance of <see cref="ScopedContentProcessor"/>.
     /// </summary>
     /// <param name="purviewClient">The purview client to use for purview requests.</param>
-    public ScopedContentProcessor(PurviewClient purviewClient)
+    public ScopedContentProcessor(IPurviewClient purviewClient)
     {
         this._purviewClient = purviewClient;
     }
@@ -103,7 +103,7 @@ internal sealed class ScopedContentProcessor
     /// <param name="userId"></param>
     /// <param name="cancellationToken"></param>
     /// <returns></returns>
-    public async Task<List<ProcessContentRequest>> MapMessageToPCRequestsAsync(IEnumerable<ChatMessage> messages, string? threadId, Activity activity, PurviewSettings settings, string? userId, CancellationToken cancellationToken)
+    private async Task<List<ProcessContentRequest>> MapMessageToPCRequestsAsync(IEnumerable<ChatMessage> messages, string? threadId, Activity activity, PurviewSettings settings, string? userId, CancellationToken cancellationToken)
     {
         List<ProcessContentRequest> pcRequests = new();
         TokenInfo? tokenInfo = null;
@@ -203,6 +203,7 @@ internal sealed class ScopedContentProcessor
     {
         ProtectionScopesRequest psRequest = CreateProtectionScopesRequest(pcRequest, pcRequest.UserId, pcRequest.TenantId, pcRequest.CorrelationId);
         ProtectionScopesResponse psResponse = await this._purviewClient.GetProtectionScopesAsync(psRequest, cancellationToken).ConfigureAwait(false);
+        pcRequest.ScopeIdentifier = psResponse.ScopeIdentifier;
 
         (bool shouldProcess, List<DlpActionInfo> dlpActions) = CheckApplicableScopes(pcRequest, psResponse);
 

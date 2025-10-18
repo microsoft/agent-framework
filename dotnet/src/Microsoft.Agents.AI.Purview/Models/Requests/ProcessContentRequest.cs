@@ -47,4 +47,10 @@ internal sealed class ProcessContentRequest
     /// </summary>
     [JsonIgnore]
     public string TenantId { get; set; }
+
+    /// <summary>
+    /// The identifier of the cached protection scopes.
+    /// </summary>
+    [JsonIgnore]
+    internal string? ScopeIdentifier { get; set; }
 }

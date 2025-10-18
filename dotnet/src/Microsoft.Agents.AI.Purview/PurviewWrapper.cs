@@ -2,11 +2,14 @@
 
 using System;
 using System.Collections.Generic;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.Core;
 using Microsoft.Agents.AI.Purview.Models.Common;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Caching.Distributed;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -18,7 +21,7 @@ namespace Microsoft.Agents.AI.Purview;
 public sealed class PurviewWrapper
 {
     private readonly ILogger _logger;
-    private readonly ScopedContentProcessor _scopedProcessor;
+    private readonly IScopedContentProcessor _scopedProcessor;
     private readonly PurviewSettings _purviewSettings;
 
     /// <summary>
@@ -29,9 +32,19 @@ public sealed class PurviewWrapper
     /// <param name="logger"></param>
     public PurviewWrapper(TokenCredential tokenCredential, PurviewSettings purviewSettings, ILogger? logger = null)
     {
-        this._logger = logger ?? NullLogger.Instance;
-        this._scopedProcessor = new ScopedContentProcessor(new PurviewClient(tokenCredential, purviewSettings));
-        this._purviewSettings = purviewSettings;
+        ServiceCollection services = new();
+        services.AddSingleton(tokenCredential);
+        services.AddSingleton(purviewSettings);
+        services.AddSingleton<IPurviewClient, PurviewClient>();
+        services.AddSingleton<IScopedContentProcessor, ScopedContentProcessor>();
+        services.AddSingleton<IDistributedCache, MemoryDistributedCache>();
+        services.AddSingleton<HttpClient>();
+        services.AddSingleton(logger ?? NullLogger.Instance);
+        ServiceProvider serviceProvider = services.BuildServiceProvider();
+
+        this._logger = serviceProvider.GetRequiredService<ILogger>();
+        this._scopedProcessor = serviceProvider.GetRequiredService<IScopedContentProcessor>();
+        this._purviewSettings = serviceProvider.GetRequiredService<PurviewSettings>();
     }
 
     private static string GetThreadIdFromAgentThread(AgentThread? thread, IEnumerable<ChatMessage> messages)
