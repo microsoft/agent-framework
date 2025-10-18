@@ -39,7 +39,14 @@ public class TestRunContext : IRunnerContext
         public ValueTask SendMessageAsync(object message, string? targetId = null, CancellationToken cancellationToken = default)
             => runnerContext.SendMessageAsync(executorId, message, targetId, cancellationToken);
 
+        public ValueTask<T> ReadOrInitStateAsync<T>(string key, Func<T> initialStateFactory, string? scopeName = null, CancellationToken cancellationToken = default)
+        {
+            return new(initialStateFactory());
+        }
+
         public IReadOnlyDictionary<string, string>? TraceContext => traceContext;
+
+        public bool ConcurrentRunsEnabled => runnerContext.ConcurrentRunsEnabled;
     }
 
     public List<WorkflowEvent> Events { get; } = [];
@@ -79,6 +86,7 @@ public class TestRunContext : IRunnerContext
     public string StartingExecutorId { get; set; } = string.Empty;
 
     public bool WithCheckpointing => throw new NotSupportedException();
+    public bool ConcurrentRunsEnabled => throw new NotSupportedException();
 
     ValueTask<Executor> IRunnerContext.EnsureExecutorAsync(string executorId, IStepTracer? tracer, CancellationToken cancellationToken) =>
         new(this.Executors[executorId]);
@@ -99,5 +107,6 @@ public class TestRunContext : IRunnerContext
     public ValueTask SendMessageAsync<TMessage>(string senderId, [System.Diagnostics.CodeAnalysis.DisallowNull] TMessage message, CancellationToken cancellationToken = default)
         => this.SendMessageAsync(senderId, message, cancellationToken);
 
-    ValueTask ISuperStepJoinContext.AttachSuperstepAsync(ISuperStepRunner superStepRunner, CancellationToken cancellationToken) => default;
+    ValueTask<string> ISuperStepJoinContext.AttachSuperstepAsync(ISuperStepRunner superStepRunner, CancellationToken cancellationToken) => new(string.Empty);
+    ValueTask<bool> ISuperStepJoinContext.DetachSuperstepAsync(string joinId) => new(false);
 }

@@ -18,6 +18,7 @@ from agent_framework import (
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
+    CitationAnnotation,
     FunctionApprovalRequestContent,
     FunctionApprovalResponseContent,
     FunctionCallContent,
@@ -36,6 +37,9 @@ from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.agents.models import (
     CodeInterpreterToolDefinition,
     FileInfo,
+    MessageDeltaChunk,
+    MessageDeltaTextContent,
+    MessageDeltaTextUrlCitationAnnotation,
     RequiredFunctionToolCall,
     RequiredMcpToolCall,
     RunStatus,
@@ -827,6 +831,38 @@ async def test_azure_ai_chat_client_create_run_options_mcp_never_require(mock_ai
         assert mcp_resource["require_approval"] == "never"
 
 
+async def test_azure_ai_chat_client_create_run_options_mcp_with_headers(mock_ai_project_client: MagicMock) -> None:
+    """Test _create_run_options with HostedMCPTool having headers."""
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client)
+
+    # Test with headers
+    headers = {"Authorization": "Bearer DUMMY_TOKEN", "X-API-Key": "DUMMY_KEY"}
+    mcp_tool = HostedMCPTool(
+        name="Test MCP Tool", url="https://example.com/mcp", headers=headers, approval_mode="never_require"
+    )
+
+    messages = [ChatMessage(role=Role.USER, text="Hello")]
+    chat_options = ChatOptions(tools=[mcp_tool], tool_choice="auto")
+
+    with patch("agent_framework_azure_ai._chat_client.McpTool") as mock_mcp_tool_class:
+        # Mock _prep_tools to avoid actual tool preparation
+        mock_mcp_tool_instance = MagicMock()
+        mock_mcp_tool_instance.definitions = [{"type": "mcp", "name": "test_mcp"}]
+        mock_mcp_tool_class.return_value = mock_mcp_tool_instance
+
+        run_options, _ = await chat_client._create_run_options(messages, chat_options)  # type: ignore
+
+        # Verify tool_resources is created with headers
+        assert "tool_resources" in run_options
+        assert "mcp" in run_options["tool_resources"]
+        assert len(run_options["tool_resources"]["mcp"]) == 1
+
+        mcp_resource = run_options["tool_resources"]["mcp"][0]
+        assert mcp_resource["server_label"] == "Test_MCP_Tool"
+        assert mcp_resource["require_approval"] == "never"
+        assert mcp_resource["headers"] == headers
+
+
 async def test_azure_ai_chat_client_prep_tools_web_search_bing_grounding(mock_ai_project_client: MagicMock) -> None:
     """Test _prep_tools with HostedWebSearchTool using Bing Grounding."""
 
@@ -1437,6 +1473,132 @@ async def test_azure_ai_chat_client_create_agent_stream_submit_tool_outputs(
         # Should call submit_tool_outputs_stream since we have matching run ID
         mock_ai_project_client.agents.runs.submit_tool_outputs_stream.assert_called_once()
         assert final_thread_id == "test-thread"
+
+
+def test_azure_ai_chat_client_extract_url_citations_with_citations(mock_ai_project_client: MagicMock) -> None:
+    """Test _extract_url_citations with MessageDeltaChunk containing URL citations."""
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, agent_id="test-agent")
+
+    # Create mock URL citation annotation
+    mock_url_citation = MagicMock()
+    mock_url_citation.url = "https://example.com/test"
+    mock_url_citation.title = "Test Title"
+
+    mock_annotation = MagicMock(spec=MessageDeltaTextUrlCitationAnnotation)
+    mock_annotation.url_citation = mock_url_citation
+    mock_annotation.start_index = 10
+    mock_annotation.end_index = 20
+
+    # Create mock text content with annotations
+    mock_text = MagicMock()
+    mock_text.annotations = [mock_annotation]
+
+    mock_text_content = MagicMock(spec=MessageDeltaTextContent)
+    mock_text_content.text = mock_text
+
+    # Create mock delta
+    mock_delta = MagicMock()
+    mock_delta.content = [mock_text_content]
+
+    # Create mock MessageDeltaChunk
+    mock_chunk = MagicMock(spec=MessageDeltaChunk)
+    mock_chunk.delta = mock_delta
+
+    # Call the method
+    citations = chat_client._extract_url_citations(mock_chunk)  # type: ignore
+
+    # Verify results
+    assert len(citations) == 1
+    citation = citations[0]
+    assert isinstance(citation, CitationAnnotation)
+    assert citation.url == "https://example.com/test"
+    assert citation.title == "Test Title"
+    assert citation.snippet is None
+    assert citation.annotated_regions is not None
+    assert len(citation.annotated_regions) == 1
+    assert citation.annotated_regions[0].start_index == 10
+    assert citation.annotated_regions[0].end_index == 20
+
+
+def test_azure_ai_chat_client_extract_url_citations_no_citations(mock_ai_project_client: MagicMock) -> None:
+    """Test _extract_url_citations with MessageDeltaChunk containing no citations."""
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, agent_id="test-agent")
+
+    # Create mock text content without annotations
+    mock_text_content = MagicMock(spec=MessageDeltaTextContent)
+    mock_text_content.text = None  # No text, so no annotations
+
+    # Create mock delta
+    mock_delta = MagicMock()
+    mock_delta.content = [mock_text_content]
+
+    # Create mock MessageDeltaChunk
+    mock_chunk = MagicMock(spec=MessageDeltaChunk)
+    mock_chunk.delta = mock_delta
+
+    # Call the method
+    citations = chat_client._extract_url_citations(mock_chunk)  # type: ignore
+
+    # Verify no citations returned
+    assert len(citations) == 0
+
+
+def test_azure_ai_chat_client_extract_url_citations_empty_delta(mock_ai_project_client: MagicMock) -> None:
+    """Test _extract_url_citations with empty delta content."""
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, agent_id="test-agent")
+
+    # Create mock delta with empty content
+    mock_delta = MagicMock()
+    mock_delta.content = []
+
+    # Create mock MessageDeltaChunk
+    mock_chunk = MagicMock(spec=MessageDeltaChunk)
+    mock_chunk.delta = mock_delta
+
+    # Call the method
+    citations = chat_client._extract_url_citations(mock_chunk)  # type: ignore
+
+    # Verify no citations returned
+    assert len(citations) == 0
+
+
+def test_azure_ai_chat_client_extract_url_citations_without_indices(mock_ai_project_client: MagicMock) -> None:
+    """Test _extract_url_citations with URL citations that don't have start/end indices."""
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, agent_id="test-agent")
+
+    # Create mock URL citation annotation without indices
+    mock_url_citation = MagicMock()
+    mock_url_citation.url = "https://example.com/no-indices"
+
+    mock_annotation = MagicMock(spec=MessageDeltaTextUrlCitationAnnotation)
+    mock_annotation.url_citation = mock_url_citation
+    mock_annotation.start_index = None
+    mock_annotation.end_index = None
+
+    # Create mock text content with annotations
+    mock_text = MagicMock()
+    mock_text.annotations = [mock_annotation]
+
+    mock_text_content = MagicMock(spec=MessageDeltaTextContent)
+    mock_text_content.text = mock_text
+
+    # Create mock delta
+    mock_delta = MagicMock()
+    mock_delta.content = [mock_text_content]
+
+    # Create mock MessageDeltaChunk
+    mock_chunk = MagicMock(spec=MessageDeltaChunk)
+    mock_chunk.delta = mock_delta
+
+    # Call the method
+    citations = chat_client._extract_url_citations(mock_chunk)  # type: ignore
+
+    # Verify results
+    assert len(citations) == 1
+    citation = citations[0]
+    assert citation.url == "https://example.com/no-indices"
+    assert citation.annotated_regions is not None
+    assert len(citation.annotated_regions) == 0  # No regions when indices are None
 
 
 async def test_azure_ai_chat_client_setup_azure_ai_observability_resource_not_found(

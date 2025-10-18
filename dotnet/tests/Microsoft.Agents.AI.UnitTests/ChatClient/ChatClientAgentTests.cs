@@ -1012,6 +1012,31 @@ public partial class ChatClientAgentTests
         Assert.Equal("test instructions", capturedChatOptions.Instructions);
     }
 
+    [Fact]
+    public async Task ChatOptionsMergingUsesAgentOptionsConstructorWhenRequestHasNoneAsync()
+    {
+        Mock<IChatClient> mockService = new();
+        ChatOptions? capturedChatOptions = null;
+        mockService.Setup(
+                s => s.GetResponseAsync(
+                    It.IsAny<IEnumerable<ChatMessage>>(),
+                    It.IsAny<ChatOptions>(),
+                    It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<ChatMessage>, ChatOptions, CancellationToken>((msgs, opts, ct) =>
+                capturedChatOptions = opts)
+            .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
+
+        ChatClientAgent agent = new(mockService.Object, options: new("test instructions"));
+        var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
+
+        // Act
+        await agent.RunAsync(messages);
+
+        // Assert
+        Assert.NotNull(capturedChatOptions);
+        Assert.Equal("test instructions", capturedChatOptions.Instructions);
+    }
+
     /// <summary>
     /// Verify that ChatOptions merging works when request has ChatOptions but agent doesn't.
     /// </summary>

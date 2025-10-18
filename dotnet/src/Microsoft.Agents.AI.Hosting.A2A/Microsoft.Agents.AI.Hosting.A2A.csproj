@@ -2,9 +2,11 @@
 
   <PropertyGroup>
     <TargetFrameworks>$(ProjectsCoreTargetFrameworks)</TargetFrameworks>
-    <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsCoreTargetFrameworks)</TargetFrameworks>
+    <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugCoreTargetFrameworks)</TargetFrameworks>
     <RootNamespace>Microsoft.Agents.AI.Hosting.A2A</RootNamespace>
     <VersionSuffix>preview</VersionSuffix>
+    <Title>Microsoft Agent Framework Hosting A2A</Title>
+    <Description>Provides Microsoft Agent Framework support for hosting A2A agents.</Description>
   </PropertyGroup>
 
   <PropertyGroup>
@@ -16,27 +18,17 @@
   <ItemGroup>
     <PackageReference Include="A2A" />
 
-    <PackageReference Include="System.Net.ServerSentEvents" VersionOverride="10.0.0-preview.5.25277.114" />
-    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" VersionOverride="10.0.0-preview.5.25277.114" />
+    <PackageReference Include="System.Net.ServerSentEvents" VersionOverride="10.0.0-rc.2.25502.107" />
+    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" VersionOverride="10.0.0-rc.2.25502.107" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Microsoft.Agents.AI.Abstractions\Microsoft.Agents.AI.Abstractions.csproj" />
     <ProjectReference Include="..\Microsoft.Agents.AI.Hosting\Microsoft.Agents.AI.Hosting.csproj" />
   </ItemGroup>
-
-  <ItemGroup>
-    <InternalsVisibleTo Include="Microsoft.Agents.AI.A2A.AspNetCore" />
-  </ItemGroup>
   
   <ItemGroup>
     <InternalsVisibleTo Include="AgentWebChat.Web" />
     <InternalsVisibleTo Include="Microsoft.Agents.AI.Hosting.A2A.Tests" />
   </ItemGroup>
-
-  <PropertyGroup>
-    <!-- NuGet Package Settings -->
-    <Title>Microsoft Agent Framework Hosting A2A</Title>
-    <Description>Provides Microsoft Agent Framework support for hosting A2A agents.</Description>
-  </PropertyGroup>
 </Project>

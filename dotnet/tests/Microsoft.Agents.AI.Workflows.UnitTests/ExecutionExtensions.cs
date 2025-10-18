@@ -1,20 +1,20 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using Microsoft.Agents.AI.Workflows.InProc;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
 internal static class ExecutionExtensions
 {
-    public static InProcessExecutionEnvironment GetEnvironment(this ExecutionMode executionMode)
+    public static IWorkflowExecutionEnvironment ToWorkflowExecutionEnvironment(this ExecutionEnvironment environment)
     {
-        return executionMode switch
+        return environment switch
         {
-            ExecutionMode.OffThread => InProcessExecution.OffThread,
-            ExecutionMode.Lockstep => InProcessExecution.Lockstep,
-            ExecutionMode.Subworkflow => throw new NotSupportedException(),
-            _ => throw new InvalidOperationException($"Unknown execution mode {executionMode}")
+            ExecutionEnvironment.InProcess_OffThread => InProcessExecution.OffThread,
+            ExecutionEnvironment.InProcess_Lockstep => InProcessExecution.Lockstep,
+            ExecutionEnvironment.InProcess_Concurrent => InProcessExecution.Concurrent,
+
+            _ => throw new InvalidOperationException($"Unknown execution environment {environment}")
         };
     }
 }

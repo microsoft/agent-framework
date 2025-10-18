@@ -55,6 +55,9 @@ public class AgentJsonUtilitiesTests
         Assert.Equal(JsonSerializer.IsReflectionEnabledByDefault, AgentJsonUtilities.DefaultOptions.TryGetTypeInfo(anonType, out _));
     }
 
+    // The following two tests validate behaviors of reflection-based serialization
+    // which is only available in .NET Framework builds.
+#if NETFRAMEWORK
     [Fact]
     public void DefaultOptions_AllowsReadingNumbersFromStrings_AndOmitsNulls()
     {
@@ -73,6 +76,7 @@ public class AgentJsonUtilitiesTests
     {
         Assert.Equal("\"Monday\"", JsonSerializer.Serialize(DayOfWeek.Monday, AgentJsonUtilities.DefaultOptions));
     }
+#endif
 
     [Fact]
     public void DefaultOptions_UsesCamelCasePropertyNames_ForAgentRunResponse()
