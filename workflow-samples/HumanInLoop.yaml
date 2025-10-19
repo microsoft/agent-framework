@@ -21,6 +21,7 @@ trigger:
     - kind: Question
       id: question_confirm
       alwaysPrompt: false
+      autoSend: false
       property: Local.ConfirmedInput
       prompt:
         kind: Message

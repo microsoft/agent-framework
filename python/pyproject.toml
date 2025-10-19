@@ -4,7 +4,7 @@ description = "Microsoft Agent Framework for building AI Agents with Python. Thi
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b251007"
+version = "1.0.0b251016"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -29,6 +29,7 @@ dependencies = [
     "agent-framework-mem0",
     "agent-framework-redis",
     "agent-framework-devui",
+    "agent-framework-purview",
 ]
 
 [dependency-groups]
@@ -81,6 +82,7 @@ agent-framework-lab = { workspace = true }
 agent-framework-mem0 = { workspace = true }
 agent-framework-redis = { workspace = true }
 agent-framework-devui = { workspace = true }
+agent-framework-purview = { workspace = true }
 
 [tool.ruff]
 line-length = 120
@@ -233,6 +235,7 @@ pytest --import-mode=importlib
 --cov=agent_framework_copilotstudio
 --cov=agent_framework_mem0
 --cov=agent_framework_redis
+--cov=agent_framework_purview
 --cov-report=term-missing:skip-covered
 --ignore-glob=packages/lab/**
 --ignore-glob=packages/devui/**

@@ -744,12 +744,12 @@ async def test_azure_openai_chat_client_agent_basic_run():
         chat_client=AzureOpenAIChatClient(credential=AzureCliCredential()),
     ) as agent:
         # Test basic run
-        response = await agent.run("Hello! Please respond with 'Hello World' exactly.")
+        response = await agent.run("Please respond with exactly: 'This is a response test.'")
 
         assert isinstance(response, AgentRunResponse)
         assert response.text is not None
         assert len(response.text) > 0
-        assert "hello world" in response.text.lower()
+        assert "response test" in response.text.lower()
 
 
 @pytest.mark.flaky
