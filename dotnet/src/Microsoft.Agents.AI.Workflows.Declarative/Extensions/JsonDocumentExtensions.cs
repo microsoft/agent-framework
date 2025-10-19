@@ -1,99 +1,141 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
-using Microsoft.Bot.ObjectModel;
-using Microsoft.PowerFx.Types;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 
 internal static class JsonDocumentExtensions
 {
-    public static FrozenDictionary<string, object?> ParseRecord(this JsonDocument jsonDocument, VariableType recordType) => jsonDocument.RootElement.ParseRecord(recordType);
-
-    public static RecordValue ParseRecord(this JsonDocument jsonDocument, RecordDataType recordType) => jsonDocument.RootElement.ParseRecord(recordType);
-
-    private static FrozenDictionary<string, object?> ParseRecord(this JsonElement currentElement, VariableType recordType)
+    public static List<object?> ParseList(this JsonDocument jsonDocument, VariableType targetType)
     {
-        if (!recordType.IsRecord || recordType.Schema is null)
+        if (!targetType.IsList)
         {
-            throw new DeclarativeActionException($"Unable to parse JSON element as {recordType.Type.Name}.");
+            throw new DeclarativeActionException($"Unable to convert JSON to list with requested type {targetType.Type.Name}.");
         }
 
-        return ParseValues().ToFrozenDictionary(kvp => kvp.Key, kvp => kvp.Value);
+        return
+            jsonDocument.RootElement.ValueKind switch
+            {
+                JsonValueKind.Array => jsonDocument.RootElement.ParseTable(targetType),
+                JsonValueKind.Object when targetType.HasSchema => [jsonDocument.RootElement.ParseRecord(targetType)],
+                JsonValueKind.Null => [],
+                _ => [jsonDocument.RootElement.ParseValue(targetType)],
+            };
+    }
+
+    public static Dictionary<string, object?> ParseRecord(this JsonDocument jsonDocument, VariableType targetType)
+    {
+        if (!targetType.IsRecord)
+        {
+            throw new DeclarativeActionException($"Unable to convert JSON to object with requested type {targetType.Type.Name}.");
+        }
+
+        return
+            jsonDocument.RootElement.ValueKind switch
+            {
+                JsonValueKind.Array when targetType.HasSchema =>
+                    ((Dictionary<string, object?>?)jsonDocument.RootElement.ParseTable(targetType).Single()) ?? [],
+                JsonValueKind.Object => jsonDocument.RootElement.ParseRecord(targetType),
+                JsonValueKind.Null => [],
+                _ => throw new DeclarativeActionException($"Unable to convert JSON to object with requested type {targetType.Type.Name}."),
+            };
+    }
+
+    private static Dictionary<string, object?> ParseRecord(this JsonElement currentElement, VariableType targetType)
+    {
+        if (targetType.Schema is null)
+        {
+            throw new DeclarativeActionException($"Object schema not defined for. {targetType.Type.Name}.");
+        }
+
+        return ParseValues().ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
 
         IEnumerable<KeyValuePair<string, object?>> ParseValues()
         {
-            foreach (KeyValuePair<string, VariableType?> property in recordType.Schema)
+            foreach (KeyValuePair<string, VariableType> property in targetType.Schema)
             {
                 JsonElement propertyElement = currentElement.GetProperty(property.Key);
-                object? parsedValue =
-                    property.Value?.Type switch
-                    {
-                        null => null,
-                        _ when property.Value.Type == typeof(string) => propertyElement.GetString(),
-                        _ when property.Value.Type == typeof(int) => propertyElement.GetInt32(),
-                        _ when property.Value.Type == typeof(long) => propertyElement.GetInt64(),
-                        _ when property.Value.Type == typeof(decimal) => propertyElement.GetDecimal(),
-                        _ when property.Value.Type == typeof(double) => propertyElement.GetDouble(),
-                        _ when property.Value.Type == typeof(bool) => propertyElement.GetBoolean(),
-                        _ when property.Value.Type == typeof(DateTime) => propertyElement.GetDateTime(),
-                        _ when property.Value.Type == typeof(TimeSpan) => propertyElement.GetDateTimeOffset().TimeOfDay,
-                        _ when property.Value.IsRecord => propertyElement.ParseRecord(property.Value),
-                        //TableDataType tableType => ParseTable(tableType, propertyElement),
-                        _ => throw new InvalidOperationException($"Unsupported data type '{property.Value.Type}' for property '{property.Key}'"),
-                    };
+                if (!propertyElement.TryParseValue(property.Value, out object? parsedValue))
+                {
+                    throw new InvalidOperationException($"Unsupported data type '{property.Value.Type}' for property '{property.Key}'");
+                }
                 yield return new KeyValuePair<string, object?>(property.Key, parsedValue);
             }
-
-            //static TableValue ParseTable(TableDataType tableType, JsonElement propertyElement)
-            //{
-            //    RecordDataType recordType = tableType.ToRecord();
-            //    return
-            //        FormulaValue.NewTable(
-            //            recordType.ToRecordType(),
-            //            propertyElement.EnumerateArray().Select(tableElement => tableElement.ParseRecord(recordType)));
-            //}
         }
     }
 
-    private static RecordValue ParseRecord(this JsonElement currentElement, RecordDataType recordType)
+    private static List<object?> ParseTable(this JsonElement currentElement, VariableType targetType)
     {
-        return FormulaValue.NewRecordFromFields(ParseValues());
+        return
+            currentElement
+                .EnumerateArray()
+                .Select(element => element.ParseValue(targetType))
+                .ToList();
+    }
 
-        IEnumerable<NamedValue> ParseValues()
+    private static object? ParseValue(this JsonElement propertyElement, VariableType targetType)
+    {
+        if (!propertyElement.TryParseValue(targetType, out object? value))
         {
-            foreach (KeyValuePair<string, PropertyInfo> property in recordType.Properties)
-            {
-                JsonElement propertyElement = currentElement.GetProperty(property.Key);
-                FormulaValue? parsedValue =
-                    property.Value.Type switch
-                    {
-                        StringDataType => FormulaValue.New(propertyElement.GetString()),
-                        NumberDataType => FormulaValue.New(propertyElement.GetDecimal()),
-                        BooleanDataType => FormulaValue.New(propertyElement.GetBoolean()),
-                        DateTimeDataType => FormulaValue.New(propertyElement.GetDateTime()),
-                        DateDataType => FormulaValue.New(propertyElement.GetDateTime()),
-                        TimeDataType => FormulaValue.New(propertyElement.GetDateTimeOffset().TimeOfDay),
-                        RecordDataType recordType => propertyElement.ParseRecord(recordType),
-                        TableDataType tableType => ParseTable(tableType, propertyElement),
-                        _ => throw new InvalidOperationException($"Unsupported data type '{property.Value.Type}' for property '{property.Key}'"),
-                    };
-                yield return new NamedValue(property.Key, parsedValue);
-            }
-
-            static TableValue ParseTable(TableDataType tableType, JsonElement propertyElement)
-            {
-                RecordDataType recordType = tableType.ToRecord();
-                return
-                    FormulaValue.NewTable(
-                        recordType.ToRecordType(),
-                        propertyElement.EnumerateArray().Select(tableElement => tableElement.ParseRecord(recordType)));
-            }
+            throw new InvalidOperationException($"Unsupported data type '{targetType.Type}'");
         }
+
+        return value;
+    }
+
+    private static readonly Dictionary<Type, Func<JsonElement, object?>> s_keyValuePairs = new()
+    {
+        [typeof(string)] = e => e.GetString(),
+        [typeof(int)] = e => e.GetInt32(),
+        [typeof(long)] = e => e.GetInt64(),
+        [typeof(decimal)] = e => e.GetDecimal(),
+        [typeof(double)] = e => e.GetDouble(),
+        [typeof(bool)] = e => e.GetBoolean(),
+        [typeof(DateTime)] = e => e.GetDateTime(),
+        [typeof(TimeSpan)] = e => e.GetDateTimeOffset().TimeOfDay,
+    };
+
+    private static bool TryParseValue(this JsonElement propertyElement, VariableType targetType, out object? value)
+    {
+        Type? elementType =
+            targetType.Type.GetElementType() ??
+            propertyElement.ValueKind switch
+            {
+                JsonValueKind.String => typeof(string),
+                JsonValueKind.Number => typeof(double),
+                JsonValueKind.True or JsonValueKind.False => typeof(bool),
+                _ => null,
+            };
+
+        if (elementType is null)
+        {
+            value = null;
+            return true;
+        }
+
+        if (s_keyValuePairs.TryGetValue(elementType, out Func<JsonElement, object?>? parser))
+        {
+            value = parser.Invoke(propertyElement);
+            return true;
+        }
+
+        if (targetType.IsRecord)
+        {
+            value = propertyElement.ParseRecord(targetType);
+            return true;
+        }
+
+        if (targetType.IsList)
+        {
+            value = propertyElement.ParseTable(targetType);
+            return true;
+        }
+
+        value = null;
+        return false;
     }
 }

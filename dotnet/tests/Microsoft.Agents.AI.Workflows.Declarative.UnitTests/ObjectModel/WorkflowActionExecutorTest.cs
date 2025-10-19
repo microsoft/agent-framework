@@ -33,6 +33,7 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
         WorkflowEvent[] events = await run.WatchStreamAsync().ToArrayAsync();
         Assert.Contains(events, e => e is DeclarativeActionInvokedEvent);
         Assert.Contains(events, e => e is DeclarativeActionCompletedEvent);
+        Assert.DoesNotContain(events, e => e is ExecutorFailedEvent);
         return events;
     }
 
