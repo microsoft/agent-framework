@@ -17,21 +17,21 @@
     <PackageVersion Include="Aspire.Microsoft.Azure.Cosmos" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="9.8.0" />
     <!-- Azure.* -->
-    <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.5" />
+    <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.6" />
     <PackageVersion Include="Azure.AI.OpenAI" Version="2.5.0-beta.1" />
     <PackageVersion Include="Azure.Identity" Version="1.17.0" />
     <PackageVersion Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.4.0" />
     <!-- System.* -->
-    <PackageVersion Include="System.CodeDom" Version="9.0.9" />
-    <PackageVersion Include="System.Collections.Immutable" Version="9.0.9" />
-    <PackageVersion Include="System.CommandLine" Version="2.0.0-rc.1.25451.107" />
-    <PackageVersion Include="System.Diagnostics.DiagnosticSource" Version="9.0.9" />
-    <PackageVersion Include="System.Net.ServerSentEvents" Version="9.0.9" />
-    <PackageVersion Include="System.Text.Json" Version="9.0.9" />
-    <PackageVersion Include="System.Threading.Channels" Version="9.0.9" />
+    <PackageVersion Include="System.CodeDom" Version="9.0.10" />
+    <PackageVersion Include="System.Collections.Immutable" Version="9.0.10" />
+    <PackageVersion Include="System.CommandLine" Version="2.0.0-rc.2.25502.107" />
+    <PackageVersion Include="System.Diagnostics.DiagnosticSource" Version="9.0.10" />
+    <PackageVersion Include="System.Net.ServerSentEvents" Version="9.0.10" />
+    <PackageVersion Include="System.Text.Json" Version="9.0.10" />
+    <PackageVersion Include="System.Threading.Channels" Version="9.0.10" />
     <PackageVersion Include="System.Threading.Tasks.Extensions" Version="4.6.3" />
     <PackageVersion Include="Microsoft.Bcl.HashCode" Version="6.0.0" />
-    <PackageVersion Include="Microsoft.Bcl.AsyncInterfaces" Version="9.0.9" />
+    <PackageVersion Include="Microsoft.Bcl.AsyncInterfaces" Version="9.0.10" />
     <!-- OpenTelemetry -->
     <PackageVersion Include="OpenTelemetry" Version="1.12.0" />
     <PackageVersion Include="OpenTelemetry.Api" Version="1.12.0" />
@@ -43,25 +43,25 @@
     <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.12.0" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.12.0" />
     <!-- Microsoft.AspNetCore.* -->
-    <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="9.0.9" />
+    <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="9.0.10" />
     <PackageVersion Include="Swashbuckle.AspNetCore.SwaggerUI" Version="9.0.4" />
     <!-- Microsoft.Extensions.* -->
-    <PackageVersion Include="Microsoft.Extensions.AI" Version="9.9.1" />
-    <PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="9.9.1" />
-    <PackageVersion Include="Microsoft.Extensions.AI.AzureAIInference" Version="9.9.1-preview.1.25474.6" />
-    <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="9.9.1-preview.1.25474.6" />
-    <PackageVersion Include="Microsoft.Extensions.Configuration" Version="9.0.9" />
-    <PackageVersion Include="Microsoft.Extensions.Configuration.Binder" Version="9.0.9" />
-    <PackageVersion Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="9.0.9" />
-    <PackageVersion Include="Microsoft.Extensions.Configuration.Json" Version="9.0.9" />
-    <PackageVersion Include="Microsoft.Extensions.Configuration.UserSecrets" Version="9.0.9" />
-    <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="9.0.9" />
-    <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.9" />
-    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="9.0.9" />
-    <PackageVersion Include="Microsoft.Extensions.Http.Resilience" Version="9.9.0" />
-    <PackageVersion Include="Microsoft.Extensions.Logging" Version="9.0.9" />
-    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.9" />
-    <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="9.0.9" />
+    <PackageVersion Include="Microsoft.Extensions.AI" Version="9.10.0" />
+    <PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="9.10.0" />
+    <PackageVersion Include="Microsoft.Extensions.AI.AzureAIInference" Version="9.10.0-preview.1.25513.3" />
+    <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="9.10.0-preview.1.25513.3" />
+    <PackageVersion Include="Microsoft.Extensions.Configuration" Version="9.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.Configuration.Binder" Version="9.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="9.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.Configuration.Json" Version="9.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.Configuration.UserSecrets" Version="9.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="9.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="9.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.Http.Resilience" Version="9.10.0" />
+    <PackageVersion Include="Microsoft.Extensions.Logging" Version="9.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="9.0.10" />
     <PackageVersion Include="Microsoft.Extensions.ServiceDiscovery" Version="$(AspireAppHostSdkVersion)" />
     <!-- Vector Stores -->
     <PackageVersion Include="Microsoft.SemanticKernel" Version="1.66.0" />
@@ -78,7 +78,7 @@
     <PackageVersion Include="ModelContextProtocol" Version="0.4.0-preview.2" />
     <!-- Inference SDKs -->
     <PackageVersion Include="Anthropic.SDK" Version="5.6.0" />
-    <PackageVersion Include="AWSSDK.Extensions.Bedrock.MEAI" Version="4.0.3.6" />
+    <PackageVersion Include="AWSSDK.Extensions.Bedrock.MEAI" Version="4.0.4" />
     <PackageVersion Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.9.2" />
     <PackageVersion Include="OllamaSharp" Version="5.4.7" />
     <PackageVersion Include="OpenAI" Version="2.5.0" />
@@ -105,7 +105,6 @@
     <!-- Symbols -->
     <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="8.0.0" />
     <!-- Toolset -->
-    <PackageVersion Include="Microsoft.Net.Compilers.Toolset" Version="4.14.0" />
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
     <PackageVersion Include="Microsoft.CodeAnalysis.NetAnalyzers" Version="9.0.0" />
     <PackageReference Include="Microsoft.CodeAnalysis.NetAnalyzers">
@@ -122,7 +121,7 @@
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
-    <PackageVersion Include="Moq.Analyzers" Version="0.3.0" />
+    <PackageVersion Include="Moq.Analyzers" Version="0.3.1" />
     <PackageReference Include="Moq.Analyzers">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>

@@ -139,33 +139,12 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     /// <summary>State passed from this instance into the inner agent, circumventing the intermediate <see cref="OpenTelemetryChatClient"/>.</summary>
     private sealed class ForwardedOptions : ChatOptions
     {
-        public ForwardedOptions(AgentRunOptions? options, AgentThread? thread, Activity? currentActivity)
+        public ForwardedOptions(AgentRunOptions? options, AgentThread? thread, Activity? currentActivity) :
+            base((options as ChatClientAgentRunOptions)?.ChatOptions)
         {
             this.Options = options;
             this.Thread = thread;
             this.CurrentActivity = currentActivity;
-
-            if (options is ChatClientAgentRunOptions { ChatOptions: { } chatClientOptions })
-            {
-                // Keep this faux copy ctor in sync with public properties on ChatOptions.
-                this.AdditionalProperties = chatClientOptions.AdditionalProperties;
-                this.AllowMultipleToolCalls = chatClientOptions.AllowMultipleToolCalls;
-                this.ConversationId = chatClientOptions.ConversationId;
-                this.FrequencyPenalty = chatClientOptions.FrequencyPenalty;
-                this.Instructions = chatClientOptions.Instructions;
-                this.MaxOutputTokens = chatClientOptions.MaxOutputTokens;
-                this.ModelId = chatClientOptions.ModelId;
-                this.PresencePenalty = chatClientOptions.PresencePenalty;
-                this.RawRepresentationFactory = chatClientOptions.RawRepresentationFactory;
-                this.ResponseFormat = chatClientOptions.ResponseFormat;
-                this.Seed = chatClientOptions.Seed;
-                this.StopSequences = chatClientOptions.StopSequences;
-                this.Temperature = chatClientOptions.Temperature;
-                this.Tools = chatClientOptions.Tools;
-                this.ToolMode = chatClientOptions.ToolMode;
-                this.TopK = chatClientOptions.TopK;
-                this.TopP = chatClientOptions.TopP;
-            }
         }
 
         public AgentRunOptions? Options { get; }

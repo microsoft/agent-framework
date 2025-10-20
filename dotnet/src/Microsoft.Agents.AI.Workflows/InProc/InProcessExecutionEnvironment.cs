@@ -15,22 +15,25 @@ namespace Microsoft.Agents.AI.Workflows.InProc;
 /// </summary>
 public sealed class InProcessExecutionEnvironment : IWorkflowExecutionEnvironment
 {
-    private readonly ExecutionMode _executionMode;
-    internal InProcessExecutionEnvironment(ExecutionMode mode)
+    internal InProcessExecutionEnvironment(ExecutionMode mode, bool enableConcurrentRuns = false)
     {
-        this._executionMode = mode;
+        this.ExecutionMode = mode;
+        this.EnableConcurrentRuns = enableConcurrentRuns;
     }
+
+    internal ExecutionMode ExecutionMode { get; }
+    internal bool EnableConcurrentRuns { get; }
 
     internal ValueTask<AsyncRunHandle> BeginRunAsync(Workflow workflow, ICheckpointManager? checkpointManager, string? runId, IEnumerable<Type> knownValidInputTypes, CancellationToken cancellationToken)
     {
-        InProcessRunner runner = new(workflow, checkpointManager, runId, knownValidInputTypes: knownValidInputTypes);
-        return runner.BeginStreamAsync(this._executionMode, cancellationToken);
+        InProcessRunner runner = InProcessRunner.CreateTopLevelRunner(workflow, checkpointManager, runId, this.EnableConcurrentRuns, knownValidInputTypes);
+        return runner.BeginStreamAsync(this.ExecutionMode, cancellationToken);
     }
 
     internal ValueTask<AsyncRunHandle> ResumeRunAsync(Workflow workflow, ICheckpointManager? checkpointManager, string? runId, CheckpointInfo fromCheckpoint, IEnumerable<Type> knownValidInputTypes, CancellationToken cancellationToken)
     {
-        InProcessRunner runner = new(workflow, checkpointManager, runId, knownValidInputTypes: knownValidInputTypes);
-        return runner.ResumeStreamAsync(this._executionMode, fromCheckpoint, cancellationToken);
+        InProcessRunner runner = InProcessRunner.CreateTopLevelRunner(workflow, checkpointManager, runId, this.EnableConcurrentRuns, knownValidInputTypes);
+        return runner.ResumeStreamAsync(this.ExecutionMode, fromCheckpoint, cancellationToken);
     }
 
     /// <inheritdoc/>
