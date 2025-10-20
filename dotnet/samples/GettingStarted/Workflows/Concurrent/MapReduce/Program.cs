@@ -205,7 +205,7 @@ internal sealed class Mapper(string id) : Executor<SplitComplete>(id)
         var lines = results.Select(r => $"{r.word}: {r.Item2}");
         await File.WriteAllLinesAsync(filePath, lines, cancellationToken);
 
-        await context.SendMessageAsync(new MapComplete(filePath), cancellationToken: cancellationToken);
+        await context.SendMessageAsync(new MapComplete(filePath), cancellationToken);
     }
 }
 
@@ -241,7 +241,7 @@ internal sealed class Shuffler(string[] reducerIds, string[] mapperIds, string i
             var lines = chunk.Select(kvp => $"{kvp.key}: {JsonSerializer.Serialize(kvp.values)}");
             await File.WriteAllLinesAsync(filePath, lines, cancellationToken);
 
-            await context.SendMessageAsync(new ShuffleComplete(filePath, this._reducerIds[index]), cancellationToken: cancellationToken);
+            await context.SendMessageAsync(new ShuffleComplete(filePath, this._reducerIds[index]), cancellationToken);
         }
 
         var tasks = chunks.Select((chunk, i) => ProcessChunkAsync(chunk, i));
@@ -345,7 +345,7 @@ internal sealed class Reducer(string id) : Executor<ShuffleComplete>(id)
         var outputLines = reducedResults.Select(kvp => $"{kvp.Key}: {kvp.Value}");
         await File.WriteAllLinesAsync(filePath, outputLines, cancellationToken);
 
-        await context.SendMessageAsync(new ReduceComplete(filePath), cancellationToken: cancellationToken);
+        await context.SendMessageAsync(new ReduceComplete(filePath), cancellationToken);
     }
 }
 

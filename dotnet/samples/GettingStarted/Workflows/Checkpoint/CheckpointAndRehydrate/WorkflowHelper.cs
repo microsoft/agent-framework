@@ -73,15 +73,15 @@ internal sealed class GuessNumberExecutor() : Executor<NumberSignal>("Guess")
         switch (message)
         {
             case NumberSignal.Init:
-                await context.SendMessageAsync(this.NextGuess, cancellationToken: cancellationToken);
+                await context.SendMessageAsync(this.NextGuess, cancellationToken);
                 break;
             case NumberSignal.Above:
                 this.UpperBound = this.NextGuess - 1;
-                await context.SendMessageAsync(this.NextGuess, cancellationToken: cancellationToken);
+                await context.SendMessageAsync(this.NextGuess, cancellationToken);
                 break;
             case NumberSignal.Below:
                 this.LowerBound = this.NextGuess + 1;
-                await context.SendMessageAsync(this.NextGuess, cancellationToken: cancellationToken);
+                await context.SendMessageAsync(this.NextGuess, cancellationToken);
                 break;
         }
     }
@@ -91,14 +91,14 @@ internal sealed class GuessNumberExecutor() : Executor<NumberSignal>("Guess")
     /// This must be overridden to save any state that is needed to resume the executor.
     /// </summary>
     protected override ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default) =>
-        context.QueueStateUpdateAsync(StateKey, (this.LowerBound, this.UpperBound), cancellationToken: cancellationToken);
+        context.QueueStateUpdateAsync(StateKey, (this.LowerBound, this.UpperBound), cancellationToken);
 
     /// <summary>
     /// Restore the state of the executor from a checkpoint.
     /// This must be overridden to restore any state that was saved during checkpointing.
     /// </summary>
     protected override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default) =>
-        (this.LowerBound, this.UpperBound) = await context.ReadStateAsync<(int, int)>(StateKey, cancellationToken: cancellationToken);
+        (this.LowerBound, this.UpperBound) = await context.ReadStateAsync<(int, int)>(StateKey, cancellationToken);
 }
 
 /// <summary>
@@ -124,15 +124,15 @@ internal sealed class JudgeExecutor() : Executor<int>("Judge")
         this._tries++;
         if (message == this._targetNumber)
         {
-            await context.YieldOutputAsync($"{this._targetNumber} found in {this._tries} tries!", cancellationToken: cancellationToken);
+            await context.YieldOutputAsync($"{this._targetNumber} found in {this._tries} tries!", cancellationToken);
         }
         else if (message < this._targetNumber)
         {
-            await context.SendMessageAsync(NumberSignal.Below, cancellationToken: cancellationToken);
+            await context.SendMessageAsync(NumberSignal.Below, cancellationToken);
         }
         else
         {
-            await context.SendMessageAsync(NumberSignal.Above, cancellationToken: cancellationToken);
+            await context.SendMessageAsync(NumberSignal.Above, cancellationToken);
         }
     }
 
@@ -141,12 +141,12 @@ internal sealed class JudgeExecutor() : Executor<int>("Judge")
     /// This must be overridden to save any state that is needed to resume the executor.
     /// </summary>
     protected override ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default) =>
-        context.QueueStateUpdateAsync(StateKey, this._tries, cancellationToken: cancellationToken);
+        context.QueueStateUpdateAsync(StateKey, this._tries, cancellationToken);
 
     /// <summary>
     /// Restore the state of the executor from a checkpoint.
     /// This must be overridden to restore any state that was saved during checkpointing.
     /// </summary>
     protected override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default) =>
-        this._tries = await context.ReadStateAsync<int>(StateKey, cancellationToken: cancellationToken);
+        this._tries = await context.ReadStateAsync<int>(StateKey, cancellationToken);
 }

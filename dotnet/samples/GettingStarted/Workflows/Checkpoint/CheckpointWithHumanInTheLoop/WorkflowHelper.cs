@@ -77,11 +77,11 @@ internal sealed class JudgeExecutor() : Executor<int>("Judge")
         }
         else if (message < this._targetNumber)
         {
-            await context.SendMessageAsync(new SignalWithNumber(NumberSignal.Below, message), cancellationToken: cancellationToken);
+            await context.SendMessageAsync(new SignalWithNumber(NumberSignal.Below, message), cancellationToken);
         }
         else
         {
-            await context.SendMessageAsync(new SignalWithNumber(NumberSignal.Above, message), cancellationToken: cancellationToken);
+            await context.SendMessageAsync(new SignalWithNumber(NumberSignal.Above, message), cancellationToken);
         }
     }
 
@@ -90,12 +90,12 @@ internal sealed class JudgeExecutor() : Executor<int>("Judge")
     /// This must be overridden to save any state that is needed to resume the executor.
     /// </summary>
     protected override ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default) =>
-        context.QueueStateUpdateAsync(StateKey, this._tries, cancellationToken: cancellationToken);
+        context.QueueStateUpdateAsync(StateKey, this._tries, cancellationToken);
 
     /// <summary>
     /// Restore the state of the executor from a checkpoint.
     /// This must be overridden to restore any state that was saved during checkpointing.
     /// </summary>
     protected override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default) =>
-        this._tries = await context.ReadStateAsync<int>(StateKey, cancellationToken: cancellationToken);
+        this._tries = await context.ReadStateAsync<int>(StateKey, cancellationToken);
 }

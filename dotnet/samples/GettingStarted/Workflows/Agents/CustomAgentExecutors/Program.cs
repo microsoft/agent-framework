@@ -230,7 +230,7 @@ internal sealed class FeedbackExecutor : Executor<SloganResult>
             return;
         }
 
-        await context.SendMessageAsync(feedback, cancellationToken: cancellationToken);
+        await context.SendMessageAsync(feedback, cancellationToken);
         this._attempts++;
     }
 }

@@ -61,11 +61,11 @@ internal sealed class JudgeExecutor() : Executor<int>("Judge")
         }
         else if (message < this._targetNumber)
         {
-            await context.SendMessageAsync(NumberSignal.Below, cancellationToken: cancellationToken);
+            await context.SendMessageAsync(NumberSignal.Below, cancellationToken);
         }
         else
         {
-            await context.SendMessageAsync(NumberSignal.Above, cancellationToken: cancellationToken);
+            await context.SendMessageAsync(NumberSignal.Above, cancellationToken);
         }
     }
 }

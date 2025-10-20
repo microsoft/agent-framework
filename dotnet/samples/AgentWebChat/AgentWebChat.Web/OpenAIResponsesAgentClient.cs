@@ -33,7 +33,7 @@ internal sealed class OpenAIResponsesAgentClient(HttpClient httpClient) : AgentC
             ConversationId = threadId
         };
 
-        await foreach (var update in openAiClient.GetStreamingResponseAsync(messages, chatOptions, cancellationToken: cancellationToken))
+        await foreach (var update in openAiClient.GetStreamingResponseAsync(messages, chatOptions, cancellationToken))
         {
             yield return new AgentRunResponseUpdate(update);
         }
