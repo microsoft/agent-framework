@@ -8,14 +8,12 @@ as an external message store for the Microsoft Agent Framework.
 Scenarios:
   1) Persist chat messages in Cosmos DB with thread-based partitioning.
   2) Retrieve messages in chronological order for conversation continuity.
-  3) Serialize and deserialize thread state for persistence across sessions.
-  4) Properly close async Cosmos DB and chat client sessions.
 
 Requirements:
   - Azure Cosmos DB (Core SQL API) with an existing database and container.
   - Container partition key must be /thread_id.
   - Environment variables:
-      COSMOS_DB_ENDPOINT, COSMOS_DB_KEY,
+      COSMOS_DB_ENDPOINT,
       AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY,
       AZURE_OPENAI_API_VERSION, AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
   - Dependencies:
@@ -36,12 +34,11 @@ from azure.cosmos.aio import CosmosClient
 
 from agent_framework import ChatMessage, ChatAgent
 from agent_framework.azure import AzureOpenAIChatClient
-
+from azure.identity.aio import DefaultAzureCredential
 
 class CosmosDBStoreState(BaseModel):
     """Serializable state for CosmosDB chat message store."""
     thread_id: str
-    cosmos_endpoint: str | None = None
     database_name: str = "agent_framework"
     container_name: str = "chat_messages"
 
@@ -51,45 +48,37 @@ class CosmosDBChatMessageStore:
     Lightweight Cosmos DB-backed chat history store for Microsoft Agent Framework.
 
     This implementation:
-        - Uses key-based authentication.
+        - Uses Azure AD authentication with an injected CosmosClient.
         - Stores one conversation thread per partition (partition key = /thread_id).
         - Appends messages and retrieves them chronologically.
-        - Supports serialization/deserialization for persistent AgentThread state.
+        - Uses ChatMessage.to_dict() and ChatMessage.from_dict() for serialization.
         - Assumes database and container already exist.
     """
 
     def __init__(
         self,
-        cosmos_endpoint: str,
-        cosmos_key: str,
+        cosmos_client: CosmosClient,
         *,
         thread_id: str | None = None,
         database_name: str = "agent_framework",
         container_name: str = "chat_messages",
     ) -> None:
-        if not cosmos_endpoint:
-            raise ValueError("cosmos_endpoint is required")
-        if not cosmos_key:
-            raise ValueError("cosmos_key is required")
-
-        self.cosmos_endpoint = cosmos_endpoint
-        self.cosmos_key = cosmos_key
         self.thread_id = thread_id or f"thread_{uuid4()}"
         self.database_name = database_name
         self.container_name = container_name
-
-        self._client: CosmosClient | None = None
+        self._client: CosmosClient | None = cosmos_client
         self._container = None
         self._ready = False
 
     async def _ensure(self) -> None:
-        """Initialize the Cosmos DB client and container reference if not already set."""
         if self._ready:
             return
-        self._client = CosmosClient(self.cosmos_endpoint, self.cosmos_key)
+        if self._client is None:
+            raise RuntimeError("CosmosDBChatMessageStore requires an injected CosmosClient.")
         db = self._client.get_database_client(self.database_name)
         self._container = db.get_container_client(self.container_name)
         self._ready = True
+
 
     async def add_messages(self, messages: Sequence[ChatMessage]) -> None:
         """Persist new chat messages for the current thread."""
@@ -131,82 +120,26 @@ class CosmosDBChatMessageStore:
         ):
             await self._container.delete_item(row["id"], partition_key=self.thread_id)
 
-    async def aclose(self) -> None:
-        """Close the Cosmos DB client connection."""
-        if self._client:
-            await self._client.close()
-        self._ready = False
-
-    async def serialize_state(self, **kwargs: Any) -> dict:
-        """Serialize the store configuration for persistent thread state."""
-        return CosmosDBStoreState(
-            thread_id=self.thread_id,
-            cosmos_endpoint=self.cosmos_endpoint,
-            database_name=self.database_name,
-            container_name=self.container_name,
-        ).model_dump(**kwargs)
-
-    async def deserialize_state(self, state: dict | None, **_: Any) -> None:
-        """Restore store configuration from serialized thread state."""
-        if not state:
-            return
-        s = CosmosDBStoreState.model_validate(state)
-        self.thread_id = s.thread_id
-        if (s.cosmos_endpoint and s.cosmos_endpoint != self.cosmos_endpoint) or \
-           s.database_name != self.database_name or \
-           s.container_name != self.container_name:
-            self.cosmos_endpoint = s.cosmos_endpoint or self.cosmos_endpoint
-            self.database_name = s.database_name
-            self.container_name = s.container_name
-            self._ready = False
-
     def _to_dict(self, message: ChatMessage) -> dict:
         """Convert ChatMessage into a JSON-safe dictionary."""
-        def make_safe(obj):
-            if obj is None:
-                return None
-            if isinstance(obj, (str, int, float, bool)):
-                return obj
-            if isinstance(obj, enum.Enum):
-                return obj.value
-            if isinstance(obj, (datetime.datetime, datetime.date)):
-                return obj.isoformat()
-            if isinstance(obj, uuid.UUID):
-                return str(obj)
-            if isinstance(obj, list):
-                return [make_safe(x) for x in obj]
-            if isinstance(obj, dict):
-                return {k: make_safe(v) for k, v in obj.items()}
-            if hasattr(obj, "dict"):
-                return make_safe(obj.dict())
-            if hasattr(obj, "model_dump"):
-                return make_safe(obj.model_dump())
-            if hasattr(obj, "__dict__"):
-                return make_safe(vars(obj))
-            return str(obj)
-
-        if hasattr(message, "model_dump"):
-            raw = message.model_dump()
-        elif hasattr(message, "dict"):
-            raw = message.dict()
-        else:
-            raw = vars(message)
-        return make_safe(raw)
+        return message.to_dict() if hasattr(message, "to_dict") else vars(message)
 
     def _from_dict(self, data: dict) -> ChatMessage:
         """Reconstruct a ChatMessage from a stored dictionary."""
-        if hasattr(ChatMessage, "model_validate"):   
-            return ChatMessage.model_validate(data)
-        if hasattr(ChatMessage, "parse_obj"):        
-            return ChatMessage.parse_obj(data)
-        return ChatMessage(**data)
-
+        return ChatMessage.from_dict(data)
 
 async def main() -> None:
     """Demonstration of CosmosDBChatMessageStore with ChatAgent."""
+    
+    credential = DefaultAzureCredential()
+
+    cosmos_client = CosmosClient(
+        url=os.getenv("COSMOS_DB_ENDPOINT"),
+        credential=credential
+    )
+        
     store = CosmosDBChatMessageStore(
-        cosmos_endpoint=os.getenv("COSMOS_DB_ENDPOINT"),
-        cosmos_key=os.getenv("COSMOS_DB_KEY"),
+        cosmos_client=cosmos_client,
         database_name="agent-chat-conversation",
         container_name="chat_messages",
     )
@@ -230,7 +163,8 @@ async def main() -> None:
         await agent.run("Tell me a pirate joke.", thread=thread)
         await agent.run("One more!", thread=thread)
     finally:
-        await store.aclose()
+        await cosmos_client.close()
+        await credential.close()
 
 if __name__ == "__main__":
     import asyncio
