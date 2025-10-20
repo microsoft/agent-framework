@@ -23,8 +23,8 @@ internal static class WorkflowHelper
 
         // Build the workflow by adding executors and connecting them
         return new WorkflowBuilder(startExecutor)
-            .AddFanOutEdge(startExecutor, null, targets: [frenchAgent, englishAgent])
-            .AddFanInEdge(aggregationExecutor, null, sources: [frenchAgent, englishAgent])
+            .AddFanOutEdge(startExecutor, targets: [frenchAgent, englishAgent])
+            .AddFanInEdge(aggregationExecutor, sources: [frenchAgent, englishAgent])
             .WithOutputFrom(aggregationExecutor)
             .BuildAsync<List<ChatMessage>>();
     }

@@ -279,21 +279,7 @@ public class WorkflowBuilder
     /// <param name="targets">One or more target executors that will receive the fan-out edge. Cannot be null or empty.</param>
     /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
     public WorkflowBuilder AddFanOutEdge(ExecutorIsh source, params IEnumerable<ExecutorIsh> targets)
-        => this.AddFanOutEdge(source, null, targets);
-
-    /// <summary>
-    /// Adds a fan-out edge from the specified source executor to one or more target executors, optionally using a
-    /// custom partitioning function.
-    /// </summary>
-    /// <remarks>If a partitioner function is provided, it will be used to distribute input across the target
-    /// executors. The order of targets determines their mapping in the partitioning process.</remarks>
-    /// <param name="source">The source executor from which the fan-out edge originates. Cannot be null.</param>
-    /// <param name="label">An optional text label to describe the edge. This label will appear in workflow visualizations
-    /// (DOT and Mermaid formats) to document the purpose or condition of the edge.</param>
-    /// <param name="targets">One or more target executors that will receive the fan-out edge. Cannot be null or empty.</param>
-    /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
-    public WorkflowBuilder AddFanOutEdge(ExecutorIsh source, string? label, params IEnumerable<ExecutorIsh> targets)
-        => this.AddFanOutEdge<object>(source, null, label, targets);
+        => this.AddFanOutEdge<object>(source, null, null, targets);
 
     internal static Func<object?, int, IEnumerable<int>>? CreateEdgeAssignerFunc<T>(Func<T?, int, IEnumerable<int>>? partitioner)
     {
