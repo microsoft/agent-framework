@@ -34,7 +34,7 @@
     <PackageVersion Include="Microsoft.Bcl.AsyncInterfaces" Version="9.0.10" />
     <!-- OpenTelemetry -->
     <PackageVersion Include="OpenTelemetry" Version="1.12.0" />
-    <PackageVersion Include="OpenTelemetry.Api" Version="1.12.0" />
+    <PackageVersion Include="OpenTelemetry.Api" Version="1.13.1" />
     <PackageVersion Include="OpenTelemetry.Exporter.Console" Version="1.12.0" />
     <PackageVersion Include="OpenTelemetry.Exporter.InMemory" Version="1.12.0" />
     <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.12.0" />
@@ -78,9 +78,9 @@
     <PackageVersion Include="ModelContextProtocol" Version="0.4.0-preview.2" />
     <!-- Inference SDKs -->
     <PackageVersion Include="Anthropic.SDK" Version="5.6.0" />
-    <PackageVersion Include="AWSSDK.Extensions.Bedrock.MEAI" Version="4.0.4" />
+    <PackageVersion Include="AWSSDK.Extensions.Bedrock.MEAI" Version="4.0.4.1" />
     <PackageVersion Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.9.2" />
-    <PackageVersion Include="OllamaSharp" Version="5.4.7" />
+    <PackageVersion Include="OllamaSharp" Version="5.4.8" />
     <PackageVersion Include="OpenAI" Version="2.5.0" />
     <!-- Identity -->
     <PackageVersion Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.77.1" />
