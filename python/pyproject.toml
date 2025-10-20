@@ -252,6 +252,13 @@ pytest --import-mode=importlib
 packages/**/tests
 """
 
+[tool.poe.tasks.azure-ai-tests]
+cmd = """
+pytest --import-mode=importlib
+-n logical --dist loadfile --dist worksteal
+packages/azure-ai/tests
+"""
+
 [tool.poe.tasks.venv]
 cmd = "uv venv --clear --python $python"
 args = [{ name = "python", default = "3.13", options = ['-p', '--python'] }]
