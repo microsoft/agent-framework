@@ -21,21 +21,46 @@ namespace Microsoft.Agents.AI.Workflows.InProc;
 /// scenarios where workflow execution does not require executor distribution. </para></remarks>
 internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
 {
-    public InProcessRunner(Workflow workflow, ICheckpointManager? checkpointManager, string? runId = null, object? workflowOwnership = null, bool subworkflow = false, IEnumerable<Type>? knownValidInputTypes = null)
+    public static InProcessRunner CreateTopLevelRunner(Workflow workflow, ICheckpointManager? checkpointManager, string? runId = null, bool enableConcurrentRuns = false, IEnumerable<Type>? knownValidInputTypes = null)
     {
+        return new InProcessRunner(workflow,
+                                   checkpointManager,
+                                   runId,
+                                   enableConcurrentRuns: enableConcurrentRuns,
+                                   knownValidInputTypes: knownValidInputTypes);
+    }
+
+    public static InProcessRunner CreateSubworkflowRunner(Workflow workflow, ICheckpointManager? checkpointManager, string? runId = null, object? existingOwnerSignoff = null, bool enableConcurrentRuns = false, IEnumerable<Type>? knownValidInputTypes = null)
+    {
+        return new InProcessRunner(workflow,
+                                   checkpointManager,
+                                   runId,
+                                   existingOwnerSignoff: existingOwnerSignoff,
+                                   enableConcurrentRuns: enableConcurrentRuns,
+                                   knownValidInputTypes: knownValidInputTypes,
+                                   subworkflow: true);
+    }
+
+    private InProcessRunner(Workflow workflow, ICheckpointManager? checkpointManager, string? runId = null, object? existingOwnerSignoff = null, bool subworkflow = false, bool enableConcurrentRuns = false, IEnumerable<Type>? knownValidInputTypes = null)
+    {
+        if (enableConcurrentRuns && !workflow.AllowConcurrent)
+        {
+            throw new InvalidOperationException("Workflow must only consist of cross-run share-capable or factory-created executors. Executors " +
+                $"not supporting concurrent: {string.Join(", ", workflow.NonConcurrentExecutorIds)}");
+        }
+
         this.RunId = runId ?? Guid.NewGuid().ToString("N");
         this.StartExecutorId = workflow.StartExecutorId;
 
         this.Workflow = Throw.IfNull(workflow);
-        this.RunContext = new InProcessRunnerContext(workflow, this.RunId, withCheckpointing: checkpointManager != null, this.OutgoingEvents, this.StepTracer, workflowOwnership, subworkflow);
+        this.RunContext = new InProcessRunnerContext(workflow, this.RunId, withCheckpointing: checkpointManager != null, this.OutgoingEvents, this.StepTracer, existingOwnerSignoff, subworkflow, enableConcurrentRuns);
         this.CheckpointManager = checkpointManager;
 
         this._knownValidInputTypes = knownValidInputTypes != null
                                    ? [.. knownValidInputTypes]
                                    : [];
 
-        // Initialize the runners for each of the edges, along with the state for edges that
-        // need it.
+        // Initialize the runners for each of the edges, along with the state for edges that need it.
         this.EdgeMap = new EdgeMap(this.RunContext, this.Workflow.Edges, this.Workflow.Ports.Values, this.Workflow.StartExecutorId, this.StepTracer);
     }
 

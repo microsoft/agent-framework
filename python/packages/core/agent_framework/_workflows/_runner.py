@@ -13,9 +13,9 @@ from ._edge_runner import EdgeRunner, create_edge_runner
 from ._events import WorkflowEvent
 from ._executor import Executor
 from ._runner_context import (
-    CheckpointState,
     Message,
-    RunnerContext,  # type: ignore
+    RunnerContext,
+    WorkflowState,
 )
 from ._shared_state import SharedState
 
@@ -242,7 +242,7 @@ class Runner:
                 logger.debug(f"Executor {exec_id} snapshot_state failed: {ex}")
             if state_dict is not None:
                 try:
-                    await self._ctx.set_state(exec_id, state_dict)
+                    await self._ctx.set_executor_state(exec_id, state_dict)
                 except Exception as ex:  # pragma: no cover
                     logger.debug(f"Failed to persist state for executor {exec_id}: {ex}")
 
@@ -251,7 +251,7 @@ class Runner:
             return
 
         try:
-            current_state = await self._ctx.get_checkpoint_state()
+            current_state = await self._ctx.get_workflow_state()
 
             shared_state_data = {}
             async with self._shared_state.hold():
@@ -262,7 +262,7 @@ class Runner:
             current_state["iteration_count"] = self._iteration
             current_state["max_iterations"] = self._max_iterations
 
-            await self._ctx.set_checkpoint_state(current_state)
+            await self._ctx.set_workflow_state(current_state)
         except Exception as e:
             logger.warning(f"Failed to update context with shared state: {e}")
 
@@ -282,6 +282,7 @@ class Runner:
             True if restoration was successful, False otherwise
         """
         try:
+            # Load the checkpoint
             checkpoint: WorkflowCheckpoint | None
             if self._ctx.has_checkpointing():
                 checkpoint = await self._ctx.load_checkpoint(checkpoint_id)
@@ -295,6 +296,7 @@ class Runner:
                 logger.error(f"Checkpoint {checkpoint_id} not found")
                 return False
 
+            # Validate the loaded checkpoint against the workflow
             graph_hash = getattr(self, "graph_signature_hash", None)
             checkpoint_hash = (checkpoint.metadata or {}).get("graph_signature")
             if graph_hash and checkpoint_hash and graph_hash != checkpoint_hash:
@@ -310,8 +312,9 @@ class Runner:
 
             await self._restore_executor_states(checkpoint.executor_states)
 
-            state = self._checkpoint_to_state(checkpoint)
-            await self._ctx.set_checkpoint_state(state)
+            state = _convert_checkpoint_to_workflow_state(checkpoint)
+            await self._ctx.set_workflow_state(state)
+
             if checkpoint.workflow_id:
                 self._ctx.set_workflow_id(checkpoint.workflow_id)
             self._workflow_id = checkpoint.workflow_id
@@ -352,7 +355,7 @@ class Runner:
 
     async def _restore_shared_state_from_context(self) -> None:
         try:
-            restored_state = await self._ctx.get_checkpoint_state()
+            restored_state = await self._ctx.get_workflow_state()
 
             shared_state_data = restored_state.get("shared_state", {})
             if shared_state_data and hasattr(self._shared_state, "_state"):
@@ -365,17 +368,6 @@ class Runner:
 
         except Exception as e:
             logger.warning(f"Failed to restore shared state from context: {e}")
-
-    @staticmethod
-    def _checkpoint_to_state(checkpoint: WorkflowCheckpoint) -> CheckpointState:
-        return {
-            "messages": checkpoint.messages,
-            "shared_state": checkpoint.shared_state,
-            "executor_states": checkpoint.executor_states,
-            "iteration_count": checkpoint.iteration_count,
-            "max_iterations": checkpoint.max_iterations,
-            "pending_request_info_events": checkpoint.pending_request_info_events,
-        }
 
     def _parse_edge_runners(self, edge_runners: list[EdgeRunner]) -> dict[str, list[EdgeRunner]]:
         """Parse the edge runners of the workflow into a mapping where each source executor ID maps to its edge runners.
@@ -426,3 +418,15 @@ class Runner:
             if executor.id == msg.target_id and isinstance(executor, RequestInfoExecutor):
                 return True
         return False
+
+
+def _convert_checkpoint_to_workflow_state(checkpoint: WorkflowCheckpoint) -> WorkflowState:
+    """Helper function to convert a WorkflowCheckpoint to a WorkflowState."""
+    return {
+        "messages": checkpoint.messages,
+        "shared_state": checkpoint.shared_state,
+        "executor_states": checkpoint.executor_states,
+        "iteration_count": checkpoint.iteration_count,
+        "max_iterations": checkpoint.max_iterations,
+        "pending_request_info_events": checkpoint.pending_request_info_events,
+    }

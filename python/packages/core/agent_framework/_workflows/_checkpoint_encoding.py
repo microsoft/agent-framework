@@ -7,8 +7,6 @@ import sys
 from dataclasses import fields, is_dataclass
 from typing import Any, cast
 
-logger = logging.getLogger(__name__)
-
 # Checkpoint serialization helpers
 MODEL_MARKER = "__af_model__"
 DATACLASS_MARKER = "__af_dataclass__"
@@ -16,6 +14,8 @@ DATACLASS_MARKER = "__af_dataclass__"
 # Guards to prevent runaway recursion while encoding arbitrary user data
 _MAX_ENCODE_DEPTH = 100
 _CYCLE_SENTINEL = "<cycle>"
+
+logger = logging.getLogger(__name__)
 
 
 def encode_checkpoint_value(value: Any) -> Any:

@@ -7,7 +7,7 @@ from textwrap import shorten
 from typing import Any
 
 from ._checkpoint import WorkflowCheckpoint
-from ._checkpoint_encoding import decode_checkpoint_value  # type: ignore
+from ._checkpoint_encoding import decode_checkpoint_value
 from ._request_info_executor import PendingRequestDetails, RequestInfoMessage, RequestResponse
 
 logger = logging.getLogger(__name__)

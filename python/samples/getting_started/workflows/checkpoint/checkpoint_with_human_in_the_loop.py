@@ -126,8 +126,8 @@ class ReviewGateway(Executor):
         # persist iterations. The `RequestInfoExecutor` relies on this state to
         # rehydrate when checkpoints are restored.
         draft = response.agent_run_response.text or ""
-        iteration = int((await ctx.get_state() or {}).get("iteration", 0)) + 1
-        await ctx.set_state({"iteration": iteration, "last_draft": draft})
+        iteration = int((await ctx.get_executor_state() or {}).get("iteration", 0)) + 1
+        await ctx.set_executor_state({"iteration": iteration, "last_draft": draft})
         # Emit a human approval request. Because this flows through
         # RequestInfoExecutor it will pause the workflow until an answer is
         # supplied either interactively or via pre-supplied responses.
@@ -151,7 +151,7 @@ class ReviewGateway(Executor):
         # The RequestResponse wrapper gives us both the human data and the
         # original request message, even when resuming from checkpoints.
         reply = feedback.strip()
-        state = await ctx.get_state() or {}
+        state = await ctx.get_executor_state() or {}
         draft = state.get("last_draft") or (original_request.draft or "")
 
         if reply.lower() == "approve":
@@ -162,7 +162,7 @@ class ReviewGateway(Executor):
         # Any other response loops us back to the writer with fresh guidance.
         guidance = reply or "Tighten the copy and emphasise customer benefit."
         iteration = int(state.get("iteration", 1)) + 1
-        await ctx.set_state({"iteration": iteration, "last_draft": draft})
+        await ctx.set_executor_state({"iteration": iteration, "last_draft": draft})
         prompt = (
             "Revise the launch note. Respond with the new copy only.\n\n"
             f"Previous draft:\n{draft}\n\n"
