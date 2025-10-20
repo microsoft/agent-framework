@@ -840,8 +840,8 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                 contents.append(TextReasoningContent(text=event.delta, raw_representation=event))
                 metadata.update(self._get_metadata_from_response(event))
             case "response.reasoning_text.done":
-                contents.append(TextReasoningContent(text=event.text, raw_representation=event))
-                metadata.update(self._get_metadata_from_response(event))
+                # Skip .done event - contains complete text already streamed via .delta events
+                pass
             case "response.reasoning_summary_text.delta":
                 contents.append(TextReasoningContent(text=event.delta, raw_representation=event))
                 metadata.update(self._get_metadata_from_response(event))

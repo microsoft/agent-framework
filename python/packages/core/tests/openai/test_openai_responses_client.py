@@ -1824,15 +1824,11 @@ def test_streaming_reasoning_text_done_event() -> None:
         text="complete reasoning",
     )
 
-    with patch.object(client, "_get_metadata_from_response", return_value={"test": "data"}) as mock_metadata:
+    with patch.object(client, "_get_metadata_from_response", return_value={"test": "data"}):
         response = client._create_streaming_response_content(event, chat_options, function_call_ids)  # type: ignore
 
-        assert len(response.contents) == 1
-        assert isinstance(response.contents[0], TextReasoningContent)
-        assert response.contents[0].text == "complete reasoning"
-        assert response.contents[0].raw_representation == event
-        mock_metadata.assert_called_once_with(event)
-        assert response.additional_properties == {"test": "data"}
+        # Event should be ignored - no content added
+        assert len(response.contents) == 0
 
 
 def test_streaming_reasoning_summary_text_delta_event() -> None:
