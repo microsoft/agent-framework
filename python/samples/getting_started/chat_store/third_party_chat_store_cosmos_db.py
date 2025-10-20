@@ -1,5 +1,16 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import os
+from time import time
+from uuid import uuid4
+from typing import Sequence, Any
+import enum, datetime, uuid
+from pydantic import BaseModel
+from azure.cosmos.aio import CosmosClient
+from agent_framework import ChatMessage, ChatAgent
+from agent_framework.azure import AzureOpenAIChatClient
+from azure.identity.aio import DefaultAzureCredential
+
 """Cosmos DB Chat Message Store Example
 
 Demonstrates how to store and retrieve chat history using Azure Cosmos DB
@@ -10,31 +21,15 @@ Scenarios:
   2) Retrieve messages in chronological order for conversation continuity.
 
 Requirements:
-  - Azure Cosmos DB (Core SQL API) with an existing database and container.
+  - Azure Cosmos DB with an existing database and container.
   - Container partition key must be /thread_id.
   - Environment variables:
       COSMOS_DB_ENDPOINT,
       AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY,
       AZURE_OPENAI_API_VERSION, AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
   - Dependencies:
-      pip install azure-cosmos pydantic "agent-framework"
-
-Run:
-  python third_party_chat_store_cosmosDB.py
+      pip install azure-cosmos "agent-framework"
 """
-
-import os
-from time import time
-from uuid import uuid4
-from typing import Sequence, Any
-import enum, datetime, uuid
-
-from pydantic import BaseModel
-from azure.cosmos.aio import CosmosClient
-
-from agent_framework import ChatMessage, ChatAgent
-from agent_framework.azure import AzureOpenAIChatClient
-from azure.identity.aio import DefaultAzureCredential
 
 class CosmosDBStoreState(BaseModel):
     """Serializable state for CosmosDB chat message store."""
@@ -120,6 +115,27 @@ class CosmosDBChatMessageStore:
         ):
             await self._container.delete_item(row["id"], partition_key=self.thread_id)
 
+    async def serialize_state(self, **kwargs: Any) -> dict:
+        """Serialize the store configuration for persistent thread state."""
+        return CosmosDBStoreState(
+            thread_id=self.thread_id,
+            database_name=self.database_name,
+            container_name=self.container_name,
+        ).model_dump(**kwargs)
+
+    async def deserialize_state(self, state: dict | None, **_: Any) -> None:
+        """Restore store configuration from serialized thread state."""
+        if not state:
+            return
+
+        s = CosmosDBStoreState.model_validate(state)
+        self.thread_id = s.thread_id
+
+        if s.database_name != self.database_name or s.container_name != self.container_name:
+            self.database_name = s.database_name
+            self.container_name = s.container_name
+            self._ready = False
+
     def _to_dict(self, message: ChatMessage) -> dict:
         """Convert ChatMessage into a JSON-safe dictionary."""
         return message.to_dict() if hasattr(message, "to_dict") else vars(message)
@@ -145,7 +161,7 @@ async def main() -> None:
     )
 
     chat_client = AzureOpenAIChatClient(
-        model_id=os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"),
+        deployment_name=os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"),
         api_key=os.getenv("AZURE_OPENAI_API_KEY"),
         endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
         api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
