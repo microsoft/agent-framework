@@ -75,7 +75,7 @@
     <PackageVersion Include="A2A" Version="0.3.1-preview" />
     <PackageVersion Include="A2A.AspNetCore" Version="0.3.1-preview" />
     <!-- MCP -->
-    <PackageVersion Include="ModelContextProtocol" Version="0.4.0-preview.2" />
+    <PackageVersion Include="ModelContextProtocol" Version="0.4.0-preview.3" />
     <!-- Inference SDKs -->
     <PackageVersion Include="Anthropic.SDK" Version="5.6.0" />
     <PackageVersion Include="AWSSDK.Extensions.Bedrock.MEAI" Version="4.0.4.1" />
