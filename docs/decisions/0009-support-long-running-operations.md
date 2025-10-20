@@ -1337,6 +1337,34 @@ while (response.ContinuationToken is { } token)
 Console.WriteLine(response.Text);
 ```
 
+### 4. Continuation Token and Agent Thread
+
+There are two types of agent threads: server-managed and client-managed. The server-managed threads live server-side and are identified by a conversation identifier, and 
+agents use the identifier to associate runs with the threads. The client-managed threads live client-side and are represented by a collection of chat messages that agents maintain
+by adding user messages to them before sending the thread to the service and by adding the agent response back to the thread when received from the service.
+
+When long-running operations are enabled and an agent is configured with tools, the initial run response may contain a tool call that needs to be invoked by the agent. If the agent runs
+with a server-managed thread, the tool call will be captured as part of the conversation history server-side and follow-up runs will have access to it, and as a result the agent will invoke the tool.
+However, if no thread is provided at the agent's initial run and a client-managed thread is provided for follow-up runs and the agent calls a tool, the tool call which the agent made 
+at the initial run will not be added to the client-managed thread since the initial run was made with no thread, and as a result the agent will not be able to invoke the tool.
+
+#### 4.1 Require Thread for Long-Running Operations
+
+This option suggests that AI agents require a thread to be provided when long-running operations are enabled. If no thread is provided, the agent will throw an exception.
+
+**Pro:** Ensures agent responses are always captured by client-managed threads when long-running operations are enabled, providing a consistent experience for callers.
+
+**Con:** May be inconvenient for callers to always provide a thread when long-running operations are enabled.
+
+#### 4.2 Don't Require Thread for Long-Running Operations
+
+This option suggests that AI agents don't require a thread to be provided when long-running operations are enabled. According to this option, it's up to the caller to ensure that
+the thread is provided with background operations consistently for all runs.
+
+**Pro:** Provides more flexibility to callers by not enforcing thread requirements.
+
+**Con:** May lead to an inconsistent experience for callers if they forget to provide the thread for initial or follow-up runs.
+
 ## Decision Outcome
 
 ### Long-Running Execution Support for Chat Clients
@@ -1350,6 +1378,7 @@ Console.WriteLine(response.Text);
 - **Methods**: Option 1.1 - Use existing `Run{Streaming}Async` for common operations; new methods for uncommon operations
 - **Enabling**: Option 2.1 - Execution mode per invocation via `AgentRunOptions.AllowLongRunningResponses`
 - **Model**: Option 3.1 - Custom continuation token type
+- **Thread Requirement**: Option 4.1 - Require thread for long-running operations
 
 ## Addendum 1: APIs of Agents Supporting Long-Running Execution
 <details>

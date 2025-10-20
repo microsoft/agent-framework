@@ -564,6 +564,13 @@ public sealed partial class ChatClientAgent : AIAgent
     {
         ChatOptions? chatOptions = this.CreateConfiguredChatOptions(runOptions);
 
+        // Supplying a thread for background responses is required to prevent inconsistent experience
+        // for callers if they forget to provide the thread for initial or follow-up runs.
+        if (chatOptions?.AllowBackgroundResponses is true && thread is null)
+        {
+            throw new InvalidOperationException("A thread must be provided when continuing a background response using a continuation token.");
+        }
+
         thread ??= this.GetNewThread();
         if (thread is not ChatClientAgentThread typedThread)
         {
@@ -575,7 +582,6 @@ public sealed partial class ChatClientAgent : AIAgent
         {
             throw new InvalidOperationException("Messages are not allowed when continuing a background response using a continuation token.");
         }
-
         List<ChatMessage> threadMessages = [];
 
         // Populate the thread messages only if we are not continuing an existing response as it's not allowed

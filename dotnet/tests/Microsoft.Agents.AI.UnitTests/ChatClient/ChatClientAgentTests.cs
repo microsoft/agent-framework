@@ -1993,8 +1993,10 @@ public partial class ChatClientAgentTests
 
         ChatClientAgent agent = new(mockChatClient.Object);
 
+        ChatClientAgentThread thread = new();
+
         // Act
-        await agent.RunAsync(options: agentRunOptions);
+        await agent.RunAsync(thread, options: agentRunOptions);
 
         // Assert
         Assert.NotNull(capturedChatOptions);
@@ -2087,8 +2089,10 @@ public partial class ChatClientAgentTests
 
         ChatClientAgent agent = new(mockChatClient.Object);
 
+        ChatClientAgentThread thread = new();
+
         // Act
-        await foreach (var _ in agent.RunStreamingAsync(options: agentRunOptions))
+        await foreach (var _ in agent.RunStreamingAsync(thread, options: agentRunOptions))
         {
         }
 
@@ -2161,8 +2165,10 @@ public partial class ChatClientAgentTests
         ChatClientAgent agent = new(mockChatClient.Object);
         var runOptions = new ChatClientAgentRunOptions(new ChatOptions { AllowBackgroundResponses = true });
 
+        ChatClientAgentThread thread = new();
+
         // Act
-        var response = await agent.RunAsync([new(ChatRole.User, "hi")], options: runOptions);
+        var response = await agent.RunAsync([new(ChatRole.User, "hi")], thread, options: runOptions);
 
         // Assert
         Assert.Same(continuationToken, response.ContinuationToken);
@@ -2189,9 +2195,11 @@ public partial class ChatClientAgentTests
 
         ChatClientAgent agent = new(mockChatClient.Object);
 
+        ChatClientAgentThread thread = new();
+
         // Act
         var actualUpdates = new List<AgentRunResponseUpdate>();
-        await foreach (var u in agent.RunStreamingAsync([new(ChatRole.User, "hi")], options: new ChatClientAgentRunOptions(new ChatOptions { AllowBackgroundResponses = true })))
+        await foreach (var u in agent.RunStreamingAsync([new(ChatRole.User, "hi")], thread, options: new ChatClientAgentRunOptions(new ChatOptions { AllowBackgroundResponses = true })))
         {
             actualUpdates.Add(u);
         }
@@ -2377,6 +2385,60 @@ public partial class ChatClientAgentTests
         // Verify that AI context provider was never called due to continuation token
         mockContextProvider.Verify(
             p => p.InvokingAsync(It.IsAny<AIContextProvider.InvokingContext>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task RunAsyncThrowsWhenNoThreadProvideForBackgroundResponsesAsync()
+    {
+        // Arrange
+        Mock<IChatClient> mockChatClient = new();
+
+        ChatClientAgent agent = new(mockChatClient.Object);
+
+        AgentRunOptions runOptions = new() { AllowBackgroundResponses = true };
+
+        IEnumerable<ChatMessage> inputMessages = [new ChatMessage(ChatRole.User, "test message")];
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() => agent.RunAsync(inputMessages, options: runOptions));
+
+        // Verify that the IChatClient was never called due to early validation
+        mockChatClient.Verify(
+            c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task RunStreamingAsyncThrowsWhenNoThreadProvideForBackgroundResponsesAsync()
+    {
+        // Arrange
+        Mock<IChatClient> mockChatClient = new();
+
+        ChatClientAgent agent = new(mockChatClient.Object);
+
+        AgentRunOptions runOptions = new() { AllowBackgroundResponses = true };
+
+        IEnumerable<ChatMessage> inputMessages = [new ChatMessage(ChatRole.User, "test message")];
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await foreach (var update in agent.RunStreamingAsync(inputMessages, options: runOptions))
+            {
+                // Should not reach here
+            }
+        });
+
+        // Verify that the IChatClient was never called due to early validation
+        mockChatClient.Verify(
+            c => c.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
