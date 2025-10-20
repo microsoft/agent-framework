@@ -24,6 +24,11 @@ public static class InProcessExecution
     public static InProcessExecutionEnvironment OffThread { get; } = new(ExecutionMode.OffThread);
 
     /// <summary>
+    /// Gets an execution environment that enables concurrent, off-thread in-process execution.
+    /// </summary>
+    public static InProcessExecutionEnvironment Concurrent { get; } = new(ExecutionMode.OffThread, enableConcurrentRuns: true);
+
+    /// <summary>
     /// An InProcesExecution environment which will run SuperSteps in the event watching thread,
     /// accumulating events during each SuperStep and streaming them out after each SuperStep is
     /// completed.

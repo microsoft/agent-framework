@@ -2,7 +2,6 @@
 
 using System.Diagnostics;
 using Microsoft.Agents.AI.Workflows;
-using Microsoft.Agents.AI.Workflows.Reflection;
 using OpenTelemetry;
 using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
@@ -71,7 +70,7 @@ public static class Program
 /// <summary>
 /// First executor: converts input text to uppercase.
 /// </summary>
-internal sealed class UppercaseExecutor() : ReflectingExecutor<UppercaseExecutor>("UppercaseExecutor"), IMessageHandler<string, string>
+internal sealed class UppercaseExecutor() : Executor<string, string>("UppercaseExecutor")
 {
     /// <summary>
     /// Processes the input message by converting it to uppercase.
@@ -81,14 +80,14 @@ internal sealed class UppercaseExecutor() : ReflectingExecutor<UppercaseExecutor
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
     /// The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>The input text converted to uppercase</returns>
-    public async ValueTask<string> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default) =>
+    public override async ValueTask<string> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default) =>
         message.ToUpperInvariant(); // The return value will be sent as a message along an edge to subsequent executors
 }
 
 /// <summary>
 /// Second executor: reverses the input text and completes the workflow.
 /// </summary>
-internal sealed class ReverseTextExecutor() : ReflectingExecutor<ReverseTextExecutor>("ReverseTextExecutor"), IMessageHandler<string, string>
+internal sealed class ReverseTextExecutor() : Executor<string, string>("ReverseTextExecutor")
 {
     /// <summary>
     /// Processes the input message by reversing the text.
@@ -98,6 +97,6 @@ internal sealed class ReverseTextExecutor() : ReflectingExecutor<ReverseTextExec
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
     /// The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>The input text reversed</returns>
-    public async ValueTask<string> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
+    public override async ValueTask<string> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
         => new(message.Reverse().ToArray());
 }

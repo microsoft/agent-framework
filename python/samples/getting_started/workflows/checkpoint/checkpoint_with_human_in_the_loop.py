@@ -23,6 +23,7 @@ from agent_framework import (
     WorkflowOutputEvent,
     WorkflowRunState,
     WorkflowStatusEvent,
+    get_checkpoint_summary,
     handler,
 )
 from agent_framework.azure import AzureOpenAIChatClient
@@ -139,8 +140,8 @@ class ReviewGateway(Executor):
         # persist iterations. The `RequestInfoExecutor` relies on this state to
         # rehydrate when checkpoints are restored.
         draft = response.agent_run_response.text or ""
-        iteration = int((await ctx.get_state() or {}).get("iteration", 0)) + 1
-        await ctx.set_state({"iteration": iteration, "last_draft": draft})
+        iteration = int((await ctx.get_executor_state() or {}).get("iteration", 0)) + 1
+        await ctx.set_executor_state({"iteration": iteration, "last_draft": draft})
         # Emit a human approval request. Because this flows through
         # RequestInfoExecutor it will pause the workflow until an answer is
         # supplied either interactively or via pre-supplied responses.
@@ -162,7 +163,7 @@ class ReviewGateway(Executor):
         # The RequestResponse wrapper gives us both the human data and the
         # original request message, even when resuming from checkpoints.
         reply = (feedback.data or "").strip()
-        state = await ctx.get_state() or {}
+        state = await ctx.get_executor_state() or {}
         draft = state.get("last_draft") or (feedback.original_request.draft if feedback.original_request else "")
 
         if reply.lower() == "approve":
@@ -174,7 +175,7 @@ class ReviewGateway(Executor):
         # Any other response loops us back to the writer with fresh guidance.
         guidance = reply or "Tighten the copy and emphasise customer benefit."
         iteration = int(state.get("iteration", 1)) + 1
-        await ctx.set_state({"iteration": iteration, "last_draft": draft})
+        await ctx.set_executor_state({"iteration": iteration, "last_draft": draft})
         prompt = (
             "Revise the launch note. Respond with the new copy only.\n\n"
             f"Previous draft:\n{draft}\n\n"
@@ -192,7 +193,7 @@ class FinaliseExecutor(Executor):
     @handler
     async def publish(self, text: str, ctx: WorkflowContext[Any, str]) -> None:
         # Store the output so diagnostics or a UI could fetch the final copy.
-        await ctx.set_state({"published_text": text})
+        await ctx.set_executor_state({"published_text": text})
         # Yield the final output so the workflow completes cleanly.
         await ctx.yield_output(text)
 
@@ -246,14 +247,12 @@ def _render_checkpoint_summary(checkpoints: list["WorkflowCheckpoint"]) -> None:
     """Pretty-print saved checkpoints with the new framework summaries."""
 
     print("\nCheckpoint summary:")
-    for summary in [
-        RequestInfoExecutor.checkpoint_summary(cp) for cp in sorted(checkpoints, key=lambda c: c.timestamp)
-    ]:
+    for summary in [get_checkpoint_summary(cp) for cp in sorted(checkpoints, key=lambda c: c.timestamp)]:
         # Compose a single line per checkpoint so the user can scan the output
         # and pick the resume point that still has outstanding human work.
         line = (
             f"- {summary.checkpoint_id} | iter={summary.iteration_count} "
-            f"| targets={summary.targets} | states={summary.executor_states}"
+            f"| targets={summary.targets} | states={summary.executor_ids}"
         )
         if summary.status:
             line += f" | status={summary.status}"
@@ -312,7 +311,7 @@ def _prompt_for_responses(requests: list[tuple[str, HumanApprovalRequest]]) -> d
 def _maybe_pre_supply_responses(cp: "WorkflowCheckpoint") -> dict[str, str] | None:
     """Offer to collect responses before resuming a checkpoint."""
 
-    pending = RequestInfoExecutor.pending_requests_from_checkpoint(cp)
+    pending = get_checkpoint_summary(cp).pending_requests
     if not pending:
         return None
 
@@ -468,7 +467,7 @@ async def main() -> None:
         return
 
     chosen = sorted_cps[idx]
-    summary = RequestInfoExecutor.checkpoint_summary(chosen)
+    summary = get_checkpoint_summary(chosen)
     if summary.status == "completed":
         print("Selected checkpoint already reflects a completed workflow; nothing to resume.")
         return

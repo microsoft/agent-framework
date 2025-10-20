@@ -12,10 +12,10 @@ from agent_framework import (
     ChatMessage,
     Executor,
     FileCheckpointStorage,
-    RequestInfoExecutor,
     Role,
     WorkflowBuilder,
     WorkflowContext,
+    get_checkpoint_summary,
     handler,
 )
 from agent_framework.azure import AzureOpenAIChatClient
@@ -42,7 +42,7 @@ Pipeline:
 5) FinalizeFromAgent yields the final result.
 
 What you learn:
-- How to persist executor state using ctx.get_state and ctx.set_state.
+- How to persist executor state using ctx.get_executor_state and ctx.set_executor_state.
 - How to persist shared workflow state using ctx.set_shared_state for cross-executor visibility.
 - How to configure FileCheckpointStorage and call with_checkpointing on WorkflowBuilder.
 - How to list and inspect checkpoints programmatically.
@@ -73,9 +73,9 @@ class UpperCaseExecutor(Executor):
 
         # Persist executor-local state so it is captured in checkpoints
         # and available after resume for observability or logic.
-        prev = await ctx.get_state() or {}
+        prev = await ctx.get_executor_state() or {}
         count = int(prev.get("count", 0)) + 1
-        await ctx.set_state({
+        await ctx.set_executor_state({
             "count": count,
             "last_input": text,
             "last_output": result,
@@ -122,9 +122,9 @@ class FinalizeFromAgent(Executor):
         result = response.agent_run_response.text or ""
 
         # Persist executor-local state for auditability when inspecting checkpoints.
-        prev = await ctx.get_state() or {}
+        prev = await ctx.get_executor_state() or {}
         count = int(prev.get("count", 0)) + 1
-        await ctx.set_state({
+        await ctx.set_executor_state({
             "count": count,
             "last_output": result,
             "final": True,
@@ -143,9 +143,9 @@ class ReverseTextExecutor(Executor):
         print(f"ReverseTextExecutor: '{text}' -> '{result}'")
 
         # Persist executor-local state so checkpoint inspection can reveal progress.
-        prev = await ctx.get_state() or {}
+        prev = await ctx.get_executor_state() or {}
         count = int(prev.get("count", 0)) + 1
-        await ctx.set_state({
+        await ctx.set_executor_state({
             "count": count,
             "last_input": text,
             "last_output": result,
@@ -194,7 +194,7 @@ def _render_checkpoint_summary(checkpoints: list["WorkflowCheckpoint"]) -> None:
 
     print("\nCheckpoint summary:")
     for cp in sorted(checkpoints, key=lambda c: c.timestamp):
-        summary = RequestInfoExecutor.checkpoint_summary(cp)
+        summary = get_checkpoint_summary(cp)
         msg_count = sum(len(v) for v in cp.messages.values())
         state_keys = sorted(cp.executor_states.keys())
         orig = cp.shared_state.get("original_input")
@@ -241,7 +241,7 @@ async def main():
 
     print("\nAvailable checkpoints to resume from:")
     for idx, cp in enumerate(sorted_cps):
-        summary = RequestInfoExecutor.checkpoint_summary(cp)
+        summary = get_checkpoint_summary(cp)
         line = f"  [{idx}] id={summary.checkpoint_id} iter={summary.iteration_count}"
         if summary.status:
             line += f" status={summary.status}"

@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.AI.Workflows;
-using Microsoft.Agents.AI.Workflows.Reflection;
 
 namespace WorkflowSharedStatesSample;
 
@@ -52,9 +51,9 @@ internal static class FileContentStateConstants
     public const string FileContentStateScope = "FileContentState";
 }
 
-internal sealed class FileReadExecutor() : ReflectingExecutor<FileReadExecutor>("FileReadExecutor"), IMessageHandler<string, string>
+internal sealed class FileReadExecutor() : Executor<string, string>("FileReadExecutor")
 {
-    public async ValueTask<string> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
+    public override async ValueTask<string> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         // Read file content from embedded resource
         string fileContent = Resources.Read(message);
@@ -72,9 +71,9 @@ internal sealed class FileStats
     public int WordCount { get; set; }
 }
 
-internal sealed class WordCountingExecutor() : ReflectingExecutor<WordCountingExecutor>("WordCountingExecutor"), IMessageHandler<string, FileStats>
+internal sealed class WordCountingExecutor() : Executor<string, FileStats>("WordCountingExecutor")
 {
-    public async ValueTask<FileStats> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
+    public override async ValueTask<FileStats> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         // Retrieve the file content from the shared state
         var fileContent = await context.ReadStateAsync<string>(message, scopeName: FileContentStateConstants.FileContentStateScope, cancellationToken)
@@ -86,10 +85,9 @@ internal sealed class WordCountingExecutor() : ReflectingExecutor<WordCountingEx
     }
 }
 
-internal sealed class ParagraphCountingExecutor() : ReflectingExecutor<ParagraphCountingExecutor>("ParagraphCountingExecutor"),
-                                                    IMessageHandler<string, FileStats>
+internal sealed class ParagraphCountingExecutor() : Executor<string, FileStats>("ParagraphCountingExecutor")
 {
-    public async ValueTask<FileStats> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
+    public override async ValueTask<FileStats> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         // Retrieve the file content from the shared state
         var fileContent = await context.ReadStateAsync<string>(message, scopeName: FileContentStateConstants.FileContentStateScope, cancellationToken)
@@ -101,11 +99,11 @@ internal sealed class ParagraphCountingExecutor() : ReflectingExecutor<Paragraph
     }
 }
 
-internal sealed class AggregationExecutor() : ReflectingExecutor<AggregationExecutor>("AggregationExecutor"), IMessageHandler<FileStats>
+internal sealed class AggregationExecutor() : Executor<FileStats>("AggregationExecutor")
 {
     private readonly List<FileStats> _messages = [];
 
-    public async ValueTask HandleAsync(FileStats message, IWorkflowContext context, CancellationToken cancellationToken = default)
+    public override async ValueTask HandleAsync(FileStats message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         this._messages.Add(message);
 

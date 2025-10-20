@@ -169,9 +169,11 @@ class AgentFrameworkExecutor:
             Raw Agent Framework events and trace events
         """
         try:
-            # Get entity info and object
+            # Get entity info
             entity_info = self.get_entity_info(entity_id)
-            entity_obj = self.entity_discovery.get_entity_object(entity_id)
+
+            # Trigger lazy loading (will return from cache if already loaded)
+            entity_obj = await self.entity_discovery.load_entity(entity_id)
 
             if not entity_obj:
                 raise EntityNotFoundError(f"Entity object for '{entity_id}' not found")

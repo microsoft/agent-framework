@@ -27,7 +27,7 @@ public static class Program
     private static async Task Main()
     {
         // Create the workflow
-        var workflow = await WorkflowHelper.GetWorkflowAsync().ConfigureAwait(false);
+        var workflow = await WorkflowHelper.GetWorkflowAsync();
 
         // Create checkpoint manager
         var checkpointManager = CheckpointManager.Default;
@@ -36,15 +36,15 @@ public static class Program
         // Execute the workflow and save checkpoints
         await using Checkpointed<StreamingRun> checkpointedRun = await InProcessExecution
             .StreamAsync(workflow, new SignalWithNumber(NumberSignal.Init), checkpointManager)
-            .ConfigureAwait(false);
-        await foreach (WorkflowEvent evt in checkpointedRun.Run.WatchStreamAsync().ConfigureAwait(false))
+            ;
+        await foreach (WorkflowEvent evt in checkpointedRun.Run.WatchStreamAsync())
         {
             switch (evt)
             {
                 case RequestInfoEvent requestInputEvt:
                     // Handle `RequestInfoEvent` from the workflow
                     ExternalResponse response = HandleExternalRequest(requestInputEvt.Request);
-                    await checkpointedRun.Run.SendResponseAsync(response).ConfigureAwait(false);
+                    await checkpointedRun.Run.SendResponseAsync(response);
                     break;
                 case ExecutorCompletedEvent executorCompletedEvt:
                     Console.WriteLine($"* Executor {executorCompletedEvt.ExecutorId} completed.");
@@ -76,15 +76,15 @@ public static class Program
         Console.WriteLine($"\n\nRestoring from the {CheckpointIndex + 1}th checkpoint.");
         CheckpointInfo savedCheckpoint = checkpoints[CheckpointIndex];
         // Note that we are restoring the state directly to the same run instance.
-        await checkpointedRun.RestoreCheckpointAsync(savedCheckpoint, CancellationToken.None).ConfigureAwait(false);
-        await foreach (WorkflowEvent evt in checkpointedRun.Run.WatchStreamAsync().ConfigureAwait(false))
+        await checkpointedRun.RestoreCheckpointAsync(savedCheckpoint, CancellationToken.None);
+        await foreach (WorkflowEvent evt in checkpointedRun.Run.WatchStreamAsync())
         {
             switch (evt)
             {
                 case RequestInfoEvent requestInputEvt:
                     // Handle `RequestInfoEvent` from the workflow
                     ExternalResponse response = HandleExternalRequest(requestInputEvt.Request);
-                    await checkpointedRun.Run.SendResponseAsync(response).ConfigureAwait(false);
+                    await checkpointedRun.Run.SendResponseAsync(response);
                     break;
                 case ExecutorCompletedEvent executorCompletedEvt:
                     Console.WriteLine($"* Executor {executorCompletedEvt.ExecutorId} completed.");
