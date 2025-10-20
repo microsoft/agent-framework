@@ -51,25 +51,31 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
 
     protected override async ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellationToken = default)
     {
-        emitEvents ??= this._emitEvents;
-        IAsyncEnumerable<AgentRunResponseUpdate> agentStream = this._agent.RunStreamingAsync(messages, this.EnsureThread(context), cancellationToken: cancellationToken);
-
-        List<AgentRunResponseUpdate> updates = [];
-
-        await foreach (AgentRunResponseUpdate update in agentStream.ConfigureAwait(false))
+        if (emitEvents ?? this._emitEvents)
         {
-            if (emitEvents ?? this._emitEvents)
+            // Run the agent in streaming mode only when agent run update events are to be emitted.
+            IAsyncEnumerable<AgentRunResponseUpdate> agentStream = this._agent.RunStreamingAsync(messages, this.EnsureThread(context), cancellationToken: cancellationToken);
+
+            List<AgentRunResponseUpdate> updates = [];
+
+            await foreach (AgentRunResponseUpdate update in agentStream.ConfigureAwait(false))
             {
                 await context.AddEventAsync(new AgentRunUpdateEvent(this.Id, update), cancellationToken).ConfigureAwait(false);
+
+                // TODO: FunctionCall request handling, and user info request handling.
+                // In some sense: We should just let it be handled as a ChatMessage, though we should consider
+                // providing some mechanisms to help the user complete the request, or route it out of the
+                // workflow.
+                updates.Add(update);
             }
 
-            // TODO: FunctionCall request handling, and user info request handling.
-            // In some sense: We should just let it be handled as a ChatMessage, though we should consider
-            // providing some mechanisms to help the user complete the request, or route it out of the
-            // workflow.
-            updates.Add(update);
+            await context.SendMessageAsync(updates.ToAgentRunResponse().Messages, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
-
-        await context.SendMessageAsync(updates.ToAgentRunResponse().Messages, cancellationToken: cancellationToken).ConfigureAwait(false);
+        else
+        {
+            // Otherwise, run the agent in non-streaming mode.
+            AgentRunResponse response = await this._agent.RunAsync(messages, this.EnsureThread(context), cancellationToken: cancellationToken).ConfigureAwait(false);
+            await context.SendMessageAsync(response.Messages, cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
     }
 }

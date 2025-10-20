@@ -170,7 +170,7 @@ public class SpecializedExecutorSmokeTests
 
         TestWorkflowContext collectingContext = new();
 
-        await host.TakeTurnAsync(new TurnToken(emitEvents: false), collectingContext);
+        await host.TakeTurnAsync(new TurnToken(emitEvents: true), collectingContext);
 
         // The first empty message is skipped.
         collectingContext.Updates.Should().HaveCount(MessageStrings.Length - 1);
