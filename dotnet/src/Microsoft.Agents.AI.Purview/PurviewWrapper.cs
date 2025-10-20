@@ -9,16 +9,18 @@ using Azure.Core;
 using Microsoft.Agents.AI.Purview.Models.Common;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Caching.Distributed;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 namespace Microsoft.Agents.AI.Purview;
 
 /// <summary>
 /// A delegating agent that connects to Microsoft Purview.
 /// </summary>
-public sealed class PurviewWrapper
+internal sealed class PurviewWrapper
 {
     private readonly ILogger _logger;
     private readonly IScopedContentProcessor _scopedProcessor;
@@ -37,7 +39,16 @@ public sealed class PurviewWrapper
         services.AddSingleton(purviewSettings);
         services.AddSingleton<IPurviewClient, PurviewClient>();
         services.AddSingleton<IScopedContentProcessor, ScopedContentProcessor>();
-        services.AddSingleton<IDistributedCache, MemoryDistributedCache>();
+
+        MemoryDistributedCacheOptions options = new()
+        {
+            SizeLimit = purviewSettings.CacheSizeLimit,
+        };
+
+        IDistributedCache cache = purviewSettings.Cache ?? new MemoryDistributedCache(Options.Create(options));
+
+        services.AddSingleton(cache);
+        services.AddSingleton<ICacheProvider, CacheProvider>();
         services.AddSingleton<HttpClient>();
         services.AddSingleton(logger ?? NullLogger.Instance);
         ServiceProvider serviceProvider = services.BuildServiceProvider();

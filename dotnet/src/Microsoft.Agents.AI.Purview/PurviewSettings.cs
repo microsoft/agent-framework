@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using Microsoft.Extensions.Caching.Distributed;
 
 namespace Microsoft.Agents.AI.Purview;
 
@@ -65,4 +66,20 @@ public class PurviewSettings
     /// Gets or sets the message to display when a response is blocked by Purview policies.
     /// </summary>
     public string BlockedResponseMessage { get; set; } = "Response blocked by policies";
+
+    /// <summary>
+    /// Gets or sets the cache used to store Purview data.
+    /// </summary>
+    public IDistributedCache? Cache { get; set; }
+
+    /// <summary>
+    /// The size limit of the cache in bytes. This only applies if no cache is provided in the <see cref="Cache"/> property.
+    /// If using a different cache, the size limit in bytes should be set there.
+    /// </summary>
+    public long? CacheSizeLimit { get; set; } = 100_000_000_000;
+
+    /// <summary>
+    /// The TTL of each cache entry.
+    /// </summary>
+    public TimeSpan CacheTTL { get; set; } = TimeSpan.FromMinutes(30);
 }

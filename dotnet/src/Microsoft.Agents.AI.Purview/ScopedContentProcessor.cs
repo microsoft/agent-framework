@@ -18,14 +18,17 @@ namespace Microsoft.Agents.AI.Purview;
 internal sealed class ScopedContentProcessor : IScopedContentProcessor
 {
     private readonly IPurviewClient _purviewClient;
+    private readonly ICacheProvider _cacheProvider;
 
     /// <summary>
     /// Create a new instance of <see cref="ScopedContentProcessor"/>.
     /// </summary>
     /// <param name="purviewClient">The purview client to use for purview requests.</param>
-    public ScopedContentProcessor(IPurviewClient purviewClient)
+    /// <param name="cacheProvider">The cache used to store Purview data.</param>
+    public ScopedContentProcessor(IPurviewClient purviewClient, ICacheProvider cacheProvider)
     {
         this._purviewClient = purviewClient;
+        this._cacheProvider = cacheProvider;
     }
 
     /// <summary>
@@ -202,7 +205,23 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
     private async Task<ProcessContentResponse> ProcessContentWithProtectionScopesAsync(ProcessContentRequest pcRequest, CancellationToken cancellationToken)
     {
         ProtectionScopesRequest psRequest = CreateProtectionScopesRequest(pcRequest, pcRequest.UserId, pcRequest.TenantId, pcRequest.CorrelationId);
-        ProtectionScopesResponse psResponse = await this._purviewClient.GetProtectionScopesAsync(psRequest, cancellationToken).ConfigureAwait(false);
+
+        ProtectionScopesCacheKey cacheKey = new(psRequest);
+
+        ProtectionScopesResponse? cacheResponse = await this._cacheProvider.GetAsync<ProtectionScopesCacheKey, ProtectionScopesResponse>(cacheKey, cancellationToken).ConfigureAwait(false);
+
+        ProtectionScopesResponse psResponse;
+
+        if (cacheResponse != null)
+        {
+            psResponse = cacheResponse;
+        }
+        else
+        {
+            psResponse = await this._purviewClient.GetProtectionScopesAsync(psRequest, cancellationToken).ConfigureAwait(false);
+            await this._cacheProvider.SetAsync(cacheKey, psResponse, cancellationToken).ConfigureAwait(false);
+        }
+
         pcRequest.ScopeIdentifier = psResponse.ScopeIdentifier;
 
         (bool shouldProcess, List<DlpActionInfo> dlpActions) = CheckApplicableScopes(pcRequest, psResponse);
@@ -210,6 +229,12 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
         if (shouldProcess)
         {
             ProcessContentResponse pcResponse = await this._purviewClient.ProcessContentAsync(pcRequest, cancellationToken).ConfigureAwait(false);
+
+            if (pcResponse.ProtectionScopeState == ProtectionScopeState.Modified)
+            {
+                await this._cacheProvider.RemoveAsync(cacheKey, cancellationToken).ConfigureAwait(false);
+            }
+
             pcResponse = CombinePolicyActions(pcResponse, dlpActions);
             return pcResponse;
         }

@@ -2,6 +2,7 @@
 
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Agents.AI.Purview.Models.Common;
 using Microsoft.Agents.AI.Purview.Models.Requests;
 using Microsoft.Agents.AI.Purview.Models.Responses;
 
@@ -13,6 +14,7 @@ namespace Microsoft.Agents.AI.Purview.Serialization;
 [JsonSerializable(typeof(ProcessContentResponse))]
 [JsonSerializable(typeof(ContentActivitiesRequest))]
 [JsonSerializable(typeof(ContentActivitiesResponse))]
+[JsonSerializable(typeof(ProtectionScopesCacheKey))]
 internal sealed partial class SourceGenerationContext : JsonSerializerContext;
 
 /// <summary>
