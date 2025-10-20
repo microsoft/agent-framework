@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import os
 import tempfile
 
 from agent_framework import ChatAgent, HostedCodeInterpreterTool
@@ -52,8 +53,6 @@ async def cleanup_files(openai_client: AsyncOpenAI, temp_file_path: str, file_id
     print(f"Cleaned up uploaded file: {file_id}")
 
     # Clean up temporary local file
-    import os
-
     os.unlink(temp_file_path)
     print(f"Cleaned up temporary file: {temp_file_path}")
 
