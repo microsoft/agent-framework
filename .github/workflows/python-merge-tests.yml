@@ -92,7 +92,7 @@ jobs:
       - name: Test core samples
         timeout-minutes: 10
         if: env.RUN_SAMPLES_TESTS == 'true'
-        run: uv run pytest tests/samples/ -m "openai"
+        run: uv run pytest tests/samples/ -m "openai" -m "azure"
         working-directory: ./python
       - name: Surface failing tests
         if: always()
@@ -149,7 +149,7 @@ jobs:
       - name: Test Azure AI samples
         timeout-minutes: 10
         if: env.RUN_SAMPLES_TESTS == 'true'
-        run: uv run pytest tests/samples/ -m "azure-ai" -m "azure"
+        run: uv run pytest tests/samples/ -m "azure-ai"
         working-directory: ./python
       - name: Surface failing tests
         if: always()
