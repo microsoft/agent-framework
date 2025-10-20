@@ -76,9 +76,9 @@ internal static class ObjectExtensions
 
         IEnumerable<KeyValuePair<string, object?>> GetEntries()
         {
-            foreach (string key in value.Keys)
+            foreach (DictionaryEntry entry in value)
             {
-                yield return new KeyValuePair<string, object?>(key, value[key]);
+                yield return new KeyValuePair<string, object?>((string)entry.Key, entry.Value);
             }
         }
     }

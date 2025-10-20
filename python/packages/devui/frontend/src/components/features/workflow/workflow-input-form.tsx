@@ -32,22 +32,29 @@ interface FormFieldProps {
   isRequired?: boolean;
 }
 
+// Helper: Determine if field is likely a short metadata field (not multiline text)
+function isShortField(fieldName: string): boolean {
+  const shortFieldNames = ['name', 'title', 'id', 'key', 'label', 'type', 'status', 'tag', 'category', 'code', 'username', 'password'];
+  return shortFieldNames.includes(fieldName.toLowerCase());
+}
+
 function FormField({ name, schema, value, onChange, isRequired = false }: FormFieldProps) {
   const { type, description, enum: enumValues, default: defaultValue } = schema;
 
-  // For text/message/content fields, treat as textarea for better UX
-  const isTextContentField = ['text', 'message', 'content', 'query', 'prompt'].includes(name.toLowerCase());
+  // Determine if this should be a textarea based on JSON Schema format field
+  // or heuristics (long descriptions, specific field types)
+  const shouldBeTextarea =
+    schema.format === "textarea" ||  // Explicit format from backend
+    (description && description.length > 100) ||  // Long description suggests multiline
+    (type === "string" && !enumValues && !isShortField(name));  // Default strings to textarea unless they're short metadata fields
 
   // Determine if this field should span full width
-  // Only span full if it's a textarea or has very long description
   const shouldSpanFullWidth =
-    schema.format === "textarea" ||
-    isTextContentField ||  // text/message fields span full width
+    shouldBeTextarea ||
     (description && description.length > 150);
 
   const shouldSpanTwoColumns =
-    schema.format === "textarea" ||
-    isTextContentField ||
+    shouldBeTextarea ||
     (description && description.length > 80) ||
     type === "array";  // Arrays might need more space for comma-separated values
 
@@ -90,8 +97,7 @@ function FormField({ name, schema, value, onChange, isRequired = false }: FormFi
             </div>
           );
         } else if (
-          schema.format === "textarea" ||
-          isTextContentField ||
+          shouldBeTextarea ||
           (description && description.length > 100)
         ) {
           // Multi-line text (including text/message/content fields)
@@ -110,7 +116,8 @@ function FormField({ name, schema, value, onChange, isRequired = false }: FormFi
                     ? defaultValue
                     : `Enter ${name}`
                 }
-                rows={isTextContentField ? 4 : 2}
+                rows={shouldBeTextarea ? 4 : 2}
+                className="min-w-[300px] w-full"
               />
               {description && (
                 <p className="text-sm text-muted-foreground">{description}</p>
