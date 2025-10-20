@@ -35,7 +35,7 @@ public static class Program
     private static async Task Main()
     {
         // Set up the Azure OpenAI client
-        var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+        var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new Exception("AZURE_OPENAI_ENDPOINT is not set.");
         var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
         var chatClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName).AsIChatClient();
 
@@ -208,7 +208,7 @@ internal sealed class EmailAssistantExecutor : Executor<DetectionResult, EmailRe
     {
         if (message.IsSpam)
         {
-            throw new InvalidOperationException("This executor should only handle non-spam messages.");
+            throw new ArgumentException("This executor should only handle non-spam messages.");
         }
 
         // Retrieve the email content from the shared state
@@ -251,7 +251,7 @@ internal sealed class HandleSpamExecutor() : Executor<DetectionResult>("HandleSp
         }
         else
         {
-            throw new InvalidOperationException("This executor should only handle spam messages.");
+            throw new ArgumentException("This executor should only handle spam messages.");
         }
     }
 }
