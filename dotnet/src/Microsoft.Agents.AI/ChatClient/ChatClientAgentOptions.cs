@@ -101,7 +101,7 @@ public class ChatClientAgentOptions
     /// <summary>
     /// Creates a new instance of <see cref="ChatClientAgentOptions"/> with the same values as this instance.
     /// </summary>
-    internal ChatClientAgentOptions Clone()
+    public ChatClientAgentOptions Clone()
         => new()
         {
             Id = this.Id,

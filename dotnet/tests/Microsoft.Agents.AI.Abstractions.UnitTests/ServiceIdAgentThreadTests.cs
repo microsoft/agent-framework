@@ -36,7 +36,8 @@ public class ServiceIdAgentThreadTests
     public void Constructor_WithSerializedId_SetsProperty()
     {
         // Arrange
-        var json = JsonSerializer.SerializeToElement(new { ServiceThreadId = "service-id-456" });
+        var serviceThreadWrapper = new ServiceIdAgentThread.ServiceIdAgentThreadState { ServiceThreadId = "service-id-456" };
+        var json = JsonSerializer.SerializeToElement(serviceThreadWrapper, TestJsonSerializerContext.Default.ServiceIdAgentThreadState);
 
         // Act
         var thread = new TestServiceIdAgentThread(json);
@@ -49,7 +50,8 @@ public class ServiceIdAgentThreadTests
     public void Constructor_WithSerializedUndefinedId_SetsProperty()
     {
         // Arrange
-        var json = JsonSerializer.SerializeToElement(new { });
+        var emptyObject = new EmptyObject();
+        var json = JsonSerializer.SerializeToElement(emptyObject, TestJsonSerializerContext.Default.EmptyObject);
 
         // Act
         var thread = new TestServiceIdAgentThread(json);
@@ -62,7 +64,7 @@ public class ServiceIdAgentThreadTests
     public void Constructor_WithInvalidJson_ThrowsArgumentException()
     {
         // Arrange
-        var invalidJson = JsonSerializer.SerializeToElement(42);
+        var invalidJson = JsonSerializer.SerializeToElement(42, TestJsonSerializerContext.Default.Int32);
 
         // Act & Assert
         Assert.Throws<ArgumentException>(() => new TestServiceIdAgentThread(invalidJson));
@@ -110,5 +112,10 @@ public class ServiceIdAgentThreadTests
         public TestServiceIdAgentThread(string serviceThreadId) : base(serviceThreadId) { }
         public TestServiceIdAgentThread(JsonElement serializedThreadState) : base(serializedThreadState) { }
         public string? GetServiceThreadId() => this.ServiceThreadId;
+    }
+
+    // Helper class to represent empty objects
+    internal sealed class EmptyObject
+    {
     }
 }
