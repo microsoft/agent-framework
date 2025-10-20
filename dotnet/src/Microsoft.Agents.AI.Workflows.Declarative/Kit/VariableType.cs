@@ -58,6 +58,16 @@ public sealed class VariableType : IEquatable<VariableType>
         RecordType.IsAssignableFrom(type);
 
     /// <summary>
+    /// Creates a list (object) variable type with the supplied <paramref name="fields"/> schema.
+    /// Each tuple's Key is the field name; Type is the declared VariableType (nullable to allow "unknown"/late binding).
+    /// </summary>
+    public static VariableType List(params IEnumerable<(string Key, VariableType Type)> fields) =>
+        new(typeof(IEnumerable))
+        {
+            Schema = fields.ToFrozenDictionary(kv => kv.Key, kv => kv.Type),
+        };
+
+    /// <summary>
     /// Creates a record (object) variable type with the supplied <paramref name="fields"/> schema.
     /// Each tuple's Key is the field name; Type is the declared VariableType (nullable to allow "unknown"/late binding).
     /// </summary>

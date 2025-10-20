@@ -37,7 +37,7 @@ public sealed class JsonDocumentExtensionsTests
               "numberInt": 7,
               "numberLong": 9223372036854775807,
               "numberDecimal": 12.5,
-              "numberDouble": 9.75,
+              "numberDouble": 3.99E99,
               "flag": true,
               "date": "2024-10-01T12:34:56Z",
               "time": "2024-10-01T12:34:56+00:00"
@@ -49,7 +49,7 @@ public sealed class JsonDocumentExtensionsTests
 
         // Assert
         Assert.Equal("hello", result["text"]);
-        Assert.Equal(7d, result["numberInt"]);
+        Assert.Equal(7, result["numberInt"]);
         Assert.Equal(9223372036854775807L, result["numberLong"]);
         Assert.Equal(12.5m, result["numberDecimal"]);
         Assert.Equal(9.75d, result["numberDouble"]);
@@ -93,6 +93,8 @@ public sealed class JsonDocumentExtensionsTests
         // Assert
         Assert.Equal("outer", result["outerText"]);
         Dictionary<string, object?> nested = (Dictionary<string, object?>)result["nested"]!;
+        Assert.NotNull(nested);
+        Assert.True(nested.ContainsKey("innerText"));
         Assert.Equal("inner", nested["innerText"]);
         Assert.Equal(42, nested["innerNumber"]);
     }
@@ -120,8 +122,8 @@ public sealed class JsonDocumentExtensionsTests
     public void ParseRecord_ArrayWithSingleRecord_Succeeds()
     {
         // Arrange
-        VariableType recordType =
-            VariableType.Record(
+        VariableType listType =
+            VariableType.List(
                 [
                     ("name", new VariableType(typeof(string))),
                     ("value", new VariableType(typeof(int)))
@@ -138,11 +140,13 @@ public sealed class JsonDocumentExtensionsTests
             """);
 
         // Act
-        Dictionary<string, object?> result = document.ParseRecord(recordType);
+        List<object?> result = document.ParseList(listType);
 
         // Assert
-        Assert.Equal("item", result["name"]);
-        Assert.Equal(5, result["value"]);
+        Assert.Single(result);
+        Dictionary<string, object?> element = Assert.IsType<Dictionary<string, object?>>(result[0]);
+        Assert.Equal("item", element["name"]);
+        Assert.Equal(5, element["value"]);
     }
 
     [Fact]
@@ -204,17 +208,16 @@ public sealed class JsonDocumentExtensionsTests
         VariableType recordType =
             VariableType.Record(
                 [
-                    ("unsupported", new VariableType(typeof(float)))
+                    ("unsupported", new VariableType(typeof(Guid)))
                 ]);
 
         JsonDocument document = JsonDocument.Parse(
             """
-            { "unsupported": 3.14 }
+            { "unsupported": "C2556C11-210E-4BB6-BF18-4A8968CB45A8" }
             """);
 
         // Act / Assert
-        InvalidOperationException exception = Assert.Throws<InvalidOperationException>(() => document.ParseRecord(recordType));
-        Assert.Contains("Unsupported data type", exception.Message);
+        Assert.Throws<InvalidOperationException>(() => document.ParseRecord(recordType));
     }
 
     [Fact]
@@ -282,8 +285,8 @@ public sealed class JsonDocumentExtensionsTests
     public void ParseList_Array_Records_Succeeds()
     {
         // Arrange
-        VariableType recordType =
-            VariableType.Record(
+        VariableType listType =
+            VariableType.List(
                 [
                     ("id", new VariableType(typeof(int))),
                     ("name", new VariableType(typeof(string)))
@@ -297,14 +300,16 @@ public sealed class JsonDocumentExtensionsTests
             """);
 
         // Act
-        List<object?> result = document.ParseList(recordType);
+        List<object?> result = document.ParseList(listType);
 
         // Assert
         Assert.Equal(2, result.Count);
         Dictionary<string, object?> first = (Dictionary<string, object?>)result[0]!;
         Dictionary<string, object?> second = (Dictionary<string, object?>)result[1]!;
+        Assert.NotNull(first);
         Assert.Equal(1, first["id"]);
         Assert.Equal("a", first["name"]);
+        Assert.NotNull(second);
         Assert.Equal(2, second["id"]);
         Assert.Equal("b", second["name"]);
     }

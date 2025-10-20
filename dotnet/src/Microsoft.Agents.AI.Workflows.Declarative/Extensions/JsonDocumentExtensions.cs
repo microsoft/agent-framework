@@ -77,7 +77,7 @@ internal static class JsonDocumentExtensions
                 .ToList();
     }
 
-    private static object? ParseValue(this JsonElement propertyElement, VariableType targetType)
+    private static object? ParseValue(this JsonElement propertyElement, VariableType targetType) // %%% ONLY FOR TABLE / LIST
     {
         if (!propertyElement.TryParseValue(targetType, out object? value))
         {
@@ -87,17 +87,18 @@ internal static class JsonDocumentExtensions
         return value;
     }
 
-    private static readonly Dictionary<Type, Func<JsonElement, object?>> s_keyValuePairs = new()
-    {
-        [typeof(string)] = e => e.GetString(),
-        [typeof(int)] = e => e.GetInt32(),
-        [typeof(long)] = e => e.GetInt64(),
-        [typeof(decimal)] = e => e.GetDecimal(),
-        [typeof(double)] = e => e.GetDouble(),
-        [typeof(bool)] = e => e.GetBoolean(),
-        [typeof(DateTime)] = e => e.GetDateTime(),
-        [typeof(TimeSpan)] = e => e.GetDateTimeOffset().TimeOfDay,
-    };
+    private static readonly Dictionary<Type, Func<JsonElement, object?>> s_keyValuePairs =
+        new()
+        {
+            [typeof(string)] = e => e.GetString(),
+            [typeof(int)] = e => e.GetInt32(),
+            [typeof(long)] = e => e.GetInt64(),
+            [typeof(decimal)] = e => e.GetDecimal(),
+            [typeof(double)] = e => e.GetDouble(),
+            [typeof(bool)] = e => e.GetBoolean(),
+            [typeof(DateTime)] = e => e.GetDateTime(),
+            [typeof(TimeSpan)] = e => e.GetDateTimeOffset().TimeOfDay,
+        };
 
     private static bool TryParseValue(this JsonElement propertyElement, VariableType targetType, out object? value)
     {
@@ -105,10 +106,13 @@ internal static class JsonDocumentExtensions
             targetType.Type.GetElementType() ??
             propertyElement.ValueKind switch
             {
-                JsonValueKind.String => typeof(string),
-                JsonValueKind.Number => typeof(double),
+                JsonValueKind.String => typeof(string), // %%% TODO
+                JsonValueKind.Number => typeof(double), // %%% TODO
                 JsonValueKind.True or JsonValueKind.False => typeof(bool),
-                _ => null,
+                JsonValueKind.Object => throw new InvalidOperationException("TBD: OBJECT CONVERSION!!!"), // %%% TODO
+                JsonValueKind.Array => throw new InvalidOperationException("TBD: ARRAY CONVERSION!!!"), // %%% TODO
+                JsonValueKind.Null => null,
+                _ => throw new InvalidOperationException($"JSON element of type {propertyElement.ValueKind} is not supported."),
             };
 
         if (elementType is null)
@@ -137,5 +141,28 @@ internal static class JsonDocumentExtensions
 
         value = null;
         return false;
+    }
+
+    private static object GetNumericValue(JsonElement element)
+    {
+        // Try parsing as integer types first (most precise representation)
+        if (element.TryGetInt32(out int intValue))
+        {
+            return intValue;
+        }
+
+        if (element.TryGetInt64(out long longValue))
+        {
+            return longValue;
+        }
+
+        // Try decimal for precise decimal values
+        if (element.TryGetDecimal(out decimal decimalValue))
+        {
+            return decimalValue;
+        }
+
+        // Fall back to double for other numeric values
+        return element.GetDouble();
     }
 }
