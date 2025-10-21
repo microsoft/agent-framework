@@ -147,7 +147,7 @@ using (appLogger.BeginScope(new Dictionary<string, object> { ["SessionId"] = ses
 
     while (true)
     {
-        Console.Write("You: ");
+        Console.Write("You ('exit' to quit): ");
         var userInput = Console.ReadLine();
 
         if (string.IsNullOrWhiteSpace(userInput) || userInput.Equals("exit", StringComparison.OrdinalIgnoreCase))

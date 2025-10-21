@@ -1,10 +1,10 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 
-namespace WorkflowAsAnAgentSample;
+namespace WorkflowAsAnAgentObservabilitySample;
 
 internal static class WorkflowHelper
 {
@@ -12,14 +12,15 @@ internal static class WorkflowHelper
     /// Creates a workflow that uses two language agents to process input concurrently.
     /// </summary>
     /// <param name="chatClient">The chat client to use for the agents</param>
+    /// <param name="sourceName">The source name for OpenTelemetry instrumentation</param>
     /// <returns>A workflow that processes input using two language agents</returns>
-    internal static Workflow GetWorkflow(IChatClient chatClient)
+    internal static Workflow GetWorkflow(IChatClient chatClient, string sourceName)
     {
         // Create executors
         var startExecutor = new ConcurrentStartExecutor();
         var aggregationExecutor = new ConcurrentAggregationExecutor();
-        AIAgent frenchAgent = GetLanguageAgent("French", chatClient);
-        AIAgent englishAgent = GetLanguageAgent("English", chatClient);
+        AIAgent frenchAgent = GetLanguageAgent("French", chatClient, sourceName);
+        AIAgent englishAgent = GetLanguageAgent("English", chatClient, sourceName);
 
         // Build the workflow by adding executors and connecting them
         return new WorkflowBuilder(startExecutor)
@@ -34,9 +35,17 @@ internal static class WorkflowHelper
     /// </summary>
     /// <param name="targetLanguage">The target language for translation</param>
     /// <param name="chatClient">The chat client to use for the agent</param>
-    /// <returns>A ChatClientAgent configured for the specified language</returns>
-    private static ChatClientAgent GetLanguageAgent(string targetLanguage, IChatClient chatClient) =>
-        new(chatClient, instructions: $"You're a helpful assistant who always responds in {targetLanguage}.", name: $"{targetLanguage}Agent");
+    /// <param name="sourceName">The source name for OpenTelemetry instrumentation</param>
+    /// <returns>An AIAgent configured for the specified language</returns>
+    private static AIAgent GetLanguageAgent(string targetLanguage, IChatClient chatClient, string sourceName) =>
+        new ChatClientAgent(
+            chatClient,
+            instructions: $"You're a helpful assistant who always responds in {targetLanguage}.",
+            name: $"{targetLanguage}Agent"
+        )
+        .AsBuilder()
+        .UseOpenTelemetry(sourceName)   // enable telemetry at the agent level
+        .Build();
 
     /// <summary>
     /// Executor that starts the concurrent processing by sending messages to the agents.
