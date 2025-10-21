@@ -2,10 +2,17 @@
 
 using System;
 using System.Collections.Generic;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.Core;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Caching.Distributed;
+using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 namespace Microsoft.Agents.AI.Purview;
 
@@ -14,16 +21,42 @@ namespace Microsoft.Agents.AI.Purview;
 /// </summary>
 public static class PurviewExtensions
 {
+    private static PurviewWrapper CreateWrapper(TokenCredential tokenCredential, PurviewSettings purviewSettings, ILogger? logger = null, IDistributedCache? cache = null)
+    {
+        MemoryDistributedCacheOptions options = new()
+        {
+            SizeLimit = purviewSettings.InMemoryCacheSizeLimit,
+        };
+
+        IDistributedCache distributedCache = cache ?? new MemoryDistributedCache(Options.Create(options));
+
+        ServiceCollection services = new();
+        services.AddSingleton(tokenCredential);
+        services.AddSingleton(purviewSettings);
+        services.AddSingleton<IPurviewClient, PurviewClient>();
+        services.AddSingleton<IScopedContentProcessor, ScopedContentProcessor>();
+        services.AddSingleton(distributedCache);
+        services.AddSingleton<ICacheProvider, CacheProvider>();
+        services.AddSingleton<HttpClient>();
+        services.AddSingleton(logger ?? NullLogger.Instance);
+        services.AddSingleton<PurviewWrapper>();
+        ServiceProvider serviceProvider = services.BuildServiceProvider();
+
+        return serviceProvider.GetRequiredService<PurviewWrapper>();
+    }
+
     /// <summary>
     /// Adds Purview capabilities to an <see cref="AIAgentBuilder"/>.
     /// </summary>
     /// <param name="builder">The AI Agent builder for the <see cref="AIAgent"/>.</param>
     /// <param name="tokenCredential">The token credential used to authenticate with Purview.</param>
     /// <param name="purviewSettings">The settings for communication with Purview.</param>
+    /// <param name="logger">The logger to use for logging.</param>
+    /// <param name="cache">The distributed cache to use for caching Purview responses. An in memory cache will be used if this is null.</param>
     /// <returns>The updated <see cref="AIAgentBuilder"/></returns>
-    public static AIAgentBuilder WithPurview(this AIAgentBuilder builder, TokenCredential tokenCredential, PurviewSettings purviewSettings)
+    public static AIAgentBuilder WithPurview(this AIAgentBuilder builder, TokenCredential tokenCredential, PurviewSettings purviewSettings, ILogger? logger = null, IDistributedCache? cache = null)
     {
-        PurviewWrapper purviewWrapper = new(tokenCredential, purviewSettings);
+        PurviewWrapper purviewWrapper = CreateWrapper(tokenCredential, purviewSettings, logger, cache);
         return builder.Use(purviewWrapper.ProcessAgentContentAsync, null);
     }
 
@@ -33,10 +66,12 @@ public static class PurviewExtensions
     /// <param name="builder">The chat client builder for the <see cref="IChatClient"/>.</param>
     /// <param name="tokenCredential">The token credential used to authenticate with Purview.</param>
     /// <param name="purviewSettings">The settings for communication with Purview.</param>
+    /// <param name="logger">The logger to use for logging.</param>
+    /// <param name="cache">The distributed cache to use for caching Purview responses. An in memory cache will be used if this is null.</param>
     /// <returns>The updated <see cref="ChatClientBuilder"/></returns>
-    public static ChatClientBuilder WithPurview(this ChatClientBuilder builder, TokenCredential tokenCredential, PurviewSettings purviewSettings)
+    public static ChatClientBuilder WithPurview(this ChatClientBuilder builder, TokenCredential tokenCredential, PurviewSettings purviewSettings, ILogger? logger = null, IDistributedCache? cache = null)
     {
-        PurviewWrapper purviewWrapper = new(tokenCredential, purviewSettings);
+        PurviewWrapper purviewWrapper = CreateWrapper(tokenCredential, purviewSettings, logger, cache);
         return builder.Use(purviewWrapper.ProcessChatContentAsync, null);
     }
 
@@ -45,10 +80,12 @@ public static class PurviewExtensions
     /// </summary>
     /// <param name="tokenCredential">The token credential used to authenticate with Purview.</param>
     /// <param name="purviewSettings">The settings for communication with Purview.</param>
+    /// <param name="logger">The logger to use for logging.</param>
+    /// <param name="cache">The distributed cache to use for caching Purview responses. An in memory cache will be used if this is null.</param>
     /// <returns>A chat middleware delegate.</returns>
-    public static Func<IEnumerable<ChatMessage>, ChatOptions?, IChatClient, CancellationToken, Task<ChatResponse>> PurviewChatMiddleware(TokenCredential tokenCredential, PurviewSettings purviewSettings)
+    public static Func<IEnumerable<ChatMessage>, ChatOptions?, IChatClient, CancellationToken, Task<ChatResponse>> PurviewChatMiddleware(TokenCredential tokenCredential, PurviewSettings purviewSettings, ILogger? logger = null, IDistributedCache? cache = null)
     {
-        PurviewWrapper purviewWrapper = new(tokenCredential, purviewSettings);
+        PurviewWrapper purviewWrapper = CreateWrapper(tokenCredential, purviewSettings, logger, cache);
         return purviewWrapper.ProcessChatContentAsync;
     }
 
@@ -57,10 +94,12 @@ public static class PurviewExtensions
     /// </summary>
     /// <param name="tokenCredential">The token credential used to authenticate with Purview.</param>
     /// <param name="purviewSettings">The settings for communication with Purview.</param>
+    /// <param name="logger">The logger to use for logging.</param>
+    /// <param name="cache">The distributed cache to use for caching Purview responses. An in memory cache will be used if this is null.</param>
     /// <returns>An agent middleware delegate.</returns>
-    public static Func<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, AIAgent, CancellationToken, Task<AgentRunResponse>> PurviewAgentMiddleware(TokenCredential tokenCredential, PurviewSettings purviewSettings)
+    public static Func<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, AIAgent, CancellationToken, Task<AgentRunResponse>> PurviewAgentMiddleware(TokenCredential tokenCredential, PurviewSettings purviewSettings, ILogger? logger = null, IDistributedCache? cache = null)
     {
-        PurviewWrapper purviewWrapper = new(tokenCredential, purviewSettings);
+        PurviewWrapper purviewWrapper = CreateWrapper(tokenCredential, purviewSettings, logger, cache);
         return purviewWrapper.ProcessAgentContentAsync;
     }
 

@@ -2,18 +2,11 @@
 
 using System;
 using System.Collections.Generic;
-using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
-using Azure.Core;
 using Microsoft.Agents.AI.Purview.Models.Common;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.Caching.Distributed;
-using Microsoft.Extensions.Caching.Memory;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 
 namespace Microsoft.Agents.AI.Purview;
 
@@ -29,33 +22,14 @@ internal sealed class PurviewWrapper
     /// <summary>
     /// Creates a new <see cref="PurviewWrapper"/> instance.
     /// </summary>
-    /// <param name="tokenCredential"></param>
+    /// <param name="scopedProcessor"></param>
     /// <param name="purviewSettings"></param>
     /// <param name="logger"></param>
-    public PurviewWrapper(TokenCredential tokenCredential, PurviewSettings purviewSettings, ILogger? logger = null)
+    public PurviewWrapper(IScopedContentProcessor scopedProcessor, PurviewSettings purviewSettings, ILogger logger)
     {
-        ServiceCollection services = new();
-        services.AddSingleton(tokenCredential);
-        services.AddSingleton(purviewSettings);
-        services.AddSingleton<IPurviewClient, PurviewClient>();
-        services.AddSingleton<IScopedContentProcessor, ScopedContentProcessor>();
-
-        MemoryDistributedCacheOptions options = new()
-        {
-            SizeLimit = purviewSettings.CacheSizeLimit,
-        };
-
-        IDistributedCache cache = purviewSettings.Cache ?? new MemoryDistributedCache(Options.Create(options));
-
-        services.AddSingleton(cache);
-        services.AddSingleton<ICacheProvider, CacheProvider>();
-        services.AddSingleton<HttpClient>();
-        services.AddSingleton(logger ?? NullLogger.Instance);
-        ServiceProvider serviceProvider = services.BuildServiceProvider();
-
-        this._logger = serviceProvider.GetRequiredService<ILogger>();
-        this._scopedProcessor = serviceProvider.GetRequiredService<IScopedContentProcessor>();
-        this._purviewSettings = serviceProvider.GetRequiredService<PurviewSettings>();
+        this._scopedProcessor = scopedProcessor;
+        this._purviewSettings = purviewSettings;
+        this._logger = logger;
     }
 
     private static string GetThreadIdFromAgentThread(AgentThread? thread, IEnumerable<ChatMessage> messages)
