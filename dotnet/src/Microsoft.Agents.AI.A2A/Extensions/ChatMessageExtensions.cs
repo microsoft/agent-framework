@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using A2A;
 
 namespace Microsoft.Extensions.AI;
