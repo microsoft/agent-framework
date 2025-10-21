@@ -1,0 +1,17 @@
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: my_workflow
+
+  actions:
+    - kind: SetVariable
+      id: set_var
+      variable: Local.MySource
+      value: '["apple","banana","cat"]'
+
+    - kind: ParseValue
+      id: parse_var
+      variable: Local.MyVar
+      value: =Local.MySource
+      valueType: Table

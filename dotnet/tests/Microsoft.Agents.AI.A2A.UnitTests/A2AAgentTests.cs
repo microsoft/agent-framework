@@ -371,7 +371,7 @@ public sealed class A2AAgentTests : IDisposable
             new(ChatRole.User,
             [
                 new TextContent("Check this file:"),
-                new HostedFileContent("https://example.com/file.pdf")
+                new UriContent("https://example.com/file.pdf", "application/pdf")
             ])
         };
 
@@ -385,7 +385,7 @@ public sealed class A2AAgentTests : IDisposable
         Assert.IsType<TextPart>(message.Parts[0]);
         Assert.Equal("Check this file:", ((TextPart)message.Parts[0]).Text);
         Assert.IsType<FilePart>(message.Parts[1]);
-        Assert.Equal("https://example.com/file.pdf", ((FileWithUri)((FilePart)message.Parts[1]).File).Uri);
+        Assert.Equal("https://example.com/file.pdf", ((FilePart)message.Parts[1]).File.Uri?.ToString());
     }
 
     public void Dispose()
