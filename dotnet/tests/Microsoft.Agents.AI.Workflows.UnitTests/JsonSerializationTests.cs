@@ -155,7 +155,7 @@ public class JsonSerializationTests
     private static RequestPortInfo IntToString => RequestPort.Create<int, string>(IntToStringId).ToPortInfo();
     private static RequestPortInfo StringToInt => RequestPort.Create<string, int>(StringToIntId).ToPortInfo();
 
-    private static ValueTask<Workflow<string>> CreateTestWorkflowAsync()
+    private static Workflow CreateTestWorkflow()
     {
         ForwardMessageExecutor<string> forwardString = new(ForwardStringId);
         ForwardMessageExecutor<int> forwardInt = new(ForwardIntId);
@@ -169,12 +169,12 @@ public class JsonSerializationTests
                .AddEdge(forwardInt, intToString)
                .AddEdge(intToString, StreamingAggregators.Last<int>().AsExecutor("Aggregate"));
 
-        return builder.BuildAsync<string>();
+        return builder.Build();
     }
 
-    internal static async ValueTask<WorkflowInfo> CreateTestWorkflowInfoAsync()
+    internal static WorkflowInfo CreateTestWorkflowInfo()
     {
-        Workflow<string> testWorkflow = await CreateTestWorkflowAsync().ConfigureAwait(false);
+        Workflow testWorkflow = CreateTestWorkflow();
         return testWorkflow.ToWorkflowInfo();
     }
 
@@ -232,7 +232,7 @@ public class JsonSerializationTests
     [Fact]
     public async Task Test_WorkflowInfo_JsonRoundtripAsync()
     {
-        WorkflowInfo prototype = await CreateTestWorkflowInfoAsync();
+        WorkflowInfo prototype = CreateTestWorkflowInfo();
 
         JsonMarshaller marshaller = new();
 
@@ -637,7 +637,7 @@ public class JsonSerializationTests
     [Fact]
     public async Task Test_Checkpoint_JsonRoundTripAsync()
     {
-        WorkflowInfo testWorkflowInfo = await CreateTestWorkflowInfoAsync();
+        WorkflowInfo testWorkflowInfo = CreateTestWorkflowInfo();
         Checkpoint prototype = new(12, testWorkflowInfo, TestRunnerStateData, TestStateData, TestEdgeState, TestParentCheckpointInfo);
         Checkpoint result = RunJsonRoundtrip(prototype, TestCustomSerializedJsonOptions);
 

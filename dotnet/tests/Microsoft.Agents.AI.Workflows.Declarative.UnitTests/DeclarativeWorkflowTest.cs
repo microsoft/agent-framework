@@ -150,12 +150,14 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     [InlineData("EditTable.yaml", 2, "edit_var")]
     [InlineData("EditTableV2.yaml", 2, "edit_var")]
     [InlineData("ParseValue.yaml", 2, "parse_var")]
+    [InlineData("ParseValueList.yaml", 2, "parse_var")]
     [InlineData("SendActivity.yaml", 2, "activity_input")]
     [InlineData("SetVariable.yaml", 1, "set_var")]
     [InlineData("SetTextVariable.yaml", 1, "set_text")]
     [InlineData("ClearAllVariables.yaml", 1, "clear_all")]
     [InlineData("ResetVariable.yaml", 2, "clear_var")]
     [InlineData("MixedScopes.yaml", 2, "activity_input")]
+    [InlineData("CaseInsensitive.yaml", 6, "end_when_match")]
     public async Task ExecuteActionAsync(string workflowFile, int expectedCount, string expectedId)
     {
         await this.RunWorkflowAsync(workflowFile);

@@ -16,7 +16,7 @@ namespace Microsoft.Agents.AI.Workflows;
 public static partial class AgentWorkflowBuilder
 {
     /// <summary>
-    /// Builds a <see cref="Workflow{T}"/> composed of a pipeline of agents where the output of one agent is the input to the next.
+    /// Builds a <see cref="Workflow"/> composed of a pipeline of agents where the output of one agent is the input to the next.
     /// </summary>
     /// <param name="agents">The sequence of agents to compose into a sequential workflow.</param>
     /// <returns>The built workflow composed of the supplied <paramref name="agents"/>, in the order in which they were yielded from the source.</returns>
@@ -24,7 +24,7 @@ public static partial class AgentWorkflowBuilder
         => BuildSequentialCore(workflowName: null, agents);
 
     /// <summary>
-    /// Builds a <see cref="Workflow{T}"/> composed of a pipeline of agents where the output of one agent is the input to the next.
+    /// Builds a <see cref="Workflow"/> composed of a pipeline of agents where the output of one agent is the input to the next.
     /// </summary>
     /// <param name="workflowName">The name of workflow.</param>
     /// <param name="agents">The sequence of agents to compose into a sequential workflow.</param>
@@ -76,7 +76,7 @@ public static partial class AgentWorkflowBuilder
     }
 
     /// <summary>
-    /// Builds a <see cref="Workflow{T}"/> composed of agents that operate concurrently on the same input,
+    /// Builds a <see cref="Workflow"/> composed of agents that operate concurrently on the same input,
     /// aggregating their outputs into a single collection.
     /// </summary>
     /// <param name="agents">The set of agents to compose into a concurrent workflow.</param>
@@ -92,7 +92,7 @@ public static partial class AgentWorkflowBuilder
         => BuildConcurrentCore(workflowName: null, agents, aggregator);
 
     /// <summary>
-    /// Builds a <see cref="Workflow{T}"/> composed of agents that operate concurrently on the same input,
+    /// Builds a <see cref="Workflow"/> composed of agents that operate concurrently on the same input,
     /// aggregating their outputs into a single collection.
     /// </summary>
     /// <param name="workflowName">The name of the workflow.</param>
