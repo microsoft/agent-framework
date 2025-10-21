@@ -94,6 +94,7 @@
     <File Path="../workflow-samples/HumanInLoop.yaml" />
     <File Path="../workflow-samples/Marketing.yaml" />
     <File Path="../workflow-samples/MathChat.yaml" />
+    <File Path="../workflow-samples/ParseValue.yaml" />
     <File Path="../workflow-samples/README.md" />
     <File Path="../workflow-samples/wttr.json" />
   </Folder>
