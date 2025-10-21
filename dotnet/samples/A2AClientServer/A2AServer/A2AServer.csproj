@@ -12,8 +12,8 @@
     <PackageReference Include="A2A.AspNetCore" />
     <PackageReference Include="Azure.AI.Agents.Persistent" />
     <PackageReference Include="Azure.Identity" />
-    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" VersionOverride="10.0.0-preview.5.25277.114" />
-    <PackageReference Include="System.Net.ServerSentEvents" VersionOverride="10.0.0-preview.5.25277.114" />
+    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" VersionOverride="10.0.0-rc.2.25502.107" />
+    <PackageReference Include="System.Net.ServerSentEvents" VersionOverride="10.0.0-rc.2.25502.107" />
   </ItemGroup>
 
   <ItemGroup>

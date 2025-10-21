@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.AI.Workflows;
-using Microsoft.Agents.AI.Workflows.Reflection;
 
 namespace WorkflowHumanInTheLoopBasicSample;
 
@@ -11,7 +10,7 @@ internal static class WorkflowHelper
     /// Get a workflow that plays a number guessing game with human-in-the-loop interaction.
     /// An input port allows the external world to provide inputs to the workflow upon requests.
     /// </summary>
-    internal static ValueTask<Workflow<NumberSignal>> GetWorkflowAsync()
+    internal static Workflow GetWorkflow()
     {
         // Create the executors
         RequestPort numberRequestPort = RequestPort.Create<NumberSignal, int>("GuessNumber");
@@ -22,7 +21,7 @@ internal static class WorkflowHelper
             .AddEdge(numberRequestPort, judgeExecutor)
             .AddEdge(judgeExecutor, numberRequestPort)
             .WithOutputFrom(judgeExecutor)
-            .BuildAsync<NumberSignal>();
+            .Build();
     }
 }
 
@@ -39,7 +38,7 @@ internal enum NumberSignal
 /// <summary>
 /// Executor that judges the guess and provides feedback.
 /// </summary>
-internal sealed class JudgeExecutor() : ReflectingExecutor<JudgeExecutor>("Judge"), IMessageHandler<int>
+internal sealed class JudgeExecutor() : Executor<int>("Judge")
 {
     private readonly int _targetNumber;
     private int _tries;
@@ -53,21 +52,20 @@ internal sealed class JudgeExecutor() : ReflectingExecutor<JudgeExecutor>("Judge
         this._targetNumber = targetNumber;
     }
 
-    public async ValueTask HandleAsync(int message, IWorkflowContext context, CancellationToken cancellationToken = default)
+    public override async ValueTask HandleAsync(int message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         this._tries++;
         if (message == this._targetNumber)
         {
-            await context.YieldOutputAsync($"{this._targetNumber} found in {this._tries} tries!", cancellationToken)
-                         .ConfigureAwait(false);
+            await context.YieldOutputAsync($"{this._targetNumber} found in {this._tries} tries!", cancellationToken);
         }
         else if (message < this._targetNumber)
         {
-            await context.SendMessageAsync(NumberSignal.Below, cancellationToken: cancellationToken).ConfigureAwait(false);
+            await context.SendMessageAsync(NumberSignal.Below, cancellationToken: cancellationToken);
         }
         else
         {
-            await context.SendMessageAsync(NumberSignal.Above, cancellationToken: cancellationToken).ConfigureAwait(false);
+            await context.SendMessageAsync(NumberSignal.Above, cancellationToken: cancellationToken);
         }
     }
 }

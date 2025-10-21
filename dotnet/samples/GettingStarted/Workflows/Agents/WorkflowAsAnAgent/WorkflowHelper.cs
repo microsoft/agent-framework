@@ -2,7 +2,6 @@
 
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
-using Microsoft.Agents.AI.Workflows.Reflection;
 using Microsoft.Extensions.AI;
 
 namespace WorkflowAsAnAgentsSample;
@@ -14,7 +13,7 @@ internal static class WorkflowHelper
     /// </summary>
     /// <param name="chatClient">The chat client to use for the agents</param>
     /// <returns>A workflow that processes input using two language agents</returns>
-    internal static ValueTask<Workflow<List<ChatMessage>>> GetWorkflowAsync(IChatClient chatClient)
+    internal static Workflow GetWorkflow(IChatClient chatClient)
     {
         // Create executors
         var startExecutor = new ConcurrentStartExecutor();
@@ -27,7 +26,7 @@ internal static class WorkflowHelper
             .AddFanOutEdge(startExecutor, targets: [frenchAgent, englishAgent])
             .AddFanInEdge(aggregationExecutor, sources: [frenchAgent, englishAgent])
             .WithOutputFrom(aggregationExecutor)
-            .BuildAsync<List<ChatMessage>>();
+            .Build();
     }
 
     /// <summary>
@@ -43,8 +42,7 @@ internal static class WorkflowHelper
     /// Executor that starts the concurrent processing by sending messages to the agents.
     /// </summary>
     private sealed class ConcurrentStartExecutor() :
-        ReflectingExecutor<ConcurrentStartExecutor>("ConcurrentStartExecutor"),
-        IMessageHandler<List<ChatMessage>>
+        Executor<List<ChatMessage>>("ConcurrentStartExecutor")
     {
         /// <summary>
         /// Starts the concurrent processing by sending messages to the agents.
@@ -53,7 +51,7 @@ internal static class WorkflowHelper
         /// <param name="context">Workflow context for accessing workflow services and adding events</param>
         /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
         /// The default is <see cref="CancellationToken.None"/>.</param>
-        public async ValueTask HandleAsync(List<ChatMessage> message, IWorkflowContext context, CancellationToken cancellationToken = default)
+        public override async ValueTask HandleAsync(List<ChatMessage> message, IWorkflowContext context, CancellationToken cancellationToken = default)
         {
             // Broadcast the message to all connected agents. Receiving agents will queue
             // the message but will not start processing until they receive a turn token.
@@ -67,8 +65,7 @@ internal static class WorkflowHelper
     /// Executor that aggregates the results from the concurrent agents.
     /// </summary>
     private sealed class ConcurrentAggregationExecutor() :
-        ReflectingExecutor<ConcurrentAggregationExecutor>("ConcurrentAggregationExecutor"),
-        IMessageHandler<ChatMessage>
+        Executor<ChatMessage>("ConcurrentAggregationExecutor")
     {
         private readonly List<ChatMessage> _messages = [];
 
@@ -79,7 +76,7 @@ internal static class WorkflowHelper
         /// <param name="context">Workflow context for accessing workflow services and adding events</param>
         /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
         /// The default is <see cref="CancellationToken.None"/>.</param>
-        public async ValueTask HandleAsync(ChatMessage message, IWorkflowContext context, CancellationToken cancellationToken = default)
+        public override async ValueTask HandleAsync(ChatMessage message, IWorkflowContext context, CancellationToken cancellationToken = default)
         {
             this._messages.Add(message);
 

@@ -1,0 +1,28 @@
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: workflow_test
+  actions:
+
+    - kind: InvokeAzureAgent
+      id: invoke_greet
+      conversationId: =System.ConversationId
+      agent:
+        name: =Env.FOUNDRY_AGENT_TOOL
+
+    - kind: InvokeAzureAgent
+      id: invoke_menu
+      conversationId: =System.ConversationId
+      agent:
+        name: =Env.FOUNDRY_AGENT_TOOL
+      input:
+        messages: =UserMessage("What's on today's menu?")
+
+    - kind: InvokeAzureAgent
+      id: invoke_item
+      conversationId: =System.ConversationId  
+      agent:
+        name: =Env.FOUNDRY_AGENT_TOOL
+      input:
+        messages: =UserMessage("How much is the clam chowder?")

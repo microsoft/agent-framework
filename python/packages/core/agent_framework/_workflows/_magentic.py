@@ -30,7 +30,8 @@ from ._events import WorkflowEvent
 from ._executor import Executor, handler
 from ._model_utils import DictConvertible, encode_value
 from ._request_info_executor import RequestInfoMessage, RequestResponse
-from ._workflow import Workflow, WorkflowBuilder, WorkflowRunResult
+from ._workflow import Workflow, WorkflowRunResult
+from ._workflow_builder import WorkflowBuilder
 from ._workflow_context import WorkflowContext
 
 if sys.version_info >= (3, 11):
@@ -1071,7 +1072,7 @@ class MagenticOrchestratorExecutor(Executor):
     ) -> None:
         if self._state_restored and self._context is not None:
             return
-        state = await context.get_state()
+        state = await context.get_executor_state()
         if not state:
             self._state_restored = True
             return
@@ -1552,7 +1553,7 @@ class MagenticAgentExecutor(Executor):
     async def _ensure_state_restored(self, context: WorkflowContext[Any, Any]) -> None:
         if self._state_restored and self._chat_history:
             return
-        state = await context.get_state()
+        state = await context.get_executor_state()
         if not state:
             self._state_restored = True
             return
