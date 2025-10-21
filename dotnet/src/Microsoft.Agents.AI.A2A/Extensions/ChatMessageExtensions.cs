@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using A2A;
 
 namespace Microsoft.Extensions.AI;
@@ -17,7 +18,7 @@ internal static class ChatMessageExtensions
 
         foreach (var message in messages)
         {
-            if (message.Contents.ToA2AParts() is { Count: > 0 } ps)
+            if (message.Contents.ToParts() is { Count: > 0 } ps)
             {
                 allParts.AddRange(ps);
             }
