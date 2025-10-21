@@ -371,7 +371,7 @@ public sealed class A2AAgentTests : IDisposable
             new(ChatRole.User,
             [
                 new TextContent("Check this file:"),
-                new UriContent("https://example.com/file.pdf", "file/pdf")
+                new UriContent("https://example.com/file.pdf", "application/pdf")
             ])
         };
 
