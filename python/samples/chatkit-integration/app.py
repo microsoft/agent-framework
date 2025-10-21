@@ -22,21 +22,30 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import Field
 
 # Agent Framework imports
-from agent_framework import ChatAgent
+from agent_framework import ChatAgent, ChatMessage, Role
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework_chatkit import simple_to_agent_input, stream_agent_response, stream_widget
 
 # ChatKit imports
+from chatkit.actions import Action
 from chatkit.server import ChatKitServer
-from chatkit.types import ThreadMetadata, ThreadStreamEvent, UserMessageItem
+from chatkit.types import ThreadMetadata, ThreadStreamEvent, UserMessageItem, WidgetItem
 
 # Local imports
 from store import SQLiteStore
-from weather_widget import WeatherData, render_weather_widget, weather_widget_copy_text
+from weather_widget import (
+    WeatherData,
+    city_selector_copy_text,
+    render_city_selector_widget,
+    render_weather_widget,
+    weather_widget_copy_text,
+)
 
 
 # Global variable to store weather data for widget creation
 _last_weather_data: WeatherData | None = None
+# Global flag to show city selector
+_show_city_selector: bool = False
 
 
 def get_weather(
@@ -81,6 +90,17 @@ def get_time() -> str:
     return f"Current UTC time: {current_time.strftime('%Y-%m-%d %H:%M:%S')} UTC"
 
 
+def show_city_selector() -> str:
+    """Show an interactive city selector widget to the user.
+
+    This function triggers the display of a widget that allows users
+    to select from popular cities to get weather information.
+    """
+    global _show_city_selector
+    _show_city_selector = True
+    return "I'll show you a list of cities to choose from."
+
+
 class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
     """ChatKit server implementation using Agent Framework.
 
@@ -99,9 +119,11 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
                 "You are a helpful weather assistant. You can provide weather information "
                 "for any location and tell the current time. Be friendly and informative "
                 "in your responses. When you provide weather information, a beautiful "
-                "interactive weather widget will be displayed to the user automatically."
+                "interactive weather widget will be displayed to the user automatically.\n\n"
+                "If a user asks to see a list of cities or wants to choose from available "
+                "cities, use the show_city_selector tool to display an interactive city selector."
             ),
-            tools=[get_weather, get_time],
+            tools=[get_weather, get_time, show_city_selector],
         )
 
     async def respond(
@@ -116,14 +138,15 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
         runs the agent, converts the response back to ChatKit events,
         and creates interactive weather widgets when weather data is queried.
         """
-        global _last_weather_data
+        global _last_weather_data, _show_city_selector
 
         if input_user_message is None:
             return
 
         try:
-            # Reset weather data
+            # Reset weather data and city selector flag
             _last_weather_data = None
+            _show_city_selector = False
 
             # Convert ChatKit input to Agent Framework messages
             agent_messages = await simple_to_agent_input(input_user_message)
@@ -150,6 +173,18 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
                 ):
                     yield widget_event
 
+            # If city selector should be shown, create and stream that widget
+            if _show_city_selector:
+                # Create city selector widget
+                selector_widget = render_city_selector_widget()
+                selector_copy_text = city_selector_copy_text()
+
+                # Stream the widget
+                async for widget_event in stream_widget(
+                    thread_id=thread.id, widget=selector_widget, copy_text=selector_copy_text
+                ):
+                    yield widget_event
+
         except Exception as e:
             # In a real application, you'd want better error handling and logging
             print(f"Error processing message: {e}")
@@ -157,7 +192,59 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
 
             traceback.print_exc()
 
+    async def action(
+        self,
+        thread: ThreadMetadata,
+        action: Action[str, Any],
+        sender: WidgetItem | None,
+        context: dict[str, Any],
+    ) -> AsyncIterator[ThreadStreamEvent]:
+        """Handle widget actions from the frontend.
 
+        This method processes actions triggered by interactive widgets,
+        such as city selection from the city selector widget.
+        """
+        global _last_weather_data
+
+        if action.type == "city_selected":
+            # Extract city information from the action payload
+            city_label = action.payload.get("city_label", "Unknown")
+
+            # Debug logging
+            print(f"[DEBUG] City selected action received")
+            print(f"[DEBUG] Action payload: {action.payload}")
+            print(f"[DEBUG] City label: {city_label}")
+
+            # Reset weather data
+            _last_weather_data = None
+
+            # Create an agent message asking about the weather
+            agent_messages = [ChatMessage(role=Role.USER, text=f"What's the weather in {city_label}?")]
+
+            print(f"[DEBUG] Sending message to agent: {agent_messages[0].text}")
+
+            # Run the Agent Framework agent with streaming
+            response_stream = self.weather_agent.run_stream(agent_messages)
+
+            # Convert Agent Framework response to ChatKit events
+            async for event in stream_agent_response(response_stream, thread.id):
+                yield event
+
+            # If weather data was collected during the tool call, create a widget
+            print(f"[DEBUG] After streaming, _last_weather_data: {_last_weather_data}")
+            if _last_weather_data is not None:
+                print(f"[DEBUG] Creating weather widget for: {_last_weather_data.location}")
+                # Create weather widget
+                widget = render_weather_widget(_last_weather_data)
+                copy_text = weather_widget_copy_text(_last_weather_data)
+
+                # Stream the widget
+                async for widget_event in stream_widget(
+                    thread_id=thread.id, widget=widget, copy_text=copy_text
+                ):
+                    yield widget_event
+            else:
+                print("[DEBUG] No weather data available to create widget")
 
 
 # FastAPI application setup

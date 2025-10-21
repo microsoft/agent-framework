@@ -47,6 +47,9 @@ timeout = 120
 [tool.ruff]
 extend = "../../pyproject.toml"
 
+[tool.ruff.lint]
+ignore = ["RUF029"]
+
 [tool.coverage.run]
 omit = [
     "**/__init__.py"

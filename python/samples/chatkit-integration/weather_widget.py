@@ -5,10 +5,29 @@
 import base64
 from dataclasses import dataclass
 
-from chatkit.widgets import Box, Card, Col, Image, Row, Text, Title, WidgetRoot
+from chatkit.actions import ActionConfig
+from chatkit.widgets import Box, Button, Card, Col, Image, Row, Text, Title, WidgetRoot
 
 WEATHER_ICON_COLOR = "#1D4ED8"
 WEATHER_ICON_ACCENT = "#DBEAFE"
+
+# Popular cities for the selector
+POPULAR_CITIES = [
+    {"value": "seattle", "label": "Seattle, WA", "description": "Pacific Northwest"},
+    {"value": "new_york", "label": "New York, NY", "description": "East Coast"},
+    {"value": "san_francisco", "label": "San Francisco, CA", "description": "Bay Area"},
+    {"value": "chicago", "label": "Chicago, IL", "description": "Midwest"},
+    {"value": "miami", "label": "Miami, FL", "description": "Southeast"},
+    {"value": "austin", "label": "Austin, TX", "description": "Southwest"},
+    {"value": "boston", "label": "Boston, MA", "description": "New England"},
+    {"value": "denver", "label": "Denver, CO", "description": "Mountain West"},
+    {"value": "portland", "label": "Portland, OR", "description": "Pacific Northwest"},
+    {"value": "atlanta", "label": "Atlanta, GA", "description": "Southeast"},
+]
+
+# Mapping from city values to display names for weather queries
+CITY_VALUE_TO_NAME = {city["value"]: city["label"] for city in POPULAR_CITIES}
+
 
 
 def _sun_svg() -> str:
@@ -288,3 +307,131 @@ def weather_widget_copy_text(data: WeatherData) -> str:
         f"• Humidity: {data.humidity}%\n"
         f"• Wind: {data.wind_speed} km/h"
     )
+
+
+def render_city_selector_widget() -> WidgetRoot:
+    """Render an interactive city selector widget.
+
+    This widget displays popular cities as a visual selection interface.
+    Users can click or ask about any city to get weather information.
+
+    Returns:
+        A ChatKit WidgetRoot (Card) with city selection display
+    """
+    # Create location icon SVG
+    location_icon = _encode_svg(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">'
+        f'<path d="M32 8c-8.837 0-16 7.163-16 16 0 12 16 32 16 32s16-20 16-32c0-8.837-7.163-16-16-16z" '
+        f'fill="{WEATHER_ICON_ACCENT}" stroke="{WEATHER_ICON_COLOR}" stroke-width="3" stroke-linejoin="round"/>'
+        f'<circle cx="32" cy="24" r="6" fill="{WEATHER_ICON_COLOR}"/>'
+        "</svg>"
+    )
+
+    # Header section
+    header = Box(
+        padding=5,
+        background="surface-tertiary",
+        children=[
+            Row(
+                gap=3,
+                align="center",
+                children=[
+                    Box(
+                        padding=3,
+                        radius="full",
+                        background="blue-100",
+                        children=[
+                            Image(
+                                src=location_icon,
+                                alt="Location",
+                                size=28,
+                                fit="contain",
+                            )
+                        ],
+                    ),
+                    Col(
+                        align="start",
+                        gap=1,
+                        children=[
+                            Title(
+                                value="Popular Cities",
+                                size="md",
+                                weight="semibold",
+                            ),
+                            Text(
+                                value="Select a city or ask about any location",
+                                color="tertiary",
+                                size="xs",
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+        ],
+    )
+
+    # Create city chips in a grid layout
+    city_chips: list[Button] = []
+    for city in POPULAR_CITIES:
+        # Create a button that sends an action to query weather for the selected city
+        chip = Button(
+            label=city["label"],
+            variant="outline",
+            size="md",
+            onClickAction=ActionConfig(
+                type="city_selected",
+                payload={"city_value": city["value"], "city_label": city["label"]},
+                handler="server",  # Handle on server-side
+            ),
+        )
+        city_chips.append(chip)
+
+    # Arrange in rows of 3
+    city_rows: list[Row] = []
+    for i in range(0, len(city_chips), 3):
+        row_chips: list[Button] = city_chips[i : i + 3]
+        city_rows.append(
+            Row(
+                gap=3,
+                wrap="wrap",
+                justify="start",
+                children=list(row_chips),  # Convert to generic list
+            )
+        )
+
+    # Cities display section
+    cities_section = Box(
+        padding=5,
+        gap=3,
+        children=[
+            *city_rows,
+            Box(
+                padding=3,
+                radius="md",
+                background="blue-50",
+                children=[
+                    Text(
+                        value="💡 Click any city to get its weather, or ask about any other location!",
+                        size="xs",
+                        color="secondary",
+                    ),
+                ],
+            ),
+        ],
+    )
+
+    return Card(
+        key="city_selector",
+        padding=0,
+        children=[header, cities_section],
+    )
+
+
+def city_selector_copy_text() -> str:
+    """Generate plain text representation of city selector.
+
+    Returns:
+        Plain text description for copy/paste functionality
+    """
+    cities_list = "\n".join([f"• {city['label']}" for city in POPULAR_CITIES])
+    return f"Popular cities (click to get weather):\n{cities_list}\n\nYou can also ask about weather in any other location!"

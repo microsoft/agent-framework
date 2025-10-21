@@ -14,7 +14,7 @@ export default function App() {
       greeting: "Hello! I'm your weather assistant. Ask me about the weather in any location.",
       prompts: [
         { label: "Weather in New York", prompt: "What's the weather in New York?" },
-        { label: "Weather in London", prompt: "Tell me the weather in London" },
+        { label: "Select City to Get Weather", prompt: "Show me the city selector for weather" },
         { label: "Current Time", prompt: "What time is it?" },
       ],
     },

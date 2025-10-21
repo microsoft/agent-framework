@@ -111,10 +111,24 @@ When you ask about weather, the assistant displays a beautiful interactive card 
 
 The widgets are created using ChatKit's widget system and are displayed alongside the text response.
 
+### City Selector Widget
+
+Ask the assistant to show you cities or list available locations, and it will display an interactive city selector widget featuring:
+
+- **Clickable city buttons**: Each city is a button that automatically asks for its weather
+- **One-click weather**: Simply click a city name to get instant weather information
+- **Popular locations**: 10 major US cities organized in an easy-to-browse grid
+- **Regional coverage**: Cities from Pacific Northwest, East Coast, Bay Area, and more
+- **Flexible input**: Users can still type to ask about any city worldwide
+
+Simply say "show me cities" or "what cities can I choose from?" to see the selector, then click any city!
+
 ### Backend Components
 
 - **`app.py`**: Main FastAPI application with ChatKit integration and widget support
-- **`weather_widget.py`**: Weather widget rendering with SVG icons and ChatKit components
+- **`weather_widget.py`**: Weather and city selector widget rendering with SVG icons and ChatKit components
+  - `render_weather_widget()`: Creates weather display cards
+  - `render_city_selector_widget()`: Creates city selection interface
 - **`store.py`**: SQLite-based store for ChatKit data persistence
 - **Weather Agent**: Uses Agent Framework with Azure OpenAI to provide weather information
 
@@ -128,6 +142,8 @@ The widgets are created using ChatKit's widget system and are displayed alongsid
 
 This sample demonstrates the full flow of creating interactive ChatKit widgets from Agent Framework:
 
+### Weather Widget Flow
+
 1. **User asks a question** (e.g., "What's the weather in Seattle?")
 2. **Agent Framework agent** processes the request using Azure OpenAI
 3. **Tool is invoked**: The `get_weather()` function is called with the location
@@ -138,7 +154,18 @@ This sample demonstrates the full flow of creating interactive ChatKit widgets f
    - SVG icons for weather conditions
    - Structured layout using Box, Card, Row, Col components
 7. **Widget streams to frontend**: Using `stream_widget()` from agent_framework_chatkit
-8. **ChatKit UI displays**: The interactive widget appears alongside the text
+
+### City Selector Widget Flow
+
+1. **User requests city list** (e.g., "show me available cities" or "what cities can I choose from?")
+2. **Agent invokes tool**: The `show_city_selector()` function sets a flag
+3. **Text response**: Agent confirms it will show the cities
+4. **Widget is created**: After the text response, the city selector widget is rendered with clickable buttons
+5. **Widget displays**: Shows a grid of clickable city buttons
+6. **User clicks a city**: The button automatically sends a message "What's the weather in [City]?"
+7. **Agent responds**: Processes the weather request and shows the weather widget
+
+The buttons use ChatKit's `ActionConfig` with type `add_user_message` to automatically submit the weather query when clicked. 7. **ChatKit UI displays**: The interactive widget appears alongside the text
 
 ### Key Files for Widget Integration
 
