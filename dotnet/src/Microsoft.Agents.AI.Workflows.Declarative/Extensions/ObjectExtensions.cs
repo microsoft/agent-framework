@@ -104,7 +104,17 @@ internal static class ObjectExtensions
             throw new DeclarativeActionException($"Unsupported type: '{targetType.Type.Name}'.");
         }
 
-        if (sourceValue != null && targetType.Type.IsAssignableFrom(sourceValue.GetType()))
+        if (sourceValue is null)
+        {
+            return null;
+        }
+
+        Type sourceType = sourceValue.GetType();
+
+        // Converting string to list requires explicit conversion.
+        // Avoid short-circuit based on string is IEnumerable<char>
+        if ((sourceType != typeof(string) || !targetType.IsList) &&
+            targetType.Type.IsAssignableFrom(sourceType))
         {
             return sourceValue;
         }
@@ -226,7 +236,7 @@ internal static class ObjectExtensions
             sourceValue switch
             {
                 null => null,
-                //string jsonText => JsonDocument.Parse(jsonText.TrimJsonDelimiter()).ParseRecord(targetType),
+                string jsonText => JsonDocument.Parse(jsonText.TrimJsonDelimiter()).ParseList(targetType),
                 _ => throw new DeclarativeActionException($"Cannot convert '{sourceValue?.GetType().Name}' to 'Record' (expected JSON string)."),
             };
 
