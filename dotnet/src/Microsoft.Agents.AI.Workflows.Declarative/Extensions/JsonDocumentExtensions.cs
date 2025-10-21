@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Text.Json;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
@@ -12,11 +13,6 @@ internal static class JsonDocumentExtensions
 {
     public static List<object?> ParseList(this JsonDocument jsonDocument, VariableType targetType)
     {
-        if (!targetType.IsList)
-        {
-            throw new DeclarativeActionException($"Unable to convert JSON to list with requested type {targetType.Type.Name}.");
-        }
-
         return
             jsonDocument.RootElement.ValueKind switch
             {
@@ -58,11 +54,19 @@ internal static class JsonDocumentExtensions
         {
             foreach (KeyValuePair<string, VariableType> property in targetType.Schema)
             {
-                JsonElement propertyElement = currentElement.GetProperty(property.Key);
-                if (!propertyElement.TryParseValue(property.Value, out object? parsedValue))
+                object? parsedValue = null;
+                if (!currentElement.TryGetProperty(property.Key, out JsonElement propertyElement))
                 {
-                    throw new InvalidOperationException($"Unsupported data type '{property.Value.Type}' for property '{property.Key}'");
+                    if (!property.Value.Type.IsNullable())
+                    {
+                        throw new DeclarativeActionException($"Property '{property.Key}' undefined and not nullable.");
+                    }
                 }
+                else if (!propertyElement.TryParseValue(property.Value, out parsedValue))
+                {
+                    throw new DeclarativeActionException($"Unsupported data type '{property.Value.Type}' for property '{property.Key}'");
+                }
+
                 yield return new KeyValuePair<string, object?>(property.Key, parsedValue);
             }
         }
@@ -70,99 +74,204 @@ internal static class JsonDocumentExtensions
 
     private static List<object?> ParseTable(this JsonElement currentElement, VariableType targetType)
     {
+        if (!targetType.IsList)
+        {
+            throw new DeclarativeActionException($"Unable to convert JSON to list as requested type {targetType.Type.Name}.");
+        }
+
+        VariableType listType = DetermineElementType();
+
         return
             currentElement
                 .EnumerateArray()
-                .Select(element => element.ParseValue(targetType))
+                .Select(element => element.ParseValue(listType))
                 .ToList();
+
+        VariableType DetermineElementType()
+        {
+            Type? targetElementType = targetType.Type.GetElementType();
+            VariableType? elementType = targetElementType is not null ? new(targetElementType) : null;
+            if (elementType is null)
+            {
+                foreach (JsonElement element in currentElement.EnumerateArray())
+                {
+                    VariableType? currentType =
+                        element.ValueKind switch
+                        {
+                            JsonValueKind.Object => VariableType.Record(targetType.Schema?.Select(kvp => (kvp.Key, kvp.Value)) ?? []),
+                            JsonValueKind.String => typeof(string),
+                            JsonValueKind.True => typeof(bool),
+                            JsonValueKind.False => typeof(bool),
+                            JsonValueKind.Number => typeof(decimal),
+                            _ => null,
+                        };
+
+                    if (elementType is not null && currentType is not null && !elementType.Equals(currentType))
+                    {
+                        throw new DeclarativeActionException("Inconsistent element types in list.");
+                    }
+
+                    elementType ??= currentType;
+                }
+            }
+
+            return
+                elementType ??
+                throw new DeclarativeActionException("Unable to determine element type for list.");
+        }
     }
 
-    private static object? ParseValue(this JsonElement propertyElement, VariableType targetType) // %%% ONLY FOR TABLE / LIST
+    private static object? ParseValue(this JsonElement propertyElement, VariableType targetType)
     {
         if (!propertyElement.TryParseValue(targetType, out object? value))
         {
-            throw new InvalidOperationException($"Unsupported data type '{targetType.Type}'");
+            throw new DeclarativeActionException($"Unable to parse {propertyElement.ValueKind} as '{targetType.Type.Name}'");
         }
 
         return value;
     }
 
-    private static readonly Dictionary<Type, Func<JsonElement, object?>> s_keyValuePairs =
-        new()
+    private static bool TryParseValue(this JsonElement propertyElement, VariableType targetType, out object? value) =>
+        propertyElement.ValueKind switch
         {
-            [typeof(string)] = e => e.GetString(),
-            [typeof(int)] = e => e.GetInt32(),
-            [typeof(long)] = e => e.GetInt64(),
-            [typeof(decimal)] = e => e.GetDecimal(),
-            [typeof(double)] = e => e.GetDouble(),
-            [typeof(bool)] = e => e.GetBoolean(),
-            [typeof(DateTime)] = e => e.GetDateTime(),
-            [typeof(TimeSpan)] = e => e.GetDateTimeOffset().TimeOfDay,
+            JsonValueKind.String => TryParseString(propertyElement, targetType.Type, out value),
+            JsonValueKind.Number => TryParseNumber(propertyElement, targetType.Type, out value),
+            JsonValueKind.True or JsonValueKind.False => TryParseBoolean(propertyElement, out value),
+            JsonValueKind.Object => TryParseObject(propertyElement, targetType, out value),
+            JsonValueKind.Array => TryParseList(propertyElement, targetType, out value),
+            JsonValueKind.Null => TryParseNull(targetType.Type, out value),
+            _ => throw new DeclarativeActionException($"JSON element of type {propertyElement.ValueKind} is not supported."),
         };
 
-    private static bool TryParseValue(this JsonElement propertyElement, VariableType targetType, out object? value)
+    private static bool TryParseNull(Type valueType, out object? value)
     {
-        Type? elementType =
-            targetType.Type.GetElementType() ??
-            propertyElement.ValueKind switch
-            {
-                JsonValueKind.String => typeof(string), // %%% TODO
-                JsonValueKind.Number => typeof(double), // %%% TODO
-                JsonValueKind.True or JsonValueKind.False => typeof(bool),
-                JsonValueKind.Object => throw new InvalidOperationException("TBD: OBJECT CONVERSION!!!"), // %%% TODO
-                JsonValueKind.Array => throw new InvalidOperationException("TBD: ARRAY CONVERSION!!!"), // %%% TODO
-                JsonValueKind.Null => null,
-                _ => throw new InvalidOperationException($"JSON element of type {propertyElement.ValueKind} is not supported."),
-            };
-
-        if (elementType is null)
+        // If the target type is not nullable, we cannot assign null to it
+        if (!valueType.IsNullable())
         {
             value = null;
-            return true;
-        }
-
-        if (s_keyValuePairs.TryGetValue(elementType, out Func<JsonElement, object?>? parser))
-        {
-            value = parser.Invoke(propertyElement);
-            return true;
-        }
-
-        if (targetType.IsRecord)
-        {
-            value = propertyElement.ParseRecord(targetType);
-            return true;
-        }
-
-        if (targetType.IsList)
-        {
-            value = propertyElement.ParseTable(targetType);
-            return true;
+            return false;
         }
 
         value = null;
-        return false;
+        return true;
     }
 
-    private static object GetNumericValue(JsonElement element)
+    private static bool TryParseBoolean(JsonElement propertyElement, out object? value)
+    {
+        try
+        {
+            value = propertyElement.GetBoolean();
+            return true;
+        }
+        catch
+        {
+            value = null;
+            return false;
+        }
+    }
+
+    private static bool TryParseString(JsonElement propertyElement, Type valueType, out object? value)
+    {
+        try
+        {
+            string? propertyValue = propertyElement.GetString();
+            if (propertyValue is null)
+            {
+                value = null;
+                return valueType.IsNullable(); // Parse fails if value is null and requested type is not.
+            }
+
+            switch (valueType)
+            {
+                case Type targetType when targetType == typeof(string):
+                    value = propertyValue;
+                    break;
+                case Type targetType when targetType == typeof(DateTime):
+                    value = DateTime.Parse(propertyValue, provider: null, styles: DateTimeStyles.RoundtripKind);
+                    break;
+                case Type targetType when targetType == typeof(TimeSpan):
+                    value = TimeSpan.Parse(propertyValue);
+                    break;
+                default:
+                    value = null;
+                    return false;
+            }
+
+            return true;
+        }
+        catch
+        {
+            value = null;
+            return false;
+        }
+    }
+
+    private static bool TryParseNumber(JsonElement element, Type valueType, out object? value)
     {
         // Try parsing as integer types first (most precise representation)
         if (element.TryGetInt32(out int intValue))
         {
-            return intValue;
+            return ConvertToExpectedType(valueType, intValue, out value);
         }
 
         if (element.TryGetInt64(out long longValue))
         {
-            return longValue;
+            return ConvertToExpectedType(valueType, longValue, out value);
         }
 
         // Try decimal for precise decimal values
         if (element.TryGetDecimal(out decimal decimalValue))
         {
-            return decimalValue;
+            return ConvertToExpectedType(valueType, decimalValue, out value);
         }
 
         // Fall back to double for other numeric values
-        return element.GetDouble();
+        if (element.TryGetDouble(out double doubleValue))
+        {
+            return ConvertToExpectedType(valueType, doubleValue, out value);
+        }
+
+        value = null;
+        return false;
+
+        static bool ConvertToExpectedType(Type valueType, object sourceValue, out object? value)
+        {
+            try
+            {
+                value = Convert.ChangeType(sourceValue, valueType);
+                return true;
+            }
+            catch
+            {
+                value = null;
+                return false;
+            }
+        }
+    }
+
+    private static bool TryParseObject(JsonElement propertyElement, VariableType targetType, out object? value)
+    {
+        if (!targetType.HasSchema)
+        {
+            value = null;
+            return false;
+        }
+
+        value = propertyElement.ParseRecord(targetType);
+        return true;
+    }
+
+    private static bool TryParseList(JsonElement propertyElement, VariableType targetType, out object? value)
+    {
+        try
+        {
+            value = ParseTable(propertyElement, targetType);
+            return true;
+        }
+        catch
+        {
+            value = null;
+            return false;
+        }
     }
 }

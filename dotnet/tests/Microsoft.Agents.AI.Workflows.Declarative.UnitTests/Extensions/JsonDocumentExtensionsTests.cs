@@ -17,14 +17,14 @@ public sealed class JsonDocumentExtensionsTests
         VariableType recordType =
             VariableType.Record(
                 [
-                    ("text", new VariableType(typeof(string))),
-                    ("numberInt", new VariableType(typeof(int))),
-                    ("numberLong", new VariableType(typeof(long))),
-                    ("numberDecimal", new VariableType(typeof(decimal))),
-                    ("numberDouble", new VariableType(typeof(double))),
-                    ("flag", new VariableType(typeof(bool))),
-                    ("date", new VariableType(typeof(DateTime))),
-                    ("time", new VariableType(typeof(TimeSpan)))
+                    ("text", typeof(string)),
+                    ("numberInt", typeof(int)),
+                    ("numberLong", typeof(long)),
+                    ("numberDecimal", typeof(decimal)),
+                    ("numberDouble", typeof(double)),
+                    ("flag", typeof(bool)),
+                    ("date", typeof(DateTime)),
+                    ("time", typeof(TimeSpan))
                 ]);
 
         DateTime expectedDateTime = new(2024, 10, 01, 12, 34, 56, DateTimeKind.Utc);
@@ -40,7 +40,7 @@ public sealed class JsonDocumentExtensionsTests
               "numberDouble": 3.99E99,
               "flag": true,
               "date": "2024-10-01T12:34:56Z",
-              "time": "2024-10-01T12:34:56+00:00"
+              "time": "12:34:56"
             }
             """);
 
@@ -52,7 +52,7 @@ public sealed class JsonDocumentExtensionsTests
         Assert.Equal(7, result["numberInt"]);
         Assert.Equal(9223372036854775807L, result["numberLong"]);
         Assert.Equal(12.5m, result["numberDecimal"]);
-        Assert.Equal(9.75d, result["numberDouble"]);
+        Assert.Equal(3.99E99, result["numberDouble"]);
         Assert.Equal(true, result["flag"]);
         Assert.Equal(expectedDateTime, result["date"]);
         Assert.Equal(expectedTimeSpan, result["time"]);
@@ -65,14 +65,14 @@ public sealed class JsonDocumentExtensionsTests
         VariableType innerRecord =
             VariableType.Record(
                 [
-                    ("innerText", new VariableType(typeof(string))),
-                    ("innerNumber", new VariableType(typeof(int)))
+                    ("innerText", typeof(string)),
+                    ("innerNumber", typeof(int))
                 ]);
 
         VariableType outerRecord =
             VariableType.Record(
                 [
-                    ("outerText", new VariableType(typeof(string))),
+                    ("outerText", typeof(string)),
                     ("nested", innerRecord)
                 ]);
 
@@ -100,13 +100,13 @@ public sealed class JsonDocumentExtensionsTests
     }
 
     [Fact]
-    public void ParseRecord_NullRoot_ReturnsEmptyDictionary()
+    public void ParseRecord_NullRoot_ReturnsEmpty()
     {
         // Arrange
         VariableType recordType =
             VariableType.Record(
                 [
-                    ("text", new VariableType(typeof(string)))
+                    ("text", typeof(string))
                 ]);
 
         JsonDocument document = JsonDocument.Parse("null");
@@ -125,8 +125,8 @@ public sealed class JsonDocumentExtensionsTests
         VariableType listType =
             VariableType.List(
                 [
-                    ("name", new VariableType(typeof(string))),
-                    ("value", new VariableType(typeof(int)))
+                    ("name", typeof(string)),
+                    ("value", typeof(int))
                 ]);
 
         JsonDocument document = JsonDocument.Parse(
@@ -156,7 +156,7 @@ public sealed class JsonDocumentExtensionsTests
         VariableType recordType =
             VariableType.Record(
                 [
-                    ("id", new VariableType(typeof(int)))
+                    ("id", typeof(int))
                 ]);
 
         JsonDocument document = JsonDocument.Parse(
@@ -168,14 +168,14 @@ public sealed class JsonDocumentExtensionsTests
             """);
 
         // Act / Assert
-        Assert.Throws<InvalidOperationException>(() => document.ParseRecord(recordType));
+        Assert.Throws<DeclarativeActionException>(() => document.ParseRecord(recordType));
     }
 
     [Fact]
-    public void ParseRecord_InvalidTargetType_ThrowsDeclarativeActionException()
+    public void ParseRecord_InvalidTargetType_Throws()
     {
         // Arrange
-        VariableType notARecord = new(typeof(string));
+        VariableType notARecord = typeof(string);
         JsonDocument document = JsonDocument.Parse(
             """
             { "x": 1 }
@@ -186,13 +186,13 @@ public sealed class JsonDocumentExtensionsTests
     }
 
     [Fact]
-    public void ParseRecord_InvalidRootKind_ThrowsDeclarativeActionException()
+    public void ParseRecord_InvalidRootKind_Throws()
     {
         // Arrange
         VariableType recordType =
             VariableType.Record(
                 [
-                    ("text", new VariableType(typeof(string)))
+                    ("text", typeof(string))
                 ]);
 
         JsonDocument document = JsonDocument.Parse(@"""not-an-object""");
@@ -202,13 +202,13 @@ public sealed class JsonDocumentExtensionsTests
     }
 
     [Fact]
-    public void ParseRecord_UnsupportedPropertyType_ThrowsInvalidOperationException()
+    public void ParseRecord_UnsupportedPropertyType_Throws()
     {
         // Arrange
         VariableType recordType =
             VariableType.Record(
                 [
-                    ("unsupported", new VariableType(typeof(Guid)))
+                    ("unsupported", typeof(Guid))
                 ]);
 
         JsonDocument document = JsonDocument.Parse(
@@ -217,33 +217,54 @@ public sealed class JsonDocumentExtensionsTests
             """);
 
         // Act / Assert
-        Assert.Throws<InvalidOperationException>(() => document.ParseRecord(recordType));
+        Assert.Throws<DeclarativeActionException>(() => document.ParseRecord(recordType));
     }
 
     [Fact]
-    public void ParseRecord_MissingProperty_ThrowsKeyNotFoundException()
+    public void ParseRecord_MissingRequiredProperty_Throws()
     {
         // Arrange
         VariableType recordType =
             VariableType.Record(
                 [
-                    ("required", new VariableType(typeof(string)))
+                    ("required", typeof(bool))
                 ]);
 
         JsonDocument document = JsonDocument.Parse("{}");
 
         // Act / Assert
-        Assert.Throws<KeyNotFoundException>(() => document.ParseRecord(recordType));
+        Assert.Throws<DeclarativeActionException>(() => document.ParseRecord(recordType));
     }
+
     [Fact]
-    public void ParseList_NullRoot_ReturnsEmptyList()
+    public void ParseRecord_MissingNullableProperty_Succeeds()
     {
         // Arrange
-        VariableType listType = new(typeof(int[])); // IsList == true
+        VariableType recordType =
+            VariableType.Record(
+                [
+                    ("required", typeof(string))
+                ]);
+
+        JsonDocument document = JsonDocument.Parse("{}");
+
+        // Act
+        Dictionary<string, object?> result = document.ParseRecord(recordType);
+
+        // Assert
+        Assert.Single(result);
+        Dictionary<string, object?> element = Assert.IsType<Dictionary<string, object?>>(result);
+        Assert.Null(element["required"]);
+    }
+
+    [Fact]
+    public void ParseList_NullRoot_ReturnsEmpty()
+    {
+        // Arrange
         JsonDocument document = JsonDocument.Parse("null");
 
         // Act
-        List<object?> result = document.ParseList(listType);
+        List<object?> result = document.ParseList(typeof(int[]));
 
         // Assert
         Assert.Empty(result);
@@ -253,11 +274,10 @@ public sealed class JsonDocumentExtensionsTests
     public void ParseList_Array_Primitives_Succeeds()
     {
         // Arrange
-        VariableType listType = new(typeof(int[]));
         JsonDocument document = JsonDocument.Parse("[1,2,3]");
 
         // Act
-        List<object?> result = document.ParseList(listType);
+        List<object?> result = document.ParseList(typeof(int[]));
 
         // Assert
         Assert.Equal(3, result.Count);
@@ -270,11 +290,10 @@ public sealed class JsonDocumentExtensionsTests
     public void ParseList_PrimitiveRoot_WrappedAsSingleElement_Succeeds()
     {
         // Arrange
-        VariableType listType = new(typeof(int[]));
         JsonDocument document = JsonDocument.Parse("7");
 
         // Act
-        List<object?> result = document.ParseList(listType);
+        List<object?> result = document.ParseList(typeof(int));
 
         // Assert
         Assert.Single(result);
@@ -288,8 +307,8 @@ public sealed class JsonDocumentExtensionsTests
         VariableType listType =
             VariableType.List(
                 [
-                    ("id", new VariableType(typeof(int))),
-                    ("name", new VariableType(typeof(string)))
+                    ("id", typeof(int)),
+                    ("name", typeof(string))
                 ]);
         JsonDocument document = JsonDocument.Parse(
             """
@@ -315,24 +334,22 @@ public sealed class JsonDocumentExtensionsTests
     }
 
     [Fact]
-    public void ParseList_InvalidTargetType_ThrowsDeclarativeActionException()
+    public void ParseList_InvalidTargetType_Throws()
     {
         // Arrange
-        VariableType notAList = new(typeof(int));
         JsonDocument document = JsonDocument.Parse("[1,2]");
 
         // Act / Assert
-        Assert.Throws<DeclarativeActionException>(() => document.ParseList(notAList));
+        Assert.Throws<DeclarativeActionException>(() => document.ParseList(typeof(int)));
     }
 
     [Fact]
     public void ParseList_Array_MixedTypes_Throws()
     {
         // Arrange
-        VariableType listType = new(typeof(int[]));
         JsonDocument document = JsonDocument.Parse("[1,\"two\",3]");
 
         // Act / Assert
-        Assert.ThrowsAny<Exception>(() => document.ParseList(listType));
+        Assert.Throws<DeclarativeActionException>(() => document.ParseList(typeof(int[])));
     }
 }
