@@ -133,7 +133,17 @@ internal sealed class PurviewClient : IPurviewClient
 
             string content = JsonSerializer.Serialize(request, PurviewSerializationUtils.SerializationSettings.GetTypeInfo(typeof(ProcessContentRequest)));
             message.Content = new StringContent(content, Encoding.UTF8, "application/json");
-            HttpResponseMessage response = await this._httpClient.SendAsync(message, cancellationToken).ConfigureAwait(false);
+
+            HttpResponseMessage response;
+            try
+            {
+                response = await this._httpClient.SendAsync(message, cancellationToken).ConfigureAwait(false);
+            }
+            catch (HttpRequestException e)
+            {
+                this._logger.LogError(e, "Http error while processing content.");
+                throw new PurviewRequestException("Http error occurred while processing content.", e);
+            }
 
 #if NET5_0_OR_GREATER
             // Pass the cancellation token if that method is available.
@@ -144,15 +154,25 @@ internal sealed class PurviewClient : IPurviewClient
 
             if (response.StatusCode == HttpStatusCode.OK || response.StatusCode == HttpStatusCode.Accepted)
             {
-                JsonTypeInfo<ProcessContentResponse> typeInfo = (JsonTypeInfo<ProcessContentResponse>)PurviewSerializationUtils.SerializationSettings.GetTypeInfo(typeof(ProcessContentResponse));
-                ProcessContentResponse? deserializedResponse = JsonSerializer.Deserialize(responseContent, typeInfo);
+                ProcessContentResponse? deserializedResponse;
+                try
+                {
+                    JsonTypeInfo<ProcessContentResponse> typeInfo = (JsonTypeInfo<ProcessContentResponse>)PurviewSerializationUtils.SerializationSettings.GetTypeInfo(typeof(ProcessContentResponse));
+                    deserializedResponse = JsonSerializer.Deserialize(responseContent, typeInfo);
+                }
+                catch (JsonException jsonException)
+                {
+                    const string DeserializeExceptionError = "Failed to deserialize ProcessContent response.";
+                    this._logger.LogError(jsonException, DeserializeExceptionError);
+                    throw new PurviewException(DeserializeExceptionError, jsonException);
+                }
 
                 if (deserializedResponse != null)
                 {
                     return deserializedResponse;
                 }
 
-                const string DeserializeError = "Failed to deserialize ProcessContent response.";
+                const string DeserializeError = "Failed to deserialize ProcessContent response. Response was null.";
                 this._logger.LogError(DeserializeError);
                 throw new PurviewException(DeserializeError);
             }
@@ -178,7 +198,17 @@ internal sealed class PurviewClient : IPurviewClient
             var typeinfo = PurviewSerializationUtils.SerializationSettings.GetTypeInfo(typeof(ProtectionScopesRequest));
             string content = JsonSerializer.Serialize(request, typeinfo);
             message.Content = new StringContent(content, Encoding.UTF8, "application/json");
-            HttpResponseMessage response = await this._httpClient.SendAsync(message, cancellationToken).ConfigureAwait(false);
+
+            HttpResponseMessage response;
+            try
+            {
+                response = await this._httpClient.SendAsync(message, cancellationToken).ConfigureAwait(false);
+            }
+            catch (HttpRequestException e)
+            {
+                this._logger.LogError(e, "Http error while retrieving protection scopes.");
+                throw new PurviewRequestException("Http error occurred while retrieving protection scopes.", e);
+            }
 
             if (response.StatusCode == HttpStatusCode.OK)
             {
@@ -188,8 +218,18 @@ internal sealed class PurviewClient : IPurviewClient
 #else
                 string responseContent = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
 #endif
-                JsonTypeInfo<ProtectionScopesResponse> typeInfo = (JsonTypeInfo<ProtectionScopesResponse>)PurviewSerializationUtils.SerializationSettings.GetTypeInfo(typeof(ProtectionScopesResponse));
-                ProtectionScopesResponse? deserializedResponse = JsonSerializer.Deserialize(responseContent, typeInfo);
+                ProtectionScopesResponse? deserializedResponse;
+                try
+                {
+                    JsonTypeInfo<ProtectionScopesResponse> typeInfo = (JsonTypeInfo<ProtectionScopesResponse>)PurviewSerializationUtils.SerializationSettings.GetTypeInfo(typeof(ProtectionScopesResponse));
+                    deserializedResponse = JsonSerializer.Deserialize(responseContent, typeInfo);
+                }
+                catch (JsonException jsonException)
+                {
+                    const string DeserializeExceptionError = "Failed to deserialize ProtectionScopes response.";
+                    this._logger.LogError(jsonException, DeserializeExceptionError);
+                    throw new PurviewException(DeserializeExceptionError, jsonException);
+                }
 
                 if (deserializedResponse != null)
                 {
@@ -221,7 +261,17 @@ internal sealed class PurviewClient : IPurviewClient
             message.Headers.Add("User-Agent", "agent-framework-dotnet");
             string content = JsonSerializer.Serialize(request, PurviewSerializationUtils.SerializationSettings.GetTypeInfo(typeof(ContentActivitiesRequest)));
             message.Content = new StringContent(content, Encoding.UTF8, "application/json");
-            HttpResponseMessage response = await this._httpClient.SendAsync(message, cancellationToken).ConfigureAwait(false);
+            HttpResponseMessage response;
+
+            try
+            {
+                response = await this._httpClient.SendAsync(message, cancellationToken).ConfigureAwait(false);
+            }
+            catch (HttpRequestException e)
+            {
+                this._logger.LogError(e, "Http error while creating content activities.");
+                throw new PurviewRequestException("Http error occurred while creating content activities.", e);
+            }
 
             if (response.StatusCode == HttpStatusCode.Created)
             {
@@ -231,9 +281,19 @@ internal sealed class PurviewClient : IPurviewClient
 #else
                 string responseContent = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
 #endif
+                ContentActivitiesResponse? deserializedResponse;
 
-                JsonTypeInfo<ContentActivitiesResponse> typeInfo = (JsonTypeInfo<ContentActivitiesResponse>)PurviewSerializationUtils.SerializationSettings.GetTypeInfo(typeof(ContentActivitiesResponse));
-                ContentActivitiesResponse? deserializedResponse = JsonSerializer.Deserialize(responseContent, typeInfo);
+                try
+                {
+                    JsonTypeInfo<ContentActivitiesResponse> typeInfo = (JsonTypeInfo<ContentActivitiesResponse>)PurviewSerializationUtils.SerializationSettings.GetTypeInfo(typeof(ContentActivitiesResponse));
+                    deserializedResponse = JsonSerializer.Deserialize(responseContent, typeInfo);
+                }
+                catch (JsonException jsonException)
+                {
+                    const string DeserializeExceptionError = "Failed to deserialize ContentActivities response.";
+                    this._logger.LogError(jsonException, DeserializeExceptionError);
+                    throw new PurviewException(DeserializeExceptionError, jsonException);
+                }
 
                 if (deserializedResponse != null)
                 {
