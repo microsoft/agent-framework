@@ -35,6 +35,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Microsoft.Agents.AI.Purview.UnitTests" />
+    <InternalsVisibleTo Include="DynamicProxyGenAssembly2" /> <!-- To let Moq mock internal interfaces -->
   </ItemGroup>
 
   <PropertyGroup>

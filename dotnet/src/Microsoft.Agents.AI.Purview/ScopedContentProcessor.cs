@@ -286,31 +286,9 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
             return pcResponse;
         }
 
-        HashSet<DlpAction> dlpActions = new();
-
-        foreach (DlpActionInfo action in actionInfos)
-        {
-            dlpActions.Add(action.Action);
-        }
-
-        foreach (DlpActionInfo action in pcResponse.PolicyActions)
-        {
-            dlpActions.Add(action.Action);
-        }
-
-        if (dlpActions.Count == 0)
-        {
-            return pcResponse;
-        }
-
-        List<DlpActionInfo> dedupedActions = new();
-
-        foreach (DlpAction action in dlpActions)
-        {
-            dedupedActions.Add(new DlpActionInfo { Action = action });
-        }
-
-        pcResponse.PolicyActions = dedupedActions;
+        List<DlpActionInfo> pcActionInfos = new(pcResponse.PolicyActions);
+        pcActionInfos.AddRange(actionInfos);
+        pcResponse.PolicyActions = pcActionInfos;
         return pcResponse;
     }
 
