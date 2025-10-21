@@ -11,6 +11,7 @@ import importlib.metadata
 
 from ._converter import ThreadItemConverter, simple_to_agent_input
 from ._streaming import stream_agent_response
+from ._widgets import stream_widget
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -22,4 +23,5 @@ __all__ = [
     "__version__",
     "simple_to_agent_input",
     "stream_agent_response",
+    "stream_widget",
 ]

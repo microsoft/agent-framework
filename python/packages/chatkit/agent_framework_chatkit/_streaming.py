@@ -69,7 +69,7 @@ async def stream_agent_response(
         if update.contents:
             for content in update.contents:
                 # Handle text content - only TextContent has a text attribute
-                if isinstance(content, TextContent) and content.text:
+                if isinstance(content, TextContent) and content.text is not None:
                     accumulated_text += content.text
 
     # Finalize the message

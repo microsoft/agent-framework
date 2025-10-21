@@ -1,10 +1,14 @@
 # ChatKit Integration Sample with Weather Agent
 
-This sample demonstrates how to integrate Microsoft Agent Framework with OpenAI ChatKit using a simple weather assistant. It provides a minimal full-stack application with:
+This sample demonstrates how to integrate Microsoft Agent Framework with OpenAI ChatKit using a weather assistant with **interactive widget visualization**. It provides a minimal full-stack application with:
 
 - **Backend**: FastAPI server using Agent Framework with Azure OpenAI
 - **Frontend**: Minimal React + TypeScript UI using ChatKit React components
-- **Features**: Weather information, current time, and a simple chat interface
+- **Features**:
+  - Weather information with beautiful interactive widgets
+  - Current time queries
+  - Chat interface with streaming responses
+  - Visual weather cards with conditions, temperature, humidity, and wind
 
 ## Architecture
 
@@ -12,6 +16,7 @@ This sample demonstrates how to integrate Microsoft Agent Framework with OpenAI 
 ┌─────────────────┐      ┌──────────────────┐      ┌─────────────────┐
 │  React Frontend │ ───▶ │  FastAPI Backend │ ───▶ │  Azure OpenAI   │
 │  (ChatKit UI)   │ ◀─── │ (Agent Framework)│ ◀─── │                 │
+│                 │      │   + Widgets      │      │                 │
 └─────────────────┘      └──────────────────┘      └─────────────────┘
 ```
 
@@ -88,23 +93,79 @@ http://localhost:5171
 
 You should see the Weather Assistant interface where you can:
 
-- Ask about weather in any location
+- Ask about weather in any location - **Weather widgets will be displayed automatically!**
 - Get the current time
 - Use the starter prompts or type your own queries
+- View beautiful, interactive weather cards with icons and details
 
 ## Features
 
+### Interactive Weather Widgets
+
+When you ask about weather, the assistant displays a beautiful interactive card showing:
+
+- **Location and weather condition**
+- **Temperature** with a visual icon (sunny, cloudy, rainy, stormy, snowy, foggy)
+- **Weather details**: Humidity percentage and wind speed
+- **Clean, modern design** following ChatKit widget guidelines
+
+The widgets are created using ChatKit's widget system and are displayed alongside the text response.
+
 ### Backend Components
 
-- **`app.py`**: Main FastAPI application with ChatKit integration
+- **`app.py`**: Main FastAPI application with ChatKit integration and widget support
+- **`weather_widget.py`**: Weather widget rendering with SVG icons and ChatKit components
 - **`store.py`**: SQLite-based store for ChatKit data persistence
 - **Weather Agent**: Uses Agent Framework with Azure OpenAI to provide weather information
 
 ### Frontend Components
 
 - **Minimal UI**: Simple, clean interface focused on ChatKit integration
-- **ChatKit Integration**: Full-featured chat interface with streaming responses
+- **ChatKit Integration**: Full-featured chat interface with streaming responses and widget support
 - **No Complex Dependencies**: Only React and ChatKit - no styling frameworks or extra libraries
+
+## How Widget Integration Works
+
+This sample demonstrates the full flow of creating interactive ChatKit widgets from Agent Framework:
+
+1. **User asks a question** (e.g., "What's the weather in Seattle?")
+2. **Agent Framework agent** processes the request using Azure OpenAI
+3. **Tool is invoked**: The `get_weather()` function is called with the location
+4. **Data is collected**: Weather data (condition, temperature, humidity, wind) is stored
+5. **Text response streams**: The agent provides a text description
+6. **Widget is created**: After the text response, a ChatKit widget is rendered using:
+   - `render_weather_widget()`: Creates the widget structure with ChatKit components
+   - SVG icons for weather conditions
+   - Structured layout using Box, Card, Row, Col components
+7. **Widget streams to frontend**: Using `stream_widget()` from agent_framework_chatkit
+8. **ChatKit UI displays**: The interactive widget appears alongside the text
+
+### Key Files for Widget Integration
+
+```python
+# weather_widget.py - Widget rendering
+from chatkit.widgets import Card, Box, Row, Col, Text, Title, Image
+
+def render_weather_widget(data: WeatherData) -> WidgetRoot:
+    # Creates a Card widget with weather information
+    return Card(key="weather", padding=0, children=[...])
+
+# app.py - Integration with agent
+from agent_framework_chatkit import stream_widget
+
+# After agent response, create and stream widget
+widget = render_weather_widget(weather_data)
+async for event in stream_widget(thread_id=thread.id, widget=widget):
+    yield event
+```
+
+The `agent_framework_chatkit` package provides the `stream_widget()` helper that:
+
+- Creates a `WidgetItem` with the provided widget
+- Wraps it in a `ThreadItemDoneEvent`
+- Yields it as a ChatKit stream event
+
+This approach keeps the widget logic separate from the agent logic while maintaining clean integration.
 
 ## Project Structure
 

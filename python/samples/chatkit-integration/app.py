@@ -4,31 +4,15 @@
 ChatKit Integration Sample with Weather Agent
 
 This sample demonstrates how to integrate Microsoft Agent Framework with OpenAI ChatKit
-using a weather tool and Azure OpenAI. It shows a complete ChatKit server implementation
-using Agent Framework agents with proper FastAPI setup.
-
-Requirements:
-- pip install agent-framework-chatkit
-- pip install fastapi uvicorn
-- Azure OpenAI service configured
-- Run `az login` for authentication
-
-Usage:
-1. Set your Azure OpenAI configuration in environment variables:
-   export AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
-   export AZURE_OPENAI_API_VERSION="2024-06-01"
-   export AZURE_OPENAI_CHAT_DEPLOYMENT_NAME="gpt-4o"
-
-2. Run the server:
-   python chatkit_weather_agent.py
-
-3. The ChatKit UI will be available at http://localhost:8000
+using a weather tool with widget visualization and Azure OpenAI. It shows a complete
+ChatKit server implementation using Agent Framework agents with proper FastAPI setup
+and interactive weather widgets.
 """
 
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from random import randint
-from typing import Any, Annotated
+from typing import Annotated, Any
 
 import uvicorn
 from azure.identity import AzureCliCredential
@@ -40,24 +24,30 @@ from pydantic import Field
 # Agent Framework imports
 from agent_framework import ChatAgent
 from agent_framework.azure import AzureOpenAIChatClient
-from agent_framework.chatkit import simple_to_agent_input, stream_agent_response
+from agent_framework_chatkit import simple_to_agent_input, stream_agent_response, stream_widget
 
 # ChatKit imports
 from chatkit.server import ChatKitServer
-from chatkit.types import (
-    ThreadMetadata,
-    UserMessageItem,
-    ThreadStreamEvent,
-)
+from chatkit.types import ThreadMetadata, ThreadStreamEvent, UserMessageItem
 
 # Local imports
 from store import SQLiteStore
+from weather_widget import WeatherData, render_weather_widget, weather_widget_copy_text
+
+
+# Global variable to store weather data for widget creation
+_last_weather_data: WeatherData | None = None
 
 
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
-    """Get the weather for a given location."""
+    """Get the weather for a given location.
+
+    Returns a text description and stores data for widget creation.
+    """
+    global _last_weather_data
+
     conditions = ["sunny", "cloudy", "rainy", "stormy", "snowy", "foggy"]
     temperature = randint(-5, 35)
     condition = conditions[randint(0, len(conditions) - 1)]
@@ -66,6 +56,16 @@ def get_weather(
     humidity = randint(30, 90)
     wind_speed = randint(5, 25)
 
+    # Store data for widget creation
+    _last_weather_data = WeatherData(
+        location=location,
+        condition=condition,
+        temperature=temperature,
+        humidity=humidity,
+        wind_speed=wind_speed,
+    )
+
+    # Return text description
     return (
         f"Weather in {location}:\n"
         f"• Condition: {condition.title()}\n"
@@ -85,7 +85,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
     """ChatKit server implementation using Agent Framework.
 
     This server integrates Agent Framework agents with ChatKit's server protocol,
-    providing weather information and time queries through Azure OpenAI.
+    providing weather information with interactive widgets and time queries through Azure OpenAI.
     """
 
     def __init__(self, data_store: SQLiteStore):
@@ -98,8 +98,8 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
             instructions=(
                 "You are a helpful weather assistant. You can provide weather information "
                 "for any location and tell the current time. Be friendly and informative "
-                "in your responses. When providing weather information, format it nicely "
-                "and include relevant details."
+                "in your responses. When you provide weather information, a beautiful "
+                "interactive weather widget will be displayed to the user automatically."
             ),
             tools=[get_weather, get_time],
         )
@@ -113,12 +113,18 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
         """Handle incoming user messages and generate responses.
 
         This method converts ChatKit messages to Agent Framework format,
-        runs the agent, and converts the response back to ChatKit events.
+        runs the agent, converts the response back to ChatKit events,
+        and creates interactive weather widgets when weather data is queried.
         """
+        global _last_weather_data
+
         if input_user_message is None:
             return
 
         try:
+            # Reset weather data
+            _last_weather_data = None
+
             # Convert ChatKit input to Agent Framework messages
             agent_messages = await simple_to_agent_input(input_user_message)
 
@@ -132,10 +138,26 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
             async for event in stream_agent_response(response_stream, thread.id):
                 yield event
 
+            # If weather data was collected during the tool call, create a widget
+            if _last_weather_data is not None:
+                # Create weather widget
+                widget = render_weather_widget(_last_weather_data)
+                copy_text = weather_widget_copy_text(_last_weather_data)
+
+                # Stream the widget
+                async for widget_event in stream_widget(
+                    thread_id=thread.id, widget=widget, copy_text=copy_text
+                ):
+                    yield widget_event
+
         except Exception as e:
             # In a real application, you'd want better error handling and logging
             print(f"Error processing message: {e}")
-            # You could yield an ErrorEvent here if needed
+            import traceback
+
+            traceback.print_exc()
+
+
 
 
 # FastAPI application setup
