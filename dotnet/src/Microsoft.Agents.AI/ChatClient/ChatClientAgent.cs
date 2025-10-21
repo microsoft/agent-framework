@@ -580,7 +580,7 @@ public sealed partial class ChatClientAgent : AIAgent
         // Supplying messages when continuing a background response is not allowed.
         if (chatOptions?.ContinuationToken is not null && inputMessages.Any())
         {
-            throw new InvalidOperationException("Messages are not allowed when continuing a background response using a continuation token.");
+            throw new InvalidOperationException("Input messages are not allowed when continuing a background response using a continuation token.");
         }
         List<ChatMessage> threadMessages = [];
 
