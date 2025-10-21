@@ -568,7 +568,7 @@ public sealed partial class ChatClientAgent : AIAgent
         // for callers if they forget to provide the thread for initial or follow-up runs.
         if (chatOptions?.AllowBackgroundResponses is true && thread is null)
         {
-            throw new InvalidOperationException("A thread must be provided when continuing a background response using a continuation token.");
+            throw new InvalidOperationException("A thread must be provided when continuing a background response with a continuation token.");
         }
 
         thread ??= this.GetNewThread();
