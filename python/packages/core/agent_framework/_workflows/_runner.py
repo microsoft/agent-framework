@@ -348,6 +348,7 @@ class Runner:
                         await maybe  # type: ignore[arg-type]
                     restored = True
             except Exception as ex:  # pragma: no cover - defensive
+                # TODO(@taochen): should we swallow the exception?
                 logger.debug(f"Executor {exec_id} restore_state failed: {ex}")
 
             if not restored:

@@ -1,15 +1,16 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import contextlib
 import logging
 import uuid
-from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from ._workflow import Workflow
 
+from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
 from ._events import (
     RequestInfoEvent,
     WorkflowErrorEvent,
@@ -20,13 +21,9 @@ from ._executor import (
     Executor,
     handler,
 )
-from ._request_info_executor import (
-    RequestInfoExecutor,
-    RequestInfoMessage,
-    RequestResponse,
-)
 from ._runner_context import Message
 from ._typing_utils import is_instance_of
+from ._workflow import WorkflowRunResult
 from ._workflow_context import WorkflowContext
 
 logger = logging.getLogger(__name__)
@@ -36,9 +33,19 @@ logger = logging.getLogger(__name__)
 class ExecutionContext:
     """Context for tracking a single sub-workflow execution."""
 
+    # The ID of the execution context
     execution_id: str
+
+    # Responses that have been collected so far for requests that
+    # were sent out in the previous iteration
     collected_responses: dict[str, Any]  # request_id -> response_data
+
+    # Number of responses to be expected. If the WorkflowExecutor has
+    # not received all responses, it won't run the sub workflow.
     expected_response_count: int
+
+    # Pending requests to be fulfilled. This will get updated as the
+    # WorkflowExecutor receives responses.
     pending_requests: dict[str, RequestInfoEvent]  # request_id -> request_info_event
 
 
@@ -269,7 +276,6 @@ class WorkflowExecutor(Executor):
         self._execution_contexts: dict[str, ExecutionContext] = {}  # execution_id -> ExecutionContext
         # Map request_id to execution_id for response routing
         self._request_to_execution: dict[str, str] = {}  # request_id -> execution_id
-        self._active_executions: int = 0  # Count of active sub-workflow executions
         self._state_loaded: bool = False
 
     @property
@@ -324,7 +330,7 @@ class WorkflowExecutor(Executor):
         # For other messages, only handle if the wrapped workflow can accept them as input
         return any(is_instance_of(message.data, input_type) for input_type in self.workflow.input_types)
 
-    @handler  # No output_types - can send any completion data type
+    @handler
     async def process_workflow(self, input_data: object, ctx: WorkflowContext[Any]) -> None:
         """Execute the sub-workflow with raw input data.
 
@@ -335,11 +341,6 @@ class WorkflowExecutor(Executor):
             input_data: The input data to send to the sub-workflow.
             ctx: The workflow context from the parent.
         """
-        # Skip RequestResponse - it has a specific handler
-        if isinstance(input_data, RequestResponse):
-            logger.debug(f"WorkflowExecutor {self.id} ignoring input of type {type(input_data)}")
-            return
-
         await self._ensure_state_loaded(ctx)
 
         # Create execution context for this sub-workflow run
@@ -351,9 +352,6 @@ class WorkflowExecutor(Executor):
             pending_requests={},
         )
         self._execution_contexts[execution_id] = execution_context
-
-        # Track this execution
-        self._active_executions += 1
 
         logger.debug(f"WorkflowExecutor {self.id} starting sub-workflow {self.workflow.id} execution {execution_id}")
 
@@ -374,95 +372,6 @@ class WorkflowExecutor(Executor):
                 exec_ctx = self._execution_contexts[execution_id]
                 if not exec_ctx.pending_requests:
                     del self._execution_contexts[execution_id]
-                    self._active_executions -= 1
-
-    async def _process_workflow_result(
-        self, result: Any, execution_context: ExecutionContext, ctx: WorkflowContext[Any]
-    ) -> None:
-        """Process the result from a workflow execution.
-
-        This method handles the common logic for processing outputs, request info events,
-        and final states that is shared between process_workflow and handle_response.
-
-        Args:
-            result: The workflow execution result.
-            execution_context: The execution context for this sub-workflow run.
-            ctx: The workflow context.
-        """
-        # Collect all events from the workflow
-        request_info_events = result.get_request_info_events()
-        outputs = result.get_outputs()
-        final_state = result.get_final_state()
-        logger.debug(
-            f"WorkflowExecutor {self.id} processing workflow result with "
-            f"{len(outputs)} outputs and {len(request_info_events)} request info events, "
-            f"final state: {final_state}"
-        )
-
-        # Process outputs
-        for output in outputs:
-            # TODO(@taochen): Allow the sub-workflow to output directly
-            await ctx.send_message(output)
-
-        # Process request info events
-        for event in request_info_events:
-            # Track the pending request in execution context
-            execution_context.pending_requests[event.request_id] = event
-            # Map request to execution for response routing
-            self._request_to_execution[event.request_id] = execution_context.execution_id
-            # TODO(@taochen): There should be two ways a sub-workflow can make a request:
-            # 1. In a workflow where the parent workflow has an executor that may intercept the
-            #    request and handle it directly, a message should be sent.
-            # 2. In a workflow where the parent workflow does not handle the request, the request
-            #    should be propagated via the `request_info` mechanism to an external source. And
-            #    a @response_handler would be required in the WorkflowExecutor to handle the response.
-            await ctx.send_message(SubWorkflowRequestMessage(source_event=event, executor_id=self.id))
-
-        # Update expected response count for this execution
-        execution_context.expected_response_count = len(request_info_events)
-
-        # Handle final state
-        if final_state == WorkflowRunState.FAILED:
-            # Find the WorkflowFailedEvent.
-            failed_events = [e for e in result if isinstance(e, WorkflowFailedEvent)]
-            if failed_events:
-                failed_event = failed_events[0]
-                error_type = failed_event.details.error_type
-                error_message = failed_event.details.message
-                exception = Exception(
-                    f"Sub-workflow {self.workflow.id} failed with error: {error_type} - {error_message}"
-                )
-                error_event = WorkflowErrorEvent(
-                    data=exception,
-                )
-                await ctx.add_event(error_event)
-                self._active_executions -= 1
-        elif final_state == WorkflowRunState.IDLE:
-            # Sub-workflow is idle - nothing more to do now
-            logger.debug(f"Sub-workflow {self.workflow.id} is idle with {self._active_executions} active executions")
-            self._active_executions -= 1  # Treat idle as completion for now
-        elif final_state == WorkflowRunState.CANCELLED:
-            # Sub-workflow was cancelled - treat as completion
-            logger.debug(
-                f"Sub-workflow {self.workflow.id} was cancelled with {self._active_executions} active executions"
-            )
-            self._active_executions -= 1
-        elif final_state == WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS:
-            # Sub-workflow is still running with pending requests
-            logger.debug(
-                f"Sub-workflow {self.workflow.id} is still in progress with {len(request_info_events)} "
-                f"pending requests with {self._active_executions} active executions"
-            )
-        elif final_state == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS:
-            # Sub-workflow is idle but has pending requests
-            logger.debug(
-                f"Sub-workflow {self.workflow.id} is idle with pending requests: "
-                f"{len(request_info_events)} with {self._active_executions} active executions"
-            )
-        else:
-            raise RuntimeError(f"Unexpected final state: {final_state}")
-
-        await self._persist_execution_state(ctx)
 
     @handler
     async def handle_response(self, response: SubWorkflowResponseMessage, ctx: WorkflowContext[Any]) -> None:
@@ -528,7 +437,6 @@ class WorkflowExecutor(Executor):
             # Clean up execution context if it's completed (no pending requests)
             if not execution_context.pending_requests:
                 del self._execution_contexts[execution_id]
-                self._active_executions -= 1
 
     async def _ensure_state_loaded(self, ctx: WorkflowContext[Any]) -> None:
         if self._state_loaded:
@@ -547,159 +455,161 @@ class WorkflowExecutor(Executor):
         else:
             self._state_loaded = True
 
-    def restore_state(self, state: dict[str, Any]) -> None:
+    async def restore_state(self, state: dict[str, Any]) -> None:
         """Restore pending request bookkeeping from a checkpoint snapshot."""
-        self._execution_contexts = {}
-        self._request_to_execution = {}
+        # Validate the state contains the right keys
+        if "execution_contexts" not in state:
+            raise KeyError("Missing 'execution_contexts' in WorkflowExecutor state.")
+        if "request_to_execution" not in state:
+            raise KeyError("Missing 'request_to_execution' in WorkflowExecutor state.")
 
-        executions_payload = state.get("executions")
-        if isinstance(executions_payload, Mapping) and executions_payload:
-            for execution_id, payload in executions_payload.items():
-                if not isinstance(execution_id, str) or not isinstance(payload, Mapping):
-                    continue
-
-                pending_ids_raw = payload.get("pending_request_ids", [])
-                if not isinstance(pending_ids_raw, list):
-                    continue
-                pending_ids = [rid for rid in pending_ids_raw if isinstance(rid, str)]
-
-                expected = payload.get("expected_response_count", len(pending_ids))
-                try:
-                    expected_count = int(expected)
-                except (TypeError, ValueError):
-                    expected_count = len(pending_ids)
-
-                collected_ids_raw = payload.get("collected_response_ids", [])
-                collected: dict[str, Any] = {}
-                if isinstance(collected_ids_raw, list):
-                    for rid in collected_ids_raw:
-                        if isinstance(rid, str):
-                            collected[rid] = None
-
-                exec_ctx = ExecutionContext(
-                    execution_id=execution_id,
-                    collected_responses=collected,
-                    expected_response_count=expected_count,
-                    pending_requests={rid: None for rid in pending_ids},
-                )
-
-                if exec_ctx.pending_requests or exec_ctx.collected_responses:
-                    self._execution_contexts[execution_id] = exec_ctx
-                    for rid in exec_ctx.pending_requests:
-                        self._request_to_execution[rid] = execution_id
-        else:
-            pending_ids = state.get("pending_request_ids", [])
-            if isinstance(pending_ids, list):
-                pending = [rid for rid in pending_ids if isinstance(rid, str)]
-                if pending:
-                    try:
-                        expected = int(state.get("expected_response_count", len(pending)))
-                    except (TypeError, ValueError):
-                        expected = len(pending)
-
-                    execution_id = str(uuid.uuid4())
-                    exec_ctx = ExecutionContext(
-                        execution_id=execution_id,
-                        collected_responses={},
-                        expected_response_count=expected,
-                        pending_requests={rid: None for rid in pending},
-                    )
-                    self._execution_contexts[execution_id] = exec_ctx
-                    for rid in pending:
-                        self._request_to_execution[rid] = execution_id
-
+        # Validate the execution contexts stored in the state have the right keys and values
+        execution_contexts: dict[str, ExecutionContext] | None = None
         try:
-            self._active_executions = int(state.get("active_executions", len(self._execution_contexts)))
-        except (TypeError, ValueError):
-            self._active_executions = len(self._execution_contexts)
+            execution_contexts = {
+                key: decode_checkpoint_value(value) for key, value in state["execution_contexts"].items()
+            }
+        except Exception as ex:
+            raise RuntimeError("Failed to deserialize execution context.") from ex
 
-        helper_states = state.get("request_info_executor_states", {})
-        restored_request_data: dict[str, RequestInfoMessage] = {}
-        if isinstance(helper_states, Mapping):
-            for exec_id, helper_state in helper_states.items():
-                helper_executor = self.workflow.executors.get(exec_id)
-                if not isinstance(helper_executor, RequestInfoExecutor) or not isinstance(helper_state, Mapping):
-                    continue
-                with contextlib.suppress(Exception):
-                    helper_executor.restore_state(dict(helper_state))
-                    for req_id, event in getattr(helper_executor, "_request_events", {}).items():  # type: ignore[attr-defined]
-                        if (
-                            isinstance(req_id, str)
-                            and isinstance(event, RequestInfoEvent)
-                            and isinstance(event.data, RequestInfoMessage)
-                        ):
-                            restored_request_data[req_id] = event.data
+        if not all(
+            isinstance(key, str) and isinstance(value, ExecutionContext) for key, value in execution_contexts.items()
+        ):
+            raise ValueError("Execution contexts must have 'str' as key and 'ExecutionContext' as value.")
+        if not all(key == value.execution_id for key, value in execution_contexts.items()):
+            raise ValueError("Execution contexts must have matching keys and IDs.")
 
-        if restored_request_data:
-            for req_id, data in restored_request_data.items():
-                execution_id = self._request_to_execution.get(req_id)
-                if execution_id and execution_id in self._execution_contexts:
-                    self._execution_contexts[execution_id].pending_requests[req_id] = data
+        # Validate the request_to_execution map contain the right data
+        request_to_execution = state["request_to_execution"]
+        if not all(isinstance(key, str) and isinstance(value, str) for key, value in request_to_execution.items()):
+            raise ValueError("Request to execution map must have 'str' as key and 'str' as value.")
+        if not all(value in execution_contexts for value in request_to_execution.values()):
+            raise ValueError(
+                "'request_to_execution` contains unknown execution ID that is not part of the execution contexts."
+            )
 
-        for execution_id, exec_ctx in self._execution_contexts.items():
-            for req_id in exec_ctx.pending_requests:
-                self._request_to_execution.setdefault(req_id, execution_id)
+        self._execution_contexts = execution_contexts
+        self._request_to_execution = request_to_execution
 
-        request_map = state.get("request_to_execution")
-        if isinstance(request_map, Mapping):
-            for req_id, execution_id in request_map.items():
-                if (
-                    isinstance(req_id, str)
-                    and isinstance(execution_id, str)
-                    and execution_id in self._execution_contexts
-                ):
-                    self._request_to_execution.setdefault(req_id, execution_id)
+        # Add the `request_info_event`s back to the sub workflow.
+        # This is only a temporary solution to rehydrate the sub workflow with the requests.
+        # The proper way would be to rehydrate the workflow from a checkpoint on a Workflow
+        # API instead of the '_runner_context' object that should be hidden. And the sub workflow
+        # should be rehydrated from a checkpoint object instead of from a subset of the state.
+        # TODO(@taochen): how to handle the case when the parent workflow has checkpointing
+        # set up but not the sub workflow?
+        request_info_events = [
+            request_info_event
+            for execution_context in self._execution_contexts.values()
+            for request_info_event in execution_context.pending_requests.values()
+        ]
+        await asyncio.gather(*[
+            self.workflow._runner_context.add_request_info_event(event) for event in request_info_events
+        ])
 
         self._state_loaded = True
 
-    def _build_state_snapshot(self) -> dict[str, Any]:
-        executions: dict[str, Any] = {}
-        pending_request_ids: list[str] = []
-
-        for execution_id, exec_ctx in self._execution_contexts.items():
-            if not exec_ctx.pending_requests and not exec_ctx.collected_responses:
-                continue
-
-            request_ids = list(exec_ctx.pending_requests.keys())
-            pending_request_ids.extend(request_ids)
-
-            summary: dict[str, Any] = {
-                "pending_request_ids": request_ids,
-                "expected_response_count": exec_ctx.expected_response_count,
-            }
-
-            if exec_ctx.collected_responses:
-                summary["collected_response_ids"] = list(exec_ctx.collected_responses.keys())
-
-            executions[execution_id] = summary
-
-        helper_states: dict[str, Any] = {}
-        for exec_id, executor in self.workflow.executors.items():
-            if isinstance(executor, RequestInfoExecutor):
-                with contextlib.suppress(Exception):
-                    snapshot = executor.snapshot_state()
-                    if snapshot:
-                        helper_states[exec_id] = snapshot
-
-        has_state = bool(executions or helper_states or self._request_to_execution)
-        if not has_state:
-            return {}
-
-        state: dict[str, Any] = {
-            "executions": executions,
+    async def _persist_execution_state(self, ctx: WorkflowContext) -> None:
+        """Persist the state of the WorkflowExecutor for checkpointing purposes."""
+        state = {
+            "execution_contexts": {
+                execution_id: encode_checkpoint_value(execution_context)
+                for execution_id, execution_context in self._execution_contexts.items()
+            },
             "request_to_execution": dict(self._request_to_execution),
-            "pending_request_ids": pending_request_ids,
-            "active_executions": self._active_executions,
         }
 
-        if helper_states:
-            state["request_info_executor_states"] = helper_states
-
-        return state
-
-    async def _persist_execution_state(self, ctx: WorkflowContext[Any]) -> None:
-        snapshot = self._build_state_snapshot()
         try:
-            await ctx.set_executor_state(snapshot)
+            await ctx.set_executor_state(state)
         except Exception as exc:  # pragma: no cover - transport specific
             logger.warning(f"WorkflowExecutor {self.id} failed to persist state: {exc}")
+
+    async def _process_workflow_result(
+        self,
+        result: WorkflowRunResult,
+        execution_context: ExecutionContext,
+        ctx: WorkflowContext[Any],
+    ) -> None:
+        """Process the result from a workflow execution.
+
+        This method handles the common logic for processing outputs, request info events,
+        and final states that is shared between process_workflow and handle_response.
+
+        Args:
+            result: The workflow execution result.
+            execution_context: The execution context for this sub-workflow run.
+            ctx: The workflow context.
+        """
+        # Collect all events from the workflow
+        request_info_events = result.get_request_info_events()
+        outputs = result.get_outputs()
+        workflow_run_state = result.get_final_state()
+        logger.debug(
+            f"WorkflowExecutor {self.id} processing workflow result with "
+            f"{len(outputs)} outputs and {len(request_info_events)} request info events. "
+            f"Workflow run state: {workflow_run_state}"
+        )
+
+        # Process outputs
+        for output in outputs:
+            # TODO(@taochen): Allow the sub-workflow to output directly
+            await ctx.send_message(output)
+
+        # Process request info events
+        for event in request_info_events:
+            # Track the pending request in execution context
+            execution_context.pending_requests[event.request_id] = event
+            # Map request to execution for response routing
+            self._request_to_execution[event.request_id] = execution_context.execution_id
+            # TODO(@taochen): There should be two ways a sub-workflow can make a request:
+            # 1. In a workflow where the parent workflow has an executor that may intercept the
+            #    request and handle it directly, a message should be sent.
+            # 2. In a workflow where the parent workflow does not handle the request, the request
+            #    should be propagated via the `request_info` mechanism to an external source. And
+            #    a @response_handler would be required in the WorkflowExecutor to handle the response.
+            await ctx.send_message(SubWorkflowRequestMessage(source_event=event, executor_id=self.id))
+
+        # Update expected response count for this execution
+        execution_context.expected_response_count = len(request_info_events)
+
+        # Handle final state
+        if workflow_run_state == WorkflowRunState.FAILED:
+            # Find the WorkflowFailedEvent.
+            failed_events = [e for e in result if isinstance(e, WorkflowFailedEvent)]
+            if failed_events:
+                failed_event = failed_events[0]
+                error_type = failed_event.details.error_type
+                error_message = failed_event.details.message
+                exception = Exception(
+                    f"Sub-workflow {self.workflow.id} failed with error: {error_type} - {error_message}"
+                )
+                error_event = WorkflowErrorEvent(
+                    data=exception,
+                )
+                await ctx.add_event(error_event)
+        elif workflow_run_state == WorkflowRunState.IDLE:
+            # Sub-workflow is idle - nothing more to do now
+            logger.debug(
+                f"Sub-workflow {self.workflow.id} is idle with {len(self._execution_contexts)} active executions"
+            )
+        elif workflow_run_state == WorkflowRunState.CANCELLED:
+            # Sub-workflow was cancelled - treat as completion
+            logger.debug(
+                f"Sub-workflow {self.workflow.id} was cancelled with {len(self._execution_contexts)} active executions"
+            )
+        elif workflow_run_state == WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS:
+            # Sub-workflow is still running with pending requests
+            logger.debug(
+                f"Sub-workflow {self.workflow.id} is still in progress with {len(request_info_events)} "
+                f"pending requests with {len(self._execution_contexts)} active executions"
+            )
+        elif workflow_run_state == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS:
+            # Sub-workflow is idle but has pending requests
+            logger.debug(
+                f"Sub-workflow {self.workflow.id} is idle with pending requests: "
+                f"{len(request_info_events)} with {len(self._execution_contexts)} active executions"
+            )
+        else:
+            raise RuntimeError(f"Unexpected workflow run state: {workflow_run_state}")
+
+        await self._persist_execution_state(ctx)

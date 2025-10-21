@@ -72,8 +72,15 @@ class Message:
     @staticmethod
     def from_dict(data: dict[str, Any]) -> "Message":
         """Create a Message from a dictionary."""
+        # Validation
+        if "data" not in data:
+            raise KeyError("Missing 'data' field in Message dictionary.")
+
+        if "source_id" not in data:
+            raise KeyError("Missing 'source_id' field in Message dictionary.")
+
         return Message(
-            data=decode_checkpoint_value(data.get("data")),
+            data=decode_checkpoint_value(data["data"]),
             source_id=data["source_id"],
             target_id=data.get("target_id"),
             type=MessageType(data.get("type", "standard")),
@@ -382,6 +389,7 @@ class InProcRunnerContext:
             executor_states=state.get("executor_states", {}),
             iteration_count=state.get("iteration_count", 0),
             max_iterations=state.get("max_iterations", DEFAULT_MAX_ITERATIONS),
+            pending_request_info_events=state.get("pending_request_info_events", {}),
             metadata=metadata or {},
         )
         checkpoint_id = await self._checkpoint_storage.save_checkpoint(checkpoint)
@@ -394,42 +402,29 @@ class InProcRunnerContext:
         return await self._checkpoint_storage.load_checkpoint(checkpoint_id)
 
     async def get_workflow_state(self) -> WorkflowState:
-        serializable_messages: dict[str, list[dict[str, Any]]] = {}
+        serialized_messages: dict[str, list[dict[str, Any]]] = {}
         for source_id, message_list in self._messages.items():
-            serializable_messages[source_id] = [
-                {
-                    "data": encode_checkpoint_value(msg.data),
-                    "source_id": msg.source_id,
-                    "target_id": msg.target_id,
-                    "trace_contexts": msg.trace_contexts,
-                    "source_span_ids": msg.source_span_ids,
-                }
-                for msg in message_list
-            ]
+            serialized_messages[source_id] = [msg.to_dict() for msg in message_list]
+
+        serialized_pending_request_info_events: dict[str, dict[str, Any]] = {
+            request_id: request.to_dict() for request_id, request in self._pending_request_info_events.items()
+        }
 
         return {
-            "messages": serializable_messages,
+            "messages": serialized_messages,
             "shared_state": encode_checkpoint_value(self._shared_state),
             "executor_states": encode_checkpoint_value(self._executor_states),
             "iteration_count": self._iteration_count,
             "max_iterations": self._max_iterations,
-            "pending_request_info_events": encode_checkpoint_value(self._pending_request_info_events),
+            "pending_request_info_events": serialized_pending_request_info_events,
         }
 
     async def set_workflow_state(self, state: WorkflowState) -> None:
         self._messages.clear()
         messages_data = state.get("messages", {})
         for source_id, message_list in messages_data.items():
-            self._messages[source_id] = [
-                Message(
-                    data=decode_checkpoint_value(msg.get("data")),
-                    source_id=msg.get("source_id", ""),
-                    target_id=msg.get("target_id"),
-                    trace_contexts=msg.get("trace_contexts"),
-                    source_span_ids=msg.get("source_span_ids"),
-                )
-                for msg in message_list
-            ]
+            self._messages[source_id] = [Message.from_dict(msg) for msg in message_list]
+
         # Restore shared_state
         decoded_shared_raw = decode_checkpoint_value(state.get("shared_state", {}))
         if isinstance(decoded_shared_raw, dict):
@@ -457,7 +452,10 @@ class InProcRunnerContext:
         self._max_iterations = state.get("max_iterations", 100)
 
         # Pending request info events
-        self._pending_request_info_events = decode_checkpoint_value(state.get("pending_request_info_events", {}))
+        self._pending_request_info_events = {
+            request_id: RequestInfoEvent.from_dict(request)
+            for request_id, request in state.get("pending_request_info_events", {}).items()
+        }
         await asyncio.gather(
             *(self.add_event(pending_request) for pending_request in self._pending_request_info_events.values())
         )

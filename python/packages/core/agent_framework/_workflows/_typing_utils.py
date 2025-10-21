@@ -153,3 +153,28 @@ def is_instance_of(data: Any, target_type: type | UnionType | Any) -> bool:
 
     # Fallback: if we reach here, we assume data is an instance of the target_type
     return isinstance(data, target_type)
+
+
+def serialize_type(t: type) -> str:
+    """Serialize a type to a string.
+
+    For example,
+
+    serialize_type(int) => "builtins.int"
+    """
+    return f"{t.__module__}.{t.__qualname__}"
+
+
+def deserialize_type(serialized_type_string: str) -> type:
+    """Deserialize a serialized type string.
+
+    For example,
+
+    deserialize_type("builtins.int") => int
+    """
+    import importlib
+
+    module_name, _, type_name = serialized_type_string.partition(".")
+    module = importlib.import_module(module_name)
+
+    return getattr(module, type_name)

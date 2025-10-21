@@ -10,6 +10,9 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 
 from agent_framework import AgentRunResponse, AgentRunResponseUpdate
 
+from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
+from ._typing_utils import deserialize_type, serialize_type
+
 if TYPE_CHECKING:
     from ._request_info_executor import RequestInfoMessage
 
@@ -238,6 +241,32 @@ class RequestInfoEvent(WorkflowEvent):
             f"request_type={self.request_type.__name__}, "
             f"data={self.data}, "
             f"response_type={self.response_type.__name__})"
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert the request info event to a dictionary for serialization."""
+        return {
+            "data": encode_checkpoint_value(self.data),
+            "request_id": self.request_id,
+            "source_executor_id": self.source_executor_id,
+            "request_type": serialize_type(self.request_type),
+            "response_type": serialize_type(self.response_type),
+        }
+
+    @staticmethod
+    def from_dict(data: dict[str, Any]) -> "RequestInfoEvent":
+        """Create a RequestInfoEvent from a dictionary."""
+        # Validation
+        for property in ["data", "request_id", "source_executor_id", "request_type", "response_type"]:
+            if property not in data:
+                raise KeyError(f"Missing '{property}' field in RequestInfoEvent dictionary.")
+
+        return RequestInfoEvent(
+            request_id=data["request_id"],
+            source_executor_id=data["source_executor_id"],
+            request_type=deserialize_type(data["request_type"]),
+            request_data=decode_checkpoint_value(data["data"]),
+            response_type=deserialize_type(data["response_type"]),
         )
 
 
