@@ -18,12 +18,14 @@ internal sealed class WorkflowHostAgent : AIAgent
     private readonly string? _id;
     private readonly CheckpointManager? _checkpointManager;
     private readonly IWorkflowExecutionEnvironment _executionEnvironment;
+    private readonly Task<ProtocolDescriptor> _describeTask;
 
     private readonly ConcurrentDictionary<string, string> _assignedRunIds = [];
 
-    public WorkflowHostAgent(Workflow<List<ChatMessage>> workflow, string? id = null, string? name = null, string? description = null, CheckpointManager? checkpointManager = null, IWorkflowExecutionEnvironment? executionEnvironment = null)
+    public WorkflowHostAgent(Workflow workflow, string? id = null, string? name = null, string? description = null, CheckpointManager? checkpointManager = null, IWorkflowExecutionEnvironment? executionEnvironment = null)
     {
         this._workflow = Throw.IfNull(workflow);
+
         this._executionEnvironment = executionEnvironment ?? (workflow.AllowConcurrent
                                                               ? InProcessExecution.Concurrent
                                                               : InProcessExecution.OffThread);
@@ -32,6 +34,9 @@ internal sealed class WorkflowHostAgent : AIAgent
         this._id = id;
         this.Name = name;
         this.Description = description;
+
+        // Kick off the typecheck right away by starting the DescribeProtocol task.
+        this._describeTask = this._workflow.DescribeProtocolAsync().AsTask();
     }
 
     public override string Id => this._id ?? base.Id;
@@ -48,6 +53,12 @@ internal sealed class WorkflowHostAgent : AIAgent
         } while (!this._assignedRunIds.TryAdd(result, result));
 
         return result;
+    }
+
+    private async ValueTask ValidateWorkflowAsync()
+    {
+        ProtocolDescriptor protocol = await this._describeTask.ConfigureAwait(false);
+        protocol.ThrowIfNotChatProtocol();
     }
 
     public override AgentThread GetNewThread() => new WorkflowThread(this._workflow, this.GenerateNewId(), this._executionEnvironment, this._checkpointManager);
@@ -75,6 +86,8 @@ internal sealed class WorkflowHostAgent : AIAgent
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
+        await this.ValidateWorkflowAsync().ConfigureAwait(false);
+
         WorkflowThread workflowThread = await this.UpdateThreadAsync(messages, thread, cancellationToken).ConfigureAwait(false);
         MessageMerger merger = new();
 
@@ -95,6 +108,8 @@ internal sealed class WorkflowHostAgent : AIAgent
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        await this.ValidateWorkflowAsync().ConfigureAwait(false);
+
         WorkflowThread workflowThread = await this.UpdateThreadAsync(messages, thread, cancellationToken).ConfigureAwait(false);
         await foreach (AgentRunResponseUpdate update in workflowThread.InvokeStageAsync(cancellationToken)
                                                                       .ConfigureAwait(false)
