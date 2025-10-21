@@ -102,6 +102,8 @@ internal sealed class WorkflowThread : AgentThread
 
     private async ValueTask<Checkpointed<StreamingRun>> CreateOrResumeRunAsync(List<ChatMessage> messages, CancellationToken cancellationToken = default)
     {
+        // The workflow is validated to be a ChatProtocol workflow by the WorkflowHostAgent before creating the thread,
+        // and does not need to be checked again here.
         if (this.LastCheckpoint is not null)
         {
             Checkpointed<StreamingRun> checkpointed =
