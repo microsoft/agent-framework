@@ -160,7 +160,6 @@ public class AgentRunResponse
     /// </value>
     public string? ResponseId { get; set; }
 
-#pragma warning disable CA1200 // Avoid using cref tags with a prefix
     /// <summary>
     /// Gets or sets the continuation token for getting result of the background agent response.
     /// </summary>
@@ -177,7 +176,6 @@ public class AgentRunResponse
     /// </para>
     /// </remarks>
     public object? ContinuationToken { get; set; }
-#pragma warning restore CA1200 // Avoid using cref tags with a prefix
 
     /// <summary>
     /// Gets or sets the timestamp indicating when this response was created.

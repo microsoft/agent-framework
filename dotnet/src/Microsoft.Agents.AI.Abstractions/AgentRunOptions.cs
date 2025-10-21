@@ -37,7 +37,6 @@ public class AgentRunOptions
         this.AllowBackgroundResponses = options.AllowBackgroundResponses;
     }
 
-#pragma warning disable CA1200 // Avoid using cref tags with a prefix
     /// <summary>
     /// Gets or sets the continuation token for resuming and getting the result of the agent response identified by this token.
     /// </summary>
@@ -52,7 +51,6 @@ public class AgentRunOptions
     /// and passing it to this property on subsequent calls to <see cref="AIAgent.RunAsync(AgentThread?, AgentRunOptions?, System.Threading.CancellationToken)"/>.
     /// </remarks>
     public object? ContinuationToken { get; set; }
-#pragma warning restore CA1200 // Avoid using cref tags with a prefix
 
     /// <summary>
     /// Gets or sets a value indicating whether the background responses are allowed.
