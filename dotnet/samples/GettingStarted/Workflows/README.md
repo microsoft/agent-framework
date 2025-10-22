@@ -17,6 +17,8 @@ Please begin with the [Foundational](./_Foundational) samples in order. These th
 | [Agents](./_Foundational/03_AgentsInWorkflows) | Use agents in workflows |
 | [Agentic Workflow Patterns](./_Foundational/04_AgentWorkflowPatterns) | Demonstrates common agentic workflow patterns |
 | [Multi-Service Workflows](./_Foundational/05_MultiModelService) | Shows using multiple AI services in the same workflow |
+| [Sub-Workflows](./_Foundational/06_SubWorkflows) | Demonstrates composing workflows hierarchically by embedding workflows as executors |
+| [Mixed Workflow with Agents and Executors](./_Foundational/07_MixedWorkflowAgentsAndExecutors) | Shows how to mix agents and executors with adapter pattern for type conversion and protocol handling |
 
 Once completed, please proceed to other samples listed below.
 

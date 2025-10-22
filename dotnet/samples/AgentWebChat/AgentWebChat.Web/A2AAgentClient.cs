@@ -58,7 +58,7 @@ internal sealed class A2AAgentClient : AgentClientBase
             if (a2aResponse is AgentMessage message)
             {
                 var responseMessage = message.ToChatMessage();
-                if (responseMessage is not null)
+                if (responseMessage is { Contents.Count: > 0 })
                 {
                     results.Add(new AgentRunResponseUpdate(responseMessage.Role, responseMessage.Contents)
                     {
@@ -78,11 +78,7 @@ internal sealed class A2AAgentClient : AgentClientBase
 
                         foreach (var part in artifact.Parts)
                         {
-                            var aiContent = ConvertPartToAIContent(part);
-                            if (aiContent != null)
-                            {
-                                (aiContents ??= []).Add(aiContent);
-                            }
+                            (aiContents ??= []).Add(part.ToAIContent());
                         }
 
                         if (aiContents is not null)
@@ -155,20 +151,6 @@ internal sealed class A2AAgentClient : AgentClientBase
             return (a2aClient, a2aCardResolver);
         });
 
-    private static AIContent? ConvertPartToAIContent(Part part) =>
-        part switch
-        {
-            TextPart textPart => new TextContent(textPart.Text)
-            {
-                RawRepresentation = textPart
-            },
-            FilePart filePart when filePart.File is FileWithUri fileWithUrl => new HostedFileContent(fileWithUrl.Uri)
-            {
-                RawRepresentation = filePart
-            },
-            _ => null
-        };
-
     private static AdditionalPropertiesDictionary? ConvertMetadataToAdditionalProperties(Dictionary<string, JsonElement>? metadata)
     {
         if (metadata is not { Count: > 0 })
@@ -182,24 +164,5 @@ internal sealed class A2AAgentClient : AgentClientBase
             additionalProperties[kvp.Key] = kvp.Value;
         }
         return additionalProperties;
-    }
-}
-
-// Extension method to convert multiple chat messages to A2A messages
-internal static class ChatMessageExtensions
-{
-    public static List<AgentMessage> ToA2AMessages(this IList<ChatMessage> chatMessages)
-    {
-        if (chatMessages is null || chatMessages.Count == 0)
-        {
-            return [];
-        }
-
-        var result = new List<AgentMessage>();
-        foreach (var chatMessage in chatMessages)
-        {
-            result.Add(chatMessage.ToA2AMessage());
-        }
-        return result;
     }
 }
