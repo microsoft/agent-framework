@@ -394,24 +394,6 @@ public sealed class OpenAIResponsesConformanceTests : ConformanceTestBase
         AssertJsonPropertyExists(responseTool, "description");
         AssertJsonPropertyExists(responseTool, "parameters");
 
-        // Assert - Tool definition has strict flag
-        AssertJsonPropertyExists(responseTool, "strict");
-        var strict = responseTool.GetProperty("strict").GetBoolean();
-        Assert.True(strict);
-
-        // Assert - Parameters have additionalProperties flag
-        var responseParameters = responseTool.GetProperty("parameters");
-        AssertJsonPropertyExists(responseParameters, "additionalProperties");
-        var additionalProperties = responseParameters.GetProperty("additionalProperties").GetBoolean();
-        Assert.False(additionalProperties);
-
-        // Assert - Required fields updated in response
-        var responseRequired = responseParameters.GetProperty("required");
-        Assert.Equal(JsonValueKind.Array, responseRequired.ValueKind);
-        var responseRequiredFields = responseRequired.EnumerateArray().Select(e => e.GetString()).ToList();
-        Assert.Contains("location", responseRequiredFields);
-        Assert.Contains("unit", responseRequiredFields);
-
         // Assert - Response has usage statistics
         AssertJsonPropertyExists(response, "usage");
         var usage = response.GetProperty("usage");
@@ -846,8 +828,6 @@ public sealed class OpenAIResponsesConformanceTests : ConformanceTestBase
         var usage = response.GetProperty("usage");
         var outputDetails = usage.GetProperty("output_tokens_details");
         AssertJsonPropertyExists(outputDetails, "reasoning_tokens");
-        var reasoningTokens = outputDetails.GetProperty("reasoning_tokens").GetInt32();
-        Assert.True(reasoningTokens > 0, "reasoning_tokens should be positive for reasoning models");
 
         // Assert - Response status is completed
         AssertJsonPropertyEquals(response, "status", "completed");

@@ -45,17 +45,6 @@ internal static class AgentRunResponseExtensions
 
         var usage = agentRunResponse.Usage.ToResponseUsage();
 
-        // If reasoning is enabled but no reasoning tokens are reported, add placeholder reasoning tokens
-        // This ensures conformance with the API spec that reasoning tokens should be > 0 for reasoning models
-        if (request.Reasoning != null && usage.OutputTokensDetails.ReasoningTokens == 0)
-        {
-            // Add fake reasoning tokens for testing/conformance purposes
-            usage = usage with
-            {
-                OutputTokensDetails = usage.OutputTokensDetails with { ReasoningTokens = 128 }
-            };
-        }
-
         return new Response
         {
             Id = context.ResponseId,
@@ -71,7 +60,7 @@ internal static class AgentRunResponseExtensions
             Output = output,
             Usage = usage,
             ParallelToolCalls = request.ParallelToolCalls ?? true,
-            Tools = request.Tools?.Select(ProcessTool).ToList() ?? [],
+            Tools = [.. request.Tools ?? []],
             ToolChoice = request.ToolChoice,
             ServiceTier = request.ServiceTier ?? "default",
             Store = request.Store ?? true,
@@ -91,106 +80,6 @@ internal static class AgentRunResponseExtensions
             Prompt = request.Prompt,
             Error = null
         };
-    }
-
-    /// <summary>
-    /// Processes a tool definition to add strict mode flags required by OpenAI.
-    /// </summary>
-    /// <param name="tool">The tool definition from the request.</param>
-    /// <returns>A processed tool definition with strict flags added.</returns>
-    public static JsonElement ProcessTool(JsonElement tool)
-    {
-        // If the tool is not a function tool, return it as-is
-        if (!tool.TryGetProperty("type", out var typeElement) || typeElement.GetString() != "function")
-        {
-            return tool;
-        }
-
-        // Clone the tool and add strict mode flags
-        using var doc = JsonDocument.Parse(tool.GetRawText());
-        using var stream = new MemoryStream();
-        using (var writer = new Utf8JsonWriter(stream))
-        {
-            writer.WriteStartObject();
-
-            // Copy existing properties
-            foreach (var property in tool.EnumerateObject())
-            {
-                if (property.Name == "parameters")
-                {
-                    // Process parameters to add strict flags
-                    writer.WritePropertyName("parameters");
-                    ProcessParameters(property.Value, writer);
-                }
-                else if (property.Name != "strict")
-                {
-                    // Copy other properties except strict (we'll add it explicitly)
-                    property.WriteTo(writer);
-                }
-            }
-
-            // Add strict flag
-            writer.WriteBoolean("strict", true);
-
-            writer.WriteEndObject();
-        }
-
-        using var doc = JsonDocument.Parse(stream.ToArray());
-        return doc.RootElement.Clone();
-    }
-
-    /// <summary>
-    /// Processes tool parameters to add additionalProperties flag and ensure all properties are required.
-    /// </summary>
-    private static void ProcessParameters(JsonElement parameters, Utf8JsonWriter writer)
-    {
-        writer.WriteStartObject();
-
-        JsonElement? propertiesElement = null;
-        var existingRequired = new HashSet<string>();
-
-        // First pass: copy properties except required and additionalProperties, and track what we need
-        foreach (var property in parameters.EnumerateObject())
-        {
-            if (property.Name == "properties")
-            {
-                propertiesElement = property.Value;
-                property.WriteTo(writer);
-            }
-            else if (property.Name == "required" && property.Value.ValueKind == JsonValueKind.Array)
-            {
-                // Track existing required fields but don't write yet
-                foreach (var item in property.Value.EnumerateArray())
-                {
-                    var str = item.GetString();
-                    if (str != null)
-                    {
-                        existingRequired.Add(str);
-                    }
-                }
-            }
-            else if (property.Name != "additionalProperties")
-            {
-                // Copy other properties
-                property.WriteTo(writer);
-            }
-        }
-
-        // Write required array with all properties
-        if (propertiesElement.HasValue && propertiesElement.Value.ValueKind == JsonValueKind.Object)
-        {
-            writer.WriteStartArray("required");
-            foreach (var prop in propertiesElement.Value.EnumerateObject())
-            {
-                writer.WriteStringValue(prop.Name);
-            }
-            writer.WriteEndArray();
-        }
-
-        // Add additionalProperties flag
-        writer.WriteBoolean("additionalProperties", false);
-
-        writer.WriteEndObject();
     }
 
     /// <summary>

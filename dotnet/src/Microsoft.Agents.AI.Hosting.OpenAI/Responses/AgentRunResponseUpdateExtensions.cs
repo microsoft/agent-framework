@@ -157,7 +157,7 @@ internal static class AgentRunResponseUpdateExtensions
                 Output = outputs?.ToList() ?? [],
                 Usage = latestUsage,
                 ParallelToolCalls = request.ParallelToolCalls ?? true,
-                Tools = request.Tools?.Select(AgentRunResponseExtensions.ProcessTool).ToList() ?? [],
+                Tools = [.. request.Tools ?? []],
                 ToolChoice = request.ToolChoice,
                 ServiceTier = request.ServiceTier ?? "default",
                 Store = request.Store ?? true,
