@@ -292,8 +292,17 @@ async def main() -> None:
     resource_allocator = ResourceAllocator("resource_allocator")
     policy_engine = PolicyEngine("policy_engine")
 
+    # Create the WorkflowExecutor for the sub-workflow
+    # Setting allow_direct_output=True to let the sub-workflow output directly.
+    # This is because the sub-workflow is the both the entry point and the exit
+    # point of the main workflow.
+    sub_workflow_executor = WorkflowExecutor(
+        sub_workflow,
+        "sub_workflow_executor",
+        allow_direct_output=True,
+    )
+
     # Build the main workflow
-    sub_workflow_executor = WorkflowExecutor(sub_workflow, "sub_workflow_executor")
     main_workflow = (
         WorkflowBuilder()
         .set_start_executor(sub_workflow_executor)
@@ -348,6 +357,8 @@ async def main() -> None:
         for output in outputs:
             # TODO(@taochen): Allow the sub-workflow to output directly
             print(f"- {output}")
+    else:
+        raise RuntimeError("Workflow did not produce an output.")
 
 
 if __name__ == "__main__":

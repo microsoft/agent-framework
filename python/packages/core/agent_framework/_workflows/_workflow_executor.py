@@ -109,7 +109,7 @@ class WorkflowExecutor(Executor):
     1. Starts the wrapped workflow with the input message
     2. Runs the sub-workflow to completion or until it needs external input
     3. Processes the sub-workflow's complete event stream after execution
-    4. Forwards outputs to the parent workflow's event stream
+    4. Forwards outputs to the parent workflow as messages
     5. Handles external requests by routing them to the parent workflow
     6. Accumulates responses and resumes sub-workflow execution
 
@@ -259,18 +259,25 @@ class WorkflowExecutor(Executor):
     - Concurrent executions are fully isolated and do not interfere with each other
     """
 
-    def __init__(self, workflow: "Workflow", id: str, **kwargs: Any):
+    def __init__(self, workflow: "Workflow", id: str, allow_direct_output: bool = False, **kwargs: Any):
         """Initialize the WorkflowExecutor.
 
         Args:
             workflow: The workflow to execute as a sub-workflow.
             id: Unique identifier for this executor.
+            allow_direct_output: Whether to allow direct output from the sub-workflow.
+                                 By default, outputs from the sub-workflow are sent to
+                                 other executors in the parent workflow as messages.
+                                 When this is set to true, the outputs are yielded
+                                 directly from the WorkflowExecutor to the parent
+                                 workflow's event stream.
 
         Keyword Args:
             **kwargs: Additional keyword arguments passed to the parent constructor.
         """
         super().__init__(id, **kwargs)
         self.workflow = workflow
+        self.allow_direct_output = allow_direct_output
 
         # Track execution contexts for concurrent sub-workflow executions
         self._execution_contexts: dict[str, ExecutionContext] = {}  # execution_id -> ExecutionContext
@@ -496,7 +503,7 @@ class WorkflowExecutor(Executor):
         # The proper way would be to rehydrate the workflow from a checkpoint on a Workflow
         # API instead of the '_runner_context' object that should be hidden. And the sub workflow
         # should be rehydrated from a checkpoint object instead of from a subset of the state.
-        # TODO(@taochen): how to handle the case when the parent workflow has checkpointing
+        # TODO(@taochen#1614): how to handle the case when the parent workflow has checkpointing
         # set up but not the sub workflow?
         request_info_events = [
             request_info_event
@@ -551,9 +558,11 @@ class WorkflowExecutor(Executor):
         )
 
         # Process outputs
-        for output in outputs:
-            # TODO(@taochen): Allow the sub-workflow to output directly
-            await ctx.send_message(output)
+        if self.allow_direct_output:
+            # Note that the executor is allowed to continue its own execution after yielding outputs.
+            await asyncio.gather(*[ctx.yield_output(output) for output in outputs])
+        else:
+            await asyncio.gather(*[ctx.send_message(output) for output in outputs])
 
         # Process request info events
         for event in request_info_events:
