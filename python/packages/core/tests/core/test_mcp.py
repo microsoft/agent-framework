@@ -779,8 +779,8 @@ async def test_streamable_http_integration():
 
 
 async def test_mcp_tool_message_handler_notification():
-    """Test message handler with server notifications."""
-
+    """Test that message_handler correctly processes tools/list_changed and prompts/list_changed
+    notifications."""
     tool = MCPStdioTool(name="test_tool", command="python")
 
     # Mock the load_tools and load_prompts methods
@@ -818,7 +818,7 @@ async def test_mcp_tool_message_handler_notification():
 
 
 async def test_mcp_tool_message_handler_error():
-    """Test message handler with error message."""
+    """Test that message_handler gracefully handles exceptions by logging and returning None."""
     tool = MCPStdioTool(name="test_tool", command="python")
 
     # Test with exception message
@@ -914,7 +914,7 @@ async def test_mcp_tool_sampling_callback_no_valid_content():
 
 
 async def test_connect_session_creation_failure():
-    """Test connect() when ClientSession creation fails."""
+    """Test connect() raises ToolException when ClientSession creation fails."""
     tool = MCPStdioTool(name="test", command="test-command")
 
     # Mock successful transport creation
