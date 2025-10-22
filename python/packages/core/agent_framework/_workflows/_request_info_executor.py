@@ -249,7 +249,7 @@ class RequestInfoExecutor(Executor):
 
     async def _retrieve_existing_pending_requests(self, ctx: WorkflowContext) -> dict[str, PendingRequestSnapshot]:
         """Retrieve existing pending requests from executor state."""
-        executor_state = await ctx.get_state()
+        executor_state = await ctx.get_executor_state()
         if executor_state is None:
             return {}
 
@@ -271,9 +271,9 @@ class RequestInfoExecutor(Executor):
         self, pending: dict[str, PendingRequestSnapshot], ctx: WorkflowContext
     ) -> None:
         """Persist the current pending requests to the executor's state."""
-        executor_state = await ctx.get_state() or {}
+        executor_state = await ctx.get_executor_state() or {}
         executor_state[self._PENDING_SHARED_STATE_KEY] = pending
-        await ctx.set_state(executor_state)
+        await ctx.set_executor_state(executor_state)
 
     def _build_pending_request_snapshot(
         self, request: RequestInfoMessage, source_executor_id: str

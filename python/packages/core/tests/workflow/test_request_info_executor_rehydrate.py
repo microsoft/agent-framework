@@ -5,7 +5,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from agent_framework._workflows._checkpoint import CheckpointStorage, WorkflowCheckpoint
+from agent_framework._workflows._checkpoint import WorkflowCheckpoint
+from agent_framework._workflows._checkpoint_encoding import encode_checkpoint_value
 from agent_framework._workflows._checkpoint_summary import get_checkpoint_summary
 from agent_framework._workflows._events import RequestInfoEvent, WorkflowEvent
 from agent_framework._workflows._request_info_executor import (
@@ -16,9 +17,8 @@ from agent_framework._workflows._request_info_executor import (
     RequestResponse,
 )
 from agent_framework._workflows._runner_context import (
-    CheckpointState,
     Message,
-    _encode_checkpoint_value,  # type: ignore
+    WorkflowState,
 )
 from agent_framework._workflows._shared_state import SharedState
 from agent_framework._workflows._workflow_context import WorkflowContext
@@ -53,10 +53,10 @@ class _StubRunnerContext:
     async def next_event(self) -> WorkflowEvent:  # pragma: no cover - unused
         raise RuntimeError("Not implemented in stub context")
 
-    async def get_state(self, executor_id: str) -> dict[str, Any] | None:  # pragma: no cover - trivial
+    async def get_executor_state(self, executor_id: str) -> dict[str, Any] | None:  # pragma: no cover - trivial
         return self._state
 
-    async def set_state(self, executor_id: str, state: dict[str, Any]) -> None:  # pragma: no cover - unused
+    async def set_executor_state(self, executor_id: str, state: dict[str, Any]) -> None:  # pragma: no cover - unused
         self._state = state
 
     def has_checkpointing(self) -> bool:  # pragma: no cover - unused
@@ -71,20 +71,13 @@ class _StubRunnerContext:
     async def create_checkpoint(self, metadata: dict[str, Any] | None = None) -> str:  # pragma: no cover - unused
         raise RuntimeError("Checkpointing not supported in stub context")
 
-    async def restore_from_checkpoint(
-        self,
-        checkpoint_id: str,
-        checkpoint_storage: CheckpointStorage | None = None,
-    ) -> bool:  # pragma: no cover - unused
-        return False
-
     async def load_checkpoint(self, checkpoint_id: str) -> WorkflowCheckpoint | None:  # pragma: no cover - unused
         return None
 
-    async def get_checkpoint_state(self) -> CheckpointState:  # pragma: no cover - unused
+    async def get_workflow_state(self) -> WorkflowState:  # pragma: no cover - unused
         return {}  # type: ignore[return-value]
 
-    async def set_checkpoint_state(self, state: CheckpointState) -> None:  # pragma: no cover - unused
+    async def set_workflow_state(self, state: WorkflowState) -> None:  # pragma: no cover - unused
         pass
 
     def set_streaming(self, streaming: bool) -> None:  # pragma: no cover - unused
@@ -178,7 +171,7 @@ def test_pending_requests_from_checkpoint_and_summary() -> None:
         request_id=request.request_id,
     )
 
-    encoded_response = _encode_checkpoint_value(response)
+    encoded_response = encode_checkpoint_value(response)
 
     checkpoint = WorkflowCheckpoint(
         checkpoint_id="cp-1",

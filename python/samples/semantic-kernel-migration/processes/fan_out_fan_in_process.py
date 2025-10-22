@@ -144,7 +144,7 @@ async def run_semantic_kernel_process_example() -> None:
         kernel=kernel,
         initial_event=KernelProcessEvent(id=CommonEvents.START_PROCESS.value, data="Initial"),
     ) as process_context:
-        process_state = await process_context.get_state()
+        process_state = await process_context.get_executor_state()
         c_step_state: KernelProcessStepState[CStepState] | None = next(
             (s.state for s in process_state.steps if s.state.name == "CStep"),
             None,
