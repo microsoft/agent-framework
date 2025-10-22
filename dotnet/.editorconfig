@@ -130,7 +130,7 @@ dotnet_diagnostic.CA1852.severity = warning # Sealed classes
 dotnet_diagnostic.CA1859.severity = warning # Use concrete types when possible for improved performance
 dotnet_diagnostic.CA1860.severity = warning # Prefer comparing 'Count' to 0 rather than using 'Any()', both for clarity and for performance
 dotnet_diagnostic.CA2007.severity = warning # Do not directly await a Task
-dotnet_diagnostic.CA2201.severity = warning # Exception type System.Exception is not sufficiently specific
+dotnet_diagnostic.CA2201.severity = suggestion # Exception type System.Exception is not sufficiently specific
 
 dotnet_diagnostic.IDE0001.severity = warning # Simplify name
 dotnet_diagnostic.IDE0005.severity = warning # Remove unnecessary using directives

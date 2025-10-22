@@ -20,9 +20,8 @@ public static class Program
 {
     private static async Task Main()
     {
-        // Set up the Azure OpenAI client
-        var endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT")
-            ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
+        // Set up the Azure Foundry client
+        var endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new Exception("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
         var deploymentName = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
         var persistentAgentsClient = new PersistentAgentsClient(endpoint, new AzureCliCredential());
 

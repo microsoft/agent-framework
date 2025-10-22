@@ -87,15 +87,15 @@ internal sealed class GuessNumberExecutor : Executor<NumberSignal>
         switch (message)
         {
             case NumberSignal.Init:
-                await context.SendMessageAsync(this.NextGuess, cancellationToken: cancellationToken);
+                await context.SendMessageAsync(this.NextGuess, cancellationToken);
                 break;
             case NumberSignal.Above:
                 this.UpperBound = this.NextGuess - 1;
-                await context.SendMessageAsync(this.NextGuess, cancellationToken: cancellationToken);
+                await context.SendMessageAsync(this.NextGuess, cancellationToken);
                 break;
             case NumberSignal.Below:
                 this.LowerBound = this.NextGuess + 1;
-                await context.SendMessageAsync(this.NextGuess, cancellationToken: cancellationToken);
+                await context.SendMessageAsync(this.NextGuess, cancellationToken);
                 break;
         }
     }
@@ -129,11 +129,11 @@ internal sealed class JudgeExecutor : Executor<int>
         }
         else if (message < this._targetNumber)
         {
-            await context.SendMessageAsync(NumberSignal.Below, cancellationToken: cancellationToken);
+            await context.SendMessageAsync(NumberSignal.Below, cancellationToken);
         }
         else
         {
-            await context.SendMessageAsync(NumberSignal.Above, cancellationToken: cancellationToken);
+            await context.SendMessageAsync(NumberSignal.Above, cancellationToken);
         }
     }
 }

@@ -55,9 +55,9 @@ internal static class WorkflowHelper
         {
             // Broadcast the message to all connected agents. Receiving agents will queue
             // the message but will not start processing until they receive a turn token.
-            await context.SendMessageAsync(message, cancellationToken: cancellationToken);
+            await context.SendMessageAsync(message, cancellationToken);
             // Broadcast the turn token to kick off the agents.
-            await context.SendMessageAsync(new TurnToken(emitEvents: true), cancellationToken: cancellationToken);
+            await context.SendMessageAsync(new TurnToken(emitEvents: true), cancellationToken);
         }
     }
 

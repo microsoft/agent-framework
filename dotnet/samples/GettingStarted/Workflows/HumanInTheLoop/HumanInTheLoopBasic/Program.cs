@@ -48,23 +48,20 @@ public static class Program
 
     private static ExternalResponse HandleExternalRequest(ExternalRequest request)
     {
-        if (request.DataIs<NumberSignal>())
+        switch (request.DataAs<NumberSignal?>())
         {
-            switch (request.DataAs<NumberSignal>())
-            {
-                case NumberSignal.Init:
-                    int initialGuess = ReadIntegerFromConsole("Please provide your initial guess: ");
-                    return request.CreateResponse(initialGuess);
-                case NumberSignal.Above:
-                    int lowerGuess = ReadIntegerFromConsole("You previously guessed too large. Please provide a new guess: ");
-                    return request.CreateResponse(lowerGuess);
-                case NumberSignal.Below:
-                    int higherGuess = ReadIntegerFromConsole("You previously guessed too small. Please provide a new guess: ");
-                    return request.CreateResponse(higherGuess);
-            }
+            case NumberSignal.Init:
+                int initialGuess = ReadIntegerFromConsole("Please provide your initial guess: ");
+                return request.CreateResponse(initialGuess);
+            case NumberSignal.Above:
+                int lowerGuess = ReadIntegerFromConsole("You previously guessed too large. Please provide a new guess: ");
+                return request.CreateResponse(lowerGuess);
+            case NumberSignal.Below:
+                int higherGuess = ReadIntegerFromConsole("You previously guessed too small. Please provide a new guess: ");
+                return request.CreateResponse(higherGuess);
+            default:
+                throw new ArgumentException("Unexpected request type.");
         }
-
-        throw new NotSupportedException($"Request {request.PortInfo.RequestType} is not supported");
     }
 
     private static int ReadIntegerFromConsole(string prompt)
