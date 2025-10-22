@@ -182,12 +182,109 @@ public static class ExecutorBindingExtensions
     /// </summary>
     /// <typeparam name="TInput">The type of input message.</typeparam>
     /// <param name="messageHandlerAsync">A delegate that defines the asynchronous function to execute for each input message.</param>
-    /// <param name="id">A optional unique identifier for the executor. If <c>null</c>, will use the function argument as an id.</param>
+    /// <param name="id">An optional unique identifier for the executor. If <c>null</c>, will use the function argument as an id.</param>
     /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
     /// <param name="threadsafe">Declare that the message handler may be used simultaneously by multiple runs concurrently.</param>
     /// <returns>An <see cref="ExecutorBinding"/> instance that wraps the provided asynchronous message handler and configuration.</returns>
     public static ExecutorBinding AsExecutor<TInput>(this Func<TInput, IWorkflowContext, CancellationToken, ValueTask> messageHandlerAsync, string id, ExecutorOptions? options = null, bool threadsafe = false)
         => new FunctionExecutor<TInput>(id, messageHandlerAsync, options, declareCrossRunShareable: threadsafe).ToBinding(messageHandlerAsync);
+
+    /// <summary>
+    /// Configures a function-based asynchronous message handler as an executor with the specified identifier and
+    /// options.
+    /// </summary>
+    /// <typeparam name="TInput">The type of input message.</typeparam>
+    /// <param name="messageHandlerAsync">A delegate that defines the asynchronous function to execute for each input message.</param>
+    /// <param name="id">An optional unique identifier for the executor. If <c>null</c>, will use the function argument as an id.</param>
+    /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
+    /// <param name="threadsafe">Declare that the message handler may be used simultaneously by multiple runs concurrently.</param>
+    /// <returns>An <see cref="ExecutorRegistration"/> instance that wraps the provided asynchronous message handler and configuration.</returns>
+    public static ExecutorRegistration AsExecutor<TInput>(this Func<TInput, ValueTask> messageHandlerAsync, string id, ExecutorOptions? options = null, bool threadsafe = false)
+        => ((Func<TInput, IWorkflowContext, CancellationToken, ValueTask>)((input, _, __) => messageHandlerAsync(input)))
+                .AsExecutor(id, options, threadsafe);
+
+    /// <summary>
+    /// Configures a function-based asynchronous message handler as an executor with the specified identifier and
+    /// options.
+    /// </summary>
+    /// <typeparam name="TInput">The type of input message.</typeparam>
+    /// <param name="messageHandlerAsync">A delegate that defines the asynchronous function to execute for each input message.</param>
+    /// <param name="id">An optional unique identifier for the executor. If <c>null</c>, will use the function argument as an id.</param>
+    /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
+    /// <param name="threadsafe">Declare that the message handler may be used simultaneously by multiple runs concurrently.</param>
+    /// <returns>An <see cref="ExecutorRegistration"/> instance that wraps the provided asynchronous message handler and configuration.</returns>
+    public static ExecutorRegistration AsExecutor<TInput>(this Func<TInput, IWorkflowContext, ValueTask> messageHandlerAsync, string id, ExecutorOptions? options = null, bool threadsafe = false)
+        => ((Func<TInput, IWorkflowContext, CancellationToken, ValueTask>)((input, ctx, __) => messageHandlerAsync(input, ctx)))
+                .AsExecutor(id, options, threadsafe);
+
+    /// <summary>
+    /// Configures a function-based asynchronous message handler as an executor with the specified identifier and
+    /// options.
+    /// </summary>
+    /// <typeparam name="TInput">The type of input message.</typeparam>
+    /// <param name="messageHandlerAsync">A delegate that defines the asynchronous function to execute for each input message.</param>
+    /// <param name="id">An optional unique identifier for the executor. If <c>null</c>, will use the function argument as an id.</param>
+    /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
+    /// <param name="threadsafe">Declare that the message handler may be used simultaneously by multiple runs concurrently.</param>
+    /// <returns>An <see cref="ExecutorRegistration"/> instance that wraps the provided asynchronous message handler and configuration.</returns>
+    public static ExecutorRegistration AsExecutor<TInput>(this Func<TInput, CancellationToken, ValueTask> messageHandlerAsync, string id, ExecutorOptions? options = null, bool threadsafe = false)
+        => ((Func<TInput, IWorkflowContext, CancellationToken, ValueTask>)((input, _, ct) => messageHandlerAsync(input, ct)))
+                .AsExecutor(id, options, threadsafe);
+
+    /// <summary>
+    /// Configures a function-based message handler as an executor with the specified identifier and
+    /// options.
+    /// </summary>
+    /// <typeparam name="TInput">The type of input message.</typeparam>
+    /// <param name="messageHandler">A delegate that defines the function to execute for each input message.</param>
+    /// <param name="id">An optional unique identifier for the executor. If <c>null</c>, will use the function argument as an id.</param>
+    /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
+    /// <param name="threadsafe">Declare that the message handler may be used simultaneously by multiple runs concurrently.</param>
+    /// <returns>An <see cref="ExecutorRegistration"/> instance that wraps the provided asynchronous message handler and configuration.</returns>
+    public static ExecutorRegistration AsExecutor<TInput>(this Action<TInput, IWorkflowContext, CancellationToken> messageHandler, string id, ExecutorOptions? options = null, bool threadsafe = false)
+        => new FunctionExecutor<TInput>(id, messageHandler, options, declareCrossRunShareable: threadsafe).ToRegistration(messageHandler);
+
+    /// <summary>
+    /// Configures a function-based message handler as an executor with the specified identifier and
+    /// options.
+    /// </summary>
+    /// <typeparam name="TInput">The type of input message.</typeparam>
+    /// <param name="messageHandler">A delegate that defines the function to execute for each input message.</param>
+    /// <param name="id">An optional unique identifier for the executor. If <c>null</c>, will use the function argument as an id.</param>
+    /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
+    /// <param name="threadsafe">Declare that the message handler may be used simultaneously by multiple runs concurrently.</param>
+    /// <returns>An <see cref="ExecutorRegistration"/> instance that wraps the provided asynchronous message handler and configuration.</returns>
+    public static ExecutorRegistration AsExecutor<TInput>(this Action<TInput> messageHandler, string id, ExecutorOptions? options = null, bool threadsafe = false)
+        => ((Action<TInput, IWorkflowContext, CancellationToken>)((input, _, __) => messageHandler(input)))
+            .AsExecutor(id, options, threadsafe);
+
+    /// <summary>
+    /// Configures a function-based message handler as an executor with the specified identifier and
+    /// options.
+    /// </summary>
+    /// <typeparam name="TInput">The type of input message.</typeparam>
+    /// <param name="messageHandler">A delegate that defines the function to execute for each input message.</param>
+    /// <param name="id">An optional unique identifier for the executor. If <c>null</c>, will use the function argument as an id.</param>
+    /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
+    /// <param name="threadsafe">Declare that the message handler may be used simultaneously by multiple runs concurrently.</param>
+    /// <returns>An <see cref="ExecutorRegistration"/> instance that wraps the provided asynchronous message handler and configuration.</returns>
+    public static ExecutorRegistration AsExecutor<TInput>(this Action<TInput, IWorkflowContext> messageHandler, string id, ExecutorOptions? options = null, bool threadsafe = false)
+        => ((Action<TInput, IWorkflowContext, CancellationToken>)((input, ctx, __) => messageHandler(input, ctx)))
+            .AsExecutor(id, options, threadsafe);
+
+    /// <summary>
+    /// Configures a function-based message handler as an executor with the specified identifier and
+    /// options.
+    /// </summary>
+    /// <typeparam name="TInput">The type of input message.</typeparam>
+    /// <param name="messageHandler">A delegate that defines the function to execute for each input message.</param>
+    /// <param name="id">An optional unique identifier for the executor. If <c>null</c>, will use the function argument as an id.</param>
+    /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
+    /// <param name="threadsafe">Declare that the message handler may be used simultaneously by multiple runs concurrently.</param>
+    /// <returns>An <see cref="ExecutorRegistration"/> instance that wraps the provided asynchronous message handler and configuration.</returns>
+    public static ExecutorRegistration AsExecutor<TInput>(this Action<TInput, CancellationToken> messageHandler, string id, ExecutorOptions? options = null, bool threadsafe = false)
+        => ((Action<TInput, IWorkflowContext, CancellationToken>)((input, _, ct) => messageHandler(input, ct)))
+            .AsExecutor(id, options, threadsafe);
 
     /// <summary>
     /// Configures a function-based asynchronous message handler as an executor with the specified identifier and
@@ -202,6 +299,106 @@ public static class ExecutorBindingExtensions
     /// <returns>An <see cref="ExecutorBinding"/> instance that wraps the provided asynchronous message handler and configuration.</returns>
     public static ExecutorBinding AsExecutor<TInput, TOutput>(this Func<TInput, IWorkflowContext, CancellationToken, ValueTask<TOutput>> messageHandlerAsync, string id, ExecutorOptions? options = null, bool threadsafe = false)
         => new FunctionExecutor<TInput, TOutput>(Throw.IfNull(id), messageHandlerAsync, options, declareCrossRunShareable: threadsafe).ToBinding(messageHandlerAsync);
+
+    /// <summary>
+    /// Configures a function-based asynchronous message handler as an executor with the specified identifier and
+    /// options.
+    /// </summary>
+    /// <typeparam name="TInput">The type of input message.</typeparam>
+    /// <typeparam name="TOutput">The type of output message.</typeparam>
+    /// <param name="messageHandlerAsync">A delegate that defines the asynchronous function to execute for each input message.</param>
+    /// <param name="id">An optional unique identifier for the executor. If <c>null</c>, will use the function argument as an id.</param>
+    /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
+    /// <param name="threadsafe">Declare that the message handler may be used simultaneously by multiple runs concurrently.</param>
+    /// <returns>An <see cref="ExecutorRegistration"/> instance that wraps the provided asynchronous message handler and configuration.</returns>
+    public static ExecutorRegistration AsExecutor<TInput, TOutput>(this Func<TInput, ValueTask<TOutput>> messageHandlerAsync, string id, ExecutorOptions? options = null, bool threadsafe = false)
+        => ((Func<TInput, IWorkflowContext, CancellationToken, ValueTask<TOutput>>)((input, _, __) => messageHandlerAsync(input)))
+                .AsExecutor(id, options, threadsafe);
+
+    /// <summary>
+    /// Configures a function-based asynchronous message handler as an executor with the specified identifier and
+    /// options.
+    /// </summary>
+    /// <typeparam name="TInput">The type of input message.</typeparam>
+    /// <typeparam name="TOutput">The type of output message.</typeparam>
+    /// <param name="messageHandlerAsync">A delegate that defines the asynchronous function to execute for each input message.</param>
+    /// <param name="id">An optional unique identifier for the executor. If <c>null</c>, will use the function argument as an id.</param>
+    /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
+    /// <param name="threadsafe">Declare that the message handler may be used simultaneously by multiple runs concurrently.</param>
+    /// <returns>An <see cref="ExecutorRegistration"/> instance that wraps the provided asynchronous message handler and configuration.</returns>
+    public static ExecutorRegistration AsExecutor<TInput, TOutput>(this Func<TInput, IWorkflowContext, ValueTask<TOutput>> messageHandlerAsync, string id, ExecutorOptions? options = null, bool threadsafe = false)
+        => ((Func<TInput, IWorkflowContext, CancellationToken, ValueTask<TOutput>>)((input, ctx, __) => messageHandlerAsync(input, ctx)))
+                .AsExecutor(id, options, threadsafe);
+
+    /// <summary>
+    /// Configures a function-based asynchronous message handler as an executor with the specified identifier and
+    /// options.
+    /// </summary>
+    /// <typeparam name="TInput">The type of input message.</typeparam>
+    /// <typeparam name="TOutput">The type of output message.</typeparam>
+    /// <param name="messageHandlerAsync">A delegate that defines the asynchronous function to execute for each input message.</param>
+    /// <param name="id">An optional unique identifier for the executor. If <c>null</c>, will use the function argument as an id.</param>
+    /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
+    /// <param name="threadsafe">Declare that the message handler may be used simultaneously by multiple runs concurrently.</param>
+    /// <returns>An <see cref="ExecutorRegistration"/> instance that wraps the provided asynchronous message handler and configuration.</returns>
+    public static ExecutorRegistration AsExecutor<TInput, TOutput>(this Func<TInput, CancellationToken, ValueTask<TOutput>> messageHandlerAsync, string id, ExecutorOptions? options = null, bool threadsafe = false)
+        => ((Func<TInput, IWorkflowContext, CancellationToken, ValueTask<TOutput>>)((input, _, ct) => messageHandlerAsync(input, ct)))
+                .AsExecutor(id, options, threadsafe);
+
+    /// <summary>
+    /// Configures a function-based message handler as an executor with the specified identifier and options.
+    /// </summary>
+    /// <typeparam name="TInput">The type of input message.</typeparam>
+    /// <typeparam name="TOutput">The type of output message.</typeparam>
+    /// <param name="messageHandler">A delegate that defines the function to execute for each input message.</param>
+    /// <param name="id">An optional unique identifier for the executor. If <c>null</c>, will use the function argument as an id.</param>
+    /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
+    /// <param name="threadsafe">Declare that the message handler may be used simultaneously by multiple runs concurrently.</param>
+    /// <returns>An <see cref="ExecutorRegistration"/> instance that wraps the provided asynchronous message handler and configuration.</returns>
+    public static ExecutorRegistration AsExecutor<TInput, TOutput>(this Func<TInput, IWorkflowContext, CancellationToken, TOutput> messageHandler, string id, ExecutorOptions? options = null, bool threadsafe = false)
+        => new FunctionExecutor<TInput, TOutput>(id, messageHandler, options, declareCrossRunShareable: threadsafe).ToRegistration(messageHandler);
+
+    /// <summary>
+    /// Configures a function-based message handler as an executor with the specified identifier and options.
+    /// </summary>
+    /// <typeparam name="TInput">The type of input message.</typeparam>
+    /// <typeparam name="TOutput">The type of output message.</typeparam>
+    /// <param name="messageHandler">A delegate that defines the function to execute for each input message.</param>
+    /// <param name="id">An optional unique identifier for the executor. If <c>null</c>, will use the function argument as an id.</param>
+    /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
+    /// <param name="threadsafe">Declare that the message handler may be used simultaneously by multiple runs concurrently.</param>
+    /// <returns>An <see cref="ExecutorRegistration"/> instance that wraps the provided asynchronous message handler and configuration.</returns>
+    public static ExecutorRegistration AsExecutor<TInput, TOutput>(this Func<TInput, TOutput> messageHandler, string id, ExecutorOptions? options = null, bool threadsafe = false)
+        => ((Func<TInput, IWorkflowContext, CancellationToken, TOutput>)((input, _, __) => messageHandler(input)))
+                .AsExecutor(id, options, threadsafe);
+
+    /// <summary>
+    /// Configures a function-based message handler as an executor with the specified identifier and options.
+    /// </summary>
+    /// <typeparam name="TInput">The type of input message.</typeparam>
+    /// <typeparam name="TOutput">The type of output message.</typeparam>
+    /// <param name="messageHandler">A delegate that defines the function to execute for each input message.</param>
+    /// <param name="id">An optional unique identifier for the executor. If <c>null</c>, will use the function argument as an id.</param>
+    /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
+    /// <param name="threadsafe">Declare that the message handler may be used simultaneously by multiple runs concurrently.</param>
+    /// <returns>An <see cref="ExecutorRegistration"/> instance that wraps the provided asynchronous message handler and configuration.</returns>
+    public static ExecutorRegistration AsExecutor<TInput, TOutput>(this Func<TInput, IWorkflowContext, TOutput> messageHandler, string id, ExecutorOptions? options = null, bool threadsafe = false)
+        => ((Func<TInput, IWorkflowContext, CancellationToken, TOutput>)((input, ctx, __) => messageHandler(input, ctx)))
+                .AsExecutor(id, options, threadsafe);
+
+    /// <summary>
+    /// Configures a function-based message handler as an executor with the specified identifier and options.
+    /// </summary>
+    /// <typeparam name="TInput">The type of input message.</typeparam>
+    /// <typeparam name="TOutput">The type of output message.</typeparam>
+    /// <param name="messageHandler">A delegate that defines the function to execute for each input message.</param>
+    /// <param name="id">An optional unique identifier for the executor. If <c>null</c>, will use the function argument as an id.</param>
+    /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
+    /// <param name="threadsafe">Declare that the message handler may be used simultaneously by multiple runs concurrently.</param>
+    /// <returns>An <see cref="ExecutorRegistration"/> instance that wraps the provided asynchronous message handler and configuration.</returns>
+    public static ExecutorRegistration AsExecutor<TInput, TOutput>(this Func<TInput, CancellationToken, TOutput> messageHandler, string id, ExecutorOptions? options = null, bool threadsafe = false)
+        => ((Func<TInput, IWorkflowContext, CancellationToken, TOutput>)((input, _, ct) => messageHandler(input, ct)))
+                .AsExecutor(id, options, threadsafe);
 
     /// <summary>
     /// Configures a function-based aggregating executor with the specified identifier and options.
