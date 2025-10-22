@@ -6,7 +6,7 @@ using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 
-namespace WorkflowAsAnAgentsSample;
+namespace WorkflowAsAnAgentSample;
 
 /// <summary>
 /// This sample introduces the concepts workflows as agents, where a workflow can be
