@@ -29,6 +29,6 @@ dapr run --app-id agents --resources-path ./Components --dapr-grpc-port 3501
 Because the Dapr sidecar needs to continue running while your application is running, please open another terminal
 window and run the following command from this project's directory to start the demo.
 
-```poweshell
+```powershell
 dotnet run
 ```
