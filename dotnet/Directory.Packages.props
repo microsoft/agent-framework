@@ -22,6 +22,7 @@
     <PackageVersion Include="Azure.Identity" Version="1.17.0" />
     <PackageVersion Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.4.0" />
     <!-- System.* -->
+    <PackageVersion Include="System.Numerics.Tensors" Version="9.0.10" />
     <PackageVersion Include="System.CodeDom" Version="9.0.10" />
     <PackageVersion Include="System.Collections.Immutable" Version="9.0.10" />
     <PackageVersion Include="System.CommandLine" Version="2.0.0-rc.2.25502.107" />
@@ -32,6 +33,8 @@
     <PackageVersion Include="System.Threading.Tasks.Extensions" Version="4.6.3" />
     <PackageVersion Include="Microsoft.Bcl.HashCode" Version="6.0.0" />
     <PackageVersion Include="Microsoft.Bcl.AsyncInterfaces" Version="9.0.10" />
+  <!-- Audio -->
+    <PackageVersion Include="NAudio" Version="2.2.1" />
     <!-- OpenTelemetry -->
     <PackageVersion Include="OpenTelemetry" Version="1.12.0" />
     <PackageVersion Include="OpenTelemetry.Api" Version="1.13.1" />

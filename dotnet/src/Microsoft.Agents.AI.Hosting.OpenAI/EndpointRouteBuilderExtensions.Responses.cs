@@ -26,6 +26,8 @@ public static partial class EndpointRouteBuilderExtensions
     /// <param name="agentName">The name of the AI agent service registered in the dependency injection container. This name is used to resolve the <see cref="AIAgent"/> instance from the keyed services.</param>
     /// <param name="responsesPath">Custom route path for the responses endpoint.</param>
     /// <param name="conversationsPath">Custom route path for the conversations endpoint.</param>
+    [RequiresDynamicCode("Calls Microsoft.AspNetCore.Builder.EndpointRouteBuilderExtensions.MapPost(String, Delegate)")]
+    [RequiresUnreferencedCode("Calls Microsoft.AspNetCore.Builder.EndpointRouteBuilderExtensions.MapPost(String, Delegate)")]
     public static void MapOpenAIResponses(
         this IEndpointRouteBuilder endpoints,
         string agentName,
@@ -52,6 +54,8 @@ public static partial class EndpointRouteBuilderExtensions
         // MapConversations(conversationsRouteGroup, agent, loggerFactory);
     }
 
+    [RequiresDynamicCode("Calls Microsoft.AspNetCore.Builder.EndpointRouteBuilderExtensions.MapPost(String, Delegate)")]
+    [RequiresUnreferencedCode("Calls Microsoft.AspNetCore.Builder.EndpointRouteBuilderExtensions.MapPost(String, Delegate)")]
     private static void MapResponses(IEndpointRouteBuilder routeGroup, AIAgent agent)
     {
         var endpointAgentName = agent.DisplayName;
@@ -76,6 +80,8 @@ public static partial class EndpointRouteBuilderExtensions
     }
 
 #pragma warning disable IDE0051 // Remove unused private members
+    [RequiresDynamicCode("Calls Microsoft.AspNetCore.Builder.EndpointRouteBuilderExtensions.MapGet(String, Delegate)")]
+    [RequiresUnreferencedCode("Calls Microsoft.AspNetCore.Builder.EndpointRouteBuilderExtensions.MapGet(String, Delegate)")]
     private static void MapConversations(IEndpointRouteBuilder routeGroup, AIAgent agent)
 #pragma warning restore IDE0051 // Remove unused private members
     {
