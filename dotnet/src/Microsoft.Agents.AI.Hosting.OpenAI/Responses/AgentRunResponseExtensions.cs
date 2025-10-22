@@ -135,7 +135,8 @@ internal static class AgentRunResponseExtensions
             writer.WriteEndObject();
         }
 
-        return JsonDocument.Parse(stream.ToArray()).RootElement.Clone();
+        using var doc = JsonDocument.Parse(stream.ToArray());
+        return doc.RootElement.Clone();
     }
 
     /// <summary>
