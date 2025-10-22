@@ -71,20 +71,11 @@ public class AIHostAgent : AIAgent
     /// <param name="cancellationToken">A cancellation token that can be used to cancel the asynchronous operation.</param>
     /// <returns>A task that represents the asynchronous operation. The task result contains the agent thread associated with the
     /// specified conversation. If no thread exists, a new thread is created and returned.</returns>
-    public async ValueTask<AgentThread> GetOrCreateThreadAsync(
-        string conversationId,
-        CancellationToken cancellationToken = default)
+    public ValueTask<AgentThread> GetOrCreateThreadAsync(string conversationId, CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNullOrWhitespace(conversationId);
 
-        var serializedThread = await this._threadStore.GetThreadAsync(
-            conversationId,
-            this.Id,
-            cancellationToken).ConfigureAwait(false);
-
-        return serializedThread is null
-            ? this._innerAgent.GetNewThread()
-            : this._innerAgent.DeserializeThread(serializedThread.Value);
+        return this._threadStore.GetThreadAsync(this._innerAgent, conversationId, cancellationToken);
     }
 
     /// <summary>
@@ -96,19 +87,12 @@ public class AIHostAgent : AIAgent
     /// <returns>A task that represents the asynchronous save operation.</returns>
     /// <exception cref="ArgumentException"><paramref name="conversationId"/> is null or whitespace.</exception>
     /// <exception cref="ArgumentNullException"><paramref name="thread"/> is <see langword="null"/>.</exception>
-    public async ValueTask SaveThreadAsync(
-        string conversationId,
-        AgentThread thread,
-        CancellationToken cancellationToken = default)
+    public ValueTask SaveThreadAsync(string conversationId, AgentThread thread, CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNullOrWhitespace(conversationId);
         _ = Throw.IfNull(thread);
 
-        await this._threadStore.SaveThreadAsync(
-            conversationId,
-            this.Id,
-            thread,
-            cancellationToken).ConfigureAwait(false);
+        return this._threadStore.SaveThreadAsync(this._innerAgent, conversationId, thread, cancellationToken);
     }
 
     /// <inheritdoc/>

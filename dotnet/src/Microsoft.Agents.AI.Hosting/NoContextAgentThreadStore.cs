@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -13,15 +12,14 @@ namespace Microsoft.Agents.AI.Hosting;
 public sealed class NoContextAgentThreadStore : IAgentThreadStore
 {
     /// <inheritdoc/>
-    public ValueTask<JsonElement?> GetThreadAsync(string conversationId, string agentId, CancellationToken cancellationToken = default)
+    public ValueTask SaveThreadAsync(AIAgent agent, string conversationId, AgentThread thread, CancellationToken cancellationToken = default)
     {
-        // this is OK, Agents should be prepared to handle null threads.
-        return new ValueTask<JsonElement?>(result: null!);
+        return new ValueTask();
     }
 
     /// <inheritdoc/>
-    public ValueTask SaveThreadAsync(string conversationId, string agentId, AgentThread thread, CancellationToken cancellationToken = default)
+    public ValueTask<AgentThread> GetThreadAsync(AIAgent agent, string conversationId, CancellationToken cancellationToken = default)
     {
-        return new();
+        return new ValueTask<AgentThread>(agent.GetNewThread());
     }
 }

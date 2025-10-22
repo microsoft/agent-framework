@@ -30,30 +30,26 @@ public sealed class InMemoryAgentThreadStore : IAgentThreadStore
     private readonly ConcurrentDictionary<string, JsonElement> _threads = new();
 
     /// <inheritdoc/>
-    public ValueTask SaveThreadAsync(
-        string conversationId,
-        string agentId,
-        AgentThread thread,
-        CancellationToken cancellationToken = default)
+    public ValueTask SaveThreadAsync(AIAgent agent, string conversationId, AgentThread thread, CancellationToken cancellationToken = default)
     {
-        var key = GetKey(conversationId, agentId);
+        var key = GetKey(conversationId, agent.Id);
         this._threads[key] = thread.Serialize();
         return default;
     }
 
     /// <inheritdoc/>
-    public ValueTask<JsonElement?> GetThreadAsync(
-        string conversationId,
-        string agentId,
-        CancellationToken cancellationToken = default)
+    public ValueTask<AgentThread> GetThreadAsync(AIAgent agent, string conversationId, CancellationToken cancellationToken = default)
     {
-        var key = GetKey(conversationId, agentId);
+        var key = GetKey(conversationId, agent.Id);
         JsonElement? threadContent = this._threads.TryGetValue(key, out var existingThread)
             ? existingThread : null!;
 
-        return new ValueTask<JsonElement?>(result: threadContent);
+        return threadContent switch
+        {
+            null => new ValueTask<AgentThread>(agent.GetNewThread()),
+            _ => new ValueTask<AgentThread>(agent.DeserializeThread(threadContent.Value)),
+        };
     }
 
-    private static string GetKey(string conversationId, string agentId)
-        => $"{agentId}:{conversationId}";
+    private static string GetKey(string conversationId, string agentId) => $"{agentId}:{conversationId}";
 }
