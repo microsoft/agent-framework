@@ -74,21 +74,26 @@ export function WorkflowChatInput({
   };
 
   return (
-    <PromptInput
-      onSubmit={handleSubmit}
-      className="border-t border-border p-4"
-    >
-      <PromptInputBody>
-        <PromptInputTextarea
-          placeholder="Type your workflow input..."
-          disabled={disabled}
-          className="resize-none"
-        />
-      </PromptInputBody>
-      <PromptInputFooter>
-        <PromptInputTools>{/* Empty - no additional tools */}</PromptInputTools>
-        <PromptInputSubmit disabled={disabled} />
-      </PromptInputFooter>
-    </PromptInput>
+    <div className="border-t border-border bg-gradient-to-b from-muted/5 to-background">
+      <PromptInput
+        onSubmit={handleSubmit}
+        className="p-4"
+      >
+        <PromptInputBody className="bg-background/50 backdrop-blur-sm border border-border/50 rounded-xl">
+          <PromptInputTextarea
+            placeholder="Input to your workflow..."
+            disabled={disabled}
+            className="resize-none bg-transparent placeholder:text-muted-foreground/60"
+          />
+        </PromptInputBody>
+        <PromptInputFooter className="mt-2">
+          <PromptInputTools />
+          <PromptInputSubmit
+            disabled={disabled}
+            className="bg-primary hover:bg-primary/90 text-primary-foreground"
+          />
+        </PromptInputFooter>
+      </PromptInput>
+    </div>
   );
 }

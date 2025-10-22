@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { WorkflowChatMessage, type ChatMessage } from "./workflow-chat-message";
 import { WorkflowChatInput } from "./workflow-chat-input";
+import { Conversation, ConversationContent, ConversationEmptyState } from "@/components/ai-elements/conversation";
+import { Shimmer } from "@/components/ai-elements/shimmer";
 import type { ExtendedResponseStreamEvent, JSONSchemaProperty } from "@/types";
-import { MessageSquare, ChevronRight } from "lucide-react";
+import { ChevronRight, Sparkles, Bot } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface WorkflowChatSidebarProps {
@@ -37,16 +38,11 @@ export function WorkflowChatSidebar({
   const [isResizing, setIsResizing] = useState(false);
 
   // Refs
-  const messagesEndRef = useRef<HTMLDivElement>(null);
   const currentExecutorRef = useRef<string | null>(null);
   const lastExecutorRef = useRef<string | null>(null);
   const processedEventCount = useRef<number>(0);
   const currentToolCallRef = useRef<string | null>(null);
-
-  // Auto-scroll
-  const scrollToBottom = useCallback(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, []);
+  const messageStartTimesRef = useRef<Record<string, number>>({});
 
   // Save state to localStorage
   useEffect(() => {
@@ -65,6 +61,7 @@ export function WorkflowChatSidebar({
       lastExecutorRef.current = null;
       processedEventCount.current = 0;
       currentToolCallRef.current = null;
+      messageStartTimesRef.current = {};
     }
   }, [events.length]);
 
@@ -96,8 +93,12 @@ export function WorkflowChatSidebar({
               return prev;
             }
 
+            const messageId = `${executorId}-${Date.now()}`;
+            // Start timing for this message
+            messageStartTimesRef.current[messageId] = Date.now();
+
             const newMessage: ChatMessage = {
-              id: `${executorId}-${Date.now()}`,
+              id: messageId,
               executorId,
               executorName: executorId,
               role: "assistant",
@@ -117,11 +118,20 @@ export function WorkflowChatSidebar({
           lastExecutorRef.current = executorId;
 
           setMessages((prev) =>
-            prev.map((m) =>
-              m.executorId === executorId && m.role === "assistant"
-                ? { ...m, state: "completed" as const }
-                : m
-            )
+            prev.map((m) => {
+              if (m.executorId === executorId && m.role === "assistant") {
+                // Calculate duration if timing exists
+                let reasoningDuration = undefined;
+                if (messageStartTimesRef.current[m.id]) {
+                  const elapsed = Date.now() - messageStartTimesRef.current[m.id];
+                  reasoningDuration = Math.max(1, Math.ceil(elapsed / 1000));
+                  // Clean up the timing ref
+                  delete messageStartTimesRef.current[m.id];
+                }
+                return { ...m, state: "completed" as const, reasoningDuration };
+              }
+              return m;
+            })
           );
 
           if (currentExecutorRef.current === executorId) {
@@ -258,12 +268,6 @@ export function WorkflowChatSidebar({
     });
   }, [events]);
 
-  // Auto-scroll during streaming
-  useEffect(() => {
-    if (isStreaming || messages.length > 0) {
-      scrollToBottom();
-    }
-  }, [messages, isStreaming, scrollToBottom]);
 
   // Resize handler
   const handleMouseDown = useCallback(
@@ -325,15 +329,20 @@ export function WorkflowChatSidebar({
   // Collapsed view
   if (isCollapsed) {
     return (
-      <div className="shrink-0 border-l border-border bg-muted/30">
+      <div className="shrink-0 border-l border-border bg-gradient-to-b from-background to-muted/30 flex flex-col items-center py-4">
         <Button
           variant="ghost"
           size="sm"
           onClick={() => setIsCollapsed(false)}
-          className="h-full rounded-none px-2"
+          className="rounded-full p-3 hover:bg-primary/10 group transition-all"
           title="Expand chat"
         >
-          <MessageSquare className="w-4 h-4" />
+          <div className="relative">
+            <Bot className="w-5 h-5 text-primary group-hover:scale-110 transition-transform" />
+            {messages.length > 0 && (
+              <span className="absolute -top-1 -right-1 w-2 h-2 bg-primary rounded-full animate-pulse" />
+            )}
+          </div>
         </Button>
       </div>
     );
@@ -342,8 +351,8 @@ export function WorkflowChatSidebar({
   // Expanded view
   return (
     <div
-      className="shrink-0 border-l border-border bg-background flex flex-col relative h-full"
-      style={{ width: `${width}px` }}
+      className="shrink-0 border-l border-border bg-background flex flex-col relative h-full w-(--sidebar-width)"
+      style={{ "--sidebar-width": `${width}px` } as React.CSSProperties}
     >
       {/* Resize handle */}
       <div
@@ -357,41 +366,69 @@ export function WorkflowChatSidebar({
       </div>
 
       {/* Header */}
-      <div className="shrink-0 border-b border-border p-4 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <MessageSquare className="w-4 h-4 text-muted-foreground" />
-          <h3 className="font-semibold text-sm">Workflow Chat</h3>
+      <div className="shrink-0 border-b border-border bg-gradient-to-r from-background to-muted/30 p-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="p-1.5 bg-primary/10 rounded-lg">
+              <Bot className="w-4 h-4 text-primary" />
+            </div>
+            <div>
+              <h3 className="font-semibold text-sm">Workflow Chat Assistant</h3>
+            </div>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setIsCollapsed(true)}
+            className="h-8 w-8 rounded-full hover:bg-muted"
+            title="Collapse chat"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </Button>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setIsCollapsed(true)}
-          className="h-6 w-6 p-0"
-          title="Collapse chat"
-        >
-          <ChevronRight className="w-4 h-4" />
-        </Button>
       </div>
 
       {/* Messages area */}
-      <ScrollArea className="flex-1 min-h-0">
-        {messages.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-muted-foreground text-sm py-12">
-            <div className="text-center">
-              <MessageSquare className="w-8 h-8 mx-auto mb-2 opacity-50" />
-              <p>No messages yet</p>
-              <p className="text-xs mt-1">Submit input below to start execution</p>
+      <Conversation className="flex-1 min-h-0 bg-gradient-to-b from-background to-muted/5">
+        <ConversationContent className="px-6 py-8">
+          {messages.length === 0 ? (
+            <ConversationEmptyState
+              icon={
+                <div className="relative">
+                  <div className="absolute inset-0 bg-primary/20 blur-3xl rounded-full animate-pulse" />
+                  <div className="relative p-4 bg-gradient-to-br from-primary/10 to-primary/5 rounded-2xl border border-primary/20">
+                    <Sparkles className="w-10 h-10 text-primary" />
+                  </div>
+                </div>
+              }
+              title="Initiate Workflow"
+              description="Input to execute your workflow"
+              className="min-h-[400px]"
+            />
+          ) : (
+            <div className="flex flex-col gap-5">
+              {messages.map((message) => (
+                <div
+                  key={message.id}
+                  className={cn(
+                    "animate-in fade-in-0 slide-in-from-bottom-2 duration-300",
+                    message.state === "streaming" && "opacity-90"
+                  )}
+                >
+                  <WorkflowChatMessage message={message} />
+                </div>
+              ))}
+              {isStreaming && (
+                <div className="flex items-center gap-2 text-muted-foreground text-sm px-2">
+                  <Shimmer duration={1.5} className="font-medium">
+                    Processing workflow...
+                  </Shimmer>
+                </div>
+              )}
             </div>
-          </div>
-        ) : (
-          <div className="flex flex-col gap-4 py-6 px-4">
-            {messages.map((message) => (
-              <WorkflowChatMessage key={message.id} message={message} />
-            ))}
-            <div ref={messagesEndRef} />
-          </div>
-        )}
-      </ScrollArea>
+          )}
+        </ConversationContent>
+      </Conversation>
 
       {/* Chat input */}
       <div className="shrink-0">

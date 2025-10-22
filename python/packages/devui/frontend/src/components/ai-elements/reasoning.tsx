@@ -57,25 +57,32 @@ export const Reasoning = memo(
       defaultProp: defaultOpen,
       onChange: onOpenChange,
     });
-    const [duration, setDuration] = useControllableState({
-      prop: durationProp,
-      defaultProp: 0,
-    });
+    // Use regular useState for duration to preserve it across toggles
+    const [internalDuration, setInternalDuration] = useState<number>(0);
+    // Use the prop if provided, otherwise use internal state
+    const duration = durationProp !== undefined ? durationProp : internalDuration;
 
     const [hasAutoClosed, setHasAutoClosed] = useState(false);
     const [startTime, setStartTime] = useState<number | null>(null);
+    const [hasMeasuredDuration, setHasMeasuredDuration] = useState(false);
 
     // Track duration when streaming starts and ends
     useEffect(() => {
       if (isStreaming) {
+        // Start timing when streaming begins
         if (startTime === null) {
           setStartTime(Date.now());
+          setHasMeasuredDuration(false);
         }
-      } else if (startTime !== null) {
-        setDuration(Math.ceil((Date.now() - startTime) / MS_IN_S));
+      } else if (startTime !== null && !hasMeasuredDuration) {
+        // Calculate and save duration when streaming ends
+        const elapsed = Date.now() - startTime;
+        const calculatedDuration = Math.max(1, Math.ceil(elapsed / MS_IN_S));
+        setInternalDuration(calculatedDuration);
         setStartTime(null);
+        setHasMeasuredDuration(true);
       }
-    }, [isStreaming, startTime, setDuration]);
+    }, [isStreaming, startTime, hasMeasuredDuration]);
 
     // Auto-open when streaming starts, auto-close when streaming ends (once only)
     useEffect(() => {
@@ -92,6 +99,10 @@ export const Reasoning = memo(
 
     const handleOpenChange = (newOpen: boolean) => {
       setIsOpen(newOpen);
+      // Reset hasAutoClosed when manually opening
+      if (newOpen && hasAutoClosed) {
+        setHasAutoClosed(false);
+      }
     };
 
     return (
@@ -114,43 +125,41 @@ export const Reasoning = memo(
 export type ReasoningTriggerProps = ComponentProps<typeof CollapsibleTrigger>;
 
 const getThinkingMessage = (isStreaming: boolean, duration?: number) => {
-  if (isStreaming || duration === 0) {
+  if (isStreaming) {
     return <Shimmer duration={1}>Thinking...</Shimmer>;
   }
-  if (duration === undefined) {
+  if (duration === undefined || duration === 0) {
     return <p>Finished in a few seconds</p>;
   }
   return <p>Finished in {duration} seconds</p>;
 };
 
-export const ReasoningTrigger = memo(
-  ({ className, children, ...props }: ReasoningTriggerProps) => {
-    const { isStreaming, isOpen, duration } = useReasoning();
+export const ReasoningTrigger = ({ className, children, ...props }: ReasoningTriggerProps) => {
+  const { isStreaming, isOpen, duration } = useReasoning();
 
-    return (
-      <CollapsibleTrigger
-        className={cn(
-          "flex w-full items-center gap-2 text-muted-foreground text-sm transition-colors hover:text-foreground",
-          className
-        )}
-        {...props}
-      >
-        {children ?? (
-          <>
-            <BrainIcon className="size-4" />
-            {getThinkingMessage(isStreaming, duration)}
-            <ChevronDownIcon
-              className={cn(
-                "size-4 transition-transform",
-                isOpen ? "rotate-180" : "rotate-0"
-              )}
-            />
-          </>
-        )}
-      </CollapsibleTrigger>
-    );
-  }
-);
+  return (
+    <CollapsibleTrigger
+      className={cn(
+        "flex w-full items-center gap-2 text-muted-foreground text-sm transition-colors hover:text-foreground",
+        className
+      )}
+      {...props}
+    >
+      {children ?? (
+        <>
+          <BrainIcon className="size-4" />
+          {getThinkingMessage(isStreaming, duration)}
+          <ChevronDownIcon
+            className={cn(
+              "size-4 transition-transform",
+              isOpen ? "rotate-180" : "rotate-0"
+            )}
+          />
+        </>
+      )}
+    </CollapsibleTrigger>
+  );
+};
 
 export type ReasoningContentProps = ComponentProps<
   typeof CollapsibleContent

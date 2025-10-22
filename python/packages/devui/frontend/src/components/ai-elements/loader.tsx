@@ -9,7 +9,7 @@ const LoaderIcon = ({ size = 16 }: LoaderIconProps) => (
   <svg
     height={size}
     strokeLinejoin="round"
-    style={{ color: "currentcolor" }}
+    className="text-current"
     viewBox="0 0 16 16"
     width={size}
   >

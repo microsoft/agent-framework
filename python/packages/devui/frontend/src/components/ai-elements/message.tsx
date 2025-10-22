@@ -15,14 +15,14 @@ export type MessageProps = HTMLAttributes<HTMLDivElement> & {
 export const Message = ({ className, from, ...props }: MessageProps) => (
   <div
     className={cn(
-      "group flex w-full py-2",
+      "group flex w-full py-2.5",
       from === "user" ? "is-user justify-end" : "is-assistant justify-start",
       className
     )}
   >
     <div
       className={cn(
-        "flex items-end gap-3 max-w-[75%]",
+        "flex items-end gap-3.5 min-w-[240px] sm:min-w-[280px] max-w-[90%] sm:max-w-[85%]",
         from === "user" && "flex-row-reverse"
       )}
       {...props}
@@ -31,14 +31,14 @@ export const Message = ({ className, from, ...props }: MessageProps) => (
 );
 
 const messageContentVariants = cva(
-  "is-user:dark flex flex-col gap-2 overflow-hidden rounded-2xl text-sm",
+  "is-user:dark flex flex-col gap-2.5 overflow-hidden rounded-2xl text-base shadow-sm min-w-0 flex-1",
   {
     variants: {
       variant: {
         contained: [
           "px-5 py-3.5",
-          "group-[.is-user]:bg-primary group-[.is-user]:text-primary-foreground group-[.is-user]:rounded-2xl",
-          "group-[.is-assistant]:bg-secondary group-[.is-assistant]:text-foreground group-[.is-assistant]:rounded-2xl",
+          "group-[.is-user]:bg-primary group-[.is-user]:text-primary-foreground group-[.is-user]:rounded-2xl group-[.is-user]:shadow-md",
+          "group-[.is-assistant]:bg-secondary group-[.is-assistant]:text-foreground group-[.is-assistant]:rounded-2xl group-[.is-assistant]:border group-[.is-assistant]:border-border/50",
         ],
         flat: [
           "group-[.is-user]:bg-secondary group-[.is-user]:px-5 group-[.is-user]:py-3.5 group-[.is-user]:text-foreground group-[.is-user]:rounded-2xl",
