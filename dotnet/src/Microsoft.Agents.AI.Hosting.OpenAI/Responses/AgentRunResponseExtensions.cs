@@ -69,8 +69,8 @@ internal static class AgentRunResponseExtensions
             Truncation = request.Truncation,
 #pragma warning disable CS0618 // Type or member is obsolete
             User = request.User,
-            PromptCacheKey = request.PromptCacheKey,
 #pragma warning restore CS0618 // Type or member is obsolete
+            PromptCacheKey = request.PromptCacheKey,
             SafetyIdentifier = request.SafetyIdentifier,
             TopLogprobs = request.TopLogprobs,
             MaxToolCalls = request.MaxToolCalls,
