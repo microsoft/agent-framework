@@ -282,7 +282,10 @@ public static class AgentsClientExtensions
     /// <param name="tools">The tools to be used by the agent.</param>
     /// <param name="temperature">The temperature setting for the agent.</param>
     /// <param name="topP">The top-p setting for the agent.</param>
-    /// <param name="responseFormat">The response format for the agent.</param>
+    /// <param name="raiConfig">The responsible AI config</param>
+    /// <param name="reasoningOptions">The reasoning options for the agent.</param>
+    /// <param name="textOptions">The text options for the agent.</param>
+    /// <param name="structuredInputs">The structured inputs for the agent.</param>
     /// <param name="metadata">The metadata for the agent.</param>
     /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
@@ -295,7 +298,7 @@ public static class AgentsClientExtensions
         IEnumerable<ResponseTool>? tools = null,
         float? temperature = null,
         float? topP = null,
-        RaiConfig raiConfig = null,
+        RaiConfig? raiConfig = null,
         ResponseReasoningOptions? reasoningOptions = null,
         ResponseTextOptions? textOptions = null,
         IDictionary<string, StructuredInputDefinition>? structuredInputs = null,
