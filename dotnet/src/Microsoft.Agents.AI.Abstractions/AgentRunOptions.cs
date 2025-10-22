@@ -48,7 +48,7 @@ public class AgentRunOptions
     /// of an update just before the interruption occurred can be passed to this property to resume the stream from the point of interruption.
     /// Non-streamed background responses, such as those returned by <see cref="AIAgent.RunAsync(AgentThread?, AgentRunOptions?, System.Threading.CancellationToken)"/>,
     /// can be polled for completion by obtaining the token from the <see cref="AgentRunResponse.ContinuationToken"/> property
-    /// and passing it to this property on subsequent calls to <see cref="AIAgent.RunAsync(AgentThread?, AgentRunOptions?, System.Threading.CancellationToken)"/>.
+    /// and passing it via this property on subsequent calls to <see cref="AIAgent.RunAsync(AgentThread?, AgentRunOptions?, System.Threading.CancellationToken)"/>.
     /// </remarks>
     public object? ContinuationToken { get; set; }
 
