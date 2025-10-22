@@ -20,16 +20,16 @@ public static class YamlAgentFactoryExtensions
     /// <param name="options"><see cref="AgentCreationOptions"/> instance.</param>
     /// <param name="cancellationToken">Optional cancellation token</param>
     [RequiresDynamicCode("Calls YamlDotNet.Serialization.DeserializerBuilder.DeserializerBuilder()")]
-    public static async Task<AIAgent?> CreateFromYamlAsync(this AgentFactory agentFactory, string text, AgentCreationOptions? options = null, CancellationToken cancellationToken = default)
+    public static Task<AIAgent> CreateFromYamlAsync(this AgentFactory agentFactory, string text, AgentCreationOptions? options = null, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(agentFactory);
         Throw.IfNullOrEmpty(text);
 
         var agentDefinition = AgentBotElementYaml.FromYaml(text);
 
-        return await agentFactory.CreateAsync(
+        return agentFactory.CreateAsync(
             agentDefinition,
             options ?? new(),
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken);
     }
 }

@@ -44,7 +44,7 @@ public sealed class ChatClientAgentFactory : AgentFactory
     }
 
     /// <inheritdoc/>
-    public override Task<AIAgent?> TryCreateAsync(PromptAgent promptAgent, AgentCreationOptions? agentCreationOptions, CancellationToken cancellationToken = default)
+    public override Task<AIAgent?> TryCreateAsync(PromptAgent promptAgent, AgentCreationOptions? agentCreationOptions = null, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(promptAgent);
 

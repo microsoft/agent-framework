@@ -122,20 +122,21 @@ public static class PromptAgentExtensions
 
     private static readonly string[] s_chatOptionProperties =
     [
-        "allow_multiple_tool_calls",
-        "conversation_id",
-        "frequency_penalty",
-        "instructions",
-        "max_output_tokens",
-        "model_id",
-        "presence_penalty",
-        "response_format",
+        "allowMultipleToolCalls",
+        "conversationId",
+        "chatToolMode",
+        "frequencyPenalty",
+        "additionalInstructions",
+        "maxOutputTokens",
+        "modelId",
+        "presencePenalty",
+        "responseFormat",
         "seed",
-        "stop_sequences",
+        "stopSequences",
         "temperature",
-        "top_k",
-        "top_p",
-        "tool_mode",
+        "topK",
+        "topP",
+        "toolMode",
         "tools",
     ];
 
