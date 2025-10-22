@@ -74,7 +74,7 @@ public class AgentRunResponse
         this.RawRepresentation = response;
         this.ResponseId = response.ResponseId;
         this.Usage = response.Usage;
-        this.ContinuationToken = response.ContinuationToken; // propagate continuation token
+        this.ContinuationToken = response.ContinuationToken;
     }
 
     /// <summary>
@@ -161,7 +161,7 @@ public class AgentRunResponse
     public string? ResponseId { get; set; }
 
     /// <summary>
-    /// Gets or sets the continuation token for getting result of the background agent response.
+    /// Gets or sets the continuation token for getting the result of a background agent response.
     /// </summary>
     /// <remarks>
     /// <see cref="AIAgent"/> implementations that support background responses will return
