@@ -11,13 +11,13 @@ internal sealed class WorkflowInfo
 {
     [JsonConstructor]
     internal WorkflowInfo(
-        Dictionary<string, ExecutorInfo> executors,
+        Dictionary<string, ExecutorInfo> executorBindings,
         Dictionary<string, List<EdgeInfo>> edges,
         HashSet<RequestPortInfo> requestPorts,
         string startExecutorId,
         HashSet<string>? outputExecutorIds)
     {
-        this.Executors = Throw.IfNull(executors);
+        this.ExecutorBindings = Throw.IfNull(executorBindings);
         this.Edges = Throw.IfNull(edges);
         this.RequestPorts = Throw.IfNull(requestPorts);
 
@@ -25,7 +25,7 @@ internal sealed class WorkflowInfo
         this.OutputExecutorIds = outputExecutorIds ?? [];
     }
 
-    public Dictionary<string, ExecutorInfo> Executors { get; }
+    public Dictionary<string, ExecutorInfo> ExecutorBindings { get; }
     public Dictionary<string, List<EdgeInfo>> Edges { get; }
     public HashSet<RequestPortInfo> RequestPorts { get; }
 
@@ -47,10 +47,10 @@ internal sealed class WorkflowInfo
         }
 
         // Validate the executors
-        if (workflow.Registrations.Count != this.Executors.Count ||
-            this.Executors.Keys.Any(
-            executorId => workflow.Registrations.TryGetValue(executorId, out ExecutorRegistration? registration)
-                       && !this.Executors[executorId].IsMatch(registration)))
+        if (workflow.ExecutorBindings.Count != this.ExecutorBindings.Count ||
+            this.ExecutorBindings.Keys.Any(
+            executorId => workflow.ExecutorBindings.TryGetValue(executorId, out ExecutorBinding? registration)
+                       && !this.ExecutorBindings[executorId].IsMatch(registration)))
         {
             return false;
         }
