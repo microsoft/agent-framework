@@ -6,14 +6,14 @@ using Microsoft.Extensions.AI;
 
 namespace WorkflowAsAnAgentsSample;
 
-internal static class WorkflowHelper
+internal static class WorkflowFactory
 {
     /// <summary>
     /// Creates a workflow that uses two language agents to process input concurrently.
     /// </summary>
     /// <param name="chatClient">The chat client to use for the agents</param>
     /// <returns>A workflow that processes input using two language agents</returns>
-    internal static Workflow GetWorkflow(IChatClient chatClient)
+    internal static Workflow BuildWorkflow(IChatClient chatClient)
     {
         // Create executors
         var startExecutor = new ConcurrentStartExecutor();
