@@ -40,14 +40,14 @@ repos:
         name: Upgrade Python syntax
         args: [--py310-plus]
         exclude: ^python/packages/lab/cookiecutter-agent-framework-lab/
-  # - repo: local
-  #   hooks:
-  #     - id: poe-check
-  #       name: Run checks through Poe
-  #       entry: uv --directory ./python run poe pre-commit-check
-  #       language: system
-  #       files: ^python/
-  #       pass_filenames: false
+  - repo: local
+    hooks:
+      - id: poe-check
+        name: Run checks through Poe
+        entry: uv --directory ./python run poe pre-commit-check
+        language: system
+        files: ^python/
+        pass_filenames: false
   - repo: https://github.com/astral-sh/uv-pre-commit
     # uv version.
     rev: 0.7.18

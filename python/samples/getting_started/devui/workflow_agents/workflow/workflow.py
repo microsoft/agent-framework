@@ -14,7 +14,6 @@ Writer creates content, Reviewer evaluates quality:
 Both paths converge at Summarizer for final report.
 """
 
-import os
 from typing import Any
 from azure.identity import AzureCliCredential
 from agent_framework import AgentExecutorResponse, WorkflowBuilder

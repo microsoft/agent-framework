@@ -167,7 +167,7 @@ omit = [
 
 [tool.pyright]
 include = ["agent_framework", "samples"]
-exclude = ["**/tests/**", "docs", "**/.venv/**", "samples/semantic-kernel-migration/**", "packages/devui/frontend/node_modules/**"]
+exclude = ["**/tests/**", "docs", "**/.venv/**", "samples/semantic-kernel-migration/**"]
 typeCheckingMode = "strict"
 reportUnnecessaryIsInstance = false
 reportMissingTypeStubs = false
