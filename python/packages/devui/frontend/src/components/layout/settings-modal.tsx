@@ -69,7 +69,7 @@ export function SettingsModal({ open, onOpenChange, onBackendUrlChange }: Settin
           <DialogTitle>Settings</DialogTitle>
         </DialogHeader>
 
-        <DialogClose onClose={() => onOpenChange(false)} />
+        <DialogClose />
 
         {/* Tabs */}
         <div className="flex border-b px-6">

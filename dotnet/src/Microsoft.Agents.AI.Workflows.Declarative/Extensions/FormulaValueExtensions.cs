@@ -219,6 +219,22 @@ internal static class FormulaValueExtensions
             elementType switch
             {
                 null => FormulaValue.NewTable(RecordType.EmptySealed(), []),
+                _ when elementType == typeof(string) =>
+                    FormulaValue.NewSingleColumnTable([.. value.OfType<string>().Select(element => FormulaValue.New(element))]),
+                _ when elementType == typeof(bool) =>
+                    FormulaValue.NewSingleColumnTable([.. value.OfType<bool>().Select(element => FormulaValue.New(element))]),
+                _ when elementType == typeof(int) =>
+                    FormulaValue.NewSingleColumnTable([.. value.OfType<int>().Select(element => FormulaValue.New(element))]),
+                _ when elementType == typeof(long) =>
+                    FormulaValue.NewSingleColumnTable([.. value.OfType<long>().Select(element => FormulaValue.New(element))]),
+                _ when elementType == typeof(decimal) =>
+                    FormulaValue.NewSingleColumnTable([.. value.OfType<decimal>().Select(element => FormulaValue.New(element))]),
+                _ when elementType == typeof(float) =>
+                    FormulaValue.NewSingleColumnTable([.. value.OfType<float>().Select(element => FormulaValue.New(element))]),
+                _ when elementType == typeof(DateTime) =>
+                    FormulaValue.NewSingleColumnTable([.. value.OfType<DateTime>().Select(element => FormulaValue.New(element))]),
+                _ when elementType == typeof(TimeSpan) =>
+                    FormulaValue.NewSingleColumnTable([.. value.OfType<TimeSpan>().Select(element => FormulaValue.New(element))]),
                 _ when elementType == typeof(ExpandoObject) =>
                     FormulaValue.NewTable(
                         value.ToTableType().ToRecord(),

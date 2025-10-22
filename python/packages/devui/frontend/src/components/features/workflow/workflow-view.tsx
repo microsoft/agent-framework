@@ -8,25 +8,21 @@ import {
   CheckCircle,
   AlertCircle,
   Loader2,
-  Play,
-  Settings,
-  RotateCcw,
   Info,
   Workflow as WorkflowIcon,
   Maximize2,
   ChevronsDown,
 } from "lucide-react";
 import { LoadingState } from "@/components/ui/loading-state";
-import { WorkflowInputForm } from "./workflow-input-form";
 import { Button } from "@/components/ui/button";
 import { WorkflowFlow } from "./workflow-flow";
+import { WorkflowChatSidebar } from "./workflow-chat-sidebar";
 import { useWorkflowEventCorrelation } from "@/hooks/useWorkflowEventCorrelation";
 import { WorkflowDetailsModal } from "./workflow-details-modal";
 import { apiClient } from "@/services/api";
 import type {
   WorkflowInfo,
   ExtendedResponseStreamEvent,
-  JSONSchemaProperty,
 } from "@/types";
 import type { ExecutorNodeData } from "./executor-node";
 import {
@@ -38,219 +34,6 @@ import {
 } from "@/components/ui/dialog";
 
 type DebugEventHandler = (event: ExtendedResponseStreamEvent | "clear") => void;
-
-// Smart Run Workflow Button Component
-interface RunWorkflowButtonProps {
-  inputSchema: JSONSchemaProperty;
-  onRun: (data: Record<string, unknown>) => void;
-  isSubmitting: boolean;
-  workflowState: "ready" | "running" | "completed" | "error";
-  executorHistory: Array<{
-    executorId: string;
-    message: string;
-    timestamp: string;
-    status: string;
-  }>;
-  workflowError?: string;
-}
-
-function RunWorkflowButton({
-  inputSchema,
-  onRun,
-  isSubmitting,
-  workflowState,
-}: RunWorkflowButtonProps) {
-  const [showModal, setShowModal] = useState(false);
-
-  // Handle escape key to close modal
-  useEffect(() => {
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && showModal) {
-        setShowModal(false);
-      }
-    };
-
-    if (showModal) {
-      document.addEventListener("keydown", handleEscape);
-      return () => document.removeEventListener("keydown", handleEscape);
-    }
-  }, [showModal]);
-
-  // Analyze input requirements
-  const inputAnalysis = useMemo(() => {
-    if (!inputSchema)
-      return { needsInput: false, hasDefaults: false, fieldCount: 0 };
-
-    if (inputSchema.type === "string") {
-      return {
-        needsInput: !inputSchema.default,
-        hasDefaults: !!inputSchema.default,
-        fieldCount: 1,
-        canRunDirectly: !!inputSchema.default,
-      };
-    }
-
-    if (inputSchema.type === "object" && inputSchema.properties) {
-      const properties = inputSchema.properties;
-      const fields = Object.entries(properties);
-      const fieldsWithDefaults = fields.filter(
-        ([, schema]: [string, JSONSchemaProperty]) =>
-          schema.default !== undefined ||
-          (schema.enum && schema.enum.length > 0)
-      );
-
-      return {
-        needsInput: fields.length > 0,
-        hasDefaults: fieldsWithDefaults.length > 0,
-        fieldCount: fields.length,
-        canRunDirectly: fieldsWithDefaults.length === fields.length, // All fields have defaults
-      };
-    }
-
-    return {
-      needsInput: false,
-      hasDefaults: false,
-      fieldCount: 0,
-      canRunDirectly: true,
-    };
-  }, [inputSchema]);
-
-  const handleDirectRun = () => {
-    if (inputAnalysis.canRunDirectly) {
-      // Build default data
-      const defaultData: Record<string, unknown> = {};
-
-      if (inputSchema.type === "string" && inputSchema.default) {
-        defaultData.input = inputSchema.default;
-      } else if (inputSchema.type === "object" && inputSchema.properties) {
-        Object.entries(inputSchema.properties).forEach(
-          ([key, schema]: [string, JSONSchemaProperty]) => {
-            if (schema.default !== undefined) {
-              defaultData[key] = schema.default;
-            } else if (schema.enum && schema.enum.length > 0) {
-              defaultData[key] = schema.enum[0];
-            }
-          }
-        );
-      }
-
-      onRun(defaultData);
-    } else {
-      setShowModal(true);
-    }
-  };
-
-  const getButtonText = () => {
-    if (workflowState === "running") return "Running...";
-    if (workflowState === "completed") return "Run Again";
-    if (workflowState === "error") return "Retry";
-    if (inputAnalysis.fieldCount === 0) return "Run Workflow";
-    if (inputAnalysis.canRunDirectly) return "Run Workflow";
-    return "Configure & Run";
-  };
-
-  const getButtonIcon = () => {
-    if (workflowState === "running")
-      return <Loader2 className="w-4 h-4 animate-spin" />;
-    if (workflowState === "error") return <RotateCcw className="w-4 h-4" />;
-    if (inputAnalysis.needsInput && !inputAnalysis.canRunDirectly)
-      return <Settings className="w-4 h-4" />;
-    return <Play className="w-4 h-4" />;
-  };
-
-  const isButtonDisabled = workflowState === "running";
-  const buttonVariant = workflowState === "error" ? "destructive" : "primary";
-
-  return (
-    <>
-      <div className="flex items-center">
-        {/* Split button group using proper Button components */}
-        <div className="flex">
-          {/* Main button */}
-          <Button
-            onClick={handleDirectRun}
-            disabled={isButtonDisabled}
-            variant={
-              buttonVariant === "destructive" ? "destructive" : "default"
-            }
-            size="default"
-            className={inputAnalysis.needsInput ? "rounded-r-none" : ""}
-          >
-            {getButtonIcon()}
-            {getButtonText()}
-          </Button>
-
-          {/* Dropdown button - only show if inputs are available */}
-          {inputAnalysis.needsInput && (
-            <Button
-              onClick={() => setShowModal(true)}
-              disabled={isButtonDisabled}
-              variant={
-                buttonVariant === "destructive" ? "destructive" : "default"
-              }
-              size="default"
-              className="rounded-l-none border-l-0 px-3"
-              title="Configure workflow inputs - customize parameters before running"
-            >
-              <Settings className="w-4 h-4" />
-              <span className="ml-1.5">Inputs</span>
-            </Button>
-          )}
-        </div>
-      </div>
-
-      {/* Modal with proper Dialog component - matching WorkflowInputForm structure */}
-      <Dialog open={showModal} onOpenChange={setShowModal}>
-        <DialogContent className="w-full min-w-[400px] max-w-md sm:max-w-lg md:max-w-2xl lg:max-w-4xl xl:max-w-5xl max-h-[90vh] flex flex-col">
-          <DialogHeader className="px-8 pt-6">
-            <DialogTitle>Configure Workflow Inputs</DialogTitle>
-            <DialogClose onClose={() => setShowModal(false)} />
-          </DialogHeader>
-
-          {/* Form Info - matching the structure from WorkflowInputForm */}
-          <div className="px-8 py-4 border-b flex-shrink-0">
-            <div className="text-sm text-muted-foreground">
-              <div className="flex items-center gap-3">
-                <span className="font-medium">Input Type:</span>
-                <code className="bg-muted px-3 py-1 text-xs font-mono">
-                  {inputAnalysis.fieldCount === 0
-                    ? "No Input"
-                    : inputSchema.type === "string"
-                    ? "String"
-                    : "Object"}
-                </code>
-                {inputSchema.type === "object" && inputSchema.properties && (
-                  <span className="text-xs text-muted-foreground">
-                    {Object.keys(inputSchema.properties).length} field
-                    {Object.keys(inputSchema.properties).length !== 1
-                      ? "s"
-                      : ""}
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Scrollable Form Content - matching padding and structure */}
-          <div className="px-8 py-6 overflow-y-auto flex-1 min-h-0">
-            <WorkflowInputForm
-              inputSchema={inputSchema}
-              inputTypeName="Input"
-              onSubmit={(data) => {
-                onRun(data as Record<string, unknown>);
-                setShowModal(false);
-              }}
-              isSubmitting={isSubmitting}
-              className="embedded"
-            />
-          </div>
-
-          {/* Footer - no additional buttons needed since WorkflowInputForm embedded mode has its own */}
-        </DialogContent>
-      </Dialog>
-    </>
-  );
-}
 
 interface WorkflowViewProps {
   selectedWorkflow: WorkflowInfo;
@@ -525,9 +308,15 @@ export function WorkflowView({
         );
 
         for await (const openAIEvent of streamGenerator) {
-          // Only store workflow events in state for performance
-          // Text deltas are processed directly without state updates
-          if (openAIEvent.type === "response.workflow_event.complete") {
+          // Store events needed by chat sidebar and debug panel
+          // Include workflow events, text deltas, and function call events
+          if (
+            openAIEvent.type === "response.workflow_event.complete" ||
+            openAIEvent.type === "response.output_text.delta" ||
+            openAIEvent.type === "response.output_item.added" ||
+            openAIEvent.type === "response.function_call_arguments.delta" ||
+            openAIEvent.type === "response.function_result.complete"
+          ) {
             setOpenAIEvents((prev) => [...prev, openAIEvent]);
           }
 
@@ -678,27 +467,6 @@ export function WorkflowView({
             </Button>
           </div>
 
-          {/* Run Workflow Controls */}
-          {workflowInfo && (
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-shrink-0">
-              <RunWorkflowButton
-                inputSchema={workflowInfo.input_schema}
-                onRun={handleSendWorkflowData}
-                isSubmitting={isStreaming}
-                workflowState={
-                  isStreaming
-                    ? "running"
-                    : workflowError
-                    ? "error"
-                    : executorHistory.length > 0
-                    ? "completed"
-                    : "ready"
-                }
-                executorHistory={executorHistory}
-                workflowError={workflowError}
-              />
-            </div>
-          )}
         </div>
 
         {selectedWorkflow.description && (
@@ -708,19 +476,32 @@ export function WorkflowView({
         )}
       </div>
 
-      {/* Workflow Visualization */}
-      <div className="flex-1 min-h-0">
-        {workflowInfo?.workflow_dump && (
-          <WorkflowFlow
-            workflowDump={workflowInfo.workflow_dump}
-            events={workflowEvents}
+      {/* Workflow Visualization and Chat Sidebar */}
+      <div className="flex flex-1 min-h-0">
+        {/* Workflow Visualizer */}
+        <div className="flex-1 min-w-0">
+          {workflowInfo?.workflow_dump && (
+            <WorkflowFlow
+              workflowDump={workflowInfo.workflow_dump}
+              events={workflowEvents}
+              isStreaming={isStreaming}
+              onNodeSelect={handleNodeSelect}
+              className="h-full"
+              viewOptions={viewOptions}
+              onToggleViewOption={toggleViewOption}
+              layoutDirection={layoutDirection}
+              onLayoutDirectionChange={setLayoutDirection}
+            />
+          )}
+        </div>
+
+        {/* Chat Sidebar */}
+        {workflowInfo && (
+          <WorkflowChatSidebar
+            events={openAIEvents}
             isStreaming={isStreaming}
-            onNodeSelect={handleNodeSelect}
-            className="h-full"
-            viewOptions={viewOptions}
-            onToggleViewOption={toggleViewOption}
-            layoutDirection={layoutDirection}
-            onLayoutDirectionChange={setLayoutDirection}
+            inputSchema={workflowInfo.input_schema}
+            onSubmit={handleSendWorkflowData}
           />
         )}
       </div>
@@ -1114,7 +895,7 @@ export function WorkflowView({
               <CheckCircle className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
               Workflow Results
             </DialogTitle>
-            <DialogClose onClose={() => setResultModalOpen(false)} />
+            <DialogClose />
           </DialogHeader>
 
           <div className="px-6 pb-6 overflow-y-auto flex-1">
@@ -1180,7 +961,7 @@ export function WorkflowView({
               <AlertCircle className="w-5 h-5 text-destructive" />
               Workflow Error
             </DialogTitle>
-            <DialogClose onClose={() => setErrorModalOpen(false)} />
+            <DialogClose />
           </DialogHeader>
 
           <div className="px-6 pb-6 overflow-y-auto flex-1">

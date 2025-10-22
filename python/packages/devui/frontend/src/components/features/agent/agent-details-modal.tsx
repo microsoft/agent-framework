@@ -72,7 +72,7 @@ export function AgentDetailsModal({
       <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col">
         <DialogHeader className="px-6 pt-6 flex-shrink-0">
           <DialogTitle>Agent Details</DialogTitle>
-          <DialogClose onClose={() => onOpenChange(false)} />
+          <DialogClose />
         </DialogHeader>
 
         <div className="px-6 pb-6 overflow-y-auto flex-1">

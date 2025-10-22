@@ -568,7 +568,7 @@ export function WorkflowInputForm({
         <DialogContent className="w-full max-w-md sm:max-w-lg md:max-w-2xl lg:max-w-4xl xl:max-w-5xl max-h-[90vh] flex flex-col">
           <DialogHeader>
             <DialogTitle>Run Workflow</DialogTitle>
-            <DialogClose onClose={() => setIsModalOpen(false)} />
+            <DialogClose />
           </DialogHeader>
 
           {/* Form Info */}
