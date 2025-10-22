@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import logging
-from collections.abc import Mapping
 from dataclasses import fields, is_dataclass
 from types import UnionType
 from typing import Any, Union, get_args, get_origin
@@ -117,35 +116,7 @@ def is_instance_of(data: Any, target_type: type | UnionType | Any) -> bool:
             )
         )
 
-    # Case 6: target_type is RequestResponse[T, U] - validate generic parameters
-    if origin and hasattr(origin, "__name__") and origin.__name__ == "RequestResponse":
-        if not isinstance(data, origin):
-            return False
-        # Validate generic parameters for RequestResponse[TRequest, TResponse]
-        if len(args) >= 2:
-            request_type, response_type = args[0], args[1]
-            # Check if the original_request matches TRequest and data matches TResponse
-            if (
-                hasattr(data, "original_request")
-                and data.original_request is not None
-                and not is_instance_of(data.original_request, request_type)
-            ):
-                # Checkpoint decoding can leave original_request as a plain mapping. In that
-                # case we coerce it back into the expected request type so downstream handlers
-                # and validators still receive a fully typed RequestResponse instance.
-                original_request = data.original_request
-                if isinstance(original_request, Mapping):
-                    coerced = _coerce_to_type(dict(original_request), request_type)
-                    if coerced is None or not isinstance(coerced, request_type):
-                        return False
-                    data.original_request = coerced
-                else:
-                    return False
-            if hasattr(data, "data") and data.data is not None and not is_instance_of(data.data, response_type):
-                return False
-        return True
-
-    # Case 7: Other custom generic classes - check origin type only
+    # Case 6: Other custom generic classes - check origin type only
     # For generic classes, we check if data is an instance of the origin type
     # We don't validate the generic parameters at runtime since that's handled by type system
     if origin and hasattr(origin, "__name__"):

@@ -10,7 +10,6 @@ from typing import Any, Union, get_args, get_origin
 
 from ._edge import Edge, EdgeGroup, FanInEdgeGroup, InternalEdgeGroup
 from ._executor import Executor
-from ._request_info_executor import RequestInfoExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -247,14 +246,13 @@ class WorkflowGraphValidator:
         # If either executor has no type information, log warning and skip validation
         # This allows for dynamic typing scenarios but warns about reduced validation coverage
         if not source_output_types or not target_input_types:
-            # Suppress warnings for RequestInfoExecutor where dynamic typing is expected
-            if not source_output_types and not isinstance(source_executor, RequestInfoExecutor):
+            if not source_output_types:
                 logger.warning(
                     f"Executor '{source_executor.id}' has no output type annotations. "
                     f"Type compatibility validation will be skipped for edges from this executor. "
                     f"Consider adding WorkflowContext[T] generics in handlers for better validation."
                 )
-            if not target_input_types and not isinstance(target_executor, RequestInfoExecutor):
+            if not target_input_types:
                 logger.warning(
                     f"Executor '{target_executor.id}' has no input type annotations. "
                     f"Type compatibility validation will be skipped for edges to this executor. "

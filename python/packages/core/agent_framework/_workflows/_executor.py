@@ -90,16 +90,16 @@ class Executor(RequestInfoMixin, DictConvertible):
 
         class ParentExecutor(Executor):
             @handler
-            async def handle_domain_request(
+            async def handle_subworkflow_request(
                 self,
-                request: DomainRequest,  # Subclass of RequestInfoMessage
-                ctx: WorkflowContext[RequestResponse[RequestInfoMessage, Any] | DomainRequest],
+                request: SubWorkflowRequestMessage,
+                ctx: WorkflowContext[SubWorkflowResponseMessage],
             ) -> None:
                 if self.is_allowed(request.domain):
-                    response = RequestResponse(data=True, original_request=request, request_id=request.request_id)
-                    await ctx.send_message(response, target_id=request.source_executor_id)
+                    response = request.create_response(data=True)
+                    await ctx.send_message(response, target_id=request.executor_id)
                 else:
-                    await ctx.send_message(request)  # Forward to external
+                    await ctx.request_info(request.source_event)
 
     ## Context Types
     Handler methods receive different WorkflowContext variants based on their type annotations:
@@ -331,8 +331,6 @@ class Executor(RequestInfoMixin, DictConvertible):
                     message_type = handler_spec["message_type"]
 
                     # Keep full generic types for handler registration to avoid conflicts
-                    # Different RequestResponse[T, U] specializations are distinct handler types
-
                     if self._handlers.get(message_type) is not None:
                         raise ValueError(f"Duplicate handler for type {message_type} in {self.__class__.__name__}")
 

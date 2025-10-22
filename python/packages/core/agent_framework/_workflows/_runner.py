@@ -20,7 +20,7 @@ from ._runner_context import (
 from ._shared_state import SharedState
 
 if TYPE_CHECKING:
-    from ._request_info_executor import RequestInfoExecutor
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -386,39 +386,6 @@ class Runner:
                 parsed[source_executor_id].append(runner)
 
         return parsed
-
-    def _find_request_info_executor(self) -> "RequestInfoExecutor | None":
-        """Find the RequestInfoExecutor instance in this workflow.
-
-        Returns:
-            The RequestInfoExecutor instance if found, None otherwise.
-        """
-        from ._request_info_executor import RequestInfoExecutor
-
-        for executor in self._executors.values():
-            if isinstance(executor, RequestInfoExecutor):
-                return executor
-        return None
-
-    def _is_message_to_request_info_executor(self, msg: "Message") -> bool:
-        """Check if message targets any RequestInfoExecutor in this workflow.
-
-        Args:
-            msg: The message to check.
-
-        Returns:
-            True if the message targets a RequestInfoExecutor, False otherwise.
-        """
-        from ._request_info_executor import RequestInfoExecutor
-
-        if not msg.target_id:
-            return False
-
-        # Check all executors to see if target_id matches a RequestInfoExecutor
-        for executor in self._executors.values():
-            if executor.id == msg.target_id and isinstance(executor, RequestInfoExecutor):
-                return True
-        return False
 
 
 def _convert_checkpoint_to_workflow_state(checkpoint: WorkflowCheckpoint) -> WorkflowState:

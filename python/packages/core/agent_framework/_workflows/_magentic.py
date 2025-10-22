@@ -29,7 +29,7 @@ from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
 from ._events import WorkflowEvent
 from ._executor import Executor, handler
 from ._model_utils import DictConvertible, encode_value
-from ._request_info_executor import RequestInfoMessage, RequestResponse
+from ._request_info_mixin import response_handler
 from ._workflow import Workflow, WorkflowRunResult
 from ._workflow_builder import WorkflowBuilder
 from ._workflow_context import WorkflowContext
@@ -388,11 +388,10 @@ class MagenticResponseMessage:
 
 
 @dataclass
-class MagenticPlanReviewRequest(RequestInfoMessage):
+class MagenticPlanReviewRequest:
     """Human-in-the-loop request to review and optionally edit the plan before execution."""
 
-    # Because RequestInfoMessage defines a default field (request_id),
-    # subclass fields must also have defaults to satisfy dataclass rules.
+    request_id: str = field(default_factory=lambda: str(uuid4()))
     task_text: str = ""
     facts_text: str = ""
     plan_text: str = ""
@@ -1163,10 +1162,11 @@ class MagenticOrchestratorExecutor(Executor):
         # Continue with inner loop
         await self._run_inner_loop(context)
 
-    @handler
+    @response_handler
     async def handle_plan_review_response(
         self,
-        response: RequestResponse[MagenticPlanReviewRequest, MagenticPlanReviewReply],
+        original_request: MagenticPlanReviewRequest,
+        response: MagenticPlanReviewReply,
         context: WorkflowContext[
             # may broadcast ledger next, or ask for another round of review
             MagenticResponseMessage | MagenticRequestMessage | MagenticPlanReviewRequest, ChatMessage
@@ -1178,26 +1178,21 @@ class MagenticOrchestratorExecutor(Executor):
         if self._context is None:
             return
 
-        human = response.data
-        if human is None:  # type: ignore[unreachable]
-            # Defensive fallback: treat as revise with empty comments
-            human = MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.REVISE, comments="")
-
-        if human.decision == MagenticPlanReviewDecision.APPROVE:
+        if response.decision == MagenticPlanReviewDecision.APPROVE:
             # Close the review loop on approval (no further plan review requests this run)
             self._require_plan_signoff = False
             # If the user supplied an edited plan, adopt it
-            if human.edited_plan_text:
+            if response.edited_plan_text:
                 # Update the manager's internal ledger and rebuild the combined message
                 mgr_ledger = getattr(self._manager, "task_ledger", None)
                 if mgr_ledger is not None:
-                    mgr_ledger.plan.text = human.edited_plan_text
+                    mgr_ledger.plan.text = response.edited_plan_text
                 team_text = _team_block(self._participants)
                 combined = self._manager.task_ledger_full_prompt.format(
                     task=self._context.task.text,
                     team=team_text,
                     facts=(mgr_ledger.facts.text if mgr_ledger else ""),
-                    plan=human.edited_plan_text,
+                    plan=response.edited_plan_text,
                 )
                 self._task_ledger = ChatMessage(
                     role=Role.ASSISTANT,
@@ -1205,10 +1200,10 @@ class MagenticOrchestratorExecutor(Executor):
                     author_name=MAGENTIC_MANAGER_NAME,
                 )
             # If approved with comments but no edited text, apply comments via replan and proceed (no extra review)
-            elif human.comments:
+            elif response.comments:
                 # Record the human feedback for grounding
                 self._context.chat_history.append(
-                    ChatMessage(role=Role.USER, text=f"Human plan feedback: {human.comments}")
+                    ChatMessage(role=Role.USER, text=f"Human plan feedback: {response.comments}")
                 )
                 # Ask the manager to replan based on comments; proceed immediately
                 self._task_ledger = await self._manager.replan(self._context.clone(deep=True))
@@ -1258,26 +1253,26 @@ class MagenticOrchestratorExecutor(Executor):
             return
 
         # If the user provided an edited plan, adopt it directly and ask them to confirm once more
-        if human.edited_plan_text:
+        if response.edited_plan_text:
             mgr_ledger2 = getattr(self._manager, "task_ledger", None)
             if mgr_ledger2 is not None:
-                mgr_ledger2.plan.text = human.edited_plan_text
+                mgr_ledger2.plan.text = response.edited_plan_text
             # Rebuild combined message for preview in the next review request
             team_text = _team_block(self._participants)
             combined = self._manager.task_ledger_full_prompt.format(
                 task=self._context.task.text,
                 team=team_text,
                 facts=(mgr_ledger2.facts.text if mgr_ledger2 else ""),
-                plan=human.edited_plan_text,
+                plan=response.edited_plan_text,
             )
             self._task_ledger = ChatMessage(role=Role.ASSISTANT, text=combined, author_name=MAGENTIC_MANAGER_NAME)
             await self._send_plan_review_request(context)
             return
 
         # Else pass comments into the chat history and replan with the manager
-        if human.comments:
+        if response.comments:
             self._context.chat_history.append(
-                ChatMessage(role=Role.USER, text=f"Human plan feedback: {human.comments}")
+                ChatMessage(role=Role.USER, text=f"Human plan feedback: {response.comments}")
             )
 
         # Ask the manager to replan; this only adjusts the plan stage, not a full reset
@@ -1484,13 +1479,8 @@ class MagenticOrchestratorExecutor(Executor):
 
         return True
 
-    async def _send_plan_review_request(
-        self,
-        context: WorkflowContext[
-            MagenticResponseMessage | MagenticRequestMessage | MagenticPlanReviewRequest, ChatMessage
-        ],
-    ) -> None:
-        """Emit a PlanReviewRequest via RequestInfoExecutor."""
+    async def _send_plan_review_request(self, context: WorkflowContext) -> None:
+        """Send a PlanReviewRequest."""
         # If plan sign-off is disabled (e.g., ran out of review rounds), do nothing
         if not self._require_plan_signoff:
             return
@@ -1505,7 +1495,7 @@ class MagenticOrchestratorExecutor(Executor):
             plan_text=plan_text,
             round_index=self._plan_review_round,
         )
-        await context.send_message(req)
+        await context.request_info(req, MagenticPlanReviewRequest, MagenticPlanReviewReply)
 
 
 class MagenticAgentExecutor(Executor):
@@ -1937,26 +1927,11 @@ class MagenticBuilder:
         # Create workflow builder and set orchestrator as start
         workflow_builder = WorkflowBuilder().set_start_executor(orchestrator_executor)
 
-        if self._enable_plan_review:
-            from ._request_info_executor import RequestInfoExecutor
-
-            request_info = RequestInfoExecutor(id="magentic_plan_review")
-            workflow_builder = (
-                workflow_builder
-                # Only route plan review asks to request_info
-                .add_edge(
-                    orchestrator_executor,
-                    request_info,
-                    condition=lambda msg: isinstance(msg, MagenticPlanReviewRequest),
-                ).add_edge(request_info, orchestrator_executor)
-            )
-
         def _route_to_agent(msg: object, *, agent_name: str) -> bool:
             """Route only messages meant for this agent.
 
             - MagenticRequestMessage -> only to the named agent
             - MagenticResponseMessage -> broadcast=True to all, or target_agent==agent_name
-            Everything else (e.g., RequestInfoMessage) -> do not route to agents.
             """
             if isinstance(msg, MagenticRequestMessage):
                 return msg.agent_name == agent_name

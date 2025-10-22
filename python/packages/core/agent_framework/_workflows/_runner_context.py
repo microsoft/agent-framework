@@ -498,9 +498,6 @@ class InProcRunnerContext:
 
         await self.send_message(response_msg)
 
-        # Clear the event from pending requests
-        self._pending_request_info_events.pop(request_id, None)
-
     async def get_pending_request_info_events(self) -> dict[str, RequestInfoEvent]:
         """Get the mapping of request IDs to their corresponding RequestInfoEvent.
 

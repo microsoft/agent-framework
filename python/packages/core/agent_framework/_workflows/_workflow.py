@@ -31,7 +31,6 @@ from ._events import (
 )
 from ._executor import Executor
 from ._model_utils import DictConvertible
-from ._request_info_executor import RequestInfoExecutor
 from ._runner import Runner
 from ._runner_context import RunnerContext
 from ._shared_state import SharedState
@@ -138,11 +137,13 @@ class Workflow(DictConvertible):
     - run_stream_from_checkpoint(): Resume from checkpoint with streaming
 
     ## External Input Requests
-    Workflows can request external input using a RequestInfoExecutor:
-    1. Executor connects to RequestInfoExecutor via edge group and back to itself
-    2. Executor sends RequestInfoMessage to RequestInfoExecutor
-    3. RequestInfoExecutor emits RequestInfoEvent and workflow enters IDLE_WITH_PENDING_REQUESTS
-    4. Caller handles requests and uses send_responses()/send_responses_streaming() to continue
+    Executors within a workflow can request external input using `ctx.request_info()`:
+    1. Executor calls `ctx.request_info()` to request input
+    2. Executor implements `response_handler()` to process the response
+    3. Requests are emitted as RequestInfoEvent instances in the event stream
+    4. Workflow enters IDLE_WITH_PENDING_REQUESTS state
+    5. Caller handles requests and uses send_responses()/send_responses_streaming() to continue
+    6. Responses are routed back to the requesting executors and response handlers are invoked
 
     ## Checkpointing
     When enabled, checkpoints are created at the end of each superstep, capturing:
@@ -618,19 +619,6 @@ class Workflow(DictConvertible):
         if executor_id not in self.executors:
             raise ValueError(f"Executor with ID {executor_id} not found.")
         return self.executors[executor_id]
-
-    def _find_request_info_executor(self) -> RequestInfoExecutor | None:
-        """Find the RequestInfoExecutor instance in this workflow.
-
-        Returns:
-            The RequestInfoExecutor instance if found, None otherwise.
-        """
-        from ._request_info_executor import RequestInfoExecutor
-
-        for executor in self.executors.values():
-            if isinstance(executor, RequestInfoExecutor):
-                return executor
-        return None
 
     # Graph signature helpers
 

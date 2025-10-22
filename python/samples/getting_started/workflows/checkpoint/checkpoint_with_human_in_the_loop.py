@@ -37,17 +37,14 @@ This getting-started sample keeps the moving pieces to a minimum:
 
 1. A brief is turned into a consistent prompt for an AI copywriter.
 2. The copywriter (an `AgentExecutor`) drafts release notes.
-3. A reviewer gateway routes every draft through `RequestInfoExecutor` so a human
-   can approve or request tweaks.
+3. A reviewer gateway sends a request for approval for every draft.
 4. The workflow records checkpoints between each superstep so you can stop the
    program, restart later, and optionally pre-supply human answers on resume.
 
 Key concepts demonstrated
 -------------------------
 - Minimal executor pipeline with checkpoint persistence.
-- Human-in-the-loop pause/resume by pairing `RequestInfoExecutor` with
-  checkpoint restoration.
-- Supplying responses at restore time (`run_stream_from_checkpoint(..., responses=...)`).
+- Human-in-the-loop pause/resume with checkpoint restoration.
 
 Typical pause/resume flow
 -------------------------
@@ -103,7 +100,7 @@ class BriefPreparer(Executor):
 
 @dataclass
 class HumanApprovalRequest:
-    """Message sent to the human reviewer via RequestInfoExecutor."""
+    """Request sent to the human reviewer."""
 
     # These fields are intentionally simple because they are serialised into
     # checkpoints. Keeping them primitive types guarantees the new
@@ -122,15 +119,11 @@ class ReviewGateway(Executor):
 
     @handler
     async def on_agent_response(self, response: AgentExecutorResponse, ctx: WorkflowContext) -> None:
-        # Capture the agent output so we can surface it to the reviewer and
-        # persist iterations. The `RequestInfoExecutor` relies on this state to
-        # rehydrate when checkpoints are restored.
+        # Capture the agent output so we can surface it to the reviewer and persist iterations.
         draft = response.agent_run_response.text or ""
         iteration = int((await ctx.get_executor_state() or {}).get("iteration", 0)) + 1
         await ctx.set_executor_state({"iteration": iteration, "last_draft": draft})
-        # Emit a human approval request. Because this flows through
-        # RequestInfoExecutor it will pause the workflow until an answer is
-        # supplied either interactively or via pre-supplied responses.
+        # Emit a human approval request.
         await ctx.request_info(
             HumanApprovalRequest(
                 prompt="Review the draft. Reply 'approve' or provide edit instructions.",
@@ -148,8 +141,7 @@ class ReviewGateway(Executor):
         feedback: str,
         ctx: WorkflowContext[AgentExecutorRequest | str, str],
     ) -> None:
-        # The RequestResponse wrapper gives us both the human data and the
-        # original request message, even when resuming from checkpoints.
+        # The `original_request` is the request we sent earlier that is now being answered.
         reply = feedback.strip()
         state = await ctx.get_executor_state() or {}
         draft = state.get("last_draft") or (original_request.draft or "")
@@ -214,10 +206,8 @@ def render_checkpoint_summary(checkpoints: list["WorkflowCheckpoint"]) -> None:
         )
         if summary.status:
             line += f" | status={summary.status}"
-        if summary.draft_preview:
-            line += f" | draft_preview={summary.draft_preview}"
-        if summary.pending_requests:
-            line += f" | pending_request_id={summary.pending_requests[0].request_id}"
+        if summary.pending_request_info_events:
+            line += f" | pending_request_id={summary.pending_request_info_events[0].request_id}"
         print(line)
 
 
@@ -254,6 +244,7 @@ async def run_interactive_session(
         if responses:
             event_stream = workflow.send_responses_streaming(responses)
             requests.clear()
+            responses = None
         else:
             if initial_message:
                 print(f"\nStarting workflow with brief: {initial_message}\n")

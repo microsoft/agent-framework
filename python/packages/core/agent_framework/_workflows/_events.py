@@ -14,7 +14,7 @@ from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_val
 from ._typing_utils import deserialize_type, serialize_type
 
 if TYPE_CHECKING:
-    from ._request_info_executor import RequestInfoMessage
+    pass
 
 
 class WorkflowEventSource(str, Enum):
@@ -214,7 +214,7 @@ class RequestInfoEvent(WorkflowEvent):
         request_id: str,
         source_executor_id: str,
         request_type: type,
-        request_data: "RequestInfoMessage",
+        request_data: Any,
         response_type: type,
     ):
         """Initialize the request info event.

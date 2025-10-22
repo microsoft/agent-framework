@@ -31,7 +31,7 @@ CHECKPOINT_DIR = Path(__file__).with_suffix("").parent / "tmp" / "sub_workflow_c
 Sample: Checkpointing for workflows that embed sub-workflows.
 
 This sample shows how a parent workflow that wraps a sub-workflow can:
-- run until the sub-workflow emits a human approval request via RequestInfoExecutor
+- run until the sub-workflow emits a human approval request
 - persist a checkpoint that captures the pending request (including complex payloads)
 - resume later, supplying the human decision directly at restore time
 
@@ -80,7 +80,7 @@ class FinalDraft:
 
 @dataclass
 class ReviewRequest:
-    """Human approval request surfaced via RequestInfoExecutor."""
+    """Human approval request surfaced via `request_info`."""
 
     id: str = str(uuid.uuid4())
     topic: str = ""

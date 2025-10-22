@@ -72,12 +72,6 @@ from ._magentic import (
     MagenticStartMessage,
     StandardMagenticManager,
 )
-from ._request_info_executor import (
-    PendingRequestDetails,
-    RequestInfoExecutor,
-    RequestInfoMessage,
-    RequestResponse,
-)
 from ._request_info_mixin import response_handler
 from ._runner import Runner
 from ._runner_context import (
@@ -146,11 +140,7 @@ __all__ = [
     "MagenticResponseMessage",
     "MagenticStartMessage",
     "Message",
-    "PendingRequestDetails",
     "RequestInfoEvent",
-    "RequestInfoExecutor",
-    "RequestInfoMessage",
-    "RequestResponse",
     "Runner",
     "RunnerContext",
     "SequentialBuilder",

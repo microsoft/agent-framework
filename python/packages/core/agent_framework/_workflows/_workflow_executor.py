@@ -53,7 +53,7 @@ class ExecutionContext:
 class SubWorkflowResponseMessage:
     """Message sent from a parent workflow to a sub-workflow via WorkflowExecutor to provide requested information.
 
-    This message wraps a RequestResponse emitted by the parent workflow.
+    This message wraps the response data along with the original RequestInfoEvent emitted by the sub-workflow executor.
 
     Attributes:
         data: The response data to the original request.
@@ -119,28 +119,41 @@ class WorkflowExecutor(Executor):
     ### Output Forwarding
     All outputs from the sub-workflow are automatically forwarded to the parent:
 
+    #### When `allow_direct_output` is False (default):
+
     .. code-block:: python
 
-        # Sub-workflow yields outputs
+        # An executor in the sub-workflow yields outputs
         await ctx.yield_output("sub-workflow result")
 
         # WorkflowExecutor forwards to parent via ctx.send_message()
         # Parent receives the output as a regular message
+
+    #### When `allow_direct_output` is True:
+
+    .. code-block:: python
+        # An executor in the sub-workflow yields outputs
+        await ctx.yield_output("sub-workflow result")
+
+        # WorkflowExecutor yields output directly to parent workflow's event stream
+        # The output of the sub-workflow is considered the output of the parent workflow
+        # Caller of the parent workflow receives the output directly
 
     ### Request/Response Coordination
     When sub-workflows need external information:
 
     .. code-block:: python
 
-        # Sub-workflow makes request
+        # An executor in the sub-workflow makes request
         request = MyDataRequest(query="user info")
-        # RequestInfoExecutor emits RequestInfoEvent
 
-        # WorkflowExecutor sets source_executor_id and forwards to parent
-        request.source_executor_id = "child_workflow_executor_id"
-        # Parent workflow can handle via @handler for RequestInfoMessage subclasses,
-        # or directly forward to external source via a RequestInfoExecutor in the parent
-        # workflow.
+        # WorkflowExecutor captures RequestInfoEvent and wraps it in a SubWorkflowRequestMessage
+        # then send it to the receiving executor in parent workflow. The executor in parent workflow
+        # can handle the request locally or forward it to an external source.
+        # The WorkflowExecutor tracks the pending request, and implements a response handler.
+        # When the response is received, it executes the response handler to accumulate responses
+        # and resume the sub-workflow when all expected responses are received.
+        # The response handler expects a SubWorkflowResponseMessage wrapping the response data.
 
     ### State Management
     WorkflowExecutor maintains execution state across request/response cycles:
@@ -167,8 +180,8 @@ class WorkflowExecutor(Executor):
     .. code-block:: python
 
         # Includes all sub-workflow output types
-        # Plus RequestInfoMessage if sub-workflow can make requests
-    output_types = workflow.output_types + [RequestInfoMessage]  # if applicable
+        # Plus SubWorkflowRequestMessage if sub-workflow can make requests
+    output_types = workflow.output_types + [SubWorkflowRequestMessage]  # if applicable
     ```
 
     ## Error Handling
@@ -236,19 +249,19 @@ class WorkflowExecutor(Executor):
     ```python
     class ParentExecutor(Executor):
         @handler
-        async def handle_request(
+        async def handle_subworkflow_request(
             self,
-            request: MyRequestType,  # Subclass of RequestInfoMessage
-            ctx: WorkflowContext[RequestResponse[RequestInfoMessage, Any] | RequestInfoMessage],
+            request: SubWorkflowRequestMessage,
+            ctx: WorkflowContext[SubWorkflowResponseMessage],
         ) -> None:
             # Handle request locally or forward to external source
             if self.can_handle_locally(request):
                 # Send response back to sub-workflow
-                response = RequestResponse(data="local result", original_request=request, request_id=request.request_id)
+                response = request.create_response(data="local response data")
                 await ctx.send_message(response, target_id=request.source_executor_id)
             else:
                 # Forward to external handler
-                await ctx.send_message(request)
+                await ctx.request_info(request.source_event)
     ```
 
     ## Implementation Notes
@@ -306,7 +319,8 @@ class WorkflowExecutor(Executor):
 
         Returns:
             A list of output types that the underlying workflow can produce.
-            Includes specific RequestInfoMessage subtypes if the sub-workflow contains RequestInfoExecutor.
+            Includes the SubWorkflowRequestMessage type if any executor in the
+            sub-workflow is request-response capable.
         """
         output_types = list(self.workflow.output_types)
 
