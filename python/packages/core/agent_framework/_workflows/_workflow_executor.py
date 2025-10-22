@@ -167,9 +167,9 @@ class WorkflowExecutor(Executor):
             @handler
             async def process(self, data: str, ctx: WorkflowContext[str]) -> None:
                 # Use context state instead of instance variables
-                state = await ctx.get_state() or {}
+                state = await ctx.get_executor_state() or {}
                 state["processed"] = data
-                await ctx.set_state(state)
+                await ctx.set_executor_state(state)
 
 
         # Avoid: Stateful executor with instance variables
@@ -501,7 +501,7 @@ class WorkflowExecutor(Executor):
 
         state: dict[str, Any] | None = None
         try:
-            state = await ctx.get_state()
+            state = await ctx.get_executor_state()
         except Exception:
             state = None
 
@@ -665,6 +665,6 @@ class WorkflowExecutor(Executor):
     async def _persist_execution_state(self, ctx: WorkflowContext[Any]) -> None:
         snapshot = self._build_state_snapshot()
         try:
-            await ctx.set_state(snapshot)
+            await ctx.set_executor_state(snapshot)
         except Exception as exc:  # pragma: no cover - transport specific
             logger.warning(f"WorkflowExecutor {self.id} failed to persist state: {exc}")
