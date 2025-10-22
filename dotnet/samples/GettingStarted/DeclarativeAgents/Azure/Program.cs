@@ -3,19 +3,12 @@
 // This sample shows how to load an AI agent from a YAML file and process a prompt using Azure OpenAI as the backend.
 
 using System.ComponentModel;
-using Azure.Core;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.DependencyInjection;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
-
-// Set up dependency injection to provide the PersistentAgentsClient
-var serviceCollection = new ServiceCollection();
-serviceCollection.AddTransient<TokenCredential>((sp) => new AzureCliCredential());
-IServiceProvider serviceProvider = serviceCollection.BuildServiceProvider();
 
 // Read command-line arguments
 if (args.Length < 2)
@@ -40,7 +33,6 @@ if (!File.Exists(yamlFilePath))
 var text = await File.ReadAllTextAsync(yamlFilePath);
 
 // TODO: Remove this workaround when the agent framework supports environment variable substitution in YAML files.
-text = text.Replace("=Env.AZURE_OPENAI_ENDPOINT", endpoint, StringComparison.OrdinalIgnoreCase);
 text = text.Replace("=Env.AZURE_OPENAI_DEPLOYMENT_NAME", deploymentName, StringComparison.OrdinalIgnoreCase);
 
 // Example function tool that can be used by the agent.
@@ -51,8 +43,8 @@ static string GetWeather(
     => $"The weather in {location} is cloudy with a high of {(unit.Equals("celsius", StringComparison.Ordinal) ? "15°C" : "59°F")}.";
 
 // Create the agent from the YAML definition.
-var agentFactory = new OpenAIAgentFactory();
-var agent = await agentFactory.CreateFromYamlAsync(text, new() { ServiceProvider = serviceProvider, Tools = [AIFunctionFactory.Create(GetWeather, "GetWeather")] });
+var agentFactory = new OpenAIAgentFactory(new Uri(endpoint), new AzureCliCredential());
+var agent = await agentFactory.CreateFromYamlAsync(text, new OpenAIAgentCreationOptions() { Tools = [AIFunctionFactory.Create(GetWeather, "GetWeather")] });
 
 // Invoke the agent and output the text result.
 Console.WriteLine(await agent!.RunAsync(prompt));

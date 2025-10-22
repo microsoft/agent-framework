@@ -22,7 +22,7 @@ public static class FileSearchToolExtensions
         return new HostedFileSearchTool()
         {
             MaximumResultCount = (int?)tool.MaxNumberOfResults?.LiteralValue,
-            Inputs = tool.VectorScoreIds.Select(vsi => (AIContent)new HostedVectorStoreContent(vsi!)).ToList(),
+            Inputs = tool.VectorStoreIds.Select(vsi => (AIContent)new HostedVectorStoreContent(vsi!)).ToList(),
         };
     }
 }

@@ -20,7 +20,7 @@ public abstract class AgentFactory
     /// <param name="agentCreationOptions">Options used when creating the agent.</param>
     /// <param name="cancellationToken">Optional cancellation token.</param>
     /// <return>The created <see cref="AIAgent"/>, if null the agent type is not supported.</return>
-    public async Task<AIAgent> CreateAsync(PromptAgent promptAgent, AgentCreationOptions agentCreationOptions, CancellationToken cancellationToken = default)
+    public async Task<AIAgent> CreateAsync(PromptAgent promptAgent, AgentCreationOptions? agentCreationOptions = null, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(promptAgent);
 
@@ -35,5 +35,5 @@ public abstract class AgentFactory
     /// <param name="agentCreationOptions">Options used when creating the agent.</param>
     /// <param name="cancellationToken">Optional cancellation token.</param>
     /// <return>The created <see cref="AIAgent"/>, if null the agent type is not supported.</return>
-    public abstract Task<AIAgent?> TryCreateAsync(PromptAgent promptAgent, AgentCreationOptions agentCreationOptions, CancellationToken cancellationToken = default);
+    public abstract Task<AIAgent?> TryCreateAsync(PromptAgent promptAgent, AgentCreationOptions? agentCreationOptions = null, CancellationToken cancellationToken = default);
 }

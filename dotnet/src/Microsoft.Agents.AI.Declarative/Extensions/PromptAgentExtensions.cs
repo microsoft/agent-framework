@@ -14,22 +14,27 @@ namespace Microsoft.Bot.ObjectModel;
 public static class PromptAgentExtensions
 {
     /// <summary>
-    /// Retrieves the 'kind' property from a <see cref="PromptAgent"/>.
+    /// Generates a service key from the <see cref="PromptAgent"/>'s model and connection properties.
     /// </summary>
-    /// <param name="promptAgent">Instance of <see cref="PromptAgent"/></param>
-    public static string? GetKindValue(this PromptAgent promptAgent)
+    /// <param name="promptAgent">The prompt agent containing model and connection information.</param>
+    /// <returns>A service key string, or <see langword="null"/> if no key can be generated.</returns>
+    public static string? GenerateServiceKey(this PromptAgent promptAgent)
     {
-        Throw.IfNull(promptAgent);
-
-        try
-        {
-            var typeValue = promptAgent.ExtensionData?.GetProperty<StringDataValue>(InitializablePropertyPath.Create("type"));
-            return typeValue?.Value;
-        }
-        catch (Exception)
+        if (promptAgent.Model is not OpenAIResponsesModel model)
         {
             return null;
         }
+
+        string? publisher = model.Publisher;
+        string? apiType = model.GetApiType();
+
+        return (publisher, apiType) switch
+        {
+            (null or "", null or "") => null,
+            (not null and not "", null or "") => publisher,
+            (null or "", not null and not "") => apiType,
+            _ => $"{publisher}:{apiType}"
+        };
     }
 
     /// <summary>
@@ -37,14 +42,17 @@ public static class PromptAgentExtensions
     /// </summary>
     /// <param name="promptAgent">Instance of <see cref="PromptAgent"/></param>
     /// <param name="agentCreationOptions">Instance of <see cref="AgentCreationOptions"/></param>
-    public static ChatOptions? GetChatOptions(this PromptAgent promptAgent, AgentCreationOptions agentCreationOptions)
+    public static ChatOptions? GetChatOptions(this PromptAgent promptAgent, AgentCreationOptions? agentCreationOptions)
     {
         Throw.IfNull(promptAgent);
 
         var outputSchema = promptAgent.OutputSchema;
         OpenAIResponsesModel? model = promptAgent.Model as OpenAIResponsesModel;
         var modelOptions = model?.Options;
-        var tools = promptAgent.GetAITools(agentCreationOptions.Tools);
+
+        // TODO: Add logic to resolve tools for a service provider or from agent creation options
+        var chatClientAgentOptions = agentCreationOptions as ChatClientAgentCreationOptions;
+        var tools = promptAgent.GetAITools(chatClientAgentOptions?.Tools);
 
         if (modelOptions is null && tools is null)
         {

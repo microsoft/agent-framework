@@ -6,12 +6,10 @@ model:
     kind: OpenAIResponsesModel
     id: =Env.AZURE_OPENAI_DEPLOYMENT_NAME
     publisher: Azure
+    apiType: Responses
     options:
         temperature: 0.9
         topP: 0.95
-    connection:
-        kind: Key
-        endpoint: =Env.AZURE_OPENAI_ENDPOINT
 outputSchema:
     properties:
         language:

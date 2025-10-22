@@ -1,10 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
-using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
 using System.Text.Json.Serialization;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Configuration;
 
 namespace Microsoft.Agents.AI.UnitTests;
 
@@ -23,7 +24,6 @@ public class AgentBotElementYamlTests
           kind: OpenAIResponsesModel
           id: gpt-4o
           options:
-            modelId: gpt-4o
             temperature: 0.7
             maxOutputTokens: 1024
             topP: 0.9
@@ -37,7 +37,6 @@ public class AgentBotElementYamlTests
               - "END"
               - "STOP"
             allowMultipleToolCalls: true
-            chatToolMode: auto
         tools:
           - kind: codeInterpreter
           - kind: function
@@ -162,6 +161,87 @@ public class AgentBotElementYamlTests
         
         """;
 
+    private const string AgentWithOpenAIResponsesModel =
+        """
+        kind: Prompt
+        name: AgentName
+        description: Agent description
+        instructions: You are a helpful assistant.
+        model:
+          kind: OpenAIResponsesModel
+          id: gpt-4o
+          options:
+            modelId: gpt-4o
+            temperature: 0.7
+            maxOutputTokens: 1024
+            topP: 0.9
+            topK: 50
+            frequencyPenalty: 0.0
+            presencePenalty: 0.0
+            seed: 42
+            responseFormat: text
+            stopSequences:
+              - "###"
+              - "END"
+              - "STOP"
+            allowMultipleToolCalls: true
+            chatToolMode: auto
+        """;
+
+    private const string AgentWithOpenAIChatModel =
+        """
+        kind: Prompt
+        name: AgentName
+        description: Agent description
+        instructions: You are a helpful assistant.
+        model:
+          kind: OpenAIChatModel
+          id: gpt-4o
+          options:
+            modelId: gpt-4o
+            temperature: 0.7
+            maxOutputTokens: 1024
+            topP: 0.9
+            topK: 50
+            frequencyPenalty: 0.0
+            presencePenalty: 0.0
+            seed: 42
+            responseFormat: text
+            stopSequences:
+              - "###"
+              - "END"
+              - "STOP"
+            allowMultipleToolCalls: true
+            chatToolMode: auto
+        """;
+
+    private const string AgentWithOpenAIAssistantsModel =
+        """
+        kind: Prompt
+        name: AgentName
+        description: Agent description
+        instructions: You are a helpful assistant.
+        model:
+          kind: OpenAIAssistantsModel
+          id: gpt-4o
+          options:
+            modelId: gpt-4o
+            temperature: 0.7
+            maxOutputTokens: 1024
+            topP: 0.9
+            topK: 50
+            frequencyPenalty: 0.0
+            presencePenalty: 0.0
+            seed: 42
+            responseFormat: text
+            stopSequences:
+              - "###"
+              - "END"
+              - "STOP"
+            allowMultipleToolCalls: true
+            chatToolMode: auto
+        """;
+
     private static readonly string[] s_stopSequences = ["###", "END", "STOP"];
 
     [Theory]
@@ -170,6 +250,9 @@ public class AgentBotElementYamlTests
     [InlineData(AgentWithEnvironmentVariables)]
     [InlineData(AgentWithOutputSchema)]
     [InlineData(OpenAIChatAgent)]
+    [InlineData(AgentWithOpenAIResponsesModel)]
+    [InlineData(AgentWithOpenAIChatModel)]
+    [InlineData(AgentWithOpenAIAssistantsModel)]
     public void FromYaml_DoesNotThrow(string text)
     {
         // Arrange & Act
@@ -195,10 +278,10 @@ public class AgentBotElementYamlTests
     }
 
     [Fact]
-    public void FromYaml_Model()
+    public void FromYaml_OpenAIResponsesModel()
     {
         // Arrange & Act
-        var agent = AgentBotElementYaml.FromYaml(AgentWithEverything);
+        var agent = AgentBotElementYaml.FromYaml(AgentWithOpenAIResponsesModel);
 
         // Assert
         Assert.NotNull(agent);
@@ -220,6 +303,62 @@ public class AgentBotElementYamlTests
         Assert.True(model.Options?.GetAllowMultipleToolCalls());
         Assert.Equal(ChatToolMode.Auto, model.Options?.GetChatToolMode());
     }
+
+    /*
+    [Fact]
+    public void FromYaml_OpenAIChatModel()
+    {
+        // Arrange & Act
+        var agent = AgentBotElementYaml.FromYaml(AgentWithOpenAIResponsesModel);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.NotNull(agent.Model);
+        Assert.Equal("gpt-4o", agent.Model.Id);
+        OpenAIChatModel? model = agent.Model as OpenAIChatModel;
+        Assert.NotNull(model);
+        Assert.NotNull(model.Options);
+        Assert.Equal(0.7f, (float?)model.Options?.Temperature.LiteralValue);
+        Assert.Equal(0.9f, (float?)model.Options?.TopP.LiteralValue);
+
+        // Assert contents using extension methods
+        Assert.Equal(1024, model.Options?.GetMaxOutputTokens());
+        Assert.Equal(50, model.Options?.GetTopK());
+        Assert.Equal(0.0f, model.Options?.GetFrequencyPenalty());
+        Assert.Equal(0.0f, model.Options?.GetPresencePenalty());
+        Assert.Equal(42, model.Options?.GetSeed());
+        Assert.Equal(s_stopSequences, model.Options?.GetStopSequences());
+        Assert.True(model.Options?.GetAllowMultipleToolCalls());
+        Assert.Equal(ChatToolMode.Auto, model.Options?.GetChatToolMode());
+    }
+
+    [Fact]
+    public void FromYaml_OpenAIAssistantsModel()
+    {
+        // Arrange & Act
+        var agent = AgentBotElementYaml.FromYaml(AgentWithOpenAIAssistantsModel);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.NotNull(agent.Model);
+        Assert.Equal("gpt-4o", agent.Model.Id);
+        OpenAIAssistantsModel? model = agent.Model as OpenAIAssistantsModel;
+        Assert.NotNull(model);
+        Assert.NotNull(model.Options);
+        Assert.Equal(0.7f, (float?)model.Options?.Temperature.LiteralValue);
+        Assert.Equal(0.9f, (float?)model.Options?.TopP.LiteralValue);
+
+        // Assert contents using extension methods
+        Assert.Equal(1024, model.Options?.GetMaxOutputTokens());
+        Assert.Equal(50, model.Options?.GetTopK());
+        Assert.Equal(0.0f, model.Options?.GetFrequencyPenalty());
+        Assert.Equal(0.0f, model.Options?.GetPresencePenalty());
+        Assert.Equal(42, model.Options?.GetSeed());
+        Assert.Equal(s_stopSequences, model.Options?.GetStopSequences());
+        Assert.True(model.Options?.GetAllowMultipleToolCalls());
+        Assert.Equal(ChatToolMode.Auto, model.Options?.GetChatToolMode());
+    }
+    */
 
     [Fact]
     public void FromYaml_OutputSchema()
@@ -316,10 +455,10 @@ public class AgentBotElementYamlTests
         Assert.NotNull(fileSearchTool);
 
         // Verify VectorScoreIds property exists and has correct values
-        Assert.Equal(3, fileSearchTool.VectorScoreIds.Length);
-        Assert.Equal("1", fileSearchTool.VectorScoreIds[0]);
-        Assert.Equal("2", fileSearchTool.VectorScoreIds[1]);
-        Assert.Equal("3", fileSearchTool.VectorScoreIds[2]);
+        Assert.Equal(3, fileSearchTool.VectorStoreIds.Length);
+        Assert.Equal("1", fileSearchTool.VectorStoreIds[0]);
+        Assert.Equal("2", fileSearchTool.VectorStoreIds[1]);
+        Assert.Equal("3", fileSearchTool.VectorStoreIds[2]);
     }
 
     [Fact]
@@ -343,23 +482,28 @@ public class AgentBotElementYamlTests
     public void FromYaml_WithEnvironmentVariables()
     {
         // Arrange
-        Environment.SetEnvironmentVariable("OpenAIEndpoint", "endpoint");
-        Environment.SetEnvironmentVariable("OpenAIModelId", "modelId");
-        Environment.SetEnvironmentVariable("OpenAIApiKey", "apiKey");
+        IConfiguration configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["OpenAIEndpoint"] = "endpoint",
+                ["OpenAIModelId"] = "modelId",
+                ["OpenAIApiKey"] = "apiKey"
+            })
+            .Build();
 
         // Act
-        var agent = AgentBotElementYaml.FromYaml(AgentWithEnvironmentVariables);
+        PromptAgent agent = AgentBotElementYaml.FromYaml(AgentWithEnvironmentVariables, configuration);
 
         // Assert
         Assert.NotNull(agent);
         OpenAIResponsesModel? model = agent.Model as OpenAIResponsesModel;
         Assert.NotNull(model);
-        Assert.Equal("modelId", model.Id);
         Assert.NotNull(model.Connection);
         KeyConnection? connection = model.Connection as KeyConnection;
         Assert.NotNull(connection);
         Assert.Equal("endpoint", connection.Endpoint?.LiteralValue);
         Assert.Equal("apiKey", connection.Key?.LiteralValue);
+        Assert.Equal("modelId", model.Id);
     }
 
     /// <summary>

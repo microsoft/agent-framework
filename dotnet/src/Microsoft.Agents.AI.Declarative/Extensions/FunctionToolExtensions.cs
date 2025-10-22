@@ -27,7 +27,7 @@ public static class FunctionToolExtensions
         {
             var function = tools
                 .OfType<AIFunction>()
-                .FirstOrDefault(f => f.Name == tool.Name);
+                .FirstOrDefault(f => tool.Matches(f));
 
             // TODO: Consider validating that the function signature matches the schema
 
@@ -44,5 +44,23 @@ public static class FunctionToolExtensions
             name: tool.Name,
             description: tool.Description,
             jsonSchema: jsonSchema);
+    }
+
+    /// <summary>
+    /// Checks if a <see cref="FunctionTool"/> matches an <see cref="AITool"/>.
+    /// </summary>
+    /// <param name="tool">Instance of <see cref="FunctionTool"/></param>
+    /// <param name="aiFunc">Instance of <see cref="AIFunction"/></param>
+    internal static bool Matches(this FunctionTool tool, AIFunction aiFunc)
+    {
+        Throw.IfNull(tool);
+        Throw.IfNull(aiFunc);
+
+        if (tool.Name != aiFunc.Name)
+        {
+            return false;
+        }
+
+        return true;
     }
 }

@@ -1,24 +1,14 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to load an AI agent from a YAML file and process a prompt using Azure OpenAI as the backend.
+// This sample shows how to load an AI agent from a YAML file and process a prompt using Foundry Agents as the backend.
 
 using System.ComponentModel;
-using Azure.AI.Agents.Persistent;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.DependencyInjection;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
 var model = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_MODEL_ID") ?? "gpt-4.1-mini";
-
-// Get a client to create/retrieve server side agents with.
-var persistentAgentsClient = new PersistentAgentsClient(endpoint, new AzureCliCredential());
-
-// Set up dependency injection to provide the PersistentAgentsClient
-var serviceCollection = new ServiceCollection();
-serviceCollection.AddTransient((sp) => persistentAgentsClient);
-IServiceProvider serviceProvider = serviceCollection.BuildServiceProvider();
 
 // Read command-line arguments
 if (args.Length < 2)
@@ -42,6 +32,10 @@ if (!File.Exists(yamlFilePath))
 // Read the YAML content from the file
 var text = await File.ReadAllTextAsync(yamlFilePath);
 
+// TODO: Remove this workaround when the agent framework supports environment variable substitution in YAML files.
+text = text.Replace("=Env.AZURE_FOUNDRY_PROJECT_ENDPOINT", endpoint, StringComparison.OrdinalIgnoreCase);
+text = text.Replace("=Env.AZURE_FOUNDRY_PROJECT_MODEL_ID", model, StringComparison.OrdinalIgnoreCase);
+
 // Example function tool that can be used by the agent.
 [Description("Get the weather for a given location.")]
 static string GetWeather(
@@ -49,24 +43,9 @@ static string GetWeather(
     [Description("The unit of temperature. Possible values are 'celsius' and 'fahrenheit'.")] string unit)
     => $"The weather in {location} is cloudy with a high of {(unit.Equals("celsius", StringComparison.Ordinal) ? "15°C" : "59°F")}.";
 
-// Create run options to configure the agent invocation.
-var runOptions = new ChatClientAgentRunOptions()
-{
-    ChatOptions = new()
-    {
-        RawRepresentationFactory = (_) => new ThreadAndRunOptions()
-        {
-            ToolResources = new MCPToolResource(serverLabel: "microsoft_learn")
-            {
-                RequireApproval = new MCPApproval("never"),
-            }.ToToolResources()
-        }
-    }
-};
-
 // Create the agent from the YAML definition.
-var agentFactory = new AzureFoundryAgentFactory();
-var agent = await agentFactory.CreateFromYamlAsync(text, new() { Model = model, ServiceProvider = serviceProvider, Tools = [AIFunctionFactory.Create(GetWeather, "GetWeather")] });
+var agentFactory = new AIFoundryAgentFactory(new AzureCliCredential());
+var agent = await agentFactory.CreateFromYamlAsync(text, new AIFoundryAgentCreationOptions() { Tools = [AIFunctionFactory.Create(GetWeather, "GetWeather")] });
 
 // Invoke the agent and output the text result.
 Console.WriteLine(await agent!.RunAsync(prompt));

@@ -5,9 +5,10 @@ instructions: You are a helpful assistant. You answer questions is the language 
 model:
     kind: OpenAIResponsesModel
     id: gpt-4o
+    apiType: Responses
     publisher: OpenAI
     options:
-        apiType: responses
+        apiType: Responses
         temperature: 0.9
         topP: 0.95
     connection:

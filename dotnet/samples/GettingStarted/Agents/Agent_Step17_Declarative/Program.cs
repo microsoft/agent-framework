@@ -41,8 +41,8 @@ var text =
     """;
 
 // Create the agent from the YAML definition.
-var agentFactory = new ChatClientAgentFactory();
-var agent = await agentFactory.CreateFromYamlAsync(text, new() { ChatClient = chatClient });
+var agentFactory = new ChatClientAgentFactory(chatClient);
+var agent = await agentFactory.CreateFromYamlAsync(text);
 
 // Invoke the agent and output the text result.
 Console.WriteLine(await agent!.RunAsync("Tell me a joke about a pirate in English."));
