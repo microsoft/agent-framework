@@ -180,7 +180,7 @@ public class JsonSerializationTests
 
     private static void ValidateWorkflowInfo(WorkflowInfo actual, WorkflowInfo prototype)
     {
-        ValidateExecutorDictionary(prototype.Executors, prototype.Edges, actual.Executors, actual.Edges);
+        ValidateExecutorDictionary(prototype.ExecutorBindings, prototype.Edges, actual.ExecutorBindings, actual.Edges);
         ValidateRequestPorts(prototype.RequestPorts, actual.RequestPorts);
 
         actual.InputType.Should().Match(prototype.InputType.CreateValidator());

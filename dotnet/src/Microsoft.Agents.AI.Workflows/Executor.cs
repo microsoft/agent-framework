@@ -27,6 +27,18 @@ public abstract class Executor : IIdentified
     private static readonly string s_namespace = typeof(Executor).Namespace!;
     private static readonly ActivitySource s_activitySource = new(s_namespace);
 
+    /// <inheritdoc cref="ExecutorBindingExtensions.BindExecutor{TExecutor}(Func{string, string, ValueTask{TExecutor}})"/>
+    public static ExecutorBinding CreateBinding<TExecutor>(Func<string, string, ValueTask<TExecutor>> factoryAsync)
+        where TExecutor : Executor
+        => factoryAsync.BindExecutor();
+
+    /// <inheritdoc cref="ExecutorBindingExtensions.BindExecutor{TExecutor}(Func{string, string, ValueTask{TExecutor}}, string)"/>
+    public static ExecutorBinding CreateBinding<TExecutor>(Func<string, string, ValueTask<TExecutor>> factoryAsync, string id)
+        where TExecutor : Executor
+        => factoryAsync.BindExecutor(id);
+
+    // TODO: Add overloads for binding with a configuration/options object once the Configured<T> hierarchy goes away.
+
     /// <summary>
     /// Initialize the executor with a unique identifier
     /// </summary>
