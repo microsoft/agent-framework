@@ -10,9 +10,6 @@ namespace Microsoft.Agents.AI;
 /// </summary>
 /// <remarks>
 /// <para>
-/// This class currently has minimal options, but may be extended in the future to include additional configuration settings.
-/// </para>
-/// <para>
 /// Implementations of <see cref="AIAgent"/> may provide subclasses of <see cref="AgentRunOptions"/> with additional options specific to that agent type.
 /// </para>
 /// </remarks>
@@ -44,7 +41,7 @@ public class AgentRunOptions
     /// This property is used for background responses that can be activated via the <see cref="AllowBackgroundResponses"/>
     /// property if the <see cref="AIAgent"/> implementation supports them.
     /// Streamed background responses, such as those returned by default by <see cref="AIAgent.RunStreamingAsync(AgentThread?, AgentRunOptions?, System.Threading.CancellationToken)"/>
-    /// can be resumed if interrupted. This means that a continuation token obtained from the <see cref="AgentRunResponse.ContinuationToken"/>
+    /// can be resumed if interrupted. This means that a continuation token obtained from the <see cref="AgentRunResponseUpdate.ContinuationToken"/>
     /// of an update just before the interruption occurred can be passed to this property to resume the stream from the point of interruption.
     /// Non-streamed background responses, such as those returned by <see cref="AIAgent.RunAsync(AgentThread?, AgentRunOptions?, System.Threading.CancellationToken)"/>,
     /// can be polled for completion by obtaining the token from the <see cref="AgentRunResponse.ContinuationToken"/> property
