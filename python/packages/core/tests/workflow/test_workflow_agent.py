@@ -11,8 +11,9 @@ from agent_framework import (
     AgentRunUpdateEvent,
     ChatMessage,
     Executor,
+    FunctionApprovalRequestContent,
+    FunctionApprovalResponseContent,
     FunctionCallContent,
-    FunctionResultContent,
     RequestInfoExecutor,
     RequestInfoMessage,
     Role,
@@ -163,34 +164,55 @@ class TestWorkflowAgent:
         updates: list[AgentRunResponseUpdate] = []
         async for update in agent.run_stream("Start request"):
             updates.append(update)
-        # Should have received a function call for the request info
+        # Should have received an approval request for the request info
         assert len(updates) > 0
 
-        # Find the function call update (RequestInfoEvent converted to function call)
-        function_call_update: AgentRunResponseUpdate | None = None
+        approval_update: AgentRunResponseUpdate | None = None
         for update in updates:
-            if update.contents and hasattr(update.contents[0], "name") and update.contents[0].name == "request_info":  # type: ignore[attr-defined]
-                function_call_update = update
+            if any(isinstance(content, FunctionApprovalRequestContent) for content in update.contents):
+                approval_update = update
                 break
 
-        assert function_call_update is not None, "Should have received a request_info function call"
-        function_call: FunctionCallContent = function_call_update.contents[0]  # type: ignore[assignment]
+        assert approval_update is not None, "Should have received a request_info approval request"
+
+        function_call = next(
+            content for content in approval_update.contents if isinstance(content, FunctionCallContent)
+        )
+        approval_request = next(
+            content for content in approval_update.contents if isinstance(content, FunctionApprovalRequestContent)
+        )
 
         # Verify the function call has expected structure
         assert function_call.call_id is not None
         assert function_call.name == "request_info"
         assert isinstance(function_call.arguments, dict)
-        assert "request_id" in function_call.arguments
+        assert function_call.arguments.get("request_id") == approval_request.id
+
+        # Approval request should reference the same function call
+        assert approval_request.function_call.call_id == function_call.call_id
+        assert approval_request.function_call.name == function_call.name
 
         # Verify the request is tracked in pending_requests
         assert len(agent.pending_requests) == 1
         assert function_call.call_id in agent.pending_requests
 
-        # Now provide a function result response to test continuation
-        response_message = ChatMessage(
-            role=Role.USER,
-            contents=[FunctionResultContent(call_id=function_call.call_id, result="User provided answer")],
+        # Now provide an approval response with updated arguments to test continuation
+        response_args = WorkflowAgent.RequestInfoFunctionArgs(
+            request_id=approval_request.id,
+            data="User provided answer",
+        ).to_dict()
+
+        approval_response = FunctionApprovalResponseContent(
+            approved=True,
+            id=approval_request.id,
+            function_call=FunctionCallContent(
+                call_id=function_call.call_id,
+                name=function_call.name,
+                arguments=response_args,
+            ),
         )
+
+        response_message = ChatMessage(role=Role.USER, contents=[approval_response])
 
         # Continue the workflow with the response
         continuation_result = await agent.run(response_message)
