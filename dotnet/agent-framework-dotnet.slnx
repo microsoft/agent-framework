@@ -95,6 +95,7 @@
     <File Path="../workflow-samples/HumanInLoop.yaml" />
     <File Path="../workflow-samples/Marketing.yaml" />
     <File Path="../workflow-samples/MathChat.yaml" />
+    <File Path="../workflow-samples/ParseValue.yaml" />
     <File Path="../workflow-samples/README.md" />
     <File Path="../workflow-samples/wttr.json" />
   </Folder>
@@ -131,6 +132,7 @@
     <Project Path="samples/GettingStarted/Workflows/_Foundational/04_AgentWorkflowPatterns/04_AgentWorkflowPatterns.csproj" />
     <Project Path="samples/GettingStarted/Workflows/_Foundational/05_MultiModelService/05_MultiModelService.csproj" />
     <Project Path="samples/GettingStarted/Workflows/_Foundational/06_SubWorkflows/06_SubWorkflows.csproj" />
+    <Project Path="samples/GettingStarted/Workflows/_Foundational/07_MixedWorkflowAgentsAndExecutors/07_MixedWorkflowAgentsAndExecutors.csproj" />
   </Folder>
   <Folder Name="/Samples/SemanticKernelMigration/">
     <File Path="samples/SemanticKernelMigration/README.md" />

@@ -85,42 +85,6 @@ public class Workflow
         this.Description = description;
     }
 
-    /// <summary>
-    /// Attempts to promote the current workflow to a type pre-checked instance that can handle input of type <typeparamref name="TInput"/>.
-    /// </summary>
-    /// <typeparam name="TInput">The desired input type.</typeparam>
-    /// <returns>A type-parametrized workflow definitely able to process input of type <typeparamref name="TInput"/> or
-    /// <see langword="null" /> if the workflow does not accept that type of input.</returns>
-    /// <exception cref="InvalidOperationException"></exception>
-    internal async ValueTask<Workflow<TInput>?> TryPromoteAsync<TInput>()
-    {
-        // Grab the start node, and make sure it has the right type?
-        if (!this.Registrations.TryGetValue(this.StartExecutorId, out ExecutorRegistration? startRegistration))
-        {
-            // TODO: This should never be able to be hit
-            throw new InvalidOperationException($"Start executor with ID '{this.StartExecutorId}' is not bound.");
-        }
-
-        // TODO: Can we cache this somehow to avoid having to instantiate a new one when running?
-        // Does that break some user expectations?
-        Executor startExecutor = await startRegistration.CreateInstanceAsync(string.Empty).ConfigureAwait(false);
-
-        if (!startExecutor.InputTypes.Any(t => t.IsAssignableFrom(typeof(TInput))))
-        {
-            // We have no handlers for the input type T, which means the built workflow will not be able to
-            // process messages of the desired type
-            return null;
-        }
-
-        return new Workflow<TInput>(this.StartExecutorId)
-        {
-            Registrations = this.Registrations,
-            Edges = this.Edges,
-            Ports = this.Ports,
-            OutputExecutors = this.OutputExecutors
-        };
-    }
-
     private bool _needsReset;
     private bool IsResettable => this.Registrations.Values.All(registration => !registration.IsUnresettableSharedInstance);
 
@@ -215,27 +179,18 @@ public class Workflow
 
         await this.TryResetExecutorRegistrationsAsync().ConfigureAwait(false);
     }
-}
 
-/// <summary>
-/// Represents a workflow that operates on data of type <typeparamref name="T"/>.
-/// </summary>
-/// <typeparam name="T">The type of input to the workflow.</typeparam>
-public class Workflow<T> : Workflow
-{
     /// <summary>
-    /// Initializes a new instance of the <see cref="Workflow{T}"/> class with the specified starting executor identifier
+    /// Retrieves a <see cref="ProtocolDescriptor"/> defining how to interact with this workflow.
     /// </summary>
-    /// <param name="startExecutorId">The unique identifier of the starting executor for the workflow. Cannot be <c>null</c>.</param>
-    /// <param name="name">Optional human-readable name for the workflow.</param>
-    /// <param name="description">Optional description of what the workflow does.</param>
-    public Workflow(string startExecutorId, string? name = null, string? description = null)
-        : base(startExecutorId, name, description)
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A <see cref="ValueTask{ProtocolDescriptor}"/> that represents that asynchronous operation. The result contains
+    /// a <see cref="ProtocolDescriptor"/> the protocol this <see cref="Workflow"/> follows.</returns>
+    public async ValueTask<ProtocolDescriptor> DescribeProtocolAsync(CancellationToken cancellationToken = default)
     {
+        ExecutorRegistration startExecutorRegistration = this.Registrations[this.StartExecutorId];
+        Executor startExecutor = await startExecutorRegistration.CreateInstanceAsync(string.Empty)
+                                                                .ConfigureAwait(false);
+        return startExecutor.DescribeProtocol();
     }
-
-    /// <summary>
-    /// Gets the type of input expected by the starting executor of the workflow.
-    /// </summary>
-    public Type InputType => typeof(T);
 }
