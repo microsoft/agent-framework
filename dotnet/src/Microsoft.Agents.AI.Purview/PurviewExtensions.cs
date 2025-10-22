@@ -1,10 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Generic;
 using System.Net.Http;
-using System.Threading;
-using System.Threading.Tasks;
 using Azure.Core;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Caching.Distributed;
@@ -57,7 +54,7 @@ public static class PurviewExtensions
     public static AIAgentBuilder WithPurview(this AIAgentBuilder builder, TokenCredential tokenCredential, PurviewSettings purviewSettings, ILogger? logger = null, IDistributedCache? cache = null)
     {
         PurviewWrapper purviewWrapper = CreateWrapper(tokenCredential, purviewSettings, logger, cache);
-        return builder.Use(purviewWrapper.ProcessAgentContentAsync, null);
+        return builder.Use((innerAgent) => new PurviewAgent(innerAgent, purviewWrapper));
     }
 
     /// <summary>
@@ -72,7 +69,7 @@ public static class PurviewExtensions
     public static ChatClientBuilder WithPurview(this ChatClientBuilder builder, TokenCredential tokenCredential, PurviewSettings purviewSettings, ILogger? logger = null, IDistributedCache? cache = null)
     {
         PurviewWrapper purviewWrapper = CreateWrapper(tokenCredential, purviewSettings, logger, cache);
-        return builder.Use(purviewWrapper.ProcessChatContentAsync, null);
+        return builder.Use((innerChatClient) => new PurviewChatClient(innerChatClient, purviewWrapper));
     }
 
     /// <summary>
@@ -83,10 +80,10 @@ public static class PurviewExtensions
     /// <param name="logger">The logger to use for logging.</param>
     /// <param name="cache">The distributed cache to use for caching Purview responses. An in memory cache will be used if this is null.</param>
     /// <returns>A chat middleware delegate.</returns>
-    public static Func<IEnumerable<ChatMessage>, ChatOptions?, IChatClient, CancellationToken, Task<ChatResponse>> PurviewChatMiddleware(TokenCredential tokenCredential, PurviewSettings purviewSettings, ILogger? logger = null, IDistributedCache? cache = null)
+    public static Func<IChatClient, IChatClient> PurviewChatMiddleware(TokenCredential tokenCredential, PurviewSettings purviewSettings, ILogger? logger = null, IDistributedCache? cache = null)
     {
         PurviewWrapper purviewWrapper = CreateWrapper(tokenCredential, purviewSettings, logger, cache);
-        return purviewWrapper.ProcessChatContentAsync;
+        return (innerChatClient) => new PurviewChatClient(innerChatClient, purviewWrapper);
     }
 
     /// <summary>
@@ -97,10 +94,10 @@ public static class PurviewExtensions
     /// <param name="logger">The logger to use for logging.</param>
     /// <param name="cache">The distributed cache to use for caching Purview responses. An in memory cache will be used if this is null.</param>
     /// <returns>An agent middleware delegate.</returns>
-    public static Func<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, AIAgent, CancellationToken, Task<AgentRunResponse>> PurviewAgentMiddleware(TokenCredential tokenCredential, PurviewSettings purviewSettings, ILogger? logger = null, IDistributedCache? cache = null)
+    public static Func<AIAgent, AIAgent> PurviewAgentMiddleware(TokenCredential tokenCredential, PurviewSettings purviewSettings, ILogger? logger = null, IDistributedCache? cache = null)
     {
         PurviewWrapper purviewWrapper = CreateWrapper(tokenCredential, purviewSettings, logger, cache);
-        return purviewWrapper.ProcessAgentContentAsync;
+        return (innerAgent) => new PurviewAgent(innerAgent, purviewWrapper);
     }
 
     /// <summary>

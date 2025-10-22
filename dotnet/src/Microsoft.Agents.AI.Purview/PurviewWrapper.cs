@@ -13,7 +13,7 @@ namespace Microsoft.Agents.AI.Purview;
 /// <summary>
 /// A delegating agent that connects to Microsoft Purview.
 /// </summary>
-internal sealed class PurviewWrapper
+internal sealed class PurviewWrapper : IDisposable
 {
     private readonly ILogger _logger;
     private readonly IScopedContentProcessor _scopedProcessor;
@@ -166,5 +166,10 @@ internal sealed class PurviewWrapper
         }
 
         return response;
+    }
+
+    public void Dispose()
+    {
+        throw new NotImplementedException("Stop listeners and dispose resources here.");
     }
 }

@@ -8,7 +8,6 @@ using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Agents.AI.Purview;
-using OpenAI;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
@@ -22,20 +21,23 @@ TokenCredential browserCredential = new InteractiveBrowserCredential(
         ClientId = purviewClientAppId
     });
 
-AIAgent agent = new AzureOpenAIClient(
+IChatClient client = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
-     .GetOpenAIResponseClient(deploymentName)
-     .CreateAIAgent(instructions: "You are good at telling jokes.", name: "Joker")
-     .AsBuilder()
-     .WithPurview(browserCredential, new PurviewSettings("Agent Framework Test App"))
-     .Build();
+    .GetOpenAIResponseClient(deploymentName)
+    .AsIChatClient()
+    .AsBuilder()
+    .WithPurview(browserCredential, new PurviewSettings("Agent Framework Test App"))
+    .Build();
 
-Console.WriteLine("Enter a prompt to send to the agent:");
-string? promptText = Console.ReadLine();
-
-if (!string.IsNullOrEmpty(promptText))
+using (client)
 {
-    // Invoke the agent and output the text result.
-    Console.WriteLine(await agent.RunAsync(promptText));
+    Console.WriteLine("Enter a prompt to send to the client:");
+    string? promptText = Console.ReadLine();
+
+    if (!string.IsNullOrEmpty(promptText))
+    {
+        // Invoke the agent and output the text result.
+        Console.WriteLine(await client.GetResponseAsync(promptText));
+    }
 }
