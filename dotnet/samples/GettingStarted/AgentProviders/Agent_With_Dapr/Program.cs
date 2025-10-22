@@ -1,4 +1,6 @@
-﻿// This sample shows how to create and use a simple AI agent with Dapr as the backend.
+﻿// Copyright (c) Microsoft. All rights reserved.
+
+// This sample shows how to create and use a simple AI agent with Dapr as the backend.
 
 using Dapr.AI.Conversation.Extensions;
 using Dapr.AI.Microsoft.Extensions;
