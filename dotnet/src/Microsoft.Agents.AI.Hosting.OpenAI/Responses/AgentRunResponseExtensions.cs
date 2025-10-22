@@ -43,8 +43,6 @@ internal static class AgentRunResponseExtensions
         output.AddRange(agentRunResponse.Messages
             .SelectMany(msg => msg.ToItemResource(context.IdGenerator, context.JsonSerializerOptions)));
 
-        var usage = agentRunResponse.Usage.ToResponseUsage();
-
         return new Response
         {
             Id = context.ResponseId,
@@ -58,7 +56,7 @@ internal static class AgentRunResponseExtensions
             Temperature = request.Temperature ?? 1.0,
             TopP = request.TopP ?? 1.0,
             Output = output,
-            Usage = usage,
+            Usage = agentRunResponse.Usage.ToResponseUsage(),
             ParallelToolCalls = request.ParallelToolCalls ?? true,
             Tools = [.. request.Tools ?? []],
             ToolChoice = request.ToolChoice,
