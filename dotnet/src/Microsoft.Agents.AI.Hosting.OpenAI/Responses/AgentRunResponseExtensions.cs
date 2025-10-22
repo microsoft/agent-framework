@@ -218,8 +218,7 @@ internal static class AgentRunResponseExtensions
                     break;
                 default:
                     // message.Role == ChatRole.Assistant
-                    var itemContent = ItemContentConverter.ToItemContent(content);
-                    if (itemContent != null)
+                    if (ItemContentConverter.ToItemContent(content) is { } itemContent)
                     {
                         contents.Add(itemContent);
                     }
