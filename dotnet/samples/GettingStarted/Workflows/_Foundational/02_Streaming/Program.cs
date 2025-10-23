@@ -28,7 +28,7 @@ public static class Program
         var workflow = builder.Build();
 
         // Execute the workflow in streaming mode
-        await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, "Hello, World!");
+        await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, input: "Hello, World!");
         await foreach (WorkflowEvent evt in run.WatchStreamAsync())
         {
             if (evt is ExecutorCompletedEvent executorCompleted)

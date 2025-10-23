@@ -57,6 +57,7 @@
     <Project Path="samples/GettingStarted/Agents/Agent_Step14_Middleware/Agent_Step14_Middleware.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step15_Plugins/Agent_Step15_Plugins.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step16_ChatReduction/Agent_Step16_ChatReduction.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agent_Step17_BackgroundResponses/Agent_Step17_BackgroundResponses.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/AgentWithOpenAI/">
     <File Path="samples/GettingStarted/AgentWithOpenAI/README.md" />
@@ -130,6 +131,7 @@
     <Project Path="samples/GettingStarted/Workflows/_Foundational/04_AgentWorkflowPatterns/04_AgentWorkflowPatterns.csproj" />
     <Project Path="samples/GettingStarted/Workflows/_Foundational/05_MultiModelService/05_MultiModelService.csproj" />
     <Project Path="samples/GettingStarted/Workflows/_Foundational/06_SubWorkflows/06_SubWorkflows.csproj" />
+    <Project Path="samples/GettingStarted/Workflows/_Foundational/07_MixedWorkflowAgentsAndExecutors/07_MixedWorkflowAgentsAndExecutors.csproj" />
   </Folder>
   <Folder Name="/Samples/SemanticKernelMigration/">
     <File Path="samples/SemanticKernelMigration/README.md" />
@@ -160,8 +162,14 @@
   <Folder Name="/Solution Items/docs/" />
   <Folder Name="/Solution Items/docs/decisions/">
     <File Path="../docs/decisions/0001-agent-run-response.md" />
-    <File Path="../docs/decisions/0001-agent-tools.md" />
-    <File Path="../docs/decisions/0002-agent-opentelemetry-instrumentation.md" />
+    <File Path="../docs/decisions/0002-agent-tools.md" />
+    <File Path="../docs/decisions/0003-agent-opentelemetry-instrumentation.md" />
+    <File Path="../docs/decisions/0004-foundry-sdk-extensions.md" />
+    <File Path="../docs/decisions/0005-python-naming-conventions.md" />
+    <File Path="../docs/decisions/0006-userapproval.md" />
+    <File Path="../docs/decisions/0007-agent-filtering-middleware.md" />
+    <File Path="../docs/decisions/0008-python-subpackages.md" />
+    <File Path="../docs/decisions/0009-support-long-running-operations.md" />
     <File Path="../docs/decisions/adr-short-template.md" />
     <File Path="../docs/decisions/adr-template.md" />
     <File Path="../docs/decisions/README.md" />
@@ -275,6 +283,7 @@
     <Project Path="tests/Microsoft.Agents.AI.Abstractions.UnitTests/Microsoft.Agents.AI.Abstractions.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.AzureAI.UnitTests/Microsoft.Agents.AI.AzureAI.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Hosting.A2A.Tests/Microsoft.Agents.AI.Hosting.A2A.Tests.csproj" Id="2a1c544d-237d-4436-8732-ba0c447ac06b" />
+    <Project Path="tests/Microsoft.Agents.AI.Hosting.OpenAI.UnitTests/Microsoft.Agents.AI.Hosting.OpenAI.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Hosting.UnitTests/Microsoft.Agents.AI.Hosting.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.OpenAI.UnitTests/Microsoft.Agents.AI.OpenAI.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.UnitTests/Microsoft.Agents.AI.UnitTests.csproj" />

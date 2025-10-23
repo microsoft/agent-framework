@@ -48,7 +48,7 @@ public static class Program
             .Build();
 
         // Execute the workflow
-        await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, "Create a slogan for a new electric SUV that is affordable and fun to drive.");
+        await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, input: "Create a slogan for a new electric SUV that is affordable and fun to drive.");
         await foreach (WorkflowEvent evt in run.WatchStreamAsync())
         {
             if (evt is SloganGeneratedEvent or FeedbackEvent)

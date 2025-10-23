@@ -127,7 +127,15 @@ jobs:
         run: |
           export UT_PROJECTS=$(find ./dotnet -type f -name "*.UnitTests.csproj" | tr '\n' ' ')
           for project in $UT_PROJECTS; do
-            dotnet test -f ${{ matrix.targetFramework }} -c ${{ matrix.configuration }} $project --no-build -v Normal --logger trx --collect:"XPlat Code Coverage" --results-directory:"TestResults/Coverage/" -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.ExcludeByAttribute=GeneratedCodeAttribute,CompilerGeneratedAttribute,ExcludeFromCodeCoverageAttribute
+            # Query the project's target frameworks using MSBuild with the current configuration
+            target_frameworks=$(dotnet msbuild $project -getProperty:TargetFrameworks -p:Configuration=${{ matrix.configuration }} -nologo 2>/dev/null | tr -d '\r')
+            
+            # Check if the project supports the target framework
+            if [[ "$target_frameworks" == *"${{ matrix.targetFramework }}"* ]]; then
+              dotnet test -f ${{ matrix.targetFramework }} -c ${{ matrix.configuration }} $project --no-build -v Normal --logger trx --collect:"XPlat Code Coverage" --results-directory:"TestResults/Coverage/" -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.ExcludeByAttribute=GeneratedCodeAttribute,CompilerGeneratedAttribute,ExcludeFromCodeCoverageAttribute
+            else
+              echo "Skipping $project - does not support target framework ${{ matrix.targetFramework }} (supports: $target_frameworks)"
+            fi
           done
       
       - name: Log event name and matrix integration-tests
@@ -148,7 +156,15 @@ jobs:
         run: |
           export INTEGRATION_TEST_PROJECTS=$(find ./dotnet -type f -name "*IntegrationTests.csproj" | tr '\n' ' ')
           for project in $INTEGRATION_TEST_PROJECTS; do
-            dotnet test -f ${{ matrix.targetFramework }} -c ${{ matrix.configuration }} $project --no-build -v Normal --logger trx
+            # Query the project's target frameworks using MSBuild with the current configuration
+            target_frameworks=$(dotnet msbuild $project -getProperty:TargetFrameworks -p:Configuration=${{ matrix.configuration }} -nologo 2>/dev/null | tr -d '\r')
+            
+            # Check if the project supports the target framework
+            if [[ "$target_frameworks" == *"${{ matrix.targetFramework }}"* ]]; then
+              dotnet test -f ${{ matrix.targetFramework }} -c ${{ matrix.configuration }} $project --no-build -v Normal --logger trx
+            else
+              echo "Skipping $project - does not support target framework ${{ matrix.targetFramework }} (supports: $target_frameworks)"
+            fi
           done
         env:
           # OpenAI Models
@@ -166,7 +182,7 @@ jobs:
 
       # Generate test reports and check coverage
       - name: Generate test reports
-        uses: danielpalme/ReportGenerator-GitHub-Action@5.4.16
+        uses: danielpalme/ReportGenerator-GitHub-Action@5.4.17
         with:
           reports: "./TestResults/Coverage/**/coverage.cobertura.xml"
           targetdir: "./TestResults/Reports"

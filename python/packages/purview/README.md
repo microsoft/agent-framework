@@ -62,16 +62,16 @@ If a policy violation is detected on the prompt, the middleware terminates the r
 `PurviewClient` uses the `azure-identity` library for token acquisition. You can use any `TokenCredential` or `AsyncTokenCredential` implementation.
 
 The APIs require the following Graph Permissions:
-- ProtectionScopes.Compute.All : (userProtectionScopeContainer)[https://learn.microsoft.com/en-us/graph/api/userprotectionscopecontainer-compute]
-- Content.Process.All : (processContent)[https://learn.microsoft.com/en-us/graph/api/userdatasecurityandgovernance-processcontent]
-- ContentActivity.Write : (contentActivity)[https://learn.microsoft.com/en-us/graph/api/activitiescontainer-post-contentactivities]
+- ProtectionScopes.Compute.All : [userProtectionScopeContainer](https://learn.microsoft.com/en-us/graph/api/userprotectionscopecontainer-compute)
+- Content.Process.All : [processContent](https://learn.microsoft.com/en-us/graph/api/userdatasecurityandgovernance-processcontent)
+- ContentActivity.Write : [contentActivity](https://learn.microsoft.com/en-us/graph/api/activitiescontainer-post-contentactivities)
 
 ### Scopes
 `PurviewSettings.get_scopes()` derives the Graph scope list (currently `https://graph.microsoft.com/.default` style).
 
 ### Tenant Enablement for Purview
 - The tenant requires an e5 license and consumptive billing setup.
-- There need to be (Data Loss Prevention)[https://learn.microsoft.com/en-us/purview/dlp-create-deploy-policy] or (Data Collection Policies)[https://learn.microsoft.com/en-us/purview/collection-policies-policy-reference] that apply to the user to call Process Content API else it calls Content Activities API for auditing the message.
+- There need to be [Data Loss Prevention](https://learn.microsoft.com/en-us/purview/dlp-create-deploy-policy) or [Data Collection Policies](https://learn.microsoft.com/en-us/purview/collection-policies-policy-reference) that apply to the user to call Process Content API else it calls Content Activities API for auditing the message.
 
 ---
 

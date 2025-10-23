@@ -62,7 +62,8 @@ public class InMemoryAgentThreadTests
         // Arrange
         InMemoryChatMessageStore store = [new(ChatRole.User, "TestMsg")];
         var storeState = store.Serialize();
-        var json = JsonSerializer.SerializeToElement(new { storeState });
+        var threadStateWrapper = new InMemoryAgentThread.InMemoryAgentThreadState { StoreState = storeState };
+        var json = JsonSerializer.SerializeToElement(threadStateWrapper, TestJsonSerializerContext.Default.InMemoryAgentThreadState);
 
         // Act
         var thread = new TestInMemoryAgentThread(json);
@@ -77,7 +78,7 @@ public class InMemoryAgentThreadTests
     public void Constructor_WithInvalidJson_ThrowsArgumentException()
     {
         // Arrange
-        var invalidJson = JsonSerializer.SerializeToElement(42);
+        var invalidJson = JsonSerializer.SerializeToElement(42, TestJsonSerializerContext.Default.Int32);
 
         // Act & Assert
         Assert.Throws<ArgumentException>(() => new TestInMemoryAgentThread(invalidJson));

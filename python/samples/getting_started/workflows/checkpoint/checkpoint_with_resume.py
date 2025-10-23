@@ -42,7 +42,7 @@ Pipeline:
 5) FinalizeFromAgent yields the final result.
 
 What you learn:
-- How to persist executor state using ctx.get_state and ctx.set_state.
+- How to persist executor state using ctx.get_executor_state and ctx.set_executor_state.
 - How to persist shared workflow state using ctx.set_shared_state for cross-executor visibility.
 - How to configure FileCheckpointStorage and call with_checkpointing on WorkflowBuilder.
 - How to list and inspect checkpoints programmatically.
@@ -73,9 +73,9 @@ class UpperCaseExecutor(Executor):
 
         # Persist executor-local state so it is captured in checkpoints
         # and available after resume for observability or logic.
-        prev = await ctx.get_state() or {}
+        prev = await ctx.get_executor_state() or {}
         count = int(prev.get("count", 0)) + 1
-        await ctx.set_state({
+        await ctx.set_executor_state({
             "count": count,
             "last_input": text,
             "last_output": result,
@@ -122,9 +122,9 @@ class FinalizeFromAgent(Executor):
         result = response.agent_run_response.text or ""
 
         # Persist executor-local state for auditability when inspecting checkpoints.
-        prev = await ctx.get_state() or {}
+        prev = await ctx.get_executor_state() or {}
         count = int(prev.get("count", 0)) + 1
-        await ctx.set_state({
+        await ctx.set_executor_state({
             "count": count,
             "last_output": result,
             "final": True,
@@ -143,9 +143,9 @@ class ReverseTextExecutor(Executor):
         print(f"ReverseTextExecutor: '{text}' -> '{result}'")
 
         # Persist executor-local state so checkpoint inspection can reveal progress.
-        prev = await ctx.get_state() or {}
+        prev = await ctx.get_executor_state() or {}
         count = int(prev.get("count", 0)) + 1
-        await ctx.set_state({
+        await ctx.set_executor_state({
             "count": count,
             "last_input": text,
             "last_output": result,
