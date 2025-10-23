@@ -293,7 +293,7 @@ class VideoTranslationClient:
         if response_iteration.status != OperationStatus.Succeeded:
             logger.error(colored(f"Iteration creation failed with error: {error}", 'red'))
             logger.debug(json.dumps(dataclasses.asdict(operation_location), indent=2))
-            return False, response_iteration.translationFailureReason, None
+            return False, response_iteration.iterationFailureReason, None
 
         return True, None, response_iteration
 
