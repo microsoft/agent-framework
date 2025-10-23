@@ -9,9 +9,8 @@ model:
         temperature: 0.9
         topP: 0.95
     connection:
-        kind: Key
-        publisher: Foundry
-        endpoint: =Env.AZURE_FOUNDRY_PROJECT_ENDPOINT
+        kind: Foundry
+        type: =Env.AZURE_FOUNDRY_PROJECT_ENDPOINT
 outputSchema:
     properties:
         language:

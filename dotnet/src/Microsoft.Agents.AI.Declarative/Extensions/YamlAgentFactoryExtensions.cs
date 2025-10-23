@@ -13,23 +13,21 @@ namespace Microsoft.Agents.AI;
 public static class YamlAgentFactoryExtensions
 {
     /// <summary>
-    /// Create a <see cref="AIAgent"/> from the given YAML text.
+    /// Create a <see cref="AIAgent"/> from the given agent YAML.
     /// </summary>
     /// <param name="agentFactory"><see cref="AgentFactory"/> which will be used to create the agent.</param>
-    /// <param name="text">Text string containing the YAML representation of an <see cref="AIAgent" />.</param>
-    /// <param name="options"><see cref="AgentCreationOptions"/> instance.</param>
+    /// <param name="agentYaml">Text string containing the YAML representation of an <see cref="AIAgent" />.</param>
     /// <param name="cancellationToken">Optional cancellation token</param>
     [RequiresDynamicCode("Calls YamlDotNet.Serialization.DeserializerBuilder.DeserializerBuilder()")]
-    public static Task<AIAgent> CreateFromYamlAsync(this AgentFactory agentFactory, string text, AgentCreationOptions? options = null, CancellationToken cancellationToken = default)
+    public static Task<AIAgent> CreateFromYamlAsync(this AgentFactory agentFactory, string agentYaml, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(agentFactory);
-        Throw.IfNullOrEmpty(text);
+        Throw.IfNullOrEmpty(agentYaml);
 
-        var agentDefinition = AgentBotElementYaml.FromYaml(text);
+        var agentDefinition = AgentBotElementYaml.FromYaml(agentYaml);
 
         return agentFactory.CreateAsync(
             agentDefinition,
-            options ?? new(),
             cancellationToken);
     }
 }

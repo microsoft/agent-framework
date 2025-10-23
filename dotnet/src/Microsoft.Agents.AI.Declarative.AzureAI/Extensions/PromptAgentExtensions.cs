@@ -3,7 +3,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Azure.AI.Agents.Persistent;
-using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Bot.ObjectModel;
@@ -17,25 +16,11 @@ internal static class PromptAgentExtensions
     /// Return the Foundry tool definitions which corresponds with the provided <see cref="PromptAgent"/>.
     /// </summary>
     /// <param name="promptAgent">Instance of <see cref="PromptAgent"/></param>
-    /// <param name="tools">Instance of <see cref="IList{AITool}"/></param>
-    internal static IEnumerable<Azure.AI.Agents.Persistent.ToolDefinition> GetToolDefinitions(this PromptAgent promptAgent, IList<AITool>? tools)
+    internal static IEnumerable<Azure.AI.Agents.Persistent.ToolDefinition> GetToolDefinitions(this PromptAgent promptAgent)
     {
         Throw.IfNull(promptAgent);
 
-        var optionTools = tools?.Select<AITool, Azure.AI.Agents.Persistent.ToolDefinition>(tool =>
-        {
-            return tool switch
-            {
-                HostedCodeInterpreterTool => ((HostedCodeInterpreterTool)tool).CreateHostedCodeInterpreterToolDefinition(),
-                AIFunction => ((AIFunction)tool).CreateFunctionToolDefinition(),
-                HostedFileSearchTool => ((HostedFileSearchTool)tool).CreateFileSearchToolDefinition(),
-                HostedWebSearchTool => ((HostedWebSearchTool)tool).CreateBingGroundingToolDefinition(),
-                HostedMcpServerTool => ((HostedMcpServerTool)tool).CreateMcpToolDefinition(),
-                _ => throw new NotSupportedException($"Unable to create tool definition because of unsupported tool type: {tool}"),
-            };
-        }).ToList() ?? [];
-
-        var promptTools = promptAgent.Tools.Select<AgentTool, Azure.AI.Agents.Persistent.ToolDefinition>(tool =>
+        return promptAgent.Tools.Select<AgentTool, Azure.AI.Agents.Persistent.ToolDefinition>(tool =>
         {
             return tool switch
             {
@@ -47,10 +32,6 @@ internal static class PromptAgentExtensions
                 _ => throw new NotSupportedException($"Unable to create tool definition because of unsupported tool type: {tool.Kind}"),
             };
         }).ToList() ?? [];
-
-        return optionTools != null
-            ? [.. promptTools, .. optionTools]
-            : promptTools;
         /*
         return promptAgent.Tools.Select<AgentTool, Azure.AI.Agents.Persistent.ToolDefinition>(tool =>
         {

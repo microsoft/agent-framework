@@ -1,8 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Generic;
-using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
@@ -23,15 +21,24 @@ public static class RecordDataTypeExtensions
     {
         Throw.IfNull(recordDataType);
 
-        var schemaObject = new Dictionary<string, object>
+        if (recordDataType.Properties.Count == 0)
         {
-            ["type"] = "object",
-            ["properties"] = recordDataType.Properties.AsObjectDictionary(),
-            ["additionalProperties"] = false
-        };
+            return null;
+        }
 
-        var json = JsonSerializer.Serialize(schemaObject, ElementSerializer.CreateOptions());
-        return new BinaryData(json);
+        return BinaryData.FromObjectAsJson(
+            new
+            {
+                type = "json_schema",
+                schema =
+                new
+                {
+                    type = "object",
+                    properties = recordDataType.Properties.AsObjectDictionary(),
+                    additionalProperties = false
+                }
+            }
+        );
     }
 #pragma warning restore IL3050 // Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
 #pragma warning restore IL2026 // Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code

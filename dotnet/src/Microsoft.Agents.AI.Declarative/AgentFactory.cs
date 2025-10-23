@@ -17,14 +17,13 @@ public abstract class AgentFactory
     /// Create a <see cref="AIAgent"/> from the specified <see cref="PromptAgent"/>.
     /// </summary>
     /// <param name="promptAgent">Definition of the agent to create.</param>
-    /// <param name="agentCreationOptions">Options used when creating the agent.</param>
     /// <param name="cancellationToken">Optional cancellation token.</param>
     /// <return>The created <see cref="AIAgent"/>, if null the agent type is not supported.</return>
-    public async Task<AIAgent> CreateAsync(PromptAgent promptAgent, AgentCreationOptions? agentCreationOptions = null, CancellationToken cancellationToken = default)
+    public async Task<AIAgent> CreateAsync(PromptAgent promptAgent, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(promptAgent);
 
-        var agent = await this.TryCreateAsync(promptAgent, agentCreationOptions, cancellationToken).ConfigureAwait(false);
+        var agent = await this.TryCreateAsync(promptAgent, cancellationToken).ConfigureAwait(false);
         return agent ?? throw new NotSupportedException($"Agent type {promptAgent.Kind} is not supported.");
     }
 
@@ -32,8 +31,7 @@ public abstract class AgentFactory
     /// Tries to create a <see cref="AIAgent"/> from the specified <see cref="PromptAgent"/>.
     /// </summary>
     /// <param name="promptAgent">Definition of the agent to create.</param>
-    /// <param name="agentCreationOptions">Options used when creating the agent.</param>
     /// <param name="cancellationToken">Optional cancellation token.</param>
     /// <return>The created <see cref="AIAgent"/>, if null the agent type is not supported.</return>
-    public abstract Task<AIAgent?> TryCreateAsync(PromptAgent promptAgent, AgentCreationOptions? agentCreationOptions = null, CancellationToken cancellationToken = default);
+    public abstract Task<AIAgent?> TryCreateAsync(PromptAgent promptAgent, CancellationToken cancellationToken = default);
 }

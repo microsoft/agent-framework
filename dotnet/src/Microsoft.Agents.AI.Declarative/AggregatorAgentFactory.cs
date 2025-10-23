@@ -32,13 +32,13 @@ public sealed class AggregatorAgentFactory : AgentFactory
     }
 
     /// <inheritdoc/>
-    public override async Task<AIAgent?> TryCreateAsync(PromptAgent promptAgent, AgentCreationOptions? agentCreationOptions = null, CancellationToken cancellationToken = default)
+    public override async Task<AIAgent?> TryCreateAsync(PromptAgent promptAgent, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(promptAgent);
 
         foreach (var agentFactory in this._agentFactories)
         {
-            var agent = await agentFactory.TryCreateAsync(promptAgent, agentCreationOptions, cancellationToken).ConfigureAwait(false);
+            var agent = await agentFactory.TryCreateAsync(promptAgent, cancellationToken).ConfigureAwait(false);
             if (agent is not null)
             {
                 return agent;

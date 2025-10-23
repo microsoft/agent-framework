@@ -1,11 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Shared.Diagnostics;
 
@@ -19,76 +18,36 @@ public sealed class ChatClientAgentFactory : AgentFactory
     /// <summary>
     /// Creates a new instance of the <see cref="ChatClientAgentFactory"/> class.
     /// </summary>
-    public ChatClientAgentFactory()
-    {
-    }
-
-    /// <summary>
-    /// Creates a new instance of the <see cref="ChatClientAgentFactory"/> class.
-    /// </summary>
-    public ChatClientAgentFactory(IChatClient chatClient)
+    public ChatClientAgentFactory(IChatClient chatClient, IList<AIFunction>? functions = null, ILoggerFactory? loggerFactory = null)
     {
         Throw.IfNull(chatClient);
 
         this._chatClient = chatClient;
-    }
-
-    /// <summary>
-    /// Creates a new instance of the <see cref="ChatClientAgentFactory"/> class.
-    /// </summary>
-    public ChatClientAgentFactory(IServiceProvider serviceProvider)
-    {
-        Throw.IfNull(serviceProvider);
-
-        this._serviceProvider = serviceProvider;
+        this._functions = functions;
+        this._loggerFactory = loggerFactory;
     }
 
     /// <inheritdoc/>
-    public override Task<AIAgent?> TryCreateAsync(PromptAgent promptAgent, AgentCreationOptions? agentCreationOptions = null, CancellationToken cancellationToken = default)
+    public override Task<AIAgent?> TryCreateAsync(PromptAgent promptAgent, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(promptAgent);
-
-        var chatClientAgentOptions = agentCreationOptions as ChatClientAgentCreationOptions;
-        IServiceProvider? serviceProvider = agentCreationOptions?.ServiceProvider ?? this._serviceProvider;
-        IChatClient? chatClient = this.GetIChatClient(promptAgent, chatClientAgentOptions, serviceProvider);
-        if (chatClient == null)
-        {
-            throw new ArgumentException("A chat client must be provided via ChatClientAgentCreationOptions.", nameof(agentCreationOptions));
-        }
-        ILoggerFactory? loggerFactory = serviceProvider?.GetService(typeof(ILoggerFactory)) as ILoggerFactory;
 
         var options = new ChatClientAgentOptions()
         {
             Name = promptAgent.Name,
             Description = promptAgent.Description,
             Instructions = promptAgent.Instructions?.ToTemplateString(),
-            ChatOptions = promptAgent.GetChatOptions(agentCreationOptions),
+            ChatOptions = promptAgent.GetChatOptions(this._functions),
         };
 
-        var agent = new ChatClientAgent(chatClient, options, loggerFactory);
+        var agent = new ChatClientAgent(this._chatClient, options, this._loggerFactory);
 
         return Task.FromResult<AIAgent?>(agent);
     }
 
     #region
-    private readonly IChatClient? _chatClient;
-    private readonly IServiceProvider? _serviceProvider;
-
-    private IChatClient? GetIChatClient(PromptAgent promptAgent, ChatClientAgentCreationOptions? agentOptions, IServiceProvider? serviceProvider)
-    {
-        var chatClient = agentOptions?.ChatClient ?? this._chatClient;
-
-        if (chatClient is null && serviceProvider is not null)
-        {
-            string? serviceKey = promptAgent.GenerateServiceKey();
-            if (!string.IsNullOrEmpty(serviceKey))
-            {
-                chatClient = serviceProvider.GetKeyedService<IChatClient>(serviceKey);
-            }
-            chatClient ??= serviceProvider.GetService<IChatClient>();
-        }
-
-        return chatClient;
-    }
+    private readonly IChatClient _chatClient;
+    private readonly IList<AIFunction>? _functions;
+    private readonly ILoggerFactory? _loggerFactory;
     #endregion
 }

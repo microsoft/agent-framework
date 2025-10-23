@@ -17,13 +17,6 @@ public sealed class AIFoundryAgentFactory : AgentFactory
     /// <summary>
     /// Creates a new instance of the <see cref="AIFoundryAgentFactory"/> class.
     /// </summary>
-    public AIFoundryAgentFactory()
-    {
-    }
-
-    /// <summary>
-    /// Creates a new instance of the <see cref="AIFoundryAgentFactory"/> class.
-    /// </summary>
     public AIFoundryAgentFactory(PersistentAgentsClient agentClient)
     {
         Throw.IfNull(agentClient);
@@ -41,49 +34,12 @@ public sealed class AIFoundryAgentFactory : AgentFactory
         this._tokenCredential = tokenCredential;
     }
 
-    /// <summary>
-    /// Creates a new instance of the <see cref="AIFoundryAgentFactory"/> class.
-    /// </summary>
-    public AIFoundryAgentFactory(IServiceProvider serviceProvider)
-    {
-        Throw.IfNull(serviceProvider);
-
-        this._serviceProvider = serviceProvider;
-    }
-
     /// <inheritdoc/>
-    public override async Task<AIAgent?> TryCreateAsync(PromptAgent promptAgent, AgentCreationOptions? agentCreationOptions = null, CancellationToken cancellationToken = default)
+    public override async Task<AIAgent?> TryCreateAsync(PromptAgent promptAgent, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(promptAgent);
 
-        var aiFoundryAgentOptions = agentCreationOptions as AIFoundryAgentCreationOptions;
-        PersistentAgentsClient? agentClient = aiFoundryAgentOptions?.PersistentAgentsClient ?? this._agentClient;
-        IServiceProvider? serviceProvider = agentCreationOptions?.ServiceProvider ?? this._serviceProvider;
-
-        agentClient ??= serviceProvider?.GetService(typeof(PersistentAgentsClient)) as PersistentAgentsClient;
-
-        if (agentClient is null)
-        {
-            var foundryConnection = promptAgent.Model?.Connection as FoundryConnection;
-            if (foundryConnection is not null)
-            {
-                var endpoint = foundryConnection.Type; // TODO: Change to Endpoint when available in FoundryConnection
-                if (string.IsNullOrEmpty(endpoint))
-                {
-                    throw new InvalidOperationException("The endpoint must be specified in the agent definition model connection to create an PersistentAgentsClient.");
-                }
-                TokenCredential? tokenCredential = this._tokenCredential ?? aiFoundryAgentOptions?.TokenCredential ?? serviceProvider?.GetService(typeof(TokenCredential)) as TokenCredential;
-                if (tokenCredential is null)
-                {
-                    throw new InvalidOperationException("A TokenCredential must be registered in the service provider to create an PersistentAgentsClient.");
-                }
-                agentClient = new PersistentAgentsClient(endpoint, tokenCredential);
-            }
-            else
-            {
-                throw new InvalidOperationException("A PersistentAgentsClient must be registered in the service provider or a KeyConnection or OAuthConnection must be specified in the agent definition model connection to create an PersistentAgentsClient.");
-            }
-        }
+        var agentClient = this._agentClient ?? this.CreatePersistentAgentClient(promptAgent);
 
         var modelId = promptAgent.Model?.Id;
         if (string.IsNullOrEmpty(modelId))
@@ -99,11 +55,11 @@ public sealed class AIFoundryAgentFactory : AgentFactory
             model: modelId,
             name: promptAgent.Name,
             instructions: promptAgent.Instructions?.ToTemplateString(),
-            tools: promptAgent.GetToolDefinitions(aiFoundryAgentOptions?.Tools),
+            tools: promptAgent.GetToolDefinitions(),
             toolResources: promptAgent.GetToolResources(),
             temperature: (float?)modelOptions?.Temperature?.LiteralValue,
             topP: (float?)modelOptions?.TopP?.LiteralValue,
-            responseFormat: outputSchema.AsBinaryData(),
+            // responseFormat: outputSchema.AsBinaryData(), TODO: Fix converting RecordDataType to BinaryData
             metadata: promptAgent.Metadata?.ToDictionary(),
             cancellationToken: cancellationToken).ConfigureAwait(false);
     }
@@ -111,6 +67,31 @@ public sealed class AIFoundryAgentFactory : AgentFactory
     #region
     private readonly PersistentAgentsClient? _agentClient;
     private readonly TokenCredential? _tokenCredential;
-    private readonly IServiceProvider? _serviceProvider;
+
+    private PersistentAgentsClient CreatePersistentAgentClient(PromptAgent promptAgent)
+    {
+        PersistentAgentsClient agentClient;
+        var foundryConnection = promptAgent.Model?.Connection as FoundryConnection;
+        if (foundryConnection is not null)
+        {
+            var endpoint = foundryConnection.Type; // TODO: Change to Endpoint when available in FoundryConnection
+            if (string.IsNullOrEmpty(endpoint))
+            {
+                throw new InvalidOperationException("The endpoint must be specified in the agent definition model connection to create an PersistentAgentsClient.");
+            }
+            if (this._tokenCredential is null)
+            {
+                throw new InvalidOperationException("A TokenCredential must be registered in the service provider to create an PersistentAgentsClient.");
+            }
+            agentClient = new PersistentAgentsClient(endpoint, this._tokenCredential);
+        }
+        else
+        {
+            throw new InvalidOperationException("A PersistentAgentsClient must be registered in the service provider or a FoundryConnection must be specified in the agent definition model connection to create an PersistentAgentsClient.");
+        }
+
+        return agentClient;
+    }
+
     #endregion
 }

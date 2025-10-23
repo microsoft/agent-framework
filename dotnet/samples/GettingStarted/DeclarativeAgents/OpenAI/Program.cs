@@ -41,10 +41,11 @@ static string GetWeather(
     [Description("The city and state, e.g. San Francisco, CA")] string location,
     [Description("The unit of temperature. Possible values are 'celsius' and 'fahrenheit'.")] string unit)
     => $"The weather in {location} is cloudy with a high of {(unit.Equals("celsius", StringComparison.Ordinal) ? "15°C" : "59°F")}.";
+List<AIFunction> functions = [AIFunctionFactory.Create(GetWeather, "GetWeather")];
 
 // Create the agent from the YAML definition.
-var agentFactory = new OpenAIAgentFactory();
-var agent = await agentFactory.CreateFromYamlAsync(text, new OpenAIAgentCreationOptions() { Tools = [AIFunctionFactory.Create(GetWeather, "GetWeather")] });
+var agentFactory = new OpenAIChatAgentFactory(functions); // TODO: Aggregate all of the OpenAI agent factories into a single factory.
+var agent = await agentFactory.CreateFromYamlAsync(text);
 
 // Invoke the agent and output the text result.
 Console.WriteLine(await agent!.RunAsync(prompt));

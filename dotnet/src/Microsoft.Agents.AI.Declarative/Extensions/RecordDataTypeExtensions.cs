@@ -20,6 +20,11 @@ public static class RecordDataTypeExtensions
     {
         Throw.IfNull(recordDataType);
 
+        if (recordDataType.Properties.Count == 0)
+        {
+            return null;
+        }
+
         // TODO: Consider adding schemaName and schemaDescription parameters to this method.
         return ChatResponseFormat.ForJsonSchema(
             schema: recordDataType.GetSchema(),

@@ -16,16 +16,16 @@ public static class FunctionToolExtensions
     /// Creates a <see cref="AIFunctionDeclaration"/> from a <see cref="FunctionTool"/>.
     /// </summary>
     /// <param name="tool">Instance of <see cref="FunctionTool"/></param>
-    /// <param name="tools">Instance of <see cref="IList{AITool}"/></param>
-    internal static AITool CreateFunctionTool(this FunctionTool tool, IList<AITool>? tools)
+    /// <param name="functions">Instance of <see cref="IList{AIFunction}"/></param>
+    internal static AITool CreateFunctionTool(this FunctionTool tool, IList<AIFunction>? functions)
     {
         Throw.IfNull(tool);
         Throw.IfNull(tool.Name);
 
         // use the tool from the provided list if it exists
-        if (tools is not null)
+        if (functions is not null)
         {
-            var function = tools
+            var function = functions
                 .OfType<AIFunction>()
                 .FirstOrDefault(f => tool.Matches(f));
 

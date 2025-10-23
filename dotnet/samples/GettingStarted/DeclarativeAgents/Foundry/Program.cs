@@ -45,7 +45,13 @@ static string GetWeather(
 
 // Create the agent from the YAML definition.
 var agentFactory = new AIFoundryAgentFactory(new AzureCliCredential());
-var agent = await agentFactory.CreateFromYamlAsync(text, new AIFoundryAgentCreationOptions() { Tools = [AIFunctionFactory.Create(GetWeather, "GetWeather")] });
+var agent = await agentFactory.CreateFromYamlAsync(text);
+
+// Create agent run options
+var options = new ChatClientAgentRunOptions(new()
+{
+    Tools = [AIFunctionFactory.Create(GetWeather, name: nameof(GetWeather))]
+});
 
 // Invoke the agent and output the text result.
-Console.WriteLine(await agent!.RunAsync(prompt));
+Console.WriteLine(await agent!.RunAsync(prompt, options: options));
