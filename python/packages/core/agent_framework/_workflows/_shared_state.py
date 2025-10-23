@@ -34,6 +34,21 @@ class SharedState:
         async with self._shared_state_lock:
             await self.delete_within_hold(key)
 
+    async def clear(self) -> None:
+        """Clear the entire shared state."""
+        async with self._shared_state_lock:
+            self._state.clear()
+
+    async def clone_inner_state(self) -> dict[str, Any]:
+        """Get a serialized copy of the entire shared state."""
+        async with self._shared_state_lock:
+            return dict(self._state)
+
+    async def populate_inner_state(self, state: dict[str, Any]) -> None:
+        """Populate the shared state from a serialized state dictionary."""
+        async with self._shared_state_lock:
+            self._state.update(state)
+
     @asynccontextmanager
     async def hold(self) -> AsyncIterator["SharedState"]:
         """Context manager to hold the shared state lock for multiple operations.

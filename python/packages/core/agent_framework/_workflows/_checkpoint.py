@@ -11,8 +11,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
-from ._const import DEFAULT_MAX_ITERATIONS
-
 logger = logging.getLogger(__name__)
 
 
@@ -27,11 +25,9 @@ class WorkflowCheckpoint:
     # Core workflow state
     messages: dict[str, list[dict[str, Any]]] = field(default_factory=dict)  # type: ignore[misc]
     shared_state: dict[str, Any] = field(default_factory=dict)  # type: ignore[misc]
-    executor_states: dict[str, dict[str, Any]] = field(default_factory=dict)  # type: ignore[misc]
 
     # Runtime state
     iteration_count: int = 0
-    max_iterations: int = DEFAULT_MAX_ITERATIONS
 
     # Metadata
     metadata: dict[str, Any] = field(default_factory=dict)  # type: ignore[misc]
