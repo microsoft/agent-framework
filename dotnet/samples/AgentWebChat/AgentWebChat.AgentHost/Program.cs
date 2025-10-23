@@ -26,7 +26,7 @@ builder.AddAIAgent(
     instructions: "You are a pirate. Speak like a pirate",
     description: "An agent that speaks like a pirate.",
     chatClientServiceKey: "chat-model")
-    .WithInMemoryThreadStore();
+    .AddInMemoryThreadStore();
 
 builder.AddAIAgent("knights-and-knaves", (sp, key) =>
 {
