@@ -79,7 +79,7 @@
     <!-- MCP -->
     <PackageVersion Include="ModelContextProtocol" Version="0.4.0-preview.3" />
     <!-- Inference SDKs -->
-    <PackageVersion Include="Anthropic.SDK" Version="5.6.0" />
+    <PackageVersion Include="Anthropic.SDK" Version="5.7.1" />
     <PackageVersion Include="AWSSDK.Extensions.Bedrock.MEAI" Version="4.0.4.1" />
     <PackageVersion Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.10.0" />
     <PackageVersion Include="OllamaSharp" Version="5.4.8" />
