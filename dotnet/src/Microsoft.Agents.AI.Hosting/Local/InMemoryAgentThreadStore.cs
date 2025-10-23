@@ -41,8 +41,7 @@ public sealed class InMemoryAgentThreadStore : IAgentThreadStore
     public ValueTask<AgentThread> GetThreadAsync(AIAgent agent, string conversationId, CancellationToken cancellationToken = default)
     {
         var key = GetKey(conversationId, agent.Id);
-        JsonElement? threadContent = this._threads.TryGetValue(key, out var existingThread)
-            ? existingThread : null!;
+        JsonElement? threadContent = this._threads.TryGetValue(key, out var existingThread) ? existingThread : null;
 
         return threadContent switch
         {

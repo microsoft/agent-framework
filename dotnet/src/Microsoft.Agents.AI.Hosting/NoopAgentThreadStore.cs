@@ -7,9 +7,9 @@ namespace Microsoft.Agents.AI.Hosting;
 
 /// <summary>
 /// This store implementation does not have any store under the hood and operates with empty threads.
-/// It the "noop" store, and could be used if you are keeping the thread contents on the client side for example.
+/// It is the "noop" store, and could be used if you are keeping the thread contents on the client side for example.
 /// </summary>
-public sealed class NoContextAgentThreadStore : IAgentThreadStore
+public sealed class NoopAgentThreadStore : IAgentThreadStore
 {
     /// <inheritdoc/>
     public ValueTask SaveThreadAsync(AIAgent agent, string conversationId, AgentThread thread, CancellationToken cancellationToken = default)

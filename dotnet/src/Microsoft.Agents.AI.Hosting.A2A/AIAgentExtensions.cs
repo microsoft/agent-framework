@@ -33,7 +33,7 @@ public static class AIAgentExtensions
 
         var hostAgent = new AIHostAgent(
             innerAgent: agent,
-            threadStore: agentThreadStore ?? new NoContextAgentThreadStore());
+            threadStore: agentThreadStore ?? new NoopAgentThreadStore());
 
         taskManager ??= new();
         taskManager.OnMessageReceived += OnMessageReceivedAsync;
@@ -49,7 +49,7 @@ public static class AIAgentExtensions
                 thread: thread,
                 cancellationToken: cancellationToken).ConfigureAwait(false);
 
-            await hostAgent.SaveThreadAsync(contextId, thread!, cancellationToken).ConfigureAwait(false);
+            await hostAgent.SaveThreadAsync(contextId, thread, cancellationToken).ConfigureAwait(false);
             var parts = response.Messages.ToParts();
             return new AgentMessage
             {
