@@ -95,7 +95,6 @@ class VideoTranslationClient:
         except Exception as e:
             logger.error(f"Failed to get authentication token: {str(e)}")
         return None
-        return None
 
     def build_request_header(self) -> dict:
         """Build the request headers with appropriate authentication"""
