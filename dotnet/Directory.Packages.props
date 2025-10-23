@@ -72,8 +72,8 @@
     <!-- Agent SDKs -->
     <PackageVersion Include="Microsoft.Agents.CopilotStudio.Client" Version="1.2.41" />
     <!-- A2A -->
-    <PackageVersion Include="A2A" Version="0.3.1-preview" />
-    <PackageVersion Include="A2A.AspNetCore" Version="0.3.1-preview" />
+    <PackageVersion Include="A2A" Version="0.3.3-preview" />
+    <PackageVersion Include="A2A.AspNetCore" Version="0.3.3-preview" />
     <!-- MCP -->
     <PackageVersion Include="ModelContextProtocol" Version="0.4.0-preview.2" />
     <!-- Inference SDKs -->
