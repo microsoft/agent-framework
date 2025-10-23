@@ -21,13 +21,13 @@ public class EndDialogTest(ITestOutputHelper output) : WorkflowActionTemplateTes
         EndDialog model = this.CreateModel(displayName);
 
         // Act
-        DefaultTemplate template = new(model, "workflow_id");
+        DefaultTemplate template = new(model.Id.Value, "workflow_id");
         string workflowCode = template.TransformText();
         this.Output.WriteLine(workflowCode.Trim());
 
         // Assert
         AssertDelegate(template.Id, "workflow_id", workflowCode);
-        AssertAgentProvider(template.UseAgentProvider, workflowCode);
+        AssertAgentProvider(false, workflowCode);
     }
 
     private EndDialog CreateModel(string displayName)
