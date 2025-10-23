@@ -160,7 +160,7 @@ public class InProcessStateTests
 
         Workflow workflow =
             new WorkflowBuilder(forward)
-                .AddFanOutEdge(forward, targets: [testExecutor, testExecutor2])
+                .AddFanOutEdge(forward, null, targets: [testExecutor, testExecutor2])
                 .Build();
 
         Run runWithFailure = await InProcessExecution.RunAsync(workflow, new TurnToken());

@@ -25,7 +25,7 @@ public static class Program
 
         // Build the workflow by connecting executors sequentially
         WorkflowBuilder builder = new(uppercase);
-        builder.AddEdge(uppercase, reverse).WithOutputFrom(reverse);
+        builder.AddEdge(uppercase, reverse, false, "custom label").WithOutputFrom(reverse);
         var workflow = builder.Build();
 
         // Execute the workflow with input data
