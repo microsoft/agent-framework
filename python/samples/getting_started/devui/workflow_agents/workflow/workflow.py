@@ -14,8 +14,9 @@ Writer creates content, Reviewer evaluates quality:
 Both paths converge at Summarizer for final report.
 """
 
+import os
 from typing import Any
-from azure.identity import AzureCliCredential
+
 from agent_framework import AgentExecutorResponse, WorkflowBuilder
 from agent_framework.azure import AzureOpenAIChatClient
 from pydantic import BaseModel
@@ -57,15 +58,8 @@ def is_approved(message: Any) -> bool:
         return True
 
 
-def ad_token_provider() -> str:
-    """Provide Azure AD token using Azure CLI credentials."""
-    credential = AzureCliCredential()
-    token = credential.get_token("https://cognitiveservices.azure.com/.default")
-    return token.token
-
-
 # Create Azure OpenAI chat client
-chat_client = AzureOpenAIChatClient(ad_token_provider=ad_token_provider)
+chat_client = AzureOpenAIChatClient(api_key=os.environ.get("AZURE_OPENAI_API_KEY", ""))
 
 # Create Writer agent - generates content
 writer = chat_client.create_agent(
@@ -152,25 +146,25 @@ workflow = (
 )
 
 
-# def main():
-#     """Launch the branching workflow in DevUI."""
-#     import logging
+def main():
+    """Launch the branching workflow in DevUI."""
+    import logging
 
-#     from agent_framework.devui import serve
+    from agent_framework.devui import serve
 
-#     logging.basicConfig(level=logging.INFO, format="%(message)s")
-#     logger = logging.getLogger(__name__)
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    logger = logging.getLogger(__name__)
 
-#     logger.info("Starting Agent Workflow (Content Review with Quality Routing)")
-#     logger.info("Available at: http://localhost:8093")
-#     logger.info("\nThis workflow demonstrates:")
-#     logger.info("- Conditional routing based on structured outputs")
-#     logger.info("- Path 1 (score >= 80): Reviewer → Publisher → Summarizer")
-#     logger.info("- Path 2 (score < 80): Reviewer → Editor → Publisher → Summarizer")
-#     logger.info("- Both paths converge at Summarizer for final report")
+    logger.info("Starting Agent Workflow (Content Review with Quality Routing)")
+    logger.info("Available at: http://localhost:8093")
+    logger.info("\nThis workflow demonstrates:")
+    logger.info("- Conditional routing based on structured outputs")
+    logger.info("- Path 1 (score >= 80): Reviewer → Publisher → Summarizer")
+    logger.info("- Path 2 (score < 80): Reviewer → Editor → Publisher → Summarizer")
+    logger.info("- Both paths converge at Summarizer for final report")
 
-#     serve(entities=[workflow], port=8093, auto_open=True)
+    serve(entities=[workflow], port=8093, auto_open=True)
 
 
-# if __name__ == "__main__":
-#     main()
+if __name__ == "__main__":
+    main()
