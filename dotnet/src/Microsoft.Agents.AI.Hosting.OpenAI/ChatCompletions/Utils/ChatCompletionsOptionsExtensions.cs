@@ -12,8 +12,8 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions.Utils;
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1065:Do not raise exceptions in unexpected locations", Justification = "Specifically for accessing hidden members")]
 internal static class ChatCompletionsOptionsExtensions
 {
-    private static readonly Func<ChatCompletionOptions, bool?> _getStreamNullable;
-    private static readonly Func<ChatCompletionOptions, IList<ChatMessage>> _getMessages;
+    private static readonly Func<ChatCompletionOptions, bool?> s_getStreamNullable;
+    private static readonly Func<ChatCompletionOptions, IList<ChatMessage>> s_getMessages;
 
     static ChatCompletionsOptionsExtensions()
     {
@@ -21,32 +21,32 @@ internal static class ChatCompletionsOptionsExtensions
         // However, it does parse most of the interesting fields into internal properties of `ChatCompletionsOptions` object.
 
         // --- Stream (internal bool? Stream { get; set; }) ---
-        const string streamPropName = "Stream";
-        var streamProp = typeof(ChatCompletionOptions).GetProperty(streamPropName, BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new MissingMemberException(typeof(ChatCompletionOptions).FullName!, streamPropName);
-        var streamGetter = streamProp.GetGetMethod(nonPublic: true) ?? throw new MissingMethodException($"{streamPropName} getter not found.");
+        const string StreamPropName = "Stream";
+        var streamProp = typeof(ChatCompletionOptions).GetProperty(StreamPropName, BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new MissingMemberException(typeof(ChatCompletionOptions).FullName!, StreamPropName);
+        var streamGetter = streamProp.GetGetMethod(nonPublic: true) ?? throw new MissingMethodException($"{StreamPropName} getter not found.");
 
-        _getStreamNullable = streamGetter.CreateDelegate<Func<ChatCompletionOptions, bool?>>();
+        s_getStreamNullable = streamGetter.CreateDelegate<Func<ChatCompletionOptions, bool?>>();
 
         // --- Messages (internal IList<OpenAI.Chat.ChatMessage> Messages { get; set; }) ---
-        const string inputPropName = "Messages";
-        var inputProp = typeof(ChatCompletionOptions).GetProperty(inputPropName, BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new MissingMemberException(typeof(ChatCompletionOptions).FullName!, inputPropName);
+        const string InputPropName = "Messages";
+        var inputProp = typeof(ChatCompletionOptions).GetProperty(InputPropName, BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new MissingMemberException(typeof(ChatCompletionOptions).FullName!, InputPropName);
         var inputGetter = inputProp.GetGetMethod(nonPublic: true)
-            ?? throw new MissingMethodException($"{inputPropName} getter not found.");
+            ?? throw new MissingMethodException($"{InputPropName} getter not found.");
 
-        _getMessages = inputGetter.CreateDelegate<Func<ChatCompletionOptions, IList<ChatMessage>>>();
+        s_getMessages = inputGetter.CreateDelegate<Func<ChatCompletionOptions, IList<ChatMessage>>>();
     }
 
     public static IList<ChatMessage> GetMessages(this ChatCompletionOptions options)
     {
         Throw.IfNull(options);
-        return _getMessages(options);
+        return s_getMessages(options);
     }
 
     public static bool GetStream(this ChatCompletionOptions options)
     {
         Throw.IfNull(options);
-        return _getStreamNullable(options) ?? false;
+        return s_getStreamNullable(options) ?? false;
     }
 }
