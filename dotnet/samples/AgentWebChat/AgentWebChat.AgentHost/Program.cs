@@ -6,7 +6,6 @@ using AgentWebChat.AgentHost.Utilities;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hosting;
 using Microsoft.Agents.AI.Hosting.A2A.AspNetCore;
-using Microsoft.Agents.AI.Hosting.OpenAI;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 
@@ -81,6 +80,7 @@ var literatureAgent = builder.AddAIAgent("literator",
 
 builder.AddSequentialWorkflow("science-sequential-workflow", [chemistryAgent, mathsAgent, literatureAgent]).AddAsAIAgent();
 builder.AddConcurrentWorkflow("science-concurrent-workflow", [chemistryAgent, mathsAgent, literatureAgent]).AddAsAIAgent();
+builder.AddOpenAIResponses();
 
 var app = builder.Build();
 
@@ -102,15 +102,10 @@ app.MapA2A(agentName: "knights-and-knaves", path: "/a2a/knights-and-knaves", age
     // Url = "http://localhost:5390/a2a/knights-and-knaves"
 });
 
-app.MapOpenAIResponses("pirate");
-app.MapOpenAIResponses("knights-and-knaves");
+app.MapOpenAIResponses();
 
 app.MapOpenAIChatCompletions("pirate");
 app.MapOpenAIChatCompletions("knights-and-knaves");
-
-// workflow-agents
-app.MapOpenAIResponses("science-sequential-workflow");
-app.MapOpenAIResponses("science-concurrent-workflow");
 
 // Map the agents HTTP endpoints
 app.MapAgentDiscovery("/agents");

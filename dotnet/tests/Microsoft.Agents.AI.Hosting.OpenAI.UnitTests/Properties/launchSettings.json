@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "Microsoft.Agents.AI.Hosting.OpenAI.UnitTests": {
+      "commandName": "Project",
+      "launchBrowser": true,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "applicationUrl": "https://localhost:60491;http://localhost:60492"
+    }
+  }
+}
