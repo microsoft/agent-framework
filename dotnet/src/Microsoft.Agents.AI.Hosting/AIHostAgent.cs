@@ -1,11 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Generic;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Hosting;
@@ -24,9 +21,8 @@ namespace Microsoft.Agents.AI.Hosting;
 /// as all thread operations work through the base <see cref="AgentThread"/> abstraction.
 /// </para>
 /// </remarks>
-public class AIHostAgent : AIAgent
+public class AIHostAgent : DelegatingAIAgent
 {
-    private readonly AIAgent _innerAgent;
     private readonly IAgentThreadStore _threadStore;
 
     /// <summary>
@@ -38,30 +34,10 @@ public class AIHostAgent : AIAgent
     /// <paramref name="innerAgent"/> or <paramref name="threadStore"/> is <see langword="null"/>.
     /// </exception>
     public AIHostAgent(AIAgent innerAgent, IAgentThreadStore threadStore)
+        : base(innerAgent)
     {
-        this._innerAgent = Throw.IfNull(innerAgent);
         this._threadStore = Throw.IfNull(threadStore);
     }
-
-    /// <inheritdoc/>
-    public override string Id => this._innerAgent.Id;
-
-    /// <inheritdoc/>
-    public override string? Name => this._innerAgent.Name;
-
-    /// <inheritdoc/>
-    public override string? Description => this._innerAgent.Description;
-
-    /// <inheritdoc/>
-    public override object? GetService(Type serviceType, object? serviceKey = null)
-        => base.GetService(serviceType, serviceKey) ?? this._innerAgent.GetService(serviceType, serviceKey);
-
-    /// <inheritdoc/>
-    public override AgentThread GetNewThread() => this._innerAgent.GetNewThread();
-
-    /// <inheritdoc/>
-    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
-        => this._innerAgent.DeserializeThread(serializedThread, jsonSerializerOptions);
 
     /// <summary>
     /// Gets an existing agent thread for the specified conversation, or creates a new one if none exists.
@@ -75,7 +51,7 @@ public class AIHostAgent : AIAgent
     {
         _ = Throw.IfNullOrWhitespace(conversationId);
 
-        return this._threadStore.GetThreadAsync(this._innerAgent, conversationId, cancellationToken);
+        return this._threadStore.GetThreadAsync(this.InnerAgent, conversationId, cancellationToken);
     }
 
     /// <summary>
@@ -92,22 +68,6 @@ public class AIHostAgent : AIAgent
         _ = Throw.IfNullOrWhitespace(conversationId);
         _ = Throw.IfNull(thread);
 
-        return this._threadStore.SaveThreadAsync(this._innerAgent, conversationId, thread, cancellationToken);
+        return this._threadStore.SaveThreadAsync(this.InnerAgent, conversationId, thread, cancellationToken);
     }
-
-    /// <inheritdoc/>
-    public override Task<AgentRunResponse> RunAsync(
-        IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
-        AgentRunOptions? options = null,
-        CancellationToken cancellationToken = default)
-        => this._innerAgent.RunAsync(messages, thread, options, cancellationToken);
-
-    /// <inheritdoc/>
-    public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
-        IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
-        AgentRunOptions? options = null,
-        CancellationToken cancellationToken = default)
-        => this._innerAgent.RunStreamingAsync(messages, thread, options, cancellationToken);
 }
