@@ -4,6 +4,7 @@ using A2A.AspNetCore;
 using AgentWebChat.AgentHost;
 using AgentWebChat.AgentHost.Utilities;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.DevUI;
 using Microsoft.Agents.AI.Hosting;
 using Microsoft.Agents.AI.Hosting.A2A.AspNetCore;
 using Microsoft.Agents.AI.Workflows;
@@ -82,6 +83,8 @@ builder.AddSequentialWorkflow("science-sequential-workflow", [chemistryAgent, ma
 builder.AddConcurrentWorkflow("science-concurrent-workflow", [chemistryAgent, mathsAgent, literatureAgent]).AddAsAIAgent();
 builder.AddOpenAIResponses();
 
+builder.AddDevUI();
+
 var app = builder.Build();
 
 app.MapOpenApi();
@@ -109,6 +112,13 @@ app.MapOpenAIChatCompletions("knights-and-knaves");
 
 // Map the agents HTTP endpoints
 app.MapAgentDiscovery("/agents");
+
+// DevUI: discovery and endpoints
+app.MapEntities();
+if (app.Environment.IsDevelopment())
+{
+    app.MapDevUI(); // Available at /devui
+}
 
 app.MapDefaultEndpoints();
 app.Run();
