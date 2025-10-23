@@ -35,11 +35,11 @@
     <PackageVersion Include="System.Threading.Channels" Version="9.0.10" />
     <PackageVersion Include="System.Threading.Tasks.Extensions" Version="4.6.3" />
     <!-- OpenTelemetry -->
-    <PackageVersion Include="OpenTelemetry" Version="1.12.0" />
+    <PackageVersion Include="OpenTelemetry" Version="1.13.1" />
     <PackageVersion Include="OpenTelemetry.Api" Version="1.13.1" />
-    <PackageVersion Include="OpenTelemetry.Exporter.Console" Version="1.12.0" />
-    <PackageVersion Include="OpenTelemetry.Exporter.InMemory" Version="1.12.0" />
-    <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.12.0" />
+    <PackageVersion Include="OpenTelemetry.Exporter.Console" Version="1.13.1" />
+    <PackageVersion Include="OpenTelemetry.Exporter.InMemory" Version="1.13.1" />
+    <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.13.1" />
     <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.12.0" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.12.0" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.12.0" />
@@ -94,7 +94,7 @@
     <!-- Community -->
     <PackageVersion Include="System.Linq.Async" Version="6.0.3" />
     <!-- Test -->
-    <PackageVersion Include="FluentAssertions" Version="8.7.1" />
+    <PackageVersion Include="FluentAssertions" Version="8.8.0" />
     <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="9.0.10" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.0.0" />
     <PackageVersion Include="Moq" Version="[4.18.4]" />
