@@ -621,7 +621,7 @@ class VideoTranslationClient:
             subtitleMaxCharCountPerSegment=subtitle_max_char_count_per_segment,
         )
 
-        if webvtt_file_kind is not None and webvtt_file_kind is not None:
+        if webvtt_file_kind is not None and webvtt_file_url is not None:
             translation_create_input_body.webvttFile = WebvttFileDefinition(
                 kind=webvtt_file_kind,
                 url=webvtt_file_url,
