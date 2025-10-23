@@ -314,7 +314,7 @@ class Runner:
 
             executor = self._executors.get(executor_id)
             if not executor:
-                raise ValueError(f"Executor {executor_id} not found during state restoration; skipping.")
+                raise ValueError(f"Executor {executor_id} not found during state restoration.")
 
             restored = False
             restore_method = getattr(executor, "restore_state", None)
@@ -328,7 +328,7 @@ class Runner:
                 raise ValueError(f"Executor {executor_id} restore_state failed: {ex}") from ex
 
             if not restored:
-                raise ValueError(f"Executor {executor_id} does not support state restoration; skipping.")
+                logger.debug(f"Executor {executor_id} does not support state restoration; skipping.")
 
     def _parse_edge_runners(self, edge_runners: list[EdgeRunner]) -> dict[str, list[EdgeRunner]]:
         """Parse the edge runners of the workflow into a mapping where each source executor ID maps to its edge runners.
