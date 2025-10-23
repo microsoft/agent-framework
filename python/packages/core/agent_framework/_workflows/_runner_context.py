@@ -347,6 +347,6 @@ class InProcRunnerContext:
 
         return {
             "messages": serializable_messages,
-            "shared_state": encode_checkpoint_value(await shared_state.clone_inner_state()),
+            "shared_state": encode_checkpoint_value(await shared_state.serialize()),
             "iteration_count": iteration_count,
         }
