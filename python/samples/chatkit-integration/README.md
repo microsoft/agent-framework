@@ -177,8 +177,8 @@ def render_weather_widget(data: WeatherData) -> WidgetRoot:
     # Creates a Card widget with weather information
     return Card(key="weather", padding=0, children=[...])
 
-# app.py - Integration with agent
-from agent_framework_chatkit import stream_widget
+# app.py - Usage with agent and widget streaming
+# The stream_widget() helper function is defined directly in app.py
 
 # After agent response, create and stream widget
 widget = render_weather_widget(weather_data)
@@ -186,13 +186,13 @@ async for event in stream_widget(thread_id=thread.id, widget=widget):
     yield event
 ```
 
-The `agent_framework_chatkit` package provides the `stream_widget()` helper that:
+The `stream_widget()` helper function in `app.py`:
 
 - Creates a `WidgetItem` with the provided widget
 - Wraps it in a `ThreadItemDoneEvent`
 - Yields it as a ChatKit stream event
 
-This approach keeps the widget logic separate from the agent logic while maintaining clean integration.
+This approach demonstrates widget streaming directly in application code, keeping it simple and easy to customize.
 
 ## Project Structure
 

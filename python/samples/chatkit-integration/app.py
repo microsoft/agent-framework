@@ -12,7 +12,7 @@ and interactive weather widgets.
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from random import randint
-from typing import Annotated, Any
+from typing import Annotated, Any, Callable
 
 import uvicorn
 from azure.identity import AzureCliCredential
@@ -24,12 +24,14 @@ from pydantic import Field
 # Agent Framework imports
 from agent_framework import ChatAgent, ChatMessage, Role
 from agent_framework.azure import AzureOpenAIChatClient
-from agent_framework_chatkit import simple_to_agent_input, stream_agent_response, stream_widget
+from agent_framework.chatkit import simple_to_agent_input, stream_agent_response
 
 # ChatKit imports
 from chatkit.actions import Action
+from chatkit.store import StoreItemType, default_generate_id
 from chatkit.server import ChatKitServer
-from chatkit.types import ThreadMetadata, ThreadStreamEvent, UserMessageItem, WidgetItem
+from chatkit.types import ThreadItemDoneEvent, ThreadMetadata, ThreadStreamEvent, UserMessageItem, WidgetItem
+from chatkit.widgets import WidgetRoot
 
 # Local imports
 from store import SQLiteStore
@@ -46,6 +48,39 @@ from weather_widget import (
 _last_weather_data: WeatherData | None = None
 # Global flag to show city selector
 _show_city_selector: bool = False
+
+
+async def stream_widget(
+    thread_id: str,
+    widget: WidgetRoot,
+    copy_text: str | None = None,
+    generate_id: Callable[[StoreItemType], str] = default_generate_id,
+) -> AsyncIterator[ThreadStreamEvent]:
+    """Stream a ChatKit widget as a ThreadStreamEvent.
+
+    This helper function creates a ChatKit widget item and yields it as a
+    ThreadItemDoneEvent that can be consumed by the ChatKit UI.
+
+    Args:
+        thread_id: The ChatKit thread ID for the conversation.
+        widget: The ChatKit widget to display.
+        copy_text: Optional text representation of the widget for copy/paste.
+        generate_id: Optional function to generate IDs for ChatKit items.
+
+    Yields:
+        ThreadStreamEvent: ChatKit event containing the widget.
+    """
+    item_id = generate_id("message")
+
+    widget_item = WidgetItem(
+        id=item_id,
+        thread_id=thread_id,
+        created_at=datetime.now(),
+        widget=widget,
+        copy_text=copy_text,
+    )
+
+    yield ThreadItemDoneEvent(type="thread.item.done", item=widget_item)
 
 
 def get_weather(

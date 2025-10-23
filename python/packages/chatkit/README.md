@@ -6,8 +6,6 @@ Specifically, it mirrors the [Agent SDK integration](https://github.com/openai/c
 
 - `stream_agent_response`: A helper to convert a streamed `AgentRunResponseUpdate`
   from a Microsoft Agent Framework agent that implements `AgentProtocol` to ChatKit events.
-- `stream_widget`: A helper to stream ChatKit widget events triggered by the agent, typically
-  as effects of tool calls.
 - `ThreadItemConverter`: A extendable helper class to convert ChatKit thread items to
   `ChatMessage` objects that can be consumed by an Agent Framework agent.
 - `simple_to_agent_input`: A helper function that uses the default implementation
