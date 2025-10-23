@@ -39,12 +39,12 @@ class SharedState:
         async with self._shared_state_lock:
             self._state.clear()
 
-    async def serialize(self) -> dict[str, Any]:
+    async def export_state(self) -> dict[str, Any]:
         """Get a serialized copy of the entire shared state."""
         async with self._shared_state_lock:
             return dict(self._state)
 
-    async def load_serialized_state(self, state: dict[str, Any]) -> None:
+    async def import_state(self, state: dict[str, Any]) -> None:
         """Populate the shared state from a serialized state dictionary.
 
         This replaces the entire current state with the provided state.
