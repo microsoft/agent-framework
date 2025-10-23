@@ -104,10 +104,18 @@ export type {
   ResponseWorkflowEventComplete,
   ResponseTraceEventComplete,
   ResponseOutputItemAddedEvent,
+  ResponseOutputItemDoneEvent,
+  ResponseCreatedEvent,
+  ResponseInProgressEvent,
   ResponseCompletedEvent,
+  ResponseFailedEvent,
   ResponseFunctionResultComplete,
   StructuredEvent,
+  WorkflowItem,
+  ExecutorActionItem,
 } from "./openai";
+
+export { isExecutorAction } from "./openai";
 
 // Re-export Agent Framework types
 export type {

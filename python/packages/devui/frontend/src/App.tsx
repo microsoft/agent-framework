@@ -241,6 +241,8 @@ export default function App() {
 
   // Show error state if loading failed
   if (entityError) {
+    const currentBackendUrl = apiClient.getBaseUrl();
+
     return (
       <div className="h-screen flex flex-col bg-background">
         <AppHeader
@@ -290,7 +292,7 @@ export default function App() {
 
               <p className="text-xs text-muted-foreground">
                 Default:{" "}
-                <span className="font-mono">http://localhost:8080</span>
+                <span className="font-mono">{currentBackendUrl}</span>
               </p>
             </div>
 
