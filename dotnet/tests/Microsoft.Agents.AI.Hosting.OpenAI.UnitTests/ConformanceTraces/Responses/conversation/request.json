@@ -1,0 +1,6 @@
+{
+  "model": "gpt-4o-mini",
+  "input": "What is its population?",
+  "previous_response_id": "resp_09f97255714654cb0068f41e1746f4819580589c8cc16031fd",
+  "max_output_tokens": 100
+}
