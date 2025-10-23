@@ -13,12 +13,70 @@ This sample demonstrates how to integrate Microsoft Agent Framework with OpenAI 
 
 ## Architecture
 
-```
-┌─────────────────┐      ┌──────────────────┐      ┌─────────────────┐
-│  React Frontend │ ───▶ │  FastAPI Backend │ ───▶ │  Azure OpenAI   │
-│  (ChatKit UI)   │ ◀─── │ (Agent Framework)│ ◀─── │   (GPT-4o)      │
-│ + File Upload   │      │   + Widgets      │      │ with Vision     │
-└─────────────────┘      └──────────────────┘      └─────────────────┘
+```mermaid
+graph TB
+    subgraph Frontend["React Frontend (ChatKit UI)"]
+        UI[ChatKit Components]
+        Upload[File Upload]
+    end
+
+    subgraph Backend["FastAPI Server"]
+        FastAPI[FastAPI Endpoints]
+
+        subgraph ChatKit["WeatherChatKitServer<br/>(ChatKitServer)"]
+            Respond[respond method]
+            Action[action method]
+        end
+
+        subgraph Stores["Data & Storage Layer"]
+            SQLite[SQLiteStore<br/>Store Protocol]
+            AttStore[FileBasedAttachmentStore<br/>AttachmentStore Protocol]
+            DB[(SQLite DB<br/>chatkit_demo.db)]
+            Files[/uploads directory/]
+        end
+
+        subgraph Integration["Agent Framework Integration"]
+            Converter[ThreadItemConverter]
+            Streamer[stream_agent_response]
+            Agent[ChatAgent]
+        end
+
+        Widgets[Widget Rendering<br/>render_weather_widget<br/>render_city_selector_widget]
+    end
+
+    subgraph Azure["Azure OpenAI"]
+        GPT4[GPT-4o<br/>with Vision]
+    end
+
+    UI -->|HTTP POST /chatkit| FastAPI
+    Upload -->|HTTP POST /upload/id| FastAPI
+
+    FastAPI --> ChatKit
+
+    ChatKit -->|save/load threads| SQLite
+    ChatKit -->|save/load attachments| AttStore
+    ChatKit -->|convert messages| Converter
+
+    SQLite -.->|persist| DB
+    AttStore -.->|save files| Files
+    AttStore -.->|save metadata| SQLite
+
+    Converter -->|ChatMessage array| Agent
+    Agent -->|AgentRunResponseUpdate| Streamer
+    Streamer -->|ThreadStreamEvent| ChatKit
+
+    ChatKit --> Widgets
+    Widgets -->|WidgetItem| ChatKit
+
+    Agent <-->|Chat Completions API| GPT4
+
+    ChatKit -->|ThreadStreamEvent| FastAPI
+    FastAPI -->|SSE Stream| UI
+
+    style ChatKit fill:#e1f5ff
+    style Stores fill:#fff4e1
+    style Integration fill:#f0e1ff
+    style Azure fill:#e1ffe1
 ```
 
 ### Server Implementation
