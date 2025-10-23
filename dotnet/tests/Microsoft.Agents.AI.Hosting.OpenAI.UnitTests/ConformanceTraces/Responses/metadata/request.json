@@ -1,0 +1,13 @@
+{
+  "model": "gpt-4o-mini",
+  "input": "Explain quantum computing in simple terms.",
+  "max_output_tokens": 150,
+  "temperature": 0.7,
+  "top_p": 0.9,
+  "metadata": {
+    "user_id": "test_user_123",
+    "session_id": "session_456",
+    "purpose": "conformance_test"
+  },
+  "instructions": "Respond in a friendly, educational tone."
+}

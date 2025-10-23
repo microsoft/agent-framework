@@ -52,6 +52,7 @@ from ._executor import (
     handler,
 )
 from ._function_executor import FunctionExecutor, executor
+from ._handoff import HandoffBuilder, HandoffUserInputRequest
 from ._magentic import (
     MagenticAgentDeltaEvent,
     MagenticAgentExecutor,
@@ -98,7 +99,8 @@ from ._validation import (
     validate_workflow_graph,
 )
 from ._viz import WorkflowViz
-from ._workflow import Workflow, WorkflowBuilder, WorkflowRunResult
+from ._workflow import Workflow, WorkflowRunResult
+from ._workflow_builder import WorkflowBuilder
 from ._workflow_context import WorkflowContext
 from ._workflow_executor import WorkflowExecutor
 
@@ -126,6 +128,8 @@ __all__ = [
     "FileCheckpointStorage",
     "FunctionExecutor",
     "GraphConnectivityError",
+    "HandoffBuilder",
+    "HandoffUserInputRequest",
     "InMemoryCheckpointStorage",
     "InProcRunnerContext",
     "MagenticAgentDeltaEvent",

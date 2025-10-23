@@ -7,8 +7,8 @@ from textwrap import shorten
 from typing import Any
 
 from ._checkpoint import WorkflowCheckpoint
+from ._checkpoint_encoding import decode_checkpoint_value
 from ._request_info_executor import PendingRequestDetails, RequestInfoMessage, RequestResponse
-from ._runner_context import _decode_checkpoint_value  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +90,7 @@ def _pending_requests_from_checkpoint(
         for message in message_list:
             if not isinstance(message, Mapping):
                 continue
-            payload = _decode_checkpoint_value(message.get("data"))
+            payload = decode_checkpoint_value(message.get("data"))
             _merge_message_payload(pending, payload, message)
 
     return list(pending.values())

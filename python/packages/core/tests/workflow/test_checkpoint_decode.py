@@ -4,9 +4,9 @@ from dataclasses import dataclass  # noqa: I001
 from typing import Any, cast
 
 from agent_framework._workflows._request_info_executor import RequestInfoMessage, RequestResponse
-from agent_framework._workflows._runner_context import (  # type: ignore
-    _decode_checkpoint_value,  # type: ignore
-    _encode_checkpoint_value,  # type: ignore
+from agent_framework._workflows._checkpoint_encoding import (
+    decode_checkpoint_value,
+    encode_checkpoint_value,
 )
 from agent_framework._workflows._typing_utils import is_instance_of
 
@@ -23,8 +23,8 @@ def test_decode_dataclass_with_nested_request() -> None:
         request_id="abc",
     )
 
-    encoded = _encode_checkpoint_value(original)
-    decoded = cast(RequestResponse[SampleRequest, str], _decode_checkpoint_value(encoded))
+    encoded = encode_checkpoint_value(original)
+    decoded = cast(RequestResponse[SampleRequest, str], decode_checkpoint_value(encoded))
 
     assert isinstance(decoded, RequestResponse)
     assert decoded.data == "approve"

@@ -175,7 +175,7 @@ Sub-packages are comprised of two parts, the code itself and the dependencies, t
 - Subpackage naming should also follow this, so in principle a package name is `<vendor/folder>-<feature/brand>`, so `google-gemini`, `azure-purview`, `microsoft-copilotstudio`, etc. For smaller vendors, where it's less likely to have a multitude of connectors, we can skip the feature/brand part, so `mem0`, `redis`, etc.
 - For Microsoft services we will have two vendor folders, `azure` and `microsoft`, where `azure` contains all Azure services, while `microsoft` contains other Microsoft services, such as Copilot Studio Agents.
 
-This setup was discussed at length and the decision is captured in [ADR-0007](../decisions/0007-python-subpackages.md).
+This setup was discussed at length and the decision is captured in [ADR-0008](../decisions/0008-python-subpackages.md).
 
 #### Evolving the package structure
 For each of the advanced components, we have two reason why we may split them into a folder, with an `__init__.py` and optionally a `_files.py`:

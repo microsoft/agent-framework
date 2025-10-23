@@ -201,7 +201,7 @@ public static class WorkflowVisualizer
                 var target = fanInData.SinkId;
                 var sources = fanInData.SourceIds.ToList();
                 var digest = ComputeFanInDigest(target, sources);
-                var nodeId = $"fan_in::{target}::{digest}";
+                var nodeId = $"fan_in_{target}_{digest}";
 
                 // Avoid duplicates - the same fan-in edge group might appear in multiple source executor lists
                 if (seen.Add(nodeId))

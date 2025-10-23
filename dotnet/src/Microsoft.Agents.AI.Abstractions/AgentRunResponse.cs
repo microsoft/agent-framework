@@ -74,6 +74,7 @@ public class AgentRunResponse
         this.RawRepresentation = response;
         this.ResponseId = response.ResponseId;
         this.Usage = response.Usage;
+        this.ContinuationToken = response.ContinuationToken;
     }
 
     /// <summary>
@@ -160,6 +161,23 @@ public class AgentRunResponse
     public string? ResponseId { get; set; }
 
     /// <summary>
+    /// Gets or sets the continuation token for getting the result of a background agent response.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="AIAgent"/> implementations that support background responses will return
+    /// a continuation token if background responses are allowed in <see cref="AgentRunOptions.AllowBackgroundResponses"/>
+    /// and the result of the response has not been obtained yet. If the response has completed and the result has been obtained,
+    /// the token will be <see langword="null"/>.
+    /// <para>
+    /// This property should be used in conjunction with <see cref="AgentRunOptions.ContinuationToken"/> to
+    /// continue to poll for the completion of the response. Pass this token to
+    /// <see cref="AgentRunOptions.ContinuationToken"/> on subsequent calls to <see cref="AIAgent.RunAsync(AgentThread?, AgentRunOptions?, System.Threading.CancellationToken)"/>
+    /// to poll for completion.
+    /// </para>
+    /// </remarks>
+    public object? ContinuationToken { get; set; }
+
+    /// <summary>
     /// Gets or sets the timestamp indicating when this response was created.
     /// </summary>
     /// <value>
@@ -234,7 +252,7 @@ public class AgentRunResponse
         {
             extra = new AgentRunResponseUpdate
             {
-                AdditionalProperties = this.AdditionalProperties
+                AdditionalProperties = this.AdditionalProperties,
             };
 
             if (this.Usage is { } usage)
