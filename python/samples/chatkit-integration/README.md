@@ -23,7 +23,7 @@ graph TB
     subgraph Backend["FastAPI Server"]
         FastAPI[FastAPI Endpoints]
 
-        subgraph ChatKit["WeatherChatKitServer<br/>(ChatKitServer)"]
+        subgraph ChatKit["WeatherChatKitServer"]
             Respond[respond method]
             Action[action method]
         end
@@ -44,8 +44,8 @@ graph TB
         Widgets[Widget Rendering<br/>render_weather_widget<br/>render_city_selector_widget]
     end
 
-    subgraph Azure["Azure OpenAI"]
-        GPT4[GPT-4o<br/>with Vision]
+    subgraph Azure["Azure AI"]
+        Foundry[GPT-5<br/>with Vision]
     end
 
     UI -->|HTTP POST /chatkit| FastAPI
@@ -68,7 +68,7 @@ graph TB
     ChatKit --> Widgets
     Widgets -->|WidgetItem| ChatKit
 
-    Agent <-->|Chat Completions API| GPT4
+    Agent <-->|Chat Completions API| Foundry
 
     ChatKit -->|ThreadStreamEvent| FastAPI
     FastAPI -->|SSE Stream| UI
