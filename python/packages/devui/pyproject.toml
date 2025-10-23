@@ -1,7 +1,7 @@
 [project]
 name = "agent-framework-devui"
 description = "Debug UI for Microsoft Agent Framework with OpenAI-compatible API server."
-authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
+authors = [{ name = "Microsoft", email = "af-support@microsoft.com" }]
 readme = "README.md"
 requires-python = ">=3.10"
 version = "1.0.0b251016"
@@ -11,15 +11,15 @@ urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
 urls.release_notes = "https://github.com/microsoft/agent-framework/releases?q=tag%3Apython-1&expanded=true"
 urls.issues = "https://github.com/microsoft/agent-framework/issues"
 classifiers = [
-  "License :: OSI Approved :: MIT License",
-  "Development Status :: 4 - Beta",
-  "Intended Audience :: Developers",
-  "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.10",
-  "Programming Language :: Python :: 3.11",
-  "Programming Language :: Python :: 3.12",
-  "Programming Language :: Python :: 3.13",
-  "Typing :: Typed",
+    "License :: OSI Approved :: MIT License",
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
 ]
 dependencies = [
     "agent-framework-core",
@@ -40,7 +40,7 @@ prerelease = "if-necessary-or-explicit"
 environments = [
     "sys_platform == 'darwin'",
     "sys_platform == 'linux'",
-    "sys_platform == 'win32'"
+    "sys_platform == 'win32'",
 ]
 
 [tool.uv-dynamic-versioning]
@@ -57,13 +57,11 @@ filterwarnings = []
 extend = "../../pyproject.toml"
 
 [tool.coverage.run]
-omit = [
-    "**/__init__.py"
-]
+omit = ["**/__init__.py"]
 
 [tool.pyright]
 extend = "../../pyproject.toml"
-exclude = ['tests']
+exclude = ['tests', 'frontend/node_modules/**']
 
 [tool.mypy]
 plugins = ['pydantic.mypy']

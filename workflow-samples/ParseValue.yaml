@@ -1,0 +1,39 @@
+kind: Workflow
+trigger:
+  kind: OnConversationStart
+  id: workflow_demo
+  actions:
+
+    - kind: SetVariable
+      id: set-variable-text
+      variable: Local.ItemsText
+      value: '["apple","banana","cat"]'
+
+
+    - kind: SendActivity
+      id: display-text
+      activity: |-
+        (1)
+        {Local.ItemsText}
+
+    - kind: ParseValue
+      id: parse-list
+      variable: Local.ItemsList
+      value: =Local.ItemsText
+      valueType: Table
+
+    - kind: SendActivity
+      id: display-list
+      activity: |-
+        (2)
+        {Local.ItemsList}
+
+    - kind: Foreach
+      id: loop-list
+      items: =Local.ItemsList
+      value: Local.LoopValue
+      index: Local.LoopIndex
+      actions:
+        - kind: SendActivity
+          id: display-list-item
+          activity: "{Local.LoopValue} (x{Local.LoopIndex + 1})"

@@ -25,7 +25,7 @@ export function AboutModal({ open, onOpenChange }: AboutModalProps) {
           <DialogTitle>About DevUI</DialogTitle>
         </DialogHeader>
 
-        <DialogClose onClose={() => onOpenChange(false)} />
+        <DialogClose />
 
         <div className="px-6 pb-6 space-y-4">
           <p className="text-sm text-muted-foreground">

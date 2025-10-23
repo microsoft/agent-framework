@@ -122,7 +122,7 @@ openai>=1.0.0
   return (
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="w-[800px] max-w-[90vw]">
-        <DialogClose onClose={onClose} />
+        <DialogClose />
         <DialogHeader className="p-6 pb-2">
           <DialogTitle className="flex items-center gap-2">
             <Rocket className="h-5 w-5" />

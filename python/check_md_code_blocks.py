@@ -4,6 +4,7 @@
 
 import argparse
 from enum import Enum
+import glob
 import logging
 import tempfile
 import subprocess  # nosec
@@ -113,7 +114,18 @@ def check_code_blocks(markdown_file_paths: list[str], exclude_patterns: list[str
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Check code blocks in Markdown files for syntax errors.")
     # Argument is a list of markdown files containing glob patterns
-    parser.add_argument("markdown_files", nargs="+", help="Markdown files to check.")
+    parser.add_argument("markdown_files", nargs="+", help="Markdown files or glob patterns to check.")
     parser.add_argument("--exclude", action="append", help="Exclude files containing this pattern.")
     args = parser.parse_args()
-    check_code_blocks(args.markdown_files, args.exclude)
+    
+    # Expand glob patterns
+    expanded_files = []
+    for pattern in args.markdown_files:
+        if '*' in pattern:
+            # Use glob to expand the pattern
+            matches = glob.glob(pattern, recursive=True)
+            expanded_files.extend(matches)
+        else:
+            expanded_files.append(pattern)
+    
+    check_code_blocks(expanded_files, args.exclude)
