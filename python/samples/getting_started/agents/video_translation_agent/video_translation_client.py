@@ -473,7 +473,7 @@ class VideoTranslationClient:
         if response.status not in [200]:
             error = response.data.decode('utf-8')
             return False, error, None
-        response_translations_json = response.json(), ""
+        response_translations_json = response.json()
 
         return True, None, response_translations_json
 
