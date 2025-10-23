@@ -37,6 +37,11 @@ public static class MicrosoftAgentAIHostingA2AEndpointRouteBuilderExtensions
     /// <param name="path">The route group to use for A2A endpoints.</param>
     /// <param name="agentCard">Agent card info to return on query.</param>
     /// <returns>Configured <see cref="ITaskManager"/> for A2A integration.</returns>
+    /// <remarks>
+    /// This method can be used to access A2A agents that support the
+    /// <see href="https://github.com/a2aproject/A2A/blob/main/docs/topics/agent-discovery.md#2-curated-registries-catalog-based-discovery">Curated Registries (Catalog-Based Discovery)</see>
+    /// discovery mechanism.
+    /// </remarks>
     public static ITaskManager MapA2A(this IEndpointRouteBuilder endpoints, string agentName, string path, AgentCard agentCard)
     {
         var agent = endpoints.ServiceProvider.GetRequiredKeyedService<AIAgent>(agentName);
@@ -65,6 +70,11 @@ public static class MicrosoftAgentAIHostingA2AEndpointRouteBuilderExtensions
     /// <param name="path">The route group to use for A2A endpoints.</param>
     /// <param name="agentCard">Agent card info to return on query.</param>
     /// <returns>Configured <see cref="ITaskManager"/> for A2A integration.</returns>
+    /// <remarks>
+    /// This method can be used to access A2A agents that support the
+    /// <see href="https://github.com/a2aproject/A2A/blob/main/docs/topics/agent-discovery.md#2-curated-registries-catalog-based-discovery">Curated Registries (Catalog-Based Discovery)</see>
+    /// discovery mechanism.
+    /// </remarks>
     public static ITaskManager MapA2A(this IEndpointRouteBuilder endpoints, AIAgent agent, string path, AgentCard agentCard)
     {
         var loggerFactory = endpoints.ServiceProvider.GetRequiredService<ILoggerFactory>();
