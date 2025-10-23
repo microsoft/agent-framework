@@ -270,8 +270,8 @@ class InProcRunnerContext:
         checkpoint = WorkflowCheckpoint(
             workflow_id=self._workflow_id,
             messages=state["messages"],
-            shared_state=state.get("shared_state"),
-            iteration_count=state.get("iteration_count"),
+            shared_state=state["shared_state"],
+            iteration_count=state["iteration_count"],
             metadata=metadata or {},
         )
         checkpoint_id = await self._checkpoint_storage.save_checkpoint(checkpoint)
