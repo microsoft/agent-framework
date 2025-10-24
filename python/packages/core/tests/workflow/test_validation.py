@@ -183,7 +183,7 @@ def test_graph_connectivity_isolated_executors():
     assert "executor3" in str(exc_info.value)
 
 
-def test_start_executor_not_in_graph():
+def test_disconnected_start_executor_not_in_graph():
     executor1 = StringExecutor(id="executor1")
     executor2 = StringExecutor(id="executor2")
     executor3 = StringExecutor(id="executor3")  # Not in graph
@@ -191,7 +191,7 @@ def test_start_executor_not_in_graph():
     with pytest.raises(GraphConnectivityError) as exc_info:
         WorkflowBuilder().add_edge(executor1, executor2).set_start_executor(executor3).build()
 
-    assert "not present in the workflow graph" in str(exc_info.value)
+    assert "The following executors are unreachable from the start executor 'executor3'" in str(exc_info.value)
 
 
 def test_missing_start_executor():

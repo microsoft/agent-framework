@@ -868,6 +868,8 @@ class SwitchCaseEdgeGroup(FanOutEdgeGroup):
         return payload
 
 
+@EdgeGroup.register
+@dataclass(init=False)
 class InternalEdgeGroup(EdgeGroup):
     """Special edge group used to route internal messages to executors.
 

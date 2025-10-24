@@ -145,7 +145,7 @@ def deserialize_type(serialized_type_string: str) -> type:
     """
     import importlib
 
-    module_name, _, type_name = serialized_type_string.partition(".")
+    module_name, _, type_name = serialized_type_string.rpartition(".")
     module = importlib.import_module(module_name)
 
     return getattr(module, type_name)

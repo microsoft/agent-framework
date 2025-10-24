@@ -2149,11 +2149,10 @@ class MagenticWorkflow:
         self,
         checkpoint_id: str,
         checkpoint_storage: CheckpointStorage | None = None,
-        responses: dict[str, Any] | None = None,
     ) -> AsyncIterable[WorkflowEvent]:
         """Resume orchestration from a checkpoint and stream resulting events."""
         await self._validate_checkpoint_participants(checkpoint_id, checkpoint_storage)
-        async for event in self._workflow.run_stream_from_checkpoint(checkpoint_id, checkpoint_storage, responses):
+        async for event in self._workflow.run_stream_from_checkpoint(checkpoint_id, checkpoint_storage):
             yield event
 
     async def run_with_string(self, task_text: str) -> WorkflowRunResult:
@@ -2203,11 +2202,10 @@ class MagenticWorkflow:
         self,
         checkpoint_id: str,
         checkpoint_storage: CheckpointStorage | None = None,
-        responses: dict[str, Any] | None = None,
     ) -> WorkflowRunResult:
         """Resume orchestration from a checkpoint and collect all resulting events."""
         events: list[WorkflowEvent] = []
-        async for event in self.run_stream_from_checkpoint(checkpoint_id, checkpoint_storage, responses):
+        async for event in self.run_stream_from_checkpoint(checkpoint_id, checkpoint_storage):
             events.append(event)
         return WorkflowRunResult(events)
 

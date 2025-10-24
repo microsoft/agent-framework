@@ -540,13 +540,13 @@ class _UserInputGateway(Executor):
             prompt=self._prompt,
             source_executor_id=self.id,
         )
-        await ctx.request_info(request, HandoffUserInputRequest, Any)
+        await ctx.request_info(request, HandoffUserInputRequest, object)
 
     @response_handler
     async def resume_from_user(
         self,
         original_request: HandoffUserInputRequest,
-        response: Any,
+        response: object,
         ctx: WorkflowContext[_ConversationWithUserInput],
     ) -> None:
         """Convert user input responses back into chat messages and resume the workflow."""
