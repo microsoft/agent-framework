@@ -18,7 +18,7 @@ public static class HostedAgentBuilderExtensions
     /// <returns>The same <paramref name="builder"/> instance, configured to use an in-memory thread store.</returns>
     public static IHostedAgentBuilder WithInMemoryThreadStore(this IHostedAgentBuilder builder)
     {
-        builder.HostApplicationBuilder.Services.AddKeyedSingleton<IAgentThreadStore>(builder.Name, new InMemoryAgentThreadStore());
+        builder.ServiceCollection.AddKeyedSingleton<IAgentThreadStore>(builder.Name, new InMemoryAgentThreadStore());
         return builder;
     }
 
@@ -31,7 +31,7 @@ public static class HostedAgentBuilderExtensions
     /// <returns>The same host agent builder instance, allowing for method chaining.</returns>
     public static IHostedAgentBuilder WithThreadStore(this IHostedAgentBuilder builder, IAgentThreadStore store)
     {
-        builder.HostApplicationBuilder.Services.AddKeyedSingleton(builder.Name, store);
+        builder.ServiceCollection.AddKeyedSingleton(builder.Name, store);
         return builder;
     }
 
@@ -44,7 +44,7 @@ public static class HostedAgentBuilderExtensions
     /// <returns>The same host agent builder instance, enabling further configuration.</returns>
     public static IHostedAgentBuilder WithThreadStore(this IHostedAgentBuilder builder, Func<IServiceProvider, string, IAgentThreadStore> createAgentThreadStore)
     {
-        builder.HostApplicationBuilder.Services.AddKeyedSingleton(builder.Name, (sp, key) =>
+        builder.ServiceCollection.AddKeyedSingleton(builder.Name, (sp, key) =>
         {
             Throw.IfNull(key);
             var keyString = key as string;

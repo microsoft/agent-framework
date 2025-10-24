@@ -22,9 +22,9 @@ public static class AIAgentExtensions
     /// <param name="loggerFactory">The logger factory to use for creating <see cref="ILogger"/> instances.</param>
     /// <param name="agentThreadStore">The store to store thread contents and metadata.</param>
     /// <returns>The configured <see cref="TaskManager"/>.</returns>
-    public static TaskManager MapA2A(
+    public static ITaskManager MapA2A(
         this AIAgent agent,
-        TaskManager? taskManager = null,
+        ITaskManager? taskManager = null,
         ILoggerFactory? loggerFactory = null,
         IAgentThreadStore? agentThreadStore = null)
     {
@@ -35,7 +35,7 @@ public static class AIAgentExtensions
             innerAgent: agent,
             threadStore: agentThreadStore ?? new NoopAgentThreadStore());
 
-        taskManager ??= new();
+        taskManager ??= new TaskManager();
         taskManager.OnMessageReceived += OnMessageReceivedAsync;
         return taskManager;
 
@@ -70,10 +70,10 @@ public static class AIAgentExtensions
     /// <param name="loggerFactory">The logger factory to use for creating <see cref="ILogger"/> instances.</param>
     /// <param name="agentThreadStore">The store to store thread contents and metadata.</param>
     /// <returns>The configured <see cref="TaskManager"/>.</returns>
-    public static TaskManager MapA2A(
+    public static ITaskManager MapA2A(
         this AIAgent agent,
         AgentCard agentCard,
-        TaskManager? taskManager = null,
+        ITaskManager? taskManager = null,
         ILoggerFactory? loggerFactory = null,
         IAgentThreadStore? agentThreadStore = null)
     {
