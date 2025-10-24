@@ -1,52 +1,238 @@
-# Basic agentic chat — implementation plan
+## User Story
 
-## Scenario goal
-Establish the smallest end-to-end slice where a .NET AG-UI `AGUIClient` sends a user message, the ASP.NET Core hosting layer relays it to an agent built on Microsoft.Extensions.AI abstractions, and the streamed response is pushed back to the client while preserving conversation state.
+**Scenario:** Basic client-to-server text streaming
 
-## References reviewed
-- `llms-full.txt` for AG-UI event, message, and state semantics.
-- Microsoft.Extensions.AI knowledge (ChatClient abstractions, `AIAgent`, `ChatClientAgentRunOptions`) — unable to query `#microsoft.docs.mcp`, relying on existing API familiarity.
-- Legacy prototype under `dotnet\src\bin\dotnet` for SSE handling patterns, AG-UI DTO shaping, and HttpClient wiring techniques to reuse/adapt for the production API.
+- **Given** an AG-UI client with an active thread and a single user text message
+- **When** the client posts the message to the AG-UI server entrypoint
+- **Then** the server emits a well-formed lifecycle event sequence and streams an assistant text response back to the client
+- **And** the client aggregates the streamed text into a completed assistant message and adds it to the conversation history
 
-## Minimum deliverables
-1. **Client package** `Microsoft.Agents.AI.AGUI`
-   - Public surface limited to `AGUIClient : AIAgent`. Constructor accepts `HttpClient httpClient, string id, string description, IEnumerable<ChatMessage> messages, JsonElement state`, internally issuing `CreateNewThread()` from the base class.
-   - `RunAsync(ChatClientAgentRunOptions input)` → `IAsyncEnumerable<AgentRunResponse>` and `RunStreamingAsync(ChatClientAgentRunOptions input)` → `IAsyncEnumerable<AgentRunResponseUpdate)`; both translate `tools`, `context`, and `forwardedProps` into `ChatOptions` (even if initial scenario omits actual tool usage).
-   - SSE consumer lifted from the prototype concept: map AG-UI text/lifecycle events into `AgentRunResponse`/`AgentRunResponseUpdate`, store the raw event inside `RawRepresentation`, and maintain assistant message/state snapshots.
-2. **Server package** `Microsoft.Agents.AI.Hosting.AGUI.AspNetCore`
-   - `IEndpointRouteBuilder.MapAGUIAgent(string path, Func<IEnumerable<ChatMessage>, IEnumerable<AITool>, JsonElement, IEnumerable<KeyValuePair<string, string>>, JsonElement, AIAgent> agentFactory)` extension configuring a `/runs` endpoint.
-   - Input translation aligning with `RunAgentInput`: `threadId` → `AgentThread GetNewThread(string conversationId)`, `messages` → `IEnumerable<ChatMessage>`, `tools` → `IEnumerable<AITool>`, `context`/`state` → `AIContext`, `forwardedProps` → `ChatOptions` additional properties, `runId` drives emitted lifecycle events.
-   - Stream AG-UI events directly over SSE (pattern borrowed from the prototype), synthesizing lifecycle events (`RUN_STARTED`, `RUN_FINISHED`, `RUN_ERROR`) when the downstream agent omits them.
-3. **Integration test project** scaffold proving client/server round-trip with WebApplicationFactory (initially leveraging simple echo behavior, no tool-call coverage).
+## Minimal Implementation Surface
 
-## Client flow (minimal happy path)
-1. `AGUIClient` constructor captures injectable `HttpClient`, agent metadata, current history, and state, delegating thread creation through base `AIAgent`.
-2. `RunAsync` / `RunStreamingAsync`:
-   - Build `ChatOptions` from `ChatClientAgentRunOptions` (merge tools/context/forwarded props even if empty) and prepare `RunAgentInput`.
-   - Issue POST to server endpoint with `Accept: text/event-stream` using the legacy prototype’s resilient SSE reader for guidance.
-3. Stream handling:
-   - Aggregate `TEXT_MESSAGE_START`, `TEXT_MESSAGE_CONTENT`, `TEXT_MESSAGE_END` into `AgentRunResponseUpdate` deltas, emitting through base mechanisms, and store original AG-UI event under `RawRepresentation`.
-   - Relay lifecycle events into updates, ensuring assistant message persistence once terminal `RUN_FINISHED` arrives.
-4. Upon completion, append the assistant message to the local conversation log and update stored state (no tool call artifacts required for this slice).
+- **Integration Test:** End-to-end WebApplicationFactory test proving text streaming succeeds for a single user message.
+	```csharp
+	public sealed class BasicStreamingTests : IClassFixture<WebApplicationFactory<Program>>
+	{
+		private readonly HttpClient _client;
 
-## Server flow (minimal happy path)
-1. `MapAGUIAgent` registers the route that deserializes `RunAgentInput` and invokes the provided factory to obtain an `AIAgent`.
-2. Emit `RUN_STARTED` before invoking the agent to guarantee lifecycle signaling, mirroring the prototype’s guard behavior.
-3. Execute the agent run, projecting textual deltas to `TEXT_MESSAGE_*`; forward any lifecycle signals verbatim, and synthesize missing terminal events (`RUN_FINISHED` or `RUN_ERROR`) based on completion outcome.
-4. Stream the resulting events via SSE using the shared encoder (reuse the prototype encoder semantics), ensuring proper headers and flush behavior.
+		public BasicStreamingTests(WebApplicationFactory<Program> factory);
 
-## Shared types (initial subset)
-- `RunAgentInput` (threadId, runId, messages, context, forwardedProps, state).
-- Events: `RunStartedEvent`, `RunFinishedEvent`, `RunErrorEvent`, `StepStartedEvent`, `StepFinishedEvent`, `TextMessageStart/Content/End`.
-- Messages: `UserMessage`, `AssistantMessage`.
-- Result wrapper for unmatched events exposing `RawRepresentation`.
+		[Fact]
+		public async Task ClientReceivesStreamedAssistantMessageAsync()
+		{
+			// Arrange
+			using AGUIAgent agent = new AGUIAgent(this._client, "assistant", "Sample assistant", [], JsonDocument.Parse("null").RootElement);
+			AgentThread thread = agent.GetNewThread();
+			ChatMessage userMessage = new ChatMessage(ChatRole.User, "hello");
 
-## Testing & validation checkpoints
-- Client unit test: simulate SSE stream using HttpMessageHandler to verify `AGUIClient` produces `AgentRunResponseUpdate` instances and final message persistence.
-- Server unit test: exercise `MapAGUIAgent` with a fake `AIAgent` yielding text deltas to confirm event translation and synthesized lifecycle events.
-- Integration test: WebApplicationFactory with minimal pipeline + real `AGUIClient`, asserting that the assistant reply echoed by the server lands in the client’s conversation history.
+			// Act
+			await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync([userMessage], thread, new AgentRunOptions(), CancellationToken.None))
+			{
+				// buffer updates
+			}
 
-## Open items / future steps
-- Formalize `RawRepresentation` structure to support downstream inspection.
-- Extend error propagation coverage (`RUN_ERROR` to `AgentRunResponseUpdate`) once the base flow is stable.
-- Capture authentication pluggability for `HttpClient` once end-to-end happy path is complete.
+			// Assert
+			Assert.Collection(thread.Messages,
+				message => Assert.Equal(ChatRole.User, message.Role),
+				message => Assert.Equal(ChatRole.Assistant, message.Role));
+		}
+	}
+	```
+- **Client API surface:**
+	- `AGUIAgent` extends `AIAgent`, accepts MEAI primitives (agent id, description, existing messages, state) and projects them onto AG-UI payloads.
+	- Overrides of `RunAsync`/`RunStreamingAsync` return MEAI `AgentRunResponse`/`AgentRunResponseUpdate`, embedding AG-UI lifecycle updates inside `ChatResponseUpdate` content.
+	- Internal translation layer maps incoming AG-UI events (`RunStarted`, `TextMessage*`, `RunFinished`, errors) into MEAI constructs (messages, `RunStartedContent`, etc.).
+- **Server hosting glue:**
+	- Single `MapAGUIAgent` extension registering the AG-UI endpoint and delegating to a user-supplied factory that returns an `AIAgent` built from MEAI abstractions.
+	- Internal adapter translating AG-UI `RunAgentInput` (thread, run, messages, tools, context, forwarded props, state) into MEAI types before invoking the agent, and wrapping MEAI streaming responses back into AG-UI lifecycle/text events.
+- **Shared contract:**
+	- Minimal subset of AG-UI DTOs required for lifecycle and text events (no tools, state deltas yet) plus mapping utilities for MEAI conversions.
+- **Test doubles:**
+	- Fake `ChatClientAgent` implementation returning deterministic text chunks to validate streaming.
+
+## Mapping Notes
+
+- Lifecycle events (`RunStarted`, `RunFinished`, `RunError`, `StepStarted`, `StepFinished`) surface to consumers through `ChatResponseUpdate` content (e.g., `RunStartedContent`).
+- Thread state and other AG-UI-specific payloads map into `AgentRunOptions.ChatOptions` via tools, context, and forwarded properties; state management can be represented as a dedicated client-side tool invocation.
+- Thread identifiers translate into `AgentThread CreateNewThread()` usage; AG-UI run identifiers remain internal to streaming updates.
+- Server responses stream via ASP.NET Core's `TypedResults.ServerSentEvents`, which expects `SseItem<T>` payloads mapped from AG-UI events.
+- Basic input validation relies on `[Required]`/`[MinLength]` data annotations applied to the `RunAgentInput` transport type.
+
+## C# Skeleton Surface
+
+```csharp
+public sealed class AGUIAgent : AIAgent
+{
+	public AGUIAgent(HttpClient httpClient, string id, string description, IEnumerable<ChatMessage> messages, JsonElement state);
+	public override AgentThread GetNewThread();
+	public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null);
+	public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default);
+	public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default);
+}
+
+public static class AGUIEndpointRouteBuilderExtensions
+{
+	public static IEndpointConventionBuilder MapAGUIAgent(this IEndpointRouteBuilder endpoints, string pattern, Func<IEnumerable<ChatMessage>, IEnumerable<AITool>, JsonElement, IEnumerable<KeyValuePair<string, string>>, JsonElement, AIAgent> agentFactory);
+}
+
+public sealed class RunStartedContent : AIContent
+{
+	public RunStartedContent(string threadId, string runId);
+}
+
+public sealed class RunFinishedContent : AIContent
+{
+	public RunFinishedContent(string threadId, string runId, string? result);
+}
+
+public sealed class RunErrorContent : AIContent
+{
+	public RunErrorContent(string message, string? code);
+}
+
+public sealed class StepStartedContent : AIContent
+{
+	public StepStartedContent(string stepName);
+}
+
+public sealed class StepFinishedContent : AIContent
+{
+	public StepFinishedContent(string stepName);
+}
+
+public sealed class BasicStreamingTests : IClassFixture<WebApplicationFactory<Program>>
+{
+	public BasicStreamingTests(WebApplicationFactory<Program> factory);
+	[Fact]
+	public Task ClientReceivesStreamedAssistantMessageAsync();
+}
+
+internal sealed class AGUIEventStreamProcessor
+{
+	public AGUIEventStreamProcessor();
+	public AgentRunResponse MapRunStarted(RunStartedEvent evt);
+	public AgentRunResponseUpdate MapTextEvents(IReadOnlyList<BaseEvent> events);
+	public AgentRunResponse MapRunFinished(RunFinishedEvent evt);
+	public AgentRunResponse MapRunError(RunErrorEvent evt);
+}
+
+internal abstract class BaseEvent
+{
+}
+
+internal sealed class RunStartedEvent : BaseEvent
+{
+	public string ThreadId { get; set; }
+	public string RunId { get; set; }
+}
+
+internal sealed class RunErrorEvent : BaseEvent
+{
+	public string Message { get; set; }
+	public string? Code { get; set; }
+}
+
+internal sealed class TextMessageStartEvent : BaseEvent
+{
+	public string MessageId { get; set; }
+	public string Role { get; set; }
+}
+
+internal sealed class TextMessageContentEvent : BaseEvent
+{
+	public string MessageId { get; set; }
+	public string Delta { get; set; }
+}
+
+internal sealed class TextMessageEndEvent : BaseEvent
+{
+	public string MessageId { get; set; }
+}
+
+internal sealed class RunFinishedEvent : BaseEvent
+{
+	public string ThreadId { get; set; }
+	public string RunId { get; set; }
+	public string? Result { get; set; }
+}
+
+internal sealed class StepStartedEvent : BaseEvent
+{
+	public string StepName { get; set; }
+}
+
+internal sealed class StepFinishedEvent : BaseEvent
+{
+	public string StepName { get; set; }
+}
+
+internal sealed class RunAgentInput
+{
+	[Required]
+	public string ThreadId { get; set; }
+
+	[Required]
+	public string RunId { get; set; }
+
+	public JsonElement State { get; set; }
+
+	[Required]
+	[MinLength(1)]
+	public IReadOnlyList<ChatMessage> Messages { get; set; }
+
+	[Required]
+	public IReadOnlyList<AITool> Tools { get; set; }
+
+	[Required]
+	public IReadOnlyDictionary<string, string> Context { get; set; }
+
+	public JsonElement ForwardedProperties { get; set; }
+}
+
+internal sealed class AGUIRequestProcessor
+{
+	public AGUIRequestProcessor(AIAgent agent);
+	public IAsyncEnumerable<BaseEvent> ExecuteAsync(IEnumerable<ChatMessage> messages, IEnumerable<AITool> tools, JsonElement state, IEnumerable<KeyValuePair<string, string>> contextValues, JsonElement forwardedProps, CancellationToken cancellationToken);
+}
+
+internal sealed class FakeChatClientAgent : ChatClientAgent
+{
+	public FakeChatClientAgent();
+	public override Task<StreamingResponse> GetStreamingResponseAsync(ChatRequest request, CancellationToken cancellationToken);
+}
+```
+
+## Implementation Sketches
+
+### MapAGUIAgent
+
+```csharp
+public static IEndpointConventionBuilder MapAGUIAgent(this IEndpointRouteBuilder endpoints, string pattern, Func<IEnumerable<ChatMessage>, IEnumerable<AITool>, JsonElement, IEnumerable<KeyValuePair<string, string>>, JsonElement, AIAgent> agentFactory)
+{
+	// 1. Register a POST endpoint on the supplied pattern
+	var builder = endpoints.MapPost(pattern, async (HttpContext context, RunAgentInput input, CancellationToken cancellationToken) =>
+	{
+		// 2. Obtain required services and options from HttpContext.RequestServices
+		// 3. Model binding + data annotations ensure required fields are present (threadId, messages, etc.)
+		var (messages, tools, state, contextValues, forwardedProps) = MapRunAgentInput(input);
+		// 4. Invoke agentFactory with messages, tools, context, forwarded props, state to get AIAgent
+		AIAgent agent = ResolveAgent(agentFactory, context, messages, tools, state, contextValues, forwardedProps);
+		// 5. Create AGUIRequestProcessor and execute it to obtain IAsyncEnumerable<BaseEvent>
+		IAsyncEnumerable<BaseEvent> events = CreateEventStream(agent, messages, tools, state, contextValues, forwardedProps, cancellationToken);
+		// 6. Convert protocol events into SSE payloads expected by TypedResults.ServerSentEvents
+		IAsyncEnumerable<SseItem<string>> sseStream = MapEventsToSseItems(events, cancellationToken);
+		// 7. Return the built-in server-sent events result (TypedResults.ServerSentEvents)
+		return TypedResults.ServerSentEvents(sseStream, cancellationToken);
+	});
+
+	return builder;
+}
+```
+
+```csharp
+// Helper signatures referenced above
+private static (IEnumerable<ChatMessage> Messages, IEnumerable<AITool> Tools, JsonElement State, IEnumerable<KeyValuePair<string, string>> ContextValues, JsonElement ForwardedProperties) MapRunAgentInput(RunAgentInput input);
+private static AIAgent ResolveAgent(Func<IEnumerable<ChatMessage>, IEnumerable<AITool>, JsonElement, IEnumerable<KeyValuePair<string, string>>, JsonElement, AIAgent> agentFactory, HttpContext context, IEnumerable<ChatMessage> messages, IEnumerable<AITool> tools, JsonElement state, IEnumerable<KeyValuePair<string, string>> contextValues, JsonElement forwardedProps);
+private static IAsyncEnumerable<BaseEvent> CreateEventStream(AIAgent agent, IEnumerable<ChatMessage> messages, IEnumerable<AITool> tools, JsonElement state, IEnumerable<KeyValuePair<string, string>> contextValues, JsonElement forwardedProps, CancellationToken cancellationToken);
+private static IAsyncEnumerable<SseItem<string>> MapEventsToSseItems(IAsyncEnumerable<BaseEvent> events, CancellationToken cancellationToken);
+```
