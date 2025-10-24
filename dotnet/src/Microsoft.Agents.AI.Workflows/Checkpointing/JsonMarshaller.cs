@@ -18,6 +18,7 @@ internal sealed class JsonMarshaller : IWireMarshaller<JsonElement>
         this._internalOptions.Converters.Add(new ExecutorIdentityConverter());
         this._internalOptions.Converters.Add(new ScopeKeyConverter());
         this._internalOptions.Converters.Add(new EdgeIdConverter());
+        this._internalOptions.Converters.Add(new CheckpointInfoConverter());
 
         this._externalOptions = serializerOptions;
     }

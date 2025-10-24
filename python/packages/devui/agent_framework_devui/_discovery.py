@@ -127,7 +127,7 @@ class EntityDiscovery:
 
         # Cache the loaded object
         self._loaded_objects[entity_id] = entity_obj
-        logger.info(f"✅ Successfully loaded entity: {entity_id} (type: {enriched_info.type})")
+        logger.info(f"Successfully loaded entity: {entity_id} (type: {enriched_info.type})")
 
         return entity_obj
 
@@ -217,7 +217,7 @@ class EntityDiscovery:
         if entity_info and "lazy_loaded" in entity_info.metadata:
             entity_info.metadata["lazy_loaded"] = False
 
-        logger.info(f"♻️  Entity invalidated: {entity_id} (will reload on next access)")
+        logger.info(f"Entity invalidated: {entity_id} (will reload on next access)")
 
     def invalidate_all(self) -> None:
         """Invalidate all cached entities.

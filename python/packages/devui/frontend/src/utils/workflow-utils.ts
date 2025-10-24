@@ -307,6 +307,7 @@ export function applyDagreLayout(
 
 /**
  * Process workflow events and extract node updates
+ * Handles both new standard OpenAI events and legacy workflow events
  */
 export function processWorkflowEvents(
   events: ExtendedResponseStreamEvent[],
@@ -316,7 +317,43 @@ export function processWorkflowEvents(
   let hasWorkflowStarted = false;
 
   events.forEach((event) => {
-    if (
+    // Handle new standard OpenAI events
+    if (event.type === "response.output_item.added" || event.type === "response.output_item.done") {
+      const item = (event as any).item;
+      if (item && item.type === "executor_action" && item.executor_id) {
+        const executorId = item.executor_id;
+
+        let state: ExecutorState = "pending";
+        let error: string | undefined;
+
+        if (event.type === "response.output_item.added") {
+          state = "running";
+        } else if (event.type === "response.output_item.done") {
+          if (item.status === "completed") {
+            state = "completed";
+          } else if (item.status === "failed") {
+            state = "failed";
+            error = item.error ? (typeof item.error === "string" ? item.error : JSON.stringify(item.error)) : "Execution failed";
+          } else if (item.status === "cancelled") {
+            state = "cancelled";
+          }
+        }
+
+        nodeUpdates[executorId] = {
+          nodeId: executorId,
+          state,
+          data: item.result,
+          error,
+          timestamp: new Date().toISOString(),
+        };
+      }
+    }
+    // Handle workflow lifecycle events
+    else if (event.type === "response.created" || event.type === "response.in_progress") {
+      hasWorkflowStarted = true;
+    }
+    // Legacy support for older backends
+    else if (
       event.type === "response.workflow_event.complete" &&
       "data" in event &&
       event.data
@@ -417,7 +454,20 @@ export function getCurrentlyExecutingExecutors(
 
   // Process events to find the most recent event for each executor
   events.forEach((event) => {
-    if (
+    // Handle new standard OpenAI events
+    if (event.type === "response.output_item.added" || event.type === "response.output_item.done") {
+      const item = (event as any).item;
+      if (item && item.type === "executor_action" && item.executor_id) {
+        const executorId = item.executor_id;
+
+        executorTimeline[executorId] = {
+          lastEvent: event.type === "response.output_item.added" ? "ExecutorInvokedEvent" : "ExecutorCompletedEvent",
+          timestamp: new Date().toISOString(),
+        };
+      }
+    }
+    // Legacy support for older backends
+    else if (
       event.type === "response.workflow_event.complete" &&
       "data" in event &&
       event.data

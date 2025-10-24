@@ -116,6 +116,39 @@ function getFunctionResultFromEvent(event: ExtendedResponseStreamEvent): {
   return null;
 }
 
+// Helper to get a stable timestamp for an event
+// Uses event's own timestamp fields if available
+function getEventTimestamp(event: ExtendedResponseStreamEvent): string {
+  // Priority 1: Check for top-level timestamp (DevUI custom events like function_result.complete)
+  if ('timestamp' in event && typeof event.timestamp === 'string') {
+    return new Date(event.timestamp).toLocaleTimeString();
+  }
+
+  // Priority 2: Check for nested data.timestamp (workflow/trace events)
+  if ('data' in event && event.data && typeof event.data === 'object' && 'timestamp' in event.data) {
+    const dataTimestamp = (event.data as any).timestamp;
+    if (typeof dataTimestamp === 'string') {
+      return new Date(dataTimestamp).toLocaleTimeString();
+    }
+  }
+
+  // Priority 3: Check for created_at in response object (lifecycle events)
+  if ('response' in event && event.response && typeof event.response === 'object' && 'created_at' in event.response) {
+    const createdAt = (event.response as any).created_at;
+    if (typeof createdAt === 'number') {
+      return new Date(createdAt * 1000).toLocaleTimeString();
+    }
+  }
+
+  // Fallback: use sequence number as label (better than showing same time for all)
+  if ('sequence_number' in event && typeof event.sequence_number === 'number') {
+    return `#${event.sequence_number}`;
+  }
+
+  // Last resort: hide timestamp by returning empty string
+  return '';
+}
+
 // Helper function to accumulate OpenAI events into meaningful units
 function processEventsForDisplay(
   events: ExtendedResponseStreamEvent[]
@@ -551,7 +584,7 @@ function EventItem({ event }: EventItemProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const Icon = getEventIcon(event.type);
   const colorClass = getEventColor(event.type);
-  const timestamp = new Date().toLocaleTimeString();
+  const timestamp = getEventTimestamp(event);
   const summary = getEventSummary(event);
 
   // Determine if this event has expandable content
@@ -1487,7 +1520,7 @@ function ToolsTab({ events }: { events: ExtendedResponseStreamEvent[] }) {
 }
 
 function ToolEventItem({ event }: { event: ExtendedResponseStreamEvent }) {
-  const timestamp = new Date().toLocaleTimeString();
+  const timestamp = getEventTimestamp(event);
 
   // Check if this is a function call or result event
   const isFunctionCall = event.type === "response.function_call.complete";

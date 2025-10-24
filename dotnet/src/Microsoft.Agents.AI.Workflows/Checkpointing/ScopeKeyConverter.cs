@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Diagnostics.CodeAnalysis;
-using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using System.Text.RegularExpressions;
@@ -40,52 +39,6 @@ internal sealed partial class ScopeKeyConverter : JsonConverterDictionarySupport
         return new ScopeKey(Unescape(executorId)!,
                             Unescape(scopeName, allowNullAndPad: true),
                             Unescape(key)!);
-    }
-
-    [return: NotNull]
-    private static string Escape(string? value, bool allowNullAndPad = false, [CallerArgumentExpression(nameof(value))] string componentName = "ScopeKey")
-    {
-        if (!allowNullAndPad && value is null)
-        {
-            throw new JsonException($"Invalid {componentName} '{value}'. Expecting non-null string.");
-        }
-
-        if (value is null)
-        {
-            return string.Empty;
-        }
-
-        if (allowNullAndPad)
-        {
-            return $"@{value.Replace("|", "||")}";
-        }
-
-        return $"{value.Replace("|", "||")}";
-    }
-
-    private static string? Unescape([DisallowNull] string value, bool allowNullAndPad = false, [CallerArgumentExpression(nameof(value))] string componentName = "ScopeKey")
-    {
-        if (value.Length == 0)
-        {
-            if (!allowNullAndPad)
-            {
-                throw new JsonException($"Invalid {componentName} '{value}'. Expecting empty string or a value that is prefixed with '@'.");
-            }
-
-            return null;
-        }
-
-        if (allowNullAndPad && value[0] != '@')
-        {
-            throw new JsonException($"Invalid {componentName} component '{value}'. Expecting empty string or a value that is prefixed with '@'.");
-        }
-
-        if (allowNullAndPad)
-        {
-            value = value.Substring(1);
-        }
-
-        return value.Replace("||", "|");
     }
 
     protected override string Stringify([DisallowNull] ScopeKey value)
