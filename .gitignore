@@ -204,3 +204,11 @@ agents.md
 # AI
 .claude/
 WARP.md
+
+# Frontend
+**/frontend/node_modules/
+**/frontend/.vite/
+**/frontend/dist/
+
+# Database files
+*.db
