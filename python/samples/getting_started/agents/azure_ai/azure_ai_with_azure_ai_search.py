@@ -18,27 +18,22 @@ Prerequisites:
 3. The search index "hotels-sample-index" should exist in your Azure AI Search service
    (you can create this using the Azure portal with sample hotel data)
 
-Environment variables:
-- AZURE_AI_PROJECT_ENDPOINT: Your Azure AI project endpoint
-- AZURE_AI_MODEL_DEPLOYMENT_NAME: The name of your model deployment
+NOTE: To ensure consistent search tool usage:
+- Include explicit instructions for the agent to use the search tool
+- Mention the search requirement in your queries
+- Use `tool_choice="required"` to force tool usage (uncomment in agent config)
 """
-
-# Test queries to verify Azure AI Search is working with the hotels-sample-index
-USER_INPUTS = [
-    "Search the hotel database for Stay-Kay City Hotel and give me detailed information.",
-]
 
 
 async def main() -> None:
     """Main function demonstrating Azure AI agent with Azure AI Search capabilities."""
 
     # 1. Create Azure AI Search tool using HostedFileSearchTool
-    # The tool will automatically use the default Azure AI Search connection from your project
     azure_ai_search_tool = HostedFileSearchTool(
         additional_properties={
             "index_name": "hotels-sample-index",  # Name of your search index
             "query_type": "simple",  # Use simple search
-            "top_k": 10,  # Get more comprehensive results
+            "top_k": 3,
         },
     )
 
@@ -48,23 +43,44 @@ async def main() -> None:
         ChatAgent(
             chat_client=client,
             name="HotelSearchAgent",
-            instructions=("You are a helpful travel assistant that searches hotel information."),
+            instructions=(
+                "You are a helpful agent that only gives hotel information "
+                "based on the search index using the search tool."
+            ),
             tools=azure_ai_search_tool,
+            # tool_choice="required",
         ) as agent,
     ):
         print("=== Azure AI Agent with Azure AI Search ===")
         print("This agent can search through hotel data to help you find accommodations.\n")
 
         # 3. Simulate conversation with the agent
-        for user_input in USER_INPUTS:
-            print(f"User: {user_input}")
-            print("Agent: ", end="", flush=True)
+        user_input = "Use the search tool to find detailed information about Stay-Kay City Hotel."
+        print(f"User: {user_input}")
+        print("Agent: ", end="", flush=True)
 
-            # Stream the response for better user experience
-            async for chunk in agent.run_stream(user_input):
-                if chunk.text:
-                    print(chunk.text, end="", flush=True)
-            print("\n" + "=" * 50 + "\n")
+        # Stream the response and collect citations
+        citations = []
+        async for chunk in agent.run_stream(user_input):
+            if chunk.text:
+                print(chunk.text, end="", flush=True)
+
+            # Collect citations from Azure AI Search responses
+            if hasattr(chunk, "contents") and chunk.contents:
+                for content in chunk.contents:
+                    if hasattr(content, "annotations") and content.annotations:
+                        citations.extend(content.annotations)  # type: ignore
+
+        print()
+
+        # Display citation details from Azure AI Search
+        if citations:
+            print("\nCitations from Azure AI Search:")
+            for i, citation in enumerate(citations, 1):  # type: ignore
+                print(f"  [{i}] Document: {citation.title}")  # type: ignore
+                print(f"      Reference: {citation.url}")  # type: ignore
+
+        print("\n" + "=" * 50 + "\n")
 
         print("Hotel search conversation completed!")
 
