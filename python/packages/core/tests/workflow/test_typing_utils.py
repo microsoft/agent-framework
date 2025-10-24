@@ -3,7 +3,6 @@
 from dataclasses import dataclass
 from typing import Any, Generic, TypeVar, Union
 
-from agent_framework._workflows import RequestInfoMessage, RequestResponse
 from agent_framework._workflows._typing_utils import is_instance_of
 
 
@@ -89,22 +88,6 @@ def test_custom_type() -> None:
     instance = CustomClass(10)
     assert is_instance_of(instance, CustomClass)
     assert not is_instance_of(instance, dict)
-
-
-def test_request_response_type() -> None:
-    """Test RequestResponse generic type checking."""
-
-    request_instance = RequestResponse[RequestInfoMessage, str](
-        data="approve",
-        request_id="req-1",
-        original_request=RequestInfoMessage(),
-    )
-
-    class CustomRequestInfoMessage(RequestInfoMessage):
-        info: str
-
-    assert is_instance_of(request_instance, RequestResponse[RequestInfoMessage, str])
-    assert not is_instance_of(request_instance, RequestResponse[CustomRequestInfoMessage, str])
 
 
 def test_custom_generic_type() -> None:
