@@ -7,10 +7,10 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from agent_framework import (
     AgentExecutor,
+    AgentRunEvent,
     ChatAgent,
     WorkflowBuilder,
 )
-from agent_framework import AgentRunEvent
 from agent_framework.lab.lightning import AgentFrameworkTracer
 from agent_framework.openai import OpenAIChatClient
 from agentlightning import TracerTraceToTriplet

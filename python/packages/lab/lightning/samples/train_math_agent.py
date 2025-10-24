@@ -18,9 +18,7 @@ import string
 from typing import TypedDict, cast
 
 import sympy  # type: ignore[import-untyped,reportMissingImports]
-from agent_framework._agents import ChatAgent
-from agent_framework._mcp import MCPStdioTool
-from agent_framework._types import AgentRunResponse
+from agent_framework import AgentRunResponse, ChatAgent, MCPStdioTool
 from agent_framework.lab.lightning import AgentFrameworkTracer
 from agent_framework.openai import OpenAIChatClient
 from agentlightning import LLM, Dataset, Trainer, rollout
