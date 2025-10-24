@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>$(ProjectsCoreTargetFrameworks)</TargetFrameworks>
+    <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugCoreTargetFrameworks)</TargetFrameworks>
+    <RootNamespace>Microsoft.Agents.AI.Hosting.AGUI.AspNetCore</RootNamespace>
+    <VersionSuffix>preview</VersionSuffix>
+  </PropertyGroup>
+
+  <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
+
+  <PropertyGroup>
+    <!-- NuGet Package Settings -->
+    <Title>Microsoft Agent Framework Hosting AG-UI ASP.NET Core</Title>
+    <Description>Provides Microsoft Agent Framework support for hosting AG-UI agents in an ASP.NET Core context.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Microsoft.Agents.AI.AGUI\Microsoft.Agents.AI.AGUI.csproj" />
+    <ProjectReference Include="..\Microsoft.Agents.AI.Hosting\Microsoft.Agents.AI.Hosting.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+    <PackageReference Include="System.Net.ServerSentEvents" />
+    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" />
+    <PackageReference Include="System.Text.Json" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\Microsoft.Agents.AI.AGUI\Shared\**\*.cs" LinkBase="Shared" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.UnitTests" />
+    <InternalsVisibleTo Include="Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.IntegrationTests" />
+  </ItemGroup>
+
+</Project>
