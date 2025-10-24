@@ -7,7 +7,21 @@ from typing import Any
 
 
 class SharedState:
-    """A class to manage shared state in a workflow."""
+    """A class to manage shared state in a workflow.
+
+    SharedState provides thread-safe access to workflow state data that needs to be
+    shared across executors during workflow execution.
+
+    Reserved Keys:
+        The following keys are reserved for internal framework use and should not be
+        modified by user code:
+
+        - `_executor_state`: Stores executor state for checkpointing (managed by Runner)
+
+    Warning:
+        Do not use keys starting with underscore (_) as they may be reserved for
+        internal framework operations.
+    """
 
     def __init__(self) -> None:
         """Initialize the shared state."""
