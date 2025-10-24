@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Linq;
 using Azure.AI.Agents.Persistent;
 using Microsoft.Shared.Diagnostics;
 
@@ -18,8 +19,10 @@ internal static class HostedMcpServerToolExtensions
     {
         Throw.IfNull(tool);
         Throw.IfNull(tool.ServerName);
-        Throw.IfNull(tool.Url);
+        Throw.IfNull(tool.ServerAddress);
 
-        return new MCPToolDefinition(tool.ServerName, tool.Url.ToString());
+        var definition = new MCPToolDefinition(tool.ServerName, tool.ServerAddress);
+        tool.AllowedTools?.ToList().ForEach(definition.AllowedTools.Add);
+        return definition;
     }
 }
