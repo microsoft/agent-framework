@@ -26,30 +26,16 @@ internal static class PromptAgentExtensions
             {
                 CodeInterpreterTool => ((CodeInterpreterTool)tool).CreateCodeInterpreterToolDefinition(),
                 FunctionTool => ((FunctionTool)tool).CreateFunctionToolDefinition(),
-                //FileSearchTool => ((FileSearchTool)tool).CreateFileSearchTool(),
-                //WebSearchTool => ((WebSearchTool)tool).CreateWebSearchTool(),
-                //McpTool => ((McpTool)tool).CreateMcpTool(),
+                FileSearchTool => ((FileSearchTool)tool).CreateFileSearchToolDefinition(),
+                WebSearchTool => ((WebSearchTool)tool).CreateBingGroundingToolDefinition(),
+                McpTool => ((McpTool)tool).CreateMcpToolDefinition(),
+                // TODO: Add other tool types when implemented
+                // AzureAISearch
+                // AzureFunction
+                // OpenApi
                 _ => throw new NotSupportedException($"Unable to create tool definition because of unsupported tool type: {tool.Kind}"),
             };
         }).ToList() ?? [];
-        /*
-        return promptAgent.Tools.Select<AgentTool, Azure.AI.Agents.Persistent.ToolDefinition>(tool =>
-        {
-            var type = tool.ExtensionData?.GetString("type");
-            return type switch
-            {
-                CodeInterpreterType => tool.CreateCodeInterpreterToolDefinition(),
-                AzureAISearchType => tool.CreateAzureAISearchToolDefinition(),
-                AzureFunctionType => tool.CreateAzureFunctionToolDefinition(),
-                BingGroundingType => tool.CreateBingGroundingToolDefinition(),
-                FileSearchType => tool.CreateFileSearchToolDefinition(),
-                FunctionType => tool.CreateFunctionToolDefinition(),
-                OpenApiType => tool.CreateOpenApiToolDefinition(),
-                McpType => tool.CreateMcpToolDefinition(),
-                _ => throw new NotSupportedException($"Unable to create tool definition because of unsupported tool type: {type}, supported tool types are: {string.Join(",", s_validToolTypes)}"),
-            };
-        }) ?? [];
-        */
     }
 
     /// <summary>
@@ -60,7 +46,6 @@ internal static class PromptAgentExtensions
     {
         Throw.IfNull(promptAgent);
 
-        /*
         var toolResources = new ToolResources();
 
         var codeInterpreter = promptAgent.GetCodeInterpreterToolResource();
@@ -73,109 +58,27 @@ internal static class PromptAgentExtensions
         {
             toolResources.FileSearch = fileSearch;
         }
-        var azureAISearch = promptAgent.GetAzureAISearchResource();
-        if (azureAISearch is not null)
-        {
-            toolResources.AzureAISearch = azureAISearch;
-        }
-        */
+        //var azureAISearch = promptAgent.GetAzureAISearchResource();
+        //if (azureAISearch is not null)
+        //{
+        //    toolResources.AzureAISearch = azureAISearch;
+        //}
 
         return new ToolResources();
     }
 
-    /*
-    /// <summary>
-    /// Return the temperature which corresponds with the provided <see cref="PromptAgent"/>.
-    /// </summary>
-    /// <param name="promptAgent">Instance of <see cref="PromptAgent"/></param>
-    internal static float? GetTemperature(this PromptAgent promptAgent)
-    {
-        Throw.IfNull(promptAgent);
-
-        var temperature = promptAgent.ExtensionData?.GetPropertyOrNull<NumberDataValue>(InitializablePropertyPath.Create("model.options.temperature"));
-        return (float?)temperature?.Value;
-    }
-
-    /// <summary>
-    /// Return the top_p which corresponds with the provided <see cref="PromptAgent"/>.
-    /// </summary>
-    /// <param name="promptAgent">Instance of <see cref="PromptAgent"/></param>
-    internal static float? GetTopP(this PromptAgent promptAgent)
-    {
-        Throw.IfNull(promptAgent);
-
-        var topP = promptAgent.ExtensionData?.GetPropertyOrNull<NumberDataValue>(InitializablePropertyPath.Create("model.options.top_p"));
-        return (float?)topP?.Value;
-    }
-
-    /// <summary>
-    /// Return the response_format which corresponds with the provided <see cref="PromptAgent"/>.
-    /// </summary>
-    /// <param name="promptAgent">Instance of <see cref="PromptAgent"/></param>
-    internal static BinaryData? GetResponseFormat(this PromptAgent promptAgent)
-    {
-        Throw.IfNull(promptAgent);
-
-        try
-        {
-            var responseFormatStr = promptAgent.ExtensionData?.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("model.options.response_format"));
-            if (responseFormatStr?.Value is not null)
-            {
-                return new BinaryData(responseFormatStr.Value);
-            }
-        }
-        catch (InvalidCastException)
-        {
-            // Ignore and try next
-        }
-
-        var responseFormRec = promptAgent.ExtensionData?.GetPropertyOrNull<RecordDataValue>(InitializablePropertyPath.Create("model.options.response_format"));
-        if (responseFormRec is not null)
-        {
-#pragma warning disable IL2026 // Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code
-#pragma warning disable IL3050 // Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
-            var json = JsonSerializer.Serialize(responseFormRec, ElementSerializer.CreateOptions());
-#pragma warning restore IL3050 // Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
-#pragma warning restore IL2026 // Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code
-            return new BinaryData(json);
-        }
-
-        return null;
-    }
-
     #region private
-    private const string AzureAISearchType = "azure_ai_search";
-    private const string AzureFunctionType = "azure_function";
-    private const string BingGroundingType = "bing_grounding";
-    private const string CodeInterpreterType = "code_interpreter";
-    private const string FileSearchType = "file_search";
-    private const string FunctionType = "function";
-    private const string OpenApiType = "openapi";
-    private const string McpType = "mcp";
-
-    private static readonly string[] s_validToolTypes =
-    [
-        AzureAISearchType,
-        AzureFunctionType,
-        BingGroundingType,
-        CodeInterpreterType,
-        FileSearchType,
-        FunctionType,
-        OpenApiType,
-        McpType
-    ];
-
     private static CodeInterpreterToolResource? GetCodeInterpreterToolResource(this PromptAgent promptAgent)
     {
         Throw.IfNull(promptAgent);
 
         CodeInterpreterToolResource? resource = null;
 
-        var codeInterpreter = promptAgent.GetFirstToolDefinition(CodeInterpreterType);
+        var codeInterpreter = (CodeInterpreterTool?)promptAgent.GetFirstAgentTool<CodeInterpreterTool>();
         if (codeInterpreter is not null)
         {
             var fileIds = codeInterpreter.GetFileIds();
-            var dataSources = codeInterpreter.ExtensionData?.GetDataSources();
+            var dataSources = codeInterpreter.GetDataSources();
             if (fileIds is not null || dataSources is not null)
             {
                 resource = new CodeInterpreterToolResource();
@@ -191,7 +94,7 @@ internal static class PromptAgentExtensions
     {
         Throw.IfNull(promptAgent);
 
-        var fileSearch = promptAgent.GetFirstToolDefinition(FileSearchType);
+        var fileSearch = (FileSearchTool?)promptAgent.GetFirstAgentTool<FileSearchTool>();
         if (fileSearch is not null)
         {
             var vectorStoreIds = fileSearch.GetVectorStoreIds();
@@ -205,11 +108,12 @@ internal static class PromptAgentExtensions
         return null;
     }
 
+    /*
     private static AzureAISearchToolResource? GetAzureAISearchResource(this PromptAgent promptAgent)
     {
         Throw.IfNull(promptAgent);
 
-        var azureAISearch = promptAgent.GetFirstToolDefinition(AzureAISearchType);
+        var azureAISearch = promptAgent.GetFirstAgentTool<SearchTool>();
         if (azureAISearch is not null)
         {
             string? indexConnectionId = azureAISearch.ExtensionData?.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("options.index_connection_id"))?.Value;
@@ -231,11 +135,11 @@ internal static class PromptAgentExtensions
 
         return null;
     }
+    */
 
-    private static AgentTool? GetFirstToolDefinition(this PromptAgent promptAgent, string toolType)
+    private static AgentTool? GetFirstAgentTool<T>(this PromptAgent promptAgent)
     {
-        return promptAgent.Tools.FirstOrDefault(tool => tool.ExtensionData?.GetString("type") == toolType);
+        return promptAgent.Tools.FirstOrDefault(tool => tool is T);
     }
     #endregion
-    */
 }

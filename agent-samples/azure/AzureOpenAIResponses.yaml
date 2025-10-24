@@ -1,7 +1,7 @@
 kind: Prompt
 name: Assistant
 description: Helpful assistant
-instructions: You are a helpful assistant. You answer questions is the language specified by the user. You return your answers in a JSON format.
+instructions: You are a helpful assistant. You answer questions is the language specified by the user. You return your answers in a JSON format. You must include Responses as the type in your response.
 model:
     kind: OpenAIResponsesModel
     id: =Env.AZURE_OPENAI_DEPLOYMENT_NAME
@@ -20,3 +20,7 @@ outputSchema:
             type: string
             required: true
             description: The answer text.
+        type:
+            type: string
+            required: true
+            description: The type of the response.

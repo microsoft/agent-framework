@@ -161,7 +161,6 @@ internal static class PromptAgents
           kind: OpenAIResponsesModel
           id: gpt-4o
           options:
-            modelId: gpt-4o
             temperature: 0.7
             maxOutputTokens: 1024
             topP: 0.9
@@ -176,6 +175,32 @@ internal static class PromptAgents
               - "STOP"
             allowMultipleToolCalls: true
             chatToolMode: auto
+        """;
+
+    internal const string AgentWithOpenAIResponsesModelSnakeCase =
+        """
+        kind: Prompt
+        name: AgentName
+        description: Agent description
+        instructions: You are a helpful assistant.
+        model:
+          kind: OpenAIResponsesModel
+          id: gpt-4o
+          options:
+            temperature: 0.7
+            max_output_tokens: 1024
+            top_p: 0.9
+            top_k: 50
+            frequency_penalty: 0.7
+            presence_penalty: 0.7
+            seed: 42
+            response_format: text
+            stop_sequences:
+              - "###"
+              - "END"
+              - "STOP"
+            allow_multiple_tool_calls: true
+            chat_tool_mode: auto
         """;
 
     internal static readonly string[] s_stopSequences = ["###", "END", "STOP"];

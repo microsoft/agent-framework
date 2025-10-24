@@ -64,13 +64,42 @@ public class AgentBotElementYamlTests
         // Assert contents using extension methods
         Assert.Equal(1024, model.Options?.GetMaxOutputTokens());
         Assert.Equal(50, model.Options?.GetTopK());
-        Assert.Equal(0.0f, model.Options?.GetFrequencyPenalty());
-        Assert.Equal(0.0f, model.Options?.GetPresencePenalty());
+        Assert.Equal(0.7f, model.Options?.GetFrequencyPenalty());
+        Assert.Equal(0.7f, model.Options?.GetPresencePenalty());
         Assert.Equal(42, model.Options?.GetSeed());
         Assert.Equal(PromptAgents.s_stopSequences, model.Options?.GetStopSequences());
         Assert.True(model.Options?.GetAllowMultipleToolCalls());
         Assert.Equal(ChatToolMode.Auto, model.Options?.GetChatToolMode());
     }
+
+    /*
+    [Fact]
+    public void FromYaml_OpenAIResponsesModel_SnakeCase()
+    {
+        // Arrange & Act
+        var agent = AgentBotElementYaml.FromYaml(PromptAgents.AgentWithOpenAIResponsesModelSnakeCase);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.NotNull(agent.Model);
+        Assert.Equal("gpt-4o", agent.Model.Id);
+        OpenAIResponsesModel? model = agent.Model as OpenAIResponsesModel;
+        Assert.NotNull(model);
+        Assert.NotNull(model.Options);
+        Assert.Equal(0.7f, (float?)model.Options?.Temperature.LiteralValue);
+        Assert.Equal(0.9f, (float?)model.Options?.TopP.LiteralValue);
+
+        // Assert contents using extension methods
+        Assert.Equal(1024, model.Options?.GetMaxOutputTokens());
+        Assert.Equal(50, model.Options?.GetTopK());
+        Assert.Equal(0.7f, model.Options?.GetFrequencyPenalty());
+        Assert.Equal(0.7f, model.Options?.GetPresencePenalty());
+        Assert.Equal(42, model.Options?.GetSeed());
+        Assert.Equal(PromptAgents.s_stopSequences, model.Options?.GetStopSequences());
+        Assert.True(model.Options?.GetAllowMultipleToolCalls());
+        Assert.Equal(ChatToolMode.Auto, model.Options?.GetChatToolMode());
+    }
+    */
 
     [Fact]
     public void FromYaml_OutputSchema()

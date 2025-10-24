@@ -1,12 +1,12 @@
 kind: Prompt
 name: Assistant
 description: Helpful assistant
-instructions: You are a helpful assistant. You answer questions is the language specified by the user. You return your answers in a JSON format.
+instructions: You are a helpful assistant. You answer questions is the language specified by the user. You return your answers in a JSON format. You must include Chat as the type in your response.
 model:
     kind: OpenAIResponsesModel
     id: =Env.OPENAI_MODEL
-    apiType: Chat
     publisher: OpenAI
+    apiType: Chat
     options:
         temperature: 0.9
         topP: 0.95
@@ -23,3 +23,7 @@ outputSchema:
             type: string
             required: true
             description: The answer text.
+        type:
+            type: string
+            required: true
+            description: The type of the response.

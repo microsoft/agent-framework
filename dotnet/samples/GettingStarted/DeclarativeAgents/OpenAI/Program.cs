@@ -35,17 +35,27 @@ var text = await File.ReadAllTextAsync(yamlFilePath);
 text = text.Replace("=Env.OPENAI_APIKEY", apiKey, StringComparison.OrdinalIgnoreCase);
 text = text.Replace("=Env.OPENAI_MODEL", model, StringComparison.OrdinalIgnoreCase);
 
+// Create the agent from the YAML definition.
+var agentFactory = new AggregatorAgentFactory(
+    [
+        new OpenAIChatAgentFactory(),
+        new OpenAIResponseAgentFactory(),
+        new OpenAIAssistantAgentFactory()
+    ]);
+var agent = await agentFactory.CreateFromYamlAsync(text);
+
 // Example function tool that can be used by the agent.
 [Description("Get the weather for a given location.")]
 static string GetWeather(
     [Description("The city and state, e.g. San Francisco, CA")] string location,
     [Description("The unit of temperature. Possible values are 'celsius' and 'fahrenheit'.")] string unit)
     => $"The weather in {location} is cloudy with a high of {(unit.Equals("celsius", StringComparison.Ordinal) ? "15°C" : "59°F")}.";
-List<AIFunction> functions = [AIFunctionFactory.Create(GetWeather, "GetWeather")];
 
-// Create the agent from the YAML definition.
-var agentFactory = new OpenAIChatAgentFactory(functions); // TODO: Aggregate all of the OpenAI agent factories into a single factory.
-var agent = await agentFactory.CreateFromYamlAsync(text);
+// Create agent run options
+var options = new ChatClientAgentRunOptions(new()
+{
+    Tools = [AIFunctionFactory.Create(GetWeather, name: nameof(GetWeather))]
+});
 
 // Invoke the agent and output the text result.
-Console.WriteLine(await agent!.RunAsync(prompt));
+Console.WriteLine(await agent!.RunAsync(prompt, options: options));

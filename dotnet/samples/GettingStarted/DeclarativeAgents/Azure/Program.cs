@@ -3,7 +3,6 @@
 // This sample shows how to load an AI agent from a YAML file and process a prompt using Azure OpenAI as the backend.
 
 using System.ComponentModel;
-using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
@@ -35,17 +34,27 @@ var text = await File.ReadAllTextAsync(yamlFilePath);
 // TODO: Remove this workaround when the agent framework supports environment variable substitution in YAML files.
 text = text.Replace("=Env.AZURE_OPENAI_DEPLOYMENT_NAME", deploymentName, StringComparison.OrdinalIgnoreCase);
 
+// Create the agent from the YAML definition.
+var agentFactory = new AggregatorAgentFactory(
+    [
+        new OpenAIChatAgentFactory(),
+        new OpenAIResponseAgentFactory(),
+        new OpenAIAssistantAgentFactory()
+    ]);
+var agent = await agentFactory.CreateFromYamlAsync(text);
+
 // Example function tool that can be used by the agent.
 [Description("Get the weather for a given location.")]
 static string GetWeather(
     [Description("The city and state, e.g. San Francisco, CA")] string location,
     [Description("The unit of temperature. Possible values are 'celsius' and 'fahrenheit'.")] string unit)
     => $"The weather in {location} is cloudy with a high of {(unit.Equals("celsius", StringComparison.Ordinal) ? "15°C" : "59°F")}.";
-List<AIFunction> functions = [AIFunctionFactory.Create(GetWeather, "GetWeather")];
 
-// Create the agent from the YAML definition.
-var agentFactory = new OpenAIChatAgentFactory(new Uri(endpoint), new AzureCliCredential(), functions);
-var agent = await agentFactory.CreateFromYamlAsync(text);
+// Create agent run options
+var options = new ChatClientAgentRunOptions(new()
+{
+    Tools = [AIFunctionFactory.Create(GetWeather, name: nameof(GetWeather))]
+});
 
 // Invoke the agent and output the text result.
-Console.WriteLine(await agent!.RunAsync(prompt));
+Console.WriteLine(await agent!.RunAsync(prompt, options: options));

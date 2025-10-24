@@ -12,12 +12,12 @@ namespace Microsoft.Agents.AI;
 /// <summary>
 /// Provides an <see cref="AgentFactory"/> which creates instances of <see cref="AIAgent"/> using a <see cref="PersistentAgentsClient"/>.
 /// </summary>
-public sealed class AIFoundryAgentFactory : AgentFactory
+public sealed class FoundryPersistentAgentFactory : AgentFactory
 {
     /// <summary>
-    /// Creates a new instance of the <see cref="AIFoundryAgentFactory"/> class.
+    /// Creates a new instance of the <see cref="FoundryPersistentAgentFactory"/> class.
     /// </summary>
-    public AIFoundryAgentFactory(PersistentAgentsClient agentClient)
+    public FoundryPersistentAgentFactory(PersistentAgentsClient agentClient)
     {
         Throw.IfNull(agentClient);
 
@@ -25,9 +25,9 @@ public sealed class AIFoundryAgentFactory : AgentFactory
     }
 
     /// <summary>
-    /// Creates a new instance of the <see cref="AIFoundryAgentFactory"/> class.
+    /// Creates a new instance of the <see cref="FoundryPersistentAgentFactory"/> class.
     /// </summary>
-    public AIFoundryAgentFactory(TokenCredential tokenCredential)
+    public FoundryPersistentAgentFactory(TokenCredential tokenCredential)
     {
         Throw.IfNull(tokenCredential);
 

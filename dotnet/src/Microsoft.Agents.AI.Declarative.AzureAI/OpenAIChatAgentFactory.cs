@@ -50,6 +50,12 @@ public sealed class OpenAIChatAgentFactory : OpenAIAgentFactory
     {
         Throw.IfNull(promptAgent);
 
+        var apiType = promptAgent.Model.GetApiType();
+        if (string.IsNullOrEmpty(apiType) || !apiType.Equals(API_TYPE_CHAT, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
         var options = new ChatClientAgentOptions()
         {
             Name = promptAgent.Name,

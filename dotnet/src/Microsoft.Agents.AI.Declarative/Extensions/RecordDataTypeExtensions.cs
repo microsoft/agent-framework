@@ -28,8 +28,8 @@ public static class RecordDataTypeExtensions
         // TODO: Consider adding schemaName and schemaDescription parameters to this method.
         return ChatResponseFormat.ForJsonSchema(
             schema: recordDataType.GetSchema(),
-            schemaName: null,
-            schemaDescription: null);
+            schemaName: recordDataType.GetSchemaName(),
+            schemaDescription: recordDataType.GetSchemaDescription());
     }
 
     /// <summary>
@@ -54,4 +54,24 @@ public static class RecordDataTypeExtensions
     }
 #pragma warning restore IL3050 // Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
 #pragma warning restore IL2026 // Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code
+
+    /// <summary>
+    /// Retrieves the 'schemaName' property from a <see cref="RecordDataType"/>.
+    /// </summary>
+    public static string? GetSchemaName(this RecordDataType recordDataType)
+    {
+        Throw.IfNull(recordDataType);
+
+        return recordDataType.ExtensionData?.GetProperty<StringDataValue>(InitializablePropertyPath.Create("schemaName")).Value;
+    }
+
+    /// <summary>
+    /// Retrieves the 'schemaDescription' property from a <see cref="RecordDataType"/>.
+    /// </summary>
+    public static string? GetSchemaDescription(this RecordDataType recordDataType)
+    {
+        Throw.IfNull(recordDataType);
+
+        return recordDataType.ExtensionData?.GetProperty<StringDataValue>(InitializablePropertyPath.Create("schemaDescription")).Value;
+    }
 }

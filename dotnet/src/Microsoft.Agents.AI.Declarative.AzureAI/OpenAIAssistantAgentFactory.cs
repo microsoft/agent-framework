@@ -22,7 +22,7 @@ public sealed class OpenAIAssistantAgentFactory : OpenAIAgentFactory
     /// <summary>
     /// Creates a new instance of the <see cref="OpenAIChatAgentFactory"/> class.
     /// </summary>
-    public OpenAIAssistantAgentFactory(IList<AIFunction>? functions, ILoggerFactory? loggerFactory) : base(loggerFactory)
+    public OpenAIAssistantAgentFactory(IList<AIFunction>? functions = null, ILoggerFactory? loggerFactory = null) : base(loggerFactory)
     {
         this._functions = functions;
     }
@@ -30,7 +30,7 @@ public sealed class OpenAIAssistantAgentFactory : OpenAIAgentFactory
     /// <summary>
     /// Creates a new instance of the <see cref="OpenAIChatAgentFactory"/> class.
     /// </summary>
-    public OpenAIAssistantAgentFactory(AssistantClient assistantClient, IList<AIFunction>? functions, ILoggerFactory? loggerFactory) : base(loggerFactory)
+    public OpenAIAssistantAgentFactory(AssistantClient assistantClient, IList<AIFunction>? functions = null, ILoggerFactory? loggerFactory = null) : base(loggerFactory)
     {
         Throw.IfNull(assistantClient);
 
@@ -41,7 +41,7 @@ public sealed class OpenAIAssistantAgentFactory : OpenAIAgentFactory
     /// <summary>
     /// Creates a new instance of the <see cref="OpenAIChatAgentFactory"/> class.
     /// </summary>
-    public OpenAIAssistantAgentFactory(Uri endpoint, TokenCredential tokenCredential, IList<AIFunction>? functions, ILoggerFactory? loggerFactory) : base(endpoint, tokenCredential, loggerFactory)
+    public OpenAIAssistantAgentFactory(Uri endpoint, TokenCredential tokenCredential, IList<AIFunction>? functions = null, ILoggerFactory? loggerFactory = null) : base(endpoint, tokenCredential, loggerFactory)
     {
         this._functions = functions;
     }
@@ -50,6 +50,12 @@ public sealed class OpenAIAssistantAgentFactory : OpenAIAgentFactory
     public override async Task<AIAgent?> TryCreateAsync(PromptAgent promptAgent, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(promptAgent);
+
+        var apiType = promptAgent.Model.GetApiType();
+        if (string.IsNullOrEmpty(apiType) || !apiType.Equals(API_TYPE_ASSISTANTS, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
 
         var options = new ChatClientAgentOptions()
         {

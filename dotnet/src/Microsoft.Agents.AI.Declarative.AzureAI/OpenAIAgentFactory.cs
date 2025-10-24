@@ -19,6 +19,21 @@ namespace Microsoft.Agents.AI;
 public abstract class OpenAIAgentFactory : AgentFactory
 {
     /// <summary>
+    /// API type for chat-based models.
+    /// </summary>
+    protected const string API_TYPE_CHAT = "CHAT";
+
+    /// <summary>
+    /// API type for assistants-based models.
+    /// </summary>
+    protected const string API_TYPE_ASSISTANTS = "ASSISTANTS";
+
+    /// <summary>
+    /// API type for responses-based models.
+    /// </summary>
+    protected const string API_TYPE_RESPONSES = "RESPONSES";
+
+    /// <summary>
     /// Creates a new instance of the <see cref="OpenAIAgentFactory"/> class.
     /// </summary>
     protected OpenAIAgentFactory(ILoggerFactory? loggerFactory)
@@ -107,10 +122,6 @@ public abstract class OpenAIAgentFactory : AgentFactory
     #region private
     private const string PUBLISHER_OPENAI = "OPENAI";
     private const string PUBLISHER_AZURE = "AZURE";
-
-    //protected const string API_TYPE_CHAT = "CHAT";
-    //protected const string API_TYPE_ASSISTANTS = "ASSISTANTS";
-    //protected const string API_TYPE_RESPONSES = "RESPONSES";
 
     private readonly Uri? _endpoint;
     private readonly TokenCredential? _tokenCredential;
