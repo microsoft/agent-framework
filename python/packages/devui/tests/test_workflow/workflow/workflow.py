@@ -170,7 +170,7 @@ def main():
     logger.info("- Path 2 (score < 80): Reviewer → Editor → Publisher → Summarizer")
     logger.info("- Both paths converge at Summarizer for final report")
 
-    serve(entities=[workflow], port=8000, auto_open=False)
+    serve(entities=[workflow], port=8080, auto_open=False)
 
 
 if __name__ == "__main__":

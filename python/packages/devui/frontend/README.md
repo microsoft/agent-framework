@@ -7,7 +7,7 @@ cd frontend
 yarn install
 
 # Create .env.local with backend URL
-echo 'VITE_API_BASE_URL=http://localhost:8000' > .env.local
+echo 'VITE_API_BASE_URL=http://localhost:8080' > .env.local
 
 # Create .env.production (empty for relative URLs)
 echo '' > .env.production
