@@ -29,8 +29,8 @@
     <PackageReference Include="Azure.AI.Agents.Persistent" />
     <PackageReference Include="Microsoft.Extensions.AI" />
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" />
-    <PackageReference Include="Microsoft.Bot.ObjectModel" VersionOverride="1.2025.1017.1-preview" />
-    <PackageReference Include="Microsoft.Bot.ObjectModel.Json" VersionOverride="1.2025.1017.1-preview" />
+    <PackageReference Include="Microsoft.Bot.ObjectModel" VersionOverride="1.2025.1022.4-preview" />
+    <PackageReference Include="Microsoft.Bot.ObjectModel.Json" VersionOverride="1.2025.1022.4-preview" />
     <PackageReference Include="Microsoft.Bot.ObjectModel.PowerFx"  VersionOverride="1.2025.1008-1-preview" />
     <PackageReference Include="Microsoft.PowerFx.Interpreter" />
     <PackageReference Include="Microsoft.Extensions.Configuration" />

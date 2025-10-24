@@ -41,14 +41,14 @@ public sealed class FoundryPersistentAgentFactory : AgentFactory
 
         var agentClient = this._agentClient ?? this.CreatePersistentAgentClient(promptAgent);
 
-        var modelId = promptAgent.Model?.Id;
+        var modelId = promptAgent.Model?.Id?.LiteralValue;
         if (string.IsNullOrEmpty(modelId))
         {
             throw new InvalidOperationException("The model id must be specified in the agent definition model to create a foundry agent.");
         }
 
         var outputSchema = promptAgent.OutputSchema;
-        OpenAIResponsesModel? model = promptAgent.Model as OpenAIResponsesModel;
+        ChatModel? model = promptAgent.Model as ChatModel;
         var modelOptions = model?.Options;
 
         return await agentClient.CreateAIAgentAsync(
@@ -71,10 +71,10 @@ public sealed class FoundryPersistentAgentFactory : AgentFactory
     private PersistentAgentsClient CreatePersistentAgentClient(PromptAgent promptAgent)
     {
         PersistentAgentsClient agentClient;
-        var foundryConnection = promptAgent.Model?.Connection as FoundryConnection;
-        if (foundryConnection is not null)
+        var keyConnection = promptAgent.Model?.Connection as KeyConnection;
+        if (keyConnection is not null)
         {
-            var endpoint = foundryConnection.Type; // TODO: Change to Endpoint when available in FoundryConnection
+            var endpoint = keyConnection.Endpoint?.LiteralValue;
             if (string.IsNullOrEmpty(endpoint))
             {
                 throw new InvalidOperationException("The endpoint must be specified in the agent definition model connection to create an PersistentAgentsClient.");

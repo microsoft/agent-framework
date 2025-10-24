@@ -51,8 +51,8 @@ public sealed class OpenAIAssistantAgentFactory : OpenAIAgentFactory
     {
         Throw.IfNull(promptAgent);
 
-        var apiType = promptAgent.Model.GetApiType();
-        if (string.IsNullOrEmpty(apiType) || !apiType.Equals(API_TYPE_ASSISTANTS, StringComparison.OrdinalIgnoreCase))
+        var apiType = promptAgent.Model.ApiType;
+        if (apiType?.IsUnknown() == true && apiType.UnknownValue?.Equals(API_TYPE_ASSISTANTS, StringComparison.OrdinalIgnoreCase) == true)
         {
             return null;
         }
@@ -68,11 +68,12 @@ public sealed class OpenAIAssistantAgentFactory : OpenAIAgentFactory
         AssistantClient? assistantClient = this._assistantClient ?? this.CreateAssistantClient(promptAgent);
         if (assistantClient is not null)
         {
-            Throw.IfNullOrEmpty(promptAgent.Model?.Id, "The model id must be specified in the agent definition to create an OpenAI Assistant.");
+            var modelId = promptAgent.Model?.Id?.LiteralValue;
+            Throw.IfNullOrEmpty(modelId, "The model id must be specified in the agent definition to create an OpenAI Assistant.");
             Throw.IfNullOrEmpty(promptAgent.Instructions?.ToTemplateString(), "The instructions must be specified in the agent definition to create an OpenAI Assistant.");
 
             return await assistantClient.CreateAIAgentAsync(
-                promptAgent.Model!.Id,
+                modelId,
                 options
             ).ConfigureAwait(false);
         }
@@ -83,5 +84,7 @@ public sealed class OpenAIAssistantAgentFactory : OpenAIAgentFactory
     #region private
     private readonly AssistantClient? _assistantClient;
     private readonly IList<AIFunction>? _functions;
+
+    private const string API_TYPE_ASSISTANTS = "ASSISTANTS";
     #endregion
 }

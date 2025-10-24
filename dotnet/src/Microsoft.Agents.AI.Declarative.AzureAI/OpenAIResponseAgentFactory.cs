@@ -50,8 +50,8 @@ public sealed class OpenAIResponseAgentFactory : OpenAIAgentFactory
     {
         Throw.IfNull(promptAgent);
 
-        var apiType = promptAgent.Model.GetApiType();
-        if (string.IsNullOrEmpty(apiType) || !apiType.Equals(API_TYPE_RESPONSES, StringComparison.OrdinalIgnoreCase))
+        var apiType = promptAgent.Model.ApiType;
+        if (apiType?.IsUnknown() == false && apiType.Value != ApiType.Responses)
         {
             return null;
         }

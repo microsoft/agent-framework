@@ -62,7 +62,7 @@ public static class RecordDataTypeExtensions
     {
         Throw.IfNull(recordDataType);
 
-        return recordDataType.ExtensionData?.GetProperty<StringDataValue>(InitializablePropertyPath.Create("schemaName")).Value;
+        return recordDataType.ExtensionData?.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("schemaName"))?.Value;
     }
 
     /// <summary>
@@ -72,6 +72,6 @@ public static class RecordDataTypeExtensions
     {
         Throw.IfNull(recordDataType);
 
-        return recordDataType.ExtensionData?.GetProperty<StringDataValue>(InitializablePropertyPath.Create("schemaDescription")).Value;
+        return recordDataType.ExtensionData?.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("schemaDescription"))?.Value;
     }
 }

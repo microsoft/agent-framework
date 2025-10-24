@@ -151,14 +151,14 @@ internal static class PromptAgents
                     description: The answer text.        
         """;
 
-    internal const string AgentWithOpenAIResponsesModel =
+    internal const string AgentWithOpenAIChatModel =
         """
         kind: Prompt
         name: AgentName
         description: Agent description
         instructions: You are a helpful assistant.
         model:
-          kind: OpenAIResponsesModel
+          kind: ChatModel
           id: gpt-4o
           options:
             temperature: 0.7

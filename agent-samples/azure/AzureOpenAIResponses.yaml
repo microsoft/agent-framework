@@ -3,7 +3,7 @@ name: Assistant
 description: Helpful assistant
 instructions: You are a helpful assistant. You answer questions is the language specified by the user. You return your answers in a JSON format. You must include Responses as the type in your response.
 model:
-    kind: OpenAIResponsesModel
+    kind: ChatModel
     id: =Env.AZURE_OPENAI_DEPLOYMENT_NAME
     publisher: Azure
     apiType: Responses

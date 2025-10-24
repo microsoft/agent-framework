@@ -13,30 +13,6 @@ namespace Microsoft.Bot.ObjectModel;
 public static class PromptAgentExtensions
 {
     /// <summary>
-    /// Generates a service key from the <see cref="PromptAgent"/>'s model and connection properties.
-    /// </summary>
-    /// <param name="promptAgent">The prompt agent containing model and connection information.</param>
-    /// <returns>A service key string, or <see langword="null"/> if no key can be generated.</returns>
-    public static string? GenerateServiceKey(this PromptAgent promptAgent)
-    {
-        if (promptAgent.Model is not OpenAIResponsesModel model)
-        {
-            return null;
-        }
-
-        string? publisher = model.Publisher;
-        string? apiType = model.GetApiType();
-
-        return (publisher, apiType) switch
-        {
-            (null or "", null or "") => null,
-            (not null and not "", null or "") => publisher,
-            (null or "", not null and not "") => apiType,
-            _ => $"{publisher}:{apiType}"
-        };
-    }
-
-    /// <summary>
     /// Retrieves the 'options' property from a <see cref="PromptAgent"/> as a <see cref="ChatOptions"/> instance.
     /// </summary>
     /// <param name="promptAgent">Instance of <see cref="PromptAgent"/></param>
@@ -46,7 +22,7 @@ public static class PromptAgentExtensions
         Throw.IfNull(promptAgent);
 
         var outputSchema = promptAgent.OutputSchema;
-        OpenAIResponsesModel? model = promptAgent.Model as OpenAIResponsesModel;
+        ChatModel? model = promptAgent.Model as ChatModel;
         var modelOptions = model?.Options;
 
         // TODO: Add logic to resolve tools for a service provider or from agent creation options
@@ -68,7 +44,7 @@ public static class PromptAgentExtensions
             PresencePenalty = modelOptions?.GetPresencePenalty(),
             Seed = modelOptions?.GetSeed(),
             ResponseFormat = outputSchema?.AsChatResponseFormat(),
-            ModelId = model?.Id,
+            ModelId = model?.Id?.LiteralValue,
             StopSequences = modelOptions?.GetStopSequences(),
             AllowMultipleToolCalls = modelOptions?.GetAllowMultipleToolCalls(),
             ToolMode = modelOptions?.GetChatToolMode(),

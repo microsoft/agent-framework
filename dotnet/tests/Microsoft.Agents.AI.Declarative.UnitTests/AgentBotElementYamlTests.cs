@@ -20,7 +20,7 @@ public class AgentBotElementYamlTests
     [InlineData(PromptAgents.AgentWithEnvironmentVariables)]
     [InlineData(PromptAgents.AgentWithOutputSchema)]
     [InlineData(PromptAgents.OpenAIChatAgent)]
-    [InlineData(PromptAgents.AgentWithOpenAIResponsesModel)]
+    [InlineData(PromptAgents.AgentWithOpenAIChatModel)]
     public void FromYaml_DoesNotThrow(string text)
     {
         // Arrange & Act
@@ -49,13 +49,13 @@ public class AgentBotElementYamlTests
     public void FromYaml_OpenAIResponsesModel()
     {
         // Arrange & Act
-        var agent = AgentBotElementYaml.FromYaml(PromptAgents.AgentWithOpenAIResponsesModel);
+        var agent = AgentBotElementYaml.FromYaml(PromptAgents.AgentWithOpenAIChatModel);
 
         // Assert
         Assert.NotNull(agent);
         Assert.NotNull(agent.Model);
-        Assert.Equal("gpt-4o", agent.Model.Id);
-        OpenAIResponsesModel? model = agent.Model as OpenAIResponsesModel;
+        Assert.Equal("gpt-4o", agent.Model.Id?.LiteralValue);
+        ChatModel? model = agent.Model as ChatModel;
         Assert.NotNull(model);
         Assert.NotNull(model.Options);
         Assert.Equal(0.7f, (float?)model.Options?.Temperature.LiteralValue);
@@ -210,7 +210,7 @@ public class AgentBotElementYamlTests
 
         // Assert
         Assert.NotNull(agent);
-        OpenAIResponsesModel? model = agent.Model as OpenAIResponsesModel;
+        ChatModel? model = agent.Model as ChatModel;
         Assert.NotNull(model);
         Assert.NotNull(model.Connection);
         KeyConnection? connection = model.Connection as KeyConnection;
@@ -237,7 +237,7 @@ public class AgentBotElementYamlTests
 
         // Assert
         Assert.NotNull(agent);
-        OpenAIResponsesModel? model = agent.Model as OpenAIResponsesModel;
+        ChatModel? model = agent.Model as ChatModel;
         Assert.NotNull(model);
         Assert.NotNull(model.Connection);
         KeyConnection? connection = model.Connection as KeyConnection;
