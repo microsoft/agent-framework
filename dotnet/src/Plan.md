@@ -71,6 +71,8 @@ We will only expose public API that is part of Microsoft.Extensions.AI, Microsof
 ### Implementation constraints
 
 * For each scenario, we will define the minimum number of types and members needed to implement that scenario. For example, we won't define additional message types or events if they are not used.
+* We will not add doc comments to internal types.
+* We will have one type per file as a general rule.
 
 * For testing, we will focus on testing public methods where possible.
   * We will not test constructors.
