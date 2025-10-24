@@ -71,6 +71,8 @@ dev = [
     "rich",
     "tomli",
     "tomli-w",
+    # tau2 from source (not available on PyPI)
+    "tau2@ git+https://github.com/sierra-research/tau2-bench@5ba9e3e56db57c5e4114bf7f901291f09b2c5619",
 ]
 
 [project.scripts]
