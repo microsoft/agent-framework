@@ -16,7 +16,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Microsoft.Agents.AI.AGUI\Microsoft.Agents.AI.AGUI.csproj" />
     <ProjectReference Include="..\Microsoft.Agents.AI.Hosting\Microsoft.Agents.AI.Hosting.csproj" />
   </ItemGroup>
 
@@ -30,6 +29,10 @@
   <ItemGroup>
     <Compile Include="..\Microsoft.Agents.AI.AGUI\Shared\**\*.cs" LinkBase="Shared" />
   </ItemGroup>
+
+  <PropertyGroup>
+    <DefineConstants>$(DefineConstants);ASPNETCORE</DefineConstants>
+  </PropertyGroup>
 
   <ItemGroup>
     <InternalsVisibleTo Include="Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.UnitTests" />

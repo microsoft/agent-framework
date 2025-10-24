@@ -31,8 +31,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Microsoft.Agents.AI.AGUI.UnitTests" />
-    <InternalsVisibleTo Include="Microsoft.Agents.AI.Hosting.AGUI.AspNetCore" />
-    <InternalsVisibleTo Include="Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.IntegrationTests" />
+    <InternalsVisibleTo Include="Microsoft.Agents.AI.AGUI.IntegrationTests" />
   </ItemGroup>
 
 </Project>
