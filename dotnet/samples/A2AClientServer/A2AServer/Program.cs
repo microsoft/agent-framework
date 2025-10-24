@@ -104,7 +104,10 @@ else
     throw new ArgumentException("Either A2AServer:ApiKey or A2AServer:ConnectionString & agentId must be provided");
 }
 
-var a2aTaskManager = app.MapA2A(hostA2AAgent, path: "/", agentCard: hostA2AAgentCard);
-app.MapWellKnownAgentCard(a2aTaskManager, "/");
+var a2aTaskManager = app.MapA2A(
+    hostA2AAgent,
+    path: "/",
+    agentCard: hostA2AAgentCard,
+    taskManager => app.MapWellKnownAgentCard(taskManager, "/"));
 
 await app.RunAsync();
