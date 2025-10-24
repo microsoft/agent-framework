@@ -8,6 +8,7 @@ from typing import Any
 
 from ._checkpoint import WorkflowCheckpoint
 from ._checkpoint_encoding import decode_checkpoint_value
+from ._const import EXECUTOR_STATE_KEY
 from ._request_info_executor import PendingRequestDetails, RequestInfoMessage, RequestResponse
 
 logger = logging.getLogger(__name__)
@@ -33,7 +34,7 @@ def get_checkpoint_summary(
     preview_width: int = 70,
 ) -> WorkflowCheckpointSummary:
     targets = sorted(checkpoint.messages.keys())
-    executor_ids = sorted(checkpoint.executor_states.keys())
+    executor_ids = sorted(checkpoint.shared_state.get(EXECUTOR_STATE_KEY, {}).keys())
     pending = _pending_requests_from_checkpoint(checkpoint, request_executor_ids=request_executor_ids)
 
     draft_preview: str | None = None
@@ -74,7 +75,7 @@ def _pending_requests_from_checkpoint(
 
     pending: dict[str, PendingRequestDetails] = {}
 
-    for state in checkpoint.executor_states.values():
+    for state in checkpoint.shared_state.get(EXECUTOR_STATE_KEY, {}).values():
         if not isinstance(state, Mapping):
             continue
         inner = state.get("pending_requests")
