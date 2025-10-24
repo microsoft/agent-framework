@@ -8,12 +8,10 @@ This package enables you to train and fine-tune agents using advanced RL algorit
 
 ## Installation
 
-Install from source with Lightning dependencies:
+Install the `agent-framework-lab` package with Lightning dependencies:
 
 ```bash
-git clone https://github.com/microsoft/agent-framework.git
-cd agent-framework/python/packages/lab
-pip install -e ".[lightning]"
+pip install "agent-framework-lab[lightning]"
 ```
 
 ### Optional Dependencies
