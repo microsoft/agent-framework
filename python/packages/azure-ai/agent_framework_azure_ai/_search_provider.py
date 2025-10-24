@@ -12,10 +12,12 @@ reasoning across documents with Knowledge Bases.
 
 import sys
 from collections.abc import MutableSequence
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from agent_framework import ChatMessage, Context, ContextProvider
-from azure.core.credentials import AzureKeyCredential, TokenCredential
+from azure.core.credentials import AzureKeyCredential
+from azure.core.credentials_async import AsyncTokenCredential
+from azure.core.exceptions import ResourceNotFoundError
 from azure.search.documents.aio import SearchClient
 from azure.search.documents.indexes.aio import SearchIndexClient
 from azure.search.documents.indexes.models import (
@@ -35,6 +37,16 @@ from azure.search.documents.models import (
     VectorizedQuery,
 )
 
+# Type checking imports for optional agentic mode dependencies
+if TYPE_CHECKING:
+    from azure.search.documents.agent.aio import KnowledgeAgentRetrievalClient
+    from azure.search.documents.agent.models import (
+        KnowledgeAgentMessage,
+        KnowledgeAgentMessageTextContent,
+        KnowledgeAgentRetrievalRequest,
+    )
+
+# Runtime imports for agentic mode (optional dependency)
 try:
     from azure.search.documents.agent.aio import KnowledgeAgentRetrievalClient
     from azure.search.documents.agent.models import (
@@ -43,9 +55,9 @@ try:
         KnowledgeAgentRetrievalRequest,
     )
 
-    _AGENTIC_RETRIEVAL_AVAILABLE = True
+    _agentic_retrieval_available = True
 except ImportError:
-    _AGENTIC_RETRIEVAL_AVAILABLE = False
+    _agentic_retrieval_available = False
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -112,16 +124,11 @@ class AzureAISearchContextProvider(ContextProvider):
             )
     """
 
-    DEFAULT_CONTEXT_PROMPT: str = (
-        "Use the following context from the knowledge base to answer the user's question. "
-        "If the context doesn't contain relevant information, say so."
-    )
-
     def __init__(
         self,
         endpoint: str,
         index_name: str,
-        credential: AzureKeyCredential | TokenCredential,
+        credential: AzureKeyCredential | AsyncTokenCredential,
         mode: Literal["semantic", "agentic"] = "semantic",
         top_k: int = 5,
         semantic_configuration_name: str | None = None,
@@ -131,6 +138,7 @@ class AzureAISearchContextProvider(ContextProvider):
         # Agentic mode parameters (Knowledge Base)
         azure_ai_project_endpoint: str | None = None,
         model_deployment_name: str | None = None,
+        model_name: str | None = None,
         knowledge_base_name: str | None = None,
         retrieval_instructions: str | None = None,
         # Deprecated parameters (for backwards compatibility)
@@ -158,8 +166,10 @@ class AzureAISearchContextProvider(ContextProvider):
                 Default: Uses DEFAULT_CONTEXT_PROMPT.
             azure_ai_project_endpoint: Azure AI Foundry project endpoint URL.
                 Required for agentic mode. Example: "https://myproject.services.ai.azure.com"
-            model_deployment_name: Model deployment name in the Azure AI project (e.g., "gpt-4o").
+            model_deployment_name: Model deployment name in the Azure AI project.
                 Required for agentic mode.
+            model_name: The underlying model name (e.g., "gpt-4o", "gpt-4o-mini").
+                If not provided, defaults to model_deployment_name. Used for Knowledge Base configuration.
             knowledge_base_name: Name for the Knowledge Base. Required for agentic mode.
             retrieval_instructions: Custom instructions for the Knowledge Base's
                 retrieval planning. Only used in agentic mode.
@@ -180,10 +190,9 @@ class AzureAISearchContextProvider(ContextProvider):
         # Agentic mode parameters (Knowledge Base)
         # Handle both new and deprecated parameter names for backwards compatibility
         if azure_ai_project_endpoint:
-            # Extract Azure OpenAI endpoint from project endpoint
-            # Project endpoint format: https://<project>.services.ai.azure.com
-            # OpenAI endpoint format: https://<resource>.openai.azure.com
-            # For now, use the project endpoint directly as Knowledge Base accepts it
+            # Use Azure AI project endpoint directly for Knowledge Base API
+            # The Knowledge Base API accepts project endpoints in the format:
+            # https://<project>.services.ai.azure.com
             self.azure_openai_endpoint = azure_ai_project_endpoint
         elif azure_openai_endpoint:
             # Deprecated parameter for backwards compatibility
@@ -192,6 +201,8 @@ class AzureAISearchContextProvider(ContextProvider):
             self.azure_openai_endpoint = None
 
         self.azure_openai_deployment_name = model_deployment_name or azure_openai_deployment_name
+        # If model_name not provided, default to deployment name for backwards compatibility
+        self.model_name = model_name or self.azure_openai_deployment_name
         self.knowledge_base_name = knowledge_base_name
         self.retrieval_instructions = retrieval_instructions
 
@@ -200,7 +211,7 @@ class AzureAISearchContextProvider(ContextProvider):
             raise ValueError("embedding_function is required when vector_field_name is specified")
 
         if mode == "agentic":
-            if not _AGENTIC_RETRIEVAL_AVAILABLE:
+            if not _agentic_retrieval_available:
                 raise ImportError(
                     "Agentic retrieval requires azure-search-documents >= 11.7.0b1 with Knowledge Base support. "
                     "Please upgrade: pip install azure-search-documents>=11.7.0b1"
@@ -368,14 +379,20 @@ class AzureAISearchContextProvider(ContextProvider):
         if self._knowledge_base_initialized or not self._index_client:
             return
 
+        # Type narrowing: these are validated as non-None in __init__ for agentic mode
+        # Using cast() for type checker - actual validation happens in __init__
+        knowledge_base_name = cast(str, self.knowledge_base_name)
+        azure_openai_endpoint = cast(str, self.azure_openai_endpoint)
+        azure_openai_deployment_name = cast(str, self.azure_openai_deployment_name)
+
         # Step 1: Create or get knowledge source
         knowledge_source_name = f"{self.index_name}-source"
 
         try:
             # Try to get existing knowledge source
             await self._index_client.get_knowledge_source(knowledge_source_name)
-        except Exception:
-            # Create new knowledge source
+        except ResourceNotFoundError:
+            # Create new knowledge source if it doesn't exist
             knowledge_source = SearchIndexKnowledgeSource(
                 name=knowledge_source_name,
                 description=f"Knowledge source for {self.index_name} search index",
@@ -388,18 +405,18 @@ class AzureAISearchContextProvider(ContextProvider):
         # Step 2: Create or get Knowledge Base (using KnowledgeAgent SDK class)
         try:
             # Try to get existing Knowledge Base
-            await self._index_client.get_agent(self.knowledge_base_name)
-        except Exception:
-            # Create new Knowledge Base
+            await self._index_client.get_agent(knowledge_base_name)
+        except ResourceNotFoundError:
+            # Create new Knowledge Base if it doesn't exist
             aoai_params = AzureOpenAIVectorizerParameters(
-                resource_url=self.azure_openai_endpoint,
-                deployment_name=self.azure_openai_deployment_name,
-                model_name=self.azure_openai_deployment_name,  # Model name for Knowledge Base
+                resource_url=azure_openai_endpoint,
+                deployment_name=azure_openai_deployment_name,
+                model_name=self.model_name,  # Underlying model name (e.g., "gpt-4o")
             )
 
             # Note: SDK uses KnowledgeAgent class name, but this represents a Knowledge Base
             knowledge_base = KnowledgeAgent(
-                name=self.knowledge_base_name,
+                name=knowledge_base_name,
                 description=f"Knowledge Base for multi-hop retrieval across {self.index_name}",
                 models=[KnowledgeAgentAzureOpenAIModel(azure_open_ai_parameters=aoai_params)],
                 knowledge_sources=[
@@ -444,6 +461,10 @@ class AzureAISearchContextProvider(ContextProvider):
         # Ensure Knowledge Base is initialized
         await self._ensure_knowledge_base()
 
+        # Type narrowing: knowledge_base_name is validated in __init__ for agentic mode
+        # Using cast() for type checker - actual validation happens in __init__
+        knowledge_base_name = cast(str, self.knowledge_base_name)
+
         # Create retrieval request with query as a conversation message
         # Note: SDK uses KnowledgeAgent class names, but represents Knowledge Base operations
         retrieval_request = KnowledgeAgentRetrievalRequest(
@@ -456,12 +477,12 @@ class AzureAISearchContextProvider(ContextProvider):
         )
 
         # Create a fresh retrieval client for each query to avoid transport closure issues
-        if not _AGENTIC_RETRIEVAL_AVAILABLE:
+        if not _agentic_retrieval_available:
             raise ImportError("KnowledgeAgentRetrievalClient not available")
 
         retrieval_client = KnowledgeAgentRetrievalClient(
             endpoint=self.endpoint,
-            agent_name=self.knowledge_base_name,
+            agent_name=knowledge_base_name,
             credential=self.credential,
         )
 
@@ -480,7 +501,8 @@ class AzureAISearchContextProvider(ContextProvider):
                 # Combine all text content
                 answer_parts = []
                 for content_item in assistant_message.content:
-                    if hasattr(content_item, "text") and content_item.text:
+                    # Check if this is a text content item
+                    if isinstance(content_item, KnowledgeAgentMessageTextContent) and content_item.text:
                         answer_parts.append(content_item.text)
 
                 if answer_parts:

@@ -38,11 +38,11 @@ Prerequisites:
    - AZURE_SEARCH_API_KEY: Your search API key (or use Azure AD)
    - AZURE_SEARCH_INDEX_NAME: Your search index name
    - AZURE_AI_PROJECT_ENDPOINT: Your Azure AI Foundry project endpoint
+   - AZURE_AI_MODEL_DEPLOYMENT_NAME: Your model deployment name (e.g., "gpt-4o")
 
    Additional for agentic mode (Knowledge Bases):
    - USE_AGENTIC_MODE: Set to "true" to use agentic retrieval
-   - AZURE_OPENAI_ENDPOINT: Your Azure OpenAI endpoint
-   - AZURE_OPENAI_DEPLOYMENT_NAME: Your deployment name (e.g., "gpt-4o")
+   - AZURE_SEARCH_KNOWLEDGE_BASE_NAME: Your Knowledge Base name
 """
 
 # Sample queries to demonstrate RAG
