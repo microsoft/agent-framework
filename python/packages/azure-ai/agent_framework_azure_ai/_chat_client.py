@@ -4,7 +4,7 @@ import json
 import os
 import sys
 from collections.abc import AsyncIterable, MutableMapping, MutableSequence, Sequence
-from typing import Any, ClassVar, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -97,6 +97,9 @@ if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
 else:
     from typing_extensions import Self  # pragma: no cover
+
+if TYPE_CHECKING:
+    from agent_framework import ChatAgent
 
 
 logger = get_logger("agent_framework.azure")
@@ -1102,3 +1105,6 @@ class AzureAIAgentClient(BaseChatClient):
             The service URL for the chat client, or None if not set.
         """
         return self.project_client._config.endpoint
+
+    def create_agent(self, *, store: bool | None = True, **kwargs: Any) -> "ChatAgent":
+        return super().create_agent(store=store, **kwargs)
