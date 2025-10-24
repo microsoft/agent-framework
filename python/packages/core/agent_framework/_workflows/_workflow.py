@@ -183,13 +183,11 @@ class Workflow(DictConvertible):
         # Convert start_executor to string ID if it's an Executor instance
         start_executor_id = start_executor.id if isinstance(start_executor, Executor) else start_executor
 
-        id = str(uuid.uuid4())
-
         self.edge_groups = list(edge_groups)
         self.executors = dict(executors)
         self.start_executor_id = start_executor_id
         self.max_iterations = max_iterations
-        self.id = id
+        self.id = str(uuid.uuid4())
         self.name = name
         self.description = description
 
@@ -202,7 +200,7 @@ class Workflow(DictConvertible):
             self._shared_state,
             runner_context,
             max_iterations=max_iterations,
-            workflow_id=id,
+            workflow_id=self.id,
         )
 
         # Flag to prevent concurrent workflow executions
@@ -317,7 +315,9 @@ class Workflow(DictConvertible):
 
                 # Reset context for a new run if supported
                 if reset_context:
-                    self._runner.context.reset_for_new_run(self._shared_state)
+                    self._runner.reset_iteration_count()
+                    self._runner.context.reset_for_new_run()
+                    await self._shared_state.clear()
 
                 # Set streaming mode after reset
                 self._runner_context.set_streaming(streaming)

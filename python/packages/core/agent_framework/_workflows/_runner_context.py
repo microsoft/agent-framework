@@ -5,11 +5,10 @@ import logging
 import uuid
 from copy import copy
 from dataclasses import dataclass
-from typing import Any, Protocol, TypedDict, TypeVar, cast, runtime_checkable
+from typing import Any, Protocol, TypedDict, TypeVar, runtime_checkable
 
 from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
 from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
-from ._const import DEFAULT_MAX_ITERATIONS
 from ._events import WorkflowEvent
 from ._shared_state import SharedState
 
@@ -43,7 +42,7 @@ class Message:
         return self.source_span_ids[0] if self.source_span_ids else None
 
 
-class WorkflowState(TypedDict):
+class _WorkflowState(TypedDict):
     """TypedDict representing the serializable state of a workflow execution.
 
     This includes all state data needed for checkpointing and restoration.
@@ -51,9 +50,7 @@ class WorkflowState(TypedDict):
 
     messages: dict[str, list[dict[str, Any]]]
     shared_state: dict[str, Any]
-    executor_states: dict[str, dict[str, Any]]
     iteration_count: int
-    max_iterations: int
 
 
 @runtime_checkable
@@ -116,26 +113,6 @@ class RunnerContext(Protocol):
         """Wait for and return the next event emitted by the workflow run."""
         ...
 
-    async def set_executor_state(self, executor_id: str, state: dict[str, Any]) -> None:
-        """Set the state for a specific executor.
-
-        Args:
-            executor_id: The ID of the executor whose state is being set.
-            state: The state data to be set for the executor.
-        """
-        ...
-
-    async def get_executor_state(self, executor_id: str) -> dict[str, Any] | None:
-        """Get the state for a specific executor.
-
-        Args:
-            executor_id: The ID of the executor whose state is being retrieved.
-
-        Returns:
-            The state data for the executor, or None if not found.
-        """
-        ...
-
     # Checkpointing capability
     def has_checkpointing(self) -> bool:
         """Check if the context supports checkpointing.
@@ -150,7 +127,7 @@ class RunnerContext(Protocol):
         """Set the workflow ID for the context."""
         ...
 
-    def reset_for_new_run(self, workflow_shared_state: SharedState | None = None) -> None:
+    def reset_for_new_run(self) -> None:
         """Reset the context for a new workflow run."""
         ...
 
@@ -170,27 +147,42 @@ class RunnerContext(Protocol):
         """
         ...
 
-    async def create_checkpoint(self, metadata: dict[str, Any] | None = None) -> str:
+    async def create_checkpoint(
+        self,
+        shared_state: SharedState,
+        iteration_count: int,
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
         """Create a checkpoint of the current workflow state.
 
         Args:
+            shared_state: The shared state to include in the checkpoint.
+                          This is needed to capture the full state of the workflow.
+                          The shared state is not managed by the context itself.
+            iteration_count: The current iteration count of the workflow.
             metadata: Optional metadata to associate with the checkpoint.
+
+        Returns:
+            The ID of the created checkpoint.
         """
         ...
 
     async def load_checkpoint(self, checkpoint_id: str) -> WorkflowCheckpoint | None:
-        """Load a checkpoint without mutating the current context state."""
-        ...
-
-    async def get_workflow_state(self) -> WorkflowState:
-        """Get the current state of the workflow suitable for checkpointing."""
-        ...
-
-    async def set_workflow_state(self, state: WorkflowState) -> None:
-        """Set the state of the workflow from a checkpoint.
+        """Load a checkpoint without mutating the current context state.
 
         Args:
-            state: The state data to set for the workflow.
+            checkpoint_id: The ID of the checkpoint to load.
+
+        Returns:
+            The loaded checkpoint, or None if it does not exist.
+        """
+        ...
+
+    async def apply_checkpoint(self, checkpoint: WorkflowCheckpoint) -> None:
+        """Apply a checkpoint to the current context, mutating its state.
+
+        Args:
+            checkpoint: The checkpoint whose state is to be applied.
         """
         ...
 
@@ -211,14 +203,11 @@ class InProcRunnerContext:
         # Checkpointing configuration/state
         self._checkpoint_storage = checkpoint_storage
         self._workflow_id: str | None = None
-        self._shared_state: dict[str, Any] = {}
-        self._executor_states: dict[str, dict[str, Any]] = {}
-        self._iteration_count: int = 0
-        self._max_iterations: int = 100
 
         # Streaming flag - set by workflow's run_stream() vs run()
         self._streaming: bool = False
 
+    # region Messaging and Events
     async def send_message(self, message: Message) -> None:
         self._messages.setdefault(message.source_id, [])
         self._messages[message.source_id].append(message)
@@ -259,14 +248,69 @@ class InProcRunnerContext:
         """
         return await self._event_queue.get()
 
-    async def set_executor_state(self, executor_id: str, state: dict[str, Any]) -> None:
-        self._executor_states[executor_id] = state
+    # endregion Messaging and Events
 
-    async def get_executor_state(self, executor_id: str) -> dict[str, Any] | None:
-        return self._executor_states.get(executor_id)
+    # region Checkpointing
 
     def has_checkpointing(self) -> bool:
         return self._checkpoint_storage is not None
+
+    async def create_checkpoint(
+        self,
+        shared_state: SharedState,
+        iteration_count: int,
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
+        if not self._checkpoint_storage:
+            raise ValueError("Checkpoint storage not configured")
+
+        self._workflow_id = self._workflow_id or str(uuid.uuid4())
+        state = await self._get_serialized_workflow_state(shared_state, iteration_count)
+
+        checkpoint = WorkflowCheckpoint(
+            workflow_id=self._workflow_id,
+            messages=state["messages"],
+            shared_state=state["shared_state"],
+            iteration_count=state["iteration_count"],
+            metadata=metadata or {},
+        )
+        checkpoint_id = await self._checkpoint_storage.save_checkpoint(checkpoint)
+        logger.info(f"Created checkpoint {checkpoint_id} for workflow {self._workflow_id}")
+        return checkpoint_id
+
+    async def load_checkpoint(self, checkpoint_id: str) -> WorkflowCheckpoint | None:
+        if not self._checkpoint_storage:
+            raise ValueError("Checkpoint storage not configured")
+        return await self._checkpoint_storage.load_checkpoint(checkpoint_id)
+
+    def reset_for_new_run(self) -> None:
+        """Reset the context for a new workflow run.
+
+        This clears messages, events, and resets streaming flag.
+        """
+        self._messages.clear()
+        # Clear any pending events (best-effort) by recreating the queue
+        self._event_queue = asyncio.Queue()
+        self._streaming = False  # Reset streaming flag
+
+    async def apply_checkpoint(self, checkpoint: WorkflowCheckpoint) -> None:
+        self._messages.clear()
+        messages_data = checkpoint.messages
+        for source_id, message_list in messages_data.items():
+            self._messages[source_id] = [
+                Message(
+                    data=decode_checkpoint_value(msg.get("data")),
+                    source_id=msg.get("source_id", ""),
+                    target_id=msg.get("target_id"),
+                    trace_contexts=msg.get("trace_contexts"),
+                    source_span_ids=msg.get("source_span_ids"),
+                )
+                for msg in message_list
+            ]
+
+        self._workflow_id = checkpoint.workflow_id
+
+    # endregion Checkpointing
 
     def set_workflow_id(self, workflow_id: str) -> None:
         self._workflow_id = workflow_id
@@ -287,44 +331,7 @@ class InProcRunnerContext:
         """
         return self._streaming
 
-    def reset_for_new_run(self, workflow_shared_state: SharedState | None = None) -> None:
-        self._messages.clear()
-        # Clear any pending events (best-effort) by recreating the queue
-        self._event_queue = asyncio.Queue()
-        self._shared_state.clear()
-        self._executor_states.clear()
-        self._iteration_count = 0
-        self._streaming = False  # Reset streaming flag
-        if workflow_shared_state is not None and hasattr(workflow_shared_state, "_state"):
-            workflow_shared_state._state.clear()  # type: ignore[attr-defined]
-
-    async def create_checkpoint(self, metadata: dict[str, Any] | None = None) -> str:
-        if not self._checkpoint_storage:
-            raise ValueError("Checkpoint storage not configured")
-
-        wf_id = self._workflow_id or str(uuid.uuid4())
-        self._workflow_id = wf_id
-        state = await self.get_workflow_state()
-
-        checkpoint = WorkflowCheckpoint(
-            workflow_id=wf_id,
-            messages=state["messages"],
-            shared_state=state.get("shared_state", {}),
-            executor_states=state.get("executor_states", {}),
-            iteration_count=state.get("iteration_count", 0),
-            max_iterations=state.get("max_iterations", DEFAULT_MAX_ITERATIONS),
-            metadata=metadata or {},
-        )
-        checkpoint_id = await self._checkpoint_storage.save_checkpoint(checkpoint)
-        logger.info(f"Created checkpoint {checkpoint_id} for workflow {wf_id}'")
-        return checkpoint_id
-
-    async def load_checkpoint(self, checkpoint_id: str) -> WorkflowCheckpoint | None:
-        if not self._checkpoint_storage:
-            raise ValueError("Checkpoint storage not configured")
-        return await self._checkpoint_storage.load_checkpoint(checkpoint_id)
-
-    async def get_workflow_state(self) -> WorkflowState:
+    async def _get_serialized_workflow_state(self, shared_state: SharedState, iteration_count: int) -> _WorkflowState:
         serializable_messages: dict[str, list[dict[str, Any]]] = {}
         for source_id, message_list in self._messages.items():
             serializable_messages[source_id] = [
@@ -340,48 +347,6 @@ class InProcRunnerContext:
 
         return {
             "messages": serializable_messages,
-            "shared_state": encode_checkpoint_value(self._shared_state),
-            "executor_states": encode_checkpoint_value(self._executor_states),
-            "iteration_count": self._iteration_count,
-            "max_iterations": self._max_iterations,
+            "shared_state": encode_checkpoint_value(await shared_state.export_state()),
+            "iteration_count": iteration_count,
         }
-
-    async def set_workflow_state(self, state: WorkflowState) -> None:
-        self._messages.clear()
-        messages_data = state.get("messages", {})
-        for source_id, message_list in messages_data.items():
-            self._messages[source_id] = [
-                Message(
-                    data=decode_checkpoint_value(msg.get("data")),
-                    source_id=msg.get("source_id", ""),
-                    target_id=msg.get("target_id"),
-                    trace_contexts=msg.get("trace_contexts"),
-                    source_span_ids=msg.get("source_span_ids"),
-                )
-                for msg in message_list
-            ]
-        # Restore shared_state
-        decoded_shared_raw = decode_checkpoint_value(state.get("shared_state", {}))
-        if isinstance(decoded_shared_raw, dict):
-            self._shared_state = cast(dict[str, Any], decoded_shared_raw)
-        else:  # fallback to empty dict if corrupted
-            self._shared_state = {}
-
-        # Restore executor_states ensuring value types are dicts
-        decoded_exec_raw = decode_checkpoint_value(state.get("executor_states", {}))
-        if isinstance(decoded_exec_raw, dict):
-            typed_exec: dict[str, dict[str, Any]] = {}
-            for k_raw, v_raw in decoded_exec_raw.items():  # type: ignore[assignment]
-                if isinstance(k_raw, str) and isinstance(v_raw, dict):
-                    # Filter inner dict to string keys only (best-effort)
-                    inner: dict[str, Any] = {}
-                    for inner_k, inner_v in v_raw.items():  # type: ignore[assignment]
-                        if isinstance(inner_k, str):
-                            inner[inner_k] = inner_v
-                    typed_exec[k_raw] = inner
-            self._executor_states = typed_exec
-        else:
-            self._executor_states = {}
-
-        self._iteration_count = state.get("iteration_count", 0)
-        self._max_iterations = state.get("max_iterations", 100)

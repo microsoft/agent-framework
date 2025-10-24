@@ -8,6 +8,7 @@ from typing import Any
 from agent_framework._workflows._checkpoint import WorkflowCheckpoint
 from agent_framework._workflows._checkpoint_encoding import encode_checkpoint_value
 from agent_framework._workflows._checkpoint_summary import get_checkpoint_summary
+from agent_framework._workflows._const import EXECUTOR_STATE_KEY
 from agent_framework._workflows._events import RequestInfoEvent, WorkflowEvent
 from agent_framework._workflows._request_info_executor import (
     PendingRequestDetails,
@@ -16,10 +17,7 @@ from agent_framework._workflows._request_info_executor import (
     RequestInfoMessage,
     RequestResponse,
 )
-from agent_framework._workflows._runner_context import (
-    Message,
-    WorkflowState,
-)
+from agent_framework._workflows._runner_context import Message
 from agent_framework._workflows._shared_state import SharedState
 from agent_framework._workflows._workflow_context import WorkflowContext
 
@@ -28,9 +26,6 @@ PENDING_STATE_KEY = RequestInfoExecutor._PENDING_SHARED_STATE_KEY  # pyright: ig
 
 class _StubRunnerContext:
     """Minimal runner context stub for exercising WorkflowContext helpers."""
-
-    def __init__(self, stored_state: dict[str, Any] | None = None) -> None:
-        self._state = stored_state or {}
 
     async def send_message(self, message: Message) -> None:  # pragma: no cover - unused in tests
         return None
@@ -53,31 +48,27 @@ class _StubRunnerContext:
     async def next_event(self) -> WorkflowEvent:  # pragma: no cover - unused
         raise RuntimeError("Not implemented in stub context")
 
-    async def get_executor_state(self, executor_id: str) -> dict[str, Any] | None:  # pragma: no cover - trivial
-        return self._state
-
-    async def set_executor_state(self, executor_id: str, state: dict[str, Any]) -> None:  # pragma: no cover - unused
-        self._state = state
-
     def has_checkpointing(self) -> bool:  # pragma: no cover - unused
         return False
 
     def set_workflow_id(self, workflow_id: str) -> None:  # pragma: no cover - unused
         pass
 
-    def reset_for_new_run(self, workflow_shared_state: SharedState | None = None) -> None:  # pragma: no cover - unused
+    def reset_for_new_run(self) -> None:  # pragma: no cover - unused
         pass
 
-    async def create_checkpoint(self, metadata: dict[str, Any] | None = None) -> str:  # pragma: no cover - unused
+    async def create_checkpoint(
+        self,
+        shared_state: SharedState,
+        iteration_count: int,
+        metadata: dict[str, Any] | None = None,
+    ) -> str:  # pragma: no cover - unused
         raise RuntimeError("Checkpointing not supported in stub context")
 
     async def load_checkpoint(self, checkpoint_id: str) -> WorkflowCheckpoint | None:  # pragma: no cover - unused
         return None
 
-    async def get_workflow_state(self) -> WorkflowState:  # pragma: no cover - unused
-        return {}  # type: ignore[return-value]
-
-    async def set_workflow_state(self, state: WorkflowState) -> None:  # pragma: no cover - unused
+    async def apply_checkpoint(self, checkpoint: WorkflowCheckpoint) -> None:  # pragma: no cover - unused
         pass
 
     def set_streaming(self, streaming: bool) -> None:  # pragma: no cover - unused
@@ -120,8 +111,8 @@ async def test_rehydrate_falls_back_when_request_type_missing() -> None:
         },
     )
 
-    runner_ctx = _StubRunnerContext({PENDING_STATE_KEY: {request_id: snapshot}})
-    ctx: WorkflowContext[Any] = WorkflowContext("request_info", ["workflow"], SharedState(), runner_ctx)
+    ctx: WorkflowContext[Any] = WorkflowContext("request_info", ["workflow"], SharedState(), _StubRunnerContext())
+    await ctx.set_executor_state({PENDING_STATE_KEY: {request_id: snapshot}})
 
     executor = RequestInfoExecutor(id="request_info")
 
@@ -143,8 +134,8 @@ async def test_has_pending_request_detects_snapshot() -> None:
         },
     )
 
-    runner_ctx = _StubRunnerContext({PENDING_STATE_KEY: {request_id: snapshot}})
-    ctx: WorkflowContext[Any] = WorkflowContext("request_info", ["workflow"], SharedState(), runner_ctx)
+    ctx: WorkflowContext[Any] = WorkflowContext("request_info", ["workflow"], SharedState(), _StubRunnerContext())
+    await ctx.set_executor_state({PENDING_STATE_KEY: {request_id: snapshot}})
 
     executor = RequestInfoExecutor(id="request_info")
 
@@ -152,9 +143,8 @@ async def test_has_pending_request_detects_snapshot() -> None:
 
 
 async def test_has_pending_request_false_when_snapshot_absent() -> None:
-    shared_state = SharedState()
-    runner_ctx = _StubRunnerContext({"pending_requests": {}})
-    ctx: WorkflowContext[Any] = WorkflowContext("request_info", ["workflow"], shared_state, runner_ctx)
+    ctx: WorkflowContext[Any] = WorkflowContext("request_info", ["workflow"], SharedState(), _StubRunnerContext())
+    await ctx.set_executor_state({PENDING_STATE_KEY: {}})
 
     executor = RequestInfoExecutor(id="request_info")
 
@@ -196,7 +186,6 @@ def test_pending_requests_from_checkpoint_and_summary() -> None:
                 }
             }
         },
-        executor_states={},
         iteration_count=1,
     )
 
@@ -284,10 +273,13 @@ async def test_run_persists_pending_requests_in_runner_state() -> None:
     await executor.execute(approval, ctx.source_executor_ids, shared_state, runner_ctx)
 
     # Runner state should include both pending snapshot and serialized request events
-    assert PENDING_STATE_KEY in runner_ctx._state  # pyright: ignore[reportPrivateUsage]
-    assert approval.request_id in runner_ctx._state[PENDING_STATE_KEY]  # pyright: ignore[reportPrivateUsage]
+    assert await shared_state.has(EXECUTOR_STATE_KEY)
+    executor_state = await shared_state.get(EXECUTOR_STATE_KEY)
+    assert executor.id in executor_state
+    assert PENDING_STATE_KEY in executor_state[executor.id]
+    assert approval.request_id in executor_state[executor.id][PENDING_STATE_KEY]
 
     response_ctx: WorkflowContext[None] = WorkflowContext("request_info", ["source"], shared_state, runner_ctx)
     await executor.handle_response("approved", approval.request_id, response_ctx)  # type: ignore
 
-    assert runner_ctx._state[PENDING_STATE_KEY] == {}  # pyright: ignore[reportPrivateUsage]
+    assert executor_state[executor.id][PENDING_STATE_KEY] == {}
