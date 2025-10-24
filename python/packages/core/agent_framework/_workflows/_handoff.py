@@ -38,7 +38,7 @@ from ._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorR
 from ._checkpoint import CheckpointStorage
 from ._conversation_state import decode_chat_messages, encode_chat_messages
 from ._executor import Executor, handler
-from ._request_info_executor import RequestInfoExecutor, RequestInfoMessage, RequestResponse
+from ._request_info_mixin import response_handler
 from ._workflow import Workflow
 from ._workflow_builder import WorkflowBuilder
 from ._workflow_context import WorkflowContext
@@ -112,12 +112,13 @@ def _clone_chat_agent(agent: ChatAgent) -> ChatAgent:
 
 
 @dataclass
-class HandoffUserInputRequest(RequestInfoMessage):
+class HandoffUserInputRequest:
     """Request message emitted when the workflow needs fresh user input."""
 
-    conversation: list[ChatMessage] = field(default_factory=lambda: [])  # type: ignore[misc]
-    awaiting_agent_id: str | None = None
-    prompt: str | None = None
+    conversation: list[ChatMessage]
+    awaiting_agent_id: str
+    prompt: str
+    source_executor_id: str
 
 
 @dataclass
@@ -514,28 +515,22 @@ class _HandoffCoordinator(Executor):
 
 
 class _UserInputGateway(Executor):
-    """Bridges conversation context with RequestInfoExecutor and re-enters the loop."""
+    """Bridges conversation context with the request & response cycle and re-enters the loop."""
 
     def __init__(
         self,
         *,
-        request_executor_id: str,
         starting_agent_id: str,
         prompt: str | None,
         id: str,
     ) -> None:
         """Initialise the gateway that requests user input and forwards responses."""
         super().__init__(id)
-        self._request_executor_id = request_executor_id
         self._starting_agent_id = starting_agent_id
         self._prompt = prompt or "Provide your next input for the conversation."
 
     @handler
-    async def request_input(
-        self,
-        conversation: list[ChatMessage],
-        ctx: WorkflowContext[HandoffUserInputRequest],
-    ) -> None:
+    async def request_input(self, conversation: list[ChatMessage], ctx: WorkflowContext) -> None:
         """Emit a `HandoffUserInputRequest` capturing the conversation snapshot."""
         if not conversation:
             raise ValueError("Handoff workflow requires non-empty conversation before requesting user input.")
@@ -543,27 +538,26 @@ class _UserInputGateway(Executor):
             conversation=list(conversation),
             awaiting_agent_id=self._starting_agent_id,
             prompt=self._prompt,
+            source_executor_id=self.id,
         )
-        request.source_executor_id = self.id
-        await ctx.send_message(request, target_id=self._request_executor_id)
+        await ctx.request_info(request, HandoffUserInputRequest, Any)
 
-    @handler
+    @response_handler
     async def resume_from_user(
         self,
-        response: RequestResponse[HandoffUserInputRequest, Any],
+        original_request: HandoffUserInputRequest,
+        response: Any,
         ctx: WorkflowContext[_ConversationWithUserInput],
     ) -> None:
         """Convert user input responses back into chat messages and resume the workflow."""
         # Reconstruct full conversation with new user input
-        conversation = list(response.original_request.conversation)
-        user_messages = _as_user_messages(response.data)
+        conversation = list(original_request.conversation)
+        user_messages = _as_user_messages(response)
         conversation.extend(user_messages)
 
         # Send full conversation back to coordinator (not trimmed)
         # Coordinator will update its authoritative history and trim for agent
         message = _ConversationWithUserInput(full_conversation=conversation)
-        # CRITICAL: Must specify target to avoid broadcasting to all connected executors
-        # Gateway is connected to both request_info and coordinator, we want coordinator only
         await ctx.send_message(message, target_id="handoff-coordinator")
 
 
@@ -1309,9 +1303,7 @@ class HandoffBuilder:
             logger.warning("Handoff workflow has no specialist agents; the coordinator will loop with the user.")
 
         input_node = _InputToConversation(id="input-conversation")
-        request_info = RequestInfoExecutor(id=f"{starting_executor.id}_handoff_requests")
         user_gateway = _UserInputGateway(
-            request_executor_id=request_info.id,
             starting_agent_id=starting_executor.id,
             prompt=self._request_prompt,
             id="handoff-user-input",
@@ -1335,8 +1327,6 @@ class HandoffBuilder:
             builder.add_edge(specialist, coordinator)
 
         builder.add_edge(coordinator, user_gateway)
-        builder.add_edge(user_gateway, request_info)
-        builder.add_edge(request_info, user_gateway)
         builder.add_edge(user_gateway, coordinator)  # Route back to coordinator, not directly to agent
         builder.add_edge(coordinator, starting_executor)  # Coordinator sends trimmed request to agent
 

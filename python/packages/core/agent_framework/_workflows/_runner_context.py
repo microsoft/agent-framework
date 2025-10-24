@@ -348,6 +348,7 @@ class InProcRunnerContext:
             workflow_id=self._workflow_id,
             messages=state["messages"],
             shared_state=state["shared_state"],
+            pending_request_info_events=state["pending_request_info_events"],
             iteration_count=state["iteration_count"],
             metadata=metadata or {},
         )
@@ -371,6 +372,8 @@ class InProcRunnerContext:
         self._streaming = False  # Reset streaming flag
 
     async def apply_checkpoint(self, checkpoint: WorkflowCheckpoint) -> None:
+        """Apply a checkpoint to the current context, mutating its state."""
+        # Restore messages
         self._messages.clear()
         messages_data = checkpoint.messages
         for source_id, message_list in messages_data.items():
@@ -385,6 +388,15 @@ class InProcRunnerContext:
                 for msg in message_list
             ]
 
+        # Restore pending request info events
+        self._pending_request_info_events.clear()
+        pending_requests_data = checkpoint.pending_request_info_events
+        for request_id, request_data in pending_requests_data.items():
+            request_info_event = RequestInfoEvent.from_dict(request_data)
+            self._pending_request_info_events[request_id] = request_info_event
+            await self.add_event(request_info_event)
+
+        # Restore workflow ID
         self._workflow_id = checkpoint.workflow_id
 
     # endregion Checkpointing
