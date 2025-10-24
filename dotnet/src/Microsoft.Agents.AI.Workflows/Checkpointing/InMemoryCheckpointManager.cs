@@ -12,21 +12,22 @@ namespace Microsoft.Agents.AI.Workflows.Checkpointing;
 /// </summary>
 internal sealed class InMemoryCheckpointManager : ICheckpointManager
 {
-    private readonly Dictionary<string, RunCheckpointCache<Checkpoint>> _store = [];
+    [JsonInclude]
+    internal Dictionary<string, RunCheckpointCache<Checkpoint>> Store { get; } = [];
 
     public InMemoryCheckpointManager() { }
 
     [JsonConstructor]
     internal InMemoryCheckpointManager(Dictionary<string, RunCheckpointCache<Checkpoint>> store)
     {
-        this._store = store;
+        this.Store = store;
     }
 
     private RunCheckpointCache<Checkpoint> GetRunStore(string runId)
     {
-        if (!this._store.TryGetValue(runId, out RunCheckpointCache<Checkpoint>? runStore))
+        if (!this.Store.TryGetValue(runId, out RunCheckpointCache<Checkpoint>? runStore))
         {
-            runStore = this._store[runId] = new();
+            runStore = this.Store[runId] = new();
         }
 
         return runStore;

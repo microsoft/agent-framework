@@ -8,11 +8,75 @@ to support Agent Framework specific features like workflows and traces.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
 # Custom Agent Framework OpenAI event types for structured data
+
+
+# Agent lifecycle events - simple and clear
+class AgentStartedEvent:
+    """Event emitted when an agent starts execution."""
+
+    pass
+
+
+class AgentCompletedEvent:
+    """Event emitted when an agent completes execution successfully."""
+
+    pass
+
+
+@dataclass
+class AgentFailedEvent:
+    """Event emitted when an agent fails during execution."""
+
+    error: Exception | None = None
+
+
+class ExecutorActionItem(BaseModel):
+    """Custom item type for workflow executor actions.
+
+    This is a DevUI-specific extension to represent workflow executors as output items.
+    Since OpenAI's ResponseOutputItemAddedEvent only accepts specific item types,
+    and executor actions are not part of the standard, we need this custom type.
+    """
+
+    type: Literal["executor_action"] = "executor_action"
+    id: str
+    executor_id: str
+    status: Literal["in_progress", "completed", "failed", "cancelled"] = "in_progress"
+    metadata: dict[str, Any] | None = None
+    result: Any | None = None
+    error: dict[str, Any] | None = None
+
+
+class CustomResponseOutputItemAddedEvent(BaseModel):
+    """Custom version of ResponseOutputItemAddedEvent that accepts any item type.
+
+    This allows us to emit executor action items while maintaining the same
+    event structure as OpenAI's standard.
+    """
+
+    type: Literal["response.output_item.added"] = "response.output_item.added"
+    output_index: int
+    sequence_number: int
+    item: dict[str, Any] | ExecutorActionItem | Any  # Flexible item type
+
+
+class CustomResponseOutputItemDoneEvent(BaseModel):
+    """Custom version of ResponseOutputItemDoneEvent that accepts any item type.
+
+    This allows us to emit executor action items while maintaining the same
+    event structure as OpenAI's standard.
+    """
+
+    type: Literal["response.output_item.done"] = "response.output_item.done"
+    output_index: int
+    sequence_number: int
+    item: dict[str, Any] | ExecutorActionItem | Any  # Flexible item type
 
 
 class ResponseWorkflowEventComplete(BaseModel):
@@ -57,6 +121,7 @@ class ResponseFunctionResultComplete(BaseModel):
     item_id: str
     output_index: int = 0
     sequence_number: int
+    timestamp: str | None = None  # Optional timestamp for UI display
 
 
 # Agent Framework extension fields
@@ -64,7 +129,7 @@ class AgentFrameworkExtraBody(BaseModel):
     """Agent Framework specific routing fields for OpenAI requests."""
 
     entity_id: str
-    input_data: dict[str, Any] | None = None
+    # input_data removed - now using standard input field for all data
 
     model_config = ConfigDict(extra="allow")
 
@@ -80,7 +145,7 @@ class AgentFrameworkRequest(BaseModel):
 
     # All OpenAI fields from ResponseCreateParams
     model: str  # Used as entity_id in DevUI!
-    input: str | list[Any]  # ResponseInputParam
+    input: str | list[Any] | dict[str, Any]  # ResponseInputParam + dict for workflow structured input
     stream: bool | None = False
 
     # OpenAI conversation parameter (standard!)

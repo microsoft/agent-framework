@@ -21,6 +21,48 @@ export interface ResponseStreamEvent {
   created_at?: number;
 }
 
+// Standard OpenAI Response Lifecycle Events
+export interface ResponseCreatedEvent {
+  type: "response.created";
+  response: {
+    id: string;
+    status: "in_progress";
+    created_at: number;
+    output?: any[];
+  };
+  sequence_number?: number;
+}
+
+export interface ResponseInProgressEvent {
+  type: "response.in_progress";
+  response: {
+    id: string;
+    status: "in_progress";
+  };
+  sequence_number?: number;
+}
+
+export interface ResponseCompletedEvent {
+  type: "response.completed";
+  response: {
+    id: string;
+    status: "completed";
+    usage?: any;  // Optional usage information
+    model?: string;  // Optional model information
+  };
+  sequence_number?: number;
+}
+
+export interface ResponseFailedEvent {
+  type: "response.failed";
+  response: {
+    id: string;
+    status: "failed";
+    error?: any;
+  };
+  sequence_number?: number;
+}
+
 // Custom Agent Framework OpenAI event types with structured data
 export interface ResponseWorkflowEventComplete {
   type: "response.workflow_event.complete";
@@ -83,13 +125,41 @@ export interface ResponseFunctionToolCall {
   status?: "in_progress" | "completed" | "incomplete";
 }
 
-// OpenAI Responses API - Output Item Added Event
-// OpenAI standard: Output item added event
+// Workflow Item Types - flexible interface for any workflow item
+export interface WorkflowItem {
+  type: string;  // "executor_action", "workflow_action", "message", or any future type
+  id: string;
+  status?: "in_progress" | "completed" | "failed" | "cancelled";
+  [key: string]: any;  // Allow any additional fields
+}
+
+// Executor Action Item (DevUI specific)
+export interface ExecutorActionItem extends WorkflowItem {
+  type: "executor_action";
+  executor_id: string;
+  metadata?: Record<string, any>;
+  result?: any;
+  error?: any;
+}
+
+// Type guard for executor actions
+export function isExecutorAction(item: WorkflowItem): item is ExecutorActionItem {
+  return item.type === "executor_action" && "executor_id" in item;
+}
+
+// OpenAI Responses API - Output Item Events
 export interface ResponseOutputItemAddedEvent {
   type: "response.output_item.added";
-  item: ResponseFunctionToolCall;
+  item: WorkflowItem | ResponseFunctionToolCall | any;  // Flexible to support various item types
   output_index: number;
-  sequence_number: number;
+  sequence_number?: number;
+}
+
+export interface ResponseOutputItemDoneEvent {
+  type: "response.output_item.done";
+  item: WorkflowItem | ResponseFunctionToolCall | any;
+  output_index: number;
+  sequence_number?: number;
 }
 
 // Trace event - matching actual backend output
@@ -171,6 +241,7 @@ export interface ResponseFunctionResultComplete {
   item_id: string;
   output_index: number;
   sequence_number: number;
+  timestamp?: string;  // Optional ISO timestamp for UI display
 }
 
 // DevUI Extension: Turn Separator (UI-only event for grouping)
@@ -182,11 +253,15 @@ export interface TurnSeparatorEvent {
 
 // Union type for all structured events
 export type StructuredEvent =
+  | ResponseCreatedEvent
+  | ResponseInProgressEvent
   | ResponseCompletedEvent
+  | ResponseFailedEvent
   | ResponseWorkflowEventComplete
   | ResponseTraceEventComplete
   | ResponseTraceComplete
   | ResponseOutputItemAddedEvent
+  | ResponseOutputItemDoneEvent
   | ResponseFunctionCallComplete
   | ResponseFunctionCallDelta
   | ResponseFunctionCallArgumentsDelta
@@ -249,12 +324,6 @@ export interface ResponseUsage {
   };
 }
 
-// OpenAI standard: response.completed event
-export interface ResponseCompletedEvent {
-  type: "response.completed";
-  response: OpenAIResponse;
-  sequence_number: number;
-}
 
 // Request format for Agent Framework
 // AgentFrameworkRequest moved to agent-framework.ts to avoid conflicts

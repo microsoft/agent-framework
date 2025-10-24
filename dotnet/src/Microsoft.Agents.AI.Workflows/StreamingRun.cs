@@ -79,11 +79,14 @@ public sealed class StreamingRun : IAsyncDisposable
         CancellationToken cancellationToken = default)
         => this._runHandle.TakeEventStreamAsync(blockOnPendingRequest, cancellationToken);
 
+    /// <summary>
+    /// Attempt to cancel the streaming run.
+    /// </summary>
+    /// <returns>A <see cref="ValueTask"/> that represents the asynchronous send operation.</returns>
+    public ValueTask CancelRunAsync() => this._runHandle.CancelRunAsync();
+
     /// <inheritdoc/>
-    public ValueTask DisposeAsync()
-    {
-        return this._runHandle.DisposeAsync();
-    }
+    public ValueTask DisposeAsync() => this._runHandle.DisposeAsync();
 }
 
 /// <summary>

@@ -143,6 +143,104 @@ def test_select_primary_input_type_prefers_string_and_dict():
     assert fallback is int
 
 
+@pytest.mark.asyncio
+async def test_credential_cleanup() -> None:
+    """Test that async credentials are properly closed during server cleanup."""
+    from unittest.mock import AsyncMock, Mock
+
+    from agent_framework import ChatAgent
+
+    # Create mock credential with async close
+    mock_credential = AsyncMock()
+    mock_credential.close = AsyncMock()
+
+    # Create mock chat client with credential
+    mock_client = Mock()
+    mock_client.async_credential = mock_credential
+    mock_client.model_id = "test-model"
+
+    # Create agent with mock client
+    agent = ChatAgent(name="TestAgent", chat_client=mock_client, instructions="Test agent")
+
+    # Create DevUI server with agent
+    server = DevServer()
+    server._pending_entities = [agent]
+    await server._ensure_executor()
+
+    # Run cleanup
+    await server._cleanup_entities()
+
+    # Verify credential.close() was called
+    assert mock_credential.close.called, "Async credential close should have been called"
+    assert mock_credential.close.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_credential_cleanup_error_handling() -> None:
+    """Test that credential cleanup errors are handled gracefully."""
+    from unittest.mock import AsyncMock, Mock
+
+    from agent_framework import ChatAgent
+
+    # Create mock credential that raises error on close
+    mock_credential = AsyncMock()
+    mock_credential.close = AsyncMock(side_effect=Exception("Close failed"))
+
+    # Create mock chat client with credential
+    mock_client = Mock()
+    mock_client.async_credential = mock_credential
+    mock_client.model_id = "test-model"
+
+    # Create agent with mock client
+    agent = ChatAgent(name="TestAgent", chat_client=mock_client, instructions="Test agent")
+
+    # Create DevUI server with agent
+    server = DevServer()
+    server._pending_entities = [agent]
+    await server._ensure_executor()
+
+    # Run cleanup - should not raise despite credential error
+    await server._cleanup_entities()
+
+    # Verify close was attempted
+    assert mock_credential.close.called
+
+
+@pytest.mark.asyncio
+async def test_multiple_credential_attributes() -> None:
+    """Test that we check all common credential attribute names."""
+    from unittest.mock import AsyncMock, Mock
+
+    from agent_framework import ChatAgent
+
+    # Create mock credentials
+    mock_cred1 = Mock()
+    mock_cred1.close = Mock()
+    mock_cred2 = AsyncMock()
+    mock_cred2.close = AsyncMock()
+
+    # Create mock chat client with multiple credential attributes
+    mock_client = Mock()
+    mock_client.credential = mock_cred1
+    mock_client.async_credential = mock_cred2
+    mock_client.model_id = "test-model"
+
+    # Create agent with mock client
+    agent = ChatAgent(name="TestAgent", chat_client=mock_client, instructions="Test agent")
+
+    # Create DevUI server with agent
+    server = DevServer()
+    server._pending_entities = [agent]
+    await server._ensure_executor()
+
+    # Run cleanup
+    await server._cleanup_entities()
+
+    # Verify both credentials were closed
+    assert mock_cred1.close.called, "Sync credential should be closed"
+    assert mock_cred2.close.called, "Async credential should be closed"
+
+
 if __name__ == "__main__":
     # Simple test runner
     async def run_tests():
