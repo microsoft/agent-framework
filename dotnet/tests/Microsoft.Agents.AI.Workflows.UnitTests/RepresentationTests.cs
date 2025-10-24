@@ -38,9 +38,8 @@ public class RepresentationTests
     private static RequestPort TestRequestPort =>
         RequestPort.Create<FunctionCallContent, FunctionResultContent>("ExternalFunction");
 
-    private static async ValueTask RunExecutorishInfoMatchTestAsync(ExecutorIsh target)
+    private static async ValueTask RunExecutorishInfoMatchTestAsync(ExecutorRegistration registration)
     {
-        ExecutorRegistration registration = target.Registration;
         ExecutorInfo info = registration.ToExecutorInfo();
 
         info.IsMatch(await registration.CreateInstanceAsync(runId: string.Empty)).Should().BeTrue();
@@ -53,17 +52,19 @@ public class RepresentationTests
         await RunExecutorishTestAsync(new TestExecutor());
         await RunExecutorishTestAsync(TestRequestPort);
         await RunExecutorishTestAsync(new TestAgent());
-        await RunExecutorishTestAsync(Step1EntryPoint.WorkflowInstance.ConfigureSubWorkflow(nameof(Step1EntryPoint)));
+        await RunExecutorishTestAsync(Step1EntryPoint.WorkflowInstance.AsExecutor(nameof(Step1EntryPoint)));
 
         Func<int, IWorkflowContext, CancellationToken, ValueTask> function = MessageHandlerAsync;
         await RunExecutorishTestAsync(function.AsExecutor("FunctionExecutor"));
 
-        if (Enum.GetValues(typeof(ExecutorIsh.Type)).Length > testsRun + 1)
-        {
-            Assert.Fail("Not all ExecutorIsh types were tested.");
-        }
+        // It would be great if there was a way to test exhaustion for record-based Sum Types
+        // TODO: Unit tests don't have to be AOT-compatible, so...
+        //if (Enum.GetValues(typeof(ExecutorIsh.Type)).Length > testsRun + 1)
+        //{
+        //    Assert.Fail("Not all ExecutorIsh types were tested.");
+        //}
 
-        async ValueTask RunExecutorishTestAsync(ExecutorIsh executorish)
+        async ValueTask RunExecutorishTestAsync(ExecutorRegistration executorish)
         {
             await RunExecutorishInfoMatchTestAsync(executorish);
             testsRun++;

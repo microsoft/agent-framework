@@ -24,7 +24,7 @@ internal sealed class WorkflowModelBuilder : IModelBuilder<Func<object?, bool>>
             condition);
     }
 
-    private static ExecutorIsh GetExecutorIsh(IModeledAction action) =>
+    private static ExecutorRegistration GetExecutorIsh(IModeledAction action) =>
         action switch
         {
             RequestPortAction port => port.RequestPort,

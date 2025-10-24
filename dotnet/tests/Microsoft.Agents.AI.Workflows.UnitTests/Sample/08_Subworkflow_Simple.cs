@@ -29,13 +29,13 @@ internal static class Step8EntryPoint
     public static async ValueTask<List<TextProcessingResult>> RunAsync(TextWriter writer, IWorkflowExecutionEnvironment environment, List<string> textsToProcess)
     {
         Func<TextProcessingRequest, IWorkflowContext, CancellationToken, ValueTask> processTextAsyncFunc = ProcessTextAsync;
-        ExecutorIsh processText = processTextAsyncFunc.AsExecutor("TextProcessor", threadsafe: true);
+        ExecutorRegistration processText = processTextAsyncFunc.AsExecutor("TextProcessor", threadsafe: true);
 
         Workflow subWorkflow = new WorkflowBuilder(processText).WithOutputFrom(processText).Build();
 
-        ExecutorIsh textProcessor = subWorkflow.ConfigureSubWorkflow("TextProcessor");
+        ExecutorRegistration textProcessor = subWorkflow.AsExecutor("TextProcessor");
         Func<string, string, ValueTask<Executor>> createOrchestrator = (id, _) => new(new TextProcessingOrchestrator(id));
-        var orchestrator = createOrchestrator.ConfigureFactory();
+        var orchestrator = createOrchestrator.RegisterExecutor();
 
         Workflow workflow = new WorkflowBuilder(orchestrator)
             .AddEdge(orchestrator, textProcessor)

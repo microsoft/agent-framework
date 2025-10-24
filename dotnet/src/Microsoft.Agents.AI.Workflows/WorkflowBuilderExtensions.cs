@@ -24,7 +24,7 @@ public static class WorkflowBuilderExtensions
     /// <param name="source">The source executor from which messages will be forwarded.</param>
     /// <param name="executors">The target executors to which messages will be forwarded.</param>
     /// <returns>The updated <see cref="WorkflowBuilder"/> instance.</returns>
-    public static WorkflowBuilder ForwardMessage<TMessage>(this WorkflowBuilder builder, ExecutorIsh source, params IEnumerable<ExecutorIsh> executors)
+    public static WorkflowBuilder ForwardMessage<TMessage>(this WorkflowBuilder builder, ExecutorRegistration source, params IEnumerable<ExecutorRegistration> executors)
         => builder.ForwardMessage<TMessage>(source, condition: null, executors);
 
     /// <summary>
@@ -38,7 +38,7 @@ public static class WorkflowBuilderExtensions
     /// all messages of type <typeparamref name="TMessage"/> will be forwarded.</param>
     /// <param name="executors">The target executors to which messages will be forwarded.</param>
     /// <returns>The updated <see cref="WorkflowBuilder"/> instance.</returns>
-    public static WorkflowBuilder ForwardMessage<TMessage>(this WorkflowBuilder builder, ExecutorIsh source, Func<TMessage, bool>? condition = null, params IEnumerable<ExecutorIsh> executors)
+    public static WorkflowBuilder ForwardMessage<TMessage>(this WorkflowBuilder builder, ExecutorRegistration source, Func<TMessage, bool>? condition = null, params IEnumerable<ExecutorRegistration> executors)
     {
         Throw.IfNull(executors);
 
@@ -47,7 +47,7 @@ public static class WorkflowBuilderExtensions
 #if NET
         if (executors.TryGetNonEnumeratedCount(out int count) && count == 1)
 #else
-        if (executors is ICollection<ExecutorIsh> { Count: 1 })
+        if (executors is ICollection<ExecutorRegistration> { Count: 1 })
 #endif
         {
             return builder.AddEdge(source, executors.First(), predicate);
@@ -68,7 +68,7 @@ public static class WorkflowBuilderExtensions
     /// <param name="source">The source executor from which messages will be forwarded.</param>
     /// <param name="executors">The target executors to which messages, except those of type <typeparamref name="TMessage"/>, will be forwarded.</param>
     /// <returns>The updated <see cref="WorkflowBuilder"/> instance with the added edges.</returns>
-    public static WorkflowBuilder ForwardExcept<TMessage>(this WorkflowBuilder builder, ExecutorIsh source, params IEnumerable<ExecutorIsh> executors)
+    public static WorkflowBuilder ForwardExcept<TMessage>(this WorkflowBuilder builder, ExecutorRegistration source, params IEnumerable<ExecutorRegistration> executors)
     {
         Throw.IfNull(executors);
 
@@ -77,7 +77,7 @@ public static class WorkflowBuilderExtensions
 #if NET
         if (executors.TryGetNonEnumeratedCount(out int count) && count == 1)
 #else
-        if (executors is ICollection<ExecutorIsh> { Count: 1 })
+        if (executors is ICollection<ExecutorRegistration> { Count: 1 })
 #endif
         {
             return builder.AddEdge(source, executors.First(), predicate);
@@ -102,7 +102,7 @@ public static class WorkflowBuilderExtensions
     /// <param name="executors">An ordered array of executors to be added to the chain after the source.</param>
     /// <returns>The original workflow builder instance with the specified executor chain added.</returns>
     /// <exception cref="ArgumentException">Thrown if there is a cycle in the chain.</exception>
-    public static WorkflowBuilder AddChain(this WorkflowBuilder builder, ExecutorIsh source, bool allowRepetition = false, params IEnumerable<ExecutorIsh> executors)
+    public static WorkflowBuilder AddChain(this WorkflowBuilder builder, ExecutorRegistration source, bool allowRepetition = false, params IEnumerable<ExecutorRegistration> executors)
     {
         Throw.IfNull(builder);
         Throw.IfNull(source);
@@ -139,7 +139,7 @@ public static class WorkflowBuilderExtensions
     /// <param name="source">The source executor representing the external system or process to connect. Cannot be null.</param>
     /// <param name="portId">The unique identifier for the input port that will handle the external call. Cannot be null.</param>
     /// <returns>The original workflow builder instance with the external call added.</returns>
-    public static WorkflowBuilder AddExternalCall<TRequest, TResponse>(this WorkflowBuilder builder, ExecutorIsh source, string portId)
+    public static WorkflowBuilder AddExternalCall<TRequest, TResponse>(this WorkflowBuilder builder, ExecutorRegistration source, string portId)
     {
         Throw.IfNull(builder);
         Throw.IfNull(source);
@@ -160,7 +160,7 @@ public static class WorkflowBuilderExtensions
     /// <param name="source">The source executor that determines the branching condition for the switch. Cannot be null.</param>
     /// <param name="configureSwitch">An action used to configure the switch builder, specifying the branches and their conditions. Cannot be null.</param>
     /// <returns>The workflow builder instance with the configured switch step added.</returns>
-    public static WorkflowBuilder AddSwitch(this WorkflowBuilder builder, ExecutorIsh source, Action<SwitchBuilder> configureSwitch)
+    public static WorkflowBuilder AddSwitch(this WorkflowBuilder builder, ExecutorRegistration source, Action<SwitchBuilder> configureSwitch)
     {
         Throw.IfNull(builder);
         Throw.IfNull(source);

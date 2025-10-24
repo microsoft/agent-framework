@@ -39,7 +39,7 @@ public static partial class AgentWorkflowBuilder
         // Create a builder that chains the agents together in sequence. The workflow simply begins
         // with the first agent in the sequence.
         WorkflowBuilder? builder = null;
-        ExecutorIsh? previous = null;
+        ExecutorRegistration? previous = null;
         foreach (var agent in agents)
         {
             AgentRunStreamingExecutor agentExecutor = new(agent, includeInputInOutput: true);
@@ -124,8 +124,8 @@ public static partial class AgentWorkflowBuilder
         // so that the final accumulator receives a single list of messages from each agent. Otherwise, the
         // accumulator would not be able to determine what came from what agent, as there's currently no
         // provenance tracking exposed in the workflow context passed to a handler.
-        ExecutorIsh[] agentExecutors = (from agent in agents select (ExecutorIsh)new AgentRunStreamingExecutor(agent, includeInputInOutput: false)).ToArray();
-        ExecutorIsh[] accumulators = [.. from agent in agentExecutors select (ExecutorIsh)new CollectChatMessagesExecutor($"Batcher/{agent.Id}")];
+        ExecutorRegistration[] agentExecutors = (from agent in agents select (ExecutorRegistration)new AgentRunStreamingExecutor(agent, includeInputInOutput: false)).ToArray();
+        ExecutorRegistration[] accumulators = [.. from agent in agentExecutors select (ExecutorRegistration)new CollectChatMessagesExecutor($"Batcher/{agent.Id}")];
         builder.AddFanOutEdge(start, targets: agentExecutors);
         for (int i = 0; i < agentExecutors.Length; i++)
         {

@@ -66,10 +66,10 @@ public class Workflow
     /// </summary>
     public string? Description { get; internal init; }
 
-    internal bool AllowConcurrent => this.Registrations.Values.All(registration => registration.SupportsConcurrent);
+    internal bool AllowConcurrent => this.Registrations.Values.All(registration => registration.SupportsConcurrentSharedExecution);
 
     internal IEnumerable<string> NonConcurrentExecutorIds =>
-        this.Registrations.Values.Where(r => !r.SupportsConcurrent).Select(r => r.Id);
+        this.Registrations.Values.Where(r => !r.SupportsConcurrentSharedExecution).Select(r => r.Id);
 
     /// <summary>
     /// Initializes a new instance of the <see cref="Workflow"/> class with the specified starting executor identifier
@@ -86,11 +86,12 @@ public class Workflow
     }
 
     private bool _needsReset;
-    private bool IsResettable => this.Registrations.Values.All(registration => !registration.IsUnresettableSharedInstance);
+    private bool HasResettableExecutors =>
+        this.Registrations.Values.Any(registration => registration.SupportsResetting);
 
     private async ValueTask<bool> TryResetExecutorRegistrationsAsync()
     {
-        if (this.IsResettable)
+        if (this.HasResettableExecutors)
         {
             foreach (ExecutorRegistration registration in this.Registrations.Values)
             {
@@ -158,7 +159,7 @@ public class Workflow
                 });
         }
 
-        this._needsReset = true;
+        this._needsReset = !this.AllowConcurrent;
         this._ownedAsSubworkflow = subworkflow;
     }
 

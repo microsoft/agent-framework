@@ -266,7 +266,7 @@ public static class WorkflowVisualizer
 
     private static bool TryGetNestedWorkflow(ExecutorRegistration registration, [NotNullWhen(true)] out Workflow? workflow)
     {
-        if (registration.RawExecutorishData is Workflow subWorkflow)
+        if (registration.RawValue is Workflow subWorkflow)
         {
             workflow = subWorkflow;
             return true;
