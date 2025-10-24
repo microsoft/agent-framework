@@ -25,6 +25,7 @@ dependencies = [
     "agent-framework-core",
     "azure-ai-projects >= 1.0.0b11",
     "azure-ai-agents == 1.2.0b5",
+    "azure-search-documents >= 11.7.0b1",
     "aiohttp ~= 3.8",
 ]
 

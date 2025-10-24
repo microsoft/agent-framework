@@ -12,7 +12,8 @@ This folder contains examples demonstrating different ways to create and use age
 | [`azure_ai_with_existing_agent.py`](azure_ai_with_existing_agent.py) | Shows how to work with a pre-existing agent by providing the agent ID to the Azure AI chat client. This example also demonstrates proper cleanup of manually created agents. |
 | [`azure_ai_with_existing_thread.py`](azure_ai_with_existing_thread.py) | Shows how to work with a pre-existing thread by providing the thread ID to the Azure AI chat client. This example also demonstrates proper cleanup of manually created threads. |
 | [`azure_ai_with_explicit_settings.py`](azure_ai_with_explicit_settings.py) | Shows how to create an agent with explicitly configured `AzureAIAgentClient` settings, including project endpoint, model deployment, credentials, and agent name. |
-| [`azure_ai_with_azure_ai_search.py`](azure_ai_with_azure_ai_search.py) | Demonstrates how to use Azure AI Search with Azure AI agents to search through indexed data. Shows how to configure search parameters, query types, and integrate with existing search indexes. |
+| [`azure_ai_with_azure_ai_search.py`](azure_ai_with_azure_ai_search.py) | Demonstrates how to use Azure AI Search with Azure AI agents to search through indexed data using HostedFileSearchTool. Shows how to configure search parameters, query types, and integrate with existing search indexes. |
+| [`azure_ai_with_search_context.py`](azure_ai_with_search_context.py) | Shows how to use AzureAISearchContextProvider for RAG with hybrid search and semantic ranking. Demonstrates semantic (fast) and agentic (slower, uses Knowledge Bases for complex multi-hop reasoning) retrieval modes. Provides context from Azure AI Search to enhance agent responses. |
 | [`azure_ai_with_file_search.py`](azure_ai_with_file_search.py) | Demonstrates how to use the HostedFileSearchTool with Azure AI agents to search through uploaded documents. Shows file upload, vector store creation, and querying document content. Includes both streaming and non-streaming examples. |
 | [`azure_ai_with_function_tools.py`](azure_ai_with_function_tools.py) | Demonstrates how to use function tools with agents. Shows both agent-level tools (defined when creating the agent) and query-level tools (provided with specific queries). |
 | [`azure_ai_with_hosted_mcp.py`](azure_ai_with_hosted_mcp.py) | Shows how to integrate Azure AI agents with hosted Model Context Protocol (MCP) servers for enhanced functionality and tool integration. Demonstrates remote MCP server connections and tool discovery. |
@@ -71,3 +72,10 @@ export BING_CONNECTION_ID="your-bing-connection-id"  # Alternative to BING_CONNE
 ### Optional Variables
 
 - `BING_CONNECTION_NAME` or `BING_CONNECTION_ID`: Your Bing connection name or ID (required for `azure_ai_with_bing_grounding.py` and `azure_ai_with_multiple_tools.py`)
+- `AZURE_SEARCH_ENDPOINT`: Azure AI Search endpoint (required for `azure_ai_with_search_context.py`)
+- `AZURE_SEARCH_API_KEY`: Azure AI Search API key (required for `azure_ai_with_search_context.py`)
+- `AZURE_SEARCH_INDEX_NAME`: Azure AI Search index name (required for `azure_ai_with_search_context.py`)
+- `AZURE_SEARCH_SEMANTIC_CONFIG`: Semantic configuration name (optional for semantic mode in `azure_ai_with_search_context.py`)
+- `AZURE_SEARCH_KNOWLEDGE_BASE_NAME`: Knowledge Base name (required for agentic mode in `azure_ai_with_search_context.py`)
+
+Note: The sample code demonstrates both semantic and agentic modes. Agentic mode reuses `AZURE_AI_PROJECT_ENDPOINT` and `AZURE_AI_MODEL_DEPLOYMENT_NAME` from the base configuration above.
