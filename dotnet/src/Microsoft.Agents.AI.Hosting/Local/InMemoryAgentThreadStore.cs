@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 namespace Microsoft.Agents.AI.Hosting;
 
 /// <summary>
-/// Provides an in-memory implementation of <see cref="IAgentThreadStore"/> for development and testing scenarios.
+/// Provides an in-memory implementation of <see cref="AgentThreadStore"/> for development and testing scenarios.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -25,12 +25,12 @@ namespace Microsoft.Agents.AI.Hosting;
 /// such as Redis, SQL Server, or Azure Cosmos DB.
 /// </para>
 /// </remarks>
-public sealed class InMemoryAgentThreadStore : IAgentThreadStore
+public sealed class InMemoryAgentThreadStore : AgentThreadStore
 {
     private readonly ConcurrentDictionary<string, JsonElement> _threads = new();
 
     /// <inheritdoc/>
-    public ValueTask SaveThreadAsync(AIAgent agent, string conversationId, AgentThread thread, CancellationToken cancellationToken = default)
+    public override ValueTask SaveThreadAsync(AIAgent agent, string conversationId, AgentThread thread, CancellationToken cancellationToken = default)
     {
         var key = GetKey(conversationId, agent.Id);
         this._threads[key] = thread.Serialize();
@@ -38,7 +38,7 @@ public sealed class InMemoryAgentThreadStore : IAgentThreadStore
     }
 
     /// <inheritdoc/>
-    public ValueTask<AgentThread> GetThreadAsync(AIAgent agent, string conversationId, CancellationToken cancellationToken = default)
+    public override ValueTask<AgentThread> GetThreadAsync(AIAgent agent, string conversationId, CancellationToken cancellationToken = default)
     {
         var key = GetKey(conversationId, agent.Id);
         JsonElement? threadContent = this._threads.TryGetValue(key, out var existingThread) ? existingThread : null;

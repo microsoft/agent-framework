@@ -13,7 +13,7 @@ namespace Microsoft.Agents.AI.Hosting;
 /// allowing conversations to be resumed across HTTP requests, application restarts,
 /// or different service instances in hosted scenarios.
 /// </remarks>
-public interface IAgentThreadStore
+public abstract class AgentThreadStore
 {
     /// <summary>
     /// Saves a serialized agent thread to persistent storage.
@@ -23,7 +23,7 @@ public interface IAgentThreadStore
     /// <param name="thread">The thread to save.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
     /// <returns>A task that represents the asynchronous save operation.</returns>
-    ValueTask SaveThreadAsync(
+    public abstract ValueTask SaveThreadAsync(
         AIAgent agent,
         string conversationId,
         AgentThread thread,
@@ -39,7 +39,7 @@ public interface IAgentThreadStore
     /// A task that represents the asynchronous retrieval operation.
     /// The task result contains the serialized thread state, or <see langword="null"/> if not found.
     /// </returns>
-    ValueTask<AgentThread> GetThreadAsync(
+    public abstract ValueTask<AgentThread> GetThreadAsync(
         AIAgent agent,
         string conversationId,
         CancellationToken cancellationToken = default);

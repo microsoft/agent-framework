@@ -26,7 +26,7 @@ public static class AIAgentExtensions
         this AIAgent agent,
         ITaskManager? taskManager = null,
         ILoggerFactory? loggerFactory = null,
-        IAgentThreadStore? agentThreadStore = null)
+        AgentThreadStore? agentThreadStore = null)
     {
         ArgumentNullException.ThrowIfNull(agent);
         ArgumentNullException.ThrowIfNull(agent.Name);
@@ -75,7 +75,7 @@ public static class AIAgentExtensions
         AgentCard agentCard,
         ITaskManager? taskManager = null,
         ILoggerFactory? loggerFactory = null,
-        IAgentThreadStore? agentThreadStore = null)
+        AgentThreadStore? agentThreadStore = null)
     {
         taskManager = agent.MapA2A(taskManager, loggerFactory, agentThreadStore);
 

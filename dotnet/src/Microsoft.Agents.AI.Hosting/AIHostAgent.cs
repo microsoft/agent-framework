@@ -14,7 +14,7 @@ namespace Microsoft.Agents.AI.Hosting;
 /// <remarks>
 /// <para>
 /// <see cref="AIHostAgent"/> wraps an existing agent implementation and adds the ability to
-/// persist and restore conversation threads using an <see cref="IAgentThreadStore"/>.
+/// persist and restore conversation threads using an <see cref="AgentThreadStore"/>.
 /// </para>
 /// <para>
 /// This wrapper enables thread persistence without requiring type-specific knowledge of the thread type,
@@ -23,7 +23,7 @@ namespace Microsoft.Agents.AI.Hosting;
 /// </remarks>
 public class AIHostAgent : DelegatingAIAgent
 {
-    private readonly IAgentThreadStore _threadStore;
+    private readonly AgentThreadStore _threadStore;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AIHostAgent"/> class.
@@ -33,7 +33,7 @@ public class AIHostAgent : DelegatingAIAgent
     /// <exception cref="ArgumentNullException">
     /// <paramref name="innerAgent"/> or <paramref name="threadStore"/> is <see langword="null"/>.
     /// </exception>
-    public AIHostAgent(AIAgent innerAgent, IAgentThreadStore threadStore)
+    public AIHostAgent(AIAgent innerAgent, AgentThreadStore threadStore)
         : base(innerAgent)
     {
         this._threadStore = Throw.IfNull(threadStore);

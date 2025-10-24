@@ -4,6 +4,7 @@ using System;
 using A2A;
 using A2A.AspNetCore;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Hosting;
 using Microsoft.Agents.AI.Hosting.A2A;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Routing;
@@ -98,7 +99,8 @@ public static class MicrosoftAgentAIHostingA2AEndpointRouteBuilderExtensions
     public static IEndpointConventionBuilder MapA2A(this IEndpointRouteBuilder endpoints, AIAgent agent, string path, Action<ITaskManager> configureTaskManager)
     {
         var loggerFactory = endpoints.ServiceProvider.GetRequiredService<ILoggerFactory>();
-        var taskManager = agent.MapA2A(loggerFactory: loggerFactory);
+        var agentThreadStore = endpoints.ServiceProvider.GetKeyedService<AgentThreadStore>(agent.Name);
+        var taskManager = agent.MapA2A(loggerFactory: loggerFactory, agentThreadStore: agentThreadStore);
         var endpointConventionBuilder = endpoints.MapA2A(taskManager, path);
 
         configureTaskManager(taskManager);
@@ -138,7 +140,8 @@ public static class MicrosoftAgentAIHostingA2AEndpointRouteBuilderExtensions
     public static IEndpointConventionBuilder MapA2A(this IEndpointRouteBuilder endpoints, AIAgent agent, string path, AgentCard agentCard, Action<ITaskManager> configureTaskManager)
     {
         var loggerFactory = endpoints.ServiceProvider.GetRequiredService<ILoggerFactory>();
-        var taskManager = agent.MapA2A(agentCard: agentCard, loggerFactory: loggerFactory);
+        var agentThreadStore = endpoints.ServiceProvider.GetKeyedService<AgentThreadStore>(agent.Name);
+        var taskManager = agent.MapA2A(agentCard: agentCard, agentThreadStore: agentThreadStore, loggerFactory: loggerFactory);
         var endpointConventionBuilder = endpoints.MapA2A(taskManager, path);
 
         configureTaskManager(taskManager);
