@@ -103,7 +103,7 @@ async def main() -> None:
     worker = Worker(id="sub-worker", chat_client=mini_chat_client)
     reviewer = ReviewerWithHumanInTheLoop(worker_id=worker.id)
 
-    print("Building workflow with Worker ↔ Reviewer cycle...")
+    print("Building workflow with Worker-Reviewer cycle...")
     # Build a workflow with bidirectional communication between Worker and Reviewer,
     # and escalation paths for human review.
     agent = (

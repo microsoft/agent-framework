@@ -287,7 +287,7 @@ class Runner:
 
             self._workflow_id = checkpoint.workflow_id
             # Restore shared state
-            await self._shared_state.import_state(checkpoint.shared_state)
+            await self._shared_state.import_state(decode_checkpoint_value(checkpoint.shared_state))
             # Restore executor states using the restored shared state
             await self._restore_executor_states()
             # Apply the checkpoint to the context
