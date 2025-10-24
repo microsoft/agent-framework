@@ -36,8 +36,7 @@ gaia = [
 
 # Lightning RL training module dependencies
 lightning = [
-  # Till 0.2.0 is released
-  "agentlightning @ git+https://github.com/microsoft/agent-lightning@138ad0e48780b65ccefa628ee7a5fb9fb27aca01",
+  "agentlightning>=0.2.0,<0.3.0",
 ]
 
 # TAU2 benchmark module dependencies

@@ -68,6 +68,13 @@ environments = [
     "sys_platform == 'linux'",
     "sys_platform == 'win32'"
 ]
+override-dependencies = [
+  # A conflict between the dependency of litellm[proxy] < 0.30.0, which is a dependency of agent-lightning
+  # and uvicorn >= 0.34.0, which is a dependency of tau2
+  "uvicorn==0.38.0",
+  # Similar problem with websockets, which is a dependency conflict between litellm[proxy] and mcp
+  "websockets==15.0.1",
+]
 
 [tool.uv.workspace]
 members = [ "packages/*" ]

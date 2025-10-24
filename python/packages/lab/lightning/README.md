@@ -26,7 +26,7 @@ pip install -e ".[lightning,math]"
 pip install -e ".[lightning,tau2]"
 ```
 
-To prepare for RL training, you'll also need to install dependencies like PyTorch, Ray, and vLLM. See the [Agent-lightning setup instructions](https://github.com/microsoft/agent-lightning) for more details.
+To prepare for RL training, you'll also need to install dependencies like PyTorch, Ray, and vLLM. See the [Agent-lightning setup instructions](https://microsoft.github.io/agent-lightning/stable/tutorials/installation/) for more details.
 
 ## Usage Patterns
 
@@ -40,7 +40,7 @@ The basic usage pattern follows these steps:
 ### Example Implementation
 
 ```python
-from agent_framework.lab.lightning import init
+from agent_framework.lab.lightning import AgentFrameworkTracer
 from agentlightning import rollout, Trainer, LLM, Dataset
 from agentlightning.algorithm.verl import VERL
 
@@ -73,10 +73,10 @@ config = {
     # ... additional config
 }
 
-# Initialize agent-framework to send telemetry data to agent-lightning's observability backend
-init()
+# Initialize agent-framework tracer to send telemetry data to agent-lightning's observability backend
+tracer = AgentFrameworkTracer()
 
-trainer = Trainer(algorithm=VERL(config), n_workers=2)
+trainer = Trainer(algorithm=VERL(config), tracer=tracer, n_workers=2)
 # Both train_dataset and val_dataset are lists of TaskType
 trainer.fit(math_agent, train_dataset, val_data=val_dataset)
 ```

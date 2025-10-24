@@ -11,6 +11,7 @@ from opentelemetry.trace import SpanKind
 from typing_extensions import Never, TypeVar
 
 from ..observability import OtelAttr, create_workflow_span
+from ._const import EXECUTOR_STATE_KEY
 from ._events import (
     WorkflowEvent,
     WorkflowEventSource,
@@ -436,16 +437,34 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
         return self._shared_state
 
     async def set_executor_state(self, state: dict[str, Any]) -> None:
-        """Persist this executor's state into the checkpointable context.
+        """Store executor state in shared state under a reserved key.
 
         Executors call this with a JSON-serializable dict capturing the minimal
         state needed to resume. It replaces any previously stored state.
         """
-        await self._runner_context.set_executor_state(self._executor_id, state)
+        has_existing_states = await self._shared_state.has(EXECUTOR_STATE_KEY)
+        if has_existing_states:
+            existing_states = await self._shared_state.get(EXECUTOR_STATE_KEY)
+        else:
+            existing_states = {}
+
+        if not isinstance(existing_states, dict):
+            raise ValueError("Existing executor states in shared state is not a dictionary.")
+
+        existing_states[self._executor_id] = state
+        await self._shared_state.set(EXECUTOR_STATE_KEY, existing_states)
 
     async def get_executor_state(self) -> dict[str, Any] | None:
         """Retrieve previously persisted state for this executor, if any."""
-        return await self._runner_context.get_executor_state(self._executor_id)
+        has_existing_states = await self._shared_state.has(EXECUTOR_STATE_KEY)
+        if not has_existing_states:
+            return None
+
+        existing_states = await self._shared_state.get(EXECUTOR_STATE_KEY)
+        if not isinstance(existing_states, dict):
+            raise ValueError("Existing executor states in shared state is not a dictionary.")
+
+        return existing_states.get(self._executor_id)
 
     def is_streaming(self) -> bool:
         """Check if the workflow is running in streaming mode.
