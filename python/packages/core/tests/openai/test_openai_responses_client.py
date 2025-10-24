@@ -73,7 +73,11 @@ async def create_vector_store(client: OpenAIResponsesClient) -> tuple[str, Hoste
         name="knowledge_base",
         expires_after={"anchor": "last_active_at", "days": 1},
     )
-    result = await client.client.vector_stores.files.create_and_poll(vector_store_id=vector_store.id, file_id=file.id)
+    result = await client.client.vector_stores.files.create_and_poll(
+        vector_store_id=vector_store.id,
+        file_id=file.id,
+        poll_interval_ms=1000,
+    )
     if result.last_error is not None:
         raise Exception(f"Vector store file processing failed with status: {result.last_error.message}")
 
@@ -1229,6 +1233,10 @@ async def test_openai_responses_client_web_search_streaming() -> None:
     assert full_message is not None
 
 
+@pytest.mark.skip(
+    reason="Unreliable due to OpenAI vector store indexing potential "
+    "race condition. See https://github.com/microsoft/agent-framework/issues/1669"
+)
 @pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_responses_client_file_search() -> None:
@@ -1254,6 +1262,10 @@ async def test_openai_responses_client_file_search() -> None:
     assert "75" in response.text
 
 
+@pytest.mark.skip(
+    reason="Unreliable due to OpenAI vector store indexing "
+    "potential race condition. See https://github.com/microsoft/agent-framework/issues/1669"
+)
 @pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_responses_client_streaming_file_search() -> None:

@@ -53,7 +53,7 @@ public static class IWorkflowContextExtensions
     /// </example>
     public static async ValueTask<string> FormatTemplateAsync(this IWorkflowContext context, IEnumerable<string> lines, CancellationToken cancellationToken = default)
     {
-        WorkflowFormulaState state = await context.GetStateAsync(cancellationToken: default).ConfigureAwait(false);
+        WorkflowFormulaState state = await context.GetStateAsync(cancellationToken).ConfigureAwait(false);
 
         StringBuilder builder = new();
         foreach (string line in lines)

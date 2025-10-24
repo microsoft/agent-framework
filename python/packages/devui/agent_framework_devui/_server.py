@@ -85,19 +85,25 @@ class DevServer:
         return self.executor
 
     async def _cleanup_entities(self) -> None:
-        """Cleanup entity resources (close clients, credentials, etc.)."""
+        """Cleanup entity resources (close clients, MCP tools, credentials, etc.)."""
         if not self.executor:
             return
 
         logger.info("Cleaning up entity resources...")
         entities = self.executor.entity_discovery.list_entities()
         closed_count = 0
+        mcp_tools_closed = 0
+        credentials_closed = 0
 
         for entity_info in entities:
             try:
                 entity_obj = self.executor.entity_discovery.get_entity_object(entity_info.id)
+
+                # Close chat clients and their credentials
                 if entity_obj and hasattr(entity_obj, "chat_client"):
                     client = entity_obj.chat_client
+
+                    # Close the chat client itself
                     if hasattr(client, "close") and callable(client.close):
                         if inspect.iscoroutinefunction(client.close):
                             await client.close()
@@ -105,11 +111,47 @@ class DevServer:
                             client.close()
                         closed_count += 1
                         logger.debug(f"Closed client for entity: {entity_info.id}")
+
+                    # Close credentials attached to chat clients (e.g., AzureCliCredential)
+                    credential_attrs = ["credential", "async_credential", "_credential", "_async_credential"]
+                    for attr in credential_attrs:
+                        if hasattr(client, attr):
+                            cred = getattr(client, attr)
+                            if cred and hasattr(cred, "close") and callable(cred.close):
+                                try:
+                                    if inspect.iscoroutinefunction(cred.close):
+                                        await cred.close()
+                                    else:
+                                        cred.close()
+                                    credentials_closed += 1
+                                    logger.debug(f"Closed credential for entity: {entity_info.id}")
+                                except Exception as e:
+                                    logger.warning(f"Error closing credential for {entity_info.id}: {e}")
+
+                # Close MCP tools (framework tracks them in _local_mcp_tools)
+                if entity_obj and hasattr(entity_obj, "_local_mcp_tools"):
+                    for mcp_tool in entity_obj._local_mcp_tools:
+                        if hasattr(mcp_tool, "close") and callable(mcp_tool.close):
+                            try:
+                                if inspect.iscoroutinefunction(mcp_tool.close):
+                                    await mcp_tool.close()
+                                else:
+                                    mcp_tool.close()
+                                mcp_tools_closed += 1
+                                tool_name = getattr(mcp_tool, "name", "unknown")
+                                logger.debug(f"Closed MCP tool '{tool_name}' for entity: {entity_info.id}")
+                            except Exception as e:
+                                logger.warning(f"Error closing MCP tool for {entity_info.id}: {e}")
+
             except Exception as e:
                 logger.warning(f"Error closing entity {entity_info.id}: {e}")
 
         if closed_count > 0:
             logger.info(f"Closed {closed_count} entity client(s)")
+        if credentials_closed > 0:
+            logger.info(f"Closed {credentials_closed} credential(s)")
+        if mcp_tools_closed > 0:
+            logger.info(f"Closed {mcp_tools_closed} MCP tool(s)")
 
     def create_app(self) -> FastAPI:
         """Create the FastAPI application."""

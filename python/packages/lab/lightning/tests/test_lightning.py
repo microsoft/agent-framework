@@ -10,6 +10,7 @@ from agent_framework import (
     ChatAgent,
     WorkflowBuilder,
 )
+from agent_framework._workflows._events import AgentRunEvent
 from agent_framework.openai import OpenAIChatClient
 from agent_framework_lab_lightning import init
 from agentlightning.adapter import TraceTripletAdapter
@@ -110,7 +111,16 @@ def workflow_two_agents():
 async def test_openai_workflow_two_agents(workflow_two_agents):
     events = await workflow_two_agents.run("Please analyze the quarterly sales data")
 
-    assert "Based on the analysis 'Analyzed data shows trend upward', I recommend investing" in events.get_outputs()
+    # Get all AgentRunEvent data
+    agent_outputs = [event.data for event in events if isinstance(event, AgentRunEvent)]
+
+    # Check that we have outputs from both agents
+    assert len(agent_outputs) == 2
+    assert any("Analyzed data shows trend upward" in str(output) for output in agent_outputs)
+    assert any(
+        "Based on the analysis 'Analyzed data shows trend upward', I recommend investing" in str(output)
+        for output in agent_outputs
+    )
 
 
 async def test_observability(workflow_two_agents):
