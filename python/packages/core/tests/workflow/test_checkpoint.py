@@ -20,9 +20,7 @@ def test_workflow_checkpoint_default_values():
     assert checkpoint.timestamp != ""
     assert checkpoint.messages == {}
     assert checkpoint.shared_state == {}
-    assert checkpoint.executor_states == {}
     assert checkpoint.iteration_count == 0
-    assert checkpoint.max_iterations == 100
     assert checkpoint.metadata == {}
     assert checkpoint.version == "1.0"
 
@@ -35,9 +33,7 @@ def test_workflow_checkpoint_custom_values():
         timestamp=custom_timestamp,
         messages={"executor1": [{"data": "test"}]},
         shared_state={"key": "value"},
-        executor_states={"executor1": {"state": "active"}},
         iteration_count=5,
-        max_iterations=50,
         metadata={"test": True},
         version="2.0",
     )
@@ -47,9 +43,7 @@ def test_workflow_checkpoint_custom_values():
     assert checkpoint.timestamp == custom_timestamp
     assert checkpoint.messages == {"executor1": [{"data": "test"}]}
     assert checkpoint.shared_state == {"key": "value"}
-    assert checkpoint.executor_states == {"executor1": {"state": "active"}}
     assert checkpoint.iteration_count == 5
-    assert checkpoint.max_iterations == 50
     assert checkpoint.metadata == {"test": True}
     assert checkpoint.version == "2.0"
 
@@ -290,7 +284,6 @@ async def test_file_checkpoint_storage_json_serialization():
             workflow_id="complex-workflow",
             messages={"executor1": [{"data": {"nested": {"value": 42}}, "source_id": "test", "target_id": None}]},
             shared_state={"list": [1, 2, 3], "dict": {"a": "b", "c": {"d": "e"}}, "bool": True, "null": None},
-            executor_states={"executor1": {"state": "active", "config": {"timeout": 30, "retries": 3}}},
         )
 
         # Save and load
@@ -300,7 +293,6 @@ async def test_file_checkpoint_storage_json_serialization():
         assert loaded is not None
         assert loaded.messages == checkpoint.messages
         assert loaded.shared_state == checkpoint.shared_state
-        assert loaded.executor_states == checkpoint.executor_states
 
         # Verify the JSON file is properly formatted
         file_path = Path(temp_dir) / f"{checkpoint.checkpoint_id}.json"
