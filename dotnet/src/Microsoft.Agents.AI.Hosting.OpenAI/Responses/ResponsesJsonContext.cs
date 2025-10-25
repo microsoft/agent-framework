@@ -30,6 +30,7 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses;
 [JsonSerializable(typeof(StreamingOutputTextDone))]
 [JsonSerializable(typeof(StreamingFunctionCallArgumentsDelta))]
 [JsonSerializable(typeof(StreamingFunctionCallArgumentsDone))]
+[JsonSerializable(typeof(StreamingWorkflowEventComplete))]
 [JsonSerializable(typeof(ReasoningOptions))]
 [JsonSerializable(typeof(ResponseUsage))]
 [JsonSerializable(typeof(ResponseError))]
@@ -82,5 +83,6 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses;
 [JsonSerializable(typeof(ResponseTextFormatConfigurationText))]
 [JsonSerializable(typeof(ResponseTextFormatConfigurationJsonObject))]
 [JsonSerializable(typeof(ResponseTextFormatConfigurationJsonSchema))]
+[JsonSerializable(typeof(FunctionCallInfo))]
 [ExcludeFromCodeCoverage]
 internal sealed partial class ResponsesJsonContext : JsonSerializerContext;

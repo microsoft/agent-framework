@@ -59,7 +59,16 @@ const DEFAULT_API_BASE_URL =
 
 // Get backend URL from localStorage or default
 function getBackendUrl(): string {
-  return localStorage.getItem("devui_backend_url") || DEFAULT_API_BASE_URL;
+  const stored = localStorage.getItem("devui_backend_url");
+  if (stored) return stored;
+  
+  // If VITE_API_BASE_URL is explicitly set to empty string, use relative path
+  // This allows the frontend to call the same host it's served from
+  if (import.meta.env.VITE_API_BASE_URL === "") {
+    return "";
+  }
+  
+  return DEFAULT_API_BASE_URL;
 }
 
 class ApiClient {
