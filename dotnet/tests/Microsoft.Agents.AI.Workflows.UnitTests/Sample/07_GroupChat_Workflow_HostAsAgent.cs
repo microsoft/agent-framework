@@ -8,7 +8,10 @@ namespace Microsoft.Agents.AI.Workflows.Sample;
 
 internal static class Step7EntryPoint
 {
-    public static async ValueTask RunAsync(TextWriter writer, int maxSteps = 2)
+    public static string EchoAgentId => Step6EntryPoint.EchoAgentId;
+    public static string EchoPrefix => Step6EntryPoint.EchoPrefix;
+
+    public static async ValueTask RunAsync(TextWriter writer, IWorkflowExecutionEnvironment environment, int maxSteps = 2)
     {
         Workflow workflow = Step6EntryPoint.CreateWorkflow(maxSteps);
 

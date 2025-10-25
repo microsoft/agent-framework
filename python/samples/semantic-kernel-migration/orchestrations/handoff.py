@@ -1,13 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 """Side-by-side handoff orchestrations for Semantic Kernel and Agent Framework."""
 
-from __future__ import annotations
-
 import asyncio
 import sys
-from collections.abc import AsyncIterable, Sequence
-from typing import Any, cast
-from collections.abc import Iterator
+from collections.abc import AsyncIterable, Iterator, Sequence
+from typing import cast
 
 from agent_framework import (
     ChatMessage,
@@ -29,13 +26,12 @@ from semantic_kernel.contents import (
     FunctionResultContent,
     StreamingChatMessageContent,
 )
-from semantic_kernel.functions import KernelArguments, kernel_function
-from semantic_kernel.prompt_template import KernelPromptTemplate, PromptTemplateConfig
+from semantic_kernel.functions import kernel_function
 
 if sys.version_info >= (3, 12):
-    from typing import override  # pragma: no cover
+    pass  # pragma: no cover
 else:
-    from typing_extensions import override  # pragma: no cover
+    pass  # pragma: no cover
 
 
 CUSTOMER_PROMPT = "I need help with order 12345. I want a replacement and need to know when it will arrive."

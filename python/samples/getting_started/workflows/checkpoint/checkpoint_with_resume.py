@@ -196,7 +196,7 @@ def _render_checkpoint_summary(checkpoints: list["WorkflowCheckpoint"]) -> None:
     for cp in sorted(checkpoints, key=lambda c: c.timestamp):
         summary = get_checkpoint_summary(cp)
         msg_count = sum(len(v) for v in cp.messages.values())
-        state_keys = sorted(cp.executor_states.keys())
+        state_keys = sorted(summary.executor_ids)
         orig = cp.shared_state.get("original_input")
         upper = cp.shared_state.get("upper_output")
 

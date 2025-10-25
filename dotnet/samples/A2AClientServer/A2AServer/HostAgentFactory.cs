@@ -4,7 +4,6 @@ using A2A;
 using Azure.AI.Agents.Persistent;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.A2A;
 using Microsoft.Extensions.AI;
 using OpenAI;
 
@@ -12,7 +11,7 @@ namespace A2AServer;
 
 internal static class HostAgentFactory
 {
-    internal static async Task<A2AHostAgent> CreateFoundryHostAgentAsync(string agentType, string model, string endpoint, string assistantId, IList<AITool>? tools = null)
+    internal static async Task<(AIAgent, AgentCard)> CreateFoundryHostAgentAsync(string agentType, string model, string endpoint, string assistantId, IList<AITool>? tools = null)
     {
         var persistentAgentsClient = new PersistentAgentsClient(endpoint, new AzureCliCredential());
         PersistentAgent persistentAgent = await persistentAgentsClient.Administration.GetAgentAsync(assistantId);
@@ -28,10 +27,10 @@ internal static class HostAgentFactory
             _ => throw new ArgumentException($"Unsupported agent type: {agentType}"),
         };
 
-        return new A2AHostAgent(agent, agentCard);
+        return new(agent, agentCard);
     }
 
-    internal static async Task<A2AHostAgent> CreateChatCompletionHostAgentAsync(string agentType, string model, string apiKey, string name, string instructions, IList<AITool>? tools = null)
+    internal static async Task<(AIAgent, AgentCard)> CreateChatCompletionHostAgentAsync(string agentType, string model, string apiKey, string name, string instructions, IList<AITool>? tools = null)
     {
         AIAgent agent = new OpenAIClient(apiKey)
              .GetChatClient(model)
@@ -45,7 +44,7 @@ internal static class HostAgentFactory
             _ => throw new ArgumentException($"Unsupported agent type: {agentType}"),
         };
 
-        return new A2AHostAgent(agent, agentCard);
+        return new(agent, agentCard);
     }
 
     #region private

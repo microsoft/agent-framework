@@ -2,7 +2,7 @@
 
 from collections.abc import AsyncIterable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -15,13 +15,12 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Executor,
+    MagenticAgentMessageEvent,
     MagenticBuilder,
     MagenticManagerBase,
     MagenticPlanReviewDecision,
     MagenticPlanReviewReply,
     MagenticPlanReviewRequest,
-    MagenticProgressLedger,
-    MagenticProgressLedgerItem,
     RequestInfoEvent,
     Role,
     TextContent,
@@ -34,17 +33,19 @@ from agent_framework import (
     handler,
 )
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
-from agent_framework._workflows._magentic import (
+from agent_framework._workflows._magentic import (  # type: ignore[reportPrivateUsage]
     MagenticAgentExecutor,
     MagenticContext,
     MagenticOrchestratorExecutor,
-    MagenticStartMessage,
+    _MagenticProgressLedger,  # type: ignore
+    _MagenticProgressLedgerItem,  # type: ignore
+    _MagenticStartMessage,  # type: ignore
 )
 
 
 def test_magentic_start_message_from_string():
-    msg = MagenticStartMessage.from_string("Do the thing")
-    assert isinstance(msg, MagenticStartMessage)
+    msg = _MagenticStartMessage.from_string("Do the thing")
+    assert isinstance(msg, _MagenticStartMessage)
     assert isinstance(msg.task, ChatMessage)
     assert msg.task.role == Role.USER
     assert msg.task.text == "Do the thing"
@@ -114,8 +115,9 @@ class FakeManager(MagenticManagerBase):
         super().restore_state(state)
         ledger_state = state.get("task_ledger")
         if isinstance(ledger_state, dict):
-            facts_payload = ledger_state.get("facts")  # type: ignore[reportUnknownMemberType]
-            plan_payload = ledger_state.get("plan")  # type: ignore[reportUnknownMemberType]
+            ledger_dict = cast(dict[str, Any], ledger_state)
+            facts_payload = cast(dict[str, Any] | None, ledger_dict.get("facts"))
+            plan_payload = cast(dict[str, Any] | None, ledger_dict.get("plan"))
             if facts_payload is not None and plan_payload is not None:
                 try:
                     facts = ChatMessage.from_dict(facts_payload)
@@ -138,14 +140,14 @@ class FakeManager(MagenticManagerBase):
         combined = f"Task: {magentic_context.task.text}\n\nFacts:\n{facts.text}\n\nPlan:\n{plan.text}"
         return ChatMessage(role=Role.ASSISTANT, text=combined, author_name="magentic_manager")
 
-    async def create_progress_ledger(self, magentic_context: MagenticContext) -> MagenticProgressLedger:
+    async def create_progress_ledger(self, magentic_context: MagenticContext) -> _MagenticProgressLedger:
         is_satisfied = self.satisfied_after_signoff and len(magentic_context.chat_history) > 0
-        return MagenticProgressLedger(
-            is_request_satisfied=MagenticProgressLedgerItem(reason="test", answer=is_satisfied),
-            is_in_loop=MagenticProgressLedgerItem(reason="test", answer=False),
-            is_progress_being_made=MagenticProgressLedgerItem(reason="test", answer=True),
-            next_speaker=MagenticProgressLedgerItem(reason="test", answer=self.next_speaker_name),
-            instruction_or_question=MagenticProgressLedgerItem(reason="test", answer=self.instruction_text),
+        return _MagenticProgressLedger(
+            is_request_satisfied=_MagenticProgressLedgerItem(reason="test", answer=is_satisfied),
+            is_in_loop=_MagenticProgressLedgerItem(reason="test", answer=False),
+            is_progress_being_made=_MagenticProgressLedgerItem(reason="test", answer=True),
+            next_speaker=_MagenticProgressLedgerItem(reason="test", answer=self.next_speaker_name),
+            instruction_or_question=_MagenticProgressLedgerItem(reason="test", answer=self.instruction_text),
         )
 
     async def prepare_final_answer(self, magentic_context: MagenticContext) -> ChatMessage:
@@ -175,7 +177,7 @@ async def test_standard_manager_progress_ledger_and_fallback():
     )
 
     ledger = await manager.create_progress_ledger(ctx.clone())
-    assert isinstance(ledger, MagenticProgressLedger)
+    assert isinstance(ledger, _MagenticProgressLedger)
     assert ledger.next_speaker.answer == "agentA"
 
     manager.satisfied_after_signoff = False
@@ -328,13 +330,11 @@ async def test_magentic_checkpoint_resume_round_trip():
         .build()
     )
 
-    orchestrator = next(
-        exec for exec in wf_resume.workflow.executors.values() if isinstance(exec, MagenticOrchestratorExecutor)
-    )
+    orchestrator = next(exec for exec in wf_resume.executors.values() if isinstance(exec, MagenticOrchestratorExecutor))
 
     reply = MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.APPROVE)
     completed: WorkflowOutputEvent | None = None
-    async for event in wf_resume.workflow.run_stream_from_checkpoint(
+    async for event in wf_resume.run_stream_from_checkpoint(
         resume_checkpoint.checkpoint_id,
         responses={req_event.request_id: reply},
     ):
@@ -346,8 +346,8 @@ async def test_magentic_checkpoint_resume_round_trip():
     assert orchestrator._context.chat_history  # type: ignore[reportPrivateUsage]
     assert orchestrator._task_ledger is not None  # type: ignore[reportPrivateUsage]
     assert manager2.task_ledger is not None
-    # Initial message should be the task ledger plan
-    assert orchestrator._context.chat_history[0].text == orchestrator._task_ledger.text  # type: ignore[reportPrivateUsage]
+    # Latest entry in chat history should be the task ledger plan
+    assert orchestrator._context.chat_history[-1].text == orchestrator._task_ledger.text  # type: ignore[reportPrivateUsage]
 
 
 class _DummyExec(Executor):
@@ -472,24 +472,24 @@ class InvokeOnceManager(MagenticManagerBase):
     async def replan(self, magentic_context: MagenticContext) -> ChatMessage:
         return ChatMessage(role=Role.ASSISTANT, text="re-ledger")
 
-    async def create_progress_ledger(self, magentic_context: MagenticContext) -> MagenticProgressLedger:
+    async def create_progress_ledger(self, magentic_context: MagenticContext) -> _MagenticProgressLedger:
         if not self._invoked:
             # First round: ask agentA to respond
             self._invoked = True
-            return MagenticProgressLedger(
-                is_request_satisfied=MagenticProgressLedgerItem(reason="r", answer=False),
-                is_in_loop=MagenticProgressLedgerItem(reason="r", answer=False),
-                is_progress_being_made=MagenticProgressLedgerItem(reason="r", answer=True),
-                next_speaker=MagenticProgressLedgerItem(reason="r", answer="agentA"),
-                instruction_or_question=MagenticProgressLedgerItem(reason="r", answer="say hi"),
+            return _MagenticProgressLedger(
+                is_request_satisfied=_MagenticProgressLedgerItem(reason="r", answer=False),
+                is_in_loop=_MagenticProgressLedgerItem(reason="r", answer=False),
+                is_progress_being_made=_MagenticProgressLedgerItem(reason="r", answer=True),
+                next_speaker=_MagenticProgressLedgerItem(reason="r", answer="agentA"),
+                instruction_or_question=_MagenticProgressLedgerItem(reason="r", answer="say hi"),
             )
         # Next round: mark satisfied so run can conclude
-        return MagenticProgressLedger(
-            is_request_satisfied=MagenticProgressLedgerItem(reason="r", answer=True),
-            is_in_loop=MagenticProgressLedgerItem(reason="r", answer=False),
-            is_progress_being_made=MagenticProgressLedgerItem(reason="r", answer=True),
-            next_speaker=MagenticProgressLedgerItem(reason="r", answer="agentA"),
-            instruction_or_question=MagenticProgressLedgerItem(reason="r", answer="done"),
+        return _MagenticProgressLedger(
+            is_request_satisfied=_MagenticProgressLedgerItem(reason="r", answer=True),
+            is_in_loop=_MagenticProgressLedgerItem(reason="r", answer=False),
+            is_progress_being_made=_MagenticProgressLedgerItem(reason="r", answer=True),
+            next_speaker=_MagenticProgressLedgerItem(reason="r", answer="agentA"),
+            instruction_or_question=_MagenticProgressLedgerItem(reason="r", answer="done"),
         )
 
     async def prepare_final_answer(self, magentic_context: MagenticContext) -> ChatMessage:
@@ -533,17 +533,10 @@ class StubAssistantsAgent(BaseAgent):
 async def _collect_agent_responses_setup(participant_obj: object):
     captured: list[ChatMessage] = []
 
-    async def sink(event) -> None:  # type: ignore[no-untyped-def]
-        from agent_framework._workflows._magentic import MagenticAgentMessageEvent
-
-        if isinstance(event, MagenticAgentMessageEvent) and event.message is not None:
-            captured.append(event.message)
-
     wf = (
         MagenticBuilder()
         .participants(agentA=participant_obj)  # type: ignore[arg-type]
         .with_standard_manager(InvokeOnceManager())
-        .on_event(sink)  # type: ignore
         .build()
     )
 
@@ -551,6 +544,10 @@ async def _collect_agent_responses_setup(participant_obj: object):
     events: list[WorkflowEvent] = []
     async for ev in wf.run_stream("task"):  # plan review disabled
         events.append(ev)
+        if isinstance(ev, WorkflowOutputEvent):
+            break
+        if isinstance(ev, MagenticAgentMessageEvent) and ev.message is not None:
+            captured.append(ev.message)
         if len(events) > 50:
             break
 
@@ -559,7 +556,7 @@ async def _collect_agent_responses_setup(participant_obj: object):
 
 async def test_agent_executor_invoke_with_thread_chat_client():
     captured = await _collect_agent_responses_setup(StubThreadAgent())
-    # Should have at least one response from agentA via MagenticAgentExecutor path
+    # Should have at least one response from agentA via _MagenticAgentExecutor path
     assert any((m.author_name == "agentA" and "ok" in (m.text or "")) for m in captured)
 
 
@@ -685,7 +682,7 @@ async def test_magentic_checkpoint_resume_rejects_participant_renames():
         .build()
     )
 
-    with pytest.raises(RuntimeError, match="participant names do not match"):
+    with pytest.raises(ValueError, match="Workflow graph has changed"):
         async for _ in renamed_workflow.run_stream_from_checkpoint(
             target_checkpoint.checkpoint_id,  # type: ignore[reportUnknownMemberType]
             responses={req_event.request_id: MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.APPROVE)},
@@ -704,13 +701,13 @@ class NotProgressingManager(MagenticManagerBase):
     async def replan(self, magentic_context: MagenticContext) -> ChatMessage:
         return ChatMessage(role=Role.ASSISTANT, text="re-ledger")
 
-    async def create_progress_ledger(self, magentic_context: MagenticContext) -> MagenticProgressLedger:
-        return MagenticProgressLedger(
-            is_request_satisfied=MagenticProgressLedgerItem(reason="r", answer=False),
-            is_in_loop=MagenticProgressLedgerItem(reason="r", answer=True),
-            is_progress_being_made=MagenticProgressLedgerItem(reason="r", answer=False),
-            next_speaker=MagenticProgressLedgerItem(reason="r", answer="agentA"),
-            instruction_or_question=MagenticProgressLedgerItem(reason="r", answer="done"),
+    async def create_progress_ledger(self, magentic_context: MagenticContext) -> _MagenticProgressLedger:
+        return _MagenticProgressLedger(
+            is_request_satisfied=_MagenticProgressLedgerItem(reason="r", answer=False),
+            is_in_loop=_MagenticProgressLedgerItem(reason="r", answer=True),
+            is_progress_being_made=_MagenticProgressLedgerItem(reason="r", answer=False),
+            next_speaker=_MagenticProgressLedgerItem(reason="r", answer="agentA"),
+            instruction_or_question=_MagenticProgressLedgerItem(reason="r", answer="done"),
         )
 
     async def prepare_final_answer(self, magentic_context: MagenticContext) -> ChatMessage:

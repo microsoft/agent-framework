@@ -7,6 +7,8 @@ This sample demonstrates how to use background responses with ChatCompletionAgen
 
 > **Note:** Background responses are currently only supported by OpenAI Responses.
 
+For more information, see the [official documentation](https://learn.microsoft.com/en-us/agent-framework/user-guide/agents/agent-background-responses?pivots=programming-language-csharp).
+
 # Prerequisites
 
 Before you begin, ensure you have the following prerequisites:

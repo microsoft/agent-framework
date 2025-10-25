@@ -2,9 +2,9 @@
 
 using Microsoft.Agents.AI.Workflows;
 
-namespace WorkflowCheckpointAndResumeSample;
+namespace WorkflowCheckpointAndRehydrateSample;
 
-internal static class WorkflowHelper
+internal static class WorkflowFactory
 {
     /// <summary>
     /// Get a workflow that plays a number guessing game with checkpointing support.
@@ -13,7 +13,7 @@ internal static class WorkflowHelper
     /// 2. JudgeExecutor: Evaluates the guess and provides feedback.
     /// The workflow continues until the correct number is guessed.
     /// </summary>
-    internal static Workflow GetWorkflow()
+    internal static Workflow BuildWorkflow()
     {
         // Create the executors
         GuessNumberExecutor guessNumberExecutor = new(1, 100);
@@ -124,7 +124,7 @@ internal sealed class JudgeExecutor() : Executor<int>("Judge")
         this._tries++;
         if (message == this._targetNumber)
         {
-            await context.YieldOutputAsync($"{this._targetNumber} found in {this._tries} tries!", cancellationToken);
+            await context.YieldOutputAsync($"{this._targetNumber} found in {this._tries} tries!", cancellationToken: cancellationToken);
         }
         else if (message < this._targetNumber)
         {

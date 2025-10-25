@@ -75,7 +75,7 @@ public abstract class ActionExecutor<TMessage> : Executor<TMessage>, IResettable
     /// <inheritdoc/>
     public override async ValueTask HandleAsync(TMessage message, IWorkflowContext context, CancellationToken cancellationToken)
     {
-        object? result = await this.ExecuteAsync(new DeclarativeWorkflowContext(context, this._session.State), message, cancellationToken: default).ConfigureAwait(false);
+        object? result = await this.ExecuteAsync(new DeclarativeWorkflowContext(context, this._session.State), message, cancellationToken).ConfigureAwait(false);
         Debug.WriteLine($"RESULT #{this.Id} - {result ?? "(null)"}");
 
         await context.SendResultMessageAsync(this.Id, result, cancellationToken).ConfigureAwait(false);

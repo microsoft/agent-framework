@@ -4,13 +4,13 @@ using Microsoft.Agents.AI.Workflows;
 
 namespace WorkflowCheckpointWithHumanInTheLoopSample;
 
-internal static class WorkflowHelper
+internal static class WorkflowFactory
 {
     /// <summary>
     /// Get a workflow that plays a number guessing game with human-in-the-loop interaction.
     /// An input port allows the external world to provide inputs to the workflow upon requests.
     /// </summary>
-    internal static Workflow GetWorkflow()
+    internal static Workflow BuildWorkflow()
     {
         // Create the executors
         RequestPort numberRequest = RequestPort.Create<SignalWithNumber, int>("GuessNumber");
