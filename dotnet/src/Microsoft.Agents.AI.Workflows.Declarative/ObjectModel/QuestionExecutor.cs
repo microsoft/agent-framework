@@ -75,12 +75,12 @@ internal sealed class QuestionExecutor(Question model, WorkflowAgentProvider age
     public async ValueTask PrepareResponseAsync(IWorkflowContext context, ActionExecutorResult message, CancellationToken cancellationToken)
     {
         int count = await this._promptCount.ReadAsync(context).ConfigureAwait(false);
-        InputRequest inputRequest = new(this.FormatPrompt(this.Model.Prompt));
+        UserMessageRequest inputRequest = new(this.FormatPrompt(this.Model.Prompt));
         await context.SendMessageAsync(inputRequest, targetId: null, cancellationToken).ConfigureAwait(false);
         await this._promptCount.WriteAsync(context, count + 1).ConfigureAwait(false);
     }
 
-    public async ValueTask CaptureResponseAsync(IWorkflowContext context, InputResponse message, CancellationToken cancellationToken)
+    public async ValueTask CaptureResponseAsync(IWorkflowContext context, UserMessageResponse message, CancellationToken cancellationToken)
     {
         FormulaValue? extractedValue = null;
         if (message.Value is null)

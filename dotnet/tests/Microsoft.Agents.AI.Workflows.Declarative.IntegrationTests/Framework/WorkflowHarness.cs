@@ -31,7 +31,7 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
             string inputText = testcase.Setup.Responses[responseCount].Value;
             Console.WriteLine($"INPUT: {inputText}");
             ++responseCount;
-            WorkflowEvents runEvents = await this.ResumeAsync(new InputResponse(inputText)).ConfigureAwait(false);
+            WorkflowEvents runEvents = await this.ResumeAsync(new UserMessageResponse(inputText)).ConfigureAwait(false);
             workflowEvents = new WorkflowEvents([.. workflowEvents.Events, .. runEvents.Events]);
             requestCount = (workflowEvents.InputEvents.Count + 1) / 2;
         }

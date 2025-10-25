@@ -7,9 +7,9 @@ using Microsoft.Extensions.AI;
 namespace Microsoft.Agents.AI.Workflows.Declarative.Events;
 
 /// <summary>
-/// Represents a request for user input.
+/// Represents one or more user-input requests.
 /// </summary>
-public sealed class AgentToolRequest
+public sealed class UserInputRequest
 {
     /// <summary>
     /// The name of the agent associated with the tool request.
@@ -17,14 +17,14 @@ public sealed class AgentToolRequest
     public string AgentName { get; }
 
     /// <summary>
-    /// A list of tool requests.
+    /// A list of user input requests.
     /// </summary>
-    public IList<FunctionCallContent> FunctionCalls { get; }
+    public IList<AIContent> InputRequests { get; }
 
     [JsonConstructor]
-    internal AgentToolRequest(string agentName, IList<FunctionCallContent>? functionCalls = null)
+    internal UserInputRequest(string agentName, IList<AIContent> inputRequests)
     {
         this.AgentName = agentName;
-        this.FunctionCalls = functionCalls ?? [];
+        this.InputRequests = inputRequests;
     }
 }
