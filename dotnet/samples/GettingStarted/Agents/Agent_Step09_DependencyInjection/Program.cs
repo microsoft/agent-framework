@@ -18,8 +18,7 @@ var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT
 HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
 
 // Add agent options to the service collection.
-builder.Services.AddSingleton(
-    new ChatClientAgentOptions(instructions: "You are good at telling jokes.", name: "Joker"));
+builder.Services.AddSingleton(new ChatClientAgentOptions() { Name = "Joker", ChatOptions = new() { Instructions = "You are good at telling jokes." } });
 
 // Add a chat client to the service collection.
 builder.Services.AddKeyedChatClient("AzureOpenAI", (sp) => new AzureOpenAIClient(

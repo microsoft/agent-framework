@@ -22,7 +22,7 @@ ChatClient chatClient = new AzureOpenAIClient(
         .GetChatClient(deploymentName);
 
 // Create the ChatClientAgent with the specified name and instructions.
-ChatClientAgent agent = chatClient.CreateAIAgent(new ChatClientAgentOptions(name: "HelpfulAssistant", instructions: "You are a helpful assistant."));
+ChatClientAgent agent = chatClient.CreateAIAgent(name: "HelpfulAssistant", instructions: "You are a helpful assistant.");
 
 // Set PersonInfo as the type parameter of RunAsync method to specify the expected structured output from the agent and invoke the agent with some unstructured input.
 AgentRunResponse<PersonInfo> response = await agent.RunAsync<PersonInfo>("Please provide information about John Smith, who is a 35-year-old software engineer.");
@@ -34,12 +34,10 @@ Console.WriteLine($"Age: {response.Result.Age}");
 Console.WriteLine($"Occupation: {response.Result.Occupation}");
 
 // Create the ChatClientAgent with the specified name, instructions, and expected structured output the agent should produce.
-ChatClientAgent agentWithPersonInfo = chatClient.CreateAIAgent(new ChatClientAgentOptions(name: "HelpfulAssistant", instructions: "You are a helpful assistant.")
+ChatClientAgent agentWithPersonInfo = chatClient.CreateAIAgent(new ChatClientAgentOptions()
 {
-    ChatOptions = new()
-    {
-        ResponseFormat = Microsoft.Extensions.AI.ChatResponseFormat.ForJsonSchema<PersonInfo>()
-    }
+    Name = "HelpfulAssistant",
+    ChatOptions = new() { Instructions = "You are a helpful assistant.", ResponseFormat = Microsoft.Extensions.AI.ChatResponseFormat.ForJsonSchema<PersonInfo>() }
 });
 
 // Invoke the agent with some unstructured input while streaming, to extract the structured information from.
