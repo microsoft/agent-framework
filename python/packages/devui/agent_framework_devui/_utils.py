@@ -344,7 +344,7 @@ def generate_input_schema(input_type: type) -> dict[str, Any]:
     # Handle None type (no input required)
     if input_type is type(None):
         return {"type": "null"}
-    
+
     # Check for Union types (e.g., str | None, list[str] | None) before other generic types
     origin = get_origin(input_type)
     if origin is not None:
@@ -358,12 +358,12 @@ def generate_input_schema(input_type: type) -> dict[str, Any]:
                 base_schema = generate_input_schema(non_none_types[0])
                 base_schema["default"] = None
                 return base_schema
-            elif len(non_none_types) > 1:
+            if len(non_none_types) > 1:
                 # Multiple non-None types - use first one and mark as optional
                 base_schema = generate_input_schema(non_none_types[0])
                 base_schema["default"] = None
                 return base_schema
-    
+
     # Built-in types
     if input_type is str:
         return {"type": "string"}
@@ -430,7 +430,7 @@ def parse_input_for_type(input_data: Any, target_type: type) -> Any:
     # Handle None type specially (when parameter is annotated as just `None`)
     if target_type is type(None):
         return None
-    
+
     # If already correct type, return as-is
     # Note: We skip isinstance check if target_type is None to avoid isinstance() errors
     try:
@@ -565,25 +565,25 @@ def _parse_dict_input(input_dict: dict[str, Any], target_type: type) -> Any:
     """
     # Handle Union types (e.g., str | None, int | None) - extract non-None type
     origin = get_origin(target_type)
-    if origin is Union or (hasattr(types, 'UnionType') and origin is getattr(types, 'UnionType')):
+    if origin is Union or (hasattr(types, "UnionType") and origin is types.UnionType):
         args = get_args(target_type)
         # Filter out NoneType to get base type
         non_none_types = [arg for arg in args if arg is not type(None)]
         if len(non_none_types) == 1:
             # Recursively parse with the base type (e.g., str from str | None)
             base_type = non_none_types[0]
-            
+
             # Handle None value explicitly
             if "input" in input_dict and input_dict["input"] is None:
                 return None
-            
+
             # Handle empty dict for optional types - treat as None
             if not input_dict or input_dict == {}:
                 return None
-            
+
             # Parse with base type
             return _parse_dict_input(input_dict, base_type)
-    
+
     # Handle list/array types - extract from "input" field
     origin = get_origin(target_type)
     if origin is list or target_type is list:
@@ -595,7 +595,7 @@ def _parse_dict_input(input_dict: dict[str, Any], target_type: type) -> Any:
                     return value
                 # If single item, wrap in list
                 return [value] if value is not None else []
-            
+
             # If single-key dict, extract the value
             if len(input_dict) == 1:
                 value = next(iter(input_dict.values()))
@@ -604,7 +604,7 @@ def _parse_dict_input(input_dict: dict[str, Any], target_type: type) -> Any:
                 return [value] if value is not None else []
         except (ValueError, TypeError) as e:
             logger.debug(f"Failed to convert dict to list: {e}")
-    
+
     # Handle primitive types - extract from common field names
     if target_type in (str, int, float, bool):
         try:
