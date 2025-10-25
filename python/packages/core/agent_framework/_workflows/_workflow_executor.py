@@ -471,7 +471,7 @@ class WorkflowExecutor(Executor):
 
         if isinstance(state, dict) and state:
             with contextlib.suppress(Exception):
-                self.restore_state(state)
+                await self.restore_state(state)
                 self._state_loaded = True
         else:
             self._state_loaded = True

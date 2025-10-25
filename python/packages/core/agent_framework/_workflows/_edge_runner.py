@@ -86,7 +86,7 @@ class EdgeRunner(ABC):
 class SingleEdgeRunner(EdgeRunner):
     """Runner for single edge groups."""
 
-    def __init__(self, edge_group: SingleEdgeGroup, executors: dict[str, Executor]) -> None:
+    def __init__(self, edge_group: SingleEdgeGroup | InternalEdgeGroup, executors: dict[str, Executor]) -> None:
         super().__init__(edge_group, executors)
         self._edge = edge_group.edges[0]
 

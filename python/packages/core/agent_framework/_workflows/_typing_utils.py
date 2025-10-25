@@ -3,7 +3,7 @@
 import logging
 from dataclasses import fields, is_dataclass
 from types import UnionType
-from typing import Any, Union, get_args, get_origin
+from typing import Any, Union, cast, get_args, get_origin
 
 logger = logging.getLogger(__name__)
 
@@ -148,4 +148,4 @@ def deserialize_type(serialized_type_string: str) -> type:
     module_name, _, type_name = serialized_type_string.rpartition(".")
     module = importlib.import_module(module_name)
 
-    return getattr(module, type_name)
+    return cast(type, getattr(module, type_name))

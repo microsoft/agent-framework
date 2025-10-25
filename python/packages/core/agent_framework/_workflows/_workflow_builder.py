@@ -83,7 +83,7 @@ class WorkflowBuilder:
         # New executor
         self._executors[executor.id] = executor
         # Add an internal edge group for each unique executor
-        self._edge_groups.append(InternalEdgeGroup(executor.id))
+        self._edge_groups.append(InternalEdgeGroup(executor.id))  # type: ignore[call-arg]
 
         return executor.id
 

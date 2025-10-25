@@ -1115,7 +1115,7 @@ class MagenticOrchestratorExecutor(Executor):
 
         # If a human must sign off, ask now and return. The response handler will resume.
         if self._require_plan_signoff:
-            await self._send_plan_review_request(context)
+            await self._send_plan_review_request(cast(WorkflowContext, context))
             return
 
         # Add task ledger to conversation history
@@ -1267,7 +1267,7 @@ class MagenticOrchestratorExecutor(Executor):
                 plan=response.edited_plan_text,
             )
             self._task_ledger = ChatMessage(role=Role.ASSISTANT, text=combined, author_name=MAGENTIC_MANAGER_NAME)
-            await self._send_plan_review_request(context)
+            await self._send_plan_review_request(cast(WorkflowContext, context))
             return
 
         # Else pass comments into the chat history and replan with the manager
@@ -1278,7 +1278,7 @@ class MagenticOrchestratorExecutor(Executor):
 
         # Ask the manager to replan; this only adjusts the plan stage, not a full reset
         self._task_ledger = await self._manager.replan(self._context.clone(deep=True))
-        await self._send_plan_review_request(context)
+        await self._send_plan_review_request(cast(WorkflowContext, context))
 
     async def _run_outer_loop(
         self,
