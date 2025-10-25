@@ -10,7 +10,12 @@
 /build
 
 .env.*
-claude.md
+
+# Override parent gitignore
+!AGENTS.md
+!CLAUDE.md
+!/.vscode/
+!/.vscode/mcp.json
 
 # misc
 .DS_Store

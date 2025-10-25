@@ -1,0 +1,25 @@
+{
+  "servers": {
+    "shadcn": {
+      "command": "npx",
+      "args": ["shadcn@latest", "mcp"]
+    },
+    "deepwiki": {
+      "type": "http",
+      "url": "https://mcp.deepwiki.com/mcp"
+    },
+    "context7": {
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp"]
+    },
+    "playwright": {
+      "command": "npx",
+      "args": ["@playwright/mcp@latest"]
+    },
+    "sequential-thinking-tools": {
+      "command": "npx",
+      "args": ["-y", "mcp-sequentialthinking-tools"],
+      "env": { "MAX_HISTORY_SIZE": "1000" }
+    }
+  }
+}
