@@ -4,11 +4,12 @@ using System.Diagnostics.CodeAnalysis;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.AI;
 
-namespace Microsoft.Agents.AI;
+namespace Microsoft.Agents.AI.Mem0;
 
-/// <summary>Provides a collection of utility methods for working with JSON data in the context of agents.</summary>
-internal static partial class AgentJsonUtilities
+/// <summary>Provides a collection of utility methods for working with JSON data in the context of mem0.</summary>
+public static partial class Mem0JsonUtilities
 {
     /// <summary>
     /// Gets the <see cref="JsonSerializerOptions"/> singleton used as the default in JSON serialization operations.
@@ -40,11 +41,11 @@ internal static partial class AgentJsonUtilities
         // Copy the configuration from the source generated context.
         JsonSerializerOptions options = new(JsonContext.Default.Options)
         {
-            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping, // same as in AgentAbstractionsJsonUtilities and AIJsonUtilities
+            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping, // same as in AIJsonUtilities
         };
 
-        // Chain with all supported types from Microsoft.Agents.AI.Abstractions.
-        options.TypeInfoResolverChain.Add(AgentAbstractionsJsonUtilities.DefaultOptions.TypeInfoResolver!);
+        // Chain with all supported types from Microsoft.Extensions.AI.Abstractions.
+        options.TypeInfoResolverChain.Add(AIJsonUtilities.DefaultOptions.TypeInfoResolver!);
         if (JsonSerializer.IsReflectionEnabledByDefault)
         {
             options.Converters.Add(new JsonStringEnumConverter());
@@ -61,7 +62,7 @@ internal static partial class AgentJsonUtilities
         NumberHandling = JsonNumberHandling.AllowReadingFromString)]
 
     // Agent abstraction types
-    [JsonSerializable(typeof(ChatClientAgentThread.ThreadState))]
+    [JsonSerializable(typeof(Mem0Provider.Mem0State))]
 
     [ExcludeFromCodeCoverage]
     internal sealed partial class JsonContext : JsonSerializerContext;
