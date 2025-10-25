@@ -4,6 +4,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Agents.AI.Data;
 
 namespace Microsoft.Agents.AI;
 
@@ -62,6 +63,7 @@ internal static partial class AgentJsonUtilities
 
     // Agent abstraction types
     [JsonSerializable(typeof(ChatClientAgentThread.ThreadState))]
+    [JsonSerializable(typeof(RagProvider.RagProviderState))]
 
     [ExcludeFromCodeCoverage]
     internal sealed partial class JsonContext : JsonSerializerContext;
