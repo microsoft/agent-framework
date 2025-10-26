@@ -2444,6 +2444,268 @@ public partial class ChatClientAgentTests
 
     #endregion
 
+    #region Instructions and ChatOptions Mutability Tests
+
+    /// <summary>
+    /// Verify that Instructions property can be set after construction.
+    /// </summary>
+    [Fact]
+    public async Task InstructionsCanBeSetAfterConstructionAsync()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>();
+        ChatOptions? capturedChatOptions = null;
+        chatClient.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<ChatMessage>, ChatOptions, CancellationToken>((msgs, opts, ct) =>
+                capturedChatOptions = opts)
+            .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
+
+        ChatClientAgent agent = new(chatClient.Object, options: new() { Instructions = "initial instructions" });
+
+        // Act
+        Assert.Equal("initial instructions", agent.Instructions);
+        agent.Instructions = "modified instructions";
+
+        // Assert
+        Assert.Equal("modified instructions", agent.Instructions);
+
+        await agent.RunAsync([new(ChatRole.User, "test")]);
+        Assert.NotNull(capturedChatOptions);
+        Assert.Equal("modified instructions", capturedChatOptions.Instructions);
+    }
+
+    /// <summary>
+    /// Verify that Instructions can be set on an agent created with null options.
+    /// </summary>
+    [Fact]
+    public async Task InstructionsCanBeSetWhenConstructedWithNullOptionsAsync()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>();
+        ChatOptions? capturedChatOptions = null;
+        chatClient.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<ChatMessage>, ChatOptions, CancellationToken>((msgs, opts, ct) =>
+                capturedChatOptions = opts)
+            .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
+
+        ChatClientAgent agent = new(chatClient.Object, options: null);
+
+        // Act
+        Assert.Null(agent.Instructions);
+        agent.Instructions = "new instructions";
+
+        // Assert
+        Assert.Equal("new instructions", agent.Instructions);
+
+        await agent.RunAsync([new(ChatRole.User, "test")]);
+        Assert.NotNull(capturedChatOptions);
+        Assert.Equal("new instructions", capturedChatOptions.Instructions);
+    }
+
+    /// <summary>
+    /// Verify that ChatOptions property can be set after construction.
+    /// </summary>
+    [Fact]
+    public async Task ChatOptionsCanBeSetAfterConstructionAsync()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>();
+        ChatOptions? capturedChatOptions = null;
+        chatClient.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<ChatMessage>, ChatOptions, CancellationToken>((msgs, opts, ct) =>
+                capturedChatOptions = opts)
+            .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
+
+        var initialChatOptions = new ChatOptions { MaxOutputTokens = 100, Temperature = 0.5f };
+        ChatClientAgent agent = new(chatClient.Object, options: new() { ChatOptions = initialChatOptions });
+
+        // Act
+        Assert.NotNull(agent.ChatOptions);
+        Assert.Equal(100, agent.ChatOptions.MaxOutputTokens);
+
+        var newChatOptions = new ChatOptions { MaxOutputTokens = 200, Temperature = 0.7f };
+        agent.ChatOptions = newChatOptions;
+
+        // Assert
+        Assert.Same(newChatOptions, agent.ChatOptions);
+        Assert.Equal(200, agent.ChatOptions.MaxOutputTokens);
+        Assert.Equal(0.7f, agent.ChatOptions.Temperature);
+
+        await agent.RunAsync([new(ChatRole.User, "test")]);
+        Assert.NotNull(capturedChatOptions);
+        Assert.Equal(200, capturedChatOptions.MaxOutputTokens);
+        Assert.Equal(0.7f, capturedChatOptions.Temperature);
+    }
+
+    /// <summary>
+    /// Verify that ChatOptions can be set on an agent created with null options.
+    /// </summary>
+    [Fact]
+    public async Task ChatOptionsCanBeSetWhenConstructedWithNullOptionsAsync()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>();
+        ChatOptions? capturedChatOptions = null;
+        chatClient.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<ChatMessage>, ChatOptions, CancellationToken>((msgs, opts, ct) =>
+                capturedChatOptions = opts)
+            .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
+
+        ChatClientAgent agent = new(chatClient.Object, options: null);
+
+        // Act
+        Assert.Null(agent.ChatOptions);
+
+        var newChatOptions = new ChatOptions { MaxOutputTokens = 150, TopP = 0.9f };
+        agent.ChatOptions = newChatOptions;
+
+        // Assert
+        Assert.Same(newChatOptions, agent.ChatOptions);
+        Assert.Equal(150, agent.ChatOptions.MaxOutputTokens);
+        Assert.Equal(0.9f, agent.ChatOptions.TopP);
+
+        await agent.RunAsync([new(ChatRole.User, "test")]);
+        Assert.NotNull(capturedChatOptions);
+        Assert.Equal(150, capturedChatOptions.MaxOutputTokens);
+        Assert.Equal(0.9f, capturedChatOptions.TopP);
+    }
+
+    /// <summary>
+    /// Verify that modifying properties within ChatOptions affects subsequent runs.
+    /// </summary>
+    [Fact]
+    public async Task ModifyingChatOptionsPropertiesAffectsSubsequentRunsAsync()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>();
+        var capturedChatOptionsValues = new List<int?>();
+        chatClient.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<ChatMessage>, ChatOptions, CancellationToken>((msgs, opts, ct) =>
+                capturedChatOptionsValues.Add(opts?.MaxOutputTokens))
+            .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
+
+        var initialChatOptions = new ChatOptions { MaxOutputTokens = 100 };
+        ChatClientAgent agent = new(chatClient.Object, options: new() { ChatOptions = initialChatOptions });
+
+        // Act & Assert - First run
+        await agent.RunAsync([new(ChatRole.User, "test1")]);
+        Assert.Single(capturedChatOptionsValues);
+        Assert.Equal(100, capturedChatOptionsValues[0]);
+
+        // Modify the ChatOptions property
+        Assert.NotNull(agent.ChatOptions);
+        agent.ChatOptions.MaxOutputTokens = 200;
+
+        // Act & Assert - Second run
+        await agent.RunAsync([new(ChatRole.User, "test2")]);
+        Assert.Equal(2, capturedChatOptionsValues.Count);
+        Assert.Equal(200, capturedChatOptionsValues[1]);
+    }
+
+    /// <summary>
+    /// Verify that Instructions and ChatOptions can be dynamically changed based on conditions.
+    /// </summary>
+    [Fact]
+    public async Task InstructionsAndChatOptionsCanBeDynamicallyChangedAsync()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>();
+        var capturedData = new List<(string? instructions, int? maxTokens)>();
+        chatClient.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<ChatMessage>, ChatOptions, CancellationToken>((msgs, opts, ct) =>
+                capturedData.Add((opts?.Instructions, opts?.MaxOutputTokens)))
+            .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
+
+        ChatClientAgent agent = new(chatClient.Object, options: new()
+        {
+            Instructions = "base instructions",
+            ChatOptions = new ChatOptions { MaxOutputTokens = 100 }
+        });
+
+        // Act & Assert - Simulate changing based on user input
+        await agent.RunAsync([new(ChatRole.User, "simple question")]);
+        Assert.Single(capturedData);
+        Assert.Equal("base instructions", capturedData[0].instructions);
+        Assert.Equal(100, capturedData[0].maxTokens);
+
+        // Change to extended thinking mode
+        agent.Instructions = "Think deeply about this question";
+        Assert.NotNull(agent.ChatOptions);
+        agent.ChatOptions.MaxOutputTokens = 4000;
+
+        await agent.RunAsync([new(ChatRole.User, "complex question")]);
+        Assert.Equal(2, capturedData.Count);
+        Assert.Equal("Think deeply about this question", capturedData[1].instructions);
+        Assert.Equal(4000, capturedData[1].maxTokens);
+
+        // Change to reasoning mode
+        agent.Instructions = "Use step-by-step reasoning";
+        agent.ChatOptions.MaxOutputTokens = 2000;
+
+        await agent.RunAsync([new(ChatRole.User, "another question")]);
+        Assert.Equal(3, capturedData.Count);
+        Assert.Equal("Use step-by-step reasoning", capturedData[2].instructions);
+        Assert.Equal(2000, capturedData[2].maxTokens);
+    }
+
+    /// <summary>
+    /// Verify that ChatOptions can be set to null after initialization.
+    /// </summary>
+    [Fact]
+    public async Task ChatOptionsCanBeSetToNullAsync()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>();
+        ChatOptions? capturedChatOptions = null;
+        chatClient.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<ChatMessage>, ChatOptions, CancellationToken>((msgs, opts, ct) =>
+                capturedChatOptions = opts)
+            .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
+
+        var initialChatOptions = new ChatOptions { MaxOutputTokens = 100 };
+        ChatClientAgent agent = new(chatClient.Object, options: new() { ChatOptions = initialChatOptions });
+
+        // Act
+        Assert.NotNull(agent.ChatOptions);
+        agent.ChatOptions = null;
+
+        // Assert
+        Assert.Null(agent.ChatOptions);
+
+        await agent.RunAsync([new(ChatRole.User, "test")]);
+        Assert.Null(capturedChatOptions);
+    }
+
+    #endregion
+
     private static async IAsyncEnumerable<T> ToAsyncEnumerableAsync<T>(IEnumerable<T> values)
     {
         await Task.Yield();

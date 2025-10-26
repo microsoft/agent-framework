@@ -19,7 +19,7 @@ namespace Microsoft.Agents.AI;
 /// </summary>
 public sealed partial class ChatClientAgent : AIAgent
 {
-    private readonly ChatClientAgentOptions? _agentOptions;
+    private readonly ChatClientAgentOptions _agentOptions;
     private readonly AIAgentMetadata _agentMetadata;
     private readonly ILogger _logger;
     private readonly Type _chatClientType;
@@ -95,7 +95,8 @@ public sealed partial class ChatClientAgent : AIAgent
         _ = Throw.IfNull(chatClient);
 
         // Options must be cloned since ChatClientAgentOptions is mutable.
-        this._agentOptions = options?.Clone();
+        // If no options are provided, create an empty options object to allow mutation.
+        this._agentOptions = options?.Clone() ?? new ChatClientAgentOptions();
 
         this._agentMetadata = new AIAgentMetadata(chatClient.GetService<ChatClientMetadata>()?.ProviderName);
 
@@ -121,16 +122,16 @@ public sealed partial class ChatClientAgent : AIAgent
     public IChatClient ChatClient { get; }
 
     /// <inheritdoc/>
-    public override string Id => this._agentOptions?.Id ?? base.Id;
+    public override string Id => this._agentOptions.Id ?? base.Id;
 
     /// <inheritdoc/>
-    public override string? Name => this._agentOptions?.Name;
+    public override string? Name => this._agentOptions.Name;
 
     /// <inheritdoc/>
-    public override string? Description => this._agentOptions?.Description;
+    public override string? Description => this._agentOptions.Description;
 
     /// <summary>
-    /// Gets the system instructions that guide the agent's behavior during conversations.
+    /// Gets or sets the system instructions that guide the agent's behavior during conversations.
     /// </summary>
     /// <value>
     /// A string containing the system instructions that are provided to the underlying chat client
@@ -141,12 +142,29 @@ public sealed partial class ChatClientAgent : AIAgent
     /// These instructions are typically provided to the AI model as system messages to establish
     /// the context and expected behavior for the agent's responses.
     /// </remarks>
-    public string? Instructions => this._agentOptions?.Instructions;
+    public string? Instructions
+    {
+        get => this._agentOptions.Instructions;
+        set => this._agentOptions.Instructions = value;
+    }
 
     /// <summary>
-    /// Gets of the default <see cref="ChatOptions"/> used by the agent.
+    /// Gets or sets the default <see cref="ChatOptions"/> used by the agent.
     /// </summary>
-    internal ChatOptions? ChatOptions => this._agentOptions?.ChatOptions;
+    /// <value>
+    /// The default chat options applied to agent invocations. May be <see langword="null"/>
+    /// if no default options were configured.
+    /// </value>
+    /// <remarks>
+    /// These options control various aspects of the chat completion, including temperature,
+    /// max tokens, tools, and other model-specific settings. Changes to these options
+    /// will affect subsequent agent invocations.
+    /// </remarks>
+    public ChatOptions? ChatOptions
+    {
+        get => this._agentOptions.ChatOptions;
+        set => this._agentOptions.ChatOptions = value;
+    }
 
     /// <inheritdoc/>
     public override Task<AgentRunResponse> RunAsync(
@@ -289,7 +307,7 @@ public sealed partial class ChatClientAgent : AIAgent
     public override AgentThread GetNewThread()
         => new ChatClientAgentThread
         {
-            AIContextProvider = this._agentOptions?.AIContextProviderFactory?.Invoke(new() { SerializedState = default, JsonSerializerOptions = null })
+            AIContextProvider = this._agentOptions.AIContextProviderFactory?.Invoke(new() { SerializedState = default, JsonSerializerOptions = null })
         };
 
     /// <summary>
@@ -313,17 +331,17 @@ public sealed partial class ChatClientAgent : AIAgent
         => new ChatClientAgentThread()
         {
             ConversationId = conversationId,
-            AIContextProvider = this._agentOptions?.AIContextProviderFactory?.Invoke(new() { SerializedState = default, JsonSerializerOptions = null })
+            AIContextProvider = this._agentOptions.AIContextProviderFactory?.Invoke(new() { SerializedState = default, JsonSerializerOptions = null })
         };
 
     /// <inheritdoc/>
     public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
     {
-        Func<JsonElement, JsonSerializerOptions?, ChatMessageStore>? chatMessageStoreFactory = this._agentOptions?.ChatMessageStoreFactory is null ?
+        Func<JsonElement, JsonSerializerOptions?, ChatMessageStore>? chatMessageStoreFactory = this._agentOptions.ChatMessageStoreFactory is null ?
             null :
             (jse, jso) => this._agentOptions.ChatMessageStoreFactory.Invoke(new() { SerializedState = jse, JsonSerializerOptions = jso });
 
-        Func<JsonElement, JsonSerializerOptions?, AIContextProvider>? aiContextProviderFactory = this._agentOptions?.AIContextProviderFactory is null ?
+        Func<JsonElement, JsonSerializerOptions?, AIContextProvider>? aiContextProviderFactory = this._agentOptions.AIContextProviderFactory is null ?
             null :
             (jse, jso) => this._agentOptions.AIContextProviderFactory.Invoke(new() { SerializedState = jse, JsonSerializerOptions = jso });
 
@@ -434,7 +452,7 @@ public sealed partial class ChatClientAgent : AIAgent
         ChatOptions? requestChatOptions = (runOptions as ChatClientAgentRunOptions)?.ChatOptions?.Clone();
 
         // If no agent chat options were provided, return the request chat options as is.
-        if (this._agentOptions?.ChatOptions is null)
+        if (this._agentOptions.ChatOptions is null)
         {
             return ApplyBackgroundResponsesProperties(requestChatOptions, runOptions);
         }
@@ -442,7 +460,7 @@ public sealed partial class ChatClientAgent : AIAgent
         // If no request chat options were provided, use the agent's chat options clone.
         if (requestChatOptions is null)
         {
-            return ApplyBackgroundResponsesProperties(this._agentOptions?.ChatOptions.Clone(), runOptions);
+            return ApplyBackgroundResponsesProperties(this._agentOptions.ChatOptions.Clone(), runOptions);
         }
 
         // If both are present, we need to merge them.
@@ -672,7 +690,7 @@ public sealed partial class ChatClientAgent : AIAgent
             // If the service doesn't use service side thread storage (i.e. we got no id back from invocation), and
             // the thread has no MessageStore yet, and we have a custom messages store, we should update the thread
             // with the custom MessageStore so that it has somewhere to store the chat history.
-            thread.MessageStore ??= this._agentOptions?.ChatMessageStoreFactory?.Invoke(new() { SerializedState = default, JsonSerializerOptions = null });
+            thread.MessageStore ??= this._agentOptions.ChatMessageStoreFactory?.Invoke(new() { SerializedState = default, JsonSerializerOptions = null });
         }
     }
 
