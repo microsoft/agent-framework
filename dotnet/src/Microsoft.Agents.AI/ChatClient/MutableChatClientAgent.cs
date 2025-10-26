@@ -18,8 +18,6 @@ namespace Microsoft.Agents.AI;
 /// </remarks>
 public class MutableChatClientAgent : ChatClientAgent
 {
-    private readonly ChatClientAgentOptions _mutableAgentOptions;
-
     /// <summary>
     /// Initializes a new instance of the <see cref="MutableChatClientAgent"/> class.
     /// </summary>
@@ -90,10 +88,6 @@ public class MutableChatClientAgent : ChatClientAgent
     public MutableChatClientAgent(IChatClient chatClient, ChatClientAgentOptions? options, ILoggerFactory? loggerFactory = null, IServiceProvider? services = null)
         : base(chatClient, options ?? new ChatClientAgentOptions(), loggerFactory, services)
     {
-        // Store a reference to the cloned agent options so we can mutate them.
-        // Since we always pass a non-null options object to the base constructor, and the base clones it,
-        // AgentOptions should never be null here.
-        this._mutableAgentOptions = base.AgentOptions!;
     }
 
     /// <summary>
@@ -111,8 +105,8 @@ public class MutableChatClientAgent : ChatClientAgent
     /// </remarks>
     public new string? Instructions
     {
-        get => this._mutableAgentOptions.Instructions;
-        set => this._mutableAgentOptions.Instructions = value;
+        get => base.AgentOptions!.Instructions;
+        set => base.AgentOptions!.Instructions = value;
     }
 
     /// <summary>
@@ -129,7 +123,7 @@ public class MutableChatClientAgent : ChatClientAgent
     /// </remarks>
     public new ChatOptions? ChatOptions
     {
-        get => this._mutableAgentOptions.ChatOptions;
-        set => this._mutableAgentOptions.ChatOptions = value;
+        get => base.AgentOptions!.ChatOptions;
+        set => base.AgentOptions!.ChatOptions = value;
     }
 }
