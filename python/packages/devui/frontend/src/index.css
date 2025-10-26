@@ -1,6 +1,18 @@
 @import "tailwindcss";
 @import "tw-animate-css";
-@source "../node_modules/streamdown/dist/index.js";
+
+@keyframes shimmer {
+  0% {
+    background-position: 100% center;
+  }
+  100% {
+    background-position: 0% center;
+  }
+}
+
+.animate-shimmer {
+  animation: shimmer var(--shimmer-duration, 2s) linear infinite;
+}
 
 @custom-variant dark (&:is(.dark *));
 
