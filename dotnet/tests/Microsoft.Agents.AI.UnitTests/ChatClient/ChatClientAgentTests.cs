@@ -2528,14 +2528,14 @@ public partial class ChatClientAgentTests
                 capturedChatOptions = opts)
             .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
 
-        var initialChatOptions = new ChatOptions { MaxOutputTokens = 100, Temperature = 0.5f };
+        ChatOptions initialChatOptions = new() { MaxOutputTokens = 100, Temperature = 0.5f };
         ChatClientAgent agent = new(chatClient.Object, options: new() { ChatOptions = initialChatOptions });
 
         // Act
         Assert.NotNull(agent.ChatOptions);
         Assert.Equal(100, agent.ChatOptions.MaxOutputTokens);
 
-        var newChatOptions = new ChatOptions { MaxOutputTokens = 200, Temperature = 0.7f };
+        ChatOptions newChatOptions = new() { MaxOutputTokens = 200, Temperature = 0.7f };
         agent.ChatOptions = newChatOptions;
 
         // Assert
@@ -2572,7 +2572,7 @@ public partial class ChatClientAgentTests
         // Act
         Assert.Null(agent.ChatOptions);
 
-        var newChatOptions = new ChatOptions { MaxOutputTokens = 150, TopP = 0.9f };
+        ChatOptions newChatOptions = new() { MaxOutputTokens = 150, TopP = 0.9f };
         agent.ChatOptions = newChatOptions;
 
         // Assert
@@ -2690,7 +2690,7 @@ public partial class ChatClientAgentTests
                 capturedChatOptions = opts)
             .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
 
-        var initialChatOptions = new ChatOptions { MaxOutputTokens = 100 };
+        ChatOptions initialChatOptions = new() { MaxOutputTokens = 100 };
         ChatClientAgent agent = new(chatClient.Object, options: new() { ChatOptions = initialChatOptions });
 
         // Act
