@@ -2453,7 +2453,7 @@ public partial class ChatClientAgentTests
     public async Task InstructionsCanBeSetAfterConstructionAsync()
     {
         // Arrange
-        var chatClient = new Mock<IChatClient>();
+        Mock<IChatClient> chatClient = new();
         ChatOptions? capturedChatOptions = null;
         chatClient.Setup(
             s => s.GetResponseAsync(
@@ -2485,7 +2485,7 @@ public partial class ChatClientAgentTests
     public async Task InstructionsCanBeSetWhenConstructedWithNullOptionsAsync()
     {
         // Arrange
-        var chatClient = new Mock<IChatClient>();
+        Mock<IChatClient> chatClient = new();
         ChatOptions? capturedChatOptions = null;
         chatClient.Setup(
             s => s.GetResponseAsync(
@@ -2517,7 +2517,7 @@ public partial class ChatClientAgentTests
     public async Task ChatOptionsCanBeSetAfterConstructionAsync()
     {
         // Arrange
-        var chatClient = new Mock<IChatClient>();
+        Mock<IChatClient> chatClient = new();
         ChatOptions? capturedChatOptions = null;
         chatClient.Setup(
             s => s.GetResponseAsync(
@@ -2556,7 +2556,7 @@ public partial class ChatClientAgentTests
     public async Task ChatOptionsCanBeSetWhenConstructedWithNullOptionsAsync()
     {
         // Arrange
-        var chatClient = new Mock<IChatClient>();
+        Mock<IChatClient> chatClient = new();
         ChatOptions? capturedChatOptions = null;
         chatClient.Setup(
             s => s.GetResponseAsync(
@@ -2593,8 +2593,8 @@ public partial class ChatClientAgentTests
     public async Task ModifyingChatOptionsPropertiesAffectsSubsequentRunsAsync()
     {
         // Arrange
-        var chatClient = new Mock<IChatClient>();
-        var capturedChatOptionsValues = new List<int?>();
+        Mock<IChatClient> chatClient = new();
+        List<int?> capturedChatOptionsValues = new();
         chatClient.Setup(
             s => s.GetResponseAsync(
                 It.IsAny<IEnumerable<ChatMessage>>(),
@@ -2604,7 +2604,7 @@ public partial class ChatClientAgentTests
                 capturedChatOptionsValues.Add(opts?.MaxOutputTokens))
             .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
 
-        var initialChatOptions = new ChatOptions { MaxOutputTokens = 100 };
+        ChatOptions initialChatOptions = new() { MaxOutputTokens = 100 };
         ChatClientAgent agent = new(chatClient.Object, options: new() { ChatOptions = initialChatOptions });
 
         // Act & Assert - First run
@@ -2629,8 +2629,8 @@ public partial class ChatClientAgentTests
     public async Task InstructionsAndChatOptionsCanBeDynamicallyChangedAsync()
     {
         // Arrange
-        var chatClient = new Mock<IChatClient>();
-        var capturedData = new List<(string? instructions, int? maxTokens)>();
+        Mock<IChatClient> chatClient = new();
+        List<(string? instructions, int? maxTokens)> capturedData = new();
         chatClient.Setup(
             s => s.GetResponseAsync(
                 It.IsAny<IEnumerable<ChatMessage>>(),
@@ -2679,7 +2679,7 @@ public partial class ChatClientAgentTests
     public async Task ChatOptionsCanBeSetToNullAsync()
     {
         // Arrange
-        var chatClient = new Mock<IChatClient>();
+        Mock<IChatClient> chatClient = new();
         ChatOptions? capturedChatOptions = null;
         chatClient.Setup(
             s => s.GetResponseAsync(
