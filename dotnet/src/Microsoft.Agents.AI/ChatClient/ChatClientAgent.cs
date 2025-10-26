@@ -156,8 +156,8 @@ public sealed partial class ChatClientAgent : AIAgent
     /// if no default options were configured.
     /// </value>
     /// <remarks>
-    /// These options control various aspects of the chat completion, including temperature,
-    /// max tokens, tools, and other model-specific settings. Changes to these options
+    /// These options control various aspects of the chat completion, including max tokens,
+    /// tools, reasoning, and other model-specific settings. Changes to these options
     /// will affect subsequent agent invocations.
     /// </remarks>
     public ChatOptions? ChatOptions
