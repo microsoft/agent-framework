@@ -20,7 +20,7 @@ public sealed class MutableChatClientAgentTests
     public void VerifyMutableChatClientAgentDefinition()
     {
         // Arrange
-        var chatClient = new Mock<IChatClient>().Object;
+        IChatClient chatClient = new Mock<IChatClient>().Object;
         MutableChatClientAgent agent =
             new(chatClient,
                 options: new()
@@ -47,7 +47,7 @@ public sealed class MutableChatClientAgentTests
     public void VerifyMutableChatClientAgentCreatesEmptyOptionsWhenNoneProvided()
     {
         // Arrange
-        var chatClient = new Mock<IChatClient>().Object;
+        IChatClient chatClient = new Mock<IChatClient>().Object;
 
         // Act
         MutableChatClientAgent agent = new(chatClient, options: null);
@@ -68,7 +68,7 @@ public sealed class MutableChatClientAgentTests
     public void VerifyInstructionsCanBeModified()
     {
         // Arrange
-        var chatClient = new Mock<IChatClient>().Object;
+        IChatClient chatClient = new Mock<IChatClient>().Object;
         MutableChatClientAgent agent = new(chatClient, instructions: "initial instructions");
 
         // Act
@@ -88,7 +88,7 @@ public sealed class MutableChatClientAgentTests
     public void VerifyInstructionsCanBeSetToNull()
     {
         // Arrange
-        var chatClient = new Mock<IChatClient>().Object;
+        IChatClient chatClient = new Mock<IChatClient>().Object;
         MutableChatClientAgent agent = new(chatClient, instructions: "initial instructions");
 
         // Act
@@ -105,7 +105,7 @@ public sealed class MutableChatClientAgentTests
     public void VerifyChatOptionsCanBeModified()
     {
         // Arrange
-        var chatClient = new Mock<IChatClient>().Object;
+        IChatClient chatClient = new Mock<IChatClient>().Object;
         ChatOptions initialOptions = new() { Temperature = 0.5f };
         MutableChatClientAgent agent = new(chatClient, options: new() { ChatOptions = initialOptions });
 
@@ -128,7 +128,7 @@ public sealed class MutableChatClientAgentTests
     public void VerifyChatOptionsCanBeSetToNull()
     {
         // Arrange
-        var chatClient = new Mock<IChatClient>().Object;
+        IChatClient chatClient = new Mock<IChatClient>().Object;
         ChatOptions initialOptions = new() { Temperature = 0.5f };
         MutableChatClientAgent agent = new(chatClient, options: new() { ChatOptions = initialOptions });
 
@@ -157,7 +157,7 @@ public sealed class MutableChatClientAgentTests
 
         // Act
         agent.Instructions = "modified instructions";
-        var result = await agent.RunAsync([new(ChatRole.User, "Test message")]);
+        AgentRunResponse result = await agent.RunAsync([new(ChatRole.User, "Test message")]);
 
         // Assert
         Assert.Single(result.Messages);
@@ -194,7 +194,7 @@ public sealed class MutableChatClientAgentTests
             });
 
         // Act
-        var result = await agent.RunAsync([new(ChatRole.User, "Where are you?")]);
+        AgentRunResponse result = await agent.RunAsync([new(ChatRole.User, "Where are you?")]);
 
         // Assert
         Assert.Single(result.Messages);
