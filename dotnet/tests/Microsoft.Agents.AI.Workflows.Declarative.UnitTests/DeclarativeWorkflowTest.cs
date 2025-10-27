@@ -225,6 +225,94 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         Assert.True(visitor.HasUnsupportedActions);
     }
 
+    [Fact]
+    public async Task LoopContinueActionCancelRunAsync()
+    {
+        // Arrange
+        const string WorkflowInput = "Test input message";
+        Workflow workflow = this.CreateWorkflow("LoopContinue.yaml", WorkflowInput);
+        await using StreamingRun run = await InProcessExecution.StreamAsync<string>(workflow, WorkflowInput);
+
+        // Act
+        // Cancel the run immediately after starting the run.
+        await run.CancelRunAsync();
+
+        // Assert
+        await Assert.ThrowsAsync<TaskCanceledException>(async () =>
+        {
+            await foreach (WorkflowEvent workflowEvent in run.WatchStreamAsync())
+            {
+                // This should not execute due to cancellation
+                this.WorkflowEvents.Add(workflowEvent);
+            }
+        });
+
+        this.WorkflowEventCounts = this.WorkflowEvents.GroupBy(e => e.GetType()).ToDictionary(e => e.Key, e => e.Count());
+        Assert.Empty(this.WorkflowEventCounts);
+        this.AssertNotExecuted("foreach_loop");
+        this.AssertNotExecuted("continue_loop_now");
+        this.AssertNotExecuted("end_all");
+        this.AssertNotExecuted("set_variable_inner");
+        this.AssertNotExecuted("send_activity_inner");
+    }
+
+    [Fact]
+    public async Task CancelInProgressRunAsync()
+    {
+        // Arrange
+        const string WorkflowInput = "Test input message";
+        Workflow workflow = this.CreateWorkflow("LoopEach.yaml", WorkflowInput);
+        await using StreamingRun run = await InProcessExecution.StreamAsync<string>(workflow, WorkflowInput);
+
+        await foreach (WorkflowEvent workflowEvent in run.WatchStreamAsync())
+        {
+            this.WorkflowEvents.Add(workflowEvent);
+
+            if (workflowEvent is DeclarativeActionCompletedEvent actionCompleteEvent)
+            {
+                // Act
+                // Cancel run after the first declarative action completes.
+                await run.CancelRunAsync();
+            }
+        }
+
+        // Assert
+        this.WorkflowEventCounts = this.WorkflowEvents.GroupBy(e => e.GetType()).ToDictionary(e => e.Key, e => e.Count());
+        Assert.Contains(this.WorkflowEvents.OfType<DeclarativeActionInvokedEvent>(), e => e.ActionId == "foreach_loop");
+        Assert.Contains(this.WorkflowEvents.OfType<DeclarativeActionCompletedEvent>(), e => e.ActionId == "foreach_loop");
+        this.AssertNotExecuted("set_variable_inner");
+        this.AssertNotExecuted("send_activity_inner");
+    }
+
+    [Fact]
+    public async Task CancellationTokenCancelledAsync()
+    {
+        // Arrange
+        using CancellationTokenSource tokenSource = new();
+        CancellationToken cancellationToken = tokenSource.Token;
+        const string WorkflowInput = "Test input message";
+        Workflow workflow = this.CreateWorkflow("LoopContinue.yaml", WorkflowInput);
+
+        // Act
+        // Cancel the token before starting the workflow and ensure cancellation is detected
+        tokenSource.Cancel();
+        await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, WorkflowInput, cancellationToken: cancellationToken);
+
+        // Assert
+        await Assert.ThrowsAsync<TaskCanceledException>(async () =>
+        {
+            await foreach (WorkflowEvent workflowEvent in run.WatchStreamAsync(cancellationToken))
+            {
+                // This should not execute due to cancellation
+                this.WorkflowEvents.Add(workflowEvent);
+            }
+        });
+
+        this.AssertNotExecuted("foreach_loop");
+        this.AssertNotExecuted("continue_loop_now");
+        this.AssertNotExecuted("end_all");
+    }
+
     private void AssertExecutionCount(int expectedCount)
     {
         Assert.Equal(expectedCount + 2, this.WorkflowEventCounts[typeof(ExecutorInvokedEvent)]);
@@ -256,12 +344,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
 
     private async Task RunWorkflowAsync<TInput>(string workflowPath, TInput workflowInput) where TInput : notnull
     {
-        using StreamReader yamlReader = File.OpenText(Path.Combine("Workflows", workflowPath));
-        Mock<WorkflowAgentProvider> mockAgentProvider = CreateMockProvider($"{workflowInput}");
-        DeclarativeWorkflowOptions workflowContext = new(mockAgentProvider.Object) { LoggerFactory = this.Output };
-
-        Workflow workflow = DeclarativeWorkflowBuilder.Build<TInput>(yamlReader, workflowContext);
-
+        Workflow workflow = this.CreateWorkflow(workflowPath, workflowInput);
         await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, workflowInput);
 
         await foreach (WorkflowEvent workflowEvent in run.WatchStreamAsync())
@@ -301,6 +384,14 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         }
 
         this.WorkflowEventCounts = this.WorkflowEvents.GroupBy(e => e.GetType()).ToDictionary(e => e.Key, e => e.Count());
+    }
+
+    private Workflow CreateWorkflow<TInput>(string workflowPath, TInput workflowInput) where TInput : notnull
+    {
+        using StreamReader yamlReader = File.OpenText(Path.Combine("Workflows", workflowPath));
+        Mock<WorkflowAgentProvider> mockAgentProvider = CreateMockProvider($"{workflowInput}");
+        DeclarativeWorkflowOptions workflowContext = new(mockAgentProvider.Object) { LoggerFactory = this.Output };
+        return DeclarativeWorkflowBuilder.Build<TInput>(yamlReader, workflowContext);
     }
 
     private static Mock<WorkflowAgentProvider> CreateMockProvider(string input)
