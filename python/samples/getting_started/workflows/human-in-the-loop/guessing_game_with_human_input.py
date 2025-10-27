@@ -45,7 +45,7 @@ Prerequisites:
 - Basic familiarity with WorkflowBuilder, executors, edges, events, and streaming runs.
 """
 
-# How human-in-the-loops is achieved via `request_info` and `send_responses_streaming`:
+# How human-in-the-loop is achieved via `request_info` and `send_responses_streaming`:
 # - An executor (TurnManager) calls `ctx.request_info` with a payload (HumanFeedbackRequest).
 # - The workflow run pauses and emits a RequestInfoEvent with the payload and the request_id.
 # - The application captures the event, prompts the user, and collects replies.
@@ -113,7 +113,11 @@ class TurnManager(Executor):
             "lower (your number is lower than this guess), correct, or exit."
         )
         # Send a request with a prompt as the payload and expect a string reply.
-        await ctx.request_info(HumanFeedbackRequest(prompt=prompt), HumanFeedbackRequest, str)
+        await ctx.request_info(
+            request_data=HumanFeedbackRequest(prompt=prompt),
+            request_type=HumanFeedbackRequest,
+            response_type=str,
+        )
 
     @response_handler
     async def on_human_feedback(
@@ -180,7 +184,7 @@ async def main() -> None:
     #     flush=True,
     # )
 
-    while not workflow_output:
+    while workflow_output is None:
         # First iteration uses run_stream("start").
         # Subsequent iterations use send_responses_streaming with pending_responses from the console.
         stream = (
