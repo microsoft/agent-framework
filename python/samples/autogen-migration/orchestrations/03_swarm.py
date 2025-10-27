@@ -231,7 +231,7 @@ async def main() -> None:
     print("Agent Framework: HandoffBuilder\n")
     await run_autogen()
     print()
-    # await run_agent_framework()
+    await run_agent_framework()
 
 
 if __name__ == "__main__":
