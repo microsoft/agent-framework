@@ -1,0 +1,6 @@
+{
+    // Exclude the autogen source files from type checking.
+    "exclude": [
+        "autogen"
+    ]
+}
