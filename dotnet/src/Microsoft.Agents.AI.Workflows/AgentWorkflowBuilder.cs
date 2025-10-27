@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Specialized;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
@@ -136,7 +137,12 @@ public static partial class AgentWorkflowBuilder
         // each agent's accumulator to it. If no aggregation function was provided, we default to returning
         // the last message from each agent
         aggregator ??= static lists => (from list in lists where list.Count > 0 select list.Last()).ToList();
-        ConcurrentEndExecutor end = new(agentExecutors.Length, aggregator);
+
+        Func<string, string, ValueTask<ConcurrentEndExecutor>> endFactory =
+            (string _, string __) => new(new ConcurrentEndExecutor(agentExecutors.Length, aggregator));
+
+        ExecutorIsh end = endFactory.ConfigureFactory(ConcurrentEndExecutor.ExecutorId);
+
         builder.AddFanInEdge(end, sources: accumulators);
 
         builder = builder.WithOutputFrom(end);

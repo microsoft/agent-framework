@@ -23,12 +23,16 @@ _Note: Currently only the airline domain is fully supported._
 
 ## Installation
 
-Install from source with TAU2 dependencies:
+Install the agent-framework-lab package with TAU2 dependencies:
 
 ```bash
-git clone https://github.com/microsoft/agent-framework.git
-cd agent-framework/python/packages/lab
-pip install -e ".[tau2]"
+pip install "agent-framework-lab[tau2]"
+```
+
+**Important:** You must also install the tau2-bench package from source:
+
+```bash
+pip install "tau2 @ git+https://github.com/sierra-research/tau2-bench@5ba9e3e56db57c5e4114bf7f901291f09b2c5619"
 ```
 
 Download data from [Tau2-Bench](https://github.com/sierra-research/tau2-bench):

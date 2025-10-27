@@ -17,14 +17,15 @@ import asyncio
 import json
 import os
 import random
+import time
 import traceback
 from pathlib import Path
 from typing import TypedDict, cast
 
+from agent_framework.lab.lightning import AgentFrameworkTracer
 from agent_framework.lab.tau2 import ASSISTANT_AGENT_ID, patch_env_set_state  # type: ignore
 from agent_framework.lab.tau2 import TaskRunner as Tau2TaskRunner  # type: ignore
 from agent_framework.openai import OpenAIChatClient
-from agent_framework_lab_lightning import init as lightning_init
 from agentlightning import LLM, Dataset, LitAgent, NamedResources, Rollout, Trainer
 from agentlightning.algorithm.verl import VERL
 from tau2.data_model.tasks import Task as Tau2Task  # type: ignore[import-untyped]
@@ -133,9 +134,6 @@ def main():
     """Main entrypoint."""
     # RL config with higher resource requirements and W&B logging
     rl_training_config = {
-        "agentlightning": {
-            "port": 9999,
-        },
         "algorithm": {"adv_estimator": "grpo"},
         "data": {
             "train_batch_size": 8,
@@ -187,7 +185,6 @@ def main():
         },
     }
 
-    lightning_init()
     patch_env_set_state()  # Tau2-specific environment setup
 
     train_dataset, val_dataset = _load_dataset()
@@ -196,14 +193,13 @@ def main():
     # Only the assistant agent is trained; user simulator remains fixed
     tau2_agent = Tau2Agent(trained_agents=ASSISTANT_AGENT_ID)
 
-    trainer = Trainer(algorithm=VERL(rl_training_config), n_workers=4)
-    trainer.fit(tau2_agent, train_dataset, val_data=val_dataset)
+    tracer = AgentFrameworkTracer()
+    trainer = Trainer(algorithm=VERL(rl_training_config), tracer=tracer, n_workers=4)
+    trainer.fit(tau2_agent, train_dataset, val_dataset=val_dataset)
 
 
 def debug():
     """Debug mode for testing multi-agent setup and Tau2 integration."""
-    lightning_init()
-
     train_dataset, _ = _load_dataset()
     tau2_agent = Tau2Agent(trained_agents=ASSISTANT_AGENT_ID)
 
@@ -218,7 +214,7 @@ def debug():
         tau2_agent.rollout_async(
             train_dataset[0],
             resources={"main_llm": LLM(model="gpt-4.1", endpoint=openai_base_url)},
-            rollout=Rollout(rollout_id="dummy"),
+            rollout=Rollout(rollout_id="dummy", input="dummy_input", start_time=time.time()),
         )
     )
 

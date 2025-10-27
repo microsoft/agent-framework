@@ -114,7 +114,7 @@ async def main() -> None:
         print("No plan review request emitted; nothing to resume.")
         return
 
-    checkpoints = await checkpoint_storage.list_checkpoints(workflow.workflow.id)
+    checkpoints = await checkpoint_storage.list_checkpoints(workflow.id)
     if not checkpoints:
         print("No checkpoints persisted.")
         return
@@ -141,7 +141,7 @@ async def main() -> None:
 
     # Resume execution and capture the re-emitted plan review request.
     request_info_event: RequestInfoEvent | None = None
-    async for event in resumed_workflow.workflow.run_stream_from_checkpoint(resume_checkpoint.checkpoint_id):
+    async for event in resumed_workflow.run_stream_from_checkpoint(resume_checkpoint.checkpoint_id):
         if isinstance(event, RequestInfoEvent) and isinstance(event, MagenticPlanReviewRequest):
             request_info_event = event
 
@@ -152,7 +152,7 @@ async def main() -> None:
 
     # Supply the approval and continue to run to completion.
     final_event: WorkflowOutputEvent | None = None
-    async for event in resumed_workflow.workflow.send_responses_streaming({request_info_event.request_id: approval}):
+    async for event in resumed_workflow.send_responses_streaming({request_info_event.request_id: approval}):
         if isinstance(event, WorkflowOutputEvent):
             final_event = event
 
@@ -212,7 +212,7 @@ async def main() -> None:
     final_event_post: WorkflowOutputEvent | None = None
     post_emitted_events = False
     post_plan_workflow = build_workflow(checkpoint_storage)
-    async for event in post_plan_workflow.workflow.run_stream_from_checkpoint(post_plan_checkpoint.checkpoint_id):
+    async for event in post_plan_workflow.run_stream_from_checkpoint(post_plan_checkpoint.checkpoint_id):
         post_emitted_events = True
         if isinstance(event, WorkflowOutputEvent):
             final_event_post = event

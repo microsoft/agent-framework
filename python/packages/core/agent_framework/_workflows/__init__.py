@@ -52,29 +52,29 @@ from ._executor import (
     handler,
 )
 from ._function_executor import FunctionExecutor, executor
+from ._group_chat import (
+    DEFAULT_MANAGER_INSTRUCTIONS,
+    DEFAULT_MANAGER_STRUCTURED_OUTPUT_PROMPT,
+    GroupChatBuilder,
+    GroupChatDirective,
+    GroupChatStateSnapshot,
+    ManagerDirectiveModel,
+)
 from ._handoff import HandoffBuilder, HandoffUserInputRequest
 from ._magentic import (
     MagenticAgentDeltaEvent,
-    MagenticAgentExecutor,
     MagenticAgentMessageEvent,
     MagenticBuilder,
-    MagenticCallbackEvent,
-    MagenticCallbackMode,
     MagenticContext,
     MagenticFinalResultEvent,
     MagenticManagerBase,
-    MagenticOrchestratorExecutor,
     MagenticOrchestratorMessageEvent,
     MagenticPlanReviewDecision,
     MagenticPlanReviewReply,
     MagenticPlanReviewRequest,
-    MagenticProgressLedger,
-    MagenticProgressLedgerItem,
-    MagenticRequestMessage,
-    MagenticResponseMessage,
-    MagenticStartMessage,
     StandardMagenticManager,
 )
+from ._orchestration_state import OrchestrationState
 from ._request_info_mixin import response_handler
 from ._runner import Runner
 from ._runner_context import (
@@ -99,6 +99,8 @@ from ._workflow_context import WorkflowContext
 from ._workflow_executor import SubWorkflowRequestMessage, SubWorkflowResponseMessage, WorkflowExecutor
 
 __all__ = [
+    "DEFAULT_MANAGER_INSTRUCTIONS",
+    "DEFAULT_MANAGER_STRUCTURED_OUTPUT_PROMPT",
     "DEFAULT_MAX_ITERATIONS",
     "AgentExecutor",
     "AgentExecutorRequest",
@@ -121,30 +123,26 @@ __all__ = [
     "FileCheckpointStorage",
     "FunctionExecutor",
     "GraphConnectivityError",
+    "GroupChatBuilder",
+    "GroupChatDirective",
+    "GroupChatStateSnapshot",
     "HandoffBuilder",
     "HandoffUserInputRequest",
     "InMemoryCheckpointStorage",
     "InProcRunnerContext",
     "MagenticAgentDeltaEvent",
-    "MagenticAgentExecutor",
     "MagenticAgentMessageEvent",
     "MagenticBuilder",
-    "MagenticCallbackEvent",
-    "MagenticCallbackMode",
     "MagenticContext",
     "MagenticFinalResultEvent",
     "MagenticManagerBase",
-    "MagenticOrchestratorExecutor",
     "MagenticOrchestratorMessageEvent",
     "MagenticPlanReviewDecision",
     "MagenticPlanReviewReply",
     "MagenticPlanReviewRequest",
-    "MagenticProgressLedger",
-    "MagenticProgressLedgerItem",
-    "MagenticRequestMessage",
-    "MagenticResponseMessage",
-    "MagenticStartMessage",
+    "ManagerDirectiveModel",
     "Message",
+    "OrchestrationState",
     "RequestInfoEvent",
     "Runner",
     "RunnerContext",
