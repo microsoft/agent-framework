@@ -54,6 +54,7 @@ class _RecordingAgent(BaseAgent):
         extra_properties: dict[str, object] | None = None,
     ) -> None:
         super().__init__(id=name, name=name, display_name=name)
+        self._agent_name = name
         self.handoff_to = handoff_to
         self.calls: list[list[ChatMessage]] = []
         self._text_handoff = text_handoff
@@ -72,7 +73,7 @@ class _RecordingAgent(BaseAgent):
         additional_properties = _merge_additional_properties(
             self.handoff_to, self._text_handoff, self._extra_properties
         )
-        contents = _build_reply_contents(self.name, self.handoff_to, self._text_handoff, self._next_call_id())
+        contents = _build_reply_contents(self._agent_name, self.handoff_to, self._text_handoff, self._next_call_id())
         reply = ChatMessage(
             role=Role.ASSISTANT,
             contents=contents,
@@ -91,7 +92,7 @@ class _RecordingAgent(BaseAgent):
         conversation = _normalise(messages)
         self.calls.append(conversation)
         additional_props = _merge_additional_properties(self.handoff_to, self._text_handoff, self._extra_properties)
-        contents = _build_reply_contents(self.name, self.handoff_to, self._text_handoff, self._next_call_id())
+        contents = _build_reply_contents(self._agent_name, self.handoff_to, self._text_handoff, self._next_call_id())
         yield AgentRunResponseUpdate(
             contents=contents,
             role=Role.ASSISTANT,
@@ -357,3 +358,38 @@ async def test_multiple_runs_dont_leak_conversation():
     assert not any("First run message" in msg.text for msg in second_run_user_messages if msg.text), (
         "Second run should NOT contain first run's messages"
     )
+
+
+async def test_handoff_async_termination_condition() -> None:
+    """Test that async termination conditions work correctly."""
+    termination_call_count = 0
+
+    async def async_termination(conv: list[ChatMessage]) -> bool:
+        nonlocal termination_call_count
+        termination_call_count += 1
+        user_count = sum(1 for msg in conv if msg.role == Role.USER)
+        return user_count >= 2
+
+    coordinator = _RecordingAgent(name="coordinator")
+
+    workflow = (
+        HandoffBuilder(participants=[coordinator])
+        .set_coordinator(coordinator)
+        .with_termination_condition(async_termination)
+        .build()
+    )
+
+    events = await _drain(workflow.run_stream("First user message"))
+    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
+    assert requests
+
+    events = await _drain(workflow.send_responses_streaming({requests[-1].request_id: "Second user message"}))
+    outputs = [ev for ev in events if isinstance(ev, WorkflowOutputEvent)]
+    assert len(outputs) == 1
+
+    final_conversation = outputs[0].data
+    assert isinstance(final_conversation, list)
+    final_conv_list = cast(list[ChatMessage], final_conversation)
+    user_messages = [msg for msg in final_conv_list if msg.role == Role.USER]
+    assert len(user_messages) == 2
+    assert termination_call_count > 0

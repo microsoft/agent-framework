@@ -450,13 +450,7 @@ ContextT = TypeVar("ContextT", bound="WorkflowContext[Any, Any]")
 
 def handler(
     func: Callable[[ExecutorT, Any, ContextT], Awaitable[Any]],
-) -> (
-    Callable[[ExecutorT, Any, ContextT], Awaitable[Any]]
-    | Callable[
-        [Callable[[ExecutorT, Any, ContextT], Awaitable[Any]]],
-        Callable[[ExecutorT, Any, ContextT], Awaitable[Any]],
-    ]
-):
+) -> Callable[[ExecutorT, Any, ContextT], Awaitable[Any]]:
     """Decorator to register a handler for an executor.
 
     Args:
