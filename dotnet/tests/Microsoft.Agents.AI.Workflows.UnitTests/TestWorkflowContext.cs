@@ -65,7 +65,7 @@ internal sealed class TestWorkflowContext : IWorkflowContext
     public ValueTask<HashSet<string>> ReadStateKeysAsync(string? scopeName = null, CancellationToken cancellationToken = default)
         => this.StateManager.ReadKeysAsync(new ScopeId(this._executorId, scopeName));
 
-    public ValueTask SendMessageAsync(object message, string? targetId = null, CancellationToken cancellationToken = default)
+    public ValueTask SendMessageAsync(object message, string? targetId, CancellationToken cancellationToken = default)
     {
         this.SentMessages.Enqueue(message);
         return default;

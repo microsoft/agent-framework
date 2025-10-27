@@ -143,7 +143,7 @@ public class SpecializedExecutorSmokeTests
 
         public ValueTask SendMessageAsync(object message, CancellationToken cancellationToken) => this.SendMessageAsync(message, targetId: null, cancellationToken);
 
-        public ValueTask SendMessageAsync(object message, string? targetId = null, CancellationToken cancellationToken = default)
+        public ValueTask SendMessageAsync(object message, string? targetId, CancellationToken cancellationToken = default)
         {
             if (message is List<ChatMessage> messages)
             {
