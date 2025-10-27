@@ -26,6 +26,7 @@ dependencies = [
     "agent-framework-a2a",
     "agent-framework-azure-ai",
     "agent-framework-copilotstudio",
+    "agent-framework-lab",
     "agent-framework-mem0",
     "agent-framework-redis",
     "agent-framework-devui",
@@ -67,6 +68,13 @@ environments = [
     "sys_platform == 'darwin'",
     "sys_platform == 'linux'",
     "sys_platform == 'win32'"
+]
+override-dependencies = [
+  # A conflict between the dependency of litellm[proxy] < 0.30.0, which is a dependency of agent-lightning
+  # and uvicorn >= 0.34.0, which is a dependency of tau2
+  "uvicorn==0.38.0",
+  # Similar problem with websockets, which is a dependency conflict between litellm[proxy] and mcp
+  "websockets==15.0.1",
 ]
 
 [tool.uv.workspace]
@@ -167,7 +175,7 @@ omit = [
 
 [tool.pyright]
 include = ["agent_framework", "samples"]
-exclude = ["**/tests/**", "docs", "**/.venv/**", "samples/semantic-kernel-migration/**"]
+exclude = ["**/tests/**", "docs", "**/.venv/**", "samples/semantic-kernel-migration/**", "packages/devui/frontend/**"]
 typeCheckingMode = "strict"
 reportUnnecessaryIsInstance = false
 reportMissingTypeStubs = false
@@ -198,7 +206,7 @@ exclude_dirs = ["tests", "./run_tasks_in_packages_if_exists.py", "./check_md_cod
 executor.type = "uv"
 
 [tool.poe.tasks]
-markdown-code-lint = """uv run python check_md_code_blocks.py README.md ./packages/**/README.md ./samples/**/*.md --exclude cookiecutter-agent-framework-lab --exclude tau2"""
+markdown-code-lint = """uv run python check_md_code_blocks.py README.md ./packages/**/README.md ./samples/**/*.md --exclude cookiecutter-agent-framework-lab --exclude tau2 --exclude packages/devui/frontend"""
 samples-code-check = """pyright ./samples"""
 docs-install = "uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit --group=docs"
 docs-clean = "rm -rf docs/build"

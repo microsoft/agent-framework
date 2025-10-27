@@ -478,3 +478,59 @@ class TestFunctionExecutor:
 
         # The actual thread execution test would require a full workflow setup,
         # but the important thing is that asyncio.to_thread is used in the wrapper
+
+    def test_executor_rejects_staticmethod(self):
+        """Test that @executor decorator properly rejects @staticmethod with clear error."""
+        with pytest.raises(ValueError) as exc_info:
+
+            class Example:
+                @executor
+                @staticmethod
+                async def bad_handler(data: str) -> str:
+                    return data.upper()
+
+        assert "cannot be used with @staticmethod" in str(exc_info.value)
+        assert "@handler on instance methods" in str(exc_info.value)
+
+    def test_executor_rejects_classmethod(self):
+        """Test that @executor decorator properly rejects @classmethod with clear error."""
+        with pytest.raises(ValueError) as exc_info:
+
+            class Example:
+                @executor
+                @classmethod
+                async def bad_handler(cls, data: str) -> str:
+                    return data.upper()
+
+        assert "cannot be used with @classmethod" in str(exc_info.value)
+        assert "@handler on instance methods" in str(exc_info.value)
+
+    async def test_async_staticmethod_detection_behavior(self):
+        """Document the behavior of asyncio.iscoroutinefunction with staticmethod descriptors.
+
+        This test explains why the unwrapping is necessary when decorators are stacked.
+        """
+        import asyncio
+
+        # When @staticmethod is applied, it creates a descriptor
+        async def my_async_func():
+            await asyncio.sleep(0.001)
+            return "done"
+
+        # Apply staticmethod (what happens with innermost decorator)
+        static_wrapped = staticmethod(my_async_func)
+
+        # Direct check on descriptor object fails (this is the bug)
+        assert not asyncio.iscoroutinefunction(static_wrapped)
+        assert isinstance(static_wrapped, staticmethod)
+
+        # But unwrapping __func__ reveals the async function
+        unwrapped = static_wrapped.__func__
+        assert asyncio.iscoroutinefunction(unwrapped)
+
+        # When accessed via class attribute, Python's descriptor protocol
+        # automatically unwraps it, so it works:
+        class C:
+            async_static = static_wrapped
+
+        assert asyncio.iscoroutinefunction(C.async_static)  # Works via descriptor protocol

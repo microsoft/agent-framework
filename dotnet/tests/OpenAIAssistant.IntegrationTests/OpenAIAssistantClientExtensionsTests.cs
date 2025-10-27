@@ -123,7 +123,7 @@ public class OpenAIAssistantClientExtensionsTests
         }
     }
 
-    [Theory]
+    [Theory(Skip = "For manual testing only")]
     [InlineData("CreateWithChatClientAgentOptionsAsync")]
     [InlineData("CreateWithChatClientAgentOptionsSync")]
     [InlineData("CreateWithParamsAsync")]

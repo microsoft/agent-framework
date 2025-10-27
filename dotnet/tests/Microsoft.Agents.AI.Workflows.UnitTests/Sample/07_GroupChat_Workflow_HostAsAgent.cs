@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -9,11 +8,12 @@ namespace Microsoft.Agents.AI.Workflows.Sample;
 
 internal static class Step7EntryPoint
 {
-    public static async ValueTask RunAsync(TextWriter writer, int maxSteps = 2)
+    public static string EchoAgentId => Step6EntryPoint.EchoAgentId;
+    public static string EchoPrefix => Step6EntryPoint.EchoPrefix;
+
+    public static async ValueTask RunAsync(TextWriter writer, IWorkflowExecutionEnvironment environment, int maxSteps = 2)
     {
-        Workflow<List<ChatMessage>> workflow = (await Step6EntryPoint.CreateWorkflow(maxSteps)
-                                                                     .TryPromoteAsync<List<ChatMessage>>()
-                                                                     .ConfigureAwait(false))!;
+        Workflow workflow = Step6EntryPoint.CreateWorkflow(maxSteps);
 
         AIAgent agent = workflow.AsAgent("group-chat-agent", "Group Chat Agent");
 

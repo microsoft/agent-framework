@@ -21,12 +21,16 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
 {
     public static class Steps
     {
-        public static string Input(string id) => $"{id}_{nameof(Input)}";
+        public static string UserInput(string id) => $"{id}_{nameof(UserInput)}";
+        public static string FunctionTool(string id) => $"{id}_{nameof(FunctionTool)}";
         public static string Resume(string id) => $"{id}_{nameof(Resume)}";
     }
 
-    // Input is requested by a message other than ActionExecutorResult.
-    public static bool RequiresInput(object? message) => message is not ActionExecutorResult;
+    public static bool RequiresFunctionCall(object? message) => message is AgentFunctionToolRequest;
+
+    public static bool RequiresUserInput(object? message) => message is UserInputRequest;
+
+    public static bool RequiresNothing(object? message) => message is ActionExecutorResult;
 
     private AzureAgentUsage AgentUsage => Throw.IfNull(this.Model.Agent, $"{nameof(this.Model)}.{nameof(this.Model.Agent)}");
     private AzureAgentInput? AgentInput => this.Model.Input;
@@ -42,7 +46,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
         return default;
     }
 
-    public ValueTask ResumeAsync(IWorkflowContext context, AgentToolResponse message, CancellationToken cancellationToken) =>
+    public ValueTask ResumeAsync(IWorkflowContext context, AgentFunctionToolResponse message, CancellationToken cancellationToken) =>
         this.InvokeAgentAsync(context, [message.FunctionResults.ToChatMessage()], cancellationToken);
 
     public async ValueTask CompleteAsync(IWorkflowContext context, ActionExecutorResult message, CancellationToken cancellationToken)
@@ -64,12 +68,20 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
         if (string.IsNullOrEmpty(agentResponse.Text))
         {
             // Identify function calls that have no associated result.
-            List<FunctionCallContent> functionCalls = this.GetOrphanedFunctionCalls(agentResponse);
-            isComplete = functionCalls.Count == 0;
-
-            if (!isComplete)
+            List<UserInputRequestContent> inputRequests = GetUserInputRequests(agentResponse);
+            if (inputRequests.Count > 0)
             {
-                AgentToolRequest toolRequest = new(agentName, functionCalls);
+                isComplete = false;
+                UserInputRequest approvalRequest = new(agentName, inputRequests.OfType<AIContent>().ToArray());
+                await context.SendMessageAsync(approvalRequest, targetId: null, cancellationToken).ConfigureAwait(false);
+            }
+
+            // Identify function calls that have no associated result.
+            List<FunctionCallContent> functionCalls = GetOrphanedFunctionCalls(agentResponse);
+            if (functionCalls.Count > 0)
+            {
+                isComplete = false;
+                AgentFunctionToolRequest toolRequest = new(agentName, functionCalls);
                 await context.SendMessageAsync(toolRequest, targetId: null, cancellationToken).ConfigureAwait(false);
             }
         }
@@ -95,7 +107,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
         return userInput?.ToChatMessages();
     }
 
-    private List<FunctionCallContent> GetOrphanedFunctionCalls(AgentRunResponse agentResponse)
+    private static List<FunctionCallContent> GetOrphanedFunctionCalls(AgentRunResponse agentResponse)
     {
         HashSet<string> functionResultIds =
             [.. agentResponse.Messages
@@ -116,6 +128,9 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
 
         return functionCalls;
     }
+
+    private static List<UserInputRequestContent> GetUserInputRequests(AgentRunResponse agentResponse) =>
+        agentResponse.Messages.SelectMany(m => m.Contents.OfType<UserInputRequestContent>()).ToList();
 
     private string? GetConversationId()
     {

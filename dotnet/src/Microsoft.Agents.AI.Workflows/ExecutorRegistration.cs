@@ -13,24 +13,29 @@ internal sealed class ExecutorRegistration(string id, Type executorType, Executo
     public string Id { get; } = Throw.IfNullOrEmpty(id);
     public Type ExecutorType { get; } = Throw.IfNull(executorType);
     private ExecutorFactoryF ProviderAsync { get; } = Throw.IfNull(provider);
-    public bool IsNotExecutorInstance { get; } = rawData is not Executor;
-    public bool IsUnresettableSharedInstance { get; } = rawData is Executor executor &&
-                                                        // Cross-Run Shareable executors are "trivially" resettable, since they
-                                                        // have no on-object state.
-                                                        !executor.IsCrossRunShareable &&
-                                                        rawData is not IResettableExecutor;
-    public bool SupportsConcurrent { get; } = (rawData is not Executor executor || executor.IsCrossRunShareable) &&
-                                              (rawData is not Workflow workflow || workflow.AllowConcurrent);
+
+    public bool IsSharedInstance { get; } = rawData is Executor;
+
+    /// <summary>
+    /// Gets a value whether instances of the executor created from this registration can be reset between subsequent
+    /// runs from the same <see cref="Workflow"/> instance. This value is not relevant for executors that <see
+    /// cref="SupportsConcurrent"/>.
+    /// </summary>
+    public bool SupportsResetting { get; } = rawData is Executor &&
+                                             // Cross-Run Shareable executors are "trivially" resettable, since they
+                                             // have no on-object state.
+                                             rawData is IResettableExecutor;
+
+    /// <summary>
+    /// Gets a value whether instances of the executor created from this registration can be used in concurrent runs
+    /// from the same <see cref="Workflow"/> instance.
+    /// </summary>
+    public bool SupportsConcurrent { get; } = rawData is not Executor executor || executor.IsCrossRunShareable;
 
     internal async ValueTask<bool> TryResetAsync()
     {
-        if (this.IsUnresettableSharedInstance)
-        {
-            return false;
-        }
-
-        // If the executor supports concurrent use, then resetting is a no-op.
-        if (this.SupportsConcurrent)
+        // Non-shared instances do not need resetting
+        if (!this.IsSharedInstance)
         {
             return true;
         }

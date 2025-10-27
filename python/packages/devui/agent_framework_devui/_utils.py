@@ -6,7 +6,10 @@ import inspect
 import json
 import logging
 from dataclasses import fields, is_dataclass
-from typing import Any, get_args, get_origin
+from types import UnionType
+from typing import Any, Union, get_args, get_origin
+
+from agent_framework import ChatMessage
 
 logger = logging.getLogger(__name__)
 
@@ -110,10 +113,25 @@ def extract_executor_message_types(executor: Any) -> list[Any]:
     return message_types
 
 
+def _contains_chat_message(type_hint: Any) -> bool:
+    """Check whether the provided type hint directly or indirectly references ChatMessage."""
+    if type_hint is ChatMessage:
+        return True
+
+    origin = get_origin(type_hint)
+    if origin in (list, tuple):
+        return any(_contains_chat_message(arg) for arg in get_args(type_hint))
+
+    if origin in (Union, UnionType):
+        return any(_contains_chat_message(arg) for arg in get_args(type_hint))
+
+    return False
+
+
 def select_primary_input_type(message_types: list[Any]) -> Any | None:
     """Choose the most user-friendly input type for workflow inputs.
 
-    Prefers str and dict types for better user experience.
+    Prefers ChatMessage (or containers thereof) and then falls back to primitives.
 
     Args:
         message_types: List of possible message types
@@ -123,6 +141,10 @@ def select_primary_input_type(message_types: list[Any]) -> Any | None:
     """
     if not message_types:
         return None
+
+    for message_type in message_types:
+        if _contains_chat_message(message_type):
+            return ChatMessage
 
     preferred = (str, dict)
 

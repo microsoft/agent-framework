@@ -414,9 +414,7 @@ async def test_workflow_run_stream_from_checkpoint_with_external_storage(simple_
             workflow_id="test-workflow",
             messages={},
             shared_state={},
-            executor_states={},
             iteration_count=0,
-            max_iterations=100,
         )
         checkpoint_id = await storage.save_checkpoint(test_checkpoint)
 
@@ -451,9 +449,7 @@ async def test_workflow_run_from_checkpoint_non_streaming(simple_executor: Execu
             workflow_id="test-workflow",
             messages={},
             shared_state={},
-            executor_states={},
             iteration_count=0,
-            max_iterations=100,
         )
         checkpoint_id = await storage.save_checkpoint(test_checkpoint)
 
@@ -484,9 +480,7 @@ async def test_workflow_run_stream_from_checkpoint_with_responses(simple_executo
             workflow_id="test-workflow",
             messages={},
             shared_state={},
-            executor_states={},
             iteration_count=0,
-            max_iterations=100,
         )
         checkpoint_id = await storage.save_checkpoint(test_checkpoint)
 
@@ -525,7 +519,7 @@ class StateTrackingExecutor(Executor):
     """An executor that tracks state in shared state to test context reset behavior."""
 
     @handler
-    async def handle_message(self, message: StateTrackingMessage, ctx: WorkflowContext[Any, list]) -> None:
+    async def handle_message(self, message: StateTrackingMessage, ctx: WorkflowContext[Any, list[Any]]) -> None:
         """Handle the message and track it in shared state."""
         # Get existing messages from shared state
         try:

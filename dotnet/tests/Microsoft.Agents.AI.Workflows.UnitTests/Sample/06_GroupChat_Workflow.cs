@@ -6,20 +6,23 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
-using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.UnitTests;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.Sample;
 
 internal static class Step6EntryPoint
 {
+    public const string EchoAgentId = "echo";
+    public const string EchoPrefix = "You said: ";
+
     public static Workflow CreateWorkflow(int maxTurns) =>
         AgentWorkflowBuilder
             .CreateGroupChatBuilderWith(agents => new RoundRobinGroupChatManager(agents) { MaximumIterationCount = maxTurns })
-            .AddParticipants(new HelloAgent(), new EchoAgent())
+            .AddParticipants(new HelloAgent(), new TestEchoAgent(id: EchoAgentId, prefix: EchoPrefix))
             .Build();
 
     public static async ValueTask RunAsync(TextWriter writer, IWorkflowExecutionEnvironment environment, int maxSteps = 2)
@@ -85,54 +88,3 @@ internal sealed class HelloAgent(string id = nameof(HelloAgent)) : AIAgent
 }
 
 internal sealed class HelloAgentThread() : InMemoryAgentThread();
-
-internal sealed class EchoAgent(string id = nameof(EchoAgent)) : AIAgent
-{
-    public const string Prefix = "You said: ";
-    public const string DefaultId = nameof(EchoAgent);
-
-    public override string Id => id;
-    public override string? Name => id;
-
-    public override AgentThread GetNewThread()
-        => new EchoAgentThread();
-
-    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
-        => new EchoAgentThread();
-
-    public override async Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
-    {
-        IEnumerable<AgentRunResponseUpdate> update = [
-            await this.RunStreamingAsync(messages, thread, options, cancellationToken)
-                      .SingleAsync(cancellationToken)
-                      .ConfigureAwait(false)];
-
-        return update.ToAgentRunResponse();
-    }
-
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
-    {
-        var messagesList = messages as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
-
-        if (messagesList.Count == 0)
-        {
-            throw new ArgumentException("No messages provided to echo.", nameof(messages));
-        }
-
-        StringBuilder collectedText = new(Prefix);
-        foreach (string messageText in messagesList.Select(message => message.Text)
-                                               .Where(text => !string.IsNullOrEmpty(text)))
-        {
-            collectedText.AppendLine(messageText);
-        }
-
-        yield return new(ChatRole.Assistant, collectedText.ToString())
-        {
-            AgentId = this.Id,
-            AuthorName = this.Name,
-            MessageId = Guid.NewGuid().ToString("N"),
-        };
-    }
-}
-
-internal sealed class EchoAgentThread() : InMemoryAgentThread();

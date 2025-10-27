@@ -201,6 +201,18 @@ public abstract class Executor : IIdentified
     public ISet<Type> OutputTypes { get; } = new HashSet<Type>([typeof(object)]);
 
     /// <summary>
+    /// Describes the protocol for communication with this <see cref="Executor"/>.
+    /// </summary>
+    /// <returns></returns>
+    public ProtocolDescriptor DescribeProtocol()
+    {
+        // TODO: Once burden of annotating yield/output messages becomes easier for the non-Auto case,
+        // we should (1) start checking for validity on output/send side, and (2) add the Yield/Send
+        // types to the ProtocolDescriptor.
+        return new(this.InputTypes);
+    }
+
+    /// <summary>
     /// Checks if the executor can handle a specific message type.
     /// </summary>
     /// <param name="messageType"></param>

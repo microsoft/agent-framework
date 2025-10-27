@@ -12,6 +12,7 @@ from ._events import (
     AgentRunUpdateEvent,  # type: ignore[reportPrivateUsage]
 )
 from ._executor import Executor, handler
+from ._message_utils import normalize_messages_input
 from ._workflow_context import WorkflowContext
 
 logger = logging.getLogger(__name__)
@@ -167,7 +168,7 @@ class AgentExecutor(Executor):
     @handler
     async def from_str(self, text: str, ctx: WorkflowContext[AgentExecutorResponse, AgentRunResponse]) -> None:
         """Accept a raw user prompt string and run the agent (one-shot)."""
-        self._cache = [ChatMessage(role="user", text=text)]  # type: ignore[arg-type]
+        self._cache = normalize_messages_input(text)
         await self._run_agent_and_emit(ctx)
 
     @handler
@@ -177,15 +178,50 @@ class AgentExecutor(Executor):
         ctx: WorkflowContext[AgentExecutorResponse, AgentRunResponse],
     ) -> None:
         """Accept a single ChatMessage as input."""
-        self._cache = [message]
+        self._cache = normalize_messages_input(message)
         await self._run_agent_and_emit(ctx)
 
     @handler
     async def from_messages(
         self,
-        messages: list[ChatMessage],
+        messages: list[str | ChatMessage],
         ctx: WorkflowContext[AgentExecutorResponse, AgentRunResponse],
     ) -> None:
-        """Accept a list of ChatMessage objects as conversation context."""
-        self._cache = list(messages)
+        """Accept a list of chat inputs (strings or ChatMessage) as conversation context."""
+        self._cache = normalize_messages_input(messages)
         await self._run_agent_and_emit(ctx)
+
+    def snapshot_state(self) -> dict[str, Any]:
+        """Capture current executor state for checkpointing.
+
+        Returns:
+            Dict containing serialized cache state
+        """
+        from ._conversation_state import encode_chat_messages
+
+        return {
+            "cache": encode_chat_messages(self._cache),
+        }
+
+    def restore_state(self, state: dict[str, Any]) -> None:
+        """Restore executor state from checkpoint.
+
+        Args:
+            state: Checkpoint data dict
+        """
+        from ._conversation_state import decode_chat_messages
+
+        cache_payload = state.get("cache")
+        if cache_payload:
+            try:
+                self._cache = decode_chat_messages(cache_payload)
+            except Exception as exc:
+                logger.warning("Failed to restore cache: %s", exc)
+                self._cache = []
+        else:
+            self._cache = []
+
+    def reset(self) -> None:
+        """Reset the internal cache of the executor."""
+        logger.debug("AgentExecutor %s: Resetting cache", self.id)
+        self._cache.clear()
