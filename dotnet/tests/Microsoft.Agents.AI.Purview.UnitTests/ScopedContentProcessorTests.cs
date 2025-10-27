@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Purview.Exceptions;
 using Microsoft.Agents.AI.Purview.Models.Common;
+using Microsoft.Agents.AI.Purview.Models.Jobs;
 using Microsoft.Agents.AI.Purview.Models.Requests;
 using Microsoft.Agents.AI.Purview.Models.Responses;
 using Microsoft.Extensions.AI;
@@ -20,13 +21,18 @@ public sealed class ScopedContentProcessorTests
 {
     private readonly Mock<IPurviewClient> _mockPurviewClient;
     private readonly Mock<ICacheProvider> _mockCacheProvider;
+    private readonly Mock<IChannelHandler> _mockChannelHandler;
     private readonly ScopedContentProcessor _processor;
 
     public ScopedContentProcessorTests()
     {
         this._mockPurviewClient = new Mock<IPurviewClient>();
         this._mockCacheProvider = new Mock<ICacheProvider>();
-        this._processor = new ScopedContentProcessor(this._mockPurviewClient.Object, this._mockCacheProvider.Object);
+        this._mockChannelHandler = new Mock<IChannelHandler>();
+        this._processor = new ScopedContentProcessor(
+            this._mockPurviewClient.Object,
+            this._mockCacheProvider.Object,
+            this._mockChannelHandler.Object);
     }
 
     #region ProcessMessagesAsync Tests
@@ -59,7 +65,8 @@ public sealed class ScopedContentProcessorTests
                     Locations = new List<PolicyLocation>
                     {
                         new ("microsoft.graph.policyLocationApplication", "app-123")
-                    }
+                    },
+                    ExecutionMode = ExecutionMode.EvaluateInline
                 }
             }
         };
@@ -117,7 +124,8 @@ public sealed class ScopedContentProcessorTests
                     Locations = new List<PolicyLocation>
                     {
                         new ("microsoft.graph.policyLocationApplication", "app-123")
-                    }
+                    },
+                    ExecutionMode = ExecutionMode.EvaluateInline
                 }
             }
         };
@@ -175,7 +183,8 @@ public sealed class ScopedContentProcessorTests
                     Locations = new List<PolicyLocation>
                     {
                         new("microsoft.graph.policyLocationApplication", "app-123")
-                    }
+                    },
+                    ExecutionMode = ExecutionMode.EvaluateInline
                 }
             }
         };
@@ -229,7 +238,8 @@ public sealed class ScopedContentProcessorTests
                     Locations = new List<PolicyLocation>
                     {
                         new ("microsoft.graph.policyLocationApplication", "app-123")
-                    }
+                    },
+                    ExecutionMode = ExecutionMode.EvaluateInline
                 }
             }
         };
@@ -284,7 +294,8 @@ public sealed class ScopedContentProcessorTests
                     Locations = new List<PolicyLocation>
                     {
                         new ("microsoft.graph.policyLocationApplication", "app-123")
-                    }
+                    },
+                    ExecutionMode = ExecutionMode.EvaluateInline
                 }
             }
         };
@@ -332,7 +343,7 @@ public sealed class ScopedContentProcessorTests
 
         var psResponse = new ProtectionScopesResponse
         {
-            Scopes = new List<PolicyScopeBase>()
+            Scopes = new List<PolicyScopeBase>
             {
                 new()
                 {
@@ -349,19 +360,13 @@ public sealed class ScopedContentProcessorTests
             It.IsAny<ProtectionScopesRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(psResponse);
 
-        var caResponse = new ContentActivitiesResponse();
-
-        this._mockPurviewClient.Setup(x => x.SendContentActivitiesAsync(
-            It.IsAny<ContentActivitiesRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(caResponse);
-
         // Act
         await this._processor.ProcessMessagesAsync(
             messages, "thread-123", Activity.UploadText, settings, "user-123", CancellationToken.None);
 
         // Assert
-        this._mockPurviewClient.Verify(x => x.SendContentActivitiesAsync(
-            It.IsAny<ContentActivitiesRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+        // Content activities are now queued as background jobs, not called directly
+        this._mockChannelHandler.Verify(x => x.QueueJob(It.IsAny<ContentActivityJob>()), Times.Once);
         this._mockPurviewClient.Verify(x => x.ProcessContentAsync(
             It.IsAny<ProcessContentRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
@@ -437,11 +442,6 @@ public sealed class ScopedContentProcessorTests
             It.IsAny<ProtectionScopesRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(psResponse);
 
-        var caResponse = new ContentActivitiesResponse();
-        this._mockPurviewClient.Setup(x => x.SendContentActivitiesAsync(
-            It.IsAny<ContentActivitiesRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(caResponse);
-
         // Act
         var result = await this._processor.ProcessMessagesAsync(
             messages, "thread-123", Activity.UploadText, settings, null, CancellationToken.None);
@@ -476,11 +476,6 @@ public sealed class ScopedContentProcessorTests
         this._mockPurviewClient.Setup(x => x.GetProtectionScopesAsync(
             It.IsAny<ProtectionScopesRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(psResponse);
-
-        var caResponse = new ContentActivitiesResponse();
-        this._mockPurviewClient.Setup(x => x.SendContentActivitiesAsync(
-            It.IsAny<ContentActivitiesRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(caResponse);
 
         // Act
         var result = await this._processor.ProcessMessagesAsync(

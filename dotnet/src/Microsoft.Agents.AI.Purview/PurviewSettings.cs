@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using Microsoft.Extensions.Caching.Distributed;
 
 namespace Microsoft.Agents.AI.Purview;
 
@@ -76,4 +75,14 @@ public class PurviewSettings
     /// The TTL of each cache entry.
     /// </summary>
     public TimeSpan CacheTTL { get; set; } = TimeSpan.FromMinutes(30);
+
+    /// <summary>
+    /// The maximum number of background jobs that can be queued up.
+    /// </summary>
+    public int PendingBackgroundJobLimit { get; set; } = 100;
+
+    /// <summary>
+    /// The maximum number of concurrent job consumers.
+    /// </summary>
+    public int MaxConcurrentJobConsumers { get; set; } = 10;
 }

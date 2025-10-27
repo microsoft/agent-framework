@@ -18,6 +18,7 @@ internal sealed class PurviewWrapper : IDisposable
     private readonly ILogger _logger;
     private readonly IScopedContentProcessor _scopedProcessor;
     private readonly PurviewSettings _purviewSettings;
+    private readonly IChannelHandler _channelHandler;
 
     /// <summary>
     /// Creates a new <see cref="PurviewWrapper"/> instance.
@@ -25,11 +26,13 @@ internal sealed class PurviewWrapper : IDisposable
     /// <param name="scopedProcessor"></param>
     /// <param name="purviewSettings"></param>
     /// <param name="logger"></param>
-    public PurviewWrapper(IScopedContentProcessor scopedProcessor, PurviewSettings purviewSettings, ILogger logger)
+    /// <param name="channelHandler"></param>
+    public PurviewWrapper(IScopedContentProcessor scopedProcessor, PurviewSettings purviewSettings, ILogger logger, IChannelHandler channelHandler)
     {
         this._scopedProcessor = scopedProcessor;
         this._purviewSettings = purviewSettings;
         this._logger = logger;
+        this._channelHandler = channelHandler;
     }
 
     private static string GetThreadIdFromAgentThread(AgentThread? thread, IEnumerable<ChatMessage> messages)
@@ -170,6 +173,8 @@ internal sealed class PurviewWrapper : IDisposable
 
     public void Dispose()
     {
-        throw new NotImplementedException("Stop listeners and dispose resources here.");
+#pragma warning disable VSTHRD002 // Need to wait for pending jobs to complete.
+        this._channelHandler.StopAndWaitForCompletionAsync().GetAwaiter().GetResult();
+#pragma warning restore VSTHRD002 // Need to wait for pending jobs to complete.
     }
 }

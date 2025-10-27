@@ -2,7 +2,9 @@
 
 using System;
 using System.Net.Http;
+using System.Threading.Channels;
 using Azure.Core;
+using Microsoft.Agents.AI.Purview.Models.Jobs;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Caching.Memory;
@@ -37,6 +39,9 @@ public static class PurviewExtensions
         services.AddSingleton<HttpClient>();
         services.AddSingleton(logger ?? NullLogger.Instance);
         services.AddSingleton<PurviewWrapper>();
+        services.AddSingleton(Channel.CreateBounded<BackgroundJobBase>(purviewSettings.PendingBackgroundJobLimit));
+        services.AddSingleton<IChannelHandler, ChannelHandler>();
+        services.AddSingleton<BackgroundJobRunner>();
         ServiceProvider serviceProvider = services.BuildServiceProvider();
 
         return serviceProvider.GetRequiredService<PurviewWrapper>();

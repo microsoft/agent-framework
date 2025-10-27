@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Purview.Exceptions;
 using Microsoft.Agents.AI.Purview.Models.Common;
+using Microsoft.Agents.AI.Purview.Models.Jobs;
 using Microsoft.Agents.AI.Purview.Models.Requests;
 using Microsoft.Agents.AI.Purview.Models.Responses;
 using Microsoft.Extensions.AI;
@@ -19,16 +20,19 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
 {
     private readonly IPurviewClient _purviewClient;
     private readonly ICacheProvider _cacheProvider;
+    private readonly IChannelHandler _channelHandler;
 
     /// <summary>
     /// Create a new instance of <see cref="ScopedContentProcessor"/>.
     /// </summary>
     /// <param name="purviewClient">The purview client to use for purview requests.</param>
     /// <param name="cacheProvider">The cache used to store Purview data.</param>
-    public ScopedContentProcessor(IPurviewClient purviewClient, ICacheProvider cacheProvider)
+    /// <param name="channelHandler">The channel handler used to manage background jobs.</param>
+    public ScopedContentProcessor(IPurviewClient purviewClient, ICacheProvider cacheProvider, IChannelHandler channelHandler)
     {
         this._purviewClient = purviewClient;
         this._cacheProvider = cacheProvider;
+        this._channelHandler = channelHandler;
     }
 
     /// <summary>
@@ -224,10 +228,16 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
 
         pcRequest.ScopeIdentifier = psResponse.ScopeIdentifier;
 
-        (bool shouldProcess, List<DlpActionInfo> dlpActions) = CheckApplicableScopes(pcRequest, psResponse);
+        (bool shouldProcess, List<DlpActionInfo> dlpActions, ExecutionMode executionMode) = CheckApplicableScopes(pcRequest, psResponse);
 
         if (shouldProcess)
         {
+            if (executionMode == ExecutionMode.EvaluateOffline)
+            {
+                this._channelHandler.QueueJob(new ProcessContentJob(pcRequest));
+                return new ProcessContentResponse();
+            }
+
             ProcessContentResponse pcResponse = await this._purviewClient.ProcessContentAsync(pcRequest, cancellationToken).ConfigureAwait(false);
 
             if (pcResponse.ProtectionScopeState == ProtectionScopeState.Modified)
@@ -240,31 +250,9 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
         }
 
         ContentActivitiesRequest caRequest = new(pcRequest.UserId, pcRequest.TenantId, pcRequest.ContentToProcess, pcRequest.CorrelationId);
-        ContentActivitiesResponse caResponse = await this._purviewClient.SendContentActivitiesAsync(caRequest, cancellationToken).ConfigureAwait(false);
+        this._channelHandler.QueueJob(new ContentActivityJob(caRequest));
 
-        ProcessContentResponse mappedPCResponse = new();
-
-        if (caResponse.Error != null)
-        {
-            ProcessingError error = new()
-            {
-                Details = new List<ClassificationErrorBase>()
-                {
-                    new()
-                    {
-                        ErrorCode = caResponse.Error?.Code ?? "Unknown ErrorCode",
-                        Message = caResponse.Error?.Message ?? "Unknown Error Message"
-                    }
-                }
-            };
-
-            mappedPCResponse.ProcessingErrors = new List<ProcessingError>
-            {
-                error
-            };
-        }
-
-        return mappedPCResponse;
+        return new ProcessContentResponse();
     }
 
     /// <summary>
@@ -298,7 +286,7 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
     /// <param name="pcRequest"></param>
     /// <param name="psResponse"></param>
     /// <returns></returns>
-    private static (bool shouldProcess, List<DlpActionInfo> dlpActions) CheckApplicableScopes(ProcessContentRequest pcRequest, ProtectionScopesResponse psResponse)
+    private static (bool shouldProcess, List<DlpActionInfo> dlpActions, ExecutionMode executionMode) CheckApplicableScopes(ProcessContentRequest pcRequest, ProtectionScopesResponse psResponse)
     {
         ProtectionScopeActivities requestActivity = TranslateActivity(pcRequest.ContentToProcess.ActivityMetadata.Activity);
 
@@ -311,6 +299,7 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
         string locationValue = pcRequest.ContentToProcess.ProtectedAppMetadata.ApplicationLocation.Value;
         List<DlpActionInfo> dlpActions = new();
         bool shouldProcess = false;
+        ExecutionMode executionMode = ExecutionMode.EvaluateOffline;
 
         foreach (var scope in psResponse.Scopes ?? Array.Empty<PolicyScopeBase>())
         {
@@ -326,6 +315,11 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
             {
                 shouldProcess = true;
 
+                if (scope.ExecutionMode == ExecutionMode.EvaluateInline)
+                {
+                    executionMode = ExecutionMode.EvaluateInline;
+                }
+
                 if (scope.PolicyActions != null)
                 {
                     dlpActions.AddRange(scope.PolicyActions);
@@ -333,7 +327,7 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
             }
         }
 
-        return (shouldProcess, dlpActions);
+        return (shouldProcess, dlpActions, executionMode);
     }
 
     /// <summary>

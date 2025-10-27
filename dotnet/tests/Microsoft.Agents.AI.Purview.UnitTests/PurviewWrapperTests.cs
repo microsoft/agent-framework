@@ -15,15 +15,17 @@ namespace Microsoft.Agents.AI.Purview.UnitTests;
 /// <summary>
 /// Unit tests for the <see cref="PurviewWrapper"/> class.
 /// </summary>
-public sealed class PurviewWrapperTests
+public sealed class PurviewWrapperTests : IDisposable
 {
     private readonly Mock<IScopedContentProcessor> _mockProcessor;
+    private readonly IChannelHandler _channelHandler;
     private readonly PurviewSettings _settings;
     private readonly PurviewWrapper _wrapper;
 
     public PurviewWrapperTests()
     {
         this._mockProcessor = new Mock<IScopedContentProcessor>();
+        this._channelHandler = Mock.Of<IChannelHandler>();
         this._settings = new PurviewSettings("TestApp")
         {
             TenantId = "tenant-123",
@@ -31,7 +33,7 @@ public sealed class PurviewWrapperTests
             BlockedPromptMessage = "Prompt blocked by policy",
             BlockedResponseMessage = "Response blocked by policy"
         };
-        this._wrapper = new PurviewWrapper(this._mockProcessor.Object, this._settings, NullLogger.Instance);
+        this._wrapper = new PurviewWrapper(this._mockProcessor.Object, this._settings, NullLogger.Instance, this._channelHandler);
     }
 
     #region ProcessChatContentAsync Tests
@@ -149,7 +151,7 @@ public sealed class PurviewWrapperTests
             IgnoreExceptions = true,
             PurviewAppLocation = new PurviewAppLocation(PurviewLocationType.Application, "app-123")
         };
-        var wrapper = new PurviewWrapper(this._mockProcessor.Object, settingsWithIgnore, NullLogger.Instance);
+        var wrapper = new PurviewWrapper(this._mockProcessor.Object, settingsWithIgnore, NullLogger.Instance, this._channelHandler);
 
         var messages = new List<ChatMessage>
         {
@@ -365,7 +367,7 @@ public sealed class PurviewWrapperTests
             IgnoreExceptions = true,
             PurviewAppLocation = new PurviewAppLocation(PurviewLocationType.Application, "app-123")
         };
-        var wrapper = new PurviewWrapper(this._mockProcessor.Object, settingsWithIgnore, NullLogger.Instance);
+        var wrapper = new PurviewWrapper(this._mockProcessor.Object, settingsWithIgnore, NullLogger.Instance, this._channelHandler);
 
         var messages = new List<ChatMessage>
         {
@@ -562,4 +564,9 @@ public sealed class PurviewWrapperTests
     }
 
     #endregion
+
+    public void Dispose()
+    {
+        this._wrapper.Dispose();
+    }
 }
