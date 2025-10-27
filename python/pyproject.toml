@@ -175,7 +175,7 @@ omit = [
 
 [tool.pyright]
 include = ["agent_framework", "samples"]
-exclude = ["**/tests/**", "docs", "**/.venv/**", "samples/semantic-kernel-migration/**"]
+exclude = ["**/tests/**", "docs", "**/.venv/**", "samples/semantic-kernel-migration/**", "packages/devui/frontend/**"]
 typeCheckingMode = "strict"
 reportUnnecessaryIsInstance = false
 reportMissingTypeStubs = false
@@ -206,7 +206,7 @@ exclude_dirs = ["tests", "./run_tasks_in_packages_if_exists.py", "./check_md_cod
 executor.type = "uv"
 
 [tool.poe.tasks]
-markdown-code-lint = """uv run python check_md_code_blocks.py README.md ./packages/**/README.md ./samples/**/*.md --exclude cookiecutter-agent-framework-lab --exclude tau2"""
+markdown-code-lint = """uv run python check_md_code_blocks.py README.md ./packages/**/README.md ./samples/**/*.md --exclude cookiecutter-agent-framework-lab --exclude tau2 --exclude packages/devui/frontend"""
 samples-code-check = """pyright ./samples"""
 docs-install = "uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit --group=docs"
 docs-clean = "rm -rf docs/build"
