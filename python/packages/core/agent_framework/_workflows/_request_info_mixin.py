@@ -6,7 +6,7 @@ import inspect
 import logging
 from builtins import type as builtin_type
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from ._workflow_context import WorkflowContext, validate_workflow_context_annotation
 
@@ -19,7 +19,6 @@ logger = logging.getLogger(__name__)
 
 class RequestInfoMixin:
     """Mixin providing common functionality for request info handling."""
-
 
     def _discover_response_handlers(self) -> None:
         """Discover and register response handlers defined in the class."""

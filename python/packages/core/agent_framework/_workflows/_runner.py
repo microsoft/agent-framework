@@ -4,7 +4,7 @@ import asyncio
 import logging
 from collections import defaultdict
 from collections.abc import AsyncGenerator, Sequence
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
 from ._checkpoint_encoding import DATACLASS_MARKER, MODEL_MARKER, decode_checkpoint_value
@@ -18,9 +18,6 @@ from ._runner_context import (
     RunnerContext,
 )
 from ._shared_state import SharedState
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 

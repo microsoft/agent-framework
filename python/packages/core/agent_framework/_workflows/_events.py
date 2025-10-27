@@ -6,20 +6,17 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import Any, TypeAlias
 
 from agent_framework import AgentRunResponse, AgentRunResponseUpdate
 
 from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
 from ._typing_utils import deserialize_type, serialize_type
 
-if TYPE_CHECKING:
-    pass
-
 
 class WorkflowEventSource(str, Enum):
     """Identifies whether a workflow event came from the framework or an executor.
-
+runn
     Use `FRAMEWORK` for events emitted by built-in orchestration paths—even when the
     code that raises them lives in runner-related modules—and `EXECUTOR` for events
     surfaced by developer-provided executor implementations.
