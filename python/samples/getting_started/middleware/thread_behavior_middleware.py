@@ -88,7 +88,7 @@ async def main() -> None:
     result1 = await agent.run(query1, thread=thread)
     print(f"Agent: {result1.text}")
 
-    print("\nSecond Run")
+    print("\nSecond Run:")
     query2 = "How about in London?"
     print(f"User: {query2}")
     result2 = await agent.run(query2, thread=thread)
