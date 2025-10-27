@@ -16,7 +16,7 @@ from ._typing_utils import deserialize_type, serialize_type
 
 class WorkflowEventSource(str, Enum):
     """Identifies whether a workflow event came from the framework or an executor.
-runn
+
     Use `FRAMEWORK` for events emitted by built-in orchestration paths—even when the
     code that raises them lives in runner-related modules—and `EXECUTOR` for events
     surfaced by developer-provided executor implementations.
