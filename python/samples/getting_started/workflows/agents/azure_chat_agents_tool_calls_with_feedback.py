@@ -3,7 +3,7 @@
 import asyncio
 import json
 from dataclasses import dataclass, field
-from typing import Annotated, Never
+from typing import Annotated
 
 from agent_framework import (
     AgentExecutorRequest,
@@ -26,6 +26,7 @@ from agent_framework import (
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 from pydantic import Field
+from typing_extensions import Never
 
 """
 Sample: Tool-enabled agents with human feedback

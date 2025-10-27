@@ -2,7 +2,6 @@
 
 import asyncio
 from dataclasses import dataclass
-from typing import Never
 
 from agent_framework import (
     Executor,
@@ -16,6 +15,7 @@ from agent_framework import (
     handler,
     response_handler,
 )
+from typing_extensions import Never
 
 """
 This sample demostrates how to handle request from the sub-workflow in the main workflow.

@@ -3,7 +3,7 @@
 import asyncio
 import uuid
 from dataclasses import dataclass
-from typing import Literal, Never
+from typing import Literal
 
 from agent_framework import (
     Executor,
@@ -17,6 +17,7 @@ from agent_framework import (
     handler,
     response_handler,
 )
+from typing_extensions import Never
 
 """
 This sample demonstrates how to handle multiple parallel requests from a sub-workflow to
