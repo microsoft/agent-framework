@@ -51,6 +51,32 @@ def test_builtin_types_schema_generation():
     assert isinstance(int_schema, dict)
 
 
+def test_none_type_schema_generation():
+    """Test schema generation for None type (workflows with no inputs)."""
+    # Test None type - should return {"type": "null"}
+    none_schema = generate_input_schema(type(None))
+    assert none_schema is not None
+    assert isinstance(none_schema, dict)
+    assert none_schema == {"type": "null"}
+
+
+def test_optional_type_schema_generation():
+    """Test schema generation for Union/Optional types."""
+    # Test str | None (Optional[str])
+    optional_str_schema = generate_input_schema(str | None)
+    assert optional_str_schema is not None
+    assert isinstance(optional_str_schema, dict)
+    assert optional_str_schema.get("type") == "string"
+    assert optional_str_schema.get("default") is None
+
+    # Test int | None (Optional[int])
+    optional_int_schema = generate_input_schema(int | None)
+    assert optional_int_schema is not None
+    assert isinstance(optional_int_schema, dict)
+    assert optional_int_schema.get("type") == "integer"
+    assert optional_int_schema.get("default") is None
+
+
 def test_dataclass_schema_generation():
     """Test schema generation for dataclass."""
     schema = generate_input_schema(InputData)
