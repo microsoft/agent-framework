@@ -249,13 +249,13 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
         // Define input action
         string inputId = QuestionExecutor.Steps.Input(action.Id);
-        RequestPortAction inputPort = new(RequestPort.Create<UserMessageRequest, UserMessageResponse>(inputId));
+        RequestPortAction inputPort = new(RequestPort.Create<AnswerRequest, AnswerResponse>(inputId));
         this._workflowModel.AddNode(inputPort, action.ParentId);
         this._workflowModel.AddLinkFromPeer(action.ParentId, inputId);
 
         // Capture input response
         string captureId = QuestionExecutor.Steps.Capture(action.Id);
-        this.ContinueWith(new DelegateActionExecutor<UserMessageResponse>(captureId, this._workflowState, action.CaptureResponseAsync, emitResult: false), action.ParentId);
+        this.ContinueWith(new DelegateActionExecutor<AnswerResponse>(captureId, this._workflowState, action.CaptureResponseAsync, emitResult: false), action.ParentId);
 
         // Transition to post action if complete
         this.ContinueWith(new DelegateActionExecutor(postId, this._workflowState, action.CompleteAsync), action.ParentId, QuestionExecutor.IsComplete);

@@ -336,7 +336,7 @@ internal sealed class Program
         request.Data.TypeId.TypeName switch
         {
             // Request for human input
-            _ when request.Data.TypeId.IsMatch<UserMessageRequest>() => HandleUserMessageRequest(request.DataAs<UserMessageRequest>()!),
+            _ when request.Data.TypeId.IsMatch<AnswerRequest>() => HandleUserMessageRequest(request.DataAs<AnswerRequest>()!),
             // Request for function tool invocation.  (Only active when functions are defined and IncludeFunctions is true.)
             _ when request.Data.TypeId.IsMatch<AgentFunctionToolRequest>() => await this.HandleToolRequestAsync(request.DataAs<AgentFunctionToolRequest>()!),
             // Request for user input, such as function or mcp tool approval
@@ -348,7 +348,7 @@ internal sealed class Program
     /// <summary>
     /// Handle request for human input.
     /// </summary>
-    private static UserMessageResponse HandleUserMessageRequest(UserMessageRequest request)
+    private static AnswerResponse HandleUserMessageRequest(AnswerRequest request)
     {
         string? userInput;
         do
@@ -360,7 +360,7 @@ internal sealed class Program
         }
         while (string.IsNullOrWhiteSpace(userInput));
 
-        return new UserMessageResponse(userInput);
+        return new AnswerResponse(userInput);
     }
 
     /// <summary>

@@ -8,7 +8,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Events;
 /// <summary>
 /// Represents a user input response.
 /// </summary>
-public sealed class UserMessageResponse
+public sealed class AnswerResponse
 {
     /// <summary>
     /// The response value.
@@ -16,20 +16,20 @@ public sealed class UserMessageResponse
     public ChatMessage Value { get; }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="UserMessageResponse"/> class.
+    /// Initializes a new instance of the <see cref="AnswerResponse"/> class.
     /// </summary>
     /// <param name="value">The response value.</param>
     [JsonConstructor]
-    public UserMessageResponse(ChatMessage value)
+    public AnswerResponse(ChatMessage value)
     {
         this.Value = value;
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="UserMessageResponse"/> class.
+    /// Initializes a new instance of the <see cref="AnswerResponse"/> class.
     /// </summary>
     /// <param name="value">The response value.</param>
-    public UserMessageResponse(string value)
+    public AnswerResponse(string value)
     {
         this.Value = new ChatMessage(ChatRole.User, value);
     }

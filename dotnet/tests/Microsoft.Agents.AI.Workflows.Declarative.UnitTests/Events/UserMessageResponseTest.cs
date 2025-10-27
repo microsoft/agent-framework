@@ -7,7 +7,7 @@ using Xunit.Abstractions;
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.Events;
 
 /// <summary>
-/// Verify <see cref="UserMessageResponse"/> class
+/// Verify <see cref="AnswerResponse"/> class
 /// </summary>
 public sealed class UserMessageResponseTest(ITestOutputHelper output) : EventTest(output)
 {
@@ -15,7 +15,7 @@ public sealed class UserMessageResponseTest(ITestOutputHelper output) : EventTes
     public void VerifySerializationText()
     {
         // Arrange & Act
-        UserMessageResponse copy = VerifyEventSerialization(new UserMessageResponse("test response"));
+        AnswerResponse copy = VerifyEventSerialization(new AnswerResponse("test response"));
 
         // Assert
         Assert.Equal("test response", copy.Value.Text);
@@ -25,7 +25,7 @@ public sealed class UserMessageResponseTest(ITestOutputHelper output) : EventTes
     public void VerifySerializationMessage()
     {
         // Arrange & Act
-        UserMessageResponse copy = VerifyEventSerialization(new UserMessageResponse(new ChatMessage(ChatRole.User, "test response")));
+        AnswerResponse copy = VerifyEventSerialization(new AnswerResponse(new ChatMessage(ChatRole.User, "test response")));
 
         // Assert
         Assert.Equal("test response", copy.Value.Text);

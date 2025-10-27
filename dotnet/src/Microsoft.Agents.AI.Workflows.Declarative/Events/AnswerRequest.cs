@@ -5,9 +5,9 @@ using System.Text.Json.Serialization;
 namespace Microsoft.Agents.AI.Workflows.Declarative.Events;
 
 /// <summary>
-/// Represents a request for user input.
+/// Represents a request for user input in response to a `Question` action.
 /// </summary>
-public sealed class UserMessageRequest
+public sealed class AnswerRequest
 {
     /// <summary>
     /// An optional prompt for the user.
@@ -20,7 +20,7 @@ public sealed class UserMessageRequest
     public string? Prompt { get; }
 
     [JsonConstructor]
-    internal UserMessageRequest(string? prompt = null)
+    internal AnswerRequest(string? prompt = null)
     {
         this.Prompt = prompt;
     }
