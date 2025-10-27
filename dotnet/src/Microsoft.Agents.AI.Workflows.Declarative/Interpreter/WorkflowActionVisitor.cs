@@ -249,13 +249,13 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
         // Define input action
         string inputId = QuestionExecutor.Steps.Input(action.Id);
-        RequestPortAction inputPort = new(RequestPort.Create<InputRequest, InputResponse>(inputId));
+        RequestPortAction inputPort = new(RequestPort.Create<AnswerRequest, AnswerResponse>(inputId));
         this._workflowModel.AddNode(inputPort, action.ParentId);
         this._workflowModel.AddLinkFromPeer(action.ParentId, inputId);
 
         // Capture input response
         string captureId = QuestionExecutor.Steps.Capture(action.Id);
-        this.ContinueWith(new DelegateActionExecutor<InputResponse>(captureId, this._workflowState, action.CaptureResponseAsync, emitResult: false), action.ParentId);
+        this.ContinueWith(new DelegateActionExecutor<AnswerResponse>(captureId, this._workflowState, action.CaptureResponseAsync, emitResult: false), action.ParentId);
 
         // Transition to post action if complete
         this.ContinueWith(new DelegateActionExecutor(postId, this._workflowState, action.CompleteAsync), action.ParentId, QuestionExecutor.IsComplete);
@@ -315,22 +315,31 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         this.ContinueWith(action);
         // Transition to post action if complete
         string postId = Steps.Post(action.Id);
-        this._workflowModel.AddLink(action.Id, postId, result => !InvokeAzureAgentExecutor.RequiresInput(result));
+        this._workflowModel.AddLink(action.Id, postId, InvokeAzureAgentExecutor.RequiresNothing);
 
-        // Define input action
-        string inputId = InvokeAzureAgentExecutor.Steps.Input(action.Id);
-        RequestPortAction inputPort = new(RequestPort.Create<AgentToolRequest, AgentToolResponse>(inputId));
-        this._workflowModel.AddNode(inputPort, action.ParentId);
-        this._workflowModel.AddLink(action.Id, inputId, InvokeAzureAgentExecutor.RequiresInput);
+        // Define request-port for function calling action
+        string functionCallingPortId = InvokeAzureAgentExecutor.Steps.FunctionTool(action.Id);
+        RequestPortAction functionCallingPort = new(RequestPort.Create<AgentFunctionToolRequest, AgentFunctionToolResponse>(functionCallingPortId));
+        this._workflowModel.AddNode(functionCallingPort, action.ParentId);
+        this._workflowModel.AddLink(action.Id, functionCallingPort.Id, InvokeAzureAgentExecutor.RequiresFunctionCall);
 
-        // Input port always transitions to resume
+        // Define request-port for user input, such as: mcp tool & function tool approval
+        string userInputPortId = InvokeAzureAgentExecutor.Steps.UserInput(action.Id);
+        RequestPortAction userInputPort = new(RequestPort.Create<UserInputRequest, UserInputResponse>(userInputPortId));
+        this._workflowModel.AddNode(userInputPort, action.ParentId);
+        this._workflowModel.AddLink(action.Id, userInputPortId, InvokeAzureAgentExecutor.RequiresUserInput);
+
+        // Request ports always transitions to resume
         string resumeId = InvokeAzureAgentExecutor.Steps.Resume(action.Id);
-        this._workflowModel.AddNode(new DelegateActionExecutor<AgentToolResponse>(resumeId, this._workflowState, action.ResumeAsync), action.ParentId);
-        this._workflowModel.AddLink(inputId, resumeId);
-        // Transition to request port if more input is required
-        this._workflowModel.AddLink(resumeId, inputId, InvokeAzureAgentExecutor.RequiresInput);
+        this._workflowModel.AddNode(new DelegateActionExecutor<AgentFunctionToolResponse>(resumeId, this._workflowState, action.ResumeAsync), action.ParentId);
+        this._workflowModel.AddLink(functionCallingPortId, resumeId);
+        this._workflowModel.AddLink(userInputPortId, resumeId);
+        // Transition to appropriate request port if more function calling is requested
+        this._workflowModel.AddLink(resumeId, functionCallingPortId, InvokeAzureAgentExecutor.RequiresFunctionCall);
+        // Transition to appropriate request port if more user input is requested
+        this._workflowModel.AddLink(resumeId, userInputPortId, InvokeAzureAgentExecutor.RequiresUserInput);
         // Transition to post action if complete
-        this._workflowModel.AddLink(resumeId, postId, result => !InvokeAzureAgentExecutor.RequiresInput(result));
+        this._workflowModel.AddLink(resumeId, postId, InvokeAzureAgentExecutor.RequiresNothing);
 
         // Define post action
         this._workflowModel.AddNode(new DelegateActionExecutor(postId, this._workflowState, action.CompleteAsync), action.ParentId);

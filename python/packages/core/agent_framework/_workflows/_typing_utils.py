@@ -4,56 +4,72 @@ import logging
 from collections.abc import Mapping
 from dataclasses import fields, is_dataclass
 from types import UnionType
-from typing import Any, Union, get_args, get_origin
+from typing import Any, TypeVar, Union, cast, get_args, get_origin
 
 logger = logging.getLogger(__name__)
 
+T = TypeVar("T")
 
-def _coerce_to_type(value: Any, target_type: type) -> Any | None:
-    """Best-effort conversion of value into target_type."""
+
+def _coerce_to_type(value: Any, target_type: type[T]) -> T | None:
+    """Best-effort conversion of value into target_type.
+
+    Args:
+        value: The value to convert (can be dict, dataclass, or object with __dict__)
+        target_type: The target type to convert to
+
+    Returns:
+        Instance of target_type if conversion succeeds, None otherwise
+    """
     if isinstance(value, target_type):
-        return value
+        return value  # type: ignore[return-value]
 
     # Convert dataclass instances or objects with __dict__ into dict first
+    value_as_dict: dict[str, Any]
     if not isinstance(value, dict):
         if is_dataclass(value):
-            value = {f.name: getattr(value, f.name) for f in fields(value)}
+            value_as_dict = {f.name: getattr(value, f.name) for f in fields(value)}
         else:
             value_dict = getattr(value, "__dict__", None)
             if isinstance(value_dict, dict):
-                value = dict(value_dict)
+                value_as_dict = cast(dict[str, Any], value_dict)
+            else:
+                return None
+    else:
+        value_as_dict = cast(dict[str, Any], value)
 
-    if isinstance(value, dict):
-        ctor_kwargs: dict[str, Any] = dict(value)
+    # Try to construct the target type from the dict
+    ctor_kwargs: dict[str, Any] = dict(value_as_dict)
 
-        if is_dataclass(target_type):
-            field_names = {f.name for f in fields(target_type)}
-            ctor_kwargs = {k: v for k, v in value.items() if k in field_names}
+    if is_dataclass(target_type):
+        field_names = {f.name for f in fields(target_type)}
+        ctor_kwargs = {k: v for k, v in value_as_dict.items() if k in field_names}
 
+    try:
+        return target_type(**ctor_kwargs)  # type: ignore[call-arg,return-value]
+    except TypeError as exc:
+        logger.debug(f"_coerce_to_type could not call {target_type.__name__}(**..): {exc}")
+    except Exception as exc:  # pragma: no cover - unexpected constructor failure
+        logger.warning(
+            f"_coerce_to_type encountered unexpected error calling {target_type.__name__} constructor: {exc}"
+        )
+
+    # Fallback: try to create instance without __init__ and set attributes
+    try:
+        instance = object.__new__(target_type)
+    except Exception as exc:  # pragma: no cover - pathological type
+        logger.debug(f"_coerce_to_type could not allocate {target_type.__name__} without __init__: {exc}")
+        return None
+
+    for key, val in value_as_dict.items():
         try:
-            return target_type(**ctor_kwargs)  # type: ignore[arg-type]
-        except TypeError as exc:
-            logger.debug(f"_coerce_to_type could not call {target_type.__name__}(**..): {exc}")
-        except Exception as exc:  # pragma: no cover - unexpected constructor failure
-            logger.warning(
-                f"_coerce_to_type encountered unexpected error calling {target_type.__name__} constructor: {exc}"
+            setattr(instance, key, val)
+        except Exception as exc:
+            logger.debug(
+                f"_coerce_to_type could not set {target_type.__name__}.{key} during fallback assignment: {exc}"
             )
-        try:
-            instance: Any = object.__new__(target_type)
-        except Exception as exc:  # pragma: no cover - pathological type
-            logger.debug(f"_coerce_to_type could not allocate {target_type.__name__} without __init__: {exc}")
-            return None
-        for key, val in value.items():
-            try:
-                setattr(instance, key, val)
-            except Exception as exc:
-                logger.debug(
-                    f"_coerce_to_type could not set {target_type.__name__}.{key} during fallback assignment: {exc}"
-                )
-                continue
-        return instance
-
-    return None
+            continue
+    return instance  # type: ignore[return-value]
 
 
 def is_instance_of(data: Any, target_type: type | UnionType | Any) -> bool:
@@ -89,14 +105,14 @@ def is_instance_of(data: Any, target_type: type | UnionType | Any) -> bool:
     # Case 3: target_type is a generic type
     if origin in [list, set]:
         return isinstance(data, origin) and (
-            not args or all(any(is_instance_of(item, arg) for arg in args) for item in data)
+            not args or all(any(is_instance_of(item, arg) for arg in args) for item in data)  # type: ignore[misc]
         )  # type: ignore
 
     # Case 4: target_type is a tuple
     if origin is tuple:
         if len(args) == 2 and args[1] is Ellipsis:  # Tuple[T, ...] case
             element_type = args[0]
-            return isinstance(data, tuple) and all(is_instance_of(item, element_type) for item in data)
+            return isinstance(data, tuple) and all(is_instance_of(item, element_type) for item in data)  # type: ignore[misc]
         if len(args) == 1 and args[0] is Ellipsis:  # Tuple[...] case
             return isinstance(data, tuple)
         if len(args) == 0:
@@ -135,7 +151,7 @@ def is_instance_of(data: Any, target_type: type | UnionType | Any) -> bool:
                 # and validators still receive a fully typed RequestResponse instance.
                 original_request = data.original_request
                 if isinstance(original_request, Mapping):
-                    coerced = _coerce_to_type(dict(original_request), request_type)
+                    coerced = _coerce_to_type(dict(original_request), request_type)  # type: ignore[arg-type]
                     if coerced is None or not isinstance(coerced, request_type):
                         return False
                     data.original_request = coerced
