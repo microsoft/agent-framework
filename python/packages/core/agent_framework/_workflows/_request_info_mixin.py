@@ -20,7 +20,6 @@ logger = logging.getLogger(__name__)
 class RequestInfoMixin:
     """Mixin providing common functionality for request info handling."""
 
-    _PENDING_SHARED_STATE_KEY: ClassVar[str] = "_af_pending_request_info"
 
     def _discover_response_handlers(self) -> None:
         """Discover and register response handlers defined in the class."""
