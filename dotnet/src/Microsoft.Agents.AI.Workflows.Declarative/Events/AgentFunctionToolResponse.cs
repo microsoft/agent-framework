@@ -34,7 +34,7 @@ public sealed class AgentFunctionToolResponse
     /// Ensures that all function calls in the request have a corresponding result.
     /// </summary>
     /// <param name="toolRequest">The tool request.</param>
-    /// <param name="functionResults">On or more function results</param>
+    /// <param name="functionResults">One or more function results</param>
     /// <returns>An <see cref="AgentFunctionToolResponse"/> that can be provided to the workflow.</returns>
     /// <exception cref="DeclarativeActionException">Not all <see cref="AgentFunctionToolRequest.FunctionCalls"/> have a corresponding <see cref="FunctionResultContent"/>.</exception>
     public static AgentFunctionToolResponse Create(AgentFunctionToolRequest toolRequest, params IEnumerable<FunctionResultContent> functionResults)
