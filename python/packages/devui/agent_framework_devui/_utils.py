@@ -377,11 +377,11 @@ def generate_input_schema(input_type: type) -> dict[str, Any]:
         return {"type": "boolean"}
 
     # 3. Check for generic types (list, List, Sequence, etc.)
-    origin = get_origin(input_type)
-    if origin is not None:
+    list_origin = get_origin(input_type)
+    if list_origin is not None:
         type_str = str(input_type)
         # Handle list/array types
-        if origin is list or "list" in type_str.lower() or "List" in type_str or "Sequence" in type_str:
+        if list_origin is list or "list" in type_str.lower() or "List" in type_str or "Sequence" in type_str:
             args = get_args(input_type)
             if args:
                 # Get schema for item type
@@ -585,8 +585,8 @@ def _parse_dict_input(input_dict: dict[str, Any], target_type: type) -> Any:
             return _parse_dict_input(input_dict, base_type)
 
     # Handle list/array types - extract from "input" field
-    origin = get_origin(target_type)
-    if origin is list or target_type is list:
+    list_origin = get_origin(target_type)
+    if list_origin is list or target_type is list:
         try:
             # Try "input" field first (common for workflow inputs)
             if "input" in input_dict:
