@@ -4,6 +4,7 @@ using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Hosting;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
 using Microsoft.AspNetCore.Http;
@@ -18,6 +19,30 @@ namespace Microsoft.AspNetCore.Builder;
 /// </summary>
 public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExtensions
 {
+    /// <summary>
+    /// Maps OpenAI Responses API endpoints to the specified <see cref="IEndpointRouteBuilder"/> for the given <see cref="AIAgent"/>.
+    /// </summary>
+    /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the OpenAI Responses endpoints to.</param>
+    /// <param name="agentBuilder">The builder for <see cref="AIAgent"/> to map the OpenAI Responses endpoints for.</param>
+    /// <param name="responsesPath">Custom route path for the responses endpoint.</param>
+    public static IEndpointConventionBuilder MapOpenAIResponses(this IEndpointRouteBuilder endpoints, IHostedAgentBuilder agentBuilder, [StringSyntax("Route")] string? responsesPath = null)
+    {
+        ArgumentNullException.ThrowIfNull(agentBuilder);
+        return MapOpenAIResponses(endpoints, agentBuilder.Name, responsesPath);
+    }
+
+    /// <summary>
+    /// Maps OpenAI Responses API endpoints to the specified <see cref="IEndpointRouteBuilder"/> for the given <see cref="AIAgent"/>.
+    /// </summary>
+    /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the OpenAI Responses endpoints to.</param>
+    /// <param name="agentName">The name of <see cref="AIAgent"/> to map the OpenAI Responses endpoints for.</param>
+    /// <param name="responsesPath">Custom route path for the responses endpoint.</param>
+    public static IEndpointConventionBuilder MapOpenAIResponses(this IEndpointRouteBuilder endpoints, string agentName, [StringSyntax("Route")] string? responsesPath = null)
+    {
+        var agent = endpoints.ServiceProvider.GetRequiredKeyedService<AIAgent>(agentName);
+        return endpoints.MapOpenAIResponses(agent, responsesPath);
+    }
+
     /// <summary>
     /// Maps OpenAI Responses API endpoints to the specified <see cref="IEndpointRouteBuilder"/> for the given <see cref="AIAgent"/>.
     /// </summary>

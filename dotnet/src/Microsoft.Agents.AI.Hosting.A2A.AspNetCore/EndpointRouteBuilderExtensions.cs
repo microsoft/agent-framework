@@ -22,11 +22,45 @@ public static class MicrosoftAgentAIHostingA2AEndpointRouteBuilderExtensions
     /// Attaches A2A (Agent2Agent) communication capabilities via Message processing to the specified web application.
     /// </summary>
     /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the A2A endpoints to.</param>
+    /// <param name="agentBuilder">The configuration builder for <see cref="AIAgent"/>.</param>
+    /// <param name="path">The route group to use for A2A endpoints.</param>
+    /// <returns>Configured <see cref="ITaskManager"/> for A2A integration.</returns>
+    /// <remarks>
+    /// This method can be used to access A2A agents that support the
+    /// <see href="https://github.com/a2aproject/A2A/blob/main/docs/topics/agent-discovery.md#2-curated-registries-catalog-based-discovery">Curated Registries (Catalog-Based Discovery)</see>
+    /// discovery mechanism.
+    /// </remarks>
+    public static IEndpointConventionBuilder MapA2A(this IEndpointRouteBuilder endpoints, IHostedAgentBuilder agentBuilder, string path)
+        => endpoints.MapA2A(agentBuilder, path, _ => { });
+
+    /// <summary>
+    /// Attaches A2A (Agent2Agent) communication capabilities via Message processing to the specified web application.
+    /// </summary>
+    /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the A2A endpoints to.</param>
     /// <param name="agentName">The name of the agent to use for A2A protocol integration.</param>
     /// <param name="path">The route group to use for A2A endpoints.</param>
     /// <returns>Configured <see cref="ITaskManager"/> for A2A integration.</returns>
     public static IEndpointConventionBuilder MapA2A(this IEndpointRouteBuilder endpoints, string agentName, string path)
         => endpoints.MapA2A(agentName, path, _ => { });
+
+    /// <summary>
+    /// Attaches A2A (Agent2Agent) communication capabilities via Message processing to the specified web application.
+    /// </summary>
+    /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the A2A endpoints to.</param>
+    /// <param name="agentBuilder">The configuration builder for <see cref="AIAgent"/>.</param>
+    /// <param name="path">The route group to use for A2A endpoints.</param>
+    /// <param name="configureTaskManager">The callback to configure <see cref="ITaskManager"/>.</param>
+    /// <returns>Configured <see cref="ITaskManager"/> for A2A integration.</returns>
+    /// <remarks>
+    /// This method can be used to access A2A agents that support the
+    /// <see href="https://github.com/a2aproject/A2A/blob/main/docs/topics/agent-discovery.md#2-curated-registries-catalog-based-discovery">Curated Registries (Catalog-Based Discovery)</see>
+    /// discovery mechanism.
+    /// </remarks>
+    public static IEndpointConventionBuilder MapA2A(this IEndpointRouteBuilder endpoints, IHostedAgentBuilder agentBuilder, string path, Action<ITaskManager> configureTaskManager)
+    {
+        ArgumentNullException.ThrowIfNull(agentBuilder);
+        return endpoints.MapA2A(agentBuilder.Name, path, configureTaskManager);
+    }
 
     /// <summary>
     /// Attaches A2A (Agent2Agent) communication capabilities via Message processing to the specified web application.
@@ -46,6 +80,22 @@ public static class MicrosoftAgentAIHostingA2AEndpointRouteBuilderExtensions
     /// Attaches A2A (Agent2Agent) communication capabilities via Message processing to the specified web application.
     /// </summary>
     /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the A2A endpoints to.</param>
+    /// <param name="agentBuilder">The configuration builder for <see cref="AIAgent"/>.</param>
+    /// <param name="path">The route group to use for A2A endpoints.</param>
+    /// <param name="agentCard">Agent card info to return on query.</param>
+    /// <returns>Configured <see cref="ITaskManager"/> for A2A integration.</returns>
+    /// <remarks>
+    /// This method can be used to access A2A agents that support the
+    /// <see href="https://github.com/a2aproject/A2A/blob/main/docs/topics/agent-discovery.md#2-curated-registries-catalog-based-discovery">Curated Registries (Catalog-Based Discovery)</see>
+    /// discovery mechanism.
+    /// </remarks>
+    public static IEndpointConventionBuilder MapA2A(this IEndpointRouteBuilder endpoints, IHostedAgentBuilder agentBuilder, string path, AgentCard agentCard)
+        => endpoints.MapA2A(agentBuilder, path, agentCard, _ => { });
+
+    /// <summary>
+    /// Attaches A2A (Agent2Agent) communication capabilities via Message processing to the specified web application.
+    /// </summary>
+    /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the A2A endpoints to.</param>
     /// <param name="agentName">The name of the agent to use for A2A protocol integration.</param>
     /// <param name="path">The route group to use for A2A endpoints.</param>
     /// <param name="agentCard">Agent card info to return on query.</param>
@@ -57,6 +107,26 @@ public static class MicrosoftAgentAIHostingA2AEndpointRouteBuilderExtensions
     /// </remarks>
     public static IEndpointConventionBuilder MapA2A(this IEndpointRouteBuilder endpoints, string agentName, string path, AgentCard agentCard)
         => endpoints.MapA2A(agentName, path, agentCard, _ => { });
+
+    /// <summary>
+    /// Attaches A2A (Agent2Agent) communication capabilities via Message processing to the specified web application.
+    /// </summary>
+    /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the A2A endpoints to.</param>
+    /// <param name="agentBuilder">The configuration builder for <see cref="AIAgent"/>.</param>
+    /// <param name="path">The route group to use for A2A endpoints.</param>
+    /// <param name="agentCard">Agent card info to return on query.</param>
+    /// <param name="configureTaskManager">The callback to configure <see cref="ITaskManager"/>.</param>
+    /// <returns>Configured <see cref="ITaskManager"/> for A2A integration.</returns>
+    /// <remarks>
+    /// This method can be used to access A2A agents that support the
+    /// <see href="https://github.com/a2aproject/A2A/blob/main/docs/topics/agent-discovery.md#2-curated-registries-catalog-based-discovery">Curated Registries (Catalog-Based Discovery)</see>
+    /// discovery mechanism.
+    /// </remarks>
+    public static IEndpointConventionBuilder MapA2A(this IEndpointRouteBuilder endpoints, IHostedAgentBuilder agentBuilder, string path, AgentCard agentCard, Action<ITaskManager> configureTaskManager)
+    {
+        ArgumentNullException.ThrowIfNull(agentBuilder);
+        return endpoints.MapA2A(agentBuilder.Name, path, agentCard, configureTaskManager);
+    }
 
     /// <summary>
     /// Attaches A2A (Agent2Agent) communication capabilities via Message processing to the specified web application.
