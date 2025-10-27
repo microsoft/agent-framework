@@ -3,7 +3,7 @@
 import json
 import logging
 import uuid
-from collections.abc import AsyncIterable, Sequence
+from collections.abc import AsyncIterable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, cast
@@ -19,7 +19,6 @@ from agent_framework import (
     FunctionCallContent,
     FunctionResultContent,
     Role,
-    TextContent,
     UsageDetails,
 )
 
@@ -29,6 +28,7 @@ from ._events import (
     RequestInfoEvent,
     WorkflowEvent,
 )
+from ._message_utils import normalize_messages_input
 
 if TYPE_CHECKING:
     from ._workflow import Workflow
@@ -131,7 +131,7 @@ class WorkflowAgent(BaseAgent):
         """
         # Collect all streaming updates
         response_updates: list[AgentRunResponseUpdate] = []
-        input_messages = self._normalize_messages(messages)
+        input_messages = normalize_messages_input(messages)
         thread = thread or self.get_new_thread()
         response_id = str(uuid.uuid4())
 
@@ -165,7 +165,7 @@ class WorkflowAgent(BaseAgent):
         Yields:
             AgentRunResponseUpdate objects representing the workflow execution progress.
         """
-        input_messages = self._normalize_messages(messages)
+        input_messages = normalize_messages_input(messages)
         thread = thread or self.get_new_thread()
         response_updates: list[AgentRunResponseUpdate] = []
         response_id = str(uuid.uuid4())
@@ -224,28 +224,6 @@ class WorkflowAgent(BaseAgent):
             update = self._convert_workflow_event_to_agent_update(response_id, event)
             if update:
                 yield update
-
-    def _normalize_messages(
-        self,
-        messages: str | ChatMessage | Sequence[str] | Sequence[ChatMessage] | None = None,
-    ) -> list[ChatMessage]:
-        """Normalize input messages to a list of ChatMessage objects."""
-        if messages is None:
-            return []
-
-        if isinstance(messages, str):
-            return [ChatMessage(role=Role.USER, contents=[TextContent(text=messages)])]
-
-        if isinstance(messages, ChatMessage):
-            return [messages]
-
-        normalized: list[ChatMessage] = []
-        for msg in messages:
-            if isinstance(msg, str):
-                normalized.append(ChatMessage(role=Role.USER, contents=[TextContent(text=msg)]))
-            elif isinstance(msg, ChatMessage):
-                normalized.append(msg)
-        return normalized
 
     def _convert_workflow_event_to_agent_update(
         self,
