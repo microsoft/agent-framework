@@ -24,8 +24,9 @@ namespace Microsoft.Agents.AI;
 /// </list>
 /// </para>
 /// <para>
-/// Context information is transient by default and applies only to the current invocation, though messages
-/// added through the <see cref="Messages"/> property will be permanently incorporated into the conversation history.
+/// Context information is transient by default and applies only to the current invocation. Messages
+/// added through the <see cref="Messages"/> property are incorporated into the conversation for execution
+/// but not persisted to the message store (if provided).
 /// </para>
 /// </remarks>
 public sealed class AIContext
