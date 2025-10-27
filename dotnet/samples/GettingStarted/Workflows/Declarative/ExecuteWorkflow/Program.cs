@@ -399,7 +399,7 @@ internal sealed class Program
             foreach (UserInputRequestContent approvalRequest in request.InputRequests)
             {
                 // Here we are explicitly approving all requests.
-                // In a real-world scenario, you would replace this logic to either solicit user approval or implement a more complex approval workflow.
+                // In a real-world scenario, you would replace this logic to either solicit user approval or implement a more complex approval process.
                 yield return
                     approvalRequest switch
                     {
