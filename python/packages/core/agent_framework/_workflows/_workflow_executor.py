@@ -517,7 +517,7 @@ class WorkflowExecutor(Executor):
         # The proper way would be to rehydrate the workflow from a checkpoint on a Workflow
         # API instead of the '_runner_context' object that should be hidden. And the sub workflow
         # should be rehydrated from a checkpoint object instead of from a subset of the state.
-        # TODO(@taochen#1614): how to handle the case when the parent workflow has checkpointing
+        # TODO(@taochen): Issue #1614 - how to handle the case when the parent workflow has checkpointing
         # set up but not the sub workflow?
         request_info_events = [
             request_info_event

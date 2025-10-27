@@ -54,9 +54,9 @@ class SanitizedEmailResult:
 
 
 def build_email_address_validation_workflow() -> Workflow:
-    """Build a email address validation workflow.
+    """Build an email address validation workflow.
 
-    This workflow consists of three steps (exach is represented by an executor):
+    This workflow consists of three steps (each is represented by an executor):
     1. Sanitize the email address, such as removing leading/trailing spaces.
     2. Validate the email address format, such as checking for "@" and domain.
     3. Extract the domain from the email address and request domain validation,

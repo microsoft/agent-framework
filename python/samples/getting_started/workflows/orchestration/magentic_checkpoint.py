@@ -142,7 +142,7 @@ async def main() -> None:
     # Resume execution and capture the re-emitted plan review request.
     request_info_event: RequestInfoEvent | None = None
     async for event in resumed_workflow.run_stream_from_checkpoint(resume_checkpoint.checkpoint_id):
-        if isinstance(event, RequestInfoEvent) and isinstance(event, MagenticPlanReviewRequest):
+        if isinstance(event, RequestInfoEvent) and isinstance(event.data, MagenticPlanReviewRequest):
             request_info_event = event
 
     if request_info_event is None:
