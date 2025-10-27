@@ -178,18 +178,10 @@ omit = [
 
 [tool.pyright]
 include = ["agent_framework", "samples"]
-exclude = ["**/tests/**", "docs", "**/.venv/**", "samples/semantic-kernel-migration/**", "samples/autogen-migraiton/**", "packages/devui/frontend/**"]
+exclude = ["**/tests/**", "docs", "**/.venv/**", "samples/semantic-kernel-migration/**", "samples/autogen-migration/**", "packages/devui/frontend/**"]
 typeCheckingMode = "strict"
 reportUnnecessaryIsInstance = false
 reportMissingTypeStubs = false
-
-[[tool.pyright.executionEnvironments]]
-root = "samples/semantic-kernel-migration"
-typeCheckingMode = "off"
-
-[[tool.pyright.executionEnvironments]]
-root = "samples/autogen-migraiton"
-typeCheckingMode = "off"
 
 [tool.mypy]
 plugins = ['pydantic.mypy']
