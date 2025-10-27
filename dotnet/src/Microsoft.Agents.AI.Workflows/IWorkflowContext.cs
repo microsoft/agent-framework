@@ -86,19 +86,15 @@ public interface IWorkflowContext
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
     /// The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
-    ValueTask SendMessageAsync(object message, string? targetId = null, CancellationToken cancellationToken = default);
+    ValueTask SendMessageAsync(object message, string? targetId, CancellationToken cancellationToken = default);
 
-#if NET // What's the right way to do this so we do not make life a misery for netstandard2.0 targets?
-    // What's the value if they have to still write `cancellationToken: cancellationToken` to skip the targetId parameter?
-    // TODO: Remove this? (Maybe not: NET will eventually be the only target framework, right?)
     /// <summary>
     /// Queues a message to be sent to connected executors. The message will be sent during the next SuperStep.
     /// </summary>
     /// <param name="message">The message to be sent.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
-    ValueTask SendMessageAsync(object message, CancellationToken cancellationToken) => this.SendMessageAsync(message, null, cancellationToken);
-#endif
+    ValueTask SendMessageAsync(object message, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Adds an output value to the workflow's output queue. These outputs will be bubbled out of the workflow using the

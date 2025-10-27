@@ -71,5 +71,8 @@ internal sealed class TestWorkflowContext : IWorkflowContext
         return default;
     }
 
+    public ValueTask SendMessageAsync(object message, CancellationToken cancellationToken) =>
+        this.SendMessageAsync(message, targetId: null, cancellationToken);
+
     public IReadOnlyDictionary<string, string>? TraceContext => null;
 }

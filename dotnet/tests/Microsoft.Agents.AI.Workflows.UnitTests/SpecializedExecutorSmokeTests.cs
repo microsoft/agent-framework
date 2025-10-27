@@ -141,6 +141,8 @@ public class SpecializedExecutorSmokeTests
         public ValueTask<HashSet<string>> ReadStateKeysAsync(string? scopeName = null, CancellationToken cancellationToken = default)
             => this._stateManager.ReadKeysAsync(new ScopeId(executorId, scopeName));
 
+        public ValueTask SendMessageAsync(object message, CancellationToken cancellationToken) => this.SendMessageAsync(message, targetId: null, cancellationToken);
+
         public ValueTask SendMessageAsync(object message, string? targetId = null, CancellationToken cancellationToken = default)
         {
             if (message is List<ChatMessage> messages)

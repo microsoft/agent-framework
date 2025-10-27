@@ -36,8 +36,11 @@ public class TestRunContext : IRunnerContext
         public ValueTask<HashSet<string>> ReadStateKeysAsync(string? scopeName = null, CancellationToken cancellationToken = default)
             => new([]);
 
-        public ValueTask SendMessageAsync(object message, string? targetId = null, CancellationToken cancellationToken = default)
+        public ValueTask SendMessageAsync(object message, string? targetId, CancellationToken cancellationToken = default)
             => runnerContext.SendMessageAsync(executorId, message, targetId, cancellationToken);
+
+        public ValueTask SendMessageAsync(object message, CancellationToken cancellationToken = default)
+            => runnerContext.SendMessageAsync(executorId, message, targetId: null, cancellationToken);
 
         public ValueTask<T> ReadOrInitStateAsync<T>(string key, Func<T> initialStateFactory, string? scopeName = null, CancellationToken cancellationToken = default)
         {

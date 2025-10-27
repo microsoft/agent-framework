@@ -246,10 +246,11 @@ internal sealed class InProcessRunnerContext : IRunnerContext
     {
         public ValueTask AddEventAsync(WorkflowEvent workflowEvent, CancellationToken cancellationToken = default) => RunnerContext.AddEventAsync(workflowEvent, cancellationToken);
 
-        public ValueTask SendMessageAsync(object message, string? targetId = null, CancellationToken cancellationToken = default)
-        {
-            return RunnerContext.SendMessageAsync(ExecutorId, message, targetId, cancellationToken);
-        }
+        public ValueTask SendMessageAsync(object message, string? targetId, CancellationToken cancellationToken = default) =>
+            RunnerContext.SendMessageAsync(ExecutorId, message, targetId, cancellationToken);
+
+        public ValueTask SendMessageAsync(object message, CancellationToken cancellationToken) =>
+            this.SendMessageAsync(message, targetId: null, cancellationToken);
 
         public async ValueTask YieldOutputAsync(object output, CancellationToken cancellationToken = default)
         {
