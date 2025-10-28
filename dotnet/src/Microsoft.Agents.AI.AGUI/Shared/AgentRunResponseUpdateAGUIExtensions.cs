@@ -5,12 +5,17 @@ using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.AI.AGUI.Shared;
 using Microsoft.Extensions.AI;
 
-namespace Microsoft.Agents.AI.AGUI;
+#if ASPNETCORE
+namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.Shared;
+#else
+namespace Microsoft.Agents.AI.AGUI.Shared;
+#endif
+
 internal static class AgentRunResponseUpdateAGUIExtensions
 {
+#if !ASPNETCORE
     public static async IAsyncEnumerable<AgentRunResponseUpdate> AsChatResponseUpdatesAsync(
         this IAsyncEnumerable<BaseEvent> events,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -67,6 +72,7 @@ internal static class AgentRunResponseUpdateAGUIExtensions
             }
         }
     }
+#endif
 
     public static async IAsyncEnumerable<BaseEvent> AsAGUIEventStreamAsync(
         this IAsyncEnumerable<AgentRunResponseUpdate> updates,
