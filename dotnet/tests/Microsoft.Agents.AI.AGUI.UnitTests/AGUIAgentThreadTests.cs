@@ -35,7 +35,9 @@ public sealed class AGUIAgentThreadTests
     public void Constructor_WithMissingThreadId_ThrowsInvalidOperationException()
     {
         // Arrange
-        const string Json = "{\"WrappedState\":{}}";
+        const string Json = """
+            {"WrappedState":{}}
+            """;
         JsonElement serialized = JsonSerializer.Deserialize<JsonElement>(Json);
 
         // Act & Assert
@@ -46,7 +48,9 @@ public sealed class AGUIAgentThreadTests
     public void Constructor_WithMissingWrappedState_ThrowsArgumentException()
     {
         // Arrange
-        const string Json = "{}";
+        const string Json = """
+            {}
+            """;
         JsonElement serialized = JsonSerializer.Deserialize<JsonElement>(Json);
 
         // Act & Assert

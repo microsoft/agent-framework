@@ -258,11 +258,11 @@ public sealed class AGUIAgentTests
     }
 
     [Fact]
-    public void DeserializeThread_WithValidState_DeserializesSuccessfully()
+    public void DeserializeThread_WithValidState_ReturnsAGUIAgentThread()
     {
         // Arrange
         AGUIAgent agent = new("agent1", "Test agent", [], new HttpClient(), "http://localhost/agent");
-        AGUIAgentThread originalThread = new() { ThreadId = "thread1" };
+        AGUIAgentThread originalThread = new() { ThreadId = "test-thread-123" };
         JsonElement serialized = originalThread.Serialize();
 
         // Act
@@ -271,33 +271,8 @@ public sealed class AGUIAgentTests
         // Assert
         Assert.NotNull(deserialized);
         Assert.IsType<AGUIAgentThread>(deserialized);
-    }
-
-    [Fact]
-    public void DeserializeThread_PreservesThreadId_FromSerializedState()
-    {
-        // Arrange
-        AGUIAgent agent = new("agent1", "Test agent", [], new HttpClient(), "http://localhost/agent");
-        AGUIAgentThread originalThread = new() { ThreadId = "thread123" };
-        JsonElement serialized = originalThread.Serialize();
-
-        // Act
-        AGUIAgentThread deserialized = (AGUIAgentThread)agent.DeserializeThread(serialized);
-
-        // Assert
-        Assert.Equal("thread123", deserialized.ThreadId);
-    }
-
-    [Fact]
-    public void DeserializeThread_WithMissingThreadId_ThrowsInvalidOperationException()
-    {
-        // Arrange
-        AGUIAgent agent = new("agent1", "Test agent", [], new HttpClient(), "http://localhost/agent");
-        const string Json = "{\"WrappedState\":{}}";
-        JsonElement serialized = JsonSerializer.Deserialize<JsonElement>(Json);
-
-        // Act & Assert
-        Assert.Throws<InvalidOperationException>(() => agent.DeserializeThread(serialized));
+        AGUIAgentThread typedThread = (AGUIAgentThread)deserialized;
+        Assert.Equal("test-thread-123", typedThread.ThreadId);
     }
 
     private HttpClient CreateMockHttpClient(BaseEvent[] events)

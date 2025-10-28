@@ -14,7 +14,7 @@ namespace Microsoft.Agents.AI.AGUI.UnitTests;
 public sealed class AgentRunResponseUpdateAGUIExtensionsTests
 {
     [Fact]
-    public async Task AsChatResponseUpdatesAsync_ConvertsRunStartedEvent_ToRunStartedContentAsync()
+    public async Task AsAgentRunResponseUpdatesAsync_ConvertsRunStartedEvent_ToRunStartedContentAsync()
     {
         // Arrange
         List<BaseEvent> events =
@@ -24,7 +24,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
 
         // Act
         List<AgentRunResponseUpdate> updates = [];
-        await foreach (AgentRunResponseUpdate update in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync())
+        await foreach (AgentRunResponseUpdate update in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync())
         {
             updates.Add(update);
         }
@@ -38,7 +38,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
     }
 
     [Fact]
-    public async Task AsChatResponseUpdatesAsync_ConvertsRunFinishedEvent_ToRunFinishedContentAsync()
+    public async Task AsAgentRunResponseUpdatesAsync_ConvertsRunFinishedEvent_ToRunFinishedContentAsync()
     {
         // Arrange
         List<BaseEvent> events =
@@ -48,7 +48,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
 
         // Act
         List<AgentRunResponseUpdate> updates = [];
-        await foreach (AgentRunResponseUpdate update in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync())
+        await foreach (AgentRunResponseUpdate update in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync())
         {
             updates.Add(update);
         }
@@ -63,7 +63,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
     }
 
     [Fact]
-    public async Task AsChatResponseUpdatesAsync_ConvertsRunErrorEvent_ToRunErrorContentAsync()
+    public async Task AsAgentRunResponseUpdatesAsync_ConvertsRunErrorEvent_ToRunErrorContentAsync()
     {
         // Arrange
         List<BaseEvent> events =
@@ -73,7 +73,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
 
         // Act
         List<AgentRunResponseUpdate> updates = [];
-        await foreach (AgentRunResponseUpdate update in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync())
+        await foreach (AgentRunResponseUpdate update in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync())
         {
             updates.Add(update);
         }
@@ -87,7 +87,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
     }
 
     [Fact]
-    public async Task AsChatResponseUpdatesAsync_ConvertsTextMessageSequence_ToTextUpdatesWithCorrectRoleAsync()
+    public async Task AsAgentRunResponseUpdatesAsync_ConvertsTextMessageSequence_ToTextUpdatesWithCorrectRoleAsync()
     {
         // Arrange
         List<BaseEvent> events =
@@ -100,7 +100,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
 
         // Act
         List<AgentRunResponseUpdate> updates = [];
-        await foreach (AgentRunResponseUpdate update in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync())
+        await foreach (AgentRunResponseUpdate update in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync())
         {
             updates.Add(update);
         }
@@ -113,7 +113,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
     }
 
     [Fact]
-    public async Task AsChatResponseUpdatesAsync_WithTextMessageStartWhileMessageInProgress_ThrowsInvalidOperationExceptionAsync()
+    public async Task AsAgentRunResponseUpdatesAsync_WithTextMessageStartWhileMessageInProgress_ThrowsInvalidOperationExceptionAsync()
     {
         // Arrange
         List<BaseEvent> events =
@@ -126,14 +126,14 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         // Act & Assert
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
         {
-            await foreach (var _ in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync())
+            await foreach (var _ in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync())
             {
             }
         });
     }
 
     [Fact]
-    public async Task AsChatResponseUpdatesAsync_WithTextMessageEndForWrongMessageId_ThrowsInvalidOperationExceptionAsync()
+    public async Task AsAgentRunResponseUpdatesAsync_WithTextMessageEndForWrongMessageId_ThrowsInvalidOperationExceptionAsync()
     {
         // Arrange
         List<BaseEvent> events =
@@ -146,14 +146,14 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         // Act & Assert
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
         {
-            await foreach (var _ in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync())
+            await foreach (var _ in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync())
             {
             }
         });
     }
 
     [Fact]
-    public async Task AsChatResponseUpdatesAsync_MaintainsMessageContext_AcrossMultipleContentEventsAsync()
+    public async Task AsAgentRunResponseUpdatesAsync_MaintainsMessageContext_AcrossMultipleContentEventsAsync()
     {
         // Arrange
         List<BaseEvent> events =
@@ -167,7 +167,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
 
         // Act
         List<AgentRunResponseUpdate> updates = [];
-        await foreach (AgentRunResponseUpdate update in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync())
+        await foreach (AgentRunResponseUpdate update in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync())
         {
             updates.Add(update);
         }

@@ -165,44 +165,18 @@ public sealed class AGUIChatMessageExtensionsTests
         Assert.Equal("msg123", message.Id);
     }
 
-    [Fact]
-    public void MapChatRole_WithSystemRole_ReturnsChatRoleSystem()
+    [Theory]
+    [InlineData(AGUIRoles.System, "system")]
+    [InlineData(AGUIRoles.User, "user")]
+    [InlineData(AGUIRoles.Assistant, "assistant")]
+    [InlineData(AGUIRoles.Developer, "developer")]
+    public void MapChatRole_WithValidRole_ReturnsCorrectChatRole(string aguiRole, string expectedRoleValue)
     {
         // Arrange & Act
-        ChatRole role = AGUIChatMessageExtensions.MapChatRole(AGUIRoles.System);
+        ChatRole role = AGUIChatMessageExtensions.MapChatRole(aguiRole);
 
         // Assert
-        Assert.Equal(ChatRole.System, role);
-    }
-
-    [Fact]
-    public void MapChatRole_WithUserRole_ReturnsChatRoleUser()
-    {
-        // Arrange & Act
-        ChatRole role = AGUIChatMessageExtensions.MapChatRole(AGUIRoles.User);
-
-        // Assert
-        Assert.Equal(ChatRole.User, role);
-    }
-
-    [Fact]
-    public void MapChatRole_WithAssistantRole_ReturnsChatRoleAssistant()
-    {
-        // Arrange & Act
-        ChatRole role = AGUIChatMessageExtensions.MapChatRole(AGUIRoles.Assistant);
-
-        // Assert
-        Assert.Equal(ChatRole.Assistant, role);
-    }
-
-    [Fact]
-    public void MapChatRole_WithDeveloperRole_ReturnsDeveloperChatRole()
-    {
-        // Arrange & Act
-        ChatRole role = AGUIChatMessageExtensions.MapChatRole(AGUIRoles.Developer);
-
-        // Assert
-        Assert.Equal("developer", role.Value);
+        Assert.Equal(expectedRoleValue, role.Value);
     }
 
     [Fact]
