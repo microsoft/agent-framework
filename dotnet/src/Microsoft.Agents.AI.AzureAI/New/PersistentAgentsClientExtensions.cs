@@ -384,9 +384,12 @@ public static class AgentsClientExtensions
                 chatClientThread = asChatClientAgentThread;
             }
 
-            var conversation = (chatClientThread is not null)
-                ? await client.GetConversationsClient().GetConversationAsync(chatClientThread.ConversationId, cancellationToken).ConfigureAwait(false)
-                : await client.GetConversationsClient().CreateConversationAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+            var conversation =
+                chatClientThread is not null ?
+                    await client.GetConversationClient().GetConversationAsync(chatClientThread.ConversationId, cancellationToken).ConfigureAwait(false) :
+                    await client.GetConversationClient().CreateConversationAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+
+            await client.GetConversationClient().CreateConversationAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
 
             chatClientOptions.ChatOptions ??= new();
             chatClientOptions.ChatOptions.RawRepresentationFactory = (client) =>
