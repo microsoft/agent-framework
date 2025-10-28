@@ -294,7 +294,7 @@ class Executor(RequestInfoMixin, DictConvertible):
         """
         # Create WorkflowContext
         return WorkflowContext(
-            executor_id=self.id,
+            executor=self,
             source_executor_ids=source_executor_ids,
             shared_state=shared_state,
             runner_context=runner_context,

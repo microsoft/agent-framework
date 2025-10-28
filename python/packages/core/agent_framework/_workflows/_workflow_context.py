@@ -4,7 +4,7 @@ import inspect
 import logging
 import uuid
 from types import UnionType
-from typing import Any, Generic, Union, cast, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Generic, Union, cast, get_args, get_origin
 
 from opentelemetry.propagate import inject
 from opentelemetry.trace import SpanKind
@@ -26,6 +26,9 @@ from ._events import (
 )
 from ._runner_context import Message, RunnerContext
 from ._shared_state import SharedState
+
+if TYPE_CHECKING:
+    from ._executor import Executor
 
 T_Out = TypeVar("T_Out", default=Never)
 T_W_Out = TypeVar("T_W_Out", default=Never)
@@ -259,7 +262,7 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
 
     def __init__(
         self,
-        executor_id: str,
+        executor: "Executor",
         source_executor_ids: list[str],
         shared_state: SharedState,
         runner_context: RunnerContext,
@@ -269,7 +272,7 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
         """Initialize the executor context with the given workflow context.
 
         Args:
-            executor_id: The unique identifier of the executor that this context belongs to.
+            executor: The executor instance that this context belongs to.
             source_executor_ids: The IDs of the source executors that sent messages to this executor.
                 This is a list to support fan_in scenarios where multiple sources send aggregated
                 messages to the same executor.
@@ -278,7 +281,8 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
             trace_contexts: Optional trace contexts from multiple sources for OpenTelemetry propagation.
             source_span_ids: Optional source span IDs from multiple sources for linking (not for nesting).
         """
-        self._executor_id = executor_id
+        self._executor = executor
+        self._executor_id = executor.id
         self._source_executor_ids = source_executor_ids
         self._runner_context = runner_context
         self._shared_state = shared_state
@@ -359,6 +363,14 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
             request_type: The type of the request, used to match with response handlers.
             response_type: The expected type of the response, used for validation.
         """
+        if not self._executor.is_request_supported(request_type, response_type):
+            logger.warning(
+                f"Executor '{self._executor_id}' requested info of type {request_type.__name__} "
+                f"with expected response type {response_type.__name__}, but no matching "
+                "response handler is defined. The request will not be ignored but responses will "
+                "not be processed. Please define a response handler using the @response_handler decorator."
+            )
+
         request_info_event = RequestInfoEvent(
             request_id=str(uuid.uuid4()),
             source_executor_id=self._executor_id,

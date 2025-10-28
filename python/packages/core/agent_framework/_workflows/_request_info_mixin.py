@@ -21,6 +21,25 @@ logger = logging.getLogger(__name__)
 class RequestInfoMixin:
     """Mixin providing common functionality for request info handling."""
 
+    def is_request_supported(self, request_type: builtin_type[Any], response_type: builtin_type[Any]) -> bool:
+        """Check if the executor supports request of the given type and handling a response of the given type.
+
+        Args:
+            request_type: The type of the request message
+            response_type: The type of the expected response message
+        Returns:
+            True if a response handler is registered for the given request and response types, False otherwise
+        """
+        if not hasattr(self, "_response_handlers"):
+            return False
+
+        for request_type_key, response_type_key in self._response_handlers:
+            # TODO(@taochen): #1753 - Consider covariance/contravariance for request/response types
+            if issubclass(request_type, request_type_key) and issubclass(response_type, response_type_key):
+                return True
+
+        return False
+
     def _find_response_handler(self, request: Any, response: Any) -> Callable[..., Awaitable[None]] | None:
         """Find a registered response handler for the given request and response types.
 

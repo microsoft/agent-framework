@@ -175,7 +175,7 @@ async def test_trace_context_handling(span_exporter: InMemorySpanExporter) -> No
 
     # Test trace context propagation in messages
     workflow_ctx: WorkflowContext[str] = WorkflowContext(
-        "test-executor",
+        executor,
         ["source"],
         shared_state,
         ctx,
@@ -225,11 +225,12 @@ async def test_trace_context_handling(span_exporter: InMemorySpanExporter) -> No
 async def test_trace_context_disabled_when_tracing_disabled(enable_otel, span_exporter: InMemorySpanExporter) -> None:
     """Test that no trace context is added when tracing is disabled."""
     # Tracing should be disabled by default
+    executor = MockExecutor("test-executor")
     shared_state = SharedState()
     ctx = InProcRunnerContext()
 
     workflow_ctx: WorkflowContext[str] = WorkflowContext(
-        "test-executor",
+        executor,
         ["source"],
         shared_state,
         ctx,
