@@ -89,7 +89,7 @@ public sealed class AGUIAgent : AIAgent
             Context = new Dictionary<string, string>(StringComparer.Ordinal)
         };
 
-        await foreach (var update in this._client.PostRunAsync(input, cancellationToken).AsChatResponseUpdatesAsync(cancellationToken).ConfigureAwait(false))
+        await foreach (var update in this._client.PostRunAsync(input, cancellationToken).AsAgentRunResponseUpdatesAsync(cancellationToken).ConfigureAwait(false))
         {
             ChatResponseUpdate chatUpdate = update.AsChatResponseUpdate();
             updates.Add(chatUpdate);

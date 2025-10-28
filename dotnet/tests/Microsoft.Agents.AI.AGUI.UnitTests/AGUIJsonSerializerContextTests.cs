@@ -25,11 +25,15 @@ public sealed class AGUIJsonSerializerContextTests
 
         // Act
         string json = JsonSerializer.Serialize(input, AGUIJsonSerializerContext.Default.RunAgentInput);
+        JsonElement jsonElement = JsonSerializer.Deserialize<JsonElement>(json);
 
         // Assert
-        Assert.Contains("\"threadId\":\"thread1\"", json);
-        Assert.Contains("\"runId\":\"run1\"", json);
-        Assert.Contains("\"messages\"", json);
+        Assert.True(jsonElement.TryGetProperty("threadId", out JsonElement threadIdProp));
+        Assert.Equal("thread1", threadIdProp.GetString());
+        Assert.True(jsonElement.TryGetProperty("runId", out JsonElement runIdProp));
+        Assert.Equal("run1", runIdProp.GetString());
+        Assert.True(jsonElement.TryGetProperty("messages", out JsonElement messagesProp));
+        Assert.Equal(JsonValueKind.Array, messagesProp.ValueKind);
     }
 
     [Fact]
@@ -154,10 +158,13 @@ public sealed class AGUIJsonSerializerContextTests
 
         // Act
         string json = JsonSerializer.Serialize(evt, AGUIJsonSerializerContext.Default.RunStartedEvent);
+        JsonElement jsonElement = JsonSerializer.Deserialize<JsonElement>(json);
 
         // Assert
-        Assert.Contains("\"threadId\":\"thread1\"", json);
-        Assert.Contains("\"runId\":\"run1\"", json);
+        Assert.True(jsonElement.TryGetProperty("threadId", out JsonElement threadIdProp));
+        Assert.Equal("thread1", threadIdProp.GetString());
+        Assert.True(jsonElement.TryGetProperty("runId", out JsonElement runIdProp));
+        Assert.Equal("run1", runIdProp.GetString());
     }
 
     [Fact]
@@ -219,11 +226,15 @@ public sealed class AGUIJsonSerializerContextTests
 
         // Act
         string json = JsonSerializer.Serialize(evt, AGUIJsonSerializerContext.Default.RunFinishedEvent);
+        JsonElement jsonElement = JsonSerializer.Deserialize<JsonElement>(json);
 
         // Assert
-        Assert.Contains("\"threadId\":\"thread1\"", json);
-        Assert.Contains("\"runId\":\"run1\"", json);
-        Assert.Contains("\"result\":\"Success\"", json);
+        Assert.True(jsonElement.TryGetProperty("threadId", out JsonElement threadIdProp));
+        Assert.Equal("thread1", threadIdProp.GetString());
+        Assert.True(jsonElement.TryGetProperty("runId", out JsonElement runIdProp));
+        Assert.Equal("run1", runIdProp.GetString());
+        Assert.True(jsonElement.TryGetProperty("result", out JsonElement resultProp));
+        Assert.Equal("Success", resultProp.GetString());
     }
 
     [Fact]
@@ -287,10 +298,13 @@ public sealed class AGUIJsonSerializerContextTests
 
         // Act
         string json = JsonSerializer.Serialize(evt, AGUIJsonSerializerContext.Default.RunErrorEvent);
+        JsonElement jsonElement = JsonSerializer.Deserialize<JsonElement>(json);
 
         // Assert
-        Assert.Contains("\"message\":\"Error occurred\"", json);
-        Assert.Contains("\"code\":\"ERR001\"", json);
+        Assert.True(jsonElement.TryGetProperty("message", out JsonElement messageProp));
+        Assert.Equal("Error occurred", messageProp.GetString());
+        Assert.True(jsonElement.TryGetProperty("code", out JsonElement codeProp));
+        Assert.Equal("ERR001", codeProp.GetString());
     }
 
     [Fact]
@@ -351,10 +365,13 @@ public sealed class AGUIJsonSerializerContextTests
 
         // Act
         string json = JsonSerializer.Serialize(evt, AGUIJsonSerializerContext.Default.TextMessageStartEvent);
+        JsonElement jsonElement = JsonSerializer.Deserialize<JsonElement>(json);
 
         // Assert
-        Assert.Contains("\"messageId\":\"msg1\"", json);
-        Assert.Contains($"\"role\":\"{AGUIRoles.Assistant}\"", json);
+        Assert.True(jsonElement.TryGetProperty("messageId", out JsonElement msgIdProp));
+        Assert.Equal("msg1", msgIdProp.GetString());
+        Assert.True(jsonElement.TryGetProperty("role", out JsonElement roleProp));
+        Assert.Equal(AGUIRoles.Assistant, roleProp.GetString());
     }
 
     [Fact]
@@ -415,10 +432,13 @@ public sealed class AGUIJsonSerializerContextTests
 
         // Act
         string json = JsonSerializer.Serialize(evt, AGUIJsonSerializerContext.Default.TextMessageContentEvent);
+        JsonElement jsonElement = JsonSerializer.Deserialize<JsonElement>(json);
 
         // Assert
-        Assert.Contains("\"messageId\":\"msg1\"", json);
-        Assert.Contains("\"delta\":\"Hello World\"", json);
+        Assert.True(jsonElement.TryGetProperty("messageId", out JsonElement msgIdProp));
+        Assert.Equal("msg1", msgIdProp.GetString());
+        Assert.True(jsonElement.TryGetProperty("delta", out JsonElement deltaProp));
+        Assert.Equal("Hello World", deltaProp.GetString());
     }
 
     [Fact]
@@ -479,9 +499,11 @@ public sealed class AGUIJsonSerializerContextTests
 
         // Act
         string json = JsonSerializer.Serialize(evt, AGUIJsonSerializerContext.Default.TextMessageEndEvent);
+        JsonElement jsonElement = JsonSerializer.Deserialize<JsonElement>(json);
 
         // Assert
-        Assert.Contains("\"messageId\":\"msg1\"", json);
+        Assert.True(jsonElement.TryGetProperty("messageId", out JsonElement msgIdProp));
+        Assert.Equal("msg1", msgIdProp.GetString());
     }
 
     [Fact]
@@ -526,11 +548,15 @@ public sealed class AGUIJsonSerializerContextTests
 
         // Act
         string json = JsonSerializer.Serialize(message, AGUIJsonSerializerContext.Default.AGUIMessage);
+        JsonElement jsonElement = JsonSerializer.Deserialize<JsonElement>(json);
 
         // Assert
-        Assert.Contains("\"id\":\"m1\"", json);
-        Assert.Contains($"\"role\":\"{AGUIRoles.User}\"", json);
-        Assert.Contains("\"content\":\"Hello\"", json);
+        Assert.True(jsonElement.TryGetProperty("id", out JsonElement idProp));
+        Assert.Equal("m1", idProp.GetString());
+        Assert.True(jsonElement.TryGetProperty("role", out JsonElement roleProp));
+        Assert.Equal(AGUIRoles.User, roleProp.GetString());
+        Assert.True(jsonElement.TryGetProperty("content", out JsonElement contentProp));
+        Assert.Equal("Hello", contentProp.GetString());
     }
 
     [Fact]
@@ -759,10 +785,13 @@ public sealed class AGUIJsonSerializerContextTests
 
         // Act
         string json = JsonSerializer.Serialize(state, AGUIJsonSerializerContext.Default.AGUIAgentThreadState);
+        JsonElement jsonElement = JsonSerializer.Deserialize<JsonElement>(json);
 
         // Assert
-        Assert.Contains("\"ThreadId\":\"thread1\"", json);
-        Assert.Contains("\"WrappedState\"", json);
+        Assert.True(jsonElement.TryGetProperty("ThreadId", out JsonElement threadIdProp));
+        Assert.Equal("thread1", threadIdProp.GetString());
+        Assert.True(jsonElement.TryGetProperty("WrappedState", out JsonElement wrappedStateProp));
+        Assert.NotEqual(JsonValueKind.Null, wrappedStateProp.ValueKind);
     }
 
     [Fact]

@@ -16,7 +16,7 @@ namespace Microsoft.Agents.AI.AGUI.Shared;
 internal static class AgentRunResponseUpdateAGUIExtensions
 {
 #if !ASPNETCORE
-    public static async IAsyncEnumerable<AgentRunResponseUpdate> AsChatResponseUpdatesAsync(
+    public static async IAsyncEnumerable<AgentRunResponseUpdate> AsAgentRunResponseUpdatesAsync(
         this IAsyncEnumerable<BaseEvent> events,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
