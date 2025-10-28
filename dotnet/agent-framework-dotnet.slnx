@@ -18,6 +18,10 @@
     <Project Path="samples/AgentWebChat/AgentWebChat.ServiceDefaults/AgentWebChat.ServiceDefaults.csproj" />
     <Project Path="samples/AgentWebChat/AgentWebChat.Web/AgentWebChat.Web.csproj" />
   </Folder>
+  <Folder Name="/Samples/AGUIClientServer/">
+    <Project Path="samples/AGUIClientServer/AGUIClient/AGUIClient.csproj" />
+    <Project Path="samples/AGUIClientServer/AGUIServer/AGUIServer.csproj" />
+  </Folder>
   <Folder Name="/Samples/GettingStarted/">
     <File Path="samples/GettingStarted/README.md" />
   </Folder>
