@@ -68,7 +68,7 @@ internal static class AgentRunResponseUpdateAGUIExtensions
         }
     }
 
-    public static async IAsyncEnumerable<BaseEvent> AsAGUIEventStream(
+    public static async IAsyncEnumerable<BaseEvent> AsAGUIEventStreamAsync(
         this IAsyncEnumerable<AgentRunResponseUpdate> updates,
         string threadId,
         string runId,
@@ -104,7 +104,6 @@ internal static class AgentRunResponseUpdateAGUIExtensions
                 }
                 currentMessageId = chatResponse.MessageId;
             }
-
         }
 
         yield return new RunFinishedEvent
