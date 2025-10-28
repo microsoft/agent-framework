@@ -8,19 +8,19 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Bot.ObjectModel;
 
 /// <summary>
-/// Extension methods for <see cref="PromptAgent"/>.
+/// Extension methods for <see cref="GptComponentMetadata"/>.
 /// </summary>
 internal static class PromptAgentExtensions
 {
     /// <summary>
-    /// Return the Foundry tool definitions which corresponds with the provided <see cref="PromptAgent"/>.
+    /// Return the Foundry tool definitions which corresponds with the provided <see cref="GptComponentMetadata"/>.
     /// </summary>
-    /// <param name="promptAgent">Instance of <see cref="PromptAgent"/></param>
-    internal static IEnumerable<Azure.AI.Agents.Persistent.ToolDefinition> GetToolDefinitions(this PromptAgent promptAgent)
+    /// <param name="promptAgent">Instance of <see cref="GptComponentMetadata"/></param>
+    internal static IEnumerable<Azure.AI.Agents.Persistent.ToolDefinition> GetToolDefinitions(this GptComponentMetadata promptAgent)
     {
         Throw.IfNull(promptAgent);
 
-        return promptAgent.Tools.Select<AgentTool, Azure.AI.Agents.Persistent.ToolDefinition>(tool =>
+        return promptAgent.Tools.Select<TaskAction, Azure.AI.Agents.Persistent.ToolDefinition>(tool =>
         {
             return tool switch
             {
@@ -39,10 +39,10 @@ internal static class PromptAgentExtensions
     }
 
     /// <summary>
-    /// Return the Foundry tool resources which corresponds with the provided <see cref="PromptAgent"/>.
+    /// Return the Foundry tool resources which corresponds with the provided <see cref="GptComponentMetadata"/>.
     /// </summary>
-    /// <param name="promptAgent">Instance of <see cref="PromptAgent"/></param>
-    internal static ToolResources GetToolResources(this PromptAgent promptAgent)
+    /// <param name="promptAgent">Instance of <see cref="GptComponentMetadata"/></param>
+    internal static ToolResources GetToolResources(this GptComponentMetadata promptAgent)
     {
         Throw.IfNull(promptAgent);
 
@@ -68,7 +68,7 @@ internal static class PromptAgentExtensions
     }
 
     #region private
-    private static CodeInterpreterToolResource? GetCodeInterpreterToolResource(this PromptAgent promptAgent)
+    private static CodeInterpreterToolResource? GetCodeInterpreterToolResource(this GptComponentMetadata promptAgent)
     {
         Throw.IfNull(promptAgent);
 
@@ -90,7 +90,7 @@ internal static class PromptAgentExtensions
         return resource;
     }
 
-    private static FileSearchToolResource? GetFileSearchToolResource(this PromptAgent promptAgent)
+    private static FileSearchToolResource? GetFileSearchToolResource(this GptComponentMetadata promptAgent)
     {
         Throw.IfNull(promptAgent);
 
@@ -137,7 +137,7 @@ internal static class PromptAgentExtensions
     }
     */
 
-    private static AgentTool? GetFirstAgentTool<T>(this PromptAgent promptAgent)
+    private static TaskAction? GetFirstAgentTool<T>(this GptComponentMetadata promptAgent)
     {
         return promptAgent.Tools.FirstOrDefault(tool => tool is T);
     }

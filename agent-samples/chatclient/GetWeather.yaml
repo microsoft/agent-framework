@@ -3,6 +3,7 @@ name: Assistant
 description: Helpful assistant
 instructions: You are a helpful assistant. You answer questions using the tools provided.
 model:
+    kind: CustomModels
     options:
         temperature: 0.9
         topP: 0.95

@@ -205,7 +205,7 @@ internal static class PromptAgents
 
     internal static readonly string[] s_stopSequences = ["###", "END", "STOP"];
 
-    internal static PromptAgent CreateTestPromptAgent(string? publisher = "OpenAI", string? apiType = "Chat")
+    internal static GptComponentMetadata CreateTestPromptAgent(string? publisher = "OpenAI", string? apiType = "Chat")
     {
         string agentYaml =
             $"""

@@ -3,6 +3,7 @@
 // This sample shows how to load an AI agent from a YAML file and process a prompt using Azure OpenAI as the backend.
 
 using System.ComponentModel;
+using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
@@ -32,14 +33,18 @@ if (!File.Exists(yamlFilePath))
 var text = await File.ReadAllTextAsync(yamlFilePath);
 
 // TODO: Remove this workaround when the agent framework supports environment variable substitution in YAML files.
+text = text.Replace("=Env.AZURE_OPENAI_ENDPOINT", endpoint, StringComparison.OrdinalIgnoreCase);
 text = text.Replace("=Env.AZURE_OPENAI_DEPLOYMENT_NAME", deploymentName, StringComparison.OrdinalIgnoreCase);
+
+var endpointUri = new Uri(endpoint);
+var tokenCredential = new AzureCliCredential();
 
 // Create the agent from the YAML definition.
 var agentFactory = new AggregatorAgentFactory(
     [
-        new OpenAIChatAgentFactory(),
-        new OpenAIResponseAgentFactory(),
-        new OpenAIAssistantAgentFactory()
+        new OpenAIChatAgentFactory(endpointUri, tokenCredential),
+        new OpenAIResponseAgentFactory(endpointUri, tokenCredential),
+        new OpenAIAssistantAgentFactory(endpointUri, tokenCredential)
     ]);
 var agent = await agentFactory.CreateFromYamlAsync(text);
 

@@ -14,12 +14,12 @@ namespace Microsoft.Agents.AI;
 public abstract class AgentFactory
 {
     /// <summary>
-    /// Create a <see cref="AIAgent"/> from the specified <see cref="PromptAgent"/>.
+    /// Create a <see cref="AIAgent"/> from the specified <see cref="GptComponentMetadata"/>.
     /// </summary>
     /// <param name="promptAgent">Definition of the agent to create.</param>
     /// <param name="cancellationToken">Optional cancellation token.</param>
     /// <return>The created <see cref="AIAgent"/>, if null the agent type is not supported.</return>
-    public async Task<AIAgent> CreateAsync(PromptAgent promptAgent, CancellationToken cancellationToken = default)
+    public async Task<AIAgent> CreateAsync(GptComponentMetadata promptAgent, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(promptAgent);
 
@@ -28,10 +28,10 @@ public abstract class AgentFactory
     }
 
     /// <summary>
-    /// Tries to create a <see cref="AIAgent"/> from the specified <see cref="PromptAgent"/>.
+    /// Tries to create a <see cref="AIAgent"/> from the specified <see cref="GptComponentMetadata"/>.
     /// </summary>
     /// <param name="promptAgent">Definition of the agent to create.</param>
     /// <param name="cancellationToken">Optional cancellation token.</param>
     /// <return>The created <see cref="AIAgent"/>, if null the agent type is not supported.</return>
-    public abstract Task<AIAgent?> TryCreateAsync(PromptAgent promptAgent, CancellationToken cancellationToken = default);
+    public abstract Task<AIAgent?> TryCreateAsync(GptComponentMetadata promptAgent, CancellationToken cancellationToken = default);
 }

@@ -35,21 +35,20 @@ public sealed class FoundryPersistentAgentFactory : AgentFactory
     }
 
     /// <inheritdoc/>
-    public override async Task<AIAgent?> TryCreateAsync(PromptAgent promptAgent, CancellationToken cancellationToken = default)
+    public override async Task<AIAgent?> TryCreateAsync(GptComponentMetadata promptAgent, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(promptAgent);
 
         var agentClient = this._agentClient ?? this.CreatePersistentAgentClient(promptAgent);
 
-        var modelId = promptAgent.Model?.Id?.LiteralValue;
+        var modelId = promptAgent.Model?.ModelNameHint;
         if (string.IsNullOrEmpty(modelId))
         {
             throw new InvalidOperationException("The model id must be specified in the agent definition model to create a foundry agent.");
         }
 
-        var outputSchema = promptAgent.OutputSchema;
-        ChatModel? model = promptAgent.Model as ChatModel;
-        var modelOptions = model?.Options;
+        var outputSchema = promptAgent.OutputType;
+        var modelOptions = promptAgent.Model?.Options;
 
         return await agentClient.CreateAIAgentAsync(
             model: modelId,
@@ -68,13 +67,12 @@ public sealed class FoundryPersistentAgentFactory : AgentFactory
     private readonly PersistentAgentsClient? _agentClient;
     private readonly TokenCredential? _tokenCredential;
 
-    private PersistentAgentsClient CreatePersistentAgentClient(PromptAgent promptAgent)
+    private PersistentAgentsClient CreatePersistentAgentClient(GptComponentMetadata promptAgent)
     {
-        PersistentAgentsClient agentClient;
-        var keyConnection = promptAgent.Model?.Connection as KeyConnection;
-        if (keyConnection is not null)
+        var connection = promptAgent.Model?.Connection;
+        if (connection is not null/* && connection is ApiKeyConnection keyConnection*/)
         {
-            var endpoint = keyConnection.Endpoint?.LiteralValue;
+            var endpoint = connection.ExtensionData?.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("endpoint"))?.Value; // keyConnection.Endpoint?.LiteralValue;
             if (string.IsNullOrEmpty(endpoint))
             {
                 throw new InvalidOperationException("The endpoint must be specified in the agent definition model connection to create an PersistentAgentsClient.");
@@ -83,14 +81,10 @@ public sealed class FoundryPersistentAgentFactory : AgentFactory
             {
                 throw new InvalidOperationException("A TokenCredential must be registered in the service provider to create an PersistentAgentsClient.");
             }
-            agentClient = new PersistentAgentsClient(endpoint, this._tokenCredential);
-        }
-        else
-        {
-            throw new InvalidOperationException("A PersistentAgentsClient must be registered in the service provider or a FoundryConnection must be specified in the agent definition model connection to create an PersistentAgentsClient.");
+            return new PersistentAgentsClient(endpoint, this._tokenCredential);
         }
 
-        return agentClient;
+        throw new InvalidOperationException("A PersistentAgentsClient must be registered in the service provider or a FoundryConnection must be specified in the agent definition model connection to create an PersistentAgentsClient.");
     }
 
     #endregion

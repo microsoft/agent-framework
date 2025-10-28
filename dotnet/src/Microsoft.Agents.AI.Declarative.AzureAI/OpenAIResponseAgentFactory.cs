@@ -46,7 +46,7 @@ public sealed class OpenAIResponseAgentFactory : OpenAIAgentFactory
     }
 
     /// <inheritdoc/>
-    public override async Task<AIAgent?> TryCreateAsync(PromptAgent promptAgent, CancellationToken cancellationToken = default)
+    public override async Task<AIAgent?> TryCreateAsync(GptComponentMetadata promptAgent, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(promptAgent);
 

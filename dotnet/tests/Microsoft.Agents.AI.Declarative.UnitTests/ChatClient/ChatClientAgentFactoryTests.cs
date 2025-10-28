@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Threading.Tasks;
-using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.AI;
 using Moq;
 
@@ -23,7 +22,7 @@ public sealed class ChatClientAgentFactoryTests
     public async Task TryCreateAsync_WithChatClientInConstructor_CreatesAgent()
     {
         // Arrange
-        PromptAgent promptAgent = PromptAgents.CreateTestPromptAgent();
+        var promptAgent = PromptAgents.CreateTestPromptAgent();
         ChatClientAgentFactory factory = new(this._mockChatClient.Object);
 
         // Act
@@ -40,7 +39,7 @@ public sealed class ChatClientAgentFactoryTests
     public async Task TryCreateAsync_Creates_ChatClientAgent()
     {
         // Arrange
-        PromptAgent promptAgent = PromptAgents.CreateTestPromptAgent();
+        var promptAgent = PromptAgents.CreateTestPromptAgent();
         ChatClientAgentFactory factory = new(this._mockChatClient.Object);
 
         // Act
@@ -60,7 +59,7 @@ public sealed class ChatClientAgentFactoryTests
     public async Task TryCreateAsync_Creates_ChatOptions()
     {
         // Arrange
-        PromptAgent promptAgent = PromptAgents.CreateTestPromptAgent();
+        var promptAgent = PromptAgents.CreateTestPromptAgent();
         ChatClientAgentFactory factory = new(this._mockChatClient.Object);
 
         // Act
@@ -92,7 +91,7 @@ public sealed class ChatClientAgentFactoryTests
     public async Task TryCreateAsync_Creates_Tools()
     {
         // Arrange
-        PromptAgent promptAgent = PromptAgents.CreateTestPromptAgent();
+        var promptAgent = PromptAgents.CreateTestPromptAgent();
         ChatClientAgentFactory factory = new(this._mockChatClient.Object);
 
         // Act

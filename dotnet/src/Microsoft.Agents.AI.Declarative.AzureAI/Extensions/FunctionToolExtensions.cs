@@ -29,9 +29,11 @@ public static class FunctionToolExtensions
             parameters: parameters);
     }
 
-    internal static BinaryData GetParameters(this AgentTool tool)
+    internal static BinaryData GetParameters(this FunctionTool tool)
     {
         Throw.IfNull(tool);
+
+        // TODO: Implement proper parameter schema generation based on tool configuration.
 
         return new BinaryData("{}");
     }

@@ -2,7 +2,7 @@
 namespace Microsoft.Bot.ObjectModel;
 
 /// <summary>
-/// Extension methods for <see cref="AgentTool"/>.
+/// Extension methods for <see cref="TaskAction"/>.
 /// </summary>
 internal static class AgentToolExtensions
 {

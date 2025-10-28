@@ -21,21 +21,21 @@ namespace Microsoft.Agents.AI;
 internal static class AgentBotElementYaml
 {
     /// <summary>
-    /// Convert the given YAML text to a <see cref="PromptAgent"/> model.
+    /// Convert the given YAML text to a <see cref="GptComponentMetadata"/> model.
     /// </summary>
     /// <param name="text">YAML representation of the <see cref="BotElement"/> to use to create the prompt function.</param>
     /// <param name="configuration">Optional <see cref="IConfiguration"/> instance which provides environment variables to the template.</param>
     [RequiresDynamicCode("Calls YamlDotNet.Serialization.DeserializerBuilder.DeserializerBuilder()")]
-    public static PromptAgent FromYaml(string text, IConfiguration? configuration = null)
+    public static GptComponentMetadata FromYaml(string text, IConfiguration? configuration = null)
     {
         Throw.IfNullOrEmpty(text);
 
         var yamlReader = new StringReader(text);
         BotElement rootElement = YamlSerializer.Deserialize<BotElement>(yamlReader) ?? throw new InvalidDataException("Text does not contain a valid agent definition.");
 
-        if (rootElement is not PromptAgent promptAgent)
+        if (rootElement is not GptComponentMetadata promptAgent)
         {
-            throw new InvalidDataException($"Unsupported root element: {rootElement.GetType().Name}. Expected an {nameof(PromptAgent)}.");
+            throw new InvalidDataException($"Unsupported root element: {rootElement.GetType().Name}. Expected an {nameof(GptComponentMetadata)}.");
         }
 
         var botDefinition = WrapPromptAgentWithBot(promptAgent, configuration);
@@ -49,9 +49,9 @@ internal static class AgentBotElementYaml
             values[variableName] = configuration?[variableName];
         }
 
-        // TODO: What do I have to do to apply the values are applied to the PromptAgent?
+        // TODO: What do I have to do to apply the values are applied to the GptComponentMetadata?
 
-        return botDefinition.Descendants().OfType<PromptAgent>().First();
+        return botDefinition.Descendants().OfType<GptComponentMetadata>().First();
     }
 
     #region private
@@ -68,7 +68,7 @@ internal static class AgentBotElementYaml
         public bool IsTenantFeatureEnabled(string featureName, bool defaultValue) => defaultValue;
     }
 
-    public static BotDefinition WrapPromptAgentWithBot(this PromptAgent element, IConfiguration? configuration = null)
+    public static BotDefinition WrapPromptAgentWithBot(this GptComponentMetadata element, IConfiguration? configuration = null)
     {
         var botBuilder =
             new BotDefinition.Builder

@@ -8,24 +8,22 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Bot.ObjectModel;
 
 /// <summary>
-/// Extension methods for <see cref="PromptAgent"/>.
+/// Extension methods for <see cref="GptComponentMetadata"/>.
 /// </summary>
 public static class PromptAgentExtensions
 {
     /// <summary>
-    /// Retrieves the 'options' property from a <see cref="PromptAgent"/> as a <see cref="ChatOptions"/> instance.
+    /// Retrieves the 'options' property from a <see cref="GptComponentMetadata"/> as a <see cref="ChatOptions"/> instance.
     /// </summary>
-    /// <param name="promptAgent">Instance of <see cref="PromptAgent"/></param>
+    /// <param name="promptAgent">Instance of <see cref="GptComponentMetadata"/></param>
     /// <param name="functions">Instance of <see cref="IList{AIFunction}"/></param>
-    public static ChatOptions? GetChatOptions(this PromptAgent promptAgent, IList<AIFunction>? functions)
+    public static ChatOptions? GetChatOptions(this GptComponentMetadata promptAgent, IList<AIFunction>? functions)
     {
         Throw.IfNull(promptAgent);
 
-        var outputSchema = promptAgent.OutputSchema;
-        ChatModel? model = promptAgent.Model as ChatModel;
-        var modelOptions = model?.Options;
+        var outputSchema = promptAgent.OutputType;
+        var modelOptions = promptAgent.Model?.Options;
 
-        // TODO: Add logic to resolve tools for a service provider or from agent creation options
         var tools = promptAgent.GetAITools(functions);
 
         if (modelOptions is null && tools is null)
@@ -35,8 +33,8 @@ public static class PromptAgentExtensions
 
         return new ChatOptions()
         {
-            Instructions = promptAgent.AdditionalInstructions?.ToTemplateString(),
-            Temperature = (float?)model?.Options?.Temperature.LiteralValue,
+            Instructions = promptAgent.Instructions?.ToTemplateString(),
+            Temperature = (float?)promptAgent.Model?.Options?.Temperature.LiteralValue,
             MaxOutputTokens = modelOptions?.GetMaxOutputTokens(),
             TopP = (float?)modelOptions?.TopP.LiteralValue,
             TopK = modelOptions?.GetTopK(),
@@ -44,7 +42,7 @@ public static class PromptAgentExtensions
             PresencePenalty = modelOptions?.GetPresencePenalty(),
             Seed = modelOptions?.GetSeed(),
             ResponseFormat = outputSchema?.AsChatResponseFormat(),
-            ModelId = model?.Id?.LiteralValue,
+            ModelId = promptAgent.Model?.ModelNameHint,
             StopSequences = modelOptions?.GetStopSequences(),
             AllowMultipleToolCalls = modelOptions?.GetAllowMultipleToolCalls(),
             ToolMode = modelOptions?.GetChatToolMode(),
@@ -54,11 +52,11 @@ public static class PromptAgentExtensions
     }
 
     /// <summary>
-    /// Retrieves the 'tools' property from a <see cref="PromptAgent"/>.
+    /// Retrieves the 'tools' property from a <see cref="GptComponentMetadata"/>.
     /// </summary>
-    /// <param name="promptAgent">Instance of <see cref="PromptAgent"/></param>
+    /// <param name="promptAgent">Instance of <see cref="GptComponentMetadata"/></param>
     /// <param name="functions">Instance of <see cref="IList{AIFunction}"/></param>
-    public static List<AITool>? GetAITools(this PromptAgent promptAgent, IList<AIFunction>? functions)
+    public static List<AITool>? GetAITools(this GptComponentMetadata promptAgent, IList<AIFunction>? functions)
     {
         return promptAgent.Tools.Select(tool =>
         {

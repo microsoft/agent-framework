@@ -47,7 +47,7 @@ public sealed class OpenAIAssistantAgentFactory : OpenAIAgentFactory
     }
 
     /// <inheritdoc/>
-    public override async Task<AIAgent?> TryCreateAsync(PromptAgent promptAgent, CancellationToken cancellationToken = default)
+    public override async Task<AIAgent?> TryCreateAsync(GptComponentMetadata promptAgent, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(promptAgent);
 
@@ -68,7 +68,7 @@ public sealed class OpenAIAssistantAgentFactory : OpenAIAgentFactory
         AssistantClient? assistantClient = this._assistantClient ?? this.CreateAssistantClient(promptAgent);
         if (assistantClient is not null)
         {
-            var modelId = promptAgent.Model?.Id?.LiteralValue;
+            var modelId = promptAgent.Model?.ModelNameHint;
             Throw.IfNullOrEmpty(modelId, "The model id must be specified in the agent definition to create an OpenAI Assistant.");
             Throw.IfNullOrEmpty(promptAgent.Instructions?.ToTemplateString(), "The instructions must be specified in the agent definition to create an OpenAI Assistant.");
 

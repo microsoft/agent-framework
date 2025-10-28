@@ -3,9 +3,9 @@ name: Assistant
 description: Helpful assistant
 instructions: You are a helpful assistant. You answer questions is the language specified by the user. You return your answers in a JSON format. You must include Assistants as the type in your response.
 model:
-    kind: ChatModel
+    kind: CustomModels
     id: =Env.AZURE_OPENAI_DEPLOYMENT_NAME
-    publisher: Azure
+    provider: Azure
     apiType: Assistants
     options:
         temperature: 0.9

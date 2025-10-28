@@ -17,7 +17,7 @@ public sealed class AggregatorAgentFactory : AgentFactory
     /// <summary>Initializes the instance.</summary>
     /// <param name="agentFactories">Ordered <see cref="AgentFactory"/> instances to aggregate.</param>
     /// <remarks>
-    /// Where multiple <see cref="AgentFactory"/> instances are provided, the first factory that supports the <see cref="PromptAgent"/> will be used.
+    /// Where multiple <see cref="AgentFactory"/> instances are provided, the first factory that supports the <see cref="GptComponentMetadata"/> will be used.
     /// </remarks>
     public AggregatorAgentFactory(params AgentFactory[] agentFactories)
     {
@@ -32,7 +32,7 @@ public sealed class AggregatorAgentFactory : AgentFactory
     }
 
     /// <inheritdoc/>
-    public override async Task<AIAgent?> TryCreateAsync(PromptAgent promptAgent, CancellationToken cancellationToken = default)
+    public override async Task<AIAgent?> TryCreateAsync(GptComponentMetadata promptAgent, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(promptAgent);
 
