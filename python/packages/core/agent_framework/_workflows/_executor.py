@@ -237,6 +237,7 @@ class Executor(RequestInfoMixin, DictConvertible):
         with create_processing_span(
             self.id,
             self.__class__.__name__,
+            str(MessageType.STANDARD if not isinstance(message, Message) else message.type),
             type(message).__name__,
             source_trace_contexts=trace_contexts,
             source_span_ids=source_span_ids,
