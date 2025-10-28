@@ -74,24 +74,25 @@ public sealed class A2AAgentTests : IDisposable
     }
 
     [Fact]
-    public async Task RunAsync_NonUserRoleMessages_ThrowsArgumentExceptionAsync()
+    public async Task RunAsync_AllowsNonUserRoleMessagesAsync()
     {
         // Arrange
         var inputMessages = new List<ChatMessage>
         {
+            new(ChatRole.System, "I am a system message"),
             new(ChatRole.Assistant, "I am an assistant message"),
             new(ChatRole.User, "Valid user message")
         };
 
         // Act & Assert
-        await Assert.ThrowsAsync<ArgumentException>(() => this._agent.RunAsync(inputMessages));
+        await this._agent.RunAsync(inputMessages);
     }
 
     [Fact]
     public async Task RunAsync_WithValidUserMessage_RunsSuccessfullyAsync()
     {
         // Arrange
-        this._handler.ResponseToReturn = new Message
+        this._handler.ResponseToReturn = new AgentMessage
         {
             MessageId = "response-123",
             Role = MessageRole.Agent,
@@ -122,8 +123,8 @@ public sealed class A2AAgentTests : IDisposable
         Assert.Equal("response-123", result.ResponseId);
 
         Assert.NotNull(result.RawRepresentation);
-        Assert.IsType<Message>(result.RawRepresentation);
-        Assert.Equal("response-123", ((Message)result.RawRepresentation).MessageId);
+        Assert.IsType<AgentMessage>(result.RawRepresentation);
+        Assert.Equal("response-123", ((AgentMessage)result.RawRepresentation).MessageId);
 
         Assert.Single(result.Messages);
         Assert.Equal(ChatRole.Assistant, result.Messages[0].Role);
@@ -134,7 +135,7 @@ public sealed class A2AAgentTests : IDisposable
     public async Task RunAsync_WithNewThread_UpdatesThreadConversationIdAsync()
     {
         // Arrange
-        this._handler.ResponseToReturn = new Message
+        this._handler.ResponseToReturn = new AgentMessage
         {
             MessageId = "response-123",
             Role = MessageRole.Agent,
@@ -192,7 +193,7 @@ public sealed class A2AAgentTests : IDisposable
             new(ChatRole.User, "Test message")
         };
 
-        this._handler.ResponseToReturn = new Message
+        this._handler.ResponseToReturn = new AgentMessage
         {
             MessageId = "response-123",
             Role = MessageRole.Agent,
@@ -220,7 +221,7 @@ public sealed class A2AAgentTests : IDisposable
             new(ChatRole.User, "Hello, streaming!")
         };
 
-        this._handler.StreamingResponseToReturn = new Message()
+        this._handler.StreamingResponseToReturn = new AgentMessage()
         {
             MessageId = "stream-1",
             Role = MessageRole.Agent,
@@ -253,8 +254,8 @@ public sealed class A2AAgentTests : IDisposable
         Assert.Equal("stream-1", updates[0].ResponseId);
 
         Assert.NotNull(updates[0].RawRepresentation);
-        Assert.IsType<Message>(updates[0].RawRepresentation);
-        Assert.Equal("stream-1", ((Message)updates[0].RawRepresentation!).MessageId);
+        Assert.IsType<AgentMessage>(updates[0].RawRepresentation);
+        Assert.Equal("stream-1", ((AgentMessage)updates[0].RawRepresentation!).MessageId);
     }
 
     [Fact]
@@ -266,7 +267,7 @@ public sealed class A2AAgentTests : IDisposable
             new(ChatRole.User, "Test streaming")
         };
 
-        this._handler.StreamingResponseToReturn = new Message()
+        this._handler.StreamingResponseToReturn = new AgentMessage()
         {
             MessageId = "stream-1",
             Role = MessageRole.Agent,
@@ -296,7 +297,7 @@ public sealed class A2AAgentTests : IDisposable
             new(ChatRole.User, "Test streaming")
         };
 
-        this._handler.StreamingResponseToReturn = new Message();
+        this._handler.StreamingResponseToReturn = new AgentMessage();
 
         var thread = this._agent.GetNewThread();
         var a2aThread = (A2AAgentThread)thread;
@@ -327,7 +328,7 @@ public sealed class A2AAgentTests : IDisposable
             new(ChatRole.User, "Test streaming")
         };
 
-        this._handler.StreamingResponseToReturn = new Message()
+        this._handler.StreamingResponseToReturn = new AgentMessage()
         {
             MessageId = "stream-1",
             Role = MessageRole.Agent,
@@ -345,21 +346,28 @@ public sealed class A2AAgentTests : IDisposable
     }
 
     [Fact]
-    public async Task RunStreamingAsync_NonUserRoleMessages_ThrowsArgumentExceptionAsync()
+    public async Task RunStreamingAsync_AllowsNonUserRoleMessagesAsync()
     {
         // Arrange
+        this._handler.StreamingResponseToReturn = new AgentMessage()
+        {
+            MessageId = "stream-1",
+            Role = MessageRole.Agent,
+            Parts = [new TextPart { Text = "Response" }],
+            ContextId = "new-stream-context"
+        };
+
         var inputMessages = new List<ChatMessage>
         {
-            new(ChatRole.Assistant, "I am an assistant message")
+            new(ChatRole.System, "I am a system message"),
+            new(ChatRole.Assistant, "I am an assistant message"),
+            new(ChatRole.User, "Valid user message")
         };
 
         // Act & Assert
-        await Assert.ThrowsAsync<ArgumentException>(async () =>
+        await foreach (var _ in this._agent.RunStreamingAsync(inputMessages))
         {
-            await foreach (var update in this._agent.RunStreamingAsync(inputMessages))
-            {
-            }
-        });
+        }
     }
 
     [Fact]
@@ -371,7 +379,7 @@ public sealed class A2AAgentTests : IDisposable
             new(ChatRole.User,
             [
                 new TextContent("Check this file:"),
-                new HostedFileContent("https://example.com/file.pdf")
+                new UriContent("https://example.com/file.pdf", "application/pdf")
             ])
         };
 
@@ -385,7 +393,7 @@ public sealed class A2AAgentTests : IDisposable
         Assert.IsType<TextPart>(message.Parts[0]);
         Assert.Equal("Check this file:", ((TextPart)message.Parts[0]).Text);
         Assert.IsType<FilePart>(message.Parts[1]);
-        Assert.Equal("https://example.com/file.pdf", ((FileWithUri)((FilePart)message.Parts[1]).File).Uri);
+        Assert.Equal("https://example.com/file.pdf", ((FilePart)message.Parts[1]).File.Uri?.ToString());
     }
 
     public void Dispose()
@@ -453,7 +461,7 @@ public sealed class A2AAgentTests : IDisposable
             }
             else
             {
-                var jsonRpcResponse = JsonRpcResponse.CreateJsonRpcResponse<A2AEvent>("response-id", new Message());
+                var jsonRpcResponse = JsonRpcResponse.CreateJsonRpcResponse<A2AEvent>("response-id", new AgentMessage());
 
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 {

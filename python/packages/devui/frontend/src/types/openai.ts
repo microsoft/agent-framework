@@ -21,6 +21,48 @@ export interface ResponseStreamEvent {
   created_at?: number;
 }
 
+// Standard OpenAI Response Lifecycle Events
+export interface ResponseCreatedEvent {
+  type: "response.created";
+  response: {
+    id: string;
+    status: "in_progress";
+    created_at: number;
+    output?: any[];
+  };
+  sequence_number?: number;
+}
+
+export interface ResponseInProgressEvent {
+  type: "response.in_progress";
+  response: {
+    id: string;
+    status: "in_progress";
+  };
+  sequence_number?: number;
+}
+
+export interface ResponseCompletedEvent {
+  type: "response.completed";
+  response: {
+    id: string;
+    status: "completed";
+    usage?: any;  // Optional usage information
+    model?: string;  // Optional model information
+  };
+  sequence_number?: number;
+}
+
+export interface ResponseFailedEvent {
+  type: "response.failed";
+  response: {
+    id: string;
+    status: "failed";
+    error?: any;
+  };
+  sequence_number?: number;
+}
+
 // Custom Agent Framework OpenAI event types with structured data
 export interface ResponseWorkflowEventComplete {
   type: "response.workflow_event.complete";
@@ -36,36 +78,6 @@ export interface ResponseWorkflowEventComplete {
   sequence_number: number;
 }
 
-export interface ResponseFunctionResultComplete {
-  type: "response.function_result.complete";
-  data: {
-    call_id: string;
-    result: unknown;
-    status: "completed" | "failed";
-    exception?: string;
-    timestamp: string;
-  };
-  call_id: string;
-  item_id: string;
-  output_index: number;
-  sequence_number: number;
-}
-
-// Removed - using ResponseTraceEventComplete defined below
-
-export interface ResponseUsageEventComplete {
-  type: "response.usage.complete";
-  data: {
-    usage_data: Record<string, unknown>;
-    total_tokens: number;
-    completion_tokens: number;
-    prompt_tokens: number;
-    timestamp: string;
-  };
-  item_id: string;
-  output_index: number;
-  sequence_number: number;
-}
 
 // Function call event types - matching actual backend output
 export interface ResponseFunctionCallComplete {
@@ -100,6 +112,53 @@ export interface ResponseFunctionCallArgumentsDelta {
   };
   item_id?: string;
   output_index?: number;
+  sequence_number?: number;
+}
+
+// OpenAI Responses API - Function Tool Call Item
+export interface ResponseFunctionToolCall {
+  id: string; // Item ID
+  call_id: string; // Call ID for pairing with results
+  name: string; // Function name
+  arguments: string; // JSON arguments
+  type: "function_call";
+  status?: "in_progress" | "completed" | "incomplete";
+}
+
+// Workflow Item Types - flexible interface for any workflow item
+export interface WorkflowItem {
+  type: string;  // "executor_action", "workflow_action", "message", or any future type
+  id: string;
+  status?: "in_progress" | "completed" | "failed" | "cancelled";
+  [key: string]: any;  // Allow any additional fields
+}
+
+// Executor Action Item (DevUI specific)
+export interface ExecutorActionItem extends WorkflowItem {
+  type: "executor_action";
+  executor_id: string;
+  metadata?: Record<string, any>;
+  result?: any;
+  error?: any;
+}
+
+// Type guard for executor actions
+export function isExecutorAction(item: WorkflowItem): item is ExecutorActionItem {
+  return item.type === "executor_action" && "executor_id" in item;
+}
+
+// OpenAI Responses API - Output Item Events
+export interface ResponseOutputItemAddedEvent {
+  type: "response.output_item.added";
+  item: WorkflowItem | ResponseFunctionToolCall | any;  // Flexible to support various item types
+  output_index: number;
+  sequence_number?: number;
+}
+
+export interface ResponseOutputItemDoneEvent {
+  type: "response.output_item.done";
+  item: WorkflowItem | ResponseFunctionToolCall | any;
+  output_index: number;
   sequence_number?: number;
 }
 
@@ -150,17 +209,67 @@ export interface ResponseErrorEvent extends ResponseStreamEvent {
   sequence_number: number;
 }
 
+// DevUI Extension: Function Approval Events
+export interface ResponseFunctionApprovalRequestedEvent {
+  type: "response.function_approval.requested";
+  request_id: string;
+  function_call: {
+    id: string;
+    name: string;
+    arguments: Record<string, unknown>;
+  };
+  item_id: string;
+  output_index: number;
+  sequence_number: number;
+}
+
+export interface ResponseFunctionApprovalRespondedEvent {
+  type: "response.function_approval.responded";
+  request_id: string;
+  approved: boolean;
+  item_id: string;
+  output_index: number;
+  sequence_number: number;
+}
+
+// DevUI Extension: Function Result Complete
+export interface ResponseFunctionResultComplete {
+  type: "response.function_result.complete";
+  call_id: string;
+  output: string;
+  status: "in_progress" | "completed" | "incomplete";
+  item_id: string;
+  output_index: number;
+  sequence_number: number;
+  timestamp?: string;  // Optional ISO timestamp for UI display
+}
+
+// DevUI Extension: Turn Separator (UI-only event for grouping)
+export interface TurnSeparatorEvent {
+  type: "debug.turn_separator";
+  timestamp: string;
+  collapsed?: boolean;
+}
+
 // Union type for all structured events
 export type StructuredEvent =
+  | ResponseCreatedEvent
+  | ResponseInProgressEvent
+  | ResponseCompletedEvent
+  | ResponseFailedEvent
   | ResponseWorkflowEventComplete
-  | ResponseFunctionResultComplete
   | ResponseTraceEventComplete
   | ResponseTraceComplete
-  | ResponseUsageEventComplete
+  | ResponseOutputItemAddedEvent
+  | ResponseOutputItemDoneEvent
   | ResponseFunctionCallComplete
   | ResponseFunctionCallDelta
   | ResponseFunctionCallArgumentsDelta
-  | ResponseErrorEvent;
+  | ResponseFunctionResultComplete
+  | ResponseErrorEvent
+  | ResponseFunctionApprovalRequestedEvent
+  | ResponseFunctionApprovalRespondedEvent
+  | TurnSeparatorEvent;
 
 // Extended stream event that includes our structured events
 export type ExtendedResponseStreamEvent = ResponseStreamEvent | StructuredEvent;
@@ -215,6 +324,7 @@ export interface ResponseUsage {
   };
 }
 
+
 // Request format for Agent Framework
 // AgentFrameworkRequest moved to agent-framework.ts to avoid conflicts
 
@@ -225,4 +335,101 @@ export interface OpenAIError {
     type: string;
     code?: string;
   };
+}
+
+// ============================================================================
+// OpenAI Conversations API Types - for conversation history
+// ============================================================================
+
+// Message content types (what goes inside Message.content[])
+export interface MessageTextContent {
+  type: "text";
+  text: string;
+}
+
+export interface MessageInputImage {
+  type: "input_image";
+  image_url: string;
+  detail?: "low" | "high" | "auto";
+  file_id?: string;
+}
+
+export interface MessageInputFile {
+  type: "input_file";
+  file_url?: string;
+  file_data?: string;
+  file_id?: string;
+  filename?: string;
+}
+
+// DevUI Extension: Function approval response content
+export interface MessageFunctionApprovalResponseContent {
+  type: "function_approval_response";
+  request_id: string;
+  approved: boolean;
+  function_call: {
+    id: string;
+    name: string;
+    arguments: Record<string, unknown>;
+  };
+}
+
+export type MessageContent =
+  | MessageTextContent
+  | MessageInputImage
+  | MessageInputFile
+  | MessageFunctionApprovalResponseContent;
+
+// Message item (user/assistant messages with content)
+export interface ConversationMessage {
+  id: string;
+  type: "message";
+  role: "user" | "assistant" | "system" | "tool";
+  content: MessageContent[];
+  status: "in_progress" | "completed" | "incomplete";
+  usage?: {
+    input_tokens: number;
+    output_tokens: number;
+    total_tokens: number;
+  };
+}
+
+// Function call item (separate from message)
+export interface ConversationFunctionCall {
+  id: string;
+  type: "function_call";
+  call_id: string;
+  name: string;
+  arguments: string;
+  status: "in_progress" | "completed" | "incomplete";
+}
+
+// Function call output item
+export interface ConversationFunctionCallOutput {
+  id: string;
+  type: "function_call_output";
+  call_id: string;
+  output: string;
+  status?: "in_progress" | "completed" | "incomplete";
+}
+
+// Union of all conversation item types
+export type ConversationItem =
+  | ConversationMessage
+  | ConversationFunctionCall
+  | ConversationFunctionCallOutput;
+
+// Conversation metadata
+export interface Conversation {
+  id: string;
+  object: "conversation";
+  created_at: number;
+  metadata?: Record<string, string>;
+}
+
+// List response
+export interface ConversationItemsListResponse {
+  object: "list";
+  data: ConversationItem[];
+  has_more: boolean;
 }

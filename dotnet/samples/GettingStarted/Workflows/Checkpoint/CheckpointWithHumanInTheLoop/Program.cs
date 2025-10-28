@@ -9,9 +9,9 @@ namespace WorkflowCheckpointWithHumanInTheLoopSample;
 /// checkpointing support. The workflow plays a number guessing game where the user provides
 /// guesses based on feedback from the workflow. The workflow state is checkpointed at the end
 /// of each super step, allowing it to be restored and resumed later.
-/// Each InputPort request and response cycle takes two super steps:
-/// 1. The InputPort sends a RequestInfoEvent to request input from the external world.
-/// 2. The external world sends a response back to the InputPort.
+/// Each RequestPort request and response cycle takes two super steps:
+/// 1. The RequestPort sends a RequestInfoEvent to request input from the external world.
+/// 2. The external world sends a response back to the RequestPort.
 /// Thus, two checkpoints are created for each human-in-the-loop interaction.
 /// </summary>
 /// <remarks>
@@ -27,24 +27,24 @@ public static class Program
     private static async Task Main()
     {
         // Create the workflow
-        var workflow = await WorkflowHelper.GetWorkflowAsync().ConfigureAwait(false);
+        var workflow = WorkflowFactory.BuildWorkflow();
 
         // Create checkpoint manager
         var checkpointManager = CheckpointManager.Default;
         var checkpoints = new List<CheckpointInfo>();
 
         // Execute the workflow and save checkpoints
-        Checkpointed<StreamingRun> checkpointedRun = await InProcessExecution
+        await using Checkpointed<StreamingRun> checkpointedRun = await InProcessExecution
             .StreamAsync(workflow, new SignalWithNumber(NumberSignal.Init), checkpointManager)
-            .ConfigureAwait(false);
-        await foreach (WorkflowEvent evt in checkpointedRun.Run.WatchStreamAsync().ConfigureAwait(false))
+            ;
+        await foreach (WorkflowEvent evt in checkpointedRun.Run.WatchStreamAsync())
         {
             switch (evt)
             {
                 case RequestInfoEvent requestInputEvt:
                     // Handle `RequestInfoEvent` from the workflow
                     ExternalResponse response = HandleExternalRequest(requestInputEvt.Request);
-                    await checkpointedRun.Run.SendResponseAsync(response).ConfigureAwait(false);
+                    await checkpointedRun.Run.SendResponseAsync(response);
                     break;
                 case ExecutorCompletedEvent executorCompletedEvt:
                     Console.WriteLine($"* Executor {executorCompletedEvt.ExecutorId} completed.");
@@ -76,15 +76,15 @@ public static class Program
         Console.WriteLine($"\n\nRestoring from the {CheckpointIndex + 1}th checkpoint.");
         CheckpointInfo savedCheckpoint = checkpoints[CheckpointIndex];
         // Note that we are restoring the state directly to the same run instance.
-        await checkpointedRun.RestoreCheckpointAsync(savedCheckpoint, CancellationToken.None).ConfigureAwait(false);
-        await foreach (WorkflowEvent evt in checkpointedRun.Run.WatchStreamAsync().ConfigureAwait(false))
+        await checkpointedRun.RestoreCheckpointAsync(savedCheckpoint, CancellationToken.None);
+        await foreach (WorkflowEvent evt in checkpointedRun.Run.WatchStreamAsync())
         {
             switch (evt)
             {
                 case RequestInfoEvent requestInputEvt:
                     // Handle `RequestInfoEvent` from the workflow
                     ExternalResponse response = HandleExternalRequest(requestInputEvt.Request);
-                    await checkpointedRun.Run.SendResponseAsync(response).ConfigureAwait(false);
+                    await checkpointedRun.Run.SendResponseAsync(response);
                     break;
                 case ExecutorCompletedEvent executorCompletedEvt:
                     Console.WriteLine($"* Executor {executorCompletedEvt.ExecutorId} completed.");

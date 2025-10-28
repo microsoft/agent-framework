@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -23,6 +24,7 @@ namespace Microsoft.Agents.AI;
 /// unless explicitly serialized and restored.
 /// </para>
 /// </remarks>
+[DebuggerDisplay("{DebuggerDisplay,nq}")]
 public abstract class InMemoryAgentThread : AgentThread
 {
     /// <summary>
@@ -117,6 +119,9 @@ public abstract class InMemoryAgentThread : AgentThread
     /// <inheritdoc />
     protected internal override Task MessagesReceivedAsync(IEnumerable<ChatMessage> newMessages, CancellationToken cancellationToken = default)
         => this.MessageStore.AddMessagesAsync(newMessages, cancellationToken);
+
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    private string DebuggerDisplay => $"Count = {this.MessageStore.Count}";
 
     internal sealed class InMemoryAgentThreadState
     {

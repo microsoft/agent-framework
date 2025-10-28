@@ -1,0 +1,73 @@
+{
+  "id": "resp_05bb7fa0fc62fa280068f41e4584708195bbcbb6028e55381a",
+  "object": "response",
+  "created_at": 1760828997,
+  "status": "incomplete",
+  "background": false,
+  "billing": {
+    "payer": "developer"
+  },
+  "error": null,
+  "incomplete_details": {
+    "reason": "max_output_tokens"
+  },
+  "instructions": "Respond in a friendly, educational tone.",
+  "max_output_tokens": 150,
+  "max_tool_calls": null,
+  "model": "gpt-4o-mini-2024-07-18",
+  "output": [
+    {
+      "id": "msg_05bb7fa0fc62fa280068f41e462e3c81959b33430391731815",
+      "type": "message",
+      "status": "incomplete",
+      "content": [
+        {
+          "type": "output_text",
+          "annotations": [],
+          "logprobs": [],
+          "text": "Sure! Imagine your regular computer as a very fast and efficient librarian. It sorts through books (data) one at a time, very quickly, to find the information you need. \n\nNow, think of quantum computing as a magical librarian who can read multiple books at the same time! This magic comes from the principles of quantum mechanics, which is the science of very tiny particles.\n\nHere are a few key ideas:\n\n1. **Bits vs. Qubits**: Regular computers use bits, which can be either a 0 or a 1. Quantum computers use qubits, which can be both 0 and 1 at the same time thanks to a property called superposition. This means they can process a lot more information simultaneously.\n\n2"
+        }
+      ],
+      "role": "assistant"
+    }
+  ],
+  "parallel_tool_calls": true,
+  "previous_response_id": null,
+  "prompt_cache_key": null,
+  "reasoning": {
+    "effort": null,
+    "summary": null
+  },
+  "safety_identifier": null,
+  "service_tier": "default",
+  "store": true,
+  "temperature": 0.7,
+  "text": {
+    "format": {
+      "type": "text"
+    },
+    "verbosity": "medium"
+  },
+  "tool_choice": "auto",
+  "tools": [],
+  "top_logprobs": 0,
+  "top_p": 0.9,
+  "truncation": "disabled",
+  "usage": {
+    "input_tokens": 26,
+    "input_tokens_details": {
+      "cached_tokens": 0
+    },
+    "output_tokens": 150,
+    "output_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "total_tokens": 176
+  },
+  "user": null,
+  "metadata": {
+    "user_id": "test_user_123",
+    "session_id": "session_456",
+    "purpose": "conformance_test"
+  }
+}

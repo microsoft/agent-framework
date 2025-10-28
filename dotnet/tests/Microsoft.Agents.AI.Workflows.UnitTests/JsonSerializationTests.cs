@@ -33,7 +33,7 @@ public class JsonSerializationTests
 
     private static EdgeId TakeEdgeId() => new(Interlocked.Increment(ref s_nextEdgeId));
 
-    private static T RunJsonRoundtrip<T>(T value, JsonSerializerOptions? externalOptions = null, Expression<Func<T, bool>>? predicate = null)
+    internal static T RunJsonRoundtrip<T>(T value, JsonSerializerOptions? externalOptions = null, Expression<Func<T, bool>>? predicate = null)
     {
         JsonMarshaller marshaller = new(externalOptions);
 
@@ -89,11 +89,11 @@ public class JsonSerializationTests
         }
     }
 
-    private static InputPort TestPort => InputPort.Create<string, int>("StringToInt");
-    private static InputPortInfo TestPortInfo => TestPort.ToPortInfo();
+    private static RequestPort TestPort => RequestPort.Create<string, int>("StringToInt");
+    private static RequestPortInfo TestPortInfo => TestPort.ToPortInfo();
 
     [Fact]
-    public void Test_InputPortInfo_JsonRoundtrip()
+    public void Test_RequestPortInfo_JsonRoundtrip()
     {
         RunJsonRoundtrip(TestPortInfo, predicate: TestPort.CreatePortInfoValidator());
     }
@@ -152,16 +152,16 @@ public class JsonSerializationTests
     private const string IntToStringId = nameof(IntToString);
     private const string StringToIntId = nameof(StringToInt);
 
-    private static InputPortInfo IntToString => InputPort.Create<int, string>(IntToStringId).ToPortInfo();
-    private static InputPortInfo StringToInt => InputPort.Create<string, int>(StringToIntId).ToPortInfo();
+    private static RequestPortInfo IntToString => RequestPort.Create<int, string>(IntToStringId).ToPortInfo();
+    private static RequestPortInfo StringToInt => RequestPort.Create<string, int>(StringToIntId).ToPortInfo();
 
-    private static ValueTask<Workflow<string>> CreateTestWorkflowAsync()
+    private static Workflow CreateTestWorkflow()
     {
         ForwardMessageExecutor<string> forwardString = new(ForwardStringId);
         ForwardMessageExecutor<int> forwardInt = new(ForwardIntId);
 
-        InputPort stringToInt = InputPort.Create<string, int>(StringToIntId);
-        InputPort intToString = InputPort.Create<int, string>(IntToStringId);
+        RequestPort stringToInt = RequestPort.Create<string, int>(StringToIntId);
+        RequestPort intToString = RequestPort.Create<int, string>(IntToStringId);
 
         WorkflowBuilder builder = new(forwardString);
         builder.AddEdge(forwardString, stringToInt)
@@ -169,19 +169,19 @@ public class JsonSerializationTests
                .AddEdge(forwardInt, intToString)
                .AddEdge(intToString, StreamingAggregators.Last<int>().AsExecutor("Aggregate"));
 
-        return builder.BuildAsync<string>();
+        return builder.Build();
     }
 
-    private static async ValueTask<WorkflowInfo> CreateTestWorkflowInfoAsync()
+    internal static WorkflowInfo CreateTestWorkflowInfo()
     {
-        Workflow<string> testWorkflow = await CreateTestWorkflowAsync().ConfigureAwait(false);
+        Workflow testWorkflow = CreateTestWorkflow();
         return testWorkflow.ToWorkflowInfo();
     }
 
     private static void ValidateWorkflowInfo(WorkflowInfo actual, WorkflowInfo prototype)
     {
         ValidateExecutorDictionary(prototype.Executors, prototype.Edges, actual.Executors, actual.Edges);
-        ValidateInputPorts(prototype.InputPorts, actual.InputPorts);
+        ValidateRequestPorts(prototype.RequestPorts, actual.RequestPorts);
 
         actual.InputType.Should().Match(prototype.InputType.CreateValidator());
         actual.StartExecutorId.Should().Be(prototype.StartExecutorId);
@@ -225,14 +225,14 @@ public class JsonSerializationTests
             }
         }
 
-        void ValidateInputPorts(HashSet<InputPortInfo> expected, HashSet<InputPortInfo> actual)
+        void ValidateRequestPorts(HashSet<RequestPortInfo> expected, HashSet<RequestPortInfo> actual)
             => actual.Should().HaveCount(expected.Count).And.IntersectWith(expected);
     }
 
     [Fact]
     public async Task Test_WorkflowInfo_JsonRoundtripAsync()
     {
-        WorkflowInfo prototype = await CreateTestWorkflowInfoAsync();
+        WorkflowInfo prototype = CreateTestWorkflowInfo();
 
         JsonMarshaller marshaller = new();
 
@@ -634,13 +634,8 @@ public class JsonSerializationTests
 
     private static CheckpointInfo TestParentCheckpointInfo => new(s_runId, s_parentCheckpointId);
 
-    [Fact]
-    public async Task Test_Checkpoint_JsonRoundTripAsync()
+    private static void ValidateCheckpoint(Checkpoint result, Checkpoint prototype)
     {
-        WorkflowInfo testWorkflowInfo = await CreateTestWorkflowInfoAsync();
-        Checkpoint prototype = new(12, testWorkflowInfo, TestRunnerStateData, TestStateData, TestEdgeState, TestParentCheckpointInfo);
-        Checkpoint result = RunJsonRoundtrip(prototype, TestCustomSerializedJsonOptions);
-
         result.Should().Match((Checkpoint checkpoint) => checkpoint.StepNumber == prototype.StepNumber);
 
         result.Parent.Should().Be(prototype.Parent);
@@ -649,5 +644,32 @@ public class JsonSerializationTests
         ValidateRunnerStateData(result.RunnerData, prototype.RunnerData);
         ValidateStateData(result.StateData, prototype.StateData);
         ValidateEdgeStateData(result.EdgeStateData, prototype.EdgeStateData);
+    }
+
+    [Fact]
+    public async Task Test_Checkpoint_JsonRoundTripAsync()
+    {
+        WorkflowInfo testWorkflowInfo = CreateTestWorkflowInfo();
+        Checkpoint prototype = new(12, testWorkflowInfo, TestRunnerStateData, TestStateData, TestEdgeState, TestParentCheckpointInfo);
+        Checkpoint result = RunJsonRoundtrip(prototype, TestCustomSerializedJsonOptions);
+
+        ValidateCheckpoint(result, prototype);
+    }
+
+    [Fact]
+    public async Task Test_InMemoryCheckpointManager_JsonRoundTripAsync()
+    {
+        WorkflowInfo testWorkflowInfo = CreateTestWorkflowInfo();
+        Checkpoint prototype = new(12, testWorkflowInfo, TestRunnerStateData, TestStateData, TestEdgeState, TestParentCheckpointInfo);
+        string runId = Guid.NewGuid().ToString("N");
+
+        InMemoryCheckpointManager manager = new();
+        CheckpointInfo checkpointInfo = await manager.CommitCheckpointAsync(runId, prototype);
+
+        InMemoryCheckpointManager result = RunJsonRoundtrip(manager, TestCustomSerializedJsonOptions);
+
+        Checkpoint? retrievedCheckpoint = await result.LookupCheckpointAsync(runId, checkpointInfo);
+
+        ValidateCheckpoint(retrievedCheckpoint, prototype);
     }
 }

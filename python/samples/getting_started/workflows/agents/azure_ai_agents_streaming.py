@@ -16,12 +16,11 @@ A Writer agent generates content, then a Reviewer agent critiques it.
 The workflow uses streaming so you can observe incremental AgentRunUpdateEvent chunks as each agent produces tokens.
 
 Purpose:
-Show how to wire chat agents directly into a WorkflowBuilder pipeline where agents are auto wrapped as executors.
+Show how to wire chat agents into a WorkflowBuilder pipeline by adding agents directly as edges.
 
 Demonstrate:
-- Automatic streaming of agent deltas via AgentRunUpdateEvent.
-- A simple console aggregator that groups updates by executor id and prints them as they arrive.
-- The workflow completes when idle and outputs are available in events.get_outputs().
+- Automatic streaming of agent deltas via AgentRunUpdateEvent when using run_stream().
+- Agents adapt to workflow mode: run_stream() emits incremental updates, run() emits complete responses.
 
 Prerequisites:
 - Azure AI Agent Service configured, along with the required environment variables.
@@ -66,8 +65,14 @@ async def main() -> None:
                 "Provide the feedback in the most concise manner possible."
             ),
         )
-
-        workflow = WorkflowBuilder().set_start_executor(writer).add_edge(writer, reviewer).build()
+        # Build the workflow by adding agents directly as edges.
+        # Agents adapt to workflow mode: run_stream() for incremental updates, run() for complete responses.
+        workflow = (
+            WorkflowBuilder()
+            .set_start_executor(writer)
+            .add_edge(writer, reviewer)
+            .build()
+        )
 
         last_executor_id: str | None = None
 

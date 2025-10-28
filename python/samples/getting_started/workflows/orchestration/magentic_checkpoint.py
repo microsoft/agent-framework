@@ -113,7 +113,7 @@ async def main() -> None:
         print("No plan review request emitted; nothing to resume.")
         return
 
-    checkpoints = await checkpoint_storage.list_checkpoints(workflow.workflow.id)
+    checkpoints = await checkpoint_storage.list_checkpoints(workflow.id)
     if not checkpoints:
         print("No checkpoints persisted.")
         return
@@ -141,7 +141,7 @@ async def main() -> None:
     # and then continues the workflow. Because we only captured the initial plan review
     # checkpoint, the resumed run should complete almost immediately.
     final_event: WorkflowOutputEvent | None = None
-    async for event in resumed_workflow.workflow.run_stream_from_checkpoint(
+    async for event in resumed_workflow.run_stream_from_checkpoint(
         resume_checkpoint.checkpoint_id,
         responses={plan_review_request_id: approval},
     ):
@@ -204,7 +204,7 @@ async def main() -> None:
     final_event_post: WorkflowOutputEvent | None = None
     post_emitted_events = False
     post_plan_workflow = build_workflow(checkpoint_storage)
-    async for event in post_plan_workflow.workflow.run_stream_from_checkpoint(
+    async for event in post_plan_workflow.run_stream_from_checkpoint(
         post_plan_checkpoint.checkpoint_id,
         responses={},
     ):

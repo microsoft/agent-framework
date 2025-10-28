@@ -1,75 +1,36 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.Execution;
 
 namespace Microsoft.Agents.AI.Workflows;
-
-/// <summary>
-/// Specifies the current operational state of a workflow run.
-/// </summary>
-public enum RunStatus
-{
-    /// <summary>
-    /// The run has halted, has no outstanding requets, but has not received a <see cref="RequestHaltEvent"/>.
-    /// </summary>
-    Idle,
-
-    /// <summary>
-    /// The run has halted, and has at least one outstanding <see cref="ExternalRequest"/>.
-    /// </summary>
-    PendingRequests,
-
-    // TODO: Figure out if we want to have some way to have a true "converged" state
-    ///// <summary>
-    ///// The run has halted after converging.
-    ///// </summary>
-    //Completed,
-
-    /// <summary>
-    /// The workflow is currently running, and may receive events or requests.
-    /// </summary>
-    Running
-}
 
 /// <summary>
 /// Represents a workflow run that tracks execution status and emitted workflow events, supporting resumption
 /// with responses to <see cref="RequestInfoEvent"/>.
 /// </summary>
-public sealed class Run
+public sealed class Run : IAsyncDisposable
 {
-    internal static async ValueTask<Run> CaptureStreamAsync(StreamingRun run, CancellationToken cancellationToken = default)
-    {
-        Run result = new(run);
-        await result.RunToNextHaltAsync(cancellationToken).ConfigureAwait(false);
-        return result;
-    }
-
     private readonly List<WorkflowEvent> _eventSink = [];
-    private readonly StreamingRun _streamingRun;
-    internal Run(StreamingRun streamingRun)
+    private readonly AsyncRunHandle _runHandle;
+    internal Run(AsyncRunHandle _runHandle)
     {
-        this._streamingRun = streamingRun;
+        this._runHandle = _runHandle;
     }
 
     internal async ValueTask<bool> RunToNextHaltAsync(CancellationToken cancellationToken = default)
     {
         bool hadEvents = false;
-        this.Status = RunStatus.Running;
-        await foreach (WorkflowEvent evt in this._streamingRun.WatchStreamAsync(blockOnPendingRequest: false, cancellationToken).ConfigureAwait(false))
+        await foreach (WorkflowEvent evt in this._runHandle.TakeEventStreamAsync(blockOnPendingRequest: false, cancellationToken).ConfigureAwait(false))
         {
             hadEvents = true;
             this._eventSink.Add(evt);
         }
-
-        // TODO: bookmark every halt for history visualization?
-
-        this.Status =
-            this._streamingRun.HasUnservicedRequests
-              ? RunStatus.PendingRequests
-              : RunStatus.Idle;
 
         return hadEvents;
     }
@@ -77,12 +38,13 @@ public sealed class Run
     /// <summary>
     /// A unique identifier for the run. Can be provided at the start of the run, or auto-generated.
     /// </summary>
-    public string RunId => this._streamingRun.RunId;
+    public string RunId => this._runHandle.RunId;
 
     /// <summary>
     /// Gets the current execution status of the workflow run.
     /// </summary>
-    public RunStatus Status { get; private set; }
+    public ValueTask<RunStatus> GetStatusAsync(CancellationToken cancellationToken = default)
+        => this._runHandle.GetStatusAsync(cancellationToken);
 
     /// <summary>
     /// Gets all events emitted by the workflow.
@@ -92,8 +54,14 @@ public sealed class Run
     private int _lastBookmark;
 
     /// <summary>
+    /// The number of events emitted by the workflow since the last access to <see cref="NewEvents"/>
+    /// </summary>
+    public int NewEventCount => this._eventSink.Count - this._lastBookmark;
+
+    /// <summary>
     /// Gets all events emitted by the workflow since the last access to <see cref="NewEvents" />.
     /// </summary>
+    [DebuggerDisplay("NewEvents[{NewEventCount}]")]
     public IEnumerable<WorkflowEvent> NewEvents
     {
         get
@@ -120,7 +88,7 @@ public sealed class Run
     {
         foreach (ExternalResponse response in responses)
         {
-            await this._streamingRun.SendResponseAsync(response).ConfigureAwait(false);
+            await this._runHandle.EnqueueResponseAsync(response, cancellationToken).ConfigureAwait(false);
         }
 
         return await this.RunToNextHaltAsync(cancellationToken).ConfigureAwait(false);
@@ -129,25 +97,39 @@ public sealed class Run
     /// <summary>
     /// Resume execution of the workflow with the provided external responses.
     /// </summary>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <param name="messages">An array of messages to send to the workflow. Messages will only be sent if they are valid
     /// input types to the starting executor or a <see cref="ExternalResponse"/>.</param>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns><c>true</c> if the workflow had any output events, <c>false</c> otherwise.</returns>
-    public async ValueTask<bool> ResumeAsync<T>(IEnumerable<T> messages, CancellationToken cancellationToken = default)
+    public async ValueTask<bool> ResumeAsync<T>(CancellationToken cancellationToken = default, params IEnumerable<T> messages)
+        where T : notnull
     {
         if (messages is IEnumerable<ExternalResponse> responses)
         {
             return await this.ResumeAsync(responses, cancellationToken).ConfigureAwait(false);
         }
 
-        foreach (T message in messages)
+        if (typeof(T) == typeof(object))
         {
-            await this._streamingRun.TrySendMessageAsync(message).ConfigureAwait(false);
+            foreach (object? message in messages)
+            {
+                await this._runHandle.EnqueueMessageUntypedAsync(message, cancellationToken: cancellationToken).ConfigureAwait(false);
+            }
+        }
+        else
+        {
+            foreach (T message in messages)
+            {
+                await this._runHandle.EnqueueMessageAsync(message, cancellationToken).ConfigureAwait(false);
+            }
         }
 
         return await this.RunToNextHaltAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    /// <inheritdoc cref="StreamingRun.EndRunAsync"/>
-    public ValueTask EndRunAsync() => this._streamingRun.EndRunAsync();
+    /// <inheritdoc/>
+    public ValueTask DisposeAsync()
+    {
+        return this._runHandle.DisposeAsync();
+    }
 }

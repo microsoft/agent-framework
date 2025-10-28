@@ -5,10 +5,10 @@ using Microsoft.Agents.AI.Workflows;
 namespace WorkflowHumanInTheLoopBasicSample;
 
 /// <summary>
-/// This sample introduces the concept of InputPort and ExternalRequest to enable
+/// This sample introduces the concept of RequestPort and ExternalRequest to enable
 /// human-in-the-loop interaction scenarios.
-/// An input port can be used as if it were an executor in the workflow graph. Upon receiving
-/// a message, the input port generates an RequestInfoEvent that gets emitted to the external world.
+/// A request port can be used as if it were an executor in the workflow graph. Upon receiving
+/// a message, the request port generates an RequestInfoEvent that gets emitted to the external world.
 /// The external world can then respond to the request by sending an ExternalResponse back to
 /// the workflow.
 /// The sample implements a simple number guessing game where the external user tries to guess
@@ -24,18 +24,18 @@ public static class Program
     private static async Task Main()
     {
         // Create the workflow
-        var workflow = await WorkflowHelper.GetWorkflowAsync().ConfigureAwait(false);
+        var workflow = WorkflowFactory.BuildWorkflow();
 
         // Execute the workflow
-        StreamingRun handle = await InProcessExecution.StreamAsync(workflow, NumberSignal.Init).ConfigureAwait(false);
-        await foreach (WorkflowEvent evt in handle.WatchStreamAsync().ConfigureAwait(false))
+        await using StreamingRun handle = await InProcessExecution.StreamAsync(workflow, NumberSignal.Init);
+        await foreach (WorkflowEvent evt in handle.WatchStreamAsync())
         {
             switch (evt)
             {
                 case RequestInfoEvent requestInputEvt:
                     // Handle `RequestInfoEvent` from the workflow
                     ExternalResponse response = HandleExternalRequest(requestInputEvt.Request);
-                    await handle.SendResponseAsync(response).ConfigureAwait(false);
+                    await handle.SendResponseAsync(response);
                     break;
 
                 case WorkflowOutputEvent outputEvt:

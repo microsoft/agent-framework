@@ -3,11 +3,16 @@
 """Function-based Executor and decorator utilities.
 
 This module provides:
-- FunctionExecutor: an Executor subclass that wraps a user-defined function
+- FunctionExecutor: an Executor subclass that wraps a standalone user-defined function
   with signature (message) or (message, ctx: WorkflowContext[T]). Both sync and async functions are supported.
   Synchronous functions are executed in a thread pool using asyncio.to_thread() to avoid blocking the event loop.
-- executor decorator: converts such a function into a ready-to-use Executor instance
+- executor decorator: converts a standalone module-level function into a ready-to-use Executor instance
   with proper type validation and handler registration.
+
+Design Pattern:
+  - Use @executor for standalone module-level or local functions
+  - Use Executor subclass with @handler for class-based executors with state/dependencies
+  - Do NOT use @executor with @staticmethod or @classmethod
 """
 
 import asyncio
@@ -49,12 +54,26 @@ class FunctionExecutor(Executor):
         Args:
             func: The function to wrap as an executor (can be sync or async)
             id: Optional executor ID. If None, uses the function name.
+
+        Raises:
+            ValueError: If func is a staticmethod or classmethod (use @handler on instance methods instead)
         """
+        # Detect misuse of @executor with staticmethod/classmethod
+        if isinstance(func, (staticmethod, classmethod)):
+            descriptor_type = "staticmethod" if isinstance(func, staticmethod) else "classmethod"
+            raise ValueError(
+                f"The @executor decorator cannot be used with @{descriptor_type}. "
+                f"Use the @executor decorator on standalone module-level functions, "
+                f"or create an Executor subclass and use @handler on instance methods instead."
+            )
+
         # Validate function signature and extract types
         message_type, ctx_annotation, output_types, workflow_output_types = self._validate_function(func)
 
         # Determine if function has WorkflowContext parameter
         has_context = ctx_annotation is not None
+
+        # Check if function is async
         is_async = asyncio.iscoroutinefunction(func)
 
         # Initialize parent WITHOUT calling _discover_handlers yet
@@ -123,36 +142,53 @@ def executor(*, id: str | None = None) -> Callable[[Callable[..., Any]], Functio
 def executor(
     func: Callable[..., Any] | None = None, *, id: str | None = None
 ) -> Callable[[Callable[..., Any]], FunctionExecutor] | FunctionExecutor:
-    """Decorator that converts a function into a FunctionExecutor instance.
+    """Decorator that converts a standalone function into a FunctionExecutor instance.
+
+    The @executor decorator is designed for **standalone module-level functions only**.
+    For class-based executors, use the Executor base class with @handler on instance methods.
 
     Supports both synchronous and asynchronous functions. Synchronous functions
     are executed in a thread pool to avoid blocking the event loop.
+
+    Important:
+        - Use @executor for standalone functions (module-level or local functions)
+        - Do NOT use @executor with @staticmethod or @classmethod
+        - For class-based executors, subclass Executor and use @handler on instance methods
 
     Usage:
 
     .. code-block:: python
 
-        # With arguments (async function):
+        # Standalone async function (RECOMMENDED):
         @executor(id="upper_case")
         async def to_upper(text: str, ctx: WorkflowContext[str]):
             await ctx.send_message(text.upper())
 
 
-        # Without parentheses (sync function - runs in thread pool):
+        # Standalone sync function (runs in thread pool):
         @executor
         def process_data(data: str):
-            # Process data without sending messages
             return data.upper()
 
 
-        # Sync function with context (runs in thread pool):
-        @executor
-        def sync_with_context(data: int, ctx: WorkflowContext[int]):
-            # Note: sync functions can still use context
-            return data * 2
+        # For class-based executors, use @handler instead:
+        class MyExecutor(Executor):
+            def __init__(self):
+                super().__init__(id="my_executor")
+
+            @handler
+            async def process(self, data: str, ctx: WorkflowContext[str]):
+                await ctx.send_message(data.upper())
+
+    Args:
+        func: The function to decorate (when used without parentheses)
+        id: Optional custom ID for the executor. If None, uses the function name.
 
     Returns:
-        An Executor instance that can be wired into a Workflow.
+        A FunctionExecutor instance that can be wired into a Workflow.
+
+    Raises:
+        ValueError: If used with @staticmethod or @classmethod (unsupported pattern)
     """
 
     def wrapper(func: Callable[..., Any]) -> FunctionExecutor:

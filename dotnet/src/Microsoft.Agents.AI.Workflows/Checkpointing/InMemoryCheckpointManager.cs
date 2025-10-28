@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
+using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 
 namespace Microsoft.Agents.AI.Workflows.Checkpointing;
@@ -10,13 +12,22 @@ namespace Microsoft.Agents.AI.Workflows.Checkpointing;
 /// </summary>
 internal sealed class InMemoryCheckpointManager : ICheckpointManager
 {
-    private readonly Dictionary<string, RunCheckpointCache<Checkpoint>> _store = [];
+    [JsonInclude]
+    internal Dictionary<string, RunCheckpointCache<Checkpoint>> Store { get; } = [];
+
+    public InMemoryCheckpointManager() { }
+
+    [JsonConstructor]
+    internal InMemoryCheckpointManager(Dictionary<string, RunCheckpointCache<Checkpoint>> store)
+    {
+        this.Store = store;
+    }
 
     private RunCheckpointCache<Checkpoint> GetRunStore(string runId)
     {
-        if (!this._store.TryGetValue(runId, out RunCheckpointCache<Checkpoint>? runStore))
+        if (!this.Store.TryGetValue(runId, out RunCheckpointCache<Checkpoint>? runStore))
         {
-            runStore = this._store[runId] = new();
+            runStore = this.Store[runId] = new();
         }
 
         return runStore;
@@ -44,4 +55,9 @@ internal sealed class InMemoryCheckpointManager : ICheckpointManager
 
         return new(value);
     }
+
+    internal bool HasCheckpoints(string runId) => this.GetRunStore(runId).HasCheckpoints;
+
+    public bool TryGetLastCheckpoint(string runId, [NotNullWhen(true)] out CheckpointInfo? checkpoint)
+        => this.GetRunStore(runId).TryGetLastCheckpointInfo(out checkpoint);
 }

@@ -17,7 +17,7 @@ namespace Microsoft.Agents.AI;
 /// <summary>
 /// Provides an <see cref="AIAgent"/> that delegates to an <see cref="IChatClient"/> implementation.
 /// </summary>
-public sealed class ChatClientAgent : AIAgent
+public sealed partial class ChatClientAgent : AIAgent
 {
     private readonly ChatClientAgentOptions? _agentOptions;
     private readonly AIAgentMetadata _agentMetadata;
@@ -149,56 +149,23 @@ public sealed class ChatClientAgent : AIAgent
     internal ChatOptions? ChatOptions => this._agentOptions?.ChatOptions;
 
     /// <inheritdoc/>
-    public override async Task<AgentRunResponse> RunAsync(
+    public override Task<AgentRunResponse> RunAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        var inputMessages = Throw.IfNull(messages) as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
-
-        (ChatClientAgentThread safeThread, ChatOptions? chatOptions, List<ChatMessage> threadMessages) =
-            await this.PrepareThreadAndMessagesAsync(thread, inputMessages, options, cancellationToken).ConfigureAwait(false);
-
-        var chatClient = this.ChatClient;
-
-        chatClient = ApplyRunOptionsTransformations(options, chatClient);
-
-        var agentName = this.GetLoggingAgentName();
-
-        this._logger.LogAgentChatClientInvokingAgent(nameof(RunAsync), this.Id, agentName, this._chatClientType);
-
-        // Call the IChatClient and notify the AIContextProvider of any failures.
-        ChatResponse chatResponse;
-        try
+        static Task<ChatResponse> GetResponseAsync(IChatClient chatClient, List<ChatMessage> threadMessages, ChatOptions? chatOptions, CancellationToken ct)
         {
-            chatResponse = await chatClient.GetResponseAsync(threadMessages, chatOptions, cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            await NotifyAIContextProviderOfFailureAsync(safeThread, ex, inputMessages, cancellationToken).ConfigureAwait(false);
-            throw;
+            return chatClient.GetResponseAsync(threadMessages, chatOptions, ct);
         }
 
-        this._logger.LogAgentChatClientInvokedAgent(nameof(RunAsync), this.Id, agentName, this._chatClientType, inputMessages.Count);
-
-        // We can derive the type of supported thread from whether we have a conversation id,
-        // so let's update it and set the conversation id for the service thread case.
-        this.UpdateThreadWithTypeAndConversationId(safeThread, chatResponse.ConversationId);
-
-        // Ensure that the author name is set for each message in the response.
-        foreach (ChatMessage chatResponseMessage in chatResponse.Messages)
+        static AgentRunResponse CreateResponse(ChatResponse chatResponse)
         {
-            chatResponseMessage.AuthorName ??= agentName;
+            return new AgentRunResponse(chatResponse);
         }
 
-        // Only notify the thread of new messages if the chatResponse was successful to avoid inconsistent message state in the thread.
-        await NotifyThreadOfNewMessagesAsync(safeThread, inputMessages.Concat(chatResponse.Messages), cancellationToken).ConfigureAwait(false);
-
-        // Notify the AIContextProvider of all new messages.
-        await NotifyAIContextProviderOfSuccessAsync(safeThread, inputMessages, chatResponse.Messages, cancellationToken).ConfigureAwait(false);
-
-        return new(chatResponse) { AgentId = this.Id };
+        return this.RunCoreAsync(GetResponseAsync, CreateResponse, messages, thread, options, cancellationToken);
     }
 
     /// <summary>
@@ -322,7 +289,6 @@ public sealed class ChatClientAgent : AIAgent
     public override AgentThread GetNewThread()
         => new ChatClientAgentThread
         {
-            MessageStore = this._agentOptions?.ChatMessageStoreFactory?.Invoke(new() { SerializedState = default, JsonSerializerOptions = null }),
             AIContextProvider = this._agentOptions?.AIContextProviderFactory?.Invoke(new() { SerializedState = default, JsonSerializerOptions = null })
         };
 
@@ -370,6 +336,66 @@ public sealed class ChatClientAgent : AIAgent
 
     #region Private
 
+    private async Task<TAgentRunResponse> RunCoreAsync<TAgentRunResponse, TChatClientResponse>(
+        Func<IChatClient, List<ChatMessage>, ChatOptions?, CancellationToken, Task<TChatClientResponse>> chatClientRunFunc,
+        Func<TChatClientResponse, TAgentRunResponse> agentResponseFactoryFunc,
+        IEnumerable<ChatMessage> messages,
+        AgentThread? thread = null,
+        AgentRunOptions? options = null,
+        CancellationToken cancellationToken = default)
+        where TAgentRunResponse : AgentRunResponse
+        where TChatClientResponse : ChatResponse
+    {
+        var inputMessages = Throw.IfNull(messages) as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
+
+        (ChatClientAgentThread safeThread, ChatOptions? chatOptions, List<ChatMessage> threadMessages) =
+            await this.PrepareThreadAndMessagesAsync(thread, inputMessages, options, cancellationToken).ConfigureAwait(false);
+
+        var chatClient = this.ChatClient;
+
+        chatClient = ApplyRunOptionsTransformations(options, chatClient);
+
+        var agentName = this.GetLoggingAgentName();
+
+        this._logger.LogAgentChatClientInvokingAgent(nameof(RunAsync), this.Id, agentName, this._chatClientType);
+
+        // Call the IChatClient and notify the AIContextProvider of any failures.
+        TChatClientResponse chatResponse;
+        try
+        {
+            chatResponse = await chatClientRunFunc.Invoke(chatClient, threadMessages, chatOptions, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            await NotifyAIContextProviderOfFailureAsync(safeThread, ex, inputMessages, cancellationToken).ConfigureAwait(false);
+            throw;
+        }
+
+        this._logger.LogAgentChatClientInvokedAgent(nameof(RunAsync), this.Id, agentName, this._chatClientType, inputMessages.Count);
+
+        // We can derive the type of supported thread from whether we have a conversation id,
+        // so let's update it and set the conversation id for the service thread case.
+        this.UpdateThreadWithTypeAndConversationId(safeThread, chatResponse.ConversationId);
+
+        // Ensure that the author name is set for each message in the response.
+        foreach (ChatMessage chatResponseMessage in chatResponse.Messages)
+        {
+            chatResponseMessage.AuthorName ??= agentName;
+        }
+
+        // Only notify the thread of new messages if the chatResponse was successful to avoid inconsistent message state in the thread.
+        await NotifyThreadOfNewMessagesAsync(safeThread, inputMessages.Concat(chatResponse.Messages), cancellationToken).ConfigureAwait(false);
+
+        // Notify the AIContextProvider of all new messages.
+        await NotifyAIContextProviderOfSuccessAsync(safeThread, inputMessages, chatResponse.Messages, cancellationToken).ConfigureAwait(false);
+
+        var agentResponse = agentResponseFactoryFunc(chatResponse);
+
+        agentResponse.AgentId = this.Id;
+
+        return agentResponse;
+    }
+
     /// <summary>
     /// Notify the <see cref="AIContextProvider"/> when an agent run succeeded, if there is an <see cref="AIContextProvider"/>.
     /// </summary>
@@ -410,13 +436,13 @@ public sealed class ChatClientAgent : AIAgent
         // If no agent chat options were provided, return the request chat options as is.
         if (this._agentOptions?.ChatOptions is null)
         {
-            return requestChatOptions;
+            return ApplyBackgroundResponsesProperties(requestChatOptions, runOptions);
         }
 
         // If no request chat options were provided, use the agent's chat options clone.
         if (requestChatOptions is null)
         {
-            return this._agentOptions?.ChatOptions.Clone();
+            return ApplyBackgroundResponsesProperties(this._agentOptions?.ChatOptions.Clone(), runOptions);
         }
 
         // If both are present, we need to merge them.
@@ -506,7 +532,20 @@ public sealed class ChatClientAgent : AIAgent
             }
         }
 
-        return requestChatOptions;
+        return ApplyBackgroundResponsesProperties(requestChatOptions, runOptions);
+
+        static ChatOptions? ApplyBackgroundResponsesProperties(ChatOptions? chatOptions, AgentRunOptions? agentRunOptions)
+        {
+            // If any of the background response properties are set in the run options, we should apply both to the chat options.
+            if (agentRunOptions?.AllowBackgroundResponses is not null || agentRunOptions?.ContinuationToken is not null)
+            {
+                chatOptions ??= new ChatOptions();
+                chatOptions.AllowBackgroundResponses = agentRunOptions.AllowBackgroundResponses;
+                chatOptions.ContinuationToken = agentRunOptions.ContinuationToken;
+            }
+
+            return chatOptions;
+        }
     }
 
     /// <summary>
@@ -525,49 +564,66 @@ public sealed class ChatClientAgent : AIAgent
     {
         ChatOptions? chatOptions = this.CreateConfiguredChatOptions(runOptions);
 
+        // Supplying a thread for background responses is required to prevent inconsistent experience
+        // for callers if they forget to provide the thread for initial or follow-up runs.
+        if (chatOptions?.AllowBackgroundResponses is true && thread is null)
+        {
+            throw new InvalidOperationException("A thread must be provided when continuing a background response with a continuation token.");
+        }
+
         thread ??= this.GetNewThread();
         if (thread is not ChatClientAgentThread typedThread)
         {
             throw new InvalidOperationException("The provided thread is not compatible with the agent. Only threads created by the agent can be used.");
         }
 
-        // Add any existing messages from the thread to the messages to be sent to the chat client.
-        List<ChatMessage> threadMessages = [];
-        if (typedThread.MessageStore is not null)
+        // Supplying messages when continuing a background response is not allowed.
+        if (chatOptions?.ContinuationToken is not null && inputMessages.Any())
         {
-            threadMessages.AddRange(await typedThread.MessageStore.GetMessagesAsync(cancellationToken).ConfigureAwait(false));
+            throw new InvalidOperationException("Input messages are not allowed when continuing a background response using a continuation token.");
         }
+        List<ChatMessage> threadMessages = [];
 
-        // If we have an AIContextProvider, we should get context from it, and update our
-        // messages and options with the additional context.
-        if (typedThread.AIContextProvider is not null)
+        // Populate the thread messages only if we are not continuing an existing response as it's not allowed
+        if (chatOptions?.ContinuationToken is null)
         {
-            var invokingContext = new AIContextProvider.InvokingContext(inputMessages);
-            var aiContext = await typedThread.AIContextProvider.InvokingAsync(invokingContext, cancellationToken).ConfigureAwait(false);
-            if (aiContext.Messages is { Count: > 0 })
+            // Add any existing messages from the thread to the messages to be sent to the chat client.
+            if (typedThread.MessageStore is not null)
             {
-                threadMessages.AddRange(aiContext.Messages);
+                threadMessages.AddRange(await typedThread.MessageStore.GetMessagesAsync(cancellationToken).ConfigureAwait(false));
             }
 
-            if (aiContext.Tools is { Count: > 0 })
+            // If we have an AIContextProvider, we should get context from it, and update our
+            // messages and options with the additional context.
+            if (typedThread.AIContextProvider is not null)
             {
-                chatOptions ??= new();
-                chatOptions.Tools ??= [];
-                foreach (AITool tool in aiContext.Tools)
+                var invokingContext = new AIContextProvider.InvokingContext(inputMessages);
+                var aiContext = await typedThread.AIContextProvider.InvokingAsync(invokingContext, cancellationToken).ConfigureAwait(false);
+                if (aiContext.Messages is { Count: > 0 })
                 {
-                    chatOptions.Tools.Add(tool);
+                    threadMessages.AddRange(aiContext.Messages);
+                }
+
+                if (aiContext.Tools is { Count: > 0 })
+                {
+                    chatOptions ??= new();
+                    chatOptions.Tools ??= [];
+                    foreach (AITool tool in aiContext.Tools)
+                    {
+                        chatOptions.Tools.Add(tool);
+                    }
+                }
+
+                if (aiContext.Instructions is not null)
+                {
+                    chatOptions ??= new();
+                    chatOptions.Instructions = string.IsNullOrWhiteSpace(chatOptions.Instructions) ? aiContext.Instructions : $"{chatOptions.Instructions}\n{aiContext.Instructions}";
                 }
             }
 
-            if (aiContext.Instructions is not null)
-            {
-                chatOptions ??= new();
-                chatOptions.Instructions = string.IsNullOrWhiteSpace(chatOptions.Instructions) ? aiContext.Instructions : $"{chatOptions.Instructions}\n{aiContext.Instructions}";
-            }
+            // Add the input messages to the end of thread messages.
+            threadMessages.AddRange(inputMessages);
         }
-
-        // Add the input messages to the end of thread messages.
-        threadMessages.AddRange(inputMessages);
 
         // If a user provided two different thread ids, via the thread object and options, we should throw
         // since we don't know which one to use.
@@ -575,7 +631,7 @@ public sealed class ChatClientAgent : AIAgent
         {
             throw new InvalidOperationException(
                 $"""
-                The {nameof(chatOptions.ConversationId)} provided via {nameof(Extensions.AI.ChatOptions)} is different to the id of the provided {nameof(AgentThread)}.
+                The {nameof(chatOptions.ConversationId)} provided via {nameof(this.ChatOptions)} is different to the id of the provided {nameof(AgentThread)}.
                 Only one id can be used for a run.
                 """);
         }

@@ -12,14 +12,36 @@ import pytest
 from agent_framework_devui._discovery import EntityDiscovery
 from agent_framework_devui._executor import AgentFrameworkExecutor, EntityNotFoundError
 from agent_framework_devui._mapper import MessageMapper
-from agent_framework_devui.models._openai_custom import AgentFrameworkExtraBody, AgentFrameworkRequest
+from agent_framework_devui.models._openai_custom import AgentFrameworkRequest
+
+
+class _DummyStartExecutor:
+    """Minimal executor stub exposing handler metadata for tests."""
+
+    def __init__(self, *, input_types=None, handlers=None):
+        if input_types is not None:
+            self.input_types = list(input_types)
+        if handlers is not None:
+            self._handlers = dict(handlers)
+
+
+class _DummyWorkflow:
+    """Simple workflow stub returning configured start executor."""
+
+    def __init__(self, start_executor):
+        self._start_executor = start_executor
+
+    def get_start_executor(self):
+        return self._start_executor
 
 
 @pytest.fixture
 def test_entities_dir():
     """Use the samples directory which has proper entity structure."""
+    # Get the samples directory from the main python samples folder
     current_dir = Path(__file__).parent
-    samples_dir = current_dir.parent / "samples"
+    # Navigate to python/samples/getting_started/devui
+    samples_dir = current_dir.parent.parent.parent / "samples" / "getting_started" / "devui"
     return str(samples_dir.resolve())
 
 
@@ -51,7 +73,11 @@ async def test_executor_entity_discovery(executor):
     for entity in entities:
         assert entity.id, "Entity should have an ID"
         assert entity.name, "Entity should have a name"
-        assert entity.type in ["agent", "workflow"], "Entity should have valid type"
+        # Entities with only an `__init__.py` file cannot have their type determined
+        # until the module is imported during lazy loading. This is why 'unknown' type exists.
+        assert entity.type in ["agent", "workflow", "unknown"], (
+            "Entity should have valid type (unknown allowed during discovery phase)"
+        )
 
 
 async def test_executor_get_entity_info(executor):
@@ -62,7 +88,7 @@ async def test_executor_get_entity_info(executor):
     entity_info = executor.get_entity_info(entity_id)
     assert entity_info is not None
     assert entity_info.id == entity_id
-    assert entity_info.type in ["agent", "workflow"]
+    assert entity_info.type in ["agent", "workflow", "unknown"]
 
 
 @pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="requires OpenAI API key")
@@ -74,13 +100,17 @@ async def test_executor_sync_execution(executor):
     assert len(agents) > 0, "No agent entities found for testing"
     agent_id = agents[0].id
 
+    # Use simplified routing: model = entity_id
     request = AgentFrameworkRequest(
-        model="agent-framework", input="test data", stream=False, extra_body=AgentFrameworkExtraBody(entity_id=agent_id)
+        model=agent_id,  # Model IS the entity_id
+        input="test data",
+        stream=False,
     )
 
     response = await executor.execute_sync(request)
 
-    assert response.model == "agent-framework"
+    # With simplified routing, response.model reflects the actual agent_id
+    assert response.model == agent_id
     assert response.object == "response"
     assert len(response.output) > 0
     assert response.usage.total_tokens > 0
@@ -96,11 +126,11 @@ async def test_executor_streaming_execution(executor):
     assert len(agents) > 0, "No agent entities found for testing"
     agent_id = agents[0].id
 
+    # Use simplified routing: model = entity_id
     request = AgentFrameworkRequest(
-        model="agent-framework",
+        model=agent_id,  # Model IS the entity_id
         input="streaming test",
         stream=True,
-        extra_body=AgentFrameworkExtraBody(entity_id=agent_id),
     )
 
     event_count = 0
@@ -125,16 +155,112 @@ async def test_executor_invalid_entity_id(executor):
 
 
 async def test_executor_missing_entity_id(executor):
-    """Test execution without entity ID."""
+    """Test get_entity_id returns model field (simplified routing)."""
     request = AgentFrameworkRequest(
-        model="agent-framework",
+        model="my_agent",
         input="test",
         stream=False,
-        extra_body=None,  # Test case for missing entity_id
     )
 
+    # With simplified routing, model field IS the entity_id
     entity_id = request.get_entity_id()
-    assert entity_id is None
+    assert entity_id == "my_agent"
+
+
+def test_executor_get_start_executor_message_types_uses_handlers():
+    """Ensure handler metadata is surfaced when input_types missing."""
+    executor = AgentFrameworkExecutor(EntityDiscovery(None), MessageMapper())
+    start_executor = _DummyStartExecutor(handlers={str: lambda *_: None})
+    workflow = _DummyWorkflow(start_executor)
+
+    start, message_types = executor._get_start_executor_message_types(workflow)
+
+    assert start is start_executor
+    assert str in message_types
+
+
+def test_executor_select_primary_input_prefers_string():
+    """Select string input even when discovered after other handlers."""
+    from agent_framework_devui._utils import select_primary_input_type
+
+    placeholder_type = type("Placeholder", (), {})
+
+    chosen = select_primary_input_type([placeholder_type, str])
+
+    assert chosen is str
+
+
+def test_executor_parse_structured_prefers_input_field():
+    """Structured payloads map to string when agent start requires text."""
+    executor = AgentFrameworkExecutor(EntityDiscovery(None), MessageMapper())
+    start_executor = _DummyStartExecutor(handlers={type("Req", (), {}): None, str: lambda *_: None})
+    workflow = _DummyWorkflow(start_executor)
+
+    parsed = executor._parse_structured_workflow_input(workflow, {"input": "hello"})
+
+    assert parsed == "hello"
+
+
+def test_executor_parse_raw_falls_back_to_string():
+    """Raw inputs remain untouched when start executor expects text."""
+    executor = AgentFrameworkExecutor(EntityDiscovery(None), MessageMapper())
+    start_executor = _DummyStartExecutor(handlers={str: lambda *_: None})
+    workflow = _DummyWorkflow(start_executor)
+
+    parsed = executor._parse_raw_workflow_input(workflow, "hi there")
+
+    assert parsed == "hi there"
+
+
+async def test_executor_handles_non_streaming_agent():
+    """Test executor can handle agents with only run() method (no run_stream)."""
+    from agent_framework import AgentRunResponse, AgentThread, ChatMessage, Role, TextContent
+
+    class NonStreamingAgent:
+        """Agent with only run() method - does NOT satisfy full AgentProtocol."""
+
+        id = "non_streaming_test"
+        name = "Non-Streaming Test Agent"
+        description = "Test agent without run_stream()"
+
+        @property
+        def display_name(self):
+            return self.name
+
+        async def run(self, messages=None, *, thread=None, **kwargs):
+            return AgentRunResponse(
+                messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text=f"Processed: {messages}")])],
+                response_id="test_123",
+            )
+
+        def get_new_thread(self, **kwargs):
+            return AgentThread()
+
+    # Create executor and register agent
+    discovery = EntityDiscovery(None)
+    mapper = MessageMapper()
+    executor = AgentFrameworkExecutor(discovery, mapper)
+
+    agent = NonStreamingAgent()
+    entity_info = await discovery.create_entity_info_from_object(agent, source="test")
+    discovery.register_entity(entity_info.id, entity_info, agent)
+
+    # Execute non-streaming agent (use simplified routing)
+    request = AgentFrameworkRequest(
+        model=entity_info.id,  # Model IS the entity_id
+        input="hello",
+        stream=True,  # DevUI always streams
+    )
+
+    events = []
+    async for event in executor.execute_streaming(request):
+        events.append(event)
+
+    # Should get events even though agent doesn't stream
+    assert len(events) > 0
+    text_events = [e for e in events if hasattr(e, "type") and e.type == "response.output_text.delta"]
+    assert len(text_events) > 0
+    assert "Processed: hello" in text_events[0].delta
 
 
 if __name__ == "__main__":
@@ -163,12 +289,11 @@ class StreamingAgent:
             entities = await executor.discover_entities()
 
             if entities:
-                # Test sync execution
+                # Test sync execution (use simplified routing)
                 request = AgentFrameworkRequest(
-                    model="agent-framework",
+                    model=entities[0].id,  # Model IS the entity_id
                     input="test input",
                     stream=False,
-                    extra_body=AgentFrameworkExtraBody(entity_id=entities[0].id),
                 )
 
                 await executor.execute_sync(request)

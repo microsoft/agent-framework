@@ -4,7 +4,7 @@ using System;
 using System.Threading.Tasks;
 using Microsoft.Shared.Diagnostics;
 
-using ExecutorFactoryF = System.Func<System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.Workflows.Executor>>;
+using ExecutorFactoryF = System.Func<string, System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.Workflows.Executor>>;
 
 namespace Microsoft.Agents.AI.Workflows;
 
@@ -12,20 +12,30 @@ internal sealed class ExecutorRegistration(string id, Type executorType, Executo
 {
     public string Id { get; } = Throw.IfNullOrEmpty(id);
     public Type ExecutorType { get; } = Throw.IfNull(executorType);
-    public ExecutorFactoryF ProviderAsync { get; } = Throw.IfNull(provider);
-    public bool IsNotExecutorInstance { get; } = rawData is not Executor;
-    public bool IsUnresettableSharedInstance { get; } = rawData is Executor && rawData is not IResettableExecutor;
+    private ExecutorFactoryF ProviderAsync { get; } = Throw.IfNull(provider);
+
+    public bool IsSharedInstance { get; } = rawData is Executor;
+
+    /// <summary>
+    /// Gets a value whether instances of the executor created from this registration can be reset between subsequent
+    /// runs from the same <see cref="Workflow"/> instance. This value is not relevant for executors that <see
+    /// cref="SupportsConcurrent"/>.
+    /// </summary>
+    public bool SupportsResetting { get; } = rawData is Executor &&
+                                             // Cross-Run Shareable executors are "trivially" resettable, since they
+                                             // have no on-object state.
+                                             rawData is IResettableExecutor;
+
+    /// <summary>
+    /// Gets a value whether instances of the executor created from this registration can be used in concurrent runs
+    /// from the same <see cref="Workflow"/> instance.
+    /// </summary>
+    public bool SupportsConcurrent { get; } = rawData is not Executor executor || executor.IsCrossRunShareable;
 
     internal async ValueTask<bool> TryResetAsync()
     {
-        if (this.IsUnresettableSharedInstance)
-        {
-            return false;
-        }
-
-        // If this is not an executor instance, this is a factory, and the expectation is that the factory will
-        // create separate instances of executors.
-        if (this.IsNotExecutorInstance)
+        // Non-shared instances do not need resetting
+        if (!this.IsSharedInstance)
         {
             return true;
         }
@@ -58,5 +68,5 @@ internal sealed class ExecutorRegistration(string id, Type executorType, Executo
         return executor;
     }
 
-    public async ValueTask<Executor> CreateInstanceAsync() => this.CheckId(await this.ProviderAsync().ConfigureAwait(false));
+    public async ValueTask<Executor> CreateInstanceAsync(string runId) => this.CheckId(await this.ProviderAsync(runId).ConfigureAwait(false));
 }

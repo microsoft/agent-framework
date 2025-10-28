@@ -599,6 +599,48 @@ class TestSerializationWorkflowClasses:
         assert "_shared_state" not in data
         assert "_runner" not in data
 
+    def test_workflow_name_description_serialization(self) -> None:
+        """Test that workflow name and description are serialized correctly."""
+        # Test 1: With name and description
+        workflow1 = (
+            WorkflowBuilder(name="Test Pipeline", description="Test workflow description")
+            .set_start_executor(SampleExecutor(id="e1"))
+            .build()
+        )
+
+        assert workflow1.name == "Test Pipeline"
+        assert workflow1.description == "Test workflow description"
+
+        data1 = workflow1.to_dict()
+        assert data1["name"] == "Test Pipeline"
+        assert data1["description"] == "Test workflow description"
+
+        # Test JSON serialization
+        json_str1 = workflow1.to_json()
+        parsed1 = json.loads(json_str1)
+        assert parsed1["name"] == "Test Pipeline"
+        assert parsed1["description"] == "Test workflow description"
+
+        # Test 2: Without name and description (defaults)
+        workflow2 = WorkflowBuilder().set_start_executor(SampleExecutor(id="e2")).build()
+
+        assert workflow2.name is None
+        assert workflow2.description is None
+
+        data2 = workflow2.to_dict()
+        assert "name" not in data2  # Should not include None values
+        assert "description" not in data2
+
+        # Test 3: With only name (no description)
+        workflow3 = WorkflowBuilder(name="Named Only").set_start_executor(SampleExecutor(id="e3")).build()
+
+        assert workflow3.name == "Named Only"
+        assert workflow3.description is None
+
+        data3 = workflow3.to_dict()
+        assert data3["name"] == "Named Only"
+        assert "description" not in data3
+
     def test_executor_field_validation(self) -> None:
         """Test that Executor field validation works correctly."""
         # Valid executor

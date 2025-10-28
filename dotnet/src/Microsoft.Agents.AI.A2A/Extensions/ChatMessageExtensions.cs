@@ -11,19 +11,19 @@ namespace Microsoft.Extensions.AI;
 /// </summary>
 internal static class ChatMessageExtensions
 {
-    internal static Message ToA2AMessage(this IEnumerable<ChatMessage> messages)
+    internal static AgentMessage ToA2AMessage(this IEnumerable<ChatMessage> messages)
     {
         List<Part> allParts = [];
 
         foreach (var message in messages)
         {
-            if (message.Contents.ToA2AParts() is { Count: > 0 } ps)
+            if (message.Contents.ToParts() is { Count: > 0 } ps)
             {
                 allParts.AddRange(ps);
             }
         }
 
-        return new Message
+        return new AgentMessage
         {
             MessageId = Guid.NewGuid().ToString("N"),
             Role = MessageRole.User,

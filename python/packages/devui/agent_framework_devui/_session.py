@@ -67,7 +67,7 @@ class SessionManager:
             logger.debug(f"Closed session: {session_id}")
 
     def add_request_record(
-        self, session_id: str, entity_id: str, executor_name: str, request_input: Any, model: str
+        self, session_id: str, entity_id: str, executor_name: str, request_input: Any, model_id: str
     ) -> str:
         """Add a request record to a session.
 
@@ -76,7 +76,7 @@ class SessionManager:
             entity_id: ID of the entity being executed
             executor_name: Name of the executor
             request_input: Input for the request
-            model: Model name
+            model_id: Model name
 
         Returns:
             Request ID
@@ -91,7 +91,7 @@ class SessionManager:
             "entity_id": entity_id,
             "executor": executor_name,
             "input": request_input,
-            "model": model,
+            "model_id": model_id,
             "stream": True,
         }
         session["requests"].append(request_record)

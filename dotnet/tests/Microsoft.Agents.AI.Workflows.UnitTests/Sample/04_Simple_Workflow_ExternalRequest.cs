@@ -13,7 +13,7 @@ internal static class Step4EntryPoint
 
     public static Workflow CreateWorkflowInstance(out JudgeExecutor judge)
     {
-        InputPort guessNumber = InputPort.Create<NumberSignal, int>("GuessNumber");
+        RequestPort guessNumber = RequestPort.Create<NumberSignal, int>("GuessNumber");
         judge = new(JudgeId, 42); // Let's say the target number is 42
 
         return new WorkflowBuilder(guessNumber)
@@ -21,12 +21,6 @@ internal static class Step4EntryPoint
             .AddEdge(judge, guessNumber, (NumberSignal signal) => signal != NumberSignal.Matched)
             .WithOutputFrom(judge)
             .Build();
-    }
-
-    public static ValueTask<Workflow<NumberSignal>?> GetPromotedWorklowInstanceAsync()
-    {
-        Workflow workflow = CreateWorkflowInstance(out _);
-        return workflow.TryPromoteAsync<NumberSignal>();
     }
 
     public static Workflow WorkflowInstance
@@ -37,13 +31,13 @@ internal static class Step4EntryPoint
         }
     }
 
-    public static async ValueTask<string> RunAsync(TextWriter writer, Func<string, int> userGuessCallback)
+    public static async ValueTask<string> RunAsync(TextWriter writer, Func<string, int> userGuessCallback, IWorkflowExecutionEnvironment environment)
     {
         NumberSignal signal = NumberSignal.Init;
         string? prompt = UpdatePrompt(null, signal);
 
         Workflow workflow = WorkflowInstance;
-        StreamingRun handle = await InProcessExecution.StreamAsync(workflow, NumberSignal.Init).ConfigureAwait(false);
+        StreamingRun handle = await environment.StreamAsync(workflow, NumberSignal.Init).ConfigureAwait(false);
 
         List<ExternalRequest> requests = [];
         await foreach (WorkflowEvent evt in handle.WatchStreamAsync().ConfigureAwait(false))
@@ -54,13 +48,15 @@ internal static class Step4EntryPoint
                     switch (outputEvent.SourceId)
                     {
                         case JudgeId:
-                            if (!outputEvent.Is<NumberSignal>())
+                            if (outputEvent.Is(out NumberSignal newSignal))
+                            {
+                                prompt = UpdatePrompt(prompt, signal = newSignal);
+                            }
+                            else if (!outputEvent.Is<TryCount>())
                             {
                                 throw new InvalidOperationException($"Unexpected output type {outputEvent.Data!.GetType()}");
                             }
 
-                            signal = outputEvent.As<NumberSignal?>()!.Value;
-                            prompt = UpdatePrompt(prompt, signal);
                             break;
                     }
 

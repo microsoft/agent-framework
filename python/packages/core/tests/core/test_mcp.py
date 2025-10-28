@@ -3,7 +3,7 @@
 import os
 from contextlib import _AsyncGeneratorContextManager  # type: ignore
 from typing import Any
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from mcp import types
@@ -33,7 +33,7 @@ from agent_framework._mcp import (
     _mcp_type_to_ai_content,
     _normalize_mcp_name,
 )
-from agent_framework.exceptions import ToolExecutionException
+from agent_framework.exceptions import ToolException, ToolExecutionException
 
 # Integration test skip condition
 skip_if_mcp_integration_tests_disabled = pytest.mark.skipif(
@@ -604,6 +604,129 @@ async def test_local_mcp_server_prompt_execution():
         assert result[0].contents[0].text == "Test message"
 
 
+@pytest.mark.parametrize(
+    "approval_mode,expected_approvals",
+    [
+        ("always_require", {"tool_one": "always_require", "tool_two": "always_require"}),
+        ("never_require", {"tool_one": "never_require", "tool_two": "never_require"}),
+        (
+            {"always_require_approval": ["tool_one"], "never_require_approval": ["tool_two"]},
+            {"tool_one": "always_require", "tool_two": "never_require"},
+        ),
+    ],
+)
+async def test_mcp_tool_approval_mode(approval_mode, expected_approvals):
+    """Test MCPTool approval_mode parameter with various configurations.
+
+    The approval_mode parameter controls whether tools require approval before execution.
+    It can be set globally ("always_require" or "never_require") or per-tool using a dict.
+    """
+
+    class TestServer(MCPTool):
+        async def connect(self):
+            self.session = Mock(spec=ClientSession)
+            self.session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(
+                    tools=[
+                        types.Tool(
+                            name="tool_one",
+                            description="First tool",
+                            inputSchema={
+                                "type": "object",
+                                "properties": {"param": {"type": "string"}},
+                            },
+                        ),
+                        types.Tool(
+                            name="tool_two",
+                            description="Second tool",
+                            inputSchema={
+                                "type": "object",
+                                "properties": {"param": {"type": "string"}},
+                            },
+                        ),
+                    ]
+                )
+            )
+
+        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+            return None
+
+    server = TestServer(name="test_server", approval_mode=approval_mode)
+    async with server:
+        await server.load_tools()
+        assert len(server.functions) == 2
+
+        # Verify each tool has the expected approval mode
+        for func in server.functions:
+            assert func.approval_mode == expected_approvals[func.name]
+
+
+@pytest.mark.parametrize(
+    "allowed_tools,expected_count,expected_names",
+    [
+        (None, 3, ["tool_one", "tool_two", "tool_three"]),  # None means all tools are allowed
+        (["tool_one"], 1, ["tool_one"]),  # Only tool_one is allowed
+        (["tool_one", "tool_three"], 2, ["tool_one", "tool_three"]),  # Two tools allowed
+        (["nonexistent_tool"], 0, []),  # No matching tools
+    ],
+)
+async def test_mcp_tool_allowed_tools(allowed_tools, expected_count, expected_names):
+    """Test MCPTool allowed_tools parameter with various configurations.
+
+    The allowed_tools parameter filters which tools are exposed via the functions property.
+    When None, all loaded tools are available. When set to a list, only tools whose names
+    are in that list are exposed.
+    """
+
+    class TestServer(MCPTool):
+        async def connect(self):
+            self.session = Mock(spec=ClientSession)
+            self.session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(
+                    tools=[
+                        types.Tool(
+                            name="tool_one",
+                            description="First tool",
+                            inputSchema={
+                                "type": "object",
+                                "properties": {"param": {"type": "string"}},
+                            },
+                        ),
+                        types.Tool(
+                            name="tool_two",
+                            description="Second tool",
+                            inputSchema={
+                                "type": "object",
+                                "properties": {"param": {"type": "string"}},
+                            },
+                        ),
+                        types.Tool(
+                            name="tool_three",
+                            description="Third tool",
+                            inputSchema={
+                                "type": "object",
+                                "properties": {"param": {"type": "string"}},
+                            },
+                        ),
+                    ]
+                )
+            )
+
+        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+            return None
+
+    server = TestServer(name="test_server", allowed_tools=allowed_tools)
+    async with server:
+        await server.load_tools()
+        # _functions should contain all tools
+        assert len(server._functions) == 3
+
+        # functions property should filter based on allowed_tools
+        assert len(server.functions) == expected_count
+        actual_names = [func.name for func in server.functions]
+        assert sorted(actual_names) == sorted(expected_names)
+
+
 # Server implementation tests
 def test_local_mcp_stdio_tool_init():
     """Test MCPStdioTool initialization."""
@@ -653,3 +776,288 @@ async def test_streamable_http_integration():
 
         result = await func.invoke(query="What is Agent Framework?")
         assert result[0].text is not None
+
+
+async def test_mcp_tool_message_handler_notification():
+    """Test that message_handler correctly processes tools/list_changed and prompts/list_changed
+    notifications."""
+    tool = MCPStdioTool(name="test_tool", command="python")
+
+    # Mock the load_tools and load_prompts methods
+    tool.load_tools = AsyncMock()
+    tool.load_prompts = AsyncMock()
+
+    # Test tools list changed notification
+    tools_notification = Mock(spec=types.ServerNotification)
+    tools_notification.root = Mock()
+    tools_notification.root.method = "notifications/tools/list_changed"
+
+    result = await tool.message_handler(tools_notification)
+    assert result is None
+    tool.load_tools.assert_called_once()
+
+    # Reset mock
+    tool.load_tools.reset_mock()
+
+    # Test prompts list changed notification
+    prompts_notification = Mock(spec=types.ServerNotification)
+    prompts_notification.root = Mock()
+    prompts_notification.root.method = "notifications/prompts/list_changed"
+
+    result = await tool.message_handler(prompts_notification)
+    assert result is None
+    tool.load_prompts.assert_called_once()
+
+    # Test unhandled notification
+    unknown_notification = Mock(spec=types.ServerNotification)
+    unknown_notification.root = Mock()
+    unknown_notification.root.method = "notifications/unknown"
+
+    result = await tool.message_handler(unknown_notification)
+    assert result is None
+
+
+async def test_mcp_tool_message_handler_error():
+    """Test that message_handler gracefully handles exceptions by logging and returning None."""
+    tool = MCPStdioTool(name="test_tool", command="python")
+
+    # Test with exception message
+    test_exception = RuntimeError("Test error message")
+
+    # The message handler should log the error and return None
+    result = await tool.message_handler(test_exception)
+    assert result is None
+
+
+async def test_mcp_tool_sampling_callback_no_client():
+    """Test sampling callback error path when no chat client is available."""
+    tool = MCPStdioTool(name="test_tool", command="python")
+
+    # Create minimal params mock
+    params = Mock()
+    params.messages = []
+
+    result = await tool.sampling_callback(Mock(), params)
+
+    assert isinstance(result, types.ErrorData)
+    assert result.code == types.INTERNAL_ERROR
+    assert "No chat client available" in result.message
+
+
+async def test_mcp_tool_sampling_callback_chat_client_exception():
+    """Test sampling callback when chat client raises exception."""
+    tool = MCPStdioTool(name="test_tool", command="python")
+
+    # Mock chat client that raises exception
+    mock_chat_client = AsyncMock()
+    mock_chat_client.get_response.side_effect = RuntimeError("Chat client error")
+
+    tool.chat_client = mock_chat_client
+
+    # Create mock params
+    params = Mock()
+    mock_message = Mock()
+    mock_message.role = "user"
+    mock_message.content = Mock()
+    mock_message.content.text = "Test question"
+    params.messages = [mock_message]
+    params.temperature = None
+    params.maxTokens = None
+    params.stopSequences = None
+
+    result = await tool.sampling_callback(Mock(), params)
+
+    assert isinstance(result, types.ErrorData)
+    assert result.code == types.INTERNAL_ERROR
+    assert "Failed to get chat message content: Chat client error" in result.message
+
+
+async def test_mcp_tool_sampling_callback_no_valid_content():
+    """Test sampling callback when response has no valid content types."""
+    from agent_framework import ChatMessage, DataContent, Role
+
+    tool = MCPStdioTool(name="test_tool", command="python")
+
+    # Mock chat client with response containing only invalid content types
+    mock_chat_client = AsyncMock()
+    mock_response = Mock()
+    mock_response.messages = [
+        ChatMessage(
+            role=Role.ASSISTANT,
+            contents=[DataContent(uri="data:application/json;base64,e30K", media_type="application/json")],
+        )
+    ]
+    mock_response.model_id = "test-model"
+    mock_chat_client.get_response.return_value = mock_response
+
+    tool.chat_client = mock_chat_client
+
+    # Create mock params
+    params = Mock()
+    mock_message = Mock()
+    mock_message.role = "user"
+    mock_message.content = Mock()
+    mock_message.content.text = "Test question"
+    params.messages = [mock_message]
+    params.temperature = None
+    params.maxTokens = None
+    params.stopSequences = None
+
+    result = await tool.sampling_callback(Mock(), params)
+
+    assert isinstance(result, types.ErrorData)
+    assert result.code == types.INTERNAL_ERROR
+    assert "Failed to get right content types from the response." in result.message
+
+
+# Test error handling in connect() method
+
+
+async def test_connect_session_creation_failure():
+    """Test connect() raises ToolException when ClientSession creation fails."""
+    tool = MCPStdioTool(name="test", command="test-command")
+
+    # Mock successful transport creation
+    mock_transport = (Mock(), Mock())  # (read_stream, write_stream)
+    mock_context_manager = Mock()
+    mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
+    mock_context_manager.__aexit__ = AsyncMock(return_value=None)
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)
+
+    # Mock ClientSession to raise an exception
+    with patch("agent_framework._mcp.ClientSession") as mock_session_class:
+        mock_session_class.side_effect = RuntimeError("Session creation failed")
+
+        with pytest.raises(ToolException) as exc_info:
+            await tool.connect()
+
+        assert "Failed to create MCP session" in str(exc_info.value)
+        assert "Session creation failed" in str(exc_info.value.__cause__)
+
+
+async def test_connect_initialization_failure_http_no_command():
+    """Test connect() when session.initialize() fails for HTTP tool (no command attribute)."""
+    tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
+
+    # Mock successful transport creation
+    mock_transport = (Mock(), Mock())
+    mock_context_manager = Mock()
+    mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
+    mock_context_manager.__aexit__ = AsyncMock(return_value=None)
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)
+
+    # Mock successful session creation but failed initialization
+    mock_session = Mock()
+    mock_session.initialize = AsyncMock(side_effect=ConnectionError("Server not ready"))
+
+    with patch("agent_framework._mcp.ClientSession") as mock_session_class:
+        mock_session_class.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_class.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        with pytest.raises(ToolException) as exc_info:
+            await tool.connect()
+
+        # Should use generic error message since HTTP tool doesn't have command
+        assert "MCP server failed to initialize" in str(exc_info.value)
+        assert "Server not ready" in str(exc_info.value)
+
+
+async def test_connect_cleanup_on_transport_failure():
+    """Test that _exit_stack.aclose() is called when transport creation fails."""
+    tool = MCPStdioTool(name="test", command="test-command")
+
+    # Mock _exit_stack.aclose to verify it's called
+    tool._exit_stack.aclose = AsyncMock()
+
+    # Mock get_mcp_client to raise an exception
+    tool.get_mcp_client = Mock(side_effect=RuntimeError("Transport failed"))
+
+    with pytest.raises(ToolException):
+        await tool.connect()
+
+    # Verify cleanup was called
+    tool._exit_stack.aclose.assert_called_once()
+
+
+async def test_connect_cleanup_on_initialization_failure():
+    """Test that _exit_stack.aclose() is called when initialization fails."""
+    tool = MCPStdioTool(name="test", command="test-command")
+
+    # Mock _exit_stack.aclose to verify it's called
+    tool._exit_stack.aclose = AsyncMock()
+
+    # Mock successful transport creation
+    mock_transport = (Mock(), Mock())
+    mock_context_manager = Mock()
+    mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
+    mock_context_manager.__aexit__ = AsyncMock(return_value=None)
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)
+
+    # Mock successful session creation but failed initialization
+    mock_session = Mock()
+    mock_session.initialize = AsyncMock(side_effect=RuntimeError("Init failed"))
+
+    with patch("agent_framework._mcp.ClientSession") as mock_session_class:
+        mock_session_class.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_class.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        with pytest.raises(ToolException):
+            await tool.connect()
+
+        # Verify cleanup was called
+        tool._exit_stack.aclose.assert_called_once()
+
+
+def test_mcp_stdio_tool_get_mcp_client_with_env_and_kwargs():
+    """Test MCPStdioTool.get_mcp_client() with environment variables and client kwargs."""
+    env_vars = {"PATH": "/usr/bin", "DEBUG": "1"}
+    tool = MCPStdioTool(name="test", command="test-command", env=env_vars, custom_param="value1", another_param=42)
+
+    with patch("agent_framework._mcp.stdio_client"), patch("agent_framework._mcp.StdioServerParameters") as mock_params:
+        tool.get_mcp_client()
+
+        # Verify all parameters including custom kwargs were passed
+        mock_params.assert_called_once_with(
+            command="test-command", args=[], env=env_vars, custom_param="value1", another_param=42
+        )
+
+
+def test_mcp_streamable_http_tool_get_mcp_client_all_params():
+    """Test MCPStreamableHTTPTool.get_mcp_client() with all parameters."""
+    tool = MCPStreamableHTTPTool(
+        name="test",
+        url="http://example.com",
+        headers={"Auth": "token"},
+        timeout=30.0,
+        sse_read_timeout=10.0,
+        terminate_on_close=True,
+        custom_param="test",
+    )
+
+    with patch("agent_framework._mcp.streamablehttp_client") as mock_http_client:
+        tool.get_mcp_client()
+
+        # Verify all parameters were passed
+        mock_http_client.assert_called_once_with(
+            url="http://example.com",
+            headers={"Auth": "token"},
+            timeout=30.0,
+            sse_read_timeout=10.0,
+            terminate_on_close=True,
+            custom_param="test",
+        )
+
+
+def test_mcp_websocket_tool_get_mcp_client_with_kwargs():
+    """Test MCPWebsocketTool.get_mcp_client() with client kwargs."""
+    tool = MCPWebsocketTool(
+        name="test", url="wss://example.com", max_size=1024, ping_interval=30, compression="deflate"
+    )
+
+    with patch("agent_framework._mcp.websocket_client") as mock_ws_client:
+        tool.get_mcp_client()
+
+        # Verify all kwargs were passed
+        mock_ws_client.assert_called_once_with(
+            url="wss://example.com", max_size=1024, ping_interval=30, compression="deflate"
+        )

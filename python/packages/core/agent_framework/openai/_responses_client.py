@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import AsyncIterable, Mapping, MutableMapping, MutableSequence, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
 from datetime import datetime
 from itertools import chain
 from typing import Any, TypeVar
@@ -57,6 +57,7 @@ from .._types import (
     UriContent,
     UsageContent,
     UsageDetails,
+    prepare_function_call_results,
 )
 from ..exceptions import (
     ServiceInitializationError,
@@ -65,7 +66,7 @@ from ..exceptions import (
 )
 from ..observability import use_observability
 from ._exceptions import OpenAIContentFilterException
-from ._shared import OpenAIBase, OpenAIConfigMixin, OpenAISettings, prepare_function_call_results
+from ._shared import OpenAIBase, OpenAIConfigMixin, OpenAISettings
 
 logger = get_logger("agent_framework.openai")
 
@@ -299,27 +300,27 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
 
     def _prepare_options(self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions) -> dict[str, Any]:
         """Take ChatOptions and create the specific options for Responses API."""
-        options_dict: dict[str, Any] = {}
-
-        if chat_options.max_tokens is not None:
-            options_dict["max_output_tokens"] = chat_options.max_tokens
-
-        if chat_options.temperature is not None:
-            options_dict["temperature"] = chat_options.temperature
-
-        if chat_options.top_p is not None:
-            options_dict["top_p"] = chat_options.top_p
-
-        if chat_options.user is not None:
-            options_dict["user"] = chat_options.user
-
-        # messages
-        if instructions := options_dict.pop("instructions", None):
-            messages = [ChatMessage(role="system", text=instructions), *messages]
-        request_input = self._prepare_chat_messages_for_request(messages)
-        if not request_input:
-            raise ServiceInvalidRequestError("Messages are required for chat completions")
-        options_dict["input"] = request_input
+        options_dict: dict[str, Any] = chat_options.to_dict(
+            exclude={
+                "type",
+                "response_format",  # handled in inner get methods
+                "presence_penalty",  # not supported
+                "frequency_penalty",  # not supported
+                "logit_bias",  # not supported
+                "seed",  # not supported
+                "stop",  # not supported
+                "instructions",  # already added as system message
+            }
+        )
+        translations = {
+            "model_id": "model",
+            "allow_multiple_tool_calls": "parallel_tool_calls",
+            "conversation_id": "previous_response_id",
+            "max_tokens": "max_output_tokens",
+        }
+        for old_key, new_key in translations.items():
+            if old_key in options_dict and old_key != new_key:
+                options_dict[new_key] = options_dict.pop(old_key)
 
         # tools
         if chat_options.tools is None:
@@ -327,13 +328,23 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         else:
             options_dict["tools"] = self._tools_to_response_tools(chat_options.tools)
 
-        # other settings
-        options_dict["store"] = chat_options.store is True
-
-        if chat_options.conversation_id:
-            options_dict["previous_response_id"] = chat_options.conversation_id
-        if "model" not in options_dict:
+        # model id
+        if not options_dict.get("model"):
             options_dict["model"] = self.model_id
+
+        # messages
+        request_input = self._prepare_chat_messages_for_request(messages)
+        if not request_input:
+            raise ServiceInvalidRequestError("Messages are required for chat completions")
+        options_dict["input"] = request_input
+
+        # additional provider specific settings
+        if additional_properties := options_dict.pop("additional_properties", None):
+            for key, value in additional_properties.items():
+                if value is not None:
+                    options_dict[key] = value
+        if "store" not in options_dict:
+            options_dict["store"] = False
         return options_dict
 
     def _prepare_chat_messages_for_request(self, chat_messages: Sequence[ChatMessage]) -> list[dict[str, Any]]:
@@ -380,6 +391,9 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
             args["metadata"] = message.additional_properties
         for content in message.contents:
             match content:
+                case TextReasoningContent():
+                    # Don't send reasoning content back to model
+                    continue
                 case FunctionResultContent():
                     new_args: dict[str, Any] = {}
                     new_args.update(self._openai_content_parser(message.role, content, call_id_to_id))
@@ -453,6 +467,19 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                             "format": format,
                         },
                     }
+                if content.has_top_level_media_type("application"):
+                    filename = getattr(content, "filename", None) or (
+                        content.additional_properties.get("filename")
+                        if hasattr(content, "additional_properties") and content.additional_properties
+                        else None
+                    )
+                    file_obj = {
+                        "type": "input_file",
+                        "file_data": content.uri,
+                    }
+                    if filename:
+                        file_obj["filename"] = filename
+                    return file_obj
                 return {}
             case FunctionCallContent():
                 return {
@@ -461,6 +488,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                     "type": "function_call",
                     "name": content.name,
                     "arguments": content.arguments,
+                    "status": None,
                 }
             case FunctionResultContent():
                 # call_id for the result needs to be the same as the call_id for the function call
@@ -471,6 +499,8 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                 }
                 if content.result:
                     args["output"] = prepare_function_call_results(content.result)
+                if content.exception:
+                    args["output"] = "Error: " + str(content.exception)
                 return args
             case FunctionApprovalRequestContent():
                 return {
@@ -613,6 +643,11 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                                     raw_representation=reasoning_content,
                                     additional_properties=additional_properties,
                                 )
+                            )
+                    if hasattr(item, "summary") and item.summary:
+                        for summary in item.summary:
+                            contents.append(
+                                TextReasoningContent(text=summary.text, raw_representation=summary)  # type: ignore[arg-type]
                             )
                 case "code_interpreter_call":  # ResponseOutputCodeInterpreterCall
                     if hasattr(item, "outputs") and item.outputs:
@@ -942,8 +977,9 @@ class OpenAIResponsesClient(OpenAIConfigMixin, OpenAIBaseResponsesClient):
 
     def __init__(
         self,
+        *,
         model_id: str | None = None,
-        api_key: str | None = None,
+        api_key: str | Callable[[], str | Awaitable[str]] | None = None,
         org_id: str | None = None,
         base_url: str | None = None,
         default_headers: Mapping[str, str] | None = None,
@@ -953,25 +989,42 @@ class OpenAIResponsesClient(OpenAIConfigMixin, OpenAIBaseResponsesClient):
         env_file_encoding: str | None = None,
         **kwargs: Any,
     ) -> None:
-        """Initialize an OpenAIChatCompletion service.
+        """Initialize an OpenAI Responses client.
 
-        Args:
-            model_id: OpenAI model name, see
-                https://platform.openai.com/docs/models
-            api_key: The optional API key to use. If provided will override,
-                the env vars or .env file value.
-            org_id: The optional org ID to use. If provided will override,
-                the env vars or .env file value.
-            base_url: The optional base URL to use. If provided will override,
+        Keyword Args:
+            model_id: OpenAI model name, see https://platform.openai.com/docs/models.
+                Can also be set via environment variable OPENAI_RESPONSES_MODEL_ID.
+            api_key: The API key to use. If provided will override the env vars or .env file value.
+                Can also be set via environment variable OPENAI_API_KEY.
+            org_id: The org ID to use. If provided will override the env vars or .env file value.
+                Can also be set via environment variable OPENAI_ORG_ID.
+            base_url: The base URL to use. If provided will override the standard value.
+                Can also be set via environment variable OPENAI_BASE_URL.
             default_headers: The default headers mapping of string keys to
-                string values for HTTP requests. (Optional)
-            async_client: An existing client to use. (Optional)
+                string values for HTTP requests.
+            async_client: An existing client to use.
             instruction_role: The role to use for 'instruction' messages, for example,
                 "system" or "developer". If not provided, the default is "system".
             env_file_path: Use the environment settings file as a fallback
-                to environment variables. (Optional)
-            env_file_encoding: The encoding of the environment settings file. (Optional)
+                to environment variables.
+            env_file_encoding: The encoding of the environment settings file.
             kwargs: Other keyword parameters.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.openai import OpenAIResponsesClient
+
+                # Using environment variables
+                # Set OPENAI_API_KEY=sk-...
+                # Set OPENAI_RESPONSES_MODEL_ID=gpt-4o
+                client = OpenAIResponsesClient()
+
+                # Or passing parameters directly
+                client = OpenAIResponsesClient(model_id="gpt-4o", api_key="sk-...")
+
+                # Or loading from a .env file
+                client = OpenAIResponsesClient(env_file_path="path/to/.env")
         """
         try:
             openai_settings = OpenAISettings(
@@ -997,7 +1050,7 @@ class OpenAIResponsesClient(OpenAIConfigMixin, OpenAIBaseResponsesClient):
 
         super().__init__(
             model_id=openai_settings.responses_model_id,
-            api_key=openai_settings.api_key.get_secret_value() if openai_settings.api_key else None,
+            api_key=self._get_api_key(openai_settings.api_key),
             org_id=openai_settings.org_id,
             default_headers=default_headers,
             client=async_client,

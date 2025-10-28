@@ -14,14 +14,48 @@ namespace Microsoft.Agents.AI.Workflows;
 public static class ExecutorIshConfigurationExtensions
 {
     /// <summary>
+    /// Configures a factory method for creating an <see cref="Executor"/> of type <typeparamref name="TExecutor"/>, using the
+    /// type name as the id.
+    /// </summary>
+    /// <remarks>
+    /// Note that Executor Ids must be unique within a workflow.
+    ///
+    /// Although this will generally result in a delay-instantiated <see cref="Executor"/> once messages are available
+    /// for it, it will be instantiated if a <see cref="ProtocolDescriptor"/> for the <see cref="Workflow"/> is requested,
+    /// and it is the starting executor.
+    /// </remarks>
+    /// <typeparam name="TExecutor">The type of the resulting executor</typeparam>
+    /// <param name="factoryAsync">The factory method.</param>
+    /// <returns>An ExecutorIsh instance that resolves to the result of the factory call when messages get sent to it.</returns>
+    public static ExecutorIsh ConfigureFactory<TExecutor>(this Func<string, string, ValueTask<TExecutor>> factoryAsync)
+        where TExecutor : Executor
+        => ConfigureFactory<TExecutor, ExecutorOptions>((config, runId) => factoryAsync(config.Id, runId), typeof(TExecutor).Name, options: null);
+
+    /// <summary>
+    /// Configures a factory method for creating an <see cref="Executor"/> of type <typeparamref name="TExecutor"/>, with
+    /// the specified id.
+    /// </summary>
+    /// <remarks>
+    /// Although this will generally result in a delay-instantiated <see cref="Executor"/> once messages are available
+    /// for it, it will be instantiated if a <see cref="ProtocolDescriptor"/> for the <see cref="Workflow"/> is requested,
+    /// and it is the starting executor.
+    /// </remarks>
+    /// <typeparam name="TExecutor">The type of the resulting executor</typeparam>
+    /// <param name="factoryAsync">The factory method.</param>
+    /// <param name="id">An id for the executor to be instantiated.</param>
+    /// <returns>An ExecutorIsh instance that resolves to the result of the factory call when messages get sent to it.</returns>
+    public static ExecutorIsh ConfigureFactory<TExecutor>(this Func<string, string, ValueTask<TExecutor>> factoryAsync, string id)
+        where TExecutor : Executor
+        => ConfigureFactory<TExecutor, ExecutorOptions>((_, runId) => factoryAsync(id, runId), id, options: null);
+
+    /// <summary>
     /// Configures a factory method for creating an <see cref="Executor"/> of type <typeparamref name="TExecutor"/>, with
     /// the specified id and options.
     /// </summary>
     /// <remarks>
     /// Although this will generally result in a delay-instantiated <see cref="Executor"/> once messages are available
-    /// for it, if this is used as a start node of a typed <see cref="Workflow{TInput}"/> via <see cref="Workflow.TryPromoteAsync{TInput}"/>,
-    /// it will be instantiated as part of the workflow's construction, to validate that its input type matches the
-    /// demanded <c>TInput</c>.
+    /// for it, it will be instantiated if a <see cref="ProtocolDescriptor"/> for the <see cref="Workflow"/> is requested,
+    /// and it is the starting executor.
     /// </remarks>
     /// <typeparam name="TExecutor">The type of the resulting executor</typeparam>
     /// <typeparam name="TOptions">The type of options object to be passed to the factory method.</typeparam>
@@ -29,7 +63,7 @@ public static class ExecutorIshConfigurationExtensions
     /// <param name="id">An id for the executor to be instantiated.</param>
     /// <param name="options">An optional parameter specifying the options.</param>
     /// <returns>An ExecutorIsh instance that resolves to the result of the factory call when messages get sent to it.</returns>
-    public static ExecutorIsh ConfigureFactory<TExecutor, TOptions>(this Func<Config<TOptions>, ValueTask<TExecutor>> factoryAsync, string id, TOptions? options = null)
+    public static ExecutorIsh ConfigureFactory<TExecutor, TOptions>(this Func<Config<TOptions>, string, ValueTask<TExecutor>> factoryAsync, string id, TOptions? options = null)
         where TExecutor : Executor
         where TOptions : ExecutorOptions
     {
@@ -49,6 +83,27 @@ public static class ExecutorIshConfigurationExtensions
                                ExecutorIsh.Type.Function);
 
     /// <summary>
+    /// Configures a sub-workflow executor for the specified workflow, using the provided identifier and options.
+    /// </summary>
+    /// <param name="workflow">The workflow instance to be executed as a sub-workflow. Cannot be null.</param>
+    /// <param name="id">A unique identifier for the sub-workflow execution. Used to distinguish this sub-workflow instance.</param>
+    /// <param name="options">Optional configuration options for the sub-workflow executor. If null, default options are used.</param>
+    /// <returns>An ExecutorIsh instance representing the configured sub-workflow executor.</returns>
+    public static ExecutorIsh ConfigureSubWorkflow(this Workflow workflow, string id, ExecutorOptions? options = null)
+    {
+        object ownershipToken = new();
+        workflow.TakeOwnership(ownershipToken, subworkflow: true);
+
+        Configured<WorkflowHostExecutor, ExecutorOptions> configured = new(InitHostExecutorAsync, id, options, raw: workflow);
+        return new ExecutorIsh(configured.Super<WorkflowHostExecutor, Executor, ExecutorOptions>(), typeof(WorkflowHostExecutor), ExecutorIsh.Type.Workflow);
+
+        ValueTask<WorkflowHostExecutor> InitHostExecutorAsync(Config<ExecutorOptions> config, string runId)
+        {
+            return new(new WorkflowHostExecutor(config.Id, workflow, runId, ownershipToken, config.Options));
+        }
+    }
+
+    /// <summary>
     /// Configures a function-based asynchronous message handler as an executor with the specified identifier and
     /// options.
     /// </summary>
@@ -56,9 +111,10 @@ public static class ExecutorIshConfigurationExtensions
     /// <param name="messageHandlerAsync">A delegate that defines the asynchronous function to execute for each input message.</param>
     /// <param name="id">A optional unique identifier for the executor. If <c>null</c>, will use the function argument as an id.</param>
     /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
+    /// <param name="threadsafe">Declare that the message handler may be used simultaneously by multiple runs concurrently.</param>
     /// <returns>An ExecutorIsh instance that wraps the provided asynchronous message handler and configuration.</returns>
-    public static ExecutorIsh AsExecutor<TInput>(this Func<TInput, IWorkflowContext, CancellationToken, ValueTask> messageHandlerAsync, string id, ExecutorOptions? options = null)
-        => new FunctionExecutor<TInput>(id, messageHandlerAsync, options).ToExecutorIsh(messageHandlerAsync);
+    public static ExecutorIsh AsExecutor<TInput>(this Func<TInput, IWorkflowContext, CancellationToken, ValueTask> messageHandlerAsync, string id, ExecutorOptions? options = null, bool threadsafe = false)
+        => new FunctionExecutor<TInput>(id, messageHandlerAsync, options, declareCrossRunShareable: threadsafe).ToExecutorIsh(messageHandlerAsync);
 
     /// <summary>
     /// Configures a function-based asynchronous message handler as an executor with the specified identifier and
@@ -69,9 +125,10 @@ public static class ExecutorIshConfigurationExtensions
     /// <param name="messageHandlerAsync">A delegate that defines the asynchronous function to execute for each input message.</param>
     /// <param name="id">A unique identifier for the executor.</param>
     /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
+    /// <param name="threadsafe">Declare that the message handler may be used simultaneously by multiple runs concurrently.</param>
     /// <returns>An ExecutorIsh instance that wraps the provided asynchronous message handler and configuration.</returns>
-    public static ExecutorIsh AsExecutor<TInput, TOutput>(this Func<TInput, IWorkflowContext, CancellationToken, ValueTask<TOutput>> messageHandlerAsync, string id, ExecutorOptions? options = null)
-        => new FunctionExecutor<TInput, TOutput>(Throw.IfNull(id), messageHandlerAsync, options).ToExecutorIsh(messageHandlerAsync);
+    public static ExecutorIsh AsExecutor<TInput, TOutput>(this Func<TInput, IWorkflowContext, CancellationToken, ValueTask<TOutput>> messageHandlerAsync, string id, ExecutorOptions? options = null, bool threadsafe = false)
+        => new FunctionExecutor<TInput, TOutput>(Throw.IfNull(id), messageHandlerAsync, options, declareCrossRunShareable: threadsafe).ToExecutorIsh(messageHandlerAsync);
 
     /// <summary>
     /// Configures a function-based aggregating executor with the specified identifier and options.
@@ -81,9 +138,10 @@ public static class ExecutorIshConfigurationExtensions
     /// <param name="aggregatorFunc">A delegate the defines the aggregation procedure</param>
     /// <param name="id">A unique identifier for the executor.</param>
     /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
+    /// <param name="threadsafe">Declare that the message handler may be used simultaneously by multiple runs concurrently.</param>
     /// <returns>An ExecutorIsh instance that wraps the provided asynchronous message handler and configuration.</returns>
-    public static ExecutorIsh AsExecutor<TInput, TAccumulate>(this Func<TAccumulate?, TInput, TAccumulate?> aggregatorFunc, string id, ExecutorOptions? options = null)
-        => new AggregatingExecutor<TInput, TAccumulate>(id, aggregatorFunc, options);
+    public static ExecutorIsh AsExecutor<TInput, TAccumulate>(this Func<TAccumulate?, TInput, TAccumulate?> aggregatorFunc, string id, ExecutorOptions? options = null, bool threadsafe = false)
+        => new AggregatingExecutor<TInput, TAccumulate>(id, aggregatorFunc, options, declareCrossRunShareable: threadsafe);
 }
 
 /// <summary>
@@ -114,13 +172,17 @@ public sealed class ExecutorIsh :
         /// </summary>
         Function,
         /// <summary>
-        /// An <see cref="InputPort"/> for servicing external requests.
+        /// An <see cref="RequestPort"/> for servicing external requests.
         /// </summary>
-        InputPort,
+        RequestPort,
         /// <summary>
         /// An <see cref="AIAgent"/> instance.
         /// </summary>
         Agent,
+        /// <summary>
+        /// A nested <see cref="Workflow"/> instance.
+        /// </summary>
+        Workflow,
     }
 
     /// <summary>
@@ -133,7 +195,7 @@ public sealed class ExecutorIsh :
     private readonly Configured<Executor>? _configuredExecutor;
     private readonly System.Type? _configuredExecutorType;
 
-    internal readonly InputPort? _inputPortValue;
+    internal readonly RequestPort? _requestPortValue;
     private readonly AIAgent? _aiAgentValue;
 
     /// <summary>
@@ -168,10 +230,10 @@ public sealed class ExecutorIsh :
     /// Initializes a new instance of the ExecutorIsh class using the specified input port.
     /// </summary>
     /// <param name="port">The input port to associate to be wrapped.</param>
-    public ExecutorIsh(InputPort port)
+    public ExecutorIsh(RequestPort port)
     {
-        this.ExecutorType = Type.InputPort;
-        this._inputPortValue = Throw.IfNull(port);
+        this.ExecutorType = Type.RequestPort;
+        this._requestPortValue = Throw.IfNull(port);
     }
 
     /// <summary>
@@ -191,9 +253,10 @@ public sealed class ExecutorIsh :
     {
         Type.Unbound => this._idValue ?? throw new InvalidOperationException("This ExecutorIsh is unbound and has no ID."),
         Type.Executor => this._configuredExecutor!.Id,
-        Type.InputPort => this._inputPortValue!.Id,
+        Type.RequestPort => this._requestPortValue!.Id,
         Type.Agent => this._aiAgentValue!.Id,
         Type.Function => this._configuredExecutor!.Id,
+        Type.Workflow => this._configuredExecutor!.Id,
         _ => throw new InvalidOperationException($"Unknown ExecutorIsh type: {this.ExecutorType}")
     };
 
@@ -201,9 +264,10 @@ public sealed class ExecutorIsh :
     {
         Type.Unbound => this._idValue,
         Type.Executor => this._configuredExecutor!.Raw ?? this._configuredExecutor,
-        Type.InputPort => this._inputPortValue,
+        Type.RequestPort => this._requestPortValue,
         Type.Agent => this._aiAgentValue,
         Type.Function => this._configuredExecutor!.Raw ?? this._configuredExecutor,
+        Type.Workflow => this._configuredExecutor!.Raw ?? this._configuredExecutor,
         _ => throw new InvalidOperationException($"Unknown ExecutorIsh type: {this.ExecutorType}")
     };
 
@@ -219,9 +283,10 @@ public sealed class ExecutorIsh :
     {
         Type.Unbound => throw new InvalidOperationException($"ExecutorIsh with ID '{this.Id}' is unbound."),
         Type.Executor => this._configuredExecutorType!,
-        Type.InputPort => typeof(RequestInfoExecutor),
+        Type.RequestPort => typeof(RequestInfoExecutor),
         Type.Agent => typeof(AIAgentHostExecutor),
         Type.Function => this._configuredExecutorType!,
+        Type.Workflow => this._configuredExecutorType!,
         _ => throw new InvalidOperationException($"Unknown ExecutorIsh type: {this.ExecutorType}")
     };
 
@@ -229,13 +294,14 @@ public sealed class ExecutorIsh :
     /// Gets an <see cref="Func{Executor}"/> that can be used to obtain an <see cref="Executor"/> instance
     /// corresponding to this <see cref="ExecutorIsh"/>.
     /// </summary>
-    private Func<ValueTask<Executor>> ExecutorProvider => this.ExecutorType switch
+    private Func<string, ValueTask<Executor>> ExecutorProvider => this.ExecutorType switch
     {
         Type.Unbound => throw new InvalidOperationException($"Executor with ID '{this.Id}' is unbound."),
         Type.Executor => this._configuredExecutor!.BoundFactoryAsync,
-        Type.InputPort => () => new(new RequestInfoExecutor(this._inputPortValue!)),
-        Type.Agent => () => new(new AIAgentHostExecutor(this._aiAgentValue!)),
+        Type.RequestPort => (runId) => new(new RequestInfoExecutor(this._requestPortValue!)),
+        Type.Agent => (runId) => new(new AIAgentHostExecutor(this._aiAgentValue!)),
         Type.Function => this._configuredExecutor!.BoundFactoryAsync,
+        Type.Workflow => this._configuredExecutor!.BoundFactoryAsync,
         _ => throw new InvalidOperationException($"Unknown ExecutorIsh type: {this.ExecutorType}")
     };
 
@@ -246,10 +312,10 @@ public sealed class ExecutorIsh :
     public static implicit operator ExecutorIsh(Executor executor) => new(executor);
 
     /// <summary>
-    /// Defines an implicit conversion from an <see cref="InputPort"/> to an <see cref="ExecutorIsh"/> instance.
+    /// Defines an implicit conversion from an <see cref="RequestPort"/> to an <see cref="ExecutorIsh"/> instance.
     /// </summary>
-    /// <param name="inputPort">The <see cref="InputPort"/> to convert to an <see cref="ExecutorIsh"/>.</param>
-    public static implicit operator ExecutorIsh(InputPort inputPort) => new(inputPort);
+    /// <param name="inputPort">The <see cref="RequestPort"/> to convert to an <see cref="ExecutorIsh"/>.</param>
+    public static implicit operator ExecutorIsh(RequestPort inputPort) => new(inputPort);
 
     /// <summary>
     /// Defines an implicit conversion from an <see cref="AIAgent"/> to an <see cref="ExecutorIsh"/> instance.
@@ -294,9 +360,10 @@ public sealed class ExecutorIsh :
     {
         Type.Unbound => $"'{this.Id}':<unbound>",
         Type.Executor => $"'{this.Id}':{this._configuredExecutorType!.Name}",
-        Type.InputPort => $"'{this.Id}':Input({this._inputPortValue!.Request.Name}->{this._inputPortValue!.Response.Name})",
+        Type.RequestPort => $"'{this.Id}':Input({this._requestPortValue!.Request.Name}->{this._requestPortValue!.Response.Name})",
         Type.Agent => $"{this.Id}':AIAgent(@{this._aiAgentValue!.GetType().Name})",
         Type.Function => $"'{this.Id}':{this._configuredExecutorType!.Name}",
+        Type.Workflow => $"'{this.Id}':{this._configuredExecutorType!.Name}",
         _ => $"'{this.Id}':<unknown[{this.ExecutorType}]>"
     };
 }

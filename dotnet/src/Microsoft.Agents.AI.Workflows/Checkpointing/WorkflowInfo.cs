@@ -13,23 +13,21 @@ internal sealed class WorkflowInfo
     internal WorkflowInfo(
         Dictionary<string, ExecutorInfo> executors,
         Dictionary<string, List<EdgeInfo>> edges,
-        HashSet<InputPortInfo> inputPorts,
-        TypeId? inputType,
+        HashSet<RequestPortInfo> requestPorts,
         string startExecutorId,
         HashSet<string>? outputExecutorIds)
     {
         this.Executors = Throw.IfNull(executors);
         this.Edges = Throw.IfNull(edges);
-        this.InputPorts = Throw.IfNull(inputPorts);
+        this.RequestPorts = Throw.IfNull(requestPorts);
 
-        this.InputType = inputType;
         this.StartExecutorId = Throw.IfNullOrEmpty(startExecutorId);
         this.OutputExecutorIds = outputExecutorIds ?? [];
     }
 
     public Dictionary<string, ExecutorInfo> Executors { get; }
     public Dictionary<string, List<EdgeInfo>> Edges { get; }
-    public HashSet<InputPortInfo> InputPorts { get; }
+    public HashSet<RequestPortInfo> RequestPorts { get; }
 
     public TypeId? InputType { get; }
     public string StartExecutorId { get; }
@@ -73,9 +71,9 @@ internal sealed class WorkflowInfo
         }
 
         // Validate the input ports
-        if (workflow.Ports.Count != this.InputPorts.Count ||
-            this.InputPorts.Any(portInfo =>
-                !workflow.Ports.TryGetValue(portInfo.PortId, out InputPort? port) ||
+        if (workflow.Ports.Count != this.RequestPorts.Count ||
+            this.RequestPorts.Any(portInfo =>
+                !workflow.Ports.TryGetValue(portInfo.PortId, out RequestPort? port) ||
                 !portInfo.RequestType.IsMatch(port.Request) ||
                 !portInfo.ResponseType.IsMatch(port.Response)))
         {
@@ -91,12 +89,4 @@ internal sealed class WorkflowInfo
 
         return true;
     }
-
-    public bool IsMatch<TInput>(Workflow<TInput> workflow) =>
-        this.IsMatch(workflow as Workflow) && this.InputType?.IsMatch<TInput>() == true;
-
-    //public bool IsMatch<TInput, TResult>(WorkflowWithOutput<TInput, TResult> workflow)
-    //    => this.IsMatch(workflow as Workflow)
-    //       && this.OutputType?.IsMatch(typeof(TResult)) is true
-    //       && this.OutputCollectorId is not null && this.OutputCollectorId == workflow.OutputCollectorId;
 }

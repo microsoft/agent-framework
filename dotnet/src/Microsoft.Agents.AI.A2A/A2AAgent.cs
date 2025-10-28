@@ -72,7 +72,7 @@ internal sealed class A2AAgent : AIAgent
     /// <inheritdoc/>
     public override async Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
-        ValidateInputMessages(messages);
+        _ = Throw.IfNull(messages);
 
         var a2aMessage = messages.ToA2AMessage();
 
@@ -91,7 +91,7 @@ internal sealed class A2AAgent : AIAgent
 
         this._logger.LogAgentChatClientInvokedAgent(nameof(RunAsync), this.Id, this.Name);
 
-        if (a2aResponse is Message message)
+        if (a2aResponse is AgentMessage message)
         {
             UpdateThreadConversationId(typedThread, message.ContextId);
 
@@ -124,7 +124,7 @@ internal sealed class A2AAgent : AIAgent
     /// <inheritdoc/>
     public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        ValidateInputMessages(messages);
+        _ = Throw.IfNull(messages);
 
         var a2aMessage = messages.ToA2AMessage();
 
@@ -139,13 +139,13 @@ internal sealed class A2AAgent : AIAgent
 
         this._logger.LogA2AAgentInvokingAgent(nameof(RunStreamingAsync), this.Id, this.Name);
 
-        var a2aSseEvents = this._a2aClient.SendMessageStreamAsync(new MessageSendParams { Message = a2aMessage }, cancellationToken).ConfigureAwait(false);
+        var a2aSseEvents = this._a2aClient.SendMessageStreamingAsync(new MessageSendParams { Message = a2aMessage }, cancellationToken).ConfigureAwait(false);
 
         this._logger.LogAgentChatClientInvokedAgent(nameof(RunStreamingAsync), this.Id, this.Name);
 
         await foreach (var sseEvent in a2aSseEvents)
         {
-            if (sseEvent.Data is not Message message)
+            if (sseEvent.Data is not AgentMessage message)
             {
                 throw new NotSupportedException($"Only message responses are supported from A2A agents. Received: {sseEvent.Data?.GetType().FullName ?? "null"}");
             }
@@ -159,7 +159,7 @@ internal sealed class A2AAgent : AIAgent
                 RawRepresentation = message,
                 Role = ChatRole.Assistant,
                 MessageId = message.MessageId,
-                Contents = [.. message.Parts.Select(part => part.ToAIContent())],
+                Contents = [.. message.Parts.Select(part => part.ToAIContent()).OfType<AIContent>()],
                 AdditionalProperties = message.Metadata.ToAdditionalProperties(),
             };
         }
@@ -176,19 +176,6 @@ internal sealed class A2AAgent : AIAgent
 
     /// <inheritdoc/>
     public override string? Description => this._description ?? base.Description;
-
-    private static void ValidateInputMessages(IEnumerable<ChatMessage> messages)
-    {
-        _ = Throw.IfNull(messages);
-
-        foreach (var message in messages)
-        {
-            if (message.Role != ChatRole.User)
-            {
-                throw new ArgumentException($"All input messages for A2A agents must have the role '{ChatRole.User}'. Found '{message.Role}'.", nameof(messages));
-            }
-        }
-    }
 
     private static void UpdateThreadConversationId(A2AAgentThread? thread, string? contextId)
     {

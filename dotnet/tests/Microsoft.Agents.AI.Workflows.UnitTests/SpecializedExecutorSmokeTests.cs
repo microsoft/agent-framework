@@ -8,6 +8,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
+using Microsoft.Agents.AI.Workflows.Execution;
 using Microsoft.Agents.AI.Workflows.Specialized;
 using Microsoft.Extensions.AI;
 
@@ -111,46 +112,58 @@ public class SpecializedExecutorSmokeTests
 
     public sealed class TestAgentThread() : InMemoryAgentThread();
 
-    internal sealed class TestWorkflowContext : IWorkflowContext
+    internal sealed class TestWorkflowContext(string executorId, bool concurrentRunsEnabled = false) : IWorkflowContext
     {
-        public List<List<ChatMessage>> Updates { get; } = [];
+        private readonly StateManager _stateManager = new();
 
-        public ValueTask AddEventAsync(WorkflowEvent workflowEvent) =>
+        public List<ChatMessage> Updates { get; } = [];
+
+        public ValueTask AddEventAsync(WorkflowEvent workflowEvent, CancellationToken cancellationToken = default) =>
             default;
 
-        public ValueTask YieldOutputAsync(object output) =>
+        public ValueTask YieldOutputAsync(object output, CancellationToken cancellationToken = default) =>
             default;
 
         public ValueTask RequestHaltAsync() =>
             default;
 
-        public ValueTask QueueClearScopeAsync(string? scopeName = null) =>
-            default;
+        public ValueTask QueueClearScopeAsync(string? scopeName = null, CancellationToken cancellationToken = default)
+            => this._stateManager.ClearStateAsync(new ScopeId(executorId, scopeName));
 
-        public ValueTask QueueStateUpdateAsync<T>(string key, T? value, string? scopeName = null) =>
-            default;
+        public ValueTask QueueStateUpdateAsync<T>(string key, T? value, string? scopeName = null, CancellationToken cancellationToken = default)
+            => value is null
+             ? this._stateManager.ClearStateAsync(new ScopeId(executorId, scopeName), key)
+             : this._stateManager.WriteStateAsync(new ScopeId(executorId, scopeName), key, value);
 
-        public ValueTask<T?> ReadStateAsync<T>(string key, string? scopeName = null) =>
-            throw new NotImplementedException();
+        public ValueTask<T?> ReadStateAsync<T>(string key, string? scopeName = null, CancellationToken cancellationToken = default)
+            => this._stateManager.ReadStateAsync<T>(new ScopeId(executorId, scopeName), key);
 
-        public ValueTask<HashSet<string>> ReadStateKeysAsync(string? scopeName = null) =>
-            throw new NotImplementedException();
+        public ValueTask<HashSet<string>> ReadStateKeysAsync(string? scopeName = null, CancellationToken cancellationToken = default)
+            => this._stateManager.ReadKeysAsync(new ScopeId(executorId, scopeName));
 
-        public ValueTask SendMessageAsync(object message, string? targetId = null)
+        public ValueTask SendMessageAsync(object message, string? targetId = null, CancellationToken cancellationToken = default)
         {
             if (message is List<ChatMessage> messages)
             {
-                this.Updates.Add(messages);
+                this.Updates.AddRange(messages);
             }
             else if (message is ChatMessage chatMessage)
             {
-                this.Updates.Add([chatMessage]);
+                this.Updates.Add(chatMessage);
             }
 
             return default;
         }
 
+        public async ValueTask<T> ReadOrInitStateAsync<T>(string key, Func<T> initialStateFactory, string? scopeName = null, CancellationToken cancellationToken = default)
+        {
+            return (await this.ReadStateAsync<T>(key, scopeName, cancellationToken).ConfigureAwait(false))
+                ?? initialStateFactory();
+        }
+
         public IReadOnlyDictionary<string, string>? TraceContext => null;
+
+        public bool ConcurrentRunsEnabled => concurrentRunsEnabled;
     }
 
     [Fact]
@@ -163,23 +176,14 @@ public class SpecializedExecutorSmokeTests
             "Quisque dignissim ante odio, at facilisis orci porta a. Duis mi augue, fringilla eu egestas a, pellentesque sed lacus."
         ];
 
-        string[][] splits = MessageStrings.Select(t => t.Split()).ToArray();
-        foreach (string[] messageSplits in splits)
-        {
-            for (int i = 0; i < messageSplits.Length - 1; i++)
-            {
-                messageSplits[i] += ' ';
-            }
-        }
-
         List<ChatMessage> expected = TestAIAgent.ToChatMessages(MessageStrings);
 
         TestAIAgent agent = new(expected);
         AIAgentHostExecutor host = new(agent);
 
-        TestWorkflowContext collectingContext = new();
+        TestWorkflowContext collectingContext = new(host.Id);
 
-        await host.TakeTurnAsync(new TurnToken(emitEvents: false), collectingContext);
+        await host.TakeTurnAsync(new TurnToken(emitEvents: true), collectingContext);
 
         // The first empty message is skipped.
         collectingContext.Updates.Should().HaveCount(MessageStrings.Length - 1);
@@ -187,28 +191,9 @@ public class SpecializedExecutorSmokeTests
         for (int i = 1; i < MessageStrings.Length; i++)
         {
             string expectedText = MessageStrings[i];
-            string[] expectedSplits = splits[i];
+            ChatMessage collected = collectingContext.Updates[i - 1];
 
-            ChatMessage equivalent = expected[i];
-            List<ChatMessage> collected = collectingContext.Updates[i - 1];
-
-            collected.Should().HaveCount(1);
-            collected[0].Text.Should().Be(expectedText);
-            collected[0].Contents.Should().HaveCount(splits[i].Length);
-
-            Action<AIContent>[] splitCheckActions = splits[i].Select(MakeSplitCheckAction).ToArray();
-            Assert.Collection(collected[0].Contents, splitCheckActions);
-        }
-
-        Action<AIContent> MakeSplitCheckAction(string splitString)
-        {
-            return Check;
-
-            void Check(AIContent content)
-            {
-                TextContent? text = content as TextContent;
-                text!.Text.Should().Be(splitString);
-            }
+            collected.Text.Should().Be(expectedText);
         }
     }
 }

@@ -6,7 +6,6 @@ using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
-using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 
@@ -16,7 +15,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Kit;
 /// Base class for an entry-point workflow executor that receives the initial trigger message.
 /// </summary>
 /// <typeparam name="TInput">The type of the initial message that starts the workflow.</typeparam>
-public abstract class RootExecutor<TInput> : Executor<TInput> where TInput : notnull
+public abstract class RootExecutor<TInput> : Executor<TInput>, IResettableExecutor where TInput : notnull
 {
     private readonly IConfiguration? _configuration;
     private readonly WorkflowAgentProvider _agentProvider;
@@ -49,23 +48,29 @@ public abstract class RootExecutor<TInput> : Executor<TInput> where TInput : not
     }
 
     /// <inheritdoc/>
-    public override async ValueTask HandleAsync(TInput message, IWorkflowContext context)
+    public ValueTask ResetAsync()
+    {
+        return default;
+    }
+
+    /// <inheritdoc/>
+    public override async ValueTask HandleAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken)
     {
         DeclarativeWorkflowContext declarativeContext = new(context, this._state);
-        await this.ExecuteAsync(message, declarativeContext, cancellationToken: default).ConfigureAwait(false);
+        await this.ExecuteAsync(message, declarativeContext, cancellationToken).ConfigureAwait(false);
 
         ChatMessage input = (this._inputTransform ?? DefaultInputTransform).Invoke(message);
 
         if (string.IsNullOrWhiteSpace(this._conversationId))
         {
-            this._conversationId = await this._agentProvider.CreateConversationAsync(cancellationToken: default).ConfigureAwait(false);
+            this._conversationId = await this._agentProvider.CreateConversationAsync(cancellationToken).ConfigureAwait(false);
         }
-        await declarativeContext.QueueConversationUpdateAsync(this._conversationId).ConfigureAwait(false);
+        await declarativeContext.QueueConversationUpdateAsync(this._conversationId, isExternal: true, cancellationToken).ConfigureAwait(false);
 
-        await this._agentProvider.CreateMessageAsync(this._conversationId, input, cancellationToken: default).ConfigureAwait(false);
-        await declarativeContext.SetLastMessageAsync(input).ConfigureAwait(false);
+        ChatMessage inputMessage = await this._agentProvider.CreateMessageAsync(this._conversationId, input, cancellationToken).ConfigureAwait(false);
+        await declarativeContext.SetLastMessageAsync(inputMessage).ConfigureAwait(false);
 
-        await declarativeContext.SendMessageAsync(new ActionExecutorResult(this.Id)).ConfigureAwait(false);
+        await declarativeContext.SendResultMessageAsync(this.Id, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -88,7 +93,7 @@ public abstract class RootExecutor<TInput> : Executor<TInput> where TInput : not
     {
         foreach (string variableName in variableNames)
         {
-            await context.QueueStateUpdateAsync(variableName, GetEnvironmentVariable(variableName), VariableScopeNames.Environment).ConfigureAwait(false);
+            await context.QueueEnvironmentUpdateAsync(variableName, GetEnvironmentVariable(variableName)).ConfigureAwait(false);
         }
 
         string GetEnvironmentVariable(string name)

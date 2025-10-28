@@ -13,10 +13,17 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "main"))
 
 # Import Agent Framework types (assuming they are always available)
-from agent_framework._types import AgentRunResponseUpdate, ErrorContent, FunctionCallContent, Role, TextContent
+from agent_framework._types import (
+    AgentRunResponseUpdate,
+    ErrorContent,
+    FunctionCallContent,
+    FunctionResultContent,
+    Role,
+    TextContent,
+)
 
 from agent_framework_devui._mapper import MessageMapper
-from agent_framework_devui.models._openai_custom import AgentFrameworkExtraBody, AgentFrameworkRequest
+from agent_framework_devui.models._openai_custom import AgentFrameworkRequest
 
 
 def create_test_content(content_type: str, **kwargs: Any) -> Any:
@@ -48,11 +55,11 @@ def mapper() -> MessageMapper:
 
 @pytest.fixture
 def test_request() -> AgentFrameworkRequest:
+    # Use simplified routing: model = entity_id
     return AgentFrameworkRequest(
-        model="agent-framework",
+        model="test_agent",  # Model IS the entity_id
         input="Test input",
         stream=True,
-        extra_body=AgentFrameworkExtraBody(entity_id="test_agent"),
     )
 
 
@@ -79,15 +86,30 @@ async def test_critical_isinstance_bug_detection(mapper: MessageMapper, test_req
 
 
 async def test_text_content_mapping(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
-    """Test TextContent mapping."""
+    """Test TextContent mapping with proper OpenAI event hierarchy."""
     content = create_test_content("text", text="Hello, clean test!")
     update = create_test_agent_update([content])
 
     events = await mapper.convert_event(update, test_request)
 
-    assert len(events) == 1
-    assert events[0].type == "response.output_text.delta"
-    assert events[0].delta == "Hello, clean test!"
+    # With proper OpenAI hierarchy, we expect 3 events:
+    # 1. response.output_item.added (message)
+    # 2. response.content_part.added (text part)
+    # 3. response.output_text.delta (actual text)
+    assert len(events) == 3
+
+    # Check message output item
+    assert events[0].type == "response.output_item.added"
+    assert events[0].item.type == "message"
+    assert events[0].item.role == "assistant"
+
+    # Check content part
+    assert events[1].type == "response.content_part.added"
+    assert events[1].part.type == "output_text"
+
+    # Check text delta
+    assert events[2].type == "response.output_text.delta"
+    assert events[2].delta == "Hello, clean test!"
 
 
 async def test_function_call_mapping(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
@@ -97,12 +119,92 @@ async def test_function_call_mapping(mapper: MessageMapper, test_request: AgentF
 
     events = await mapper.convert_event(update, test_request)
 
-    assert len(events) >= 1
-    assert all(event.type == "response.function_call_arguments.delta" for event in events)
+    # Should generate: response.output_item.added + response.function_call_arguments.delta
+    assert len(events) >= 2
+    assert events[0].type == "response.output_item.added"
+    assert events[1].type == "response.function_call_arguments.delta"
 
-    # Check JSON is chunked
-    full_json = "".join(event.delta for event in events)
+    # Check JSON is in delta event
+    delta_events = [e for e in events if e.type == "response.function_call_arguments.delta"]
+    full_json = "".join(event.delta for event in delta_events)
     assert "TestCity" in full_json
+
+
+async def test_function_result_content_with_string_result(
+    mapper: MessageMapper, test_request: AgentFrameworkRequest
+) -> None:
+    """Test FunctionResultContent with plain string result (regular tools)."""
+    content = FunctionResultContent(
+        call_id="test_call_123",
+        result="Hello, World!",  # Plain string like regular Python function tools
+    )
+    update = create_test_agent_update([content])
+
+    events = await mapper.convert_event(update, test_request)
+
+    # Should produce response.function_result.complete event
+    assert len(events) >= 1
+    result_events = [e for e in events if e.type == "response.function_result.complete"]
+    assert len(result_events) == 1
+    assert result_events[0].output == "Hello, World!"
+    assert result_events[0].call_id == "test_call_123"
+    assert result_events[0].status == "completed"
+
+
+async def test_function_result_content_with_nested_content_objects(
+    mapper: MessageMapper, test_request: AgentFrameworkRequest
+) -> None:
+    """Test FunctionResultContent with nested Content objects (MCP tools case).
+
+    This tests the issue from GitHub #1476 where MCP tools return FunctionResultContent
+    with nested TextContent objects that fail to serialize properly.
+    """
+    # This is what MCP tools return - result contains nested Content objects
+    content = FunctionResultContent(
+        call_id="mcp_call_456",
+        result=[TextContent(text="Hello from MCP!")],  # List containing TextContent object
+    )
+    update = create_test_agent_update([content])
+
+    events = await mapper.convert_event(update, test_request)
+
+    # Should successfully serialize the nested Content object
+    assert len(events) >= 1
+    result_events = [e for e in events if e.type == "response.function_result.complete"]
+    assert len(result_events) == 1
+
+    # The output should contain the text from the nested TextContent
+    # Should not have TypeError or empty output
+    assert result_events[0].output != ""
+    assert "Hello from MCP!" in result_events[0].output
+    assert result_events[0].call_id == "mcp_call_456"
+
+
+async def test_function_result_content_with_multiple_nested_content_objects(
+    mapper: MessageMapper, test_request: AgentFrameworkRequest
+) -> None:
+    """Test FunctionResultContent with multiple nested Content objects."""
+    # MCP tools can return multiple Content objects
+    content = FunctionResultContent(
+        call_id="mcp_call_789",
+        result=[
+            TextContent(text="First result"),
+            TextContent(text="Second result"),
+        ],
+    )
+    update = create_test_agent_update([content])
+
+    events = await mapper.convert_event(update, test_request)
+
+    assert len(events) >= 1
+    result_events = [e for e in events if e.type == "response.function_result.complete"]
+    assert len(result_events) == 1
+
+    # Should serialize all nested Content objects
+    output = result_events[0].output
+    assert output != ""
+    assert "First result" in output
+    assert "Second result" in output
 
 
 async def test_error_content_mapping(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
@@ -158,215 +260,159 @@ async def test_unknown_content_fallback(mapper: MessageMapper, test_request: Age
     assert "WeirdUnknownContent" in event.delta
 
 
-def test_serialize_payload_primitives(mapper: MessageMapper) -> None:
-    """Test serialization of primitive types."""
-    assert mapper._serialize_payload(None) is None
-    assert mapper._serialize_payload("test") == "test"
-    assert mapper._serialize_payload(42) == 42
-    assert mapper._serialize_payload(3.14) == 3.14
-    assert mapper._serialize_payload(True) is True
-    assert mapper._serialize_payload(False) is False
+async def test_agent_run_response_mapping(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
+    """Test that mapper handles complete AgentRunResponse (non-streaming)."""
+    from agent_framework import AgentRunResponse, ChatMessage, Role, TextContent
+
+    # Create a complete response like agent.run() would return
+    message = ChatMessage(
+        role=Role.ASSISTANT,
+        contents=[TextContent(text="Complete response from run()")],
+    )
+    response = AgentRunResponse(messages=[message], response_id="test_resp_123")
+
+    # Mapper should convert it to streaming events
+    events = await mapper.convert_event(response, test_request)
+
+    assert len(events) > 0
+    # Should produce text delta events
+    text_events = [e for e in events if e.type == "response.output_text.delta"]
+    assert len(text_events) > 0
+    assert text_events[0].delta == "Complete response from run()"
 
 
-def test_serialize_payload_sequences(mapper: MessageMapper) -> None:
-    """Test serialization of lists, tuples, and sets."""
-    # List
-    result = mapper._serialize_payload([1, 2, "three"])
-    assert result == [1, 2, "three"]
-    assert isinstance(result, list)
+async def test_agent_lifecycle_events(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
+    """Test that agent lifecycle events are properly converted to OpenAI format."""
+    from agent_framework_devui.models._openai_custom import AgentCompletedEvent, AgentFailedEvent, AgentStartedEvent
 
-    # Tuple - should convert to list
-    result = mapper._serialize_payload((1, 2, "three"))
-    assert result == [1, 2, "three"]
-    assert isinstance(result, list)
+    # Test AgentStartedEvent
+    start_event = AgentStartedEvent()
+    events = await mapper.convert_event(start_event, test_request)
 
-    # Set - should convert to list (order may vary)
-    result = mapper._serialize_payload({1, 2, 3})
-    assert isinstance(result, list)
-    assert set(result) == {1, 2, 3}
+    assert len(events) == 2  # Should emit response.created and response.in_progress
+    assert events[0].type == "response.created"
+    assert events[1].type == "response.in_progress"
+    assert events[0].response.model == "test_agent"  # Should use model from request
+    assert events[0].response.status == "in_progress"
 
-    # Nested sequences
-    result = mapper._serialize_payload([1, [2, 3], (4, 5)])
-    assert result == [1, [2, 3], [4, 5]]
+    # Test AgentCompletedEvent
+    complete_event = AgentCompletedEvent()
+    events = await mapper.convert_event(complete_event, test_request)
 
+    assert len(events) == 1
+    assert events[0].type == "response.completed"
+    assert events[0].response.status == "completed"
 
-def test_serialize_payload_dicts(mapper: MessageMapper) -> None:
-    """Test serialization of dictionaries."""
-    # Simple dict
-    result = mapper._serialize_payload({"a": 1, "b": 2})
-    assert result == {"a": 1, "b": 2}
+    # Test AgentFailedEvent
+    error = Exception("Test error")
+    failed_event = AgentFailedEvent(error=error)
+    events = await mapper.convert_event(failed_event, test_request)
 
-    # Dict with non-string keys (should convert to string)
-    result = mapper._serialize_payload({1: "one", 2: "two"})
-    assert result == {"1": "one", "2": "two"}
-
-    # Nested dicts
-    result = mapper._serialize_payload({"outer": {"inner": {"deep": 42}}})
-    assert result == {"outer": {"inner": {"deep": 42}}}
-
-    # Dict with mixed value types
-    result = mapper._serialize_payload({"str": "text", "num": 123, "list": [1, 2], "dict": {"nested": True}})
-    assert result == {"str": "text", "num": 123, "list": [1, 2], "dict": {"nested": True}}
+    assert len(events) == 1
+    assert events[0].type == "response.failed"
+    assert events[0].response.status == "failed"
+    assert events[0].response.error.message == "Test error"
+    assert events[0].response.error.code == "server_error"
 
 
-def test_serialize_payload_dataclass(mapper: MessageMapper) -> None:
-    """Test serialization of dataclasses."""
-    from dataclasses import dataclass
+@pytest.mark.skip(reason="Workflow events need real classes from agent_framework.workflows")
+async def test_workflow_lifecycle_events(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
+    """Test that workflow lifecycle events are properly converted to OpenAI format."""
 
-    @dataclass
-    class Person:
-        name: str
-        age: int
-        active: bool = True
+    # Create mock workflow events (since we don't have access to the real ones in tests)
+    class WorkflowStartedEvent:  # noqa: B903
+        def __init__(self, workflow_id: str):
+            self.workflow_id = workflow_id
 
-    person = Person(name="Alice", age=30)
-    result = mapper._serialize_payload(person)
+    class WorkflowCompletedEvent:  # noqa: B903
+        def __init__(self, workflow_id: str):
+            self.workflow_id = workflow_id
 
-    assert result == {"name": "Alice", "age": 30, "active": True}
-    assert isinstance(result, dict)
+    class WorkflowFailedEvent:  # noqa: B903
+        def __init__(self, workflow_id: str, error_info: dict | None = None):
+            self.workflow_id = workflow_id
+            self.error_info = error_info
 
+    # Test WorkflowStartedEvent
+    start_event = WorkflowStartedEvent(workflow_id="test_workflow_123")
+    events = await mapper.convert_event(start_event, test_request)
 
-def test_serialize_payload_pydantic_model(mapper: MessageMapper) -> None:
-    """Test serialization of Pydantic models."""
-    from pydantic import BaseModel
+    assert len(events) == 2  # Should emit response.created and response.in_progress
+    assert events[0].type == "response.created"
+    assert events[1].type == "response.in_progress"
+    assert events[0].response.model == "test_agent"  # Should use model from request
+    assert events[0].response.status == "in_progress"
 
-    class User(BaseModel):
-        username: str
-        email: str
-        is_active: bool = True
+    # Test WorkflowCompletedEvent
+    complete_event = WorkflowCompletedEvent(workflow_id="test_workflow_123")
+    events = await mapper.convert_event(complete_event, test_request)
 
-    user = User(username="testuser", email="test@example.com")
-    result = mapper._serialize_payload(user)
+    assert len(events) == 1
+    assert events[0].type == "response.completed"
+    assert events[0].response.status == "completed"
 
-    assert result == {"username": "testuser", "email": "test@example.com", "is_active": True}
-    assert isinstance(result, dict)
+    # Test WorkflowFailedEvent with error info
+    failed_event = WorkflowFailedEvent(workflow_id="test_workflow_123", error_info={"message": "Workflow failed"})
+    events = await mapper.convert_event(failed_event, test_request)
 
-
-def test_serialize_payload_nested_pydantic(mapper: MessageMapper) -> None:
-    """Test serialization of nested Pydantic models."""
-    from pydantic import BaseModel
-
-    class Address(BaseModel):
-        street: str
-        city: str
-
-    class Person(BaseModel):
-        name: str
-        address: Address
-
-    person = Person(name="Bob", address=Address(street="123 Main St", city="Springfield"))
-    result = mapper._serialize_payload(person)
-
-    assert result == {"name": "Bob", "address": {"street": "123 Main St", "city": "Springfield"}}
+    assert len(events) == 1
+    assert events[0].type == "response.failed"
+    assert events[0].response.status == "failed"
+    assert events[0].response.error.message == "{'message': 'Workflow failed'}"
+    assert events[0].response.error.code == "server_error"
 
 
-def test_serialize_payload_object_with_dict_method(mapper: MessageMapper) -> None:
-    """Test serialization of objects with dict() method."""
+@pytest.mark.skip(reason="Executor events need real classes from agent_framework.workflows")
+async def test_executor_action_events(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
+    """Test that workflow executor events are properly converted to custom output item events."""
 
-    class CustomObject:
-        def __init__(self):
-            self.value = 42
+    # Create mock executor events (since we don't have access to the real ones in tests)
+    class ExecutorInvokedEvent:  # noqa: B903
+        def __init__(self, executor_id: str, executor_type: str = "test"):
+            self.executor_id = executor_id
+            self.executor_type = executor_type
 
-        def dict(self):
-            return {"value": self.value, "type": "custom"}
+    class ExecutorCompletedEvent:  # noqa: B903
+        def __init__(self, executor_id: str, result: Any = None):
+            self.executor_id = executor_id
+            self.result = result
 
-    obj = CustomObject()
-    result = mapper._serialize_payload(obj)
+    class ExecutorFailedEvent:  # noqa: B903
+        def __init__(self, executor_id: str, error: Exception | None = None):
+            self.executor_id = executor_id
+            self.error = error
 
-    assert result == {"value": 42, "type": "custom"}
+    # Test ExecutorInvokedEvent
+    invoked_event = ExecutorInvokedEvent(executor_id="exec_123", executor_type="test_executor")
+    events = await mapper.convert_event(invoked_event, test_request)
 
+    assert len(events) == 1
+    assert events[0].type == "response.output_item.added"
+    assert events[0].item["type"] == "executor_action"
+    assert events[0].item["executor_id"] == "exec_123"
+    assert events[0].item["status"] == "in_progress"
 
-def test_serialize_payload_object_with_to_dict_method(mapper: MessageMapper) -> None:
-    """Test serialization of objects with to_dict() method."""
+    # Test ExecutorCompletedEvent
+    complete_event = ExecutorCompletedEvent(executor_id="exec_123", result={"data": "success"})
+    events = await mapper.convert_event(complete_event, test_request)
 
-    class CustomObject:
-        def __init__(self):
-            self.value = 42
+    assert len(events) == 1
+    assert events[0].type == "response.output_item.done"
+    assert events[0].item["type"] == "executor_action"
+    assert events[0].item["executor_id"] == "exec_123"
+    assert events[0].item["status"] == "completed"
+    assert events[0].item["result"] == {"data": "success"}
 
-        def to_dict(self):
-            return {"value": self.value, "type": "custom_to_dict"}
+    # Test ExecutorFailedEvent
+    failed_event = ExecutorFailedEvent(executor_id="exec_123", error=Exception("Executor failed"))
+    events = await mapper.convert_event(failed_event, test_request)
 
-    obj = CustomObject()
-    result = mapper._serialize_payload(obj)
-
-    assert result == {"value": 42, "type": "custom_to_dict"}
-
-
-def test_serialize_payload_object_with_model_dump_json(mapper: MessageMapper) -> None:
-    """Test serialization of objects with model_dump_json() method."""
-    import json
-
-    class CustomObject:
-        def __init__(self):
-            self.value = 42
-
-        def model_dump_json(self):
-            return json.dumps({"value": self.value, "type": "json_dump"})
-
-    obj = CustomObject()
-    result = mapper._serialize_payload(obj)
-
-    assert result == {"value": 42, "type": "json_dump"}
-
-
-def test_serialize_payload_object_with_dict_attr(mapper: MessageMapper) -> None:
-    """Test serialization of objects with __dict__ attribute."""
-
-    class SimpleObject:
-        def __init__(self):
-            self.public_value = 42
-            self._private_value = 100  # Should be excluded
-
-    obj = SimpleObject()
-    result = mapper._serialize_payload(obj)
-
-    assert "public_value" in result
-    assert result["public_value"] == 42
-    assert "_private_value" not in result
-
-
-def test_serialize_payload_fallback_to_string(mapper: MessageMapper) -> None:
-    """Test that unserializable objects fall back to string representation."""
-
-    class WeirdObject:
-        __slots__ = ()  # Prevent __dict__ attribute
-
-        def __str__(self):
-            return "weird_object_string"
-
-    obj = WeirdObject()
-    result = mapper._serialize_payload(obj)
-
-    assert result == "weird_object_string"
-
-
-def test_serialize_payload_complex_nested(mapper: MessageMapper) -> None:
-    """Test serialization of complex nested structures."""
-    from dataclasses import dataclass
-
-    from pydantic import BaseModel
-
-    @dataclass
-    class DataItem:
-        value: int
-
-    class ConfigModel(BaseModel):
-        enabled: bool
-        count: int
-
-    complex_data = {
-        "items": [DataItem(value=1), DataItem(value=2)],
-        "config": ConfigModel(enabled=True, count=5),
-        "nested": {"list": [1, 2, 3], "tuple": (4, 5, 6)},
-        "primitive": 42,
-    }
-
-    result = mapper._serialize_payload(complex_data)
-
-    assert result["items"] == [{"value": 1}, {"value": 2}]
-    assert result["config"] == {"enabled": True, "count": 5}
-    assert result["nested"] == {"list": [1, 2, 3], "tuple": [4, 5, 6]}
-    assert result["primitive"] == 42
+    assert len(events) == 1
+    assert events[0].type == "response.output_item.done"
+    assert events[0].item["type"] == "executor_action"
+    assert events[0].item["executor_id"] == "exec_123"
+    assert events[0].item["status"] == "failed"
+    assert "Executor failed" in str(events[0].item["error"]["message"])
 
 
 if __name__ == "__main__":
@@ -374,10 +420,12 @@ if __name__ == "__main__":
     async def run_all_tests() -> None:
         mapper = MessageMapper()
         test_request = AgentFrameworkRequest(
-            model="agent-framework", input="Test", stream=True, extra_body=AgentFrameworkExtraBody(entity_id="test")
+            model="test",
+            input="Test",
+            stream=True,
         )
 
-        async_tests = [
+        tests = [
             ("Critical isinstance bug detection", test_critical_isinstance_bug_detection),
             ("Text content mapping", test_text_content_mapping),
             ("Function call mapping", test_function_call_mapping),
@@ -386,32 +434,10 @@ if __name__ == "__main__":
             ("Unknown content fallback", test_unknown_content_fallback),
         ]
 
-        sync_tests = [
-            ("Serialize primitives", test_serialize_payload_primitives),
-            ("Serialize sequences", test_serialize_payload_sequences),
-            ("Serialize dicts", test_serialize_payload_dicts),
-            ("Serialize dataclass", test_serialize_payload_dataclass),
-            ("Serialize pydantic model", test_serialize_payload_pydantic_model),
-            ("Serialize nested pydantic", test_serialize_payload_nested_pydantic),
-            ("Serialize dict method", test_serialize_payload_object_with_dict_method),
-            ("Serialize to_dict method", test_serialize_payload_object_with_to_dict_method),
-            ("Serialize model_dump_json", test_serialize_payload_object_with_model_dump_json),
-            ("Serialize __dict__ attr", test_serialize_payload_object_with_dict_attr),
-            ("Serialize fallback to string", test_serialize_payload_fallback_to_string),
-            ("Serialize complex nested", test_serialize_payload_complex_nested),
-        ]
-
         passed = 0
-        for _test_name, test_func in async_tests:
+        for _test_name, test_func in tests:
             try:
                 await test_func(mapper, test_request)
-                passed += 1
-            except Exception:
-                pass
-
-        for _test_name, test_func in sync_tests:
-            try:
-                test_func(mapper)
                 passed += 1
             except Exception:
                 pass

@@ -30,7 +30,7 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
         if (this._thread is not null)
         {
             JsonElement threadValue = this._thread.Serialize();
-            threadTask = context.QueueStateUpdateAsync(ThreadStateKey, threadValue).AsTask();
+            threadTask = context.QueueStateUpdateAsync(ThreadStateKey, threadValue, cancellationToken: cancellationToken).AsTask();
         }
 
         Task baseTask = base.OnCheckpointingAsync(context, cancellationToken).AsTask();
@@ -40,7 +40,7 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
 
     protected internal override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        JsonElement? threadValue = await context.ReadStateAsync<JsonElement?>(ThreadStateKey).ConfigureAwait(false);
+        JsonElement? threadValue = await context.ReadStateAsync<JsonElement?>(ThreadStateKey, cancellationToken: cancellationToken).ConfigureAwait(false);
         if (threadValue.HasValue)
         {
             this._thread = this._agent.DeserializeThread(threadValue.Value);
@@ -51,59 +51,31 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
 
     protected override async ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellationToken = default)
     {
-        emitEvents ??= this._emitEvents;
-        IAsyncEnumerable<AgentRunResponseUpdate> agentStream = this._agent.RunStreamingAsync(messages, this.EnsureThread(context), cancellationToken: cancellationToken);
-
-        List<AIContent> updates = [];
-        ChatMessage? currentStreamingMessage = null;
-
-        await foreach (AgentRunResponseUpdate update in agentStream.ConfigureAwait(false))
+        if (emitEvents ?? this._emitEvents)
         {
-            if (string.IsNullOrEmpty(update.MessageId))
+            // Run the agent in streaming mode only when agent run update events are to be emitted.
+            IAsyncEnumerable<AgentRunResponseUpdate> agentStream = this._agent.RunStreamingAsync(messages, this.EnsureThread(context), cancellationToken: cancellationToken);
+
+            List<AgentRunResponseUpdate> updates = [];
+
+            await foreach (AgentRunResponseUpdate update in agentStream.ConfigureAwait(false))
             {
-                // Ignore updates that don't have a message ID.
-                continue;
+                await context.AddEventAsync(new AgentRunUpdateEvent(this.Id, update), cancellationToken).ConfigureAwait(false);
+
+                // TODO: FunctionCall request handling, and user info request handling.
+                // In some sense: We should just let it be handled as a ChatMessage, though we should consider
+                // providing some mechanisms to help the user complete the request, or route it out of the
+                // workflow.
+                updates.Add(update);
             }
 
-            if (emitEvents ?? this._emitEvents)
-            {
-                await context.AddEventAsync(new AgentRunUpdateEvent(this.Id, update)).ConfigureAwait(false);
-            }
-
-            // TODO: FunctionCall request handling, and user info request handling.
-            // In some sense: We should just let it be handled as a ChatMessage, though we should consider
-            // providing some mechanisms to help the user complete the request, or route it out of the
-            // workflow.
-
-            if (currentStreamingMessage is null || currentStreamingMessage.MessageId != update.MessageId)
-            {
-                await PublishCurrentMessageAsync().ConfigureAwait(false);
-                currentStreamingMessage = new(update.Role ?? ChatRole.Assistant, update.Contents)
-                {
-                    AuthorName = update.AuthorName,
-                    CreatedAt = update.CreatedAt,
-                    MessageId = update.MessageId,
-                    RawRepresentation = update.RawRepresentation,
-                    AdditionalProperties = update.AdditionalProperties
-                };
-            }
-
-            updates.AddRange(update.Contents);
+            await context.SendMessageAsync(updates.ToAgentRunResponse().Messages, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
-
-        await PublishCurrentMessageAsync().ConfigureAwait(false);
-
-        async ValueTask PublishCurrentMessageAsync()
+        else
         {
-            if (currentStreamingMessage is not null && updates.Count > 0)
-            {
-                currentStreamingMessage.Contents = updates;
-                updates = [];
-
-                await context.SendMessageAsync(currentStreamingMessage).ConfigureAwait(false);
-            }
-
-            currentStreamingMessage = null;
+            // Otherwise, run the agent in non-streaming mode.
+            AgentRunResponse response = await this._agent.RunAsync(messages, this.EnsureThread(context), cancellationToken: cancellationToken).ConfigureAwait(false);
+            await context.SendMessageAsync(response.Messages, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
     }
 }

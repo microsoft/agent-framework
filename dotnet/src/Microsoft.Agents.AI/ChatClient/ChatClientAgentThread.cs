@@ -14,6 +14,7 @@ namespace Microsoft.Agents.AI;
 /// <summary>
 /// Provides a thread implementation for use with <see cref="ChatClientAgent"/>.
 /// </summary>
+[DebuggerDisplay("{DebuggerDisplay,nq}")]
 public class ChatClientAgentThread : AgentThread
 {
     private string? _conversationId;
@@ -51,7 +52,7 @@ public class ChatClientAgentThread : AgentThread
         }
 
         var state = serializedThreadState.Deserialize(
-            AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ThreadState))) as ThreadState;
+            AgentJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ThreadState))) as ThreadState;
 
         this.AIContextProvider = aiContextProviderFactory?.Invoke(state?.AIContextProviderState ?? default, jsonSerializerOptions);
 
@@ -169,7 +170,7 @@ public class ChatClientAgentThread : AgentThread
             AIContextProviderState = aiContextProviderState
         };
 
-        return JsonSerializer.SerializeToElement(state, AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ThreadState)));
+        return JsonSerializer.SerializeToElement(state, AgentJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ThreadState)));
     }
 
     /// <inheritdoc/>
@@ -206,6 +207,13 @@ public class ChatClientAgentThread : AgentThread
                 throw new UnreachableException();
         }
     }
+
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    private string DebuggerDisplay =>
+        this._conversationId is { } conversationId ? $"ConversationId = {conversationId}" :
+        this._messageStore is InMemoryChatMessageStore inMemoryStore ? $"Count = {inMemoryStore.Count}" :
+        this._messageStore is { } store ? $"Store = {store.GetType().Name}" :
+        "Count = 0";
 
     internal sealed class ThreadState
     {

@@ -51,7 +51,7 @@ public abstract class ActionExecutor(string id, FormulaSession session) : Action
 /// Base class for an action executor that receives the initial trigger message.
 /// </summary>
 /// <typeparam name="TMessage">The type of message being handled</typeparam>
-public abstract class ActionExecutor<TMessage> : Executor<TMessage> where TMessage : notnull
+public abstract class ActionExecutor<TMessage> : Executor<TMessage>, IResettableExecutor where TMessage : notnull
 {
     private readonly FormulaSession _session;
 
@@ -67,12 +67,18 @@ public abstract class ActionExecutor<TMessage> : Executor<TMessage> where TMessa
     }
 
     /// <inheritdoc/>
-    public override async ValueTask HandleAsync(TMessage message, IWorkflowContext context)
+    public ValueTask ResetAsync()
     {
-        object? result = await this.ExecuteAsync(new DeclarativeWorkflowContext(context, this._session.State), message, cancellationToken: default).ConfigureAwait(false);
+        return default;
+    }
+
+    /// <inheritdoc/>
+    public override async ValueTask HandleAsync(TMessage message, IWorkflowContext context, CancellationToken cancellationToken)
+    {
+        object? result = await this.ExecuteAsync(new DeclarativeWorkflowContext(context, this._session.State), message, cancellationToken).ConfigureAwait(false);
         Debug.WriteLine($"RESULT #{this.Id} - {result ?? "(null)"}");
 
-        await context.SendResultMessageAsync(this.Id, result).ConfigureAwait(false);
+        await context.SendResultMessageAsync(this.Id, result, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>

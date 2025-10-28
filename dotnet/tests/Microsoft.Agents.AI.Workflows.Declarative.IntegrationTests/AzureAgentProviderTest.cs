@@ -8,21 +8,17 @@ using Azure.AI.Agents.Persistent;
 using Azure.Identity;
 using Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Framework;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.Configuration;
-using Shared.IntegrationTests;
 using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests;
 
 public sealed class AzureAgentProviderTest(ITestOutputHelper output) : IntegrationTest(output)
 {
-    private AzureAIConfiguration? _configuration;
-
     [Fact]
     public async Task ConversationTestAsync()
     {
         // Arrange
-        AzureAgentProvider provider = new(this.Configuration.Endpoint, new AzureCliCredential());
+        AzureAgentProvider provider = new(this.FoundryConfiguration.Endpoint, new AzureCliCredential());
         // Act
         string conversationId = await provider.CreateConversationAsync();
         // Assert
@@ -52,7 +48,7 @@ public sealed class AzureAgentProviderTest(ITestOutputHelper output) : Integrati
     public async Task GetAgentTestAsync()
     {
         // Arrange
-        AzureAgentProvider provider = new(this.Configuration.Endpoint, new AzureCliCredential());
+        AzureAgentProvider provider = new(this.FoundryConfiguration.Endpoint, new AzureCliCredential());
         string agentName = $"TestAgent-{DateTime.UtcNow:yyMMdd-HHmmss-fff}";
 
         string agent1Id = await this.CreateAgentAsync();
@@ -74,22 +70,8 @@ public sealed class AzureAgentProviderTest(ITestOutputHelper output) : Integrati
 
     private async ValueTask<string> CreateAgentAsync(string? name = null)
     {
-        PersistentAgentsClient client = new(this.Configuration.Endpoint, new AzureCliCredential());
-        PersistentAgent agent = await client.Administration.CreateAgentAsync(this.Configuration.DeploymentName, name: name);
+        PersistentAgentsClient client = new(this.FoundryConfiguration.Endpoint, new AzureCliCredential());
+        PersistentAgent agent = await client.Administration.CreateAgentAsync(this.FoundryConfiguration.DeploymentName, name: name);
         return agent.Id;
-    }
-
-    private AzureAIConfiguration Configuration
-    {
-        get
-        {
-            if (this._configuration is null)
-            {
-                this._configuration ??= InitializeConfig().GetSection("AzureAI").Get<AzureAIConfiguration>();
-                Assert.NotNull(this._configuration);
-            }
-
-            return this._configuration;
-        }
     }
 }

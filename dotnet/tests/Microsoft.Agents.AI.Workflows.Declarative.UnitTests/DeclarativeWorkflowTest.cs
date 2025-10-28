@@ -13,6 +13,7 @@ using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.AI;
 using Moq;
 using Xunit.Abstractions;
+using Xunit.Sdk;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests;
 
@@ -21,7 +22,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests;
 /// </summary>
 public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : WorkflowTest(output)
 {
-    private List<WorkflowEvent> WorkflowEvents { get; set; } = [];
+    private List<WorkflowEvent> WorkflowEvents { get; } = [];
 
     private Dictionary<Type, int> WorkflowEventCounts { get; set; } = [];
 
@@ -149,12 +150,14 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     [InlineData("EditTable.yaml", 2, "edit_var")]
     [InlineData("EditTableV2.yaml", 2, "edit_var")]
     [InlineData("ParseValue.yaml", 2, "parse_var")]
+    [InlineData("ParseValueList.yaml", 2, "parse_var")]
     [InlineData("SendActivity.yaml", 2, "activity_input")]
     [InlineData("SetVariable.yaml", 1, "set_var")]
     [InlineData("SetTextVariable.yaml", 1, "set_text")]
     [InlineData("ClearAllVariables.yaml", 1, "clear_all")]
     [InlineData("ResetVariable.yaml", 2, "clear_var")]
     [InlineData("MixedScopes.yaml", 2, "activity_input")]
+    [InlineData("CaseInsensitive.yaml", 6, "end_when_match")]
     public async Task ExecuteActionAsync(string workflowFile, int expectedCount, string expectedId)
     {
         await this.RunWorkflowAsync(workflowFile);
@@ -214,7 +217,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         AdaptiveDialog dialog = dialogBuilder.Build();
 
         WorkflowFormulaState state = new(RecalcEngineFactory.Create());
-        Mock<WorkflowAgentProvider> mockAgentProvider = CreateMockProvider();
+        Mock<WorkflowAgentProvider> mockAgentProvider = CreateMockProvider("1");
         DeclarativeWorkflowOptions options = new(mockAgentProvider.Object);
         WorkflowActionVisitor visitor = new(new DeclarativeWorkflowExecutor<string>(WorkflowActionVisitor.Steps.Root("anything"), options, state, (message) => DeclarativeWorkflowBuilder.DefaultTransform(message)), state, options);
         WorkflowElementWalker walker = new(visitor);
@@ -254,46 +257,57 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     private async Task RunWorkflowAsync<TInput>(string workflowPath, TInput workflowInput) where TInput : notnull
     {
         using StreamReader yamlReader = File.OpenText(Path.Combine("Workflows", workflowPath));
-        Mock<WorkflowAgentProvider> mockAgentProvider = CreateMockProvider();
+        Mock<WorkflowAgentProvider> mockAgentProvider = CreateMockProvider($"{workflowInput}");
         DeclarativeWorkflowOptions workflowContext = new(mockAgentProvider.Object) { LoggerFactory = this.Output };
 
         Workflow workflow = DeclarativeWorkflowBuilder.Build<TInput>(yamlReader, workflowContext);
 
-        StreamingRun run = await InProcessExecution.StreamAsync(workflow, workflowInput);
+        await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, workflowInput);
 
-        this.WorkflowEvents = run.WatchStreamAsync().ToEnumerable().ToList();
-        foreach (WorkflowEvent workflowEvent in this.WorkflowEvents)
+        await foreach (WorkflowEvent workflowEvent in run.WatchStreamAsync())
         {
-            if (workflowEvent is ExecutorInvokedEvent invokeEvent)
+            this.WorkflowEvents.Add(workflowEvent);
+
+            switch (workflowEvent)
             {
-                ActionExecutorResult? message = invokeEvent.Data as ActionExecutorResult;
-                this.Output.WriteLine($"EXEC: {invokeEvent.ExecutorId} << {message?.ExecutorId ?? "?"} [{message?.Result ?? "-"}]");
-            }
-            else if (workflowEvent is DeclarativeActionInvokedEvent actionInvokeEvent)
-            {
-                this.Output.WriteLine($"ACTION ENTER: {actionInvokeEvent.ActionId}");
-            }
-            else if (workflowEvent is DeclarativeActionCompletedEvent actionCompleteEvent)
-            {
-                this.Output.WriteLine($"ACTION EXIT: {actionCompleteEvent.ActionId}");
-            }
-            else if (workflowEvent is MessageActivityEvent activityEvent)
-            {
-                this.Output.WriteLine($"ACTIVITY: {activityEvent.Message}");
-            }
-            else if (workflowEvent is AgentRunResponseEvent messageEvent)
-            {
-                this.Output.WriteLine($"MESSAGE: {messageEvent.Response.Messages[0].Text.Trim()}");
+                case ExecutorInvokedEvent invokeEvent:
+                    ActionExecutorResult? message = invokeEvent.Data as ActionExecutorResult;
+                    this.Output.WriteLine($"EXEC: {invokeEvent.ExecutorId} << {message?.ExecutorId ?? "?"} [{message?.Result ?? "-"}]");
+                    break;
+
+                case DeclarativeActionInvokedEvent actionInvokeEvent:
+                    this.Output.WriteLine($"ACTION ENTER: {actionInvokeEvent.ActionId}");
+                    break;
+
+                case DeclarativeActionCompletedEvent actionCompleteEvent:
+                    this.Output.WriteLine($"ACTION EXIT: {actionCompleteEvent.ActionId}");
+                    break;
+
+                case MessageActivityEvent activityEvent:
+                    this.Output.WriteLine($"ACTIVITY: {activityEvent.Message}");
+                    break;
+
+                case AgentRunResponseEvent messageEvent:
+                    this.Output.WriteLine($"MESSAGE: {messageEvent.Response.Messages[0].Text.Trim()}");
+                    break;
+
+                case ExecutorFailedEvent failureEvent:
+                    Console.WriteLine($"Executor failed [{failureEvent.ExecutorId}]: {failureEvent.Data?.Message ?? "Unknown"}");
+                    break;
+
+                case WorkflowErrorEvent errorEvent:
+                    throw errorEvent.Data as Exception ?? new XunitException("Unexpected failure...");
             }
         }
+
         this.WorkflowEventCounts = this.WorkflowEvents.GroupBy(e => e.GetType()).ToDictionary(e => e.Key, e => e.Count());
     }
 
-    private static Mock<WorkflowAgentProvider> CreateMockProvider()
+    private static Mock<WorkflowAgentProvider> CreateMockProvider(string input)
     {
         Mock<WorkflowAgentProvider> mockAgentProvider = new(MockBehavior.Strict);
         mockAgentProvider.Setup(provider => provider.CreateConversationAsync(It.IsAny<CancellationToken>())).Returns(() => Task.FromResult(Guid.NewGuid().ToString("N")));
-        mockAgentProvider.Setup(provider => provider.CreateMessageAsync(It.IsAny<string>(), It.IsAny<ChatMessage>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        mockAgentProvider.Setup(provider => provider.CreateMessageAsync(It.IsAny<string>(), It.IsAny<ChatMessage>(), It.IsAny<CancellationToken>())).Returns(Task.FromResult(new ChatMessage(ChatRole.Assistant, input)));
         return mockAgentProvider;
     }
 }

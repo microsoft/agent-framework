@@ -4,7 +4,6 @@ using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
-using Microsoft.Agents.AI.Workflows.Reflection;
 using Microsoft.Extensions.AI;
 
 namespace WorkflowConcurrentSample;
@@ -59,8 +58,8 @@ public static class Program
             .Build();
 
         // Execute the workflow in streaming mode
-        StreamingRun run = await InProcessExecution.StreamAsync(workflow, "What is temperature?");
-        await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
+        await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, input: "What is temperature?");
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync())
         {
             if (evt is WorkflowOutputEvent output)
             {
@@ -74,22 +73,23 @@ public static class Program
 /// Executor that starts the concurrent processing by sending messages to the agents.
 /// </summary>
 internal sealed class ConcurrentStartExecutor() :
-    ReflectingExecutor<ConcurrentStartExecutor>("ConcurrentStartExecutor"),
-    IMessageHandler<string>
+    Executor<string>("ConcurrentStartExecutor")
 {
     /// <summary>
     /// Starts the concurrent processing by sending messages to the agents.
     /// </summary>
     /// <param name="message">The user message to process</param>
     /// <param name="context">Workflow context for accessing workflow services and adding events</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
+    /// The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A task representing the asynchronous operation</returns>
-    public async ValueTask HandleAsync(string message, IWorkflowContext context)
+    public override async ValueTask HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         // Broadcast the message to all connected agents. Receiving agents will queue
         // the message but will not start processing until they receive a turn token.
-        await context.SendMessageAsync(new ChatMessage(ChatRole.User, message));
+        await context.SendMessageAsync(new ChatMessage(ChatRole.User, message), cancellationToken: cancellationToken);
         // Broadcast the turn token to kick off the agents.
-        await context.SendMessageAsync(new TurnToken(emitEvents: true));
+        await context.SendMessageAsync(new TurnToken(emitEvents: true), cancellationToken: cancellationToken);
     }
 }
 
@@ -97,8 +97,7 @@ internal sealed class ConcurrentStartExecutor() :
 /// Executor that aggregates the results from the concurrent agents.
 /// </summary>
 internal sealed class ConcurrentAggregationExecutor() :
-    ReflectingExecutor<ConcurrentAggregationExecutor>("ConcurrentAggregationExecutor"),
-    IMessageHandler<ChatMessage>
+    Executor<ChatMessage>("ConcurrentAggregationExecutor")
 {
     private readonly List<ChatMessage> _messages = [];
 
@@ -107,15 +106,17 @@ internal sealed class ConcurrentAggregationExecutor() :
     /// </summary>
     /// <param name="message">The message from the agent</param>
     /// <param name="context">Workflow context for accessing workflow services and adding events</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
+    /// The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A task representing the asynchronous operation</returns>
-    public async ValueTask HandleAsync(ChatMessage message, IWorkflowContext context)
+    public override async ValueTask HandleAsync(ChatMessage message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         this._messages.Add(message);
 
         if (this._messages.Count == 2)
         {
             var formattedMessages = string.Join(Environment.NewLine, this._messages.Select(m => $"{m.AuthorName}: {m.Text}"));
-            await context.YieldOutputAsync(formattedMessages);
+            await context.YieldOutputAsync(formattedMessages, cancellationToken);
         }
     }
 }

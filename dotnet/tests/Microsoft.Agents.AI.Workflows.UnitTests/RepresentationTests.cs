@@ -35,15 +35,15 @@ public class RepresentationTests
             throw new NotImplementedException();
     }
 
-    private static InputPort TestInputPort =>
-        InputPort.Create<FunctionCallContent, FunctionResultContent>("ExternalFunction");
+    private static RequestPort TestRequestPort =>
+        RequestPort.Create<FunctionCallContent, FunctionResultContent>("ExternalFunction");
 
     private static async ValueTask RunExecutorishInfoMatchTestAsync(ExecutorIsh target)
     {
         ExecutorRegistration registration = target.Registration;
         ExecutorInfo info = registration.ToExecutorInfo();
 
-        info.IsMatch(await registration.ProviderAsync()).Should().BeTrue();
+        info.IsMatch(await registration.CreateInstanceAsync(runId: string.Empty)).Should().BeTrue();
     }
 
     [Fact]
@@ -51,8 +51,9 @@ public class RepresentationTests
     {
         int testsRun = 0;
         await RunExecutorishTestAsync(new TestExecutor());
-        await RunExecutorishTestAsync(TestInputPort);
+        await RunExecutorishTestAsync(TestRequestPort);
         await RunExecutorishTestAsync(new TestAgent());
+        await RunExecutorishTestAsync(Step1EntryPoint.WorkflowInstance.ConfigureSubWorkflow(nameof(Step1EntryPoint)));
 
         Func<int, IWorkflowContext, CancellationToken, ValueTask> function = MessageHandlerAsync;
         await RunExecutorishTestAsync(function.AsExecutor("FunctionExecutor"));
@@ -77,7 +78,7 @@ public class RepresentationTests
     public async Task Test_SpecializedExecutor_InfosAsync()
     {
         await RunExecutorishInfoMatchTestAsync(new AIAgentHostExecutor(new TestAgent()));
-        await RunExecutorishInfoMatchTestAsync(new RequestInfoExecutor(TestInputPort));
+        await RunExecutorishInfoMatchTestAsync(new RequestInfoExecutor(TestRequestPort));
     }
 
     private static string Source(int id) => $"Source/{id}";
@@ -156,23 +157,17 @@ public class RepresentationTests
     [Fact]
     public async Task Test_Sample_WorkflowInfosAsync()
     {
-        Workflow<string> workflowStep1 = (await Step1EntryPoint.WorkflowInstance.TryPromoteAsync<string>())!;
-        RunWorkflowInfoMatchTest(workflowStep1);
-
-        Workflow<string> workflowStep2 = (await Step2EntryPoint.WorkflowInstance.TryPromoteAsync<string>())!;
-        RunWorkflowInfoMatchTest(workflowStep2);
-
-        RunWorkflowInfoMatchTest((await Step3EntryPoint.WorkflowInstance.TryPromoteAsync<NumberSignal>())!);
-
-        RunWorkflowInfoMatchTest((await Step4EntryPoint.WorkflowInstance.TryPromoteAsync<NumberSignal>())!);
-
+        RunWorkflowInfoMatchTest(Step1EntryPoint.WorkflowInstance);
+        RunWorkflowInfoMatchTest(Step2EntryPoint.WorkflowInstance);
+        RunWorkflowInfoMatchTest(Step3EntryPoint.WorkflowInstance);
+        RunWorkflowInfoMatchTest(Step4EntryPoint.WorkflowInstance);
         // Step 5 reuses the workflow from Step 4, so we don't need to test it separately.
-        RunWorkflowInfoMatchTest((await Step6EntryPoint.CreateWorkflow(2).TryPromoteAsync<List<ChatMessage>>())!);
+        RunWorkflowInfoMatchTest(Step6EntryPoint.CreateWorkflow(maxTurns: 2));
         // Step 7 reuses the workflow from Step 6, so we don't need to test it separately.
 
-        RunWorkflowInfoMatchTest(workflowStep1, workflowStep2, expect: false);
+        RunWorkflowInfoMatchTest(Step1EntryPoint.WorkflowInstance, Step2EntryPoint.WorkflowInstance, expect: false);
 
-        static void RunWorkflowInfoMatchTest<TInput>(Workflow<TInput> workflow, Workflow<TInput>? comparator = null, bool expect = true)
+        static void RunWorkflowInfoMatchTest(Workflow workflow, Workflow? comparator = null, bool expect = true)
         {
             comparator ??= workflow;
 
