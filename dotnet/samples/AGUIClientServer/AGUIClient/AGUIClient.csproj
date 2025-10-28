@@ -11,13 +11,10 @@
   <ItemGroup>
     <PackageReference Include="System.CommandLine" />
     <PackageReference Include="Microsoft.Extensions.Hosting" />
-    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" VersionOverride="10.0.0-rc.2.25502.107" />
-    <PackageReference Include="System.Net.ServerSentEvents" VersionOverride="10.0.0-rc.2.25502.107" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\..\src\Microsoft.Agents.AI.AGUI\Microsoft.Agents.AI.AGUI.csproj" />
-    <ProjectReference Include="..\..\..\src\Microsoft.Agents.AI.Abstractions\Microsoft.Agents.AI.Abstractions.csproj" />
   </ItemGroup>
 
 </Project>
