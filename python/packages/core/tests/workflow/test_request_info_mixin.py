@@ -49,7 +49,8 @@ class TestRequestInfoMixin:
         # Check the spec attributes
         spec = test_handler._response_handler_spec  # type: ignore[reportAttributeAccessIssue]
         assert spec["name"] == "test_handler"
-        assert spec["message_type"] is int
+        assert spec["response_type"] is int
+        assert spec["request_type"] is str
 
     def test_response_handler_with_workflow_context_types(self):
         """Test response handler with different WorkflowContext type parameters."""
@@ -111,8 +112,8 @@ class TestRequestInfoMixin:
         # Should have registered handlers
         response_handlers = executor._response_handlers  # type: ignore[reportAttributeAccessIssue]
         assert len(response_handlers) == 2
-        assert int in response_handlers
-        assert bool in response_handlers
+        assert (str, int) in response_handlers
+        assert (dict[str, Any], bool) in response_handlers
 
     def test_executor_without_response_handlers(self):
         """Test an executor without response handlers."""
@@ -156,7 +157,10 @@ class TestRequestInfoMixin:
 
         executor = DuplicateExecutor()
 
-        with pytest.raises(ValueError, match="Duplicate response handler for message type.*int"):
+        with pytest.raises(
+            ValueError,
+            match="Duplicate response handler for request type <class 'str'> and response type <class 'int'>",
+        ):
             executor._discover_response_handlers()  # type: ignore[reportAttributeAccessIssue]
 
     def test_response_handler_function_callable(self):
@@ -181,7 +185,7 @@ class TestRequestInfoMixin:
         executor._discover_response_handlers()  # type: ignore[reportAttributeAccessIssue]
 
         # Get the handler
-        response_handler_func = executor._response_handlers[int]  # type: ignore[reportAttributeAccessIssue]
+        response_handler_func = executor._response_handlers[(str, int)]  # type: ignore[reportAttributeAccessIssue]
 
         # Create a mock context - we'll just use None since the handler doesn't use it
         asyncio.run(response_handler_func("test_request", 42, None))  # type: ignore[reportArgumentType]
@@ -219,8 +223,8 @@ class TestRequestInfoMixin:
         # Should have both handlers
         response_handlers = child._response_handlers  # type: ignore[reportAttributeAccessIssue]
         assert len(response_handlers) == 2
-        assert int in response_handlers
-        assert bool in response_handlers
+        assert (str, int) in response_handlers
+        assert (str, bool) in response_handlers
         assert child.is_request_response_capable is True
 
     def test_response_handler_spec_attributes(self):
@@ -246,7 +250,8 @@ class TestRequestInfoMixin:
 
         spec = specs[0]
         assert spec["name"] == "test_handler"
-        assert spec["message_type"] is int
+        assert spec["request_type"] is str
+        assert spec["response_type"] is int
         assert "output_types" in spec
         assert "workflow_output_types" in spec
         assert "ctx_annotation" in spec
@@ -274,7 +279,10 @@ class TestRequestInfoMixin:
         first_handlers = len(executor._response_handlers)  # type: ignore[reportAttributeAccessIssue]
 
         # Second call should raise an error due to duplicate registration
-        with pytest.raises(ValueError, match="Duplicate response handler for message type.*int"):
+        with pytest.raises(
+            ValueError,
+            match="Duplicate response handler for request type <class 'str'> and response type <class 'int'>",
+        ):
             executor._discover_response_handlers()  # type: ignore[reportAttributeAccessIssue]
 
         # Handlers count should remain the same
@@ -304,4 +312,256 @@ class TestRequestInfoMixin:
         # Should only have one handler despite other attributes
         response_handlers = executor._response_handlers  # type: ignore[reportAttributeAccessIssue]
         assert len(response_handlers) == 1
-        assert int in response_handlers
+        assert (str, int) in response_handlers
+
+    def test_same_request_type_different_response_types(self):
+        """Test that handlers with same request type but different response types are distinct."""
+
+        class TestExecutor(Executor, RequestInfoMixin):
+            def __init__(self):
+                super().__init__(id="test_executor", defer_discovery=True)
+                self.str_int_handler_called = False
+                self.str_bool_handler_called = False
+                self.str_dict_handler_called = False
+
+            @handler
+            async def dummy_handler(self, message: str, ctx: WorkflowContext) -> None:
+                pass
+
+            @response_handler
+            async def handle_str_int(self, original_request: str, response: int, ctx: WorkflowContext[str]) -> None:
+                self.str_int_handler_called = True
+
+            @response_handler
+            async def handle_str_bool(self, original_request: str, response: bool, ctx: WorkflowContext[str]) -> None:
+                self.str_bool_handler_called = True
+
+            @response_handler
+            async def handle_str_dict(
+                self, original_request: str, response: dict[str, Any], ctx: WorkflowContext[str]
+            ) -> None:
+                self.str_dict_handler_called = True
+
+        executor = TestExecutor()
+        executor._discover_response_handlers()  # type: ignore[reportAttributeAccessIssue]
+
+        # Should have three distinct handlers
+        response_handlers = executor._response_handlers  # type: ignore[reportAttributeAccessIssue]
+        assert len(response_handlers) == 3
+        assert (str, int) in response_handlers
+        assert (str, bool) in response_handlers
+        assert (str, dict[str, Any]) in response_handlers
+
+        # Test that each handler can be found correctly
+        str_int_handler = executor._find_response_handler("test", 42)  # pyright: ignore[reportPrivateUsage]
+        str_bool_handler = executor._find_response_handler("test", True)  # pyright: ignore[reportPrivateUsage]
+        str_dict_handler = executor._find_response_handler("test", {"key": "value"})  # pyright: ignore[reportPrivateUsage]
+
+        assert str_int_handler is not None
+        assert str_bool_handler is not None
+        assert str_dict_handler is not None
+
+        # Test that handlers are called correctly
+        asyncio.run(str_int_handler(42, None))  # type: ignore[reportArgumentType]
+        asyncio.run(str_bool_handler(True, None))  # type: ignore[reportArgumentType]
+        asyncio.run(str_dict_handler({"key": "value"}, None))  # type: ignore[reportArgumentType]
+
+        assert executor.str_int_handler_called
+        assert executor.str_bool_handler_called
+        assert executor.str_dict_handler_called
+
+    def test_different_request_types_same_response_type(self):
+        """Test that handlers with different request types but same response type are distinct."""
+
+        class TestExecutor(Executor, RequestInfoMixin):
+            def __init__(self):
+                super().__init__(id="test_executor", defer_discovery=True)
+                self.str_int_handler_called = False
+                self.dict_int_handler_called = False
+                self.list_int_handler_called = False
+
+            @handler
+            async def dummy_handler(self, message: str, ctx: WorkflowContext) -> None:
+                pass
+
+            @response_handler
+            async def handle_str_int(self, original_request: str, response: int, ctx: WorkflowContext[str]) -> None:
+                self.str_int_handler_called = True
+
+            @response_handler
+            async def handle_dict_int(
+                self, original_request: dict[str, Any], response: int, ctx: WorkflowContext[str]
+            ) -> None:
+                self.dict_int_handler_called = True
+
+            @response_handler
+            async def handle_list_int(
+                self, original_request: list[str], response: int, ctx: WorkflowContext[str]
+            ) -> None:
+                self.list_int_handler_called = True
+
+        executor = TestExecutor()
+        executor._discover_response_handlers()  # type: ignore[reportAttributeAccessIssue]
+
+        # Should have three distinct handlers
+        response_handlers = executor._response_handlers  # type: ignore[reportAttributeAccessIssue]
+        assert len(response_handlers) == 3
+        assert (str, int) in response_handlers
+        assert (dict[str, Any], int) in response_handlers
+        assert (list[str], int) in response_handlers
+
+        # Test that each handler can be found correctly
+        str_int_handler = executor._find_response_handler("test", 42)  # pyright: ignore[reportPrivateUsage]
+        dict_int_handler = executor._find_response_handler({"key": "value"}, 42)  # pyright: ignore[reportPrivateUsage]
+        list_int_handler = executor._find_response_handler(["test"], 42)  # pyright: ignore[reportPrivateUsage]
+
+        assert str_int_handler is not None
+        assert dict_int_handler is not None
+        assert list_int_handler is not None
+
+        # Test that handlers are called correctly
+        asyncio.run(str_int_handler(42, None))  # type: ignore[reportArgumentType]
+        asyncio.run(dict_int_handler(42, None))  # type: ignore[reportArgumentType]
+        asyncio.run(list_int_handler(42, None))  # type: ignore[reportArgumentType]
+
+        assert executor.str_int_handler_called
+        assert executor.dict_int_handler_called
+        assert executor.list_int_handler_called
+
+    def test_complex_type_combinations(self):
+        """Test response handlers with complex type combinations."""
+
+        class CustomRequest:
+            pass
+
+        class CustomResponse:
+            pass
+
+        class TestExecutor(Executor, RequestInfoMixin):
+            def __init__(self):
+                super().__init__(id="test_executor", defer_discovery=True)
+                self.custom_custom_called = False
+                self.custom_str_called = False
+                self.str_custom_called = False
+
+            @handler
+            async def dummy_handler(self, message: str, ctx: WorkflowContext) -> None:
+                pass
+
+            @response_handler
+            async def handle_custom_custom(
+                self, original_request: CustomRequest, response: CustomResponse, ctx: WorkflowContext[str]
+            ) -> None:
+                self.custom_custom_called = True
+
+            @response_handler
+            async def handle_custom_str(
+                self, original_request: CustomRequest, response: str, ctx: WorkflowContext[str]
+            ) -> None:
+                self.custom_str_called = True
+
+            @response_handler
+            async def handle_str_custom(
+                self, original_request: str, response: CustomResponse, ctx: WorkflowContext[str]
+            ) -> None:
+                self.str_custom_called = True
+
+        executor = TestExecutor()
+        executor._discover_response_handlers()  # type: ignore[reportAttributeAccessIssue]
+
+        # Should have three distinct handlers
+        response_handlers = executor._response_handlers  # type: ignore[reportAttributeAccessIssue]
+        assert len(response_handlers) == 3
+        assert (CustomRequest, CustomResponse) in response_handlers
+        assert (CustomRequest, str) in response_handlers
+        assert (str, CustomResponse) in response_handlers
+
+        # Test that each handler can be found correctly
+        custom_request = CustomRequest()
+        custom_response = CustomResponse()
+
+        custom_custom_handler = executor._find_response_handler(custom_request, custom_response)  # pyright: ignore[reportPrivateUsage]
+        custom_str_handler = executor._find_response_handler(custom_request, "test")  # pyright: ignore[reportPrivateUsage]
+        str_custom_handler = executor._find_response_handler("test", custom_response)  # pyright: ignore[reportPrivateUsage]
+
+        assert custom_custom_handler is not None
+        assert custom_str_handler is not None
+        assert str_custom_handler is not None
+
+    def test_handler_key_uniqueness(self):
+        """Test that handler keys (request_type, response_type) are truly unique."""
+
+        class TestExecutor(Executor, RequestInfoMixin):
+            def __init__(self):
+                super().__init__(id="test_executor", defer_discovery=True)
+
+            @handler
+            async def dummy_handler(self, message: str, ctx: WorkflowContext) -> None:
+                pass
+
+            @response_handler
+            async def handle1(self, original_request: str, response: int, ctx: WorkflowContext[str]) -> None:
+                pass
+
+            @response_handler
+            async def handle2(self, original_request: int, response: str, ctx: WorkflowContext[str]) -> None:
+                pass
+
+            @response_handler
+            async def handle3(self, original_request: str, response: str, ctx: WorkflowContext[str]) -> None:
+                pass
+
+            @response_handler
+            async def handle4(self, original_request: int, response: int, ctx: WorkflowContext[str]) -> None:
+                pass
+
+        executor = TestExecutor()
+        executor._discover_response_handlers()  # type: ignore[reportAttributeAccessIssue]
+
+        # Should have four distinct handlers based on different combinations
+        response_handlers = executor._response_handlers  # type: ignore[reportAttributeAccessIssue]
+        assert len(response_handlers) == 4
+
+        # Verify all expected combinations exist
+        expected_keys = {
+            (str, int),  # handle1
+            (int, str),  # handle2
+            (str, str),  # handle3
+            (int, int),  # handle4
+        }
+
+        actual_keys = set(response_handlers.keys())
+        assert actual_keys == expected_keys
+
+    def test_no_false_matches_with_similar_types(self):
+        """Test that handlers don't match with similar but different types."""
+
+        class TestExecutor(Executor, RequestInfoMixin):
+            def __init__(self):
+                super().__init__(id="test_executor", defer_discovery=True)
+
+            @handler
+            async def dummy_handler(self, message: str, ctx: WorkflowContext) -> None:
+                pass
+
+            @response_handler
+            async def handle_str_int(self, original_request: str, response: int, ctx: WorkflowContext[str]) -> None:
+                pass
+
+            @response_handler
+            async def handle_list_str_float(
+                self, original_request: list[str], response: float, ctx: WorkflowContext[str]
+            ) -> None:
+                pass
+
+        executor = TestExecutor()
+        executor._discover_response_handlers()  # type: ignore[reportAttributeAccessIssue]
+
+        # Test that wrong combinations don't match
+        assert executor._find_response_handler("test", 3.14) is None  # pyright: ignore[reportPrivateUsage] # str request, float response - no handler
+        assert executor._find_response_handler(["test"], 42) is None  # pyright: ignore[reportPrivateUsage] # list request, int response - no handler
+        assert executor._find_response_handler(42, "test") is None  # pyright: ignore[reportPrivateUsage] # int request, str response - no handler
+
+        # Test that correct combinations do match
+        assert executor._find_response_handler("test", 42) is not None  # pyright: ignore[reportPrivateUsage] # str request, int response - has handler
+        assert executor._find_response_handler(["test"], 3.14) is not None  # pyright: ignore[reportPrivateUsage] # list request, float response - has handler

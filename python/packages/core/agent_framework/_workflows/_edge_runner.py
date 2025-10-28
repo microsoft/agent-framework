@@ -93,8 +93,8 @@ class SingleEdgeRunner(EdgeRunner):
     async def send_message(self, message: Message, shared_state: SharedState, ctx: RunnerContext) -> bool:
         """Send a message through the single edge."""
         should_execute = False
-        target_id = None
-        source_id = None
+        target_id: str | None = None
+        source_id: str | None = None
         with create_edge_group_processing_span(
             self._edge_group.__class__.__name__,
             edge_group_id=self._edge_group.id,

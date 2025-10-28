@@ -233,19 +233,6 @@ class Executor(RequestInfoMixin, DictConvertible):
         Returns:
             An awaitable that resolves to the result of the execution.
         """
-        # Default to find handler in regular handlers
-        target_handlers = self._handlers
-
-        if isinstance(message, Message):
-            # Wrap the response handlers to include original_request parameter
-            if message.type == MessageType.RESPONSE:
-                target_handlers = {
-                    message_type: functools.partial(handler, message.original_request)
-                    for message_type, handler in self._response_handlers.items()
-                }
-            # Handle case where Message wrapper is passed instead of raw data
-            message = message.data
-
         # Create processing span for tracing (gracefully handles disabled tracing)
         with create_processing_span(
             self.id,
@@ -255,14 +242,10 @@ class Executor(RequestInfoMixin, DictConvertible):
             source_span_ids=source_span_ids,
         ):
             # Find the handler and handler spec that matches the message type.
-            handler: Callable[[Any, WorkflowContext[Any, Any]], Awaitable[None]] | None = None
-            for message_type in target_handlers:
-                if is_instance_of(message, message_type):
-                    handler = target_handlers[message_type]
-                    break
-
-            if handler is None:
-                raise RuntimeError(f"Executor {self.__class__.__name__} cannot handle message of type {type(message)}.")
+            handler = self._find_handler(message)
+            if isinstance(message, Message):
+                # Unwrap raw data for handler call
+                message = message.data
 
             # Create the appropriate WorkflowContext based on handler specs
             context = self._create_context_for_handler(
@@ -441,6 +424,40 @@ class Executor(RequestInfoMixin, DictConvertible):
     def to_dict(self) -> dict[str, Any]:
         """Serialize executor definition for workflow topology export."""
         return {"id": self.id, "type": self.type}
+
+    def _find_handler(self, message: Any) -> Callable[[Any, WorkflowContext[Any, Any]], Awaitable[None]]:
+        """Find the handler for a given message.
+
+        Args:
+            message: The message to find the handler for.
+
+        Returns:
+            The handler function if found, None otherwise
+        """
+        if isinstance(message, Message):
+            # Case where Message wrapper is passed instead of raw data
+            # Handler can be a standard handler or a response handler
+            if message.type == MessageType.STANDARD:
+                for message_type in self._handlers:
+                    if is_instance_of(message.data, message_type):
+                        return self._handlers[message_type]
+                raise RuntimeError(
+                    f"Executor {self.__class__.__name__} cannot handle message of type {type(message.data)}."
+                )
+            # Response message case - find response handler based on original request and response types
+            handler = self._find_response_handler(message.original_request, message.data)
+            if not handler:
+                raise RuntimeError(
+                    f"Executor {self.__class__.__name__} cannot handle request of type "
+                    f"{type(message.original_request)} and response of type {type(message.data)}."
+                )
+            return handler
+
+        # Standard raw message data case - only standard handlers apply
+        for message_type in self._handlers:
+            if is_instance_of(message, message_type):
+                return self._handlers[message_type]
+        raise RuntimeError(f"Executor {self.__class__.__name__} cannot handle message of type {type(message)}.")
 
 
 # endregion: Executor
