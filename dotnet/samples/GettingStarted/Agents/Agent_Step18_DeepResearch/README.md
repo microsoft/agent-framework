@@ -1,6 +1,6 @@
 ## What this sample demonstrates
 
-This sample demonstrates how to create an Azure AI Agent with the Deep Research Tool. The Deep Research Tool leverages the o3 reasoning model to perform comprehensive research on complex topics.
+This sample demonstrates how to create an Azure AI Agent with the Deep Research Tool. The Deep Research Tool leverages the o3-deep-research reasoning model to perform comprehensive research on complex topics.
 
 ## What this sample demonstrates
 
@@ -15,8 +15,7 @@ Before running this sample, ensure you have:
 2. A deep research model deployment (e.g., o3-deep-research)
 3. A model deployment (e.g., gpt-4o)
 4. A Bing Connection configured in your Azure AI Foundry project
-5. Access to the o3 reasoning model for deep research
-6. Azure CLI installed and authenticated
+5. Azure CLI installed and authenticated
 
 **Important**: Please visit the following documentation for detailed setup instructions:
 - [Deep Research Tool Documentation](https://aka.ms/agents-deep-research)
