@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.ComponentModel.DataAnnotations;
 using System.Text.Json.Serialization;
@@ -11,6 +11,10 @@ namespace Microsoft.Agents.AI.AGUI.Shared;
 
 internal sealed class AGUIMessage
 {
+    [Required]
+    [JsonPropertyName("id")]
+    public string? Id { get; set; }
+
     [Required]
     [JsonPropertyName("role")]
     public string Role { get; set; } = string.Empty;

@@ -25,7 +25,7 @@
   <ItemGroup>
     <PackageReference Include="System.Net.ServerSentEvents" />
     <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" />
-    <PackageReference Include="System.Text.Json" />
+    <PackageReference Include="System.Net.Http.Json" />
     <PackageReference Include="System.Threading.Channels" />
   </ItemGroup>
 

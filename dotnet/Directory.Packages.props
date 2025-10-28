@@ -30,6 +30,7 @@
     <PackageVersion Include="System.CommandLine" Version="2.0.0-rc.2.25502.107" />
     <PackageVersion Include="System.Diagnostics.DiagnosticSource" Version="9.0.10" />
     <PackageVersion Include="System.Linq.AsyncEnumerable" Version="10.0.0-rc.2.25502.107" />
+    <PackageVersion Include="System.Net.Http.Json" Version="9.0.10" />
     <PackageVersion Include="System.Net.ServerSentEvents" Version="9.0.10" />
     <PackageVersion Include="System.Text.Json" Version="9.0.10" />
     <PackageVersion Include="System.Threading.Channels" Version="9.0.10" />

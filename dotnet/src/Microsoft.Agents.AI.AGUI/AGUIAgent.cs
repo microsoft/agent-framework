@@ -1,11 +1,8 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
-using System.IO;
-using System.Linq;
 using System.Net.Http;
-using System.Net.ServerSentEvents;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
@@ -21,22 +18,25 @@ namespace Microsoft.Agents.AI.AGUI;
 /// </summary>
 public sealed class AGUIAgent : AIAgent
 {
-    private readonly HttpClient _httpClient;
+    private readonly AGUIHttpService _client;
     private readonly string _agentId;
-    private readonly string? _description;
+    private readonly string _description;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AGUIAgent"/> class.
     /// </summary>
     /// <param name="httpClient">The HTTP client to use for communication with the AG-UI server.</param>
+    /// <param name="endpoint">The URL for the AG-UI server.</param>
     /// <param name="id">The agent ID.</param>
     /// <param name="description">Optional description of the agent.</param>
     /// <param name="messages">Initial conversation messages.</param>
-    public AGUIAgent(HttpClient httpClient, string id, string description, IEnumerable<ChatMessage> messages)
+    public AGUIAgent(HttpClient httpClient, string endpoint, string id, string description, IEnumerable<ChatMessage> messages)
     {
-        this._httpClient = Throw.IfNull(httpClient);
         this._agentId = Throw.IfNullOrWhitespace(id);
         this._description = description;
+        this._client = new AGUIHttpService(
+            httpClient ?? Throw.IfNull(httpClient),
+            endpoint ?? Throw.IfNullOrEmpty(endpoint));
     }
 
     /// <inheritdoc/>
@@ -85,85 +85,33 @@ public sealed class AGUIAgent : AIAgent
     {
         _ = Throw.IfNull(messages);
 
-        AGUIAgentThread aguiThread = thread as AGUIAgentThread ?? new AGUIAgentThread();
+        thread ??= this.GetNewThread();
+        if (thread is not AGUIAgentThread typedThread)
+        {
+            throw new InvalidOperationException("The provided thread is not compatible with the agent. Only threads created by the agent can be used.");
+        }
 
-        string threadId = Guid.NewGuid().ToString("N");
-        string runId = Guid.NewGuid().ToString("N");
+        string runId = Guid.NewGuid().ToString();
 
         RunAgentInput input = new()
         {
-            ThreadId = threadId,
+            ThreadId = typedThread.ThreadId,
             RunId = runId,
-            Messages = messages.Select(m => new AGUIMessage
-            {
-                Role = m.Role.Value,
-                Content = m.Text
-            }).ToArray(),
+            Messages = messages.AsAGUIMessages(),
             Tools = [],
             Context = new Dictionary<string, string>(StringComparer.Ordinal)
         };
 
-        string jsonContent = JsonSerializer.Serialize(input, AGUIJsonSerializerContext.Default.RunAgentInput);
-        using StringContent content = new(jsonContent, System.Text.Encoding.UTF8, "application/json");
-        using HttpResponseMessage response = await this._httpClient.PostAsync(
-            this._httpClient.BaseAddress,
-            content,
-            cancellationToken).ConfigureAwait(false);
-
-        response.EnsureSuccessStatusCode();
-
-#if NET
-        Stream responseStream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-#else
-        Stream responseStream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
-#endif
-
-        AGUIEventStreamProcessor processor = new();
-
-        await foreach (SseItem<string> sseItem in SseParser.Create(responseStream).EnumerateAsync(cancellationToken).ConfigureAwait(false))
+        var updates = new List<ChatResponseUpdate>();
+        await foreach (var update in this._client.PostRunAsync(input, cancellationToken).AsChatResponseUpdatesAsync(cancellationToken).ConfigureAwait(false))
         {
-            BaseEvent? evt = JsonSerializer.Deserialize(sseItem.Data, AGUIJsonSerializerContext.Default.BaseEvent);
-            if (evt is null)
-            {
-                continue;
-            }
-
-            switch (evt)
-            {
-                case RunStartedEvent runStarted:
-                    AgentRunResponse startResponse = processor.MapRunStarted(runStarted);
-                    foreach (AgentRunResponseUpdate update in startResponse.ToAgentRunResponseUpdates())
-                    {
-                        yield return update;
-                    }
-                    break;
-
-                case TextMessageStartEvent:
-                case TextMessageContentEvent:
-                case TextMessageEndEvent:
-                    // Buffer text events and process them together
-                    List<BaseEvent> textEvents = [evt];
-                    yield return processor.MapTextEvents(textEvents);
-                    break;
-
-                case RunFinishedEvent runFinished:
-                    AgentRunResponse finishResponse = processor.MapRunFinished(runFinished);
-                    foreach (AgentRunResponseUpdate update in finishResponse.ToAgentRunResponseUpdates())
-                    {
-                        yield return update;
-                    }
-                    break;
-
-                case RunErrorEvent runError:
-                    AgentRunResponse errorResponse = processor.MapRunError(runError);
-                    foreach (AgentRunResponseUpdate update in errorResponse.ToAgentRunResponseUpdates())
-                    {
-                        yield return update;
-                    }
-                    break;
-            }
+            var chatUpdate = update.AsChatResponseUpdate();
+            updates.Add(chatUpdate);
+            yield return update;
         }
 
-        await NotifyThreadOfNewMessagesAsync(aguiThread, messages, cancellationToken).ConfigureAwait(false);
+        var response = updates.ToChatResponse();
+
+        await NotifyThreadOfNewMessagesAsync(thread, response.Messages, cancellationToken).ConfigureAwait(false);
     }
 }
