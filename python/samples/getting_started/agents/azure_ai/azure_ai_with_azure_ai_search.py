@@ -3,7 +3,7 @@
 import asyncio
 import os
 
-from agent_framework import ChatAgent
+from agent_framework import ChatAgent, CitationAnnotation
 from agent_framework.azure import AzureAIAgentClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import ConnectionType
@@ -88,25 +88,24 @@ async def main() -> None:
                 print("Agent: ", end="", flush=True)
 
                 # Stream the response and collect citations
-                citations = []
+                citations: list[CitationAnnotation] = []
                 async for chunk in agent.run_stream(user_input):
                     if chunk.text:
                         print(chunk.text, end="", flush=True)
 
                     # Collect citations from Azure AI Search responses
-                    if hasattr(chunk, "contents") and chunk.contents:
-                        for content in chunk.contents:
-                            if hasattr(content, "annotations") and content.annotations:
-                                citations.extend(content.annotations)  # type: ignore
+                    for content in getattr(chunk, "contents", []):
+                        annotations = getattr(content, "annotations", [])
+                        if annotations:
+                            citations.extend(annotations)
 
                 print()
 
-                # Display citation details from Azure AI Search
+                # Display collected citations
                 if citations:
-                    print("\nCitations from Azure AI Search:")
-                    for i, citation in enumerate(citations, 1):  # type: ignore
-                        print(f"  [{i}] Document: {citation.title}")  # type: ignore
-                        print(f"      Reference: {citation.url}")  # type: ignore
+                    print("\n\nCitations:")
+                    for i, citation in enumerate(citations, 1):
+                        print(f"[{i}] Reference: {citation.url}")
 
                 print("\n" + "=" * 50 + "\n")
                 print("Hotel search conversation completed!")

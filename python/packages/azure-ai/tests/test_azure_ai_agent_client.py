@@ -1026,6 +1026,69 @@ async def test_azure_ai_chat_client_prep_tools_file_search_with_vector_stores(
         mock_file_search.assert_called_once_with(vector_store_ids=["vs-123"])
 
 
+async def test_azure_ai_chat_client_setup_azure_ai_observability_success(
+    mock_ai_project_client: MagicMock,
+) -> None:
+    """Test setup_azure_ai_observability success case with connection string."""
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, agent_id="test-agent")
+
+    # Mock successful connection string retrieval
+    mock_ai_project_client.telemetry.get_application_insights_connection_string = AsyncMock(
+        return_value="InstrumentationKey=test-key;IngestionEndpoint=https://test.com"
+    )
+
+    # Mock setup_observability function (it's imported inside the method)
+    with patch("agent_framework.observability.setup_observability") as mock_setup:
+        await chat_client.setup_azure_ai_observability(enable_sensitive_data=True)
+
+        # Verify setup_observability was called with the correct parameters
+        mock_setup.assert_called_once_with(
+            applicationinsights_connection_string="InstrumentationKey=test-key;IngestionEndpoint=https://test.com",
+            enable_sensitive_data=True,
+        )
+
+
+async def test_azure_ai_chat_client_create_agent_stream_submit_tool_approvals(
+    mock_ai_project_client: MagicMock,
+) -> None:
+    """Test _create_agent_stream with tool approvals submission path."""
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, agent_id="test-agent")
+
+    # Mock active thread run that matches the tool run ID
+    mock_thread_run = MagicMock()
+    mock_thread_run.thread_id = "test-thread"
+    mock_thread_run.id = "test-run-id"
+    chat_client._get_active_thread_run = AsyncMock(return_value=mock_thread_run)  # type: ignore
+
+    # Mock required action results with approval response that matches run ID
+    approval_response = FunctionApprovalResponseContent(
+        id='["test-run-id", "test-call-id"]',
+        function_call=FunctionCallContent(
+            call_id='["test-run-id", "test-call-id"]', name="test_function", arguments="{}"
+        ),
+        approved=True,
+    )
+
+    # Mock submit_tool_outputs_stream
+    mock_handler = MagicMock()
+    mock_ai_project_client.agents.runs.submit_tool_outputs_stream = AsyncMock()
+
+    with patch("azure.ai.agents.models.AsyncAgentEventHandler", return_value=mock_handler):
+        stream, final_thread_id = await chat_client._create_agent_stream(  # type: ignore
+            "test-thread", "test-agent", {}, [approval_response]
+        )
+
+        # Verify the approvals path was taken
+        assert final_thread_id == "test-thread"
+
+        # Verify submit_tool_outputs_stream was called with approvals
+        mock_ai_project_client.agents.runs.submit_tool_outputs_stream.assert_called_once()
+        call_args = mock_ai_project_client.agents.runs.submit_tool_outputs_stream.call_args[1]
+        assert "tool_approvals" in call_args
+        assert call_args["tool_approvals"][0].tool_call_id == "test-call-id"
+        assert call_args["tool_approvals"][0].approve is True
+
+
 async def test_azure_ai_chat_client_prep_tools_dict_tool(mock_ai_project_client: MagicMock) -> None:
     """Test _prep_tools with dictionary tool definition."""
     chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, agent_id="test-agent")
