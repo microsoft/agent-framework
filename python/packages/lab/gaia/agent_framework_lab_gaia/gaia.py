@@ -293,12 +293,11 @@ class GAIA:
         print(f"Downloading GAIA dataset to {self.data_dir}...")
         from huggingface_hub import snapshot_download
 
-        local_dir = snapshot_download(
+        local_dir = snapshot_download(  # type: ignore
             repo_id="gaia-benchmark/GAIA",
             repo_type="dataset",
             token=token,
             local_dir=str(self.data_dir),
-            local_dir_use_symlinks=False,
             force_download=False,
         )
         return Path(local_dir)

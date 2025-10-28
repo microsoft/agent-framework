@@ -19,7 +19,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests;
 /// <summary>
 /// Tests execution of workflow created by <see cref="DeclarativeWorkflowBuilder"/>.
 /// </summary>
-public sealed class ToolInputWorkflowTest(ITestOutputHelper output) : IntegrationTest(output)
+public sealed class FunctionCallingWorkflowTest(ITestOutputHelper output) : IntegrationTest(output)
 {
     [Fact]
     public Task ValidateAutoInvokeAsync() =>
@@ -47,7 +47,7 @@ public sealed class ToolInputWorkflowTest(ITestOutputHelper output) : Integratio
             Assert.False(autoInvoke);
 
             RequestInfoEvent inputEvent = workflowEvents.InputEvents[workflowEvents.InputEvents.Count - 1];
-            AgentToolRequest? toolRequest = inputEvent.Request.Data.As<AgentToolRequest>();
+            AgentFunctionToolRequest? toolRequest = inputEvent.Request.Data.As<AgentFunctionToolRequest>();
             Assert.NotNull(toolRequest);
 
             List<(FunctionCallContent, AIFunction)> functionCalls = [];
@@ -66,7 +66,7 @@ public sealed class ToolInputWorkflowTest(ITestOutputHelper output) : Integratio
 
             ++responseCount;
 
-            WorkflowEvents runEvents = await harness.ResumeAsync(AgentToolResponse.Create(toolRequest, functionResults)).ConfigureAwait(false);
+            WorkflowEvents runEvents = await harness.ResumeAsync(AgentFunctionToolResponse.Create(toolRequest, functionResults)).ConfigureAwait(false);
             workflowEvents = new WorkflowEvents([.. workflowEvents.Events, .. runEvents.Events]);
         }
 
