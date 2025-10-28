@@ -191,19 +191,51 @@ class AgentExecutor(Executor):
         self._cache = normalize_messages_input(messages)
         await self._run_agent_and_emit(ctx)
 
-    def snapshot_state(self) -> dict[str, Any]:
+    async def snapshot_state(self) -> dict[str, Any]:
         """Capture current executor state for checkpointing.
 
+        For server-side threads (those with service_thread_id), creates a local thread
+        with message store and copies messages from the server-side thread. This ensures
+        checkpoints are self-contained and don't depend on external service state that
+        could be modified or deleted.
+
         Returns:
-            Dict containing serialized cache state
+            Dict containing serialized cache and thread state
         """
+        from .._threads import ChatMessageStore
         from ._conversation_state import encode_chat_messages
+
+        serialized_thread: dict[str, Any]
+
+        # Handle server-side threads by creating a local copy with messages
+        if self._agent_thread.service_thread_id is not None:
+            # Create a new local thread with message store (not server-side)
+            # This makes the checkpoint self-contained and independent of external services
+            message_store = ChatMessageStore()
+            new_thread = AgentThread(
+                message_store=message_store,
+                context_provider=self._agent_thread.context_provider,
+            )
+
+            # Copy messages from the current thread if it has a message store
+            if self._agent_thread.message_store is not None:
+                existing_messages = await self._agent_thread.message_store.list_messages()
+                if existing_messages:
+                    # Use the message store's add_messages directly to avoid on_new_messages
+                    # which has special handling for service threads
+                    await message_store.add_messages(existing_messages)
+
+            serialized_thread = await new_thread.serialize()
+        else:
+            # For local threads, serialize directly
+            serialized_thread = await self._agent_thread.serialize()
 
         return {
             "cache": encode_chat_messages(self._cache),
+            "agent_thread": serialized_thread,
         }
 
-    def restore_state(self, state: dict[str, Any]) -> None:
+    async def restore_state(self, state: dict[str, Any]) -> None:
         """Restore executor state from checkpoint.
 
         Args:
@@ -220,6 +252,30 @@ class AgentExecutor(Executor):
                 self._cache = []
         else:
             self._cache = []
+
+        thread_payload = state.get("agent_thread")
+        if thread_payload:
+            try:
+                # Deserialize the thread state to get the messages
+                from .._threads import AgentThread
+
+                temp_thread = await AgentThread().deserialize(thread_payload)
+
+                # Create a new thread using the agent's configuration
+                # This ensures the thread type (local vs server-side) matches the agent's setup
+                self._agent_thread = self._agent.get_new_thread()
+
+                # Copy messages from the checkpoint to the new thread
+                if temp_thread.message_store is not None:
+                    messages = await temp_thread.message_store.list_messages()
+                    if messages:
+                        await self._agent_thread.on_new_messages(messages)
+
+            except Exception as exc:
+                logger.warning("Failed to restore agent thread: %s", exc)
+                self._agent_thread = self._agent.get_new_thread()
+        else:
+            self._agent_thread = self._agent.get_new_thread()
 
     def reset(self) -> None:
         """Reset the internal cache of the executor."""
