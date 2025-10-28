@@ -57,16 +57,9 @@ public sealed class AGUIAgent : AIAgent
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        List<ChatMessage> chatMessages = [];
-        await foreach (AgentRunResponseUpdate update in this.RunStreamingAsync(messages, thread, options, cancellationToken).ConfigureAwait(false))
-        {
-            if (update.Role.HasValue && update.Contents.Count > 0)
-            {
-                chatMessages.Add(new ChatMessage(update.Role.Value, update.Contents));
-            }
-        }
-
-        return new AgentRunResponse(chatMessages);
+        return await this.RunStreamingAsync(messages, thread, null, cancellationToken)
+            .ToAgentRunResponseAsync(cancellationToken)
+            .ConfigureAwait(false);
     }
 
     /// <inheritdoc/>
@@ -76,10 +69,11 @@ public sealed class AGUIAgent : AIAgent
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        List<ChatResponseUpdate> updates = [];
+
         _ = Throw.IfNull(messages);
 
-        thread ??= this.GetNewThread();
-        if (thread is not AGUIAgentThread typedThread)
+        if ((thread ?? this.GetNewThread()) is not AGUIAgentThread typedThread)
         {
             throw new InvalidOperationException("The provided thread is not compatible with the agent. Only threads created by the agent can be used.");
         }
@@ -94,16 +88,14 @@ public sealed class AGUIAgent : AIAgent
             Context = new Dictionary<string, string>(StringComparer.Ordinal)
         };
 
-        var updates = new List<ChatResponseUpdate>();
         await foreach (var update in this._client.PostRunAsync(input, cancellationToken).AsChatResponseUpdatesAsync(cancellationToken).ConfigureAwait(false))
         {
-            var chatUpdate = update.AsChatResponseUpdate();
+            ChatResponseUpdate chatUpdate = update.AsChatResponseUpdate();
             updates.Add(chatUpdate);
             yield return update;
         }
 
-        var response = updates.ToChatResponse();
-
-        await NotifyThreadOfNewMessagesAsync(thread, response.Messages, cancellationToken).ConfigureAwait(false);
+        ChatResponse response = updates.ToChatResponse();
+        await NotifyThreadOfNewMessagesAsync(typedThread, response.Messages, cancellationToken).ConfigureAwait(false);
     }
 }

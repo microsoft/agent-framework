@@ -92,15 +92,7 @@ internal static class AgentRunResponseUpdateAGUIExtensions
             var chatResponse = update.AsChatResponseUpdate();
             if (chatResponse is { Contents.Count: > 0 } && chatResponse.Contents[0] is TextContent text && !string.Equals(currentMessageId, chatResponse.MessageId, StringComparison.Ordinal))
             {
-                if (currentMessageId is not null)
-                {
-                    yield return new TextMessageStartEvent
-                    {
-                        MessageId = currentMessageId,
-                        Role = chatResponse.Role!.Value.Value
-                    };
-                }
-
+                // End the previous message if there was one
                 if (currentMessageId is not null)
                 {
                     yield return new TextMessageEndEvent
@@ -108,8 +100,35 @@ internal static class AgentRunResponseUpdateAGUIExtensions
                         MessageId = currentMessageId
                     };
                 }
+
+                // Start the new message
+                yield return new TextMessageStartEvent
+                {
+                    MessageId = chatResponse.MessageId!,
+                    Role = chatResponse.Role!.Value.Value
+                };
+
                 currentMessageId = chatResponse.MessageId;
             }
+
+            // Emit text content if present
+            if (chatResponse is { Contents.Count: > 0 } && chatResponse.Contents[0] is TextContent textContent)
+            {
+                yield return new TextMessageContentEvent
+                {
+                    MessageId = chatResponse.MessageId!,
+                    Delta = textContent.Text ?? string.Empty
+                };
+            }
+        }
+
+        // End the last message if there was one
+        if (currentMessageId is not null)
+        {
+            yield return new TextMessageEndEvent
+            {
+                MessageId = currentMessageId
+            };
         }
 
         yield return new RunFinishedEvent

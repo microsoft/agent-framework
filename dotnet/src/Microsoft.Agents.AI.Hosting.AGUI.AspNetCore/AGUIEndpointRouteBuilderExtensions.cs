@@ -36,7 +36,17 @@ public static class AGUIEndpointRouteBuilderExtensions
         return endpoints.MapPost(pattern, requestDelegate: async context =>
         {
             var cancellationToken = context.RequestAborted;
-            var input = await JsonSerializer.DeserializeAsync(context.Request.Body, AGUIJsonSerializerContext.Default.RunAgentInput, cancellationToken).ConfigureAwait(false);
+
+            RunAgentInput? input;
+            try
+            {
+                input = await JsonSerializer.DeserializeAsync(context.Request.Body, AGUIJsonSerializerContext.Default.RunAgentInput, cancellationToken).ConfigureAwait(false);
+            }
+            catch (JsonException)
+            {
+                context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                return;
+            }
 
             if (input is null)
             {
