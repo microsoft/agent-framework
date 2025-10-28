@@ -32,7 +32,7 @@ public interface IWorkflowContext
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
     /// The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
-    ValueTask SendMessageAsync(object message, string? targetId = null, CancellationToken cancellationToken = default);
+    ValueTask SendMessageAsync(object message, string? targetId, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Adds an output value to the workflow's output queue. These outputs will be bubbled out of the workflow using the
