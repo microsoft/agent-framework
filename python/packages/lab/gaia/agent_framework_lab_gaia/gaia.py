@@ -54,17 +54,29 @@ class GAIATelemetryConfig:
         if not self.enable_tracing:
             return
 
-        from agent_framework.observability import setup_observability
+        # If only file tracing is requested (no OTLP or Application Insights),
+        # skip the default setup_observability which adds console exporter
+        if self.trace_to_file and not self.otlp_endpoint and not self.applicationinsights_connection_string:
+            # Set up minimal tracing with only file export
+            from opentelemetry.sdk.trace import TracerProvider
+            from opentelemetry.trace import set_tracer_provider
 
-        setup_observability(
-            enable_sensitive_data=True,  # Enable for detailed task traces
-            otlp_endpoint=self.otlp_endpoint,
-            applicationinsights_connection_string=self.applicationinsights_connection_string,
-        )
-
-        # Set up local file export if requested
-        if self.trace_to_file:
+            tracer_provider = TracerProvider()
+            set_tracer_provider(tracer_provider)
             self._setup_file_export()
+        else:
+            # Use full observability setup for OTLP/AppInsights
+            from agent_framework.observability import setup_observability
+
+            setup_observability(
+                enable_sensitive_data=True,  # Enable for detailed task traces
+                otlp_endpoint=self.otlp_endpoint,
+                applicationinsights_connection_string=self.applicationinsights_connection_string,
+            )
+
+            # Set up local file export if requested
+            if self.trace_to_file:
+                self._setup_file_export()
 
     def _setup_file_export(self) -> None:
         """Set up local file export for traces."""
@@ -204,29 +216,79 @@ def _load_gaia_local(repo_dir: Path, wanted_levels: list[int] | None = None, max
     """Load GAIA tasks from local repository directory."""
     tasks: list[Task] = []
 
-    for p in repo_dir.rglob("metadata.jsonl"):
-        for rec in _read_jsonl(p):
-            # Robustly extract fields used across variants
-            q = rec.get("Question") or rec.get("question") or rec.get("query") or rec.get("prompt")
-            ans = rec.get("Final answer") or rec.get("answer") or rec.get("final_answer")
-            qid = str(
-                rec.get("task_id")
-                or rec.get("question_id")
-                or rec.get("id")
-                or rec.get("uuid")
-                or f"{p.stem}:{len(tasks)}"
-            )
-            lvl = rec.get("Level") or rec.get("level")
-            fname = rec.get("file_name") or rec.get("filename") or None
+    # First try to load from parquet files (new format)
+    # Prioritize validation split over test split (validation has answers)
+    parquet_files = sorted(
+        repo_dir.rglob("metadata*.parquet"), key=lambda p: (0 if "validation" in str(p) else 1, str(p))
+    )
 
-            # Only evaluate examples with public answers (dev/validation split)
-            if not q or ans is None:
-                continue
+    for p in parquet_files:
+        try:
+            import pyarrow.parquet as pq
 
-            if wanted_levels and (lvl not in wanted_levels):
-                continue
+            table = pq.read_table(p)
+            for row in table.to_pylist():
+                # Robustly extract fields used across variants
+                q = row.get("Question") or row.get("question") or row.get("query") or row.get("prompt")
+                ans = row.get("Final answer") or row.get("answer") or row.get("final_answer")
+                qid = str(
+                    row.get("task_id")
+                    or row.get("question_id")
+                    or row.get("id")
+                    or row.get("uuid")
+                    or f"{p.stem}:{len(tasks)}"
+                )
+                lvl = row.get("Level") or row.get("level")
+                # Convert level to int if it's a string
+                if isinstance(lvl, str) and lvl.isdigit():
+                    lvl = int(lvl)
+                fname = row.get("file_name") or row.get("filename") or None
 
-            tasks.append(Task(task_id=qid, question=q, answer=str(ans), level=lvl, file_name=fname, metadata=rec))
+                # Only evaluate examples with public answers (dev/validation split)
+                # Skip if no question, no answer, or answer is placeholder like "?"
+                if not q or ans is None or str(ans).strip() in ["?", ""]:
+                    continue
+
+                if wanted_levels and (lvl not in wanted_levels):
+                    continue
+
+                tasks.append(Task(task_id=qid, question=q, answer=str(ans), level=lvl, file_name=fname, metadata=row))
+        except ImportError:
+            print("Warning: pyarrow not installed. Install with: pip install pyarrow")
+            continue
+        except Exception as e:
+            print(f"Warning: Could not load parquet file {p}: {e}")
+            continue
+
+    # Fall back to jsonl files (old format) if no parquet files found
+    if not tasks:
+        for p in repo_dir.rglob("metadata.jsonl"):
+            for rec in _read_jsonl(p):
+                # Robustly extract fields used across variants
+                q = rec.get("Question") or rec.get("question") or rec.get("query") or rec.get("prompt")
+                ans = rec.get("Final answer") or rec.get("answer") or rec.get("final_answer")
+                qid = str(
+                    rec.get("task_id")
+                    or rec.get("question_id")
+                    or rec.get("id")
+                    or rec.get("uuid")
+                    or f"{p.stem}:{len(tasks)}"
+                )
+                lvl = rec.get("Level") or rec.get("level")
+                # Convert level to int if it's a string
+                if isinstance(lvl, str) and lvl.isdigit():
+                    lvl = int(lvl)
+                fname = rec.get("file_name") or rec.get("filename") or None
+
+                # Only evaluate examples with public answers (dev/validation split)
+                # Skip if no question, no answer, or answer is placeholder like "?"
+                if not q or ans is None or str(ans).strip() in ["?", ""]:
+                    continue
+
+                if wanted_levels and (lvl not in wanted_levels):
+                    continue
+
+                tasks.append(Task(task_id=qid, question=q, answer=str(ans), level=lvl, file_name=fname, metadata=rec))
 
     # Shuffle to help with rate-limits and fairness if max_n is provided
     random.shuffle(tasks)
