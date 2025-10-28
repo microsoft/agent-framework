@@ -356,7 +356,6 @@ async def main() -> None:
     if outputs:
         print("\nWorkflow completed with outputs:")
         for output in outputs:
-            # TODO(@taochen): Allow the sub-workflow to output directly
             print(f"- {output}")
     else:
         raise RuntimeError("Workflow did not produce an output.")

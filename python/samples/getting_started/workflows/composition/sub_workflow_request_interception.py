@@ -18,7 +18,7 @@ from agent_framework import (
 from typing_extensions import Never
 
 """
-This sample demostrates how to handle request from the sub-workflow in the main workflow.
+This sample demonstrates how to handle request from the sub-workflow in the main workflow.
 
 Prerequisite:
 - Understanding of sub-workflows.
