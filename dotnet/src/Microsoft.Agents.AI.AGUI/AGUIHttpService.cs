@@ -20,10 +20,14 @@ internal sealed class AGUIHttpService(HttpClient client, string endpoint)
         RunAgentInput input,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        using HttpResponseMessage response = await client.PostAsJsonAsync(
-            endpoint,
-            input,
-            AGUIJsonSerializerContext.Default.RunAgentInput,
+        using HttpRequestMessage request = new(HttpMethod.Post, endpoint)
+        {
+            Content = JsonContent.Create(input, AGUIJsonSerializerContext.Default.RunAgentInput)
+        };
+
+        using HttpResponseMessage response = await client.SendAsync(
+            request,
+            HttpCompletionOption.ResponseHeadersRead,
             cancellationToken).ConfigureAwait(false);
 
         response.EnsureSuccessStatusCode();
