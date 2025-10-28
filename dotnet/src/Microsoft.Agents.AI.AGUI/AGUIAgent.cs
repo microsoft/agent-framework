@@ -44,16 +44,11 @@ public sealed class AGUIAgent : AIAgent
     public override string? Description { get; }
 
     /// <inheritdoc/>
-    public override AgentThread GetNewThread()
-    {
-        return new AGUIAgentThread();
-    }
+    public override AgentThread GetNewThread() => new AGUIAgentThread();
 
     /// <inheritdoc/>
-    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
-    {
-        return new AGUIAgentThread(serializedThread, jsonSerializerOptions);
-    }
+    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null) =>
+        new AGUIAgentThread(serializedThread, jsonSerializerOptions);
 
     /// <inheritdoc/>
     public override async Task<AgentRunResponse> RunAsync(
