@@ -218,14 +218,14 @@ def is_type_compatible(source_type: type | UnionType | Any, target_type: type | 
 
     # Case 4: both are non-generic types
     if source_origin is None and target_origin is None:
-        try:
-            # Only call issubclass if both are actual types, not UnionType or Any
-            if isinstance(source_type, type) and isinstance(target_type, type):
+        # Only call issubclass if both are actual types, not UnionType or Any
+        if isinstance(source_type, type) and isinstance(target_type, type):
+            try:
                 return issubclass(source_type, target_type)
-            return source_type == target_type
-        except TypeError:
-            # Handle cases where issubclass doesn't work (e.g., with special forms)
-            return source_type == target_type
+            except TypeError:
+                # Handle cases where issubclass doesn't work (e.g., with special forms)
+                return False
+        return source_type == target_type
 
     # Case 5: different container types are not compatible
     if source_origin != target_origin:
