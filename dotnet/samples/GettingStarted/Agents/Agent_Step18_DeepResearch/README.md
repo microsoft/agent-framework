@@ -1,11 +1,11 @@
-## What this sample demonstrates
+# What this sample demonstrates
 
-This sample demonstrates how to create an Azure AI Agent with the Deep Research Tool. The Deep Research Tool leverages the o3-deep-research reasoning model to perform comprehensive research on complex topics.
+This sample demonstrates how to create an Azure AI Agent with the Deep Research Tool, which leverages the o3-deep-research reasoning model to perform comprehensive research on complex topics.
 
-## What this sample demonstrates
-
-- Configuring the Deep Research Tool with Bing grounding
+Key features:
+- Configuring and using the Deep Research Tool with Bing grounding
 - Creating a persistent AI agent with deep research capabilities
+- Executing deep research queries and retrieving results
 
 ## Prerequisites
 
