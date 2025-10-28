@@ -33,7 +33,7 @@ public static class AGUIEndpointRouteBuilderExtensions
         string pattern,
         Func<IEnumerable<ChatMessage>, IEnumerable<AITool>, IEnumerable<KeyValuePair<string, string>>, JsonElement, AIAgent> agentFactory)
     {
-        return endpoints.MapPost(pattern, requestDelegate: async context =>
+        return endpoints.MapPost(pattern, async context =>
         {
             var cancellationToken = context.RequestAborted;
 
@@ -44,13 +44,13 @@ public static class AGUIEndpointRouteBuilderExtensions
             }
             catch (JsonException)
             {
-                context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                await TypedResults.BadRequest().ExecuteAsync(context).ConfigureAwait(false);
                 return;
             }
 
             if (input is null)
             {
-                context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                await TypedResults.BadRequest().ExecuteAsync(context).ConfigureAwait(false);
                 return;
             }
 
