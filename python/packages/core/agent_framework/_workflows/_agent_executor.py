@@ -259,7 +259,7 @@ class AgentExecutor(Executor):
                 # Deserialize the thread state to get the messages
                 from .._threads import AgentThread
 
-                temp_thread = await AgentThread().deserialize(thread_payload)
+                temp_thread = await AgentThread.deserialize(thread_payload)
 
                 # Create a new thread using the agent's configuration
                 # This ensures the thread type (local vs server-side) matches the agent's setup
