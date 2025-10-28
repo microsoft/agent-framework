@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.Shared;
 using Microsoft.AspNetCore.Http;
@@ -37,15 +38,42 @@ internal sealed class AGUIServerSentEventsResult : IResult
         var body = httpContext.Response.Body;
         var cancellationToken = httpContext.RequestAborted;
 
-        await foreach (var item in this._events.ConfigureAwait(false))
+        try
         {
-            await body.WriteAsync(s_data, cancellationToken).ConfigureAwait(false);
-            await JsonSerializer.SerializeAsync(
-                body,
-                item,
-                AGUIJsonSerializerContext.Default.BaseEvent, cancellationToken).ConfigureAwait(false);
-            await body.WriteAsync(s_newLines, cancellationToken).ConfigureAwait(false);
-            await body.FlushAsync(cancellationToken).ConfigureAwait(false);
+            await foreach (var item in this._events.ConfigureAwait(false))
+            {
+                await body.WriteAsync(s_data, cancellationToken).ConfigureAwait(false);
+                await JsonSerializer.SerializeAsync(
+                    body,
+                    item,
+                    AGUIJsonSerializerContext.Default.BaseEvent, cancellationToken).ConfigureAwait(false);
+                await body.WriteAsync(s_newLines, cancellationToken).ConfigureAwait(false);
+                await body.FlushAsync(cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // If an error occurs during streaming, try to send an error event before closing
+            try
+            {
+                var errorEvent = new RunErrorEvent
+                {
+                    Code = "StreamingError",
+                    Message = ex.Message
+                };
+                await body.WriteAsync(s_data, CancellationToken.None).ConfigureAwait(false);
+                await JsonSerializer.SerializeAsync(
+                    body,
+                    errorEvent,
+                    AGUIJsonSerializerContext.Default.BaseEvent,
+                    CancellationToken.None).ConfigureAwait(false);
+                await body.WriteAsync(s_newLines, CancellationToken.None).ConfigureAwait(false);
+                await body.FlushAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            catch
+            {
+                // If we can't send the error event, just let the connection close
+            }
         }
 
         await body.FlushAsync(httpContext.RequestAborted).ConfigureAwait(false);
