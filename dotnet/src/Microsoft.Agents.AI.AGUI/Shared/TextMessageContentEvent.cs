@@ -12,7 +12,7 @@ internal sealed class TextMessageContentEvent : BaseEvent
 {
     public TextMessageContentEvent()
     {
-        this.Type = "text_message_content";
+        this.Type = AGUIEventTypes.TextMessageContent;
     }
 
     [JsonPropertyName("messageId")]

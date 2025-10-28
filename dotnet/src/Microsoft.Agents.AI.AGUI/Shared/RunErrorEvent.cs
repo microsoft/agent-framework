@@ -12,7 +12,7 @@ internal sealed class RunErrorEvent : BaseEvent
 {
     public RunErrorEvent()
     {
-        this.Type = "run_error";
+        this.Type = AGUIEventTypes.RunError;
     }
 
     [JsonPropertyName("message")]

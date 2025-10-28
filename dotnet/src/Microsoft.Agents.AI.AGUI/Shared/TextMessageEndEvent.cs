@@ -12,7 +12,7 @@ internal sealed class TextMessageEndEvent : BaseEvent
 {
     public TextMessageEndEvent()
     {
-        this.Type = "text_message_end";
+        this.Type = AGUIEventTypes.TextMessageEnd;
     }
 
     [JsonPropertyName("messageId")]
