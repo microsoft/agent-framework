@@ -66,6 +66,6 @@ public static class IWorkflowContextExtensions
     /// <param name="message">The message to be sent.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
-    public static ValueTask SendMessageAsync(this IWorkflowContext context, object message, CancellationToken cancellationToken) =>
+    public static ValueTask SendMessageAsync(this IWorkflowContext context, object message, CancellationToken cancellationToken = default) =>
         context.SendMessageAsync(message, null, cancellationToken);
 }
