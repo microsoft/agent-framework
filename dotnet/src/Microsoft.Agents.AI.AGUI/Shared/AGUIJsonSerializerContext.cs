@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Text.Json.Serialization;
 
@@ -21,6 +21,9 @@ namespace Microsoft.Agents.AI.AGUI;
 [JsonSerializable(typeof(TextMessageStartEvent))]
 [JsonSerializable(typeof(TextMessageContentEvent))]
 [JsonSerializable(typeof(TextMessageEndEvent))]
+#if !ASPNETCORE
+[JsonSerializable(typeof(AGUIAgentThread.AGUIAgentThreadState))]
+#endif
 internal partial class AGUIJsonSerializerContext : JsonSerializerContext
 {
 }

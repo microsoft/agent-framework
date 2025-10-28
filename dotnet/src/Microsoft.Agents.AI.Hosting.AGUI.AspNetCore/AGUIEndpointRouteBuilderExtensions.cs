@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -33,35 +33,26 @@ public static class AGUIEndpointRouteBuilderExtensions
         string pattern,
         Func<IEnumerable<ChatMessage>, IEnumerable<AITool>, IEnumerable<KeyValuePair<string, string>>, JsonElement, AIAgent> agentFactory)
     {
-#pragma warning disable IL2026 // Minimal API MapPost with delegate is acceptable for this use case
-#pragma warning disable IL3050 // Minimal API MapPost with delegate is acceptable for this use case
-        return endpoints.MapPost(pattern, async (HttpContext context, RunAgentInput input, CancellationToken cancellationToken) =>
-#pragma warning restore IL3050
-#pragma warning restore IL2026
+        return endpoints.MapPost(pattern, new RequestDelegate(async (HttpContext context) =>
         {
-            (IEnumerable<ChatMessage> messages, IEnumerable<AITool> tools, IEnumerable<KeyValuePair<string, string>> contextValues, JsonElement forwardedProps) = MapRunAgentInput(input);
+            var cancellationToken = context.RequestAborted;
+            var input = await JsonSerializer.DeserializeAsync(context.Request.Body, AGUIJsonSerializerContext.Default.RunAgentInput, cancellationToken).ConfigureAwait(false);
+            if (input is null)
+            {
+                context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                return;
+            }
+            var messages = input.Messages.AsChatMessages();
+            var contextValues = input.Context;
+            var forwardedProps = input.ForwardedProperties;
+            AIAgent agent = agentFactory(messages, [], contextValues, forwardedProps);
 
-            AIAgent agent = agentFactory(messages, tools, contextValues, forwardedProps);
-
-            IAsyncEnumerable<BaseEvent> events = CreateEventStreamAsync(agent, messages, tools, contextValues, forwardedProps, cancellationToken);
+            IAsyncEnumerable<BaseEvent> events = CreateEventStreamAsync(agent, messages, [], contextValues, forwardedProps, cancellationToken);
 
             IAsyncEnumerable<SseItem<string>> sseStream = MapEventsToSseItemsAsync(events, cancellationToken);
 
-            return new ServerSentEventsResult<string>(sseStream);
-        });
-    }
-
-    private static (IEnumerable<ChatMessage> Messages, IEnumerable<AITool> Tools, IEnumerable<KeyValuePair<string, string>> ContextValues, JsonElement ForwardedProperties) MapRunAgentInput(RunAgentInput input)
-    {
-        IEnumerable<ChatMessage> messages = input.Messages.Select(m => new ChatMessage(
-            new ChatRole(m.Role),
-            m.Content));
-
-        IEnumerable<AITool> tools = [];
-        IEnumerable<KeyValuePair<string, string>> contextValues = input.Context;
-        JsonElement forwardedProps = input.ForwardedProperties;
-
-        return (messages, tools, contextValues, forwardedProps);
+            await new ServerSentEventsResult<string>(sseStream).ExecuteAsync(context).ConfigureAwait(false);
+        }));
     }
 
     private static async IAsyncEnumerable<BaseEvent> CreateEventStreamAsync(

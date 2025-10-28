@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -31,10 +31,10 @@ internal sealed class RunAgentInput
     [MinLength(1)]
 #pragma warning restore IL2026
     [JsonPropertyName("messages")]
-    public AGUIMessage[] Messages { get; set; } = Array.Empty<AGUIMessage>();
+    public IEnumerable<AGUIMessage> Messages { get; set; } = [];
 
     [JsonPropertyName("tools")]
-    public AGUITool[] Tools { get; set; } = Array.Empty<AGUITool>();
+    public IEnumerable<AGUITool> Tools { get; set; } = [];
 
     [JsonPropertyName("context")]
     public Dictionary<string, string> Context { get; set; } = new(StringComparer.Ordinal);
