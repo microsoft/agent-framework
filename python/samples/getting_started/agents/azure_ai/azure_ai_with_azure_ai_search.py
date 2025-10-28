@@ -1,9 +1,12 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import os
 
-from agent_framework import ChatAgent, HostedFileSearchTool
+from agent_framework import ChatAgent
 from agent_framework.azure import AzureAIAgentClient
+from azure.ai.projects.aio import AIProjectClient
+from azure.ai.projects.models import ConnectionType
 from azure.identity.aio import AzureCliCredential
 
 """
@@ -21,68 +24,96 @@ Prerequisites:
 NOTE: To ensure consistent search tool usage:
 - Include explicit instructions for the agent to use the search tool
 - Mention the search requirement in your queries
-- Use `tool_choice="required"` to force tool usage (uncomment in agent config)
+- Use `tool_choice="required"` to force tool usage
+
+More info on `query type` can be found here:
+https://learn.microsoft.com/en-us/python/api/azure-ai-agents/azure.ai.agents.models.aisearchindexresource?view=azure-python-preview
 """
 
 
 async def main() -> None:
-    """Main function demonstrating Azure AI agent with Azure AI Search capabilities."""
+    """Main function demonstrating Azure AI agent with raw Azure AI Search tool."""
+    print("=== Azure AI Agent with Raw Azure AI Search Tool ===")
 
-    # 1. Create Azure AI Search tool using HostedFileSearchTool
-    azure_ai_search_tool = HostedFileSearchTool(
-        additional_properties={
-            "index_name": "hotels-sample-index",  # Name of your search index
-            "query_type": "simple",  # Use simple search
-            "top_k": 3,
-        },
-    )
-
-    # 2. Use AzureAIAgentClient as async context manager for automatic cleanup
+    # Create the client and manually create an agent with Azure AI Search tool
     async with (
-        AzureAIAgentClient(async_credential=AzureCliCredential()) as client,
-        ChatAgent(
-            chat_client=client,
+        AzureCliCredential() as credential,
+        AIProjectClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as client,
+    ):
+        ai_search_conn_id = ""
+        async for connection in client.connections.list():
+            if connection.type == ConnectionType.AZURE_AI_SEARCH:
+                ai_search_conn_id = connection.id
+                break
+
+        # 1. Create Azure AI agent with the search tool
+        azure_ai_agent = await client.agents.create_agent(
+            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             name="HotelSearchAgent",
             instructions=(
-                "You are a helpful agent that only gives hotel information "
-                "based on the search index using the search tool."
+                "You are a helpful agent that searches hotel information using Azure AI Search. "
+                "Always use the search tool and index to find hotel data and provide accurate information."
             ),
-            tools=azure_ai_search_tool,
-            # tool_choice="required",
-        ) as agent,
-    ):
-        print("=== Azure AI Agent with Azure AI Search ===")
-        print("This agent can search through hotel data to help you find accommodations.\n")
+            tools=[{"type": "azure_ai_search"}],
+            tool_resources={
+                "azure_ai_search": {
+                    "indexes": [
+                        {
+                            "index_connection_id": ai_search_conn_id,
+                            "index_name": "hotels-sample-index",
+                            "query_type": "vector",
+                        }
+                    ]
+                }
+            },
+        )
 
-        # 3. Simulate conversation with the agent
-        user_input = "Use the search tool to find detailed information about Stay-Kay City Hotel."
-        print(f"User: {user_input}")
-        print("Agent: ", end="", flush=True)
+        # 2. Create chat client with the existing agent
+        chat_client = AzureAIAgentClient(project_client=client, agent_id=azure_ai_agent.id)
 
-        # Stream the response and collect citations
-        citations = []
-        async for chunk in agent.run_stream(user_input):
-            if chunk.text:
-                print(chunk.text, end="", flush=True)
+        try:
+            async with ChatAgent(
+                chat_client=chat_client,
+                # Additional instructions for this specific conversation
+                instructions=("You are a helpful agent that uses the search tool and index to find hotel information."),
+            ) as agent:
+                print("This agent uses raw Azure AI Search tool to search hotel data.\n")
 
-            # Collect citations from Azure AI Search responses
-            if hasattr(chunk, "contents") and chunk.contents:
-                for content in chunk.contents:
-                    if hasattr(content, "annotations") and content.annotations:
-                        citations.extend(content.annotations)  # type: ignore
+                # 3. Simulate conversation with the agent
+                user_input = (
+                    "Use Azure AI search knowledge tool to find detailed information about a winter hotel."
+                    " Use the search tool and index."  # You can modify prompt to force tool usage
+                )
+                print(f"User: {user_input}")
+                print("Agent: ", end="", flush=True)
 
-        print()
+                # Stream the response and collect citations
+                citations = []
+                async for chunk in agent.run_stream(user_input):
+                    if chunk.text:
+                        print(chunk.text, end="", flush=True)
 
-        # Display citation details from Azure AI Search
-        if citations:
-            print("\nCitations from Azure AI Search:")
-            for i, citation in enumerate(citations, 1):  # type: ignore
-                print(f"  [{i}] Document: {citation.title}")  # type: ignore
-                print(f"      Reference: {citation.url}")  # type: ignore
+                    # Collect citations from Azure AI Search responses
+                    if hasattr(chunk, "contents") and chunk.contents:
+                        for content in chunk.contents:
+                            if hasattr(content, "annotations") and content.annotations:
+                                citations.extend(content.annotations)  # type: ignore
 
-        print("\n" + "=" * 50 + "\n")
+                print()
 
-        print("Hotel search conversation completed!")
+                # Display citation details from Azure AI Search
+                if citations:
+                    print("\nCitations from Azure AI Search:")
+                    for i, citation in enumerate(citations, 1):  # type: ignore
+                        print(f"  [{i}] Document: {citation.title}")  # type: ignore
+                        print(f"      Reference: {citation.url}")  # type: ignore
+
+                print("\n" + "=" * 50 + "\n")
+                print("Hotel search conversation completed!")
+
+        finally:
+            # Clean up the agent manually
+            await client.agents.delete_agent(azure_ai_agent.id)
 
 
 if __name__ == "__main__":
