@@ -19,31 +19,29 @@ namespace Microsoft.Agents.AI.AGUI;
 public sealed class AGUIAgent : AIAgent
 {
     private readonly AGUIHttpService _client;
-    private readonly string _agentId;
-    private readonly string _description;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AGUIAgent"/> class.
     /// </summary>
-    /// <param name="httpClient">The HTTP client to use for communication with the AG-UI server.</param>
-    /// <param name="endpoint">The URL for the AG-UI server.</param>
     /// <param name="id">The agent ID.</param>
     /// <param name="description">Optional description of the agent.</param>
     /// <param name="messages">Initial conversation messages.</param>
-    public AGUIAgent(HttpClient httpClient, string endpoint, string id, string description, IEnumerable<ChatMessage> messages)
+    /// <param name="httpClient">The HTTP client to use for communication with the AG-UI server.</param>
+    /// <param name="endpoint">The URL for the AG-UI server.</param>
+    public AGUIAgent(string id, string description, IEnumerable<ChatMessage> messages, HttpClient httpClient, string endpoint)
     {
-        this._agentId = Throw.IfNullOrWhitespace(id);
-        this._description = description;
+        this.Id = Throw.IfNullOrWhitespace(id);
+        this.Description = description;
         this._client = new AGUIHttpService(
             httpClient ?? Throw.IfNull(httpClient),
             endpoint ?? Throw.IfNullOrEmpty(endpoint));
     }
 
     /// <inheritdoc/>
-    public override string Id => this._agentId;
+    public override string Id { get; }
 
     /// <inheritdoc/>
-    public override string? Description => this._description;
+    public override string? Description { get; }
 
     /// <inheritdoc/>
     public override AgentThread GetNewThread()
@@ -98,7 +96,6 @@ public sealed class AGUIAgent : AIAgent
             ThreadId = typedThread.ThreadId,
             RunId = runId,
             Messages = messages.AsAGUIMessages(),
-            Tools = [],
             Context = new Dictionary<string, string>(StringComparer.Ordinal)
         };
 

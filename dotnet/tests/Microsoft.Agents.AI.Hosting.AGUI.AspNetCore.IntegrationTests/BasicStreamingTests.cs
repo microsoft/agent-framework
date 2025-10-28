@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -30,7 +30,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
     {
         // Arrange
         await this.SetupTestServerAsync();
-        AGUIAgent agent = new(this._client!, "assistant", "Sample assistant", []);
+        AGUIAgent agent = new("assistant", "Sample assistant", [], this._client!, "");
         AgentThread thread = agent.GetNewThread();
         ChatMessage userMessage = new(ChatRole.User, "hello");
 
@@ -60,7 +60,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
     {
         // Arrange
         await this.SetupTestServerAsync();
-        AGUIAgent agent = new(this._client!, "assistant", "Sample assistant", []);
+        AGUIAgent agent = new("assistant", "Sample assistant", [], this._client!, "");
         AgentThread thread = agent.GetNewThread();
         ChatMessage userMessage = new(ChatRole.User, "test");
 
@@ -86,7 +86,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
     {
         // Arrange
         await this.SetupTestServerAsync();
-        AGUIAgent agent = new(this._client!, "assistant", "Sample assistant", []);
+        AGUIAgent agent = new("assistant", "Sample assistant", [], this._client!, "");
         AgentThread thread = agent.GetNewThread();
         ChatMessage userMessage = new(ChatRole.User, "hello");
 
