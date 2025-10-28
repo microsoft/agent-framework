@@ -233,7 +233,7 @@ internal sealed class Program
                     else
                     {
                         // Yield to handle the external request
-                        return requestInfo.Request; 
+                        return requestInfo.Request;
                     }
                     break;
 
