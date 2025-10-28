@@ -12,7 +12,7 @@ internal sealed class RunStartedEvent : BaseEvent
 {
     public RunStartedEvent()
     {
-        this.Type = "run_started";
+        this.Type = AGUIEventTypes.RunStarted;
     }
 
     [JsonPropertyName("threadId")]

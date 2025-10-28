@@ -12,7 +12,7 @@ internal sealed class RunFinishedEvent : BaseEvent
 {
     public RunFinishedEvent()
     {
-        this.Type = "run_finished";
+        this.Type = AGUIEventTypes.RunFinished;
     }
 
     [JsonPropertyName("threadId")]

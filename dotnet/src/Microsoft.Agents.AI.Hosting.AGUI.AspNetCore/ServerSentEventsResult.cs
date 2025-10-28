@@ -10,10 +10,6 @@ using Microsoft.AspNetCore.Http;
 
 namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore;
 
-/// <summary>
-/// Represents a result that writes a stream of server-sent events to the response.
-/// </summary>
-/// <typeparam name="T">The underlying type of the events emitted.</typeparam>
 internal sealed class ServerSentEventsResult<T> : IResult
 {
     private readonly IAsyncEnumerable<SseItem<T>> _events;

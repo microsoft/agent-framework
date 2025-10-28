@@ -12,7 +12,7 @@ internal sealed class TextMessageStartEvent : BaseEvent
 {
     public TextMessageStartEvent()
     {
-        this.Type = "text_message_start";
+        this.Type = AGUIEventTypes.TextMessageStart;
     }
 
     [JsonPropertyName("messageId")]

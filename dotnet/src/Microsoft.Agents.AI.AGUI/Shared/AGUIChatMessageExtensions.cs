@@ -54,19 +54,19 @@ internal static class AGUIChatMessageExtensions
 
     public static ChatRole MapChatRole(string role)
     {
-        if (string.Equals(role, "system", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(role, AGUIRoles.System, StringComparison.OrdinalIgnoreCase))
         {
             return ChatRole.System;
         }
-        else if (string.Equals(role, "user", StringComparison.OrdinalIgnoreCase))
+        else if (string.Equals(role, AGUIRoles.User, StringComparison.OrdinalIgnoreCase))
         {
             return ChatRole.User;
         }
-        else if (string.Equals(role, "assistant", StringComparison.OrdinalIgnoreCase))
+        else if (string.Equals(role, AGUIRoles.Assistant, StringComparison.OrdinalIgnoreCase))
         {
             return ChatRole.Assistant;
         }
-        else if (string.Equals(role, "developer", StringComparison.OrdinalIgnoreCase))
+        else if (string.Equals(role, AGUIRoles.Developer, StringComparison.OrdinalIgnoreCase))
         {
             return s_developerChatRole;
         }
