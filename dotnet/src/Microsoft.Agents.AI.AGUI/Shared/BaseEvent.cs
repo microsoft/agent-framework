@@ -8,6 +8,7 @@ namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.Shared;
 namespace Microsoft.Agents.AI.AGUI.Shared;
 #endif
 
+[JsonConverter(typeof(BaseEventJsonConverter))]
 internal abstract class BaseEvent
 {
     [JsonPropertyName("type")]
