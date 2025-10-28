@@ -336,9 +336,11 @@ internal sealed class Program
         request.Data.TypeId.TypeName switch
         {
             // Request for human input
-            _ when request.Data.TypeId.IsMatch<InputRequest>() => HandleInputRequest(request.DataAs<InputRequest>()!),
+            _ when request.Data.TypeId.IsMatch<AnswerRequest>() => HandleUserMessageRequest(request.DataAs<AnswerRequest>()!),
             // Request for function tool invocation.  (Only active when functions are defined and IncludeFunctions is true.)
-            _ when request.Data.TypeId.IsMatch<AgentToolRequest>() => await this.HandleToolRequestAsync(request.DataAs<AgentToolRequest>()!),
+            _ when request.Data.TypeId.IsMatch<AgentFunctionToolRequest>() => await this.HandleToolRequestAsync(request.DataAs<AgentFunctionToolRequest>()!),
+            // Request for user input, such as function or mcp tool approval
+            _ when request.Data.TypeId.IsMatch<UserInputRequest>() => HandleUserInputRequest(request.DataAs<UserInputRequest>()!),
             // Unknown request type.
             _ => throw new InvalidOperationException($"Unsupported external request type: {request.GetType().Name}."),
         };
@@ -346,7 +348,7 @@ internal sealed class Program
     /// <summary>
     /// Handle request for human input.
     /// </summary>
-    private static InputResponse HandleInputRequest(InputRequest request)
+    private static AnswerResponse HandleUserMessageRequest(AnswerRequest request)
     {
         string? userInput;
         do
@@ -358,7 +360,7 @@ internal sealed class Program
         }
         while (string.IsNullOrWhiteSpace(userInput));
 
-        return new InputResponse(userInput);
+        return new AnswerResponse(userInput);
     }
 
     /// <summary>
@@ -368,13 +370,13 @@ internal sealed class Program
     /// This handler is only active when <see cref="IncludeFunctions"/> is set to true and
     /// one or more <see cref="AIFunction"/> instances are defined in the constructor.
     /// </remarks>
-    private async ValueTask<AgentToolResponse> HandleToolRequestAsync(AgentToolRequest request)
+    private async ValueTask<AgentFunctionToolResponse> HandleToolRequestAsync(AgentFunctionToolRequest request)
     {
         Task<FunctionResultContent>[] functionTasks = request.FunctionCalls.Select(functionCall => InvokesToolAsync(functionCall)).ToArray();
 
         await Task.WhenAll(functionTasks);
 
-        return AgentToolResponse.Create(request, functionTasks.Select(task => task.Result));
+        return AgentFunctionToolResponse.Create(request, functionTasks.Select(task => task.Result));
 
         async Task<FunctionResultContent> InvokesToolAsync(FunctionCallContent functionCall)
         {
@@ -382,6 +384,30 @@ internal sealed class Program
             AIFunctionArguments? functionArguments = functionCall.Arguments is null ? null : new(functionCall.Arguments.NormalizePortableValues());
             object? result = await functionTool.InvokeAsync(functionArguments);
             return new FunctionResultContent(functionCall.CallId, JsonSerializer.Serialize(result));
+        }
+    }
+
+    /// <summary>
+    /// Handle request for user input for mcp and function tool approval.
+    /// </summary>
+    private static UserInputResponse HandleUserInputRequest(UserInputRequest request)
+    {
+        return UserInputResponse.Create(request, ProcessRequests());
+
+        IEnumerable<UserInputResponseContent> ProcessRequests()
+        {
+            foreach (UserInputRequestContent approvalRequest in request.InputRequests)
+            {
+                // Here we are explicitly approving all requests.
+                // In a real-world scenario, you would replace this logic to either solicit user approval or implement a more complex approval process.
+                yield return
+                    approvalRequest switch
+                    {
+                        McpServerToolApprovalRequestContent mcpApprovalRequest => mcpApprovalRequest.CreateResponse(approved: true),
+                        FunctionApprovalRequestContent functionApprovalRequest => functionApprovalRequest.CreateResponse(approved: true),
+                        _ => throw new NotSupportedException($"Unsupported request of type {approvalRequest.GetType().Name}"),
+                    };
+            }
         }
     }
 
