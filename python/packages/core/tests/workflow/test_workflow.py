@@ -519,7 +519,9 @@ class StateTrackingExecutor(Executor):
     """An executor that tracks state in shared state to test context reset behavior."""
 
     @handler
-    async def handle_message(self, message: StateTrackingMessage, ctx: WorkflowContext[Any, list[Any]]) -> None:
+    async def handle_message(
+        self, message: StateTrackingMessage, ctx: WorkflowContext[StateTrackingMessage, list[str]]
+    ) -> None:
         """Handle the message and track it in shared state."""
         # Get existing messages from shared state
         try:
