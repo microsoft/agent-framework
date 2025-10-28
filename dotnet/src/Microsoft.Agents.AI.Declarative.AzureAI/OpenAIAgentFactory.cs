@@ -161,7 +161,7 @@ public abstract class OpenAIAgentFactory : AgentFactory
 
     private static OpenAIClient CreateOpenAIClient(GptComponentMetadata promptAgent)
     {
-        //var keyConnection = promptAgent.Model?.Connection as KeyConnection;
+        //var keyConnection = promptAgent.Model?.Connection as ApiKeyConnection;
         //Throw.IfNull(keyConnection, "A key connection must be specified when create an OpenAI client");
 
         //var apiKey = keyConnection.Key?.LiteralValue;

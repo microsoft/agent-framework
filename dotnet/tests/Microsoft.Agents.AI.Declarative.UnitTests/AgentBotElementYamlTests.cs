@@ -60,13 +60,13 @@ public class AgentBotElementYamlTests
         Assert.Equal(0.9f, (float?)agent.Model.Options?.TopP.LiteralValue);
 
         // Assert contents using extension methods
-        Assert.Equal(1024, agent.Model.Options?.GetMaxOutputTokens());
-        Assert.Equal(50, agent.Model.Options?.GetTopK());
-        Assert.Equal(0.7f, agent.Model.Options?.GetFrequencyPenalty());
-        Assert.Equal(0.7f, agent.Model.Options?.GetPresencePenalty());
-        Assert.Equal(42, agent.Model.Options?.GetSeed());
-        Assert.Equal(PromptAgents.s_stopSequences, agent.Model.Options?.GetStopSequences());
-        Assert.True(agent.Model.Options?.GetAllowMultipleToolCalls());
+        Assert.Equal(1024, agent.Model.Options?.MaxOutputTokens?.LiteralValue);
+        Assert.Equal(50, agent.Model.Options?.TopK?.LiteralValue);
+        Assert.Equal(0.7f, agent.Model.Options?.FrequencyPenalty?.LiteralValue);
+        Assert.Equal(0.7f, agent.Model.Options?.PrecensePenalty?.LiteralValue);
+        Assert.Equal(42, agent.Model.Options?.Seed?.LiteralValue);
+        Assert.Equal(PromptAgents.s_stopSequences, agent.Model.Options?.StopSequences);
+        Assert.True(agent.Model.Options?.AllowMultipleToolCalls?.LiteralValue);
         Assert.Equal(ChatToolMode.Auto, agent.Model.Options?.GetChatToolMode());
     }
 
