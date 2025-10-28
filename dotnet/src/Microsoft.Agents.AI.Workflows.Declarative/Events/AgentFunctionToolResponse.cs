@@ -8,9 +8,9 @@ using Microsoft.Extensions.AI;
 namespace Microsoft.Agents.AI.Workflows.Declarative.Events;
 
 /// <summary>
-/// Represents a user input response.
+/// Represents one or more function tool responses.
 /// </summary>
-public sealed class AgentToolResponse
+public sealed class AgentFunctionToolResponse
 {
     /// <summary>
     /// The name of the agent associated with the tool response.
@@ -22,32 +22,31 @@ public sealed class AgentToolResponse
     /// </summary>
     public IList<FunctionResultContent> FunctionResults { get; }
 
-    /// <summary>
-    /// Initializes a new instance of the <see cref="InputResponse"/> class.
-    /// </summary>
     [JsonConstructor]
-    internal AgentToolResponse(string agentName, IList<FunctionResultContent> functionResults)
+    internal AgentFunctionToolResponse(string agentName, IList<FunctionResultContent> functionResults)
     {
         this.AgentName = agentName;
         this.FunctionResults = functionResults;
     }
 
     /// <summary>
-    /// Factory method to create an <see cref="AgentToolResponse"/> from an <see cref="AgentToolRequest"/>
+    /// Factory method to create an <see cref="AgentFunctionToolResponse"/> from an <see cref="AgentFunctionToolRequest"/>
     /// Ensures that all function calls in the request have a corresponding result.
     /// </summary>
     /// <param name="toolRequest">The tool request.</param>
-    /// <param name="functionResults">On or more function results</param>
-    /// <returns>An <see cref="AgentToolResponse"/> that can be provided to the workflow.</returns>
-    /// <exception cref="DeclarativeActionException">Not all <see cref="AgentToolRequest.FunctionCalls"/> have a corresponding <see cref="FunctionResultContent"/>.</exception>
-    public static AgentToolResponse Create(AgentToolRequest toolRequest, params IEnumerable<FunctionResultContent> functionResults)
+    /// <param name="functionResults">One or more function results</param>
+    /// <returns>An <see cref="AgentFunctionToolResponse"/> that can be provided to the workflow.</returns>
+    /// <exception cref="DeclarativeActionException">Not all <see cref="AgentFunctionToolRequest.FunctionCalls"/> have a corresponding <see cref="FunctionResultContent"/>.</exception>
+    public static AgentFunctionToolResponse Create(AgentFunctionToolRequest toolRequest, params IEnumerable<FunctionResultContent> functionResults)
     {
         HashSet<string> callIds = [.. toolRequest.FunctionCalls.Select(call => call.CallId)];
         HashSet<string> resultIds = [.. functionResults.Select(call => call.CallId)];
+
         if (!callIds.SetEquals(resultIds))
         {
             throw new DeclarativeActionException($"Missing results for: {string.Join(",", callIds.Except(resultIds))}");
         }
-        return new AgentToolResponse(toolRequest.AgentName, [.. functionResults]);
+
+        return new AgentFunctionToolResponse(toolRequest.AgentName, [.. functionResults]);
     }
 }
