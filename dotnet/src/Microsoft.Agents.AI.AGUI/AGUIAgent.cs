@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
@@ -96,6 +97,6 @@ public sealed class AGUIAgent : AIAgent
         }
 
         ChatResponse response = updates.ToChatResponse();
-        await NotifyThreadOfNewMessagesAsync(typedThread, response.Messages, cancellationToken).ConfigureAwait(false);
+        await NotifyThreadOfNewMessagesAsync(typedThread, messages.Concat(response.Messages), cancellationToken).ConfigureAwait(false);
     }
 }

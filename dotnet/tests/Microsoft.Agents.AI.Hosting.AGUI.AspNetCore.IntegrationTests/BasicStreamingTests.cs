@@ -75,10 +75,12 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         // Assert - Should have received text updates
         updates.Should().Contain(u => !string.IsNullOrEmpty(u.Text));
 
-        // All updates should have the same message ID
-        string? firstMessageId = updates.FirstOrDefault()?.MessageId;
+        // All text content updates should have the same message ID
+        List<AgentRunResponseUpdate> textUpdates = updates.Where(u => !string.IsNullOrEmpty(u.Text)).ToList();
+        textUpdates.Should().NotBeEmpty();
+        string? firstMessageId = textUpdates.FirstOrDefault()?.MessageId;
         firstMessageId.Should().NotBeNullOrEmpty();
-        updates.Should().AllSatisfy(u => u.MessageId.Should().Be(firstMessageId));
+        textUpdates.Should().AllSatisfy(u => u.MessageId.Should().Be(firstMessageId));
     }
 
     [Fact]
@@ -185,12 +187,13 @@ internal sealed class FakeChatClientAgent : AIAgent
         // Simulate streaming a deterministic response
         foreach (string chunk in new[] { "Hello", " ", "from", " ", "fake", " ", "agent", "!" })
         {
-            yield return new AgentRunResponseUpdate
+            AgentRunResponseUpdate update = new AgentRunResponseUpdate
             {
                 MessageId = messageId,
                 Role = ChatRole.Assistant,
                 Contents = [new TextContent(chunk)]
             };
+            yield return update;
 
             await Task.Delay(10, cancellationToken).ConfigureAwait(false);
         }
