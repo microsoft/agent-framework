@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to create an Azure AI Agent with the Deep Research Tool.
-// The Deep Research Tool uses the o3 reasoning model to perform comprehensive research on topics.
 
 using Azure.AI.Agents.Persistent;
 using Azure.Identity;
