@@ -58,6 +58,7 @@
     <Project Path="samples/GettingStarted/Agents/Agent_Step15_Plugins/Agent_Step15_Plugins.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step16_ChatReduction/Agent_Step16_ChatReduction.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step17_BackgroundResponses/Agent_Step17_BackgroundResponses.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agent_Step18_TextSearchRag/Agent_Step18_TextSearchRag.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/AgentWithOpenAI/">
     <File Path="samples/GettingStarted/AgentWithOpenAI/README.md" />
@@ -135,6 +136,9 @@
   </Folder>
   <Folder Name="/Samples/SemanticKernelMigration/">
     <File Path="samples/SemanticKernelMigration/README.md" />
+  </Folder>
+  <Folder Name="/Samples/Catalog/">
+    <Project Path="samples/Catalog/DeepResearchAgent/DeepResearchAgent.csproj" />
   </Folder>
   <Folder Name="/Solution Items/">
     <File Path=".editorconfig" />
