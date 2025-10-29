@@ -182,6 +182,7 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 | [`getting_started/middleware/middleware_termination.py`](./getting_started/middleware/middleware_termination.py) | Middleware termination example |
 | [`getting_started/middleware/override_result_with_middleware.py`](./getting_started/middleware/override_result_with_middleware.py) | Override result with middleware example |
 | [`getting_started/middleware/shared_state_middleware.py`](./getting_started/middleware/shared_state_middleware.py) | Shared state middleware example |
+| [`getting_started/middleware/thread_behavior_middleware.py`](./getting_started/middleware/thread_behavior_middleware.py) | Thread behavior middleware example demonstrating how to track conversation state across multiple agent runs |
 
 ## Multimodal Input
 

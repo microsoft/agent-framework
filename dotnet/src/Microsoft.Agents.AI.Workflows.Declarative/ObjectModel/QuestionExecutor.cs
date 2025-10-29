@@ -76,7 +76,7 @@ internal sealed class QuestionExecutor(Question model, WorkflowAgentProvider age
     {
         int count = await this._promptCount.ReadAsync(context).ConfigureAwait(false);
         AnswerRequest inputRequest = new(this.FormatPrompt(this.Model.Prompt));
-        await context.SendMessageAsync(inputRequest, targetId: null, cancellationToken).ConfigureAwait(false);
+        await context.SendMessageAsync(inputRequest, cancellationToken).ConfigureAwait(false);
         await this._promptCount.WriteAsync(context, count + 1).ConfigureAwait(false);
     }
 

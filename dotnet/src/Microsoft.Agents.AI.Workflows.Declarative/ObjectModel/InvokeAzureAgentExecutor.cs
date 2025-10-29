@@ -73,7 +73,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
             {
                 isComplete = false;
                 UserInputRequest approvalRequest = new(agentName, inputRequests.OfType<AIContent>().ToArray());
-                await context.SendMessageAsync(approvalRequest, targetId: null, cancellationToken).ConfigureAwait(false);
+                await context.SendMessageAsync(approvalRequest, cancellationToken).ConfigureAwait(false);
             }
 
             // Identify function calls that have no associated result.
@@ -82,7 +82,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
             {
                 isComplete = false;
                 AgentFunctionToolRequest toolRequest = new(agentName, functionCalls);
-                await context.SendMessageAsync(toolRequest, targetId: null, cancellationToken).ConfigureAwait(false);
+                await context.SendMessageAsync(toolRequest, cancellationToken).ConfigureAwait(false);
             }
         }
 

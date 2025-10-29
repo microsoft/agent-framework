@@ -184,6 +184,7 @@ internal sealed class Program
 
     private async Task<ExternalRequest?> MonitorAndDisposeWorkflowRunAsync(Checkpointed<StreamingRun> run, object? response = null)
     {
+        // Always dispose the run when done.
         await using IAsyncDisposable disposeRun = run;
 
         bool hasStreamed = false;
@@ -231,7 +232,7 @@ internal sealed class Program
                     }
                     else
                     {
-                        await run.Run.DisposeAsync();
+                        // Yield to handle the external request
                         return requestInfo.Request;
                     }
                     break;
@@ -326,7 +327,7 @@ internal sealed class Program
             }
         }
 
-        return default;
+        return null; // No request to handle
     }
 
     /// <summary>

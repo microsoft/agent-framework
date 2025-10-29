@@ -4,7 +4,7 @@ description = "Microsoft Agent Framework for building AI Agents with Python. Thi
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b251016"
+version = "1.0.0b251028"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -53,6 +53,9 @@ dev = [
     "rich",
     "tomli",
     "tomli-w",
+    # AutoGen migration samples
+    "autogen-agentchat",
+    "autogen-ext[openai]",
 ]
 docs = [
     # Documentation
@@ -175,14 +178,10 @@ omit = [
 
 [tool.pyright]
 include = ["agent_framework", "samples"]
-exclude = ["**/tests/**", "docs", "**/.venv/**", "samples/semantic-kernel-migration/**", "packages/devui/frontend/**"]
+exclude = ["**/tests/**", "docs", "**/.venv/**", "samples/semantic-kernel-migration/**", "samples/autogen-migration/**", "packages/devui/frontend/**"]
 typeCheckingMode = "strict"
 reportUnnecessaryIsInstance = false
 reportMissingTypeStubs = false
-
-[[tool.pyright.executionEnvironments]]
-root = "samples/semantic-kernel-migration"
-typeCheckingMode = "off"
 
 [tool.mypy]
 plugins = ['pydantic.mypy']
