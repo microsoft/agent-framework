@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from agent_framework._workflows._executor import Executor, handler
-from agent_framework._workflows._request_info_mixin import RequestInfoMixin, response_handler
+from agent_framework._workflows._request_info_mixin import response_handler
 from agent_framework._workflows._workflow_context import WorkflowContext
 
 
@@ -17,7 +17,7 @@ class TestRequestInfoMixin:
     def test_request_info_mixin_initialization(self):
         """Test that RequestInfoMixin can be initialized."""
 
-        class TestExecutor(Executor, RequestInfoMixin):
+        class TestExecutor(Executor):
             def __init__(self):
                 super().__init__(id="test")
 
@@ -82,7 +82,7 @@ class TestRequestInfoMixin:
     def test_executor_with_response_handlers(self):
         """Test an executor with valid response handlers."""
 
-        class TestExecutor(Executor, RequestInfoMixin):
+        class TestExecutor(Executor):
             def __init__(self):
                 super().__init__(id="test_executor")
 
@@ -116,7 +116,7 @@ class TestRequestInfoMixin:
     def test_executor_without_response_handlers(self):
         """Test an executor without response handlers."""
 
-        class PlainExecutor(Executor, RequestInfoMixin):
+        class PlainExecutor(Executor):
             def __init__(self):
                 super().__init__(id="plain_executor")
 
@@ -136,7 +136,7 @@ class TestRequestInfoMixin:
     def test_duplicate_response_handlers_raise_error(self):
         """Test that duplicate response handlers for the same message type raise an error."""
 
-        class DuplicateExecutor(Executor, RequestInfoMixin):
+        class DuplicateExecutor(Executor):
             def __init__(self):
                 super().__init__(id="duplicate_executor")
 
@@ -161,7 +161,7 @@ class TestRequestInfoMixin:
     def test_response_handler_function_callable(self):
         """Test that response handlers can actually be called."""
 
-        class TestExecutor(Executor, RequestInfoMixin):
+        class TestExecutor(Executor):
             def __init__(self):
                 super().__init__(id="test_executor")
                 self.handled_request = None
@@ -190,7 +190,7 @@ class TestRequestInfoMixin:
     def test_inheritance_with_response_handlers(self):
         """Test that response handlers work correctly with inheritance."""
 
-        class BaseExecutor(Executor, RequestInfoMixin):
+        class BaseExecutor(Executor):
             def __init__(self):
                 super().__init__(id="base_executor")
 
@@ -223,7 +223,7 @@ class TestRequestInfoMixin:
     def test_response_handler_spec_attributes(self):
         """Test that response handler specs contain expected attributes."""
 
-        class TestExecutor(Executor, RequestInfoMixin):
+        class TestExecutor(Executor):
             def __init__(self):
                 super().__init__(id="test_executor")
 
@@ -252,7 +252,7 @@ class TestRequestInfoMixin:
     def test_multiple_discovery_calls_raise_error(self):
         """Test that multiple calls to _discover_response_handlers raise an error for duplicates."""
 
-        class TestExecutor(Executor, RequestInfoMixin):
+        class TestExecutor(Executor):
             def __init__(self):
                 super().__init__(id="test_executor")
 
@@ -282,7 +282,7 @@ class TestRequestInfoMixin:
     def test_non_callable_attributes_ignored(self):
         """Test that non-callable attributes are ignored during discovery."""
 
-        class TestExecutor(Executor, RequestInfoMixin):
+        class TestExecutor(Executor):
             def __init__(self):
                 super().__init__(id="test_executor")
 
@@ -307,7 +307,7 @@ class TestRequestInfoMixin:
     def test_same_request_type_different_response_types(self):
         """Test that handlers with same request type but different response types are distinct."""
 
-        class TestExecutor(Executor, RequestInfoMixin):
+        class TestExecutor(Executor):
             def __init__(self):
                 super().__init__(id="test_executor")
                 self.str_int_handler_called = False
@@ -362,7 +362,7 @@ class TestRequestInfoMixin:
     def test_different_request_types_same_response_type(self):
         """Test that handlers with different request types but same response type are distinct."""
 
-        class TestExecutor(Executor, RequestInfoMixin):
+        class TestExecutor(Executor):
             def __init__(self):
                 super().__init__(id="test_executor")
                 self.str_int_handler_called = False
@@ -425,7 +425,7 @@ class TestRequestInfoMixin:
         class CustomResponse:
             pass
 
-        class TestExecutor(Executor, RequestInfoMixin):
+        class TestExecutor(Executor):
             def __init__(self):
                 super().__init__(id="test_executor")
                 self.custom_custom_called = False
@@ -478,7 +478,7 @@ class TestRequestInfoMixin:
     def test_handler_key_uniqueness(self):
         """Test that handler keys (request_type, response_type) are truly unique."""
 
-        class TestExecutor(Executor, RequestInfoMixin):
+        class TestExecutor(Executor):
             def __init__(self):
                 super().__init__(id="test_executor")
 
@@ -522,7 +522,7 @@ class TestRequestInfoMixin:
     def test_no_false_matches_with_similar_types(self):
         """Test that handlers don't match with similar but different types."""
 
-        class TestExecutor(Executor, RequestInfoMixin):
+        class TestExecutor(Executor):
             def __init__(self):
                 super().__init__(id="test_executor")
 
@@ -554,7 +554,7 @@ class TestRequestInfoMixin:
     def test_is_request_supported_with_exact_matches(self):
         """Test is_request_supported with exact type matches."""
 
-        class TestExecutor(Executor, RequestInfoMixin):
+        class TestExecutor(Executor):
             def __init__(self):
                 super().__init__(id="test_executor")
 
@@ -586,7 +586,7 @@ class TestRequestInfoMixin:
     def test_is_request_supported_without_handlers(self):
         """Test is_request_supported when no handlers are registered."""
 
-        class TestExecutor(Executor, RequestInfoMixin):
+        class TestExecutor(Executor):
             def __init__(self):
                 super().__init__(id="test_executor")
 
@@ -604,7 +604,7 @@ class TestRequestInfoMixin:
     def test_is_request_supported_before_discovery(self):
         """Test is_request_supported before response handlers are discovered."""
 
-        class TestExecutor(Executor, RequestInfoMixin):
+        class TestExecutor(Executor):
             def __init__(self):
                 super().__init__(id="test_executor", defer_discovery=True)
 
@@ -638,7 +638,7 @@ class TestRequestInfoMixin:
         class DerivedResponse(BaseResponse):
             pass
 
-        class TestExecutor(Executor, RequestInfoMixin):
+        class TestExecutor(Executor):
             def __init__(self):
                 super().__init__(id="test_executor")
 
@@ -677,7 +677,7 @@ class TestRequestInfoMixin:
     def test_is_request_supported_with_multiple_handlers(self):
         """Test is_request_supported when multiple handlers are registered."""
 
-        class TestExecutor(Executor, RequestInfoMixin):
+        class TestExecutor(Executor):
             def __init__(self):
                 super().__init__(id="test_executor")
 
@@ -722,7 +722,7 @@ class TestRequestInfoMixin:
     def test_is_request_supported_with_complex_types(self):
         """Test is_request_supported with complex generic types."""
 
-        class TestExecutor(Executor, RequestInfoMixin):
+        class TestExecutor(Executor):
             def __init__(self):
                 super().__init__(id="test_executor")
 
@@ -756,7 +756,7 @@ class TestRequestInfoMixin:
     def test_is_request_supported_with_inheritance(self):
         """Test is_request_supported with inherited response handlers."""
 
-        class BaseExecutor(Executor, RequestInfoMixin):
+        class BaseExecutor(Executor):
             def __init__(self):
                 super().__init__(id="base_executor")
 
