@@ -117,14 +117,14 @@ async def main():
     # retrieves the outputs yielded by any terminal nodes.
     events = await workflow.run("hello world")
     print(events.get_outputs())
-    # Summarize the final run state (e.g., COMPLETED)
+    # Summarize the final run state (e.g., IDLE)
     print("Final state:", events.get_final_state())
 
     """
     Sample Output:
 
     ['DLROW OLLEH']
-    Final state: WorkflowRunState.COMPLETED
+    Final state: WorkflowRunState.IDLE
     """
 
 

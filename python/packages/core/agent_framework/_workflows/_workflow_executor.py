@@ -485,7 +485,7 @@ class WorkflowExecutor(Executor):
 
         try:
             # Resume the sub-workflow with all collected responses
-            result = await self.workflow.send_responses(responses_to_send)
+            result = await self.workflow.run(responses=responses_to_send)
 
             # Process the workflow result using shared logic
             await self._process_workflow_result(result, execution_context, ctx)

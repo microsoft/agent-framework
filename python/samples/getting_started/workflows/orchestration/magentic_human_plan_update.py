@@ -111,7 +111,7 @@ async def main() -> None:
         while not completed:
             # Use streaming for both initial run and response sending
             if pending_responses is not None:
-                stream = workflow.send_responses_streaming(pending_responses)
+                stream = workflow.run_stream(responses=pending_responses)
             else:
                 stream = workflow.run_stream(task)
 

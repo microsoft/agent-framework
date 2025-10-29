@@ -244,7 +244,7 @@ async def main() -> None:
         responses = {req.request_id: user_response for req in pending_requests}
 
         # Send responses and get new events
-        events = await _drain(workflow.send_responses_streaming(responses))
+        events = await _drain(workflow.run_stream(responses=responses))
         pending_requests = _handle_events(events)
 
     """

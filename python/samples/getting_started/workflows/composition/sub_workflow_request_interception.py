@@ -275,7 +275,7 @@ async def run_example() -> None:
                 external_responses[event.request_id] = approved
 
         # 9. Send external responses
-        await main_workflow.send_responses(external_responses)
+        await main_workflow.run(responses=external_responses)
     else:
         print("\n🎯 All requests were intercepted and handled locally!")
 

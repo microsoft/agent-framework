@@ -321,8 +321,8 @@ async def main() -> None:
 
     approval_response = "approve"
     final_event: WorkflowOutputEvent | None = None
-    async for event in workflow2.run_stream_from_checkpoint(
-        resume_checkpoint.checkpoint_id,
+    async for event in workflow2.run_stream(
+        checkpoint_id=resume_checkpoint.checkpoint_id,
         responses={request_id: approval_response},
     ):
         if isinstance(event, WorkflowOutputEvent):

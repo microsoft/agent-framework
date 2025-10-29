@@ -188,7 +188,7 @@ async def main() -> None:
     while not completed:
         last_executor: str | None = None
         stream = (
-            workflow.send_responses_streaming(pending_responses)
+            workflow.run_stream(responses=pending_responses)
             if pending_responses is not None
             else workflow.run_stream(
                 "Create a short launch blurb for the LumenX desk lamp. Emphasize adjustability and warm lighting."

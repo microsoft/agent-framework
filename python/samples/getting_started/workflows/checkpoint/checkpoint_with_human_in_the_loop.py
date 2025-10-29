@@ -55,7 +55,7 @@ Key concepts demonstrated
 - Minimal executor pipeline with checkpoint persistence.
 - Human-in-the-loop pause/resume by pairing `RequestInfoExecutor` with
   checkpoint restoration.
-- Supplying responses at restore time (`run_stream_from_checkpoint(..., responses=...)`).
+- Supplying responses at restore time (`run_stream(checkpoint_id=..., responses=...)`).
 
 Typical pause/resume flow
 -------------------------
@@ -364,7 +364,7 @@ async def run_interactive_session(workflow: "Workflow", initial_message: str) ->
             first = False
         elif pending_responses:
             # Feed any answers the user just typed back into the workflow.
-            events = await _consume(workflow.send_responses_streaming(pending_responses))
+            events = await _consume(workflow.run_stream(responses=pending_responses))
         else:
             break
 
@@ -385,8 +385,8 @@ async def resume_from_checkpoint(
 
     print(f"\nResuming from checkpoint: {checkpoint_id}")
     events = await _consume(
-        workflow.run_stream_from_checkpoint(
-            checkpoint_id,
+        workflow.run_stream(
+            checkpoint_id=checkpoint_id,
             checkpoint_storage=storage,
             responses=pre_supplied,
         )
@@ -400,7 +400,7 @@ async def resume_from_checkpoint(
 
     pending = _prompt_for_responses(requests)
     while completed_output is None and pending:
-        events = await _consume(workflow.send_responses_streaming(pending))
+        events = await _consume(workflow.run_stream(responses=pending))
         completed_output, requests = _print_events(events)
         if completed_output is None:
             pending = _prompt_for_responses(requests)

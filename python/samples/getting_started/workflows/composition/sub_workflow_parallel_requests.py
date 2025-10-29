@@ -407,7 +407,7 @@ async def main() -> None:
                 external_responses[event.request_id] = policy_response
                 print(f"  🔒 External policy: {'✅ APPROVED' if policy_response.approved else '❌ DENIED'}")
 
-        await main_workflow.send_responses(external_responses)
+        await main_workflow.run(responses=external_responses)
     else:
         print("\n🎯 All requests were intercepted internally!")
 

@@ -39,7 +39,7 @@ RequestResponse objects.
 Demonstrate:
 - Alternating turns between an AgentExecutor and a human, driven by events.
 - Using Pydantic response_format to enforce structured JSON output from the agent instead of regex parsing.
-- Driving the loop in application code with run_stream and send_responses_streaming.
+- Driving the loop in application code with run_stream and responses parameter.
 
 Prerequisites:
 - Azure OpenAI configured for AzureOpenAIChatClient with required environment variables.
@@ -52,7 +52,7 @@ Prerequisites:
 # emits a RequestInfoEvent with a typed payload, and then resumes the graph only after your application
 # supplies a matching RequestResponse keyed by the emitted request_id. It does not gather input by itself.
 # Your application is responsible for collecting the human reply from any UI or CLI and then calling
-# send_responses_streaming with a dict mapping request_id to the human's answer. The executor exists to
+# run_stream with a responses parameter mapping request_id to the human's answer. The executor exists to
 # standardize pause-and-resume human gating, to carry typed request payloads, and to preserve correlation.
 
 
@@ -208,10 +208,8 @@ async def main() -> None:
 
     while not completed:
         # First iteration uses run_stream("start").
-        # Subsequent iterations use send_responses_streaming with pending_responses from the console.
-        stream = (
-            workflow.send_responses_streaming(pending_responses) if pending_responses else workflow.run_stream("start")
-        )
+        # Subsequent iterations use run_stream with pending_responses from the console.
+        stream = workflow.run_stream(responses=pending_responses) if pending_responses else workflow.run_stream("start")
         # Collect events for this turn. Among these you may see WorkflowStatusEvent
         # with state IDLE_WITH_PENDING_REQUESTS when the workflow pauses for
         # human input, preceded by IN_PROGRESS_PENDING_REQUESTS as requests are

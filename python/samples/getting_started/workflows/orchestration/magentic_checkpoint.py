@@ -31,7 +31,7 @@ Concepts highlighted here:
    must keep stable IDs so the checkpoint state aligns when we rebuild the graph.
 2. **Executor snapshotting** - checkpoints capture the `RequestInfoExecutor` state,
    specifically the pending plan-review request map, at superstep boundaries.
-3. **Resume with responses** - `Workflow.run_stream_from_checkpoint` accepts a
+3. **Resume with responses** - `Workflow.run_stream` accepts a `checkpoint_id` and
    `responses` mapping so we can inject the stored human reply during restoration.
 
 Prerequisites:
@@ -137,12 +137,12 @@ async def main() -> None:
 
     approval = MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.APPROVE)
     # Resume execution and supply the recorded approval in a single call.
-    # `run_stream_from_checkpoint` rebuilds executor state, applies the provided responses,
+    # `run_stream` rebuilds executor state, applies the provided responses,
     # and then continues the workflow. Because we only captured the initial plan review
     # checkpoint, the resumed run should complete almost immediately.
     final_event: WorkflowOutputEvent | None = None
-    async for event in resumed_workflow.run_stream_from_checkpoint(
-        resume_checkpoint.checkpoint_id,
+    async for event in resumed_workflow.run_stream(
+        checkpoint_id=resume_checkpoint.checkpoint_id,
         responses={plan_review_request_id: approval},
     ):
         if isinstance(event, WorkflowOutputEvent):
@@ -204,8 +204,8 @@ async def main() -> None:
     final_event_post: WorkflowOutputEvent | None = None
     post_emitted_events = False
     post_plan_workflow = build_workflow(checkpoint_storage)
-    async for event in post_plan_workflow.run_stream_from_checkpoint(
-        post_plan_checkpoint.checkpoint_id,
+    async for event in post_plan_workflow.run_stream(
+        checkpoint_id=post_plan_checkpoint.checkpoint_id,
         responses={},
     ):
         post_emitted_events = True

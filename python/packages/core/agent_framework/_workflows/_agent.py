@@ -197,7 +197,7 @@ class WorkflowAgent(BaseAgent):
         """
         # Determine the event stream based on whether we have function responses
         if bool(self.pending_requests):
-            # This is a continuation - use send_responses_streaming to send function responses back
+            # This is a continuation - use run_stream with responses to send function responses back
             logger.info(f"Continuing workflow to address {len(self.pending_requests)} requests")
 
             # Extract function responses from input messages, and ensure that
@@ -213,7 +213,7 @@ class WorkflowAgent(BaseAgent):
             # NOTE: It is possible that some pending requests are not fulfilled,
             # and we will let the workflow to handle this -- the agent does not
             # have an opinion on this.
-            event_stream = self.workflow.send_responses_streaming(function_responses)
+            event_stream = self.workflow.run_stream(responses=function_responses)
         else:
             # Execute workflow with streaming (initial run or no function responses)
             # Pass the new input messages directly to the workflow

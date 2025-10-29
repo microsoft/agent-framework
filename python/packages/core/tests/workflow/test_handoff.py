@@ -176,7 +176,7 @@ async def test_handoff_routes_to_specialist_and_requests_user_input():
     assert request_payload.conversation[3].role == Role.ASSISTANT
     assert "specialist reply" in request_payload.conversation[3].text
 
-    follow_up = await _drain(workflow.send_responses_streaming({requests[-1].request_id: "Thanks"}))
+    follow_up = await _drain(workflow.run_stream(responses={requests[-1].request_id: "Thanks"}))
     assert any(isinstance(ev, RequestInfoEvent) for ev in follow_up)
 
 
@@ -204,7 +204,7 @@ async def test_specialist_to_specialist_handoff():
     assert len(specialist.calls) > 0
 
     # Second user message - specialist hands off to escalation
-    events = await _drain(workflow.send_responses_streaming({requests[-1].request_id: "This is complex"}))
+    events = await _drain(workflow.run_stream(responses={requests[-1].request_id: "This is complex"}))
     outputs = [ev for ev in events if isinstance(ev, WorkflowOutputEvent)]
     assert outputs
 
@@ -256,9 +256,7 @@ async def test_handoff_preserves_complex_additional_properties(complex_metadata:
     assert restored_meta.payload["code"] == "X1"
 
     # Respond and ensure metadata survives subsequent cycles
-    follow_up_events = await _drain(
-        workflow.send_responses_streaming({requests[-1].request_id: "Here are more details"})
-    )
+    follow_up_events = await _drain(workflow.run_stream(responses={requests[-1].request_id: "Here are more details"}))
     follow_up_requests = [ev for ev in follow_up_events if isinstance(ev, RequestInfoEvent)]
     outputs = [ev for ev in follow_up_events if isinstance(ev, WorkflowOutputEvent)]
 
@@ -325,7 +323,7 @@ async def test_multiple_runs_dont_leak_conversation():
     events = await _drain(workflow.run_stream("First run message"))
     requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
     assert requests
-    events = await _drain(workflow.send_responses_streaming({requests[-1].request_id: "Second message"}))
+    events = await _drain(workflow.run_stream(responses={requests[-1].request_id: "Second message"}))
     outputs = [ev for ev in events if isinstance(ev, WorkflowOutputEvent)]
     assert outputs, "First run should emit output"
 
@@ -343,7 +341,7 @@ async def test_multiple_runs_dont_leak_conversation():
     events = await _drain(workflow.run_stream("Second run different message"))
     requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
     assert requests
-    events = await _drain(workflow.send_responses_streaming({requests[-1].request_id: "Another message"}))
+    events = await _drain(workflow.run_stream(responses={requests[-1].request_id: "Another message"}))
     outputs = [ev for ev in events if isinstance(ev, WorkflowOutputEvent)]
     assert outputs, "Second run should emit output"
 
@@ -383,7 +381,7 @@ async def test_handoff_async_termination_condition() -> None:
     requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
     assert requests
 
-    events = await _drain(workflow.send_responses_streaming({requests[-1].request_id: "Second user message"}))
+    events = await _drain(workflow.run_stream(responses={requests[-1].request_id: "Second user message"}))
     outputs = [ev for ev in events if isinstance(ev, WorkflowOutputEvent)]
     assert len(outputs) == 1
 

@@ -255,7 +255,7 @@ async def run_agent_framework_example(initial_task: str, scripted_responses: Seq
         except StopIteration:
             user_reply = "Thanks, that's all."
         responses = {request.request_id: user_reply for request in pending}
-        final_events = await _drain_events(workflow.send_responses_streaming(responses))
+        final_events = await _drain_events(workflow.run_stream(responses=responses))
         pending = _collect_handoff_requests(final_events)
 
     conversation = _extract_final_conversation(final_events)

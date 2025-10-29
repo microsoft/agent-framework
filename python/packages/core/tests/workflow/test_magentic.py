@@ -203,9 +203,9 @@ async def test_magentic_workflow_plan_review_approval_to_completion():
 
     completed = False
     output: ChatMessage | None = None
-    async for ev in wf.send_responses_streaming({
-        req_event.request_id: MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.APPROVE)
-    }):
+    async for ev in wf.run_stream(
+        responses={req_event.request_id: MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.APPROVE)}
+    ):
         if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
             completed = True
         elif isinstance(ev, WorkflowOutputEvent):
@@ -248,12 +248,14 @@ async def test_magentic_plan_review_approve_with_comments_replans_and_proceeds()
     # Reply APPROVE with comments (no edited text). Expect one replan and no second review round.
     saw_second_review = False
     completed = False
-    async for ev in wf.send_responses_streaming({
-        req_event.request_id: MagenticPlanReviewReply(
-            decision=MagenticPlanReviewDecision.APPROVE,
-            comments="Looks good; consider Z",
-        )
-    }):
+    async for ev in wf.run_stream(
+        responses={
+            req_event.request_id: MagenticPlanReviewReply(
+                decision=MagenticPlanReviewDecision.APPROVE,
+                comments="Looks good; consider Z",
+            )
+        }
+    ):
         if isinstance(ev, RequestInfoEvent) and ev.request_type is MagenticPlanReviewRequest:
             saw_second_review = True
         if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
@@ -334,8 +336,8 @@ async def test_magentic_checkpoint_resume_round_trip():
 
     reply = MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.APPROVE)
     completed: WorkflowOutputEvent | None = None
-    async for event in wf_resume.run_stream_from_checkpoint(
-        resume_checkpoint.checkpoint_id,
+    async for event in wf_resume.run_stream(
+        checkpoint_id=resume_checkpoint.checkpoint_id,
         responses={req_event.request_id: reply},
     ):
         if isinstance(event, WorkflowOutputEvent):
@@ -599,7 +601,7 @@ async def test_magentic_checkpoint_resume_inner_loop_superstep():
     )
 
     completed: WorkflowOutputEvent | None = None
-    async for event in resumed.run_stream_from_checkpoint(inner_loop_checkpoint.checkpoint_id):  # type: ignore[reportUnknownMemberType]
+    async for event in resumed.run_stream(checkpoint_id=inner_loop_checkpoint.checkpoint_id):  # type: ignore[reportUnknownMemberType]
         if isinstance(event, WorkflowOutputEvent):
             completed = event
 
@@ -641,7 +643,7 @@ async def test_magentic_checkpoint_resume_after_reset():
     )
 
     completed: WorkflowOutputEvent | None = None
-    async for event in resumed_workflow.run_stream_from_checkpoint(resumed_state.checkpoint_id):
+    async for event in resumed_workflow.run_stream(checkpoint_id=resumed_state.checkpoint_id):
         if isinstance(event, WorkflowOutputEvent):
             completed = event
 
@@ -683,8 +685,8 @@ async def test_magentic_checkpoint_resume_rejects_participant_renames():
     )
 
     with pytest.raises(ValueError, match="Workflow graph has changed"):
-        async for _ in renamed_workflow.run_stream_from_checkpoint(
-            target_checkpoint.checkpoint_id,  # type: ignore[reportUnknownMemberType]
+        async for _ in renamed_workflow.run_stream(
+            checkpoint_id=target_checkpoint.checkpoint_id,  # type: ignore[reportUnknownMemberType]
             responses={req_event.request_id: MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.APPROVE)},
         ):
             pass
@@ -732,3 +734,66 @@ async def test_magentic_stall_and_reset_successfully():
     assert isinstance(output_event.data, ChatMessage)
     assert output_event.data.text is not None
     assert output_event.data.text == "re-ledger"
+
+
+async def test_magentic_checkpoint_runtime_only() -> None:
+    """Test checkpointing configured ONLY at runtime, not at build time."""
+    storage = InMemoryCheckpointStorage()
+
+    manager = FakeManager(max_round_count=10)
+    manager.satisfied_after_signoff = True
+    wf = MagenticBuilder().participants(agentA=_DummyExec("agentA")).with_standard_manager(manager).build()
+
+    baseline_output: ChatMessage | None = None
+    async for ev in wf.run_stream("runtime checkpoint test", checkpoint_storage=storage):
+        if isinstance(ev, WorkflowOutputEvent):
+            baseline_output = ev.data  # type: ignore[assignment]
+        if isinstance(ev, WorkflowStatusEvent) and ev.state in (
+            WorkflowRunState.IDLE,
+            WorkflowRunState.IDLE_WITH_PENDING_REQUESTS,
+        ):
+            break
+
+    assert baseline_output is not None
+
+    checkpoints = await storage.list_checkpoints()
+    assert len(checkpoints) > 0, "Runtime-only checkpointing should have created checkpoints"
+
+
+async def test_magentic_checkpoint_runtime_overrides_buildtime() -> None:
+    """Test that runtime checkpoint storage overrides build-time configuration."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as temp_dir1, tempfile.TemporaryDirectory() as temp_dir2:
+        from agent_framework._workflows._checkpoint import FileCheckpointStorage
+
+        buildtime_storage = FileCheckpointStorage(temp_dir1)
+        runtime_storage = FileCheckpointStorage(temp_dir2)
+
+        manager = FakeManager(max_round_count=10)
+        manager.satisfied_after_signoff = True
+        wf = (
+            MagenticBuilder()
+            .participants(agentA=_DummyExec("agentA"))
+            .with_standard_manager(manager)
+            .with_checkpointing(buildtime_storage)
+            .build()
+        )
+
+        baseline_output: ChatMessage | None = None
+        async for ev in wf.run_stream("override test", checkpoint_storage=runtime_storage):
+            if isinstance(ev, WorkflowOutputEvent):
+                baseline_output = ev.data  # type: ignore[assignment]
+            if isinstance(ev, WorkflowStatusEvent) and ev.state in (
+                WorkflowRunState.IDLE,
+                WorkflowRunState.IDLE_WITH_PENDING_REQUESTS,
+            ):
+                break
+
+        assert baseline_output is not None
+
+        buildtime_checkpoints = await buildtime_storage.list_checkpoints()
+        runtime_checkpoints = await runtime_storage.list_checkpoints()
+
+        assert len(runtime_checkpoints) > 0, "Runtime storage should have checkpoints"
+        assert len(buildtime_checkpoints) == 0, "Build-time storage should have no checkpoints when overridden"

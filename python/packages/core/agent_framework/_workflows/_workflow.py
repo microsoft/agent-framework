@@ -132,19 +132,33 @@ class Workflow(DictConvertible):
     Access these via the input_types and output_types properties.
 
     ## Execution Methods
-    - run(): Execute to completion, returns WorkflowRunResult with all events
-    - run_stream(): Returns async generator yielding events as they occur
-    - run_from_checkpoint(): Resume from a saved checkpoint
-    - run_stream_from_checkpoint(): Resume from checkpoint with streaming
+    The workflow provides two primary execution APIs, each supporting multiple scenarios:
+
+    - **run()**: Execute to completion, returns WorkflowRunResult with all events
+    - **run_stream()**: Returns async generator yielding events as they occur
+
+    Both methods support:
+    - Initial workflow runs: Provide `message` parameter
+    - Checkpoint restoration: Provide `checkpoint_id` (and optionally `checkpoint_storage`)
+    - HIL continuation: Provide `responses` to continue after RequestInfoExecutor requests
+    - Runtime checkpointing: Provide `checkpoint_storage` to enable/override checkpointing for this run
 
     ## External Input Requests
     Workflows can request external input using a RequestInfoExecutor:
     1. Executor connects to RequestInfoExecutor via edge group and back to itself
     2. Executor sends RequestInfoMessage to RequestInfoExecutor
     3. RequestInfoExecutor emits RequestInfoEvent and workflow enters IDLE_WITH_PENDING_REQUESTS
-    4. Caller handles requests and uses send_responses()/send_responses_streaming() to continue
+    4. Caller handles requests and uses run()/run_stream() with responses parameter to continue
 
     ## Checkpointing
+    Checkpointing can be configured at build time or runtime:
+
+    Build-time (via WorkflowBuilder):
+        workflow = WorkflowBuilder().with_checkpointing(storage).build()
+
+    Runtime (via run/run_stream parameters):
+        result = await workflow.run(message, checkpoint_storage=runtime_storage)
+
     When enabled, checkpoints are created at the end of each superstep, capturing:
     - Executor states
     - Messages in transit
@@ -369,196 +383,382 @@ class Workflow(DictConvertible):
                 capture_exception(span, exception=exc)
                 raise
 
-    async def run_stream(self, message: Any) -> AsyncIterable[WorkflowEvent]:
-        """Run the workflow with a starting message and stream events.
-
-        Args:
-            message: The message to be sent to the starting executor.
-
-        Yields:
-            WorkflowEvent: The events generated during the workflow execution.
-        """
-        self._ensure_not_running()
-        try:
-
-            async def initial_execution() -> None:
-                executor = self.get_start_executor()
-                await executor.execute(
-                    message,
-                    [self.__class__.__name__],  # source_executor_ids
-                    self._shared_state,  # shared_state
-                    self._runner.context,  # runner_context
-                    trace_contexts=None,  # No parent trace context for workflow start
-                    source_span_ids=None,  # No source span for workflow start
-                )
-
-            async for event in self._run_workflow_with_tracing(
-                initial_executor_fn=initial_execution, reset_context=True, streaming=True
-            ):
-                yield event
-        finally:
-            self._reset_running_flag()
-
-    async def run_stream_from_checkpoint(
+    async def run_stream(
         self,
-        checkpoint_id: str,
+        message: Any | None = None,
+        *,
+        checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         responses: dict[str, Any] | None = None,
     ) -> AsyncIterable[WorkflowEvent]:
-        """Resume workflow execution from a checkpoint and stream events.
+        """Run the workflow and stream events.
+
+        Unified streaming interface supporting initial runs, checkpoint restoration, and HIL responses.
 
         Args:
-            checkpoint_id: The ID of the checkpoint to restore from.
-            checkpoint_storage: Optional checkpoint storage to use for restoration.
-                              If not provided, the workflow must have been built with checkpointing enabled.
-            responses: Optional dictionary of responses to inject into the workflow
-                      after restoration. Keys are request IDs, values are response data.
+            message: Initial message for the start executor. Required for new workflow runs,
+                    should be None when resuming from checkpoint or sending HIL responses.
+            checkpoint_id: ID of checkpoint to restore from. If provided, the workflow resumes
+                          from this checkpoint instead of starting fresh. When resuming, checkpoint_storage
+                          must be provided (either at build time or runtime) to load the checkpoint.
+            checkpoint_storage: Runtime checkpoint storage with two behaviors:
+                               - With checkpoint_id: Used to load and restore the specified checkpoint
+                               - Without checkpoint_id: Enables checkpointing for this run, overriding
+                                 build-time configuration
+            responses: HIL responses to inject. Dictionary mapping request IDs (from RequestInfoEvent.request_id)
+                      to response data. The request_id correlation ensures responses are matched to the correct
+                      pending requests.
 
         Yields:
-            WorkflowEvent: Events generated during workflow execution.
+            WorkflowEvent: Events generated during workflow execution. RequestInfoEvent instances contain
+                          request_id fields that must be used as keys in the responses dictionary.
 
         Raises:
-            ValueError: If neither checkpoint_storage is provided nor checkpointing is enabled.
+            ValueError: If both message and checkpoint_id are provided, or if neither is provided
+                       when responses is also None.
+            ValueError: If checkpoint_id is provided but no checkpoint storage is available
+                       (neither at build time nor runtime).
             RuntimeError: If checkpoint restoration fails.
+
+        Examples:
+            Initial run:
+
+            .. code-block:: python
+
+                async for event in workflow.run_stream("start message"):
+                    process(event)
+
+            Enable checkpointing at runtime:
+
+            .. code-block:: python
+
+                storage = FileCheckpointStorage("./checkpoints")
+                async for event in workflow.run_stream("start", checkpoint_storage=storage):
+                    process(event)
+
+            Resume from checkpoint (storage provided at build time):
+
+            .. code-block:: python
+
+                async for event in workflow.run_stream(checkpoint_id="cp_123"):
+                    process(event)
+
+            Resume from checkpoint (storage provided at runtime):
+
+            .. code-block:: python
+
+                storage = FileCheckpointStorage("./checkpoints")
+                async for event in workflow.run_stream(checkpoint_id="cp_123", checkpoint_storage=storage):
+                    process(event)
+
+            Send HIL responses (request_id from RequestInfoEvent):
+
+            .. code-block:: python
+
+                # First, collect request ID from the event
+                async for event in workflow.run_stream("task"):
+                    if isinstance(event, RequestInfoEvent):
+                        request_id = event.request_id  # Use this ID for correlation
+                        break
+                # Then send response using the request_id
+                async for event in workflow.run_stream(responses={request_id: "approved"}):
+                    process(event)
+
+            Resume from checkpoint AND send HIL responses:
+
+            .. code-block:: python
+
+                async for event in workflow.run_stream(checkpoint_id="cp_123", responses={"req_1": "approved"}):
+                    process(event)
         """
+        # Validate mutually exclusive parameters BEFORE setting running flag
+        if message is not None and checkpoint_id is not None:
+            raise ValueError("Cannot provide both 'message' and 'checkpoint_id'. Use one or the other.")
+
+        if message is None and checkpoint_id is None and responses is None:
+            raise ValueError(
+                "Must provide at least one of: 'message' (new run), 'checkpoint_id' (resume), "
+                "or 'responses' (HIL continuation)."
+            )
+
+        # Prevent invalid combination: both message and responses provided
+        if message is not None and responses is not None:
+            raise ValueError(
+                "Cannot provide both 'message' and 'responses'. Use 'message' for new runs, "
+                "'responses' for HIL continuation."
+            )
+
         self._ensure_not_running()
+
+        # Enable runtime checkpointing if storage provided
+        # Two cases:
+        # 1. checkpoint_storage + checkpoint_id: Load checkpoint from this storage and resume
+        # 2. checkpoint_storage without checkpoint_id: Enable checkpointing for this run
+        if checkpoint_storage is not None:
+            self._runner.context.set_runtime_checkpoint_storage(checkpoint_storage)
+
         try:
 
-            async def checkpoint_restoration() -> None:
-                has_checkpointing = self._runner.context.has_checkpointing()
+            async def execution_handler() -> None:
+                # Handle checkpoint restoration
+                if checkpoint_id is not None:
+                    has_checkpointing = self._runner.context.has_checkpointing()
 
-                if not has_checkpointing and checkpoint_storage is None:
-                    raise ValueError(
-                        "Cannot restore from checkpoint: either provide checkpoint_storage parameter "
-                        "or build workflow with WorkflowBuilder.with_checkpointing(checkpoint_storage)."
+                    if not has_checkpointing and checkpoint_storage is None:
+                        raise ValueError(
+                            "Cannot restore from checkpoint: either provide checkpoint_storage parameter "
+                            "or build workflow with WorkflowBuilder.with_checkpointing(checkpoint_storage)."
+                        )
+
+                    restored = await self._runner.restore_from_checkpoint(checkpoint_id, checkpoint_storage)
+
+                    if not restored:
+                        raise RuntimeError(f"Failed to restore from checkpoint: {checkpoint_id}")
+
+                    # Process pending messages from checkpoint
+                    if await self._runner.context.has_messages():
+                        await self._runner._run_iteration()  # type: ignore
+
+                # Handle initial message
+                elif message is not None:
+                    executor = self.get_start_executor()
+                    await executor.execute(
+                        message,
+                        [self.__class__.__name__],
+                        self._shared_state,
+                        self._runner.context,
+                        trace_contexts=None,
+                        source_span_ids=None,
                     )
 
-                restored = await self._runner.restore_from_checkpoint(checkpoint_id, checkpoint_storage)
-
-                if not restored:
-                    raise RuntimeError(f"Failed to restore from checkpoint: {checkpoint_id}")
-
-                # Process any pending messages from the checkpoint first
-                # This ensures that RequestInfoExecutor state is properly populated
-                # before we try to handle responses
-                if await self._runner.context.has_messages():
-                    # Run one iteration to process pending messages
-                    # This will populate RequestInfoExecutor._request_events properly
-                    await self._runner._run_iteration()  # type: ignore
-
+                # Handle HIL responses
                 if responses:
                     request_info_executor = self._find_request_info_executor()
-                    if request_info_executor:
-                        for request_id, response_data in responses.items():
-                            ctx: WorkflowContext[Any] = WorkflowContext(
-                                request_info_executor.id,
-                                [self.__class__.__name__],
-                                self._shared_state,
-                                self._runner.context,
-                                trace_contexts=None,  # No parent trace context for new workflow span
-                                source_span_ids=None,  # No source span for response handling
-                            )
+                    if not request_info_executor:
+                        raise ValueError("No RequestInfoExecutor found in workflow.")
 
-                            if not await request_info_executor.has_pending_request(request_id, ctx):
-                                logger.debug(
-                                    f"Skipping pre-supplied response for request {request_id}; "
-                                    f"no pending request found after checkpoint restoration."
-                                )
-                                continue
-
-                            await request_info_executor.handle_response(
-                                response_data,
-                                request_id,
-                                ctx,
-                            )
-
-            async for event in self._run_workflow_with_tracing(
-                initial_executor_fn=checkpoint_restoration,
-                reset_context=False,  # Don't reset context when resuming from checkpoint
-                streaming=True,
-            ):
-                yield event
-        finally:
-            self._reset_running_flag()
-
-    async def send_responses_streaming(self, responses: dict[str, Any]) -> AsyncIterable[WorkflowEvent]:
-        """Send responses back to the workflow and stream the events generated by the workflow.
-
-        Args:
-            responses: The responses to be sent back to the workflow, where keys are request IDs
-                       and values are the corresponding response data.
-
-        Yields:
-            WorkflowEvent: The events generated during the workflow execution after sending the responses.
-        """
-        self._ensure_not_running()
-        try:
-
-            async def send_responses() -> None:
-                request_info_executor = self._find_request_info_executor()
-                if not request_info_executor:
-                    raise ValueError("No RequestInfoExecutor found in workflow.")
-
-                async def _handle_response(response: Any, request_id: str) -> None:
-                    """Handle the response from the RequestInfoExecutor."""
-                    await request_info_executor.handle_response(
-                        response,
-                        request_id,
-                        WorkflowContext(
+                    async def _handle_response(response: Any, request_id: str) -> None:
+                        ctx: WorkflowContext[Any] = WorkflowContext(
                             request_info_executor.id,
                             [self.__class__.__name__],
                             self._shared_state,
                             self._runner.context,
-                            trace_contexts=None,  # No parent trace context for new workflow span
-                            source_span_ids=None,  # No source span for response handling
-                        ),
-                    )
+                            trace_contexts=None,
+                            source_span_ids=None,
+                        )
 
-                await asyncio.gather(*[
-                    _handle_response(response, request_id) for request_id, response in responses.items()
-                ])
+                        if checkpoint_id and not await request_info_executor.has_pending_request(request_id, ctx):
+                            logger.debug(
+                                f"Skipping response for request {request_id}; "
+                                f"no pending request found after checkpoint restoration."
+                            )
+                            return
+
+                        await request_info_executor.handle_response(response, request_id, ctx)
+
+                    await asyncio.gather(*[
+                        _handle_response(response, request_id) for request_id, response in responses.items()
+                    ])
+
+            # Reset context only for new runs (not checkpoint restoration or HIL continuation)
+            reset_context = message is not None and checkpoint_id is None and responses is None
 
             async for event in self._run_workflow_with_tracing(
-                initial_executor_fn=send_responses,
-                reset_context=False,  # Don't reset context when sending responses
+                initial_executor_fn=execution_handler,
+                reset_context=reset_context,
                 streaming=True,
             ):
                 yield event
         finally:
+            # Clear runtime checkpoint storage after run completes
+            if checkpoint_storage is not None:
+                self._runner.context.clear_runtime_checkpoint_storage()
             self._reset_running_flag()
 
-    async def run(self, message: Any, *, include_status_events: bool = False) -> WorkflowRunResult:
-        """Run the workflow with the given message.
+    async def run(
+        self,
+        message: Any | None = None,
+        *,
+        checkpoint_id: str | None = None,
+        checkpoint_storage: CheckpointStorage | None = None,
+        responses: dict[str, Any] | None = None,
+        include_status_events: bool = False,
+    ) -> WorkflowRunResult:
+        """Run the workflow to completion and return all events.
+
+        Unified non-streaming interface supporting initial runs, checkpoint restoration, and HIL responses.
 
         Args:
-            message: The message to be processed by the workflow.
+            message: Initial message for the start executor. Required for new workflow runs,
+                    should be None when resuming from checkpoint or sending HIL responses.
+            checkpoint_id: ID of checkpoint to restore from. If provided, the workflow resumes
+                          from this checkpoint instead of starting fresh. When resuming, checkpoint_storage
+                          must be provided (either at build time or runtime) to load the checkpoint.
+            checkpoint_storage: Runtime checkpoint storage with two behaviors:
+                               - With checkpoint_id: Used to load and restore the specified checkpoint
+                               - Without checkpoint_id: Enables checkpointing for this run, overriding
+                                 build-time configuration
+            responses: HIL responses to inject. Dictionary mapping request IDs (from RequestInfoEvent.request_id)
+                      to response data. The request_id correlation ensures responses are matched to the correct
+                      pending requests.
             include_status_events: Whether to include WorkflowStatusEvent instances in the result list.
 
         Returns:
-            A WorkflowRunResult instance containing a list of events generated during the workflow execution.
+            A WorkflowRunResult instance containing events generated during workflow execution.
+
+        Raises:
+            ValueError: If both message and checkpoint_id are provided, or if neither is provided
+                       when responses is also None.
+            ValueError: If checkpoint_id is provided but no checkpoint storage is available
+                       (neither at build time nor runtime).
+            RuntimeError: If checkpoint restoration fails.
+
+        Examples:
+            Initial run:
+
+            .. code-block:: python
+
+                result = await workflow.run("start message")
+                outputs = result.get_outputs()
+
+            Enable checkpointing at runtime:
+
+            .. code-block:: python
+
+                storage = FileCheckpointStorage("./checkpoints")
+                result = await workflow.run("start", checkpoint_storage=storage)
+
+            Resume from checkpoint (storage provided at build time):
+
+            .. code-block:: python
+
+                result = await workflow.run(checkpoint_id="cp_123")
+
+            Resume from checkpoint (storage provided at runtime):
+
+            .. code-block:: python
+
+                storage = FileCheckpointStorage("./checkpoints")
+                result = await workflow.run(checkpoint_id="cp_123", checkpoint_storage=storage)
+
+            Send HIL responses (request_id from RequestInfoEvent):
+
+            .. code-block:: python
+
+                # First, get request ID from RequestInfoEvent
+                result = await workflow.run("task")
+                for event in result.events:
+                    if isinstance(event, RequestInfoEvent):
+                        request_id = event.request_id
+                # Then respond using the request_id
+                result = await workflow.run(responses={request_id: "approved"})
+
+            Resume and send HIL responses:
+
+            .. code-block:: python
+
+                result = await workflow.run(checkpoint_id="cp_123", responses={"req_1": "approved"})
         """
+        # Validate mutually exclusive parameters BEFORE setting running flag
+        if message is not None and checkpoint_id is not None:
+            raise ValueError("Cannot provide both 'message' and 'checkpoint_id'. Use one or the other.")
+
+        if message is None and checkpoint_id is None and responses is None:
+            raise ValueError(
+                "Must provide at least one of: 'message' (new run), 'checkpoint_id' (resume), "
+                "or 'responses' (HIL continuation)."
+            )
+
+        # Prevent invalid combination: both message and responses provided
+        if message is not None and responses is not None:
+            raise ValueError(
+                "Cannot provide both 'message' and 'responses'. Use 'message' for new runs, "
+                "'responses' for HIL continuation."
+            )
+
         self._ensure_not_running()
+
+        # Enable runtime checkpointing if storage provided
+        if checkpoint_storage is not None:
+            self._runner.context.set_runtime_checkpoint_storage(checkpoint_storage)
+
         try:
 
-            async def initial_execution() -> None:
-                executor = self.get_start_executor()
-                await executor.execute(
-                    message,
-                    [self.__class__.__name__],  # source_executor_ids
-                    self._shared_state,  # shared_state
-                    self._runner.context,  # runner_context
-                    trace_contexts=None,  # No parent trace context for workflow start
-                    source_span_ids=None,  # No source span for workflow start
-                )
+            async def execution_handler() -> None:
+                # Handle checkpoint restoration
+                if checkpoint_id is not None:
+                    has_checkpointing = self._runner.context.has_checkpointing()
+
+                    if not has_checkpointing and checkpoint_storage is None:
+                        raise ValueError(
+                            "Cannot restore from checkpoint: either provide checkpoint_storage parameter "
+                            "or build workflow with WorkflowBuilder.with_checkpointing(checkpoint_storage)."
+                        )
+
+                    restored = await self._runner.restore_from_checkpoint(checkpoint_id, checkpoint_storage)
+
+                    if not restored:
+                        raise RuntimeError(f"Failed to restore from checkpoint: {checkpoint_id}")
+
+                    # Process pending messages from checkpoint
+                    if await self._runner.context.has_messages():
+                        await self._runner._run_iteration()  # type: ignore
+
+                # Handle initial message
+                elif message is not None:
+                    executor = self.get_start_executor()
+                    await executor.execute(
+                        message,
+                        [self.__class__.__name__],
+                        self._shared_state,
+                        self._runner.context,
+                        trace_contexts=None,
+                        source_span_ids=None,
+                    )
+
+                # Handle HIL responses
+                if responses:
+                    request_info_executor = self._find_request_info_executor()
+                    if not request_info_executor:
+                        raise ValueError("No RequestInfoExecutor found in workflow.")
+
+                    async def _handle_response(response: Any, request_id: str) -> None:
+                        ctx: WorkflowContext[Any] = WorkflowContext(
+                            request_info_executor.id,
+                            [self.__class__.__name__],
+                            self._shared_state,
+                            self._runner.context,
+                            trace_contexts=None,
+                            source_span_ids=None,
+                        )
+
+                        if checkpoint_id and not await request_info_executor.has_pending_request(request_id, ctx):
+                            logger.debug(
+                                f"Skipping response for request {request_id}; "
+                                f"no pending request found after checkpoint restoration."
+                            )
+                            return
+
+                        await request_info_executor.handle_response(response, request_id, ctx)
+
+                    await asyncio.gather(*[
+                        _handle_response(response, request_id) for request_id, response in responses.items()
+                    ])
+
+            # Reset context only for new runs (not checkpoint restoration or HIL continuation)
+            reset_context = message is not None and checkpoint_id is None and responses is None
 
             raw_events = [
                 event
                 async for event in self._run_workflow_with_tracing(
-                    initial_executor_fn=initial_execution,
-                    reset_context=True,
+                    initial_executor_fn=execution_handler,
+                    reset_context=reset_context,
                 )
             ]
         finally:
+            # Clear runtime checkpoint storage after run completes
+            if checkpoint_storage is not None:
+                self._runner.context.clear_runtime_checkpoint_storage()
             self._reset_running_flag()
 
         # Filter events for non-streaming mode
@@ -578,141 +778,6 @@ class Workflow(DictConvertible):
             filtered.append(ev)
 
         return WorkflowRunResult(filtered, status_events)
-
-    async def run_from_checkpoint(
-        self,
-        checkpoint_id: str,
-        checkpoint_storage: CheckpointStorage | None = None,
-        responses: dict[str, Any] | None = None,
-    ) -> WorkflowRunResult:
-        """Resume workflow execution from a checkpoint.
-
-        Args:
-            checkpoint_id: The ID of the checkpoint to restore from.
-            checkpoint_storage: Optional checkpoint storage to use for restoration.
-                              If not provided, the workflow must have been built with checkpointing enabled.
-            responses: Optional dictionary of responses to inject into the workflow
-                      after restoration. Keys are request IDs, values are response data.
-
-        Returns:
-            A WorkflowRunResult instance containing a list of events generated during the workflow execution.
-
-        Raises:
-            ValueError: If neither checkpoint_storage is provided nor checkpointing is enabled.
-            RuntimeError: If checkpoint restoration fails.
-        """
-        self._ensure_not_running()
-        try:
-
-            async def checkpoint_restoration() -> None:
-                has_checkpointing = self._runner.context.has_checkpointing()
-
-                if not has_checkpointing and checkpoint_storage is None:
-                    raise ValueError(
-                        "Cannot restore from checkpoint: either provide checkpoint_storage parameter "
-                        "or build workflow with WorkflowBuilder.with_checkpointing(checkpoint_storage)."
-                    )
-
-                restored = await self._runner.restore_from_checkpoint(checkpoint_id, checkpoint_storage)
-
-                if not restored:
-                    raise RuntimeError(f"Failed to restore from checkpoint: {checkpoint_id}")
-
-                # Process any pending messages from the checkpoint first
-                # This ensures that RequestInfoExecutor state is properly populated
-                # before we try to handle responses
-                if await self._runner.context.has_messages():
-                    # Run one iteration to process pending messages
-                    # This will populate RequestInfoExecutor._request_events properly
-                    await self._runner._run_iteration()  # type: ignore
-
-                if responses:
-                    request_info_executor = self._find_request_info_executor()
-                    if request_info_executor:
-                        for request_id, response_data in responses.items():
-                            ctx: WorkflowContext[Any] = WorkflowContext(
-                                request_info_executor.id,
-                                [self.__class__.__name__],
-                                self._shared_state,
-                                self._runner.context,
-                                trace_contexts=None,  # No parent trace context for new workflow span
-                                source_span_ids=None,  # No source span for response handling
-                            )
-
-                            if not await request_info_executor.has_pending_request(request_id, ctx):
-                                logger.debug(
-                                    f"Skipping pre-supplied response for request {request_id}; "
-                                    f"no pending request found after checkpoint restoration."
-                                )
-                                continue
-
-                            await request_info_executor.handle_response(
-                                response_data,
-                                request_id,
-                                ctx,
-                            )
-
-            events = [
-                event
-                async for event in self._run_workflow_with_tracing(
-                    initial_executor_fn=checkpoint_restoration,
-                    reset_context=False,  # Don't reset context when resuming from checkpoint
-                )
-            ]
-            status_events = [e for e in events if isinstance(e, WorkflowStatusEvent)]
-            filtered_events = [e for e in events if not isinstance(e, (WorkflowStatusEvent, WorkflowStartedEvent))]
-            return WorkflowRunResult(filtered_events, status_events)
-        finally:
-            self._reset_running_flag()
-
-    async def send_responses(self, responses: dict[str, Any]) -> WorkflowRunResult:
-        """Send responses back to the workflow.
-
-        Args:
-            responses: A dictionary where keys are request IDs and values are the corresponding response data.
-
-        Returns:
-            A WorkflowRunResult instance containing a list of events generated during the workflow execution.
-        """
-        self._ensure_not_running()
-        try:
-
-            async def send_responses_internal() -> None:
-                request_info_executor = self._find_request_info_executor()
-                if not request_info_executor:
-                    raise ValueError("No RequestInfoExecutor found in workflow.")
-
-                async def _handle_response(response: Any, request_id: str) -> None:
-                    """Handle the response from the RequestInfoExecutor."""
-                    await request_info_executor.handle_response(
-                        response,
-                        request_id,
-                        WorkflowContext(
-                            request_info_executor.id,
-                            [self.__class__.__name__],
-                            self._shared_state,
-                            self._runner.context,
-                            trace_contexts=None,  # No parent trace context for new workflow span
-                            source_span_ids=None,  # No source span for response handling
-                        ),
-                    )
-
-                await asyncio.gather(*[
-                    _handle_response(response, request_id) for request_id, response in responses.items()
-                ])
-
-            events = [
-                event
-                async for event in self._run_workflow_with_tracing(
-                    initial_executor_fn=send_responses_internal,
-                    reset_context=False,  # Don't reset context when sending responses
-                )
-            ]
-            status_events = [e for e in events if isinstance(e, WorkflowStatusEvent)]
-            filtered_events = [e for e in events if not isinstance(e, (WorkflowStatusEvent, WorkflowStartedEvent))]
-            return WorkflowRunResult(filtered_events, status_events)
-        finally:
-            self._reset_running_flag()
 
     def _get_executor_by_id(self, executor_id: str) -> Executor:
         """Get an executor by its ID.
