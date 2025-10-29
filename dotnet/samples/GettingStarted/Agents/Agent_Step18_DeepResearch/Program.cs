@@ -24,7 +24,7 @@ DeepResearchToolDefinition deepResearchTool = new(new DeepResearchDetails(
     model: deepResearchDeploymentName)
  );
 
-// Create an agent with the Deep Research tool on the Azure AI agent service.
+// Create an agent with the Deep Research tool on the Azure AI Foundry Agent service.
 var agentMetadata = await persistentAgentsClient.Administration.CreateAgentAsync(
     model: modelDeploymentName,
     name: "DeepResearchAgent",
