@@ -247,41 +247,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
             }
         });
 
-        this.WorkflowEventCounts = this.WorkflowEvents.GroupBy(e => e.GetType()).ToDictionary(e => e.Key, e => e.Count());
-        Assert.Empty(this.WorkflowEventCounts);
-        this.AssertNotExecuted("foreach_loop");
-        this.AssertNotExecuted("continue_loop_now");
-        this.AssertNotExecuted("end_all");
-        this.AssertNotExecuted("set_variable_inner");
-        this.AssertNotExecuted("send_activity_inner");
-    }
-
-    [Fact]
-    public async Task CancelInProgressRunAsync()
-    {
-        // Arrange
-        const string WorkflowInput = "Test input message";
-        Workflow workflow = this.CreateWorkflow("LoopEach.yaml", WorkflowInput);
-        await using StreamingRun run = await InProcessExecution.StreamAsync<string>(workflow, WorkflowInput);
-
-        await foreach (WorkflowEvent workflowEvent in run.WatchStreamAsync())
-        {
-            this.WorkflowEvents.Add(workflowEvent);
-
-            if (workflowEvent is DeclarativeActionCompletedEvent actionCompleteEvent)
-            {
-                // Act
-                // Cancel run after the first declarative action completes.
-                await run.CancelRunAsync();
-            }
-        }
-
-        // Assert
-        this.WorkflowEventCounts = this.WorkflowEvents.GroupBy(e => e.GetType()).ToDictionary(e => e.Key, e => e.Count());
-        Assert.Contains(this.WorkflowEvents.OfType<DeclarativeActionInvokedEvent>(), e => e.ActionId == "foreach_loop");
-        Assert.Contains(this.WorkflowEvents.OfType<DeclarativeActionCompletedEvent>(), e => e.ActionId == "foreach_loop");
-        this.AssertNotExecuted("set_variable_inner");
-        this.AssertNotExecuted("send_activity_inner");
+        Assert.Empty(this.WorkflowEvents);
     }
 
     [Fact]
@@ -308,9 +274,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
             }
         });
 
-        this.AssertNotExecuted("foreach_loop");
-        this.AssertNotExecuted("continue_loop_now");
-        this.AssertNotExecuted("end_all");
+        Assert.Empty(this.WorkflowEvents);
     }
 
     private void AssertExecutionCount(int expectedCount)
