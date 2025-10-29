@@ -63,11 +63,32 @@ internal static class AIAgentChatCompletionsProcessor
             await foreach (var agentRunResponseUpdate in agent.RunStreamingAsync(chatMessages, cancellationToken: cancellationToken).WithCancellation(cancellationToken))
             {
                 var choiceChunks = new List<ChatCompletionChoiceChunk>();
+                CompletionUsage? usageDetails = null;
+
                 foreach (var content in agentRunResponseUpdate.Contents)
                 {
-                    var delta = content switch
+                    // usage content is handled separately
+                    if (content is UsageContent usageContent && usageContent.Details != null)
                     {
-                        TextContent textContent => new ChatCompletionDelta { Content = textContent.Text },
+                        usageDetails = usageContent.Details.ToCompletionUsage();
+                        continue;
+                    }
+
+                    ChatCompletionDelta delta = content switch
+                    {
+                        TextContent textContent => new() { Content = textContent.Text },
+
+                        // image
+                        DataContent imageContent when imageContent.HasTopLevelMediaType("image") => new() { Content = imageContent.Base64Data.ToString() },
+                        UriContent urlContent when urlContent.HasTopLevelMediaType("image") => new() { Content = urlContent.Uri.ToString() },
+
+                        // audio
+                        DataContent audioContent when audioContent.HasTopLevelMediaType("audio") => new() { Content = audioContent.Base64Data.ToString() },
+
+                        // file
+                        DataContent fileContent when !fileContent.HasTopLevelMediaType("image") && !fileContent.HasTopLevelMediaType("audio")
+                            => new() { Content = fileContent.Base64Data.ToString() },
+                        HostedFileContent fileContent => new() { Content = fileContent.FileId },
 
                         _ => throw new InvalidOperationException($"Got unsupported content: {content.GetType()}")
                     };
@@ -87,7 +108,8 @@ internal static class AIAgentChatCompletionsProcessor
                     Id = Guid.NewGuid().ToString(),
                     Created = 1,
                     Model = request.Model,
-                    Choices = choiceChunks
+                    Choices = choiceChunks,
+                    Usage = usageDetails
                 };
 
                 yield return new(chunk);

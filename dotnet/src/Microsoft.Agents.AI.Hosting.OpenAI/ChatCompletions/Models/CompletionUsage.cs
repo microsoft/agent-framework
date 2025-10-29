@@ -44,10 +44,19 @@ internal sealed record CompletionUsage
     public int? TotalTokens { get; set; }
 
     [JsonPropertyName("completion_tokens_details")]
-    public CompletionTokensDetails? CompletionTokensDetails { get; set; }
+    public required CompletionTokensDetails CompletionTokensDetails { get; set; }
 
     [JsonPropertyName("prompt_tokens_details")]
-    public PromptTokensDetails? PromptTokensDetails { get; set; }
+    public required PromptTokensDetails PromptTokensDetails { get; set; }
+
+    public static CompletionUsage operator +(CompletionUsage left, CompletionUsage right) => new()
+    {
+        CompletionTokens = left.CompletionTokens + right.CompletionTokens,
+        PromptTokens = left.PromptTokens + right.PromptTokens,
+        TotalTokens = left.TotalTokens + right.TotalTokens,
+        CompletionTokensDetails = left.CompletionTokensDetails + right.CompletionTokensDetails,
+        PromptTokensDetails = left.PromptTokensDetails + right.PromptTokensDetails
+    };
 }
 
 /// <summary>
@@ -80,6 +89,14 @@ internal sealed record CompletionTokensDetails
     /// </summary>
     [JsonPropertyName("rejected_prediction_tokens")]
     public int RejectedPredictionTokens { get; set; }
+
+    public static CompletionTokensDetails operator +(CompletionTokensDetails left, CompletionTokensDetails right) => new()
+    {
+        AcceptedPredictionTokens = left.AcceptedPredictionTokens + right.AcceptedPredictionTokens,
+        AudioTokens = left.AudioTokens + right.AudioTokens,
+        ReasoningTokens = left.ReasoningTokens + right.ReasoningTokens,
+        RejectedPredictionTokens = left.RejectedPredictionTokens + right.RejectedPredictionTokens
+    };
 }
 
 /// <summary>
@@ -98,4 +115,10 @@ internal sealed record PromptTokensDetails
     /// </summary>
     [JsonPropertyName("cached_tokens")]
     public int CachedTokens { get; set; }
+
+    public static PromptTokensDetails operator +(PromptTokensDetails left, PromptTokensDetails right) => new()
+    {
+        AudioTokens = left.AudioTokens + right.AudioTokens,
+        CachedTokens = left.CachedTokens + right.CachedTokens
+    };
 }
