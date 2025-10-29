@@ -25,14 +25,11 @@ DeepResearchToolDefinition deepResearchTool = new(new DeepResearchDetails(
  );
 
 // Create an agent with the Deep Research tool on the Azure AI agent service.
-var agentMetadata = await persistentAgentsClient.Administration.CreateAgentAsync(
+AIAgent agent = await persistentAgentsClient.CreateAIAgentAsync(
     model: modelDeploymentName,
     name: "DeepResearchAgent",
     instructions: "You are a helpful Agent that assists in researching scientific topics.",
     tools: [deepResearchTool]);
-
-// Retrieve the created agent as an AIAgent.
-AIAgent agent = await persistentAgentsClient.GetAIAgentAsync(agentMetadata.Value.Id);
 
 const string Task = "Research the current state of studies on orca intelligence and orca language, " +
     "including what is currently known about orcas' cognitive capabilities and communication systems.";
