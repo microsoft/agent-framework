@@ -340,16 +340,12 @@ internal sealed class CriticExecutor : Executor<ChatMessage, CriticDecision>
     /// </summary>
     private static (bool approved, string feedback) ParseDecision(string fullResponse)
     {
-        string? lastJson = null;
-        foreach (string line in fullResponse.Replace("\r\n", "\n").Split('\n').Reverse())
-        {
-            string trimmedLine = line.Trim();
-            if (trimmedLine.StartsWith('{') && trimmedLine.EndsWith('}'))
-            {
-                lastJson = trimmedLine;
-                break;
-            }
-        }
+        string? lastJson = fullResponse
+            .Replace("\r\n", "\n")
+            .Split('\n')
+            .Reverse()
+            .Select(line => line.Trim())
+            .FirstOrDefault(trimmedLine => trimmedLine.StartsWith('{') && trimmedLine.EndsWith('}'));
 
         if (lastJson is null)
         {
