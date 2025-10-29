@@ -389,8 +389,6 @@ public static class AgentsClientExtensions
                     await client.GetConversationClient().GetConversationAsync(chatClientThread.ConversationId, cancellationToken).ConfigureAwait(false) :
                     await client.GetConversationClient().CreateConversationAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
 
-            await client.GetConversationClient().CreateConversationAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
-
             chatClientOptions.ChatOptions ??= new();
             chatClientOptions.ChatOptions.RawRepresentationFactory = (client) =>
             {

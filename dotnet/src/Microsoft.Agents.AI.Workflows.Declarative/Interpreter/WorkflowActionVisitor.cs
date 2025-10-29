@@ -263,6 +263,13 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         this._workflowModel.AddLink(captureId, prepareId, message => !QuestionExecutor.IsComplete(message));
     }
 
+    protected override void Visit(RequestExternalInput item)
+    {
+        this.Trace(item);
+
+        // %%% IMPLEMENT
+    }
+
     protected override void Visit(EndDialog item)
     {
         this.Trace(item);
@@ -278,6 +285,26 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     {
         this.Trace(item);
 
+        // Represent action with default executor
+        DefaultActionExecutor action = new(item, this._workflowState);
+        this.ContinueWith(action);
+        // Define a clean-start to ensure "end" is not a source for any edge
+        this.RestartAfter(action.Id, action.ParentId);
+    }
+
+    protected override void Visit(CancelAllDialogs item)
+    {
+        this.Trace(item);
+
+        // Represent action with default executor
+        DefaultActionExecutor action = new(item, this._workflowState);
+        this.ContinueWith(action);
+        // Define a clean-start to ensure "end" is not a source for any edge
+        this.RestartAfter(item.Id.Value, action.ParentId);
+    }
+
+    protected override void Visit(CancelDialog item)
+    {
         // Represent action with default executor
         DefaultActionExecutor action = new(item, this._workflowState);
         this.ContinueWith(action);
@@ -343,6 +370,13 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
         // Define post action
         this._workflowModel.AddNode(new DelegateActionExecutor(postId, this._workflowState, action.CompleteAsync), action.ParentId);
+    }
+
+    protected override void Visit(InvokeAzureResponse item)
+    {
+        this.Trace(item);
+
+        // %%% IMPLEMENT
     }
 
     protected override void Visit(RetrieveConversationMessage item)
@@ -461,10 +495,6 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     protected override void Visit(RepeatDialog item) => this.NotSupported(item);
 
     protected override void Visit(ReplaceDialog item) => this.NotSupported(item);
-
-    protected override void Visit(CancelAllDialogs item) => this.NotSupported(item);
-
-    protected override void Visit(CancelDialog item) => this.NotSupported(item);
 
     protected override void Visit(EmitEvent item) => this.NotSupported(item);
 

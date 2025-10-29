@@ -5,7 +5,7 @@ trigger:
   id: my_workflow
   actions:
 
-    - kind: EndDialog
+    - kind: CancelWorkflow
       id: end_all
 
     - kind: SendActivity

@@ -58,12 +58,11 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
     {
         string? conversationId = this.GetConversationId();
         string agentName = this.GetAgentName();
-        string? additionalInstructions = this.GetAdditionalInstructions();
         bool autoSend = this.GetAutoSendValue();
 
         bool isComplete = true;
 
-        AgentRunResponse agentResponse = await agentProvider.InvokeAgentAsync(this.Id, context, agentName, conversationId, autoSend, additionalInstructions, messages, cancellationToken).ConfigureAwait(false);
+        AgentRunResponse agentResponse = await agentProvider.InvokeAgentAsync(this.Id, context, agentName, conversationId, autoSend, messages, cancellationToken).ConfigureAwait(false);
 
         if (string.IsNullOrEmpty(agentResponse.Text))
         {
@@ -148,18 +147,6 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
             Throw.IfNull(
                 this.AgentUsage.Name,
                 $"{nameof(this.Model)}.{nameof(this.Model.Agent)}.{nameof(this.Model.Agent.Name)}")).Value;
-
-    private string? GetAdditionalInstructions()
-    {
-        string? additionalInstructions = null;
-
-        if (this.AgentInput?.AdditionalInstructions is not null)
-        {
-            additionalInstructions = this.Engine.Format(this.AgentInput.AdditionalInstructions);
-        }
-
-        return additionalInstructions;
-    }
 
     private bool GetAutoSendValue()
     {

@@ -17,8 +17,8 @@
     <PackageVersion Include="Aspire.Microsoft.Azure.Cosmos" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="9.8.0" />
     <!-- Azure.* -->
-    <PackageVersion Include="Azure.AI.Agents" Version="2.0.0-alpha.20251016.2" />
-    <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.6" />
+    <PackageVersion Include="Azure.AI.Agents" Version="2.0.0-alpha.20251024.3" />
+    <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.7" />
     <PackageVersion Include="Azure.AI.OpenAI" Version="2.5.0-beta.1" />
     <PackageVersion Include="Azure.Identity" Version="1.17.0" />
     <PackageVersion Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.4.0" />
@@ -88,10 +88,10 @@
     <!-- Identity -->
     <PackageVersion Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.77.1" />
     <!-- Workflows -->
-    <PackageVersion Include="Microsoft.Bot.ObjectModel" Version="1.2025.1003.2" />
-    <PackageVersion Include="Microsoft.Bot.ObjectModel.Json" Version="1.2025.1003.2" />
-    <PackageVersion Include="Microsoft.Bot.ObjectModel.PowerFx" Version="1.2025.1003.2" />
-    <PackageVersion Include="Microsoft.PowerFx.Interpreter" Version="1.4.0" />
+    <PackageVersion Include="Microsoft.Bot.ObjectModel" Version="1.2025.1028.2" />
+    <PackageVersion Include="Microsoft.Bot.ObjectModel.Json" Version="1.2025.1028.2" />
+    <PackageVersion Include="Microsoft.Bot.ObjectModel.PowerFx" Version="1.2025.1028.2" />
+    <PackageVersion Include="Microsoft.PowerFx.Interpreter" Version="1.5.0-build.20251008-1002" />
     <!-- Community -->
     <PackageVersion Include="System.Linq.Async" Version="6.0.3" />
     <!-- Test -->
