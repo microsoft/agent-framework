@@ -11,9 +11,6 @@ using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.AGUI.UnitTests;
 
-/// <summary>
-/// Unit tests for the <see cref="AGUIAgentThread"/> class.
-/// </summary>
 public sealed class AGUIAgentThreadTests
 {
     [Fact]

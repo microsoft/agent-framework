@@ -9,9 +9,6 @@ using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.UnitTests;
 
-/// <summary>
-/// Unit tests for the <see cref="AgentRunResponseUpdateAGUIExtensions"/> class.
-/// </summary>
 public sealed class AgentRunResponseUpdateAGUIExtensionsTests
 {
     [Fact]

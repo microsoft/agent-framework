@@ -10,6 +10,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
+using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AGUI;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
@@ -72,7 +73,14 @@ public sealed class BasicStreamingTests : IAsyncDisposable
             updates.Add(update);
         }
 
-        // Assert - Should have received text updates
+        // Assert - RunStarted should be the first update
+        updates.Should().NotBeEmpty();
+        updates[0].Contents.Should().ContainSingle();
+        RunStartedContent runStarted = updates[0].Contents[0].Should().BeOfType<RunStartedContent>().Subject;
+        runStarted.ThreadId.Should().NotBeNullOrEmpty();
+        runStarted.RunId.Should().NotBeNullOrEmpty();
+
+        // Should have received text updates
         updates.Should().Contain(u => !string.IsNullOrEmpty(u.Text));
 
         // All text content updates should have the same message ID
@@ -81,6 +89,13 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         string? firstMessageId = textUpdates.FirstOrDefault()?.MessageId;
         firstMessageId.Should().NotBeNullOrEmpty();
         textUpdates.Should().AllSatisfy(u => u.MessageId.Should().Be(firstMessageId));
+
+        // RunFinished should be the last update
+        AgentRunResponseUpdate lastUpdate = updates[^1];
+        lastUpdate.Contents.Should().ContainSingle();
+        RunFinishedContent runFinished = lastUpdate.Contents[0].Should().BeOfType<RunFinishedContent>().Subject;
+        runFinished.ThreadId.Should().Be(runStarted.ThreadId);
+        runFinished.RunId.Should().Be(runStarted.RunId);
     }
 
     [Fact]
@@ -99,6 +114,55 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         response.Messages.Should().NotBeEmpty();
         response.Messages.Should().Contain(m => m.Role == ChatRole.Assistant);
         response.Messages.Should().Contain(m => m.Text == "Hello from fake agent!");
+    }
+
+    [Fact]
+    public async Task MultiTurnConversationPreservesAllMessagesInThreadAsync()
+    {
+        // Arrange
+        await this.SetupTestServerAsync();
+        AGUIAgent agent = new("assistant", "Sample assistant", [], this._client!, "");
+        AgentThread thread = agent.GetNewThread();
+        ChatMessage firstUserMessage = new(ChatRole.User, "First question");
+
+        // Act - First turn
+        List<AgentRunResponseUpdate> firstTurnUpdates = [];
+        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync([firstUserMessage], thread, new AgentRunOptions(), CancellationToken.None))
+        {
+            firstTurnUpdates.Add(update);
+        }
+
+        // Assert first turn completed
+        firstTurnUpdates.Should().Contain(u => !string.IsNullOrEmpty(u.Text));
+
+        // Act - Second turn with another message
+        ChatMessage secondUserMessage = new(ChatRole.User, "Second question");
+        List<AgentRunResponseUpdate> secondTurnUpdates = [];
+        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync([secondUserMessage], thread, new AgentRunOptions(), CancellationToken.None))
+        {
+            secondTurnUpdates.Add(update);
+        }
+
+        // Assert second turn completed
+        secondTurnUpdates.Should().Contain(u => !string.IsNullOrEmpty(u.Text));
+
+        // Assert - Thread should contain all 4 messages (2 user + 2 assistant)
+        InMemoryAgentThread? inMemoryThread = thread.GetService<InMemoryAgentThread>();
+        inMemoryThread.Should().NotBeNull();
+        inMemoryThread!.MessageStore.Should().HaveCount(4);
+
+        // Verify message order and content
+        inMemoryThread.MessageStore[0].Role.Should().Be(ChatRole.User);
+        inMemoryThread.MessageStore[0].Text.Should().Be("First question");
+
+        inMemoryThread.MessageStore[1].Role.Should().Be(ChatRole.Assistant);
+        inMemoryThread.MessageStore[1].Text.Should().Be("Hello from fake agent!");
+
+        inMemoryThread.MessageStore[2].Role.Should().Be(ChatRole.User);
+        inMemoryThread.MessageStore[2].Text.Should().Be("Second question");
+
+        inMemoryThread.MessageStore[3].Role.Should().Be(ChatRole.Assistant);
+        inMemoryThread.MessageStore[3].Text.Should().Be("Hello from fake agent!");
     }
 
     private async Task SetupTestServerAsync()
@@ -164,16 +228,13 @@ internal sealed class FakeChatClientAgent : AIAgent
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        List<ChatMessage> chatMessages = [];
+        List<AgentRunResponseUpdate> updates = [];
         await foreach (AgentRunResponseUpdate update in this.RunStreamingAsync(messages, thread, options, cancellationToken).ConfigureAwait(false))
         {
-            if (update.Role.HasValue && update.Contents.Count > 0)
-            {
-                chatMessages.Add(new ChatMessage(update.Role.Value, update.Contents));
-            }
+            updates.Add(update);
         }
 
-        return new AgentRunResponse(chatMessages);
+        return updates.ToAgentRunResponse();
     }
 
     public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
@@ -187,15 +248,14 @@ internal sealed class FakeChatClientAgent : AIAgent
         // Simulate streaming a deterministic response
         foreach (string chunk in new[] { "Hello", " ", "from", " ", "fake", " ", "agent", "!" })
         {
-            AgentRunResponseUpdate update = new AgentRunResponseUpdate
+            yield return new AgentRunResponseUpdate
             {
                 MessageId = messageId,
                 Role = ChatRole.Assistant,
                 Contents = [new TextContent(chunk)]
             };
-            yield return update;
 
-            await Task.Delay(10, cancellationToken).ConfigureAwait(false);
+            await Task.Yield();
         }
     }
 
