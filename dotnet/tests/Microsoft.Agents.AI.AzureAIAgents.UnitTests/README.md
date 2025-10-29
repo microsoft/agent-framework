@@ -56,7 +56,7 @@ https://pkgs.dev.azure.com/azure-sdk/internal/_packaging/azure-sdk-for-net-pr/nu
 
 To run these tests locally, you need:
 
-1. **Azure DevOps Authentication**: Configure access to the private NuGet feed by setting up Azure Artifacts credentials. See [Azure Artifacts documentation](https://docs.microsoft.com/en-us/azure/devops/artifacts/nuget/nuget-exe) for details.
+1. **Azure DevOps Authentication**: Configure access to the private NuGet feed by setting up Azure Artifacts credentials. See [Azure Artifacts documentation](https://learn.microsoft.com/azure/devops/artifacts/nuget/nuget-exe) for details.
 
 2. **NuGet Configuration**: Ensure your `nuget.config` includes the Azure DevOps source with proper authentication.
 
