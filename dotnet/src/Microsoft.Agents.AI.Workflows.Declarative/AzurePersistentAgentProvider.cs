@@ -1,16 +1,14 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
-using System.ClientModel.Primitives;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
-using Azure.AI.Agents;
+using Azure.AI.Agents.Persistent;
 using Azure.Core;
-using Microsoft.Bot.ObjectModel;
+using Azure.Core.Pipeline;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative;
@@ -23,31 +21,28 @@ namespace Microsoft.Agents.AI.Workflows.Declarative;
 /// <param name="projectEndpoint">The endpoint URL of the Foundry project. This must be a valid, non-null URI pointing to the project.</param>
 /// <param name="projectCredentials">The credentials used to authenticate with the Foundry project. This must be a valid instance of <see cref="TokenCredential"/>.</param>
 /// <param name="httpClient">An optional <see cref="HttpClient"/> instance to be used for making HTTP requests. If not provided, a default client will be used.</param>
-public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential projectCredentials, HttpClient? httpClient = null) : WorkflowAgentProvider
+public sealed class AzurePersistentAgentProvider(string projectEndpoint, TokenCredential projectCredentials, HttpClient? httpClient = null) : WorkflowAgentProvider
 {
-    private static readonly Dictionary<string, AgentMessageRole> s_roleMap =
+    private static readonly Dictionary<string, MessageRole> s_roleMap =
         new()
         {
-            [ChatRole.User.Value.ToUpperInvariant()] = AgentMessageRole.User,
-            [ChatRole.Assistant.Value.ToUpperInvariant()] = AgentMessageRole.Agent,
-            [ChatRole.System.Value.ToUpperInvariant()] = AgentMessageRole.Agent, // %%% ??!?!?!?!!!
-            [ChatRole.Tool.Value.ToUpperInvariant()] = AgentMessageRole.Agent, // %%% ??!?!?!?!!!
+            [ChatRole.User.Value.ToUpperInvariant()] = MessageRole.User,
+            [ChatRole.Assistant.Value.ToUpperInvariant()] = MessageRole.Agent,
+            [ChatRole.System.Value.ToUpperInvariant()] = new MessageRole(ChatRole.System.Value),
+            [ChatRole.Tool.Value.ToUpperInvariant()] = new MessageRole(ChatRole.Tool.Value),
         };
 
-    private AgentsClient? _agentsClient;
+    private PersistentAgentsClient? _agentsClient;
 
     /// <inheritdoc/>
     public override async Task<string> CreateConversationAsync(CancellationToken cancellationToken = default)
     {
-        AgentConversationCreationOptions options =
-            new()
-            {
-                Items = { }, // %%% ??!?!?!?!!!
-                Metadata = { } // %%% ??!?!?!?!!!
-            };
-
-        AgentConversation conversation =
-            await this.GetAgentsClient().GetConversationClient().CreateConversationAsync(options, cancellationToken).ConfigureAwait(false);
+        PersistentAgentThread conversation =
+            await this.GetAgentsClient().Threads.CreateThreadAsync(
+                messages: null,
+                toolResources: null,
+                metadata: null,
+                cancellationToken).ConfigureAwait(false);
 
         return conversation.Id;
     }
@@ -55,8 +50,8 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
     /// <inheritdoc/>
     public override async Task<ChatMessage> CreateMessageAsync(string conversationId, ChatMessage conversationMessage, CancellationToken cancellationToken = default)
     {
-        AgentResponseItem newMessage =
-            await this.GetAgentsClient().CreateMessageAsync(
+        PersistentThreadMessage newMessage =
+            await this.GetAgentsClient().Messages.CreateMessageAsync(
                 conversationId,
                 role: s_roleMap[conversationMessage.Role.Value.ToUpperInvariant()],
                 contentBlocks: GetContent(),
@@ -101,13 +96,14 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
     /// <inheritdoc/>
     public override async Task<AIAgent> GetAgentAsync(string agentId, CancellationToken cancellationToken = default)
     {
-        AgentRecord agent =
-            await this.GetAgentsClient().GetAgentAsync(
+        ChatClientAgent agent =
+            await this.GetAgentsClient().GetAIAgentAsync(
                 agentId,
-                //new RequestOptions()// %%% ??!?!?!?!!!
-                //{
-                //    AllowMultipleToolCalls = this.AllowMultipleToolCalls,// %%% ??!?!?!?!!!
-                //},
+                new ChatOptions()
+                {
+                    AllowMultipleToolCalls = this.AllowMultipleToolCalls,
+                },
+                clientFactory: null,
                 cancellationToken).ConfigureAwait(false);
 
         FunctionInvokingChatClient? functionInvokingClient = agent.GetService<FunctionInvokingChatClient>();
@@ -137,7 +133,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
     /// <inheritdoc/>
     public override async Task<ChatMessage> GetMessageAsync(string conversationId, string messageId, CancellationToken cancellationToken = default)
     {
-        AgentResponseItem message = await this.GetAgentsClient().GetConversationClient().GetConversationItemAsync(conversationId, messageId, cancellationToken).ConfigureAwait(false);
+        PersistentThreadMessage message = await this.GetAgentsClient().Messages.GetMessageAsync(conversationId, messageId, cancellationToken).ConfigureAwait(false);
         return ToChatMessage(message);
     }
 
@@ -157,18 +153,18 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
         }
     }
 
-    private AgentsClient GetAgentsClient()
+    private PersistentAgentsClient GetAgentsClient()
     {
         if (this._agentsClient is null)
         {
-            AgentsClientOptions clientOptions = new();
+            PersistentAgentsAdministrationClientOptions clientOptions = new();
 
             if (httpClient is not null)
             {
-                //clientOptions.Transport = new HttpClientTransport(httpClient); // %%% ??!?!?!?!!!
+                clientOptions.Transport = new HttpClientTransport(httpClient);
             }
 
-            AgentsClient newClient = new(projectEndpoint, projectCredentials, clientOptions);
+            PersistentAgentsClient newClient = new(projectEndpoint, projectCredentials, clientOptions);
 
             Interlocked.CompareExchange(ref this._agentsClient, newClient, null);
         }
@@ -176,7 +172,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
         return this._agentsClient;
     }
 
-    private static ChatMessage ToChatMessage(AgentResponsem message)
+    private static ChatMessage ToChatMessage(PersistentThreadMessage message)
     {
         return
            new ChatMessage(new ChatRole(message.Role.ToString()), [.. GetContent()])
