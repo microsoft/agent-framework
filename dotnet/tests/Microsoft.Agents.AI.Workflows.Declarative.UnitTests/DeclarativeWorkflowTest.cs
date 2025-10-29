@@ -171,8 +171,6 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     [InlineData(typeof(AdaptiveCardPrompt.Builder))]
     [InlineData(typeof(BeginDialog.Builder))]
     [InlineData(typeof(CSATQuestion.Builder))]
-    [InlineData(typeof(CancelAllDialogs.Builder))]
-    [InlineData(typeof(CancelDialog.Builder))]
     [InlineData(typeof(CreateSearchQuery.Builder))]
     [InlineData(typeof(DeleteActivity.Builder))]
     [InlineData(typeof(DisableTrigger.Builder))]
