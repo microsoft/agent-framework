@@ -22,6 +22,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Azure.AI.Agents.Persistent" Condition="'$(TargetFramework)' != 'net472'" />
     <PackageReference Include="Azure.Identity" />
     <PackageReference Include="Microsoft.Bot.ObjectModel" />
     <PackageReference Include="Microsoft.Bot.ObjectModel.Json" />
