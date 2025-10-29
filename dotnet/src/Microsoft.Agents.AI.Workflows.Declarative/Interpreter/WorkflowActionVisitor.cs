@@ -305,6 +305,8 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
     protected override void Visit(CancelDialog item)
     {
+        this.Trace(item);
+
         // Represent action with default executor
         DefaultActionExecutor action = new(item, this._workflowState);
         this.ContinueWith(action);
