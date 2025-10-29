@@ -165,17 +165,110 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         inMemoryThread.MessageStore[3].Text.Should().Be("Hello from fake agent!");
     }
 
-    private async Task SetupTestServerAsync()
+    [Fact]
+    public async Task AgentSendsMultipleMessagesInOneTurnAsync()
+    {
+        // Arrange
+        await this.SetupTestServerAsync(useMultiMessageAgent: true);
+        AGUIAgent agent = new("assistant", "Sample assistant", [], this._client!, "");
+        AgentThread thread = agent.GetNewThread();
+        ChatMessage userMessage = new(ChatRole.User, "Tell me a story");
+
+        List<AgentRunResponseUpdate> updates = [];
+
+        // Act
+        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync([userMessage], thread, new AgentRunOptions(), CancellationToken.None))
+        {
+            updates.Add(update);
+        }
+
+        // Assert - Should have received text updates with different message IDs
+        List<AgentRunResponseUpdate> textUpdates = updates.Where(u => !string.IsNullOrEmpty(u.Text)).ToList();
+        textUpdates.Should().NotBeEmpty();
+
+        // Extract unique message IDs
+        List<string> messageIds = textUpdates.Select(u => u.MessageId).Where(id => !string.IsNullOrEmpty(id)).Distinct().ToList()!;
+        messageIds.Should().HaveCountGreaterThan(1, "agent should send multiple messages");
+
+        // Verify thread contains user message plus multiple assistant messages
+        InMemoryAgentThread? inMemoryThread = thread.GetService<InMemoryAgentThread>();
+        inMemoryThread.Should().NotBeNull();
+        inMemoryThread!.MessageStore.Should().HaveCountGreaterThan(2);
+        inMemoryThread.MessageStore[0].Role.Should().Be(ChatRole.User);
+        inMemoryThread.MessageStore.Skip(1).Should().AllSatisfy(m => m.Role.Should().Be(ChatRole.Assistant));
+    }
+
+    [Fact]
+    public async Task UserSendsMultipleMessagesAtOnceAsync()
+    {
+        // Arrange
+        await this.SetupTestServerAsync();
+        AGUIAgent agent = new("assistant", "Sample assistant", [], this._client!, "");
+        AgentThread thread = agent.GetNewThread();
+
+        // Multiple user messages sent in one turn
+        ChatMessage[] userMessages =
+        [
+            new ChatMessage(ChatRole.User, "First part of question"),
+            new ChatMessage(ChatRole.User, "Second part of question"),
+            new ChatMessage(ChatRole.User, "Third part of question")
+        ];
+
+        List<AgentRunResponseUpdate> updates = [];
+
+        // Act
+        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(userMessages, thread, new AgentRunOptions(), CancellationToken.None))
+        {
+            updates.Add(update);
+        }
+
+        // Assert - Should have received assistant response
+        updates.Should().Contain(u => !string.IsNullOrEmpty(u.Text));
+
+        // Verify thread contains all user messages plus assistant response
+        InMemoryAgentThread? inMemoryThread = thread.GetService<InMemoryAgentThread>();
+        inMemoryThread.Should().NotBeNull();
+        inMemoryThread!.MessageStore.Should().HaveCount(4); // 3 user + 1 assistant
+
+        inMemoryThread.MessageStore[0].Role.Should().Be(ChatRole.User);
+        inMemoryThread.MessageStore[0].Text.Should().Be("First part of question");
+
+        inMemoryThread.MessageStore[1].Role.Should().Be(ChatRole.User);
+        inMemoryThread.MessageStore[1].Text.Should().Be("Second part of question");
+
+        inMemoryThread.MessageStore[2].Role.Should().Be(ChatRole.User);
+        inMemoryThread.MessageStore[2].Text.Should().Be("Third part of question");
+
+        inMemoryThread.MessageStore[3].Role.Should().Be(ChatRole.Assistant);
+        inMemoryThread.MessageStore[3].Text.Should().Be("Hello from fake agent!");
+    }
+
+    private async Task SetupTestServerAsync(bool useMultiMessageAgent = false)
     {
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
 
-        builder.Services.AddSingleton<FakeChatClientAgent>();
+        if (useMultiMessageAgent)
+        {
+            builder.Services.AddSingleton<FakeMultiMessageAgent>();
+        }
+        else
+        {
+            builder.Services.AddSingleton<FakeChatClientAgent>();
+        }
 
         this._app = builder.Build();
 
-        this._app.MapAGUIAgent("/agent", (IEnumerable<ChatMessage> messages, IEnumerable<AITool> tools, IEnumerable<KeyValuePair<string, string>> context, JsonElement forwardedProps) =>
-            this._app.Services.GetRequiredService<FakeChatClientAgent>());
+        if (useMultiMessageAgent)
+        {
+            this._app.MapAGUIAgent("/agent", (IEnumerable<ChatMessage> messages, IEnumerable<AITool> tools, IEnumerable<KeyValuePair<string, string>> context, JsonElement forwardedProps) =>
+                this._app.Services.GetRequiredService<FakeMultiMessageAgent>());
+        }
+        else
+        {
+            this._app.MapAGUIAgent("/agent", (IEnumerable<ChatMessage> messages, IEnumerable<AITool> tools, IEnumerable<KeyValuePair<string, string>> context, JsonElement forwardedProps) =>
+                this._app.Services.GetRequiredService<FakeChatClientAgent>());
+        }
 
         await this._app.StartAsync();
 
@@ -251,6 +344,110 @@ internal sealed class FakeChatClientAgent : AIAgent
             yield return new AgentRunResponseUpdate
             {
                 MessageId = messageId,
+                Role = ChatRole.Assistant,
+                Contents = [new TextContent(chunk)]
+            };
+
+            await Task.Yield();
+        }
+    }
+
+    private sealed class FakeInMemoryAgentThread : InMemoryAgentThread
+    {
+        public FakeInMemoryAgentThread()
+            : base()
+        {
+        }
+
+        public FakeInMemoryAgentThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+            : base(serializedThread, jsonSerializerOptions)
+        {
+        }
+    }
+}
+
+[SuppressMessage("Performance", "CA1812:Avoid uninstantiated internal classes", Justification = "Instantiated via dependency injection")]
+internal sealed class FakeMultiMessageAgent : AIAgent
+{
+    private readonly string _agentId;
+    private readonly string _description;
+
+    public FakeMultiMessageAgent()
+    {
+        this._agentId = "fake-multi-message-agent";
+        this._description = "A fake agent that sends multiple messages for testing";
+    }
+
+    public override string Id => this._agentId;
+
+    public override string? Description => this._description;
+
+    public override AgentThread GetNewThread()
+    {
+        return new FakeInMemoryAgentThread();
+    }
+
+    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+    {
+        return new FakeInMemoryAgentThread(serializedThread, jsonSerializerOptions);
+    }
+
+    public override async Task<AgentRunResponse> RunAsync(
+        IEnumerable<ChatMessage> messages,
+        AgentThread? thread = null,
+        AgentRunOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        List<AgentRunResponseUpdate> updates = [];
+        await foreach (AgentRunResponseUpdate update in this.RunStreamingAsync(messages, thread, options, cancellationToken).ConfigureAwait(false))
+        {
+            updates.Add(update);
+        }
+
+        return updates.ToAgentRunResponse();
+    }
+
+    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+        IEnumerable<ChatMessage> messages,
+        AgentThread? thread = null,
+        AgentRunOptions? options = null,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        // Simulate sending first message
+        string messageId1 = Guid.NewGuid().ToString("N");
+        foreach (string chunk in new[] { "First", " ", "message" })
+        {
+            yield return new AgentRunResponseUpdate
+            {
+                MessageId = messageId1,
+                Role = ChatRole.Assistant,
+                Contents = [new TextContent(chunk)]
+            };
+
+            await Task.Yield();
+        }
+
+        // Simulate sending second message
+        string messageId2 = Guid.NewGuid().ToString("N");
+        foreach (string chunk in new[] { "Second", " ", "message" })
+        {
+            yield return new AgentRunResponseUpdate
+            {
+                MessageId = messageId2,
+                Role = ChatRole.Assistant,
+                Contents = [new TextContent(chunk)]
+            };
+
+            await Task.Yield();
+        }
+
+        // Simulate sending third message
+        string messageId3 = Guid.NewGuid().ToString("N");
+        foreach (string chunk in new[] { "Third", " ", "message" })
+        {
+            yield return new AgentRunResponseUpdate
+            {
+                MessageId = messageId3,
                 Role = ChatRole.Assistant,
                 Contents = [new TextContent(chunk)]
             };
