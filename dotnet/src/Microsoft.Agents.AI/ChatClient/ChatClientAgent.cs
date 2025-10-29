@@ -251,6 +251,10 @@ public sealed partial class ChatClientAgent : AIAgent
                 update.AuthorName ??= this.Name;
 
                 responseUpdates.Add(update);
+
+                // Save input messages to continuation token so they can be retrieved when resuming the stream.
+                AttachInputMessagesToContinuationToken(update, inputMessages, options);
+
                 yield return new(update) { AgentId = this.Id };
             }
 
@@ -265,6 +269,9 @@ public sealed partial class ChatClientAgent : AIAgent
             }
         }
 
+        // In case of the stream resumption, retrieve input messages used to initiate streamed background response
+        inputMessages = inputMessages.Count > 0 ? inputMessages : RetrieveInputMessagesFromContinuationToken(options);
+
         var chatResponse = responseUpdates.ToChatResponse();
 
         // We can derive the type of supported thread from whether we have a conversation id,
@@ -276,6 +283,42 @@ public sealed partial class ChatClientAgent : AIAgent
 
         // Notify the AIContextProvider of all new messages.
         await NotifyAIContextProviderOfSuccessAsync(safeThread, inputMessages, chatResponse.Messages, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Attaches the input messages to the continuation token in the update, if applicable.
+    /// </summary>
+    /// <param name="update">The chat response update.</param>
+    /// <param name="inputMessages">The input messages.</param>
+    /// <param name="options">The agent run options.</param>
+    private static void AttachInputMessagesToContinuationToken(ChatResponseUpdate update, IReadOnlyCollection<ChatMessage> inputMessages, AgentRunOptions? options)
+    {
+        if (options?.AllowBackgroundResponses is true &&
+            update.ContinuationToken is ResponseContinuationToken token)
+        {
+            // Attach the input messages to the continuation token to use them when continuing the background response.
+            token.AdditionalProperties["BackgroundInputMessages"] = inputMessages;
+        }
+    }
+
+    /// <summary>
+    /// Retrieves the input messages from the continuation token, if applicable.
+    /// </summary>
+    /// <param name="options">The agent run options.</param>
+    /// <returns>The input messages from the continuation token, if available; otherwise, the original input messages.</returns>
+    private static IReadOnlyCollection<ChatMessage> RetrieveInputMessagesFromContinuationToken(AgentRunOptions? options)
+    {
+        if (options?.AllowBackgroundResponses is true &&
+            options?.ContinuationToken is ResponseContinuationToken token &&
+            token.AdditionalProperties?.TryGetValue("BackgroundInputMessages", out IReadOnlyCollection<ChatMessage> messages) is true &&
+            messages.Count > 0)
+        {
+            // Use the input messages from the continuation token
+            return messages;
+        }
+
+        // Otherwise, return an empty collection
+        return [];
     }
 
     /// <inheritdoc/>
