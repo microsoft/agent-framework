@@ -14,7 +14,6 @@ import sys
 from collections.abc import MutableSequence
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from agent_framework import ChatMessage, Context, ContextProvider
 from azure.core.credentials import AzureKeyCredential
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import ResourceNotFoundError
@@ -36,6 +35,8 @@ from azure.search.documents.models import (
     QueryType,
     VectorizedQuery,
 )
+
+from agent_framework import ChatMessage, Context, ContextProvider
 
 # Type checking imports for optional agentic mode dependencies
 if TYPE_CHECKING:
@@ -141,6 +142,8 @@ class AzureAISearchContextProvider(ContextProvider):
         model_name: str | None = None,
         knowledge_base_name: str | None = None,
         retrieval_instructions: str | None = None,
+        azure_openai_api_key: str | None = None,
+        azure_openai_resource_url: str | None = None,
         # Deprecated parameters (for backwards compatibility)
         azure_openai_endpoint: str | None = None,
         azure_openai_deployment_name: str | None = None,
@@ -173,6 +176,11 @@ class AzureAISearchContextProvider(ContextProvider):
             knowledge_base_name: Name for the Knowledge Base. Required for agentic mode.
             retrieval_instructions: Custom instructions for the Knowledge Base's
                 retrieval planning. Only used in agentic mode.
+            azure_openai_api_key: Azure OpenAI API key for Knowledge Base to call the model.
+                Only needed when using API key authentication instead of managed identity.
+            azure_openai_resource_url: Azure OpenAI resource URL for Knowledge Base model calls.
+                Required for agentic mode. Example: "https://myresource.openai.azure.com"
+                This is different from azure_ai_project_endpoint (which is Foundry-specific).
             azure_openai_endpoint: (Deprecated) Use azure_ai_project_endpoint instead.
             azure_openai_deployment_name: (Deprecated) Use model_deployment_name instead.
             azure_openai_api_version: (Deprecated) No longer used.
@@ -188,23 +196,17 @@ class AzureAISearchContextProvider(ContextProvider):
         self.context_prompt = context_prompt or self.DEFAULT_CONTEXT_PROMPT
 
         # Agentic mode parameters (Knowledge Base)
-        # Handle both new and deprecated parameter names for backwards compatibility
-        if azure_ai_project_endpoint:
-            # Use Azure AI project endpoint directly for Knowledge Base API
-            # The Knowledge Base API accepts project endpoints in the format:
-            # https://<project>.services.ai.azure.com
-            self.azure_openai_endpoint = azure_ai_project_endpoint
-        elif azure_openai_endpoint:
-            # Deprecated parameter for backwards compatibility
-            self.azure_openai_endpoint = azure_openai_endpoint
-        else:
-            self.azure_openai_endpoint = None
+        # azure_openai_resource_url: The actual Azure OpenAI endpoint for model calls
+        # azure_openai_endpoint (deprecated): Fall back to this if resource_url not provided
+        self.azure_openai_resource_url = azure_openai_resource_url or azure_openai_endpoint
 
         self.azure_openai_deployment_name = model_deployment_name or azure_openai_deployment_name
         # If model_name not provided, default to deployment name for backwards compatibility
         self.model_name = model_name or self.azure_openai_deployment_name
         self.knowledge_base_name = knowledge_base_name
         self.retrieval_instructions = retrieval_instructions
+        self.azure_openai_api_key = azure_openai_api_key
+        self.azure_ai_project_endpoint = azure_ai_project_endpoint
 
         # Validation
         if vector_field_name and not embedding_function:
@@ -216,9 +218,10 @@ class AzureAISearchContextProvider(ContextProvider):
                     "Agentic retrieval requires azure-search-documents >= 11.7.0b1 with Knowledge Base support. "
                     "Please upgrade: pip install azure-search-documents>=11.7.0b1"
                 )
-            if not self.azure_openai_endpoint:
+            if not self.azure_openai_resource_url:
                 raise ValueError(
-                    "azure_ai_project_endpoint (or deprecated azure_openai_endpoint) is required for agentic mode"
+                    "azure_openai_resource_url (or deprecated azure_openai_endpoint) is required for agentic mode. "
+                    "This should be your Azure OpenAI endpoint (e.g., 'https://myresource.openai.azure.com')"
                 )
             if not self.azure_openai_deployment_name:
                 raise ValueError(
@@ -349,22 +352,22 @@ class AzureAISearchContextProvider(ContextProvider):
             search_params["query_caption"] = QueryCaptionType.EXTRACTIVE
 
         # Execute search
-        results = await self._search_client.search(**search_params)
+        results = await self._search_client.search(**search_params)  # type: ignore[reportUnknownVariableType]
 
         # Format results
-        formatted_results = []
-        async for doc in results:
+        formatted_results: list[str] = []
+        async for doc in results:  # type: ignore[reportUnknownVariableType]
             # Extract semantic captions if available
-            caption = None
-            if hasattr(doc, "@search.captions"):
-                captions = doc.get("@search.captions", [])
+            caption: str | None = None
+            if hasattr(doc, "@search.captions"):  # type: ignore[reportUnknownArgumentType]
+                captions: Any = doc.get("@search.captions", [])  # type: ignore[reportUnknownVariableType]
                 if captions:
-                    caption = captions[0].text if hasattr(captions[0], "text") else str(captions[0])
+                    caption = captions[0].text if hasattr(captions[0], "text") else str(captions[0])  # type: ignore[reportUnknownArgumentType, reportUnknownMemberType]
 
             # Build document text
-            doc_text = caption if caption else self._extract_document_text(doc)
+            doc_text: str = caption if caption else self._extract_document_text(doc)  # type: ignore[reportUnknownArgumentType]
             if doc_text:
-                formatted_results.append(doc_text)
+                formatted_results.append(doc_text)  # type: ignore[reportUnknownArgumentType]
 
         return "\n\n".join(formatted_results)
 
@@ -382,7 +385,7 @@ class AzureAISearchContextProvider(ContextProvider):
         # Type narrowing: these are validated as non-None in __init__ for agentic mode
         # Using cast() for type checker - actual validation happens in __init__
         knowledge_base_name = cast(str, self.knowledge_base_name)
-        azure_openai_endpoint = cast(str, self.azure_openai_endpoint)
+        azure_openai_resource_url = cast(str, self.azure_openai_resource_url)
         azure_openai_deployment_name = cast(str, self.azure_openai_deployment_name)
 
         # Step 1: Create or get knowledge source
@@ -409,9 +412,10 @@ class AzureAISearchContextProvider(ContextProvider):
         except ResourceNotFoundError:
             # Create new Knowledge Base if it doesn't exist
             aoai_params = AzureOpenAIVectorizerParameters(
-                resource_url=azure_openai_endpoint,
+                resource_url=azure_openai_resource_url,
                 deployment_name=azure_openai_deployment_name,
                 model_name=self.model_name,  # Underlying model name (e.g., "gpt-4o")
+                api_key=self.azure_openai_api_key,  # Optional: for API key auth instead of managed identity
             )
 
             # Note: SDK uses KnowledgeAgent class name, but this represents a Knowledge Base
@@ -499,7 +503,7 @@ class AzureAISearchContextProvider(ContextProvider):
             assistant_message = retrieval_result.response[-1]
             if assistant_message.content:
                 # Combine all text content
-                answer_parts = []
+                answer_parts: list[str] = []
                 for content_item in assistant_message.content:
                     # Check if this is a text content item
                     if isinstance(content_item, KnowledgeAgentMessageTextContent) and content_item.text:
@@ -526,7 +530,7 @@ class AzureAISearchContextProvider(ContextProvider):
                 return str(doc[field])[:500]  # Limit to 500 chars
 
         # Fallback: concatenate all string fields
-        text_parts = []
+        text_parts: list[str] = []
         for key, value in doc.items():
             if isinstance(value, str) and not key.startswith("@") and key != "id":
                 text_parts.append(f"{key}: {value}")

@@ -4,11 +4,11 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import ChatMessage, Context, Role
 from azure.core.credentials import AzureKeyCredential
 from azure.core.exceptions import ResourceNotFoundError
 
-from agent_framework_azure_ai import AzureAISearchContextProvider
+from agent_framework import ChatMessage, Context, Role
+from agent_framework.azure import AzureAISearchContextProvider
 
 
 @pytest.fixture
@@ -71,7 +71,7 @@ class TestSearchProviderInitialization:
 
     def test_init_agentic_mode_requires_parameters(self) -> None:
         """Test that agentic mode requires additional parameters."""
-        with pytest.raises(ValueError, match="azure_ai_project_endpoint"):
+        with pytest.raises(ValueError, match="azure_openai_resource_url"):
             AzureAISearchContextProvider(
                 endpoint="https://test.search.windows.net",
                 index_name="test-index",
@@ -88,6 +88,7 @@ class TestSearchProviderInitialization:
                 credential=AzureKeyCredential("test-key"),
                 mode="agentic",
                 azure_ai_project_endpoint="https://test.services.ai.azure.com",
+                azure_openai_resource_url="https://test.openai.azure.com",
             )
 
     def test_init_agentic_mode_requires_knowledge_base_name(self) -> None:
@@ -100,6 +101,7 @@ class TestSearchProviderInitialization:
                 mode="agentic",
                 azure_ai_project_endpoint="https://test.services.ai.azure.com",
                 model_deployment_name="gpt-4o",
+                azure_openai_resource_url="https://test.openai.azure.com",
             )
 
     def test_init_agentic_mode_with_all_params(self) -> None:
@@ -113,9 +115,11 @@ class TestSearchProviderInitialization:
             model_deployment_name="my-gpt-4o-deployment",
             model_name="gpt-4o",
             knowledge_base_name="test-kb",
+            azure_openai_resource_url="https://test.openai.azure.com",
         )
         assert provider.mode == "agentic"
-        assert provider.azure_openai_endpoint == "https://test.services.ai.azure.com"
+        assert provider.azure_ai_project_endpoint == "https://test.services.ai.azure.com"
+        assert provider.azure_openai_resource_url == "https://test.openai.azure.com"
         assert provider.azure_openai_deployment_name == "my-gpt-4o-deployment"
         assert provider.model_name == "gpt-4o"
         assert provider.knowledge_base_name == "test-kb"
@@ -130,6 +134,7 @@ class TestSearchProviderInitialization:
             azure_ai_project_endpoint="https://test.services.ai.azure.com",
             model_deployment_name="gpt-4o",
             knowledge_base_name="test-kb",
+            azure_openai_resource_url="https://test.openai.azure.com",
         )
         assert provider.model_name == "gpt-4o"
 
@@ -160,7 +165,7 @@ class TestSemanticSearch:
     """Test semantic search functionality."""
 
     @pytest.mark.asyncio
-    @patch("agent_framework_azure_ai._search_provider.SearchClient")
+    @patch("agent_framework.azure._search_provider.SearchClient")
     async def test_semantic_search_basic(
         self, mock_search_class: MagicMock, sample_messages: list[ChatMessage]
     ) -> None:
@@ -186,7 +191,7 @@ class TestSemanticSearch:
         assert "Test document content" in context.messages[0].text
 
     @pytest.mark.asyncio
-    @patch("agent_framework_azure_ai._search_provider.SearchClient")
+    @patch("agent_framework.azure._search_provider.SearchClient")
     async def test_semantic_search_empty_query(self, mock_search_class: MagicMock) -> None:
         """Test that empty queries return empty context."""
         mock_search_client = AsyncMock()
@@ -206,7 +211,7 @@ class TestSemanticSearch:
         assert len(context.messages) == 0
 
     @pytest.mark.asyncio
-    @patch("agent_framework_azure_ai._search_provider.SearchClient")
+    @patch("agent_framework.azure._search_provider.SearchClient")
     async def test_semantic_search_with_vector_query(
         self, mock_search_class: MagicMock, sample_messages: list[ChatMessage]
     ) -> None:
@@ -243,8 +248,8 @@ class TestKnowledgeBaseSetup:
     """Test Knowledge Base setup for agentic mode."""
 
     @pytest.mark.asyncio
-    @patch("agent_framework_azure_ai._search_provider.SearchIndexClient")
-    @patch("agent_framework_azure_ai._search_provider.SearchClient")
+    @patch("agent_framework.azure._search_provider.SearchIndexClient")
+    @patch("agent_framework.azure._search_provider.SearchClient")
     async def test_ensure_knowledge_base_creates_when_not_exists(
         self, mock_search_class: MagicMock, mock_index_class: MagicMock
     ) -> None:
@@ -269,6 +274,7 @@ class TestKnowledgeBaseSetup:
             model_deployment_name="gpt-4o",
             model_name="gpt-4o",
             knowledge_base_name="test-kb",
+            azure_openai_resource_url="https://test.openai.azure.com",
         )
 
         await provider._ensure_knowledge_base()
@@ -279,8 +285,8 @@ class TestKnowledgeBaseSetup:
         mock_index_client.create_agent.assert_called_once()
 
     @pytest.mark.asyncio
-    @patch("agent_framework_azure_ai._search_provider.SearchIndexClient")
-    @patch("agent_framework_azure_ai._search_provider.SearchClient")
+    @patch("agent_framework.azure._search_provider.SearchIndexClient")
+    @patch("agent_framework.azure._search_provider.SearchClient")
     async def test_ensure_knowledge_base_skips_when_exists(
         self, mock_search_class: MagicMock, mock_index_class: MagicMock
     ) -> None:
@@ -302,6 +308,7 @@ class TestKnowledgeBaseSetup:
             azure_ai_project_endpoint="https://test.services.ai.azure.com",
             model_deployment_name="gpt-4o",
             knowledge_base_name="test-kb",
+            azure_openai_resource_url="https://test.openai.azure.com",
         )
 
         await provider._ensure_knowledge_base()
@@ -315,7 +322,7 @@ class TestContextProviderLifecycle:
     """Test context provider lifecycle methods."""
 
     @pytest.mark.asyncio
-    @patch("agent_framework_azure_ai._search_provider.SearchClient")
+    @patch("agent_framework.azure._search_provider.SearchClient")
     async def test_context_manager(self, mock_search_class: MagicMock) -> None:
         """Test that provider can be used as async context manager."""
         mock_search_client = AsyncMock()

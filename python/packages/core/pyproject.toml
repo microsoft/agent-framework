@@ -35,6 +35,7 @@ dependencies = [
     "opentelemetry-semantic-conventions-ai>=0.4.13",
     "aiofiles>=24.1.0",
     "azure-identity>=1,<2",
+    "azure-search-documents>=11.7.0b1",
 ]
 
 [project.optional-dependencies]

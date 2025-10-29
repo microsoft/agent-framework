@@ -4,7 +4,8 @@ import asyncio
 import os
 
 from agent_framework import ChatAgent
-from agent_framework_azure_ai import AzureAIAgentClient, AzureAISearchContextProvider
+from agent_framework.azure import AzureAISearchContextProvider
+from agent_framework_azure_ai import AzureAIAgentClient
 from azure.core.credentials import AzureKeyCredential
 from azure.identity.aio import DefaultAzureCredential
 
@@ -43,6 +44,8 @@ Prerequisites:
    Additional for agentic mode (Knowledge Bases):
    - USE_AGENTIC_MODE: Set to "true" to use agentic retrieval
    - AZURE_SEARCH_KNOWLEDGE_BASE_NAME: Your Knowledge Base name
+   - AZURE_OPENAI_ENDPOINT: Your Azure OpenAI endpoint (e.g., "https://myresource.openai.azure.com")
+     (This is different from AZURE_AI_PROJECT_ENDPOINT - Knowledge Base needs the OpenAI endpoint for model calls)
 """
 
 # Sample queries to demonstrate RAG
@@ -74,6 +77,7 @@ async def main() -> None:
         # Agentic mode: Multi-hop reasoning with Knowledge Bases (slower)
         print("Using AGENTIC mode (Knowledge Bases with multi-hop reasoning, slower)\n")
         knowledge_base_name = os.environ["AZURE_SEARCH_KNOWLEDGE_BASE_NAME"]
+        azure_openai_endpoint = os.environ["AZURE_OPENAI_ENDPOINT"]
         search_provider = AzureAISearchContextProvider(
             endpoint=search_endpoint,
             index_name=index_name,
@@ -83,6 +87,7 @@ async def main() -> None:
             azure_ai_project_endpoint=project_endpoint,
             model_deployment_name=model_deployment,
             knowledge_base_name=knowledge_base_name,
+            azure_openai_resource_url=azure_openai_endpoint,
             top_k=3,
         )
     else:
