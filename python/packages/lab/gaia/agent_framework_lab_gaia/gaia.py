@@ -352,7 +352,6 @@ class GAIA:
                 "with access to gaia-benchmark/GAIA."
             )
 
-        print(f"Downloading GAIA dataset to {self.data_dir}...")
         from huggingface_hub import snapshot_download
 
         local_dir = snapshot_download(  # type: ignore
@@ -500,8 +499,6 @@ class GAIA:
                     "Make sure you have dataset access and selected valid levels."
                 )
 
-            print(f"Running {len(tasks)} GAIA tasks (levels={levels}) with {parallel} parallel workers...")
-
             # Update benchmark span with task info
             if benchmark_span:
                 benchmark_span.set_attributes({
@@ -535,17 +532,12 @@ class GAIA:
                     "gaia.benchmark.avg_runtime_seconds": avg_runtime,
                 })
 
-            print("\nGAIA Benchmark Results:")
-            print(f"Accuracy: {accuracy:.3f} ({correct}/{len(results)})")
-            print(f"Average runtime: {avg_runtime:.2f}s")
-
             # Save results if requested
             if out:
                 with self.tracer.start_as_current_span(
                     "gaia.results.save", kind=SpanKind.INTERNAL, attributes={"gaia.results.output_file": out}
                 ):
                     self._save_results(results, out)
-                    print(f"Results saved to {out}")
 
             return results
 

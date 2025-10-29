@@ -174,13 +174,17 @@ async def main(
             out=result_file,  # Output file to save results including detailed traces (optional, None = no file output)
         )
 
-    # Print the results.
-    print("\n=== GAIA Benchmark Results ===")
-    for result in results:
-        print(f"\n--- Task ID: {result.task_id} ---")
-        print(f"Task: {result.task.question[:100]}...")
-        print(f"Prediction: {result.prediction.prediction}")
-        print(f"Evaluation: Correct={result.evaluation.is_correct}, Score={result.evaluation.score}")
+    # Print summary similar to the viewer in gaia.py
+    total = len(results)
+    correct = sum(1 for r in results if r.evaluation.is_correct)
+    accuracy = correct / total if total > 0 else 0.0
+    avg_runtime = sum(r.runtime_seconds or 0 for r in results) / total if total > 0 else 0.0
+
+    print("\n=== GAIA Benchmark Summary ===")
+    print(f"Total: {total}, Correct: {correct}, Accuracy: {accuracy:.3f}")
+    print(f"Average runtime: {avg_runtime:.2f}s")
+    if result_file:
+        print(f"Detailed results saved to: {result_file}")
 
 
 if __name__ == "__main__":
@@ -211,11 +215,10 @@ Examples:
   python gaia_sample.py --otlp-endpoint http://localhost:4318 --level 1 --max-n 10 --parallel 2
 
   # Run with all options configured
-  python gaia_sample.py --agent-provider openai \\
-    --trace-file traces.jsonl \\
-    --result-file results.jsonl \\
-    --otlp-endpoint http://localhost:4318 \\
-    --level 1 --max-n 5 --parallel 2 --timeout 180
+  python gaia_sample.py --agent-provider openai \
+  --trace-file traces.jsonl \
+  --result-file results.jsonl \
+  --otlp-endpoint http://localhost:4318 --level 1 --max-n 5 --parallel 2 --timeout 180
         """,
     )
     parser.add_argument(
