@@ -1,9 +1,7 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Generic;
 using System.Linq;
-using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -55,7 +53,7 @@ public sealed class AGUIAgentThreadTests
     }
 
     [Fact]
-    public async Task Constructor_UnwrapsAndRestores_BaseState()
+    public async Task Constructor_UnwrapsAndRestores_BaseStateAsync()
     {
         // Arrange
         AGUIAgentThread originalThread = new() { ThreadId = "thread1" };
@@ -87,7 +85,7 @@ public sealed class AGUIAgentThreadTests
     }
 
     [Fact]
-    public async Task Serialize_WrapsBaseState_Correctly()
+    public async Task Serialize_WrapsBaseState_CorrectlyAsync()
     {
         // Arrange
         AGUIAgentThread thread = new() { ThreadId = "thread1" };
@@ -103,7 +101,7 @@ public sealed class AGUIAgentThreadTests
     }
 
     [Fact]
-    public async Task Serialize_RoundTrip_PreservesThreadIdAndMessages()
+    public async Task Serialize_RoundTrip_PreservesThreadIdAndMessagesAsync()
     {
         // Arrange
         const string ThreadId = "thread789";

@@ -1,11 +1,9 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Text;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.Shared;
@@ -19,7 +17,7 @@ namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.UnitTests;
 public sealed class AGUIServerSentEventsResultTests
 {
     [Fact]
-    public async Task ExecuteAsync_SetsCorrectResponseHeaders_ContentTypeAndCacheControl()
+    public async Task ExecuteAsync_SetsCorrectResponseHeaders_ContentTypeAndCacheControlAsync()
     {
         // Arrange
         List<BaseEvent> events = [];
@@ -37,7 +35,7 @@ public sealed class AGUIServerSentEventsResultTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_SerializesEventsInSSEFormat_WithDataPrefixAndNewlines()
+    public async Task ExecuteAsync_SerializesEventsInSSEFormat_WithDataPrefixAndNewlinesAsync()
     {
         // Arrange
         List<BaseEvent> events =
@@ -62,7 +60,7 @@ public sealed class AGUIServerSentEventsResultTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_FlushesResponse_AfterEachEvent()
+    public async Task ExecuteAsync_FlushesResponse_AfterEachEventAsync()
     {
         // Arrange
         List<BaseEvent> events =
@@ -86,7 +84,7 @@ public sealed class AGUIServerSentEventsResultTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithEmptyEventStream_CompletesSuccessfully()
+    public async Task ExecuteAsync_WithEmptyEventStream_CompletesSuccessfullyAsync()
     {
         // Arrange
         List<BaseEvent> events = [];
@@ -102,7 +100,7 @@ public sealed class AGUIServerSentEventsResultTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_RespectsCancellationToken_WhenCancelled()
+    public async Task ExecuteAsync_RespectsCancellationToken_WhenCancelledAsync()
     {
         // Arrange
         CancellationTokenSource cts = new();
@@ -134,7 +132,7 @@ public sealed class AGUIServerSentEventsResultTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithNullHttpContext_ThrowsArgumentNullException()
+    public async Task ExecuteAsync_WithNullHttpContext_ThrowsArgumentNullExceptionAsync()
     {
         // Arrange
         List<BaseEvent> events = [];

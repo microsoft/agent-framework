@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 #if ASPNETCORE
 namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.Shared;

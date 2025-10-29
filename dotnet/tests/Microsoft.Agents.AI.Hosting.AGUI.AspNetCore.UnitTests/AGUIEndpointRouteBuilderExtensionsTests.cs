@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -34,8 +34,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         endpointsMock.Setup(e => e.DataSources).Returns([]);
 
         const string Pattern = "/api/agent";
-        Func<IEnumerable<ChatMessage>, IEnumerable<AITool>, IEnumerable<KeyValuePair<string, string>>, JsonElement, AIAgent> factory =
-            (messages, tools, context, props) => new TestAgent();
+        static AIAgent factory(IEnumerable<ChatMessage> messages, IEnumerable<AITool> tools, IEnumerable<KeyValuePair<string, string>> context, JsonElement props) => new TestAgent();
 
         // Act
         IEndpointConventionBuilder? result = AGUIEndpointRouteBuilderExtensions.MapAGUIAgent(endpointsMock.Object, Pattern, factory);
@@ -68,13 +67,12 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         List<ChatMessage>? capturedMessages = null;
         IEnumerable<KeyValuePair<string, string>>? capturedContext = null;
 
-        Func<IEnumerable<ChatMessage>, IEnumerable<AITool>, IEnumerable<KeyValuePair<string, string>>, JsonElement, AIAgent> factory =
-            (messages, tools, context, props) =>
-            {
-                capturedMessages = messages.ToList();
-                capturedContext = context;
-                return new TestAgent();
-            };
+        AIAgent factory(IEnumerable<ChatMessage> messages, IEnumerable<AITool> tools, IEnumerable<KeyValuePair<string, string>> context, JsonElement props)
+        {
+            capturedMessages = messages.ToList();
+            capturedContext = context;
+            return new TestAgent();
+        }
 
         DefaultHttpContext httpContext = new();
         RunAgentInput input = new()
@@ -156,12 +154,11 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         // Arrange
         List<ChatMessage>? capturedMessages = null;
 
-        Func<IEnumerable<ChatMessage>, IEnumerable<AITool>, IEnumerable<KeyValuePair<string, string>>, JsonElement, AIAgent> factory =
-            (messages, tools, context, props) =>
-            {
-                capturedMessages = messages.ToList();
-                return new TestAgent();
-            };
+        AIAgent factory(IEnumerable<ChatMessage> messages, IEnumerable<AITool> tools, IEnumerable<KeyValuePair<string, string>> context, JsonElement props)
+        {
+            capturedMessages = messages.ToList();
+            return new TestAgent();
+        }
 
         DefaultHttpContext httpContext = new();
         RunAgentInput input = new()

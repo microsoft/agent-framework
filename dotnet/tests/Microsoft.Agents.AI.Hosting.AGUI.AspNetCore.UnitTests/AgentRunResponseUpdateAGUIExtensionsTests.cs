@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
 using System.Linq;
@@ -12,7 +12,7 @@ namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.UnitTests;
 public sealed class AgentRunResponseUpdateAGUIExtensionsTests
 {
     [Fact]
-    public async Task AsAGUIEventStreamAsync_YieldsRunStartedEvent_AtBeginningWithCorrectIds()
+    public async Task AsAGUIEventStreamAsync_YieldsRunStartedEvent_AtBeginningWithCorrectIdsAsync()
     {
         // Arrange
         const string ThreadId = "thread1";
@@ -35,7 +35,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
     }
 
     [Fact]
-    public async Task AsAGUIEventStreamAsync_YieldsRunFinishedEvent_AtEndWithCorrectIds()
+    public async Task AsAGUIEventStreamAsync_YieldsRunFinishedEvent_AtEndWithCorrectIdsAsync()
     {
         // Arrange
         const string ThreadId = "thread1";
@@ -58,7 +58,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
     }
 
     [Fact]
-    public async Task AsAGUIEventStreamAsync_ConvertsTextContentUpdates_ToTextMessageEvents()
+    public async Task AsAGUIEventStreamAsync_ConvertsTextContentUpdates_ToTextMessageEventsAsync()
     {
         // Arrange
         const string ThreadId = "thread1";
@@ -83,7 +83,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
     }
 
     [Fact]
-    public async Task AsAGUIEventStreamAsync_GroupsConsecutiveUpdates_WithSameMessageId()
+    public async Task AsAGUIEventStreamAsync_GroupsConsecutiveUpdates_WithSameMessageIdAsync()
     {
         // Arrange
         const string ThreadId = "thread1";
@@ -113,7 +113,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
     }
 
     [Fact]
-    public async Task AsAGUIEventStreamAsync_WithRoleChanges_EmitsProperTextMessageStartEvents()
+    public async Task AsAGUIEventStreamAsync_WithRoleChanges_EmitsProperTextMessageStartEventsAsync()
     {
         // Arrange
         const string ThreadId = "thread1";
@@ -139,7 +139,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
     }
 
     [Fact]
-    public async Task AsAGUIEventStreamAsync_EmitsTextMessageEndEvent_WhenMessageIdChanges()
+    public async Task AsAGUIEventStreamAsync_EmitsTextMessageEndEvent_WhenMessageIdChangesAsync()
     {
         // Arrange
         const string ThreadId = "thread1";
