@@ -7,7 +7,7 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Extensions.AI;
 
 /// <summary>
-/// Extension methods for <see cref="FunctionTool"/>.
+/// Extension methods for <see cref="HostedCodeInterpreterTool"/>.
 /// </summary>
 internal static class HostedCodeInterpreterToolExtensions
 {

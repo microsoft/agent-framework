@@ -49,12 +49,13 @@ public abstract class OpenAIAgentFactory : AgentFactory
     /// </summary>
     protected ChatClient? CreateChatClient(GptComponentMetadata promptAgent)
     {
-        var provider = promptAgent.Model?.Provider ?? PROVIDER_OPENAI;
-        if (provider.Equals(PROVIDER_OPENAI, StringComparison.OrdinalIgnoreCase))
+        var model = promptAgent.Model as ExternalModel;
+        var provider = model?.Provider?.Value ?? ModelProvider.OpenAI;
+        if (provider == ModelProvider.OpenAI)
         {
             return CreateOpenAIChatClient(promptAgent);
         }
-        else if (provider.Equals(PROVIDER_AZURE, StringComparison.OrdinalIgnoreCase))
+        else if (provider == ModelProvider.AzureOpenAI)
         {
             Throw.IfNull(this._endpoint, "A endpoint must be specified to create an Azure OpenAI client");
             Throw.IfNull(this._tokenCredential, "A token credential must be specified to create an Azure OpenAI client");
@@ -69,12 +70,13 @@ public abstract class OpenAIAgentFactory : AgentFactory
     /// </summary>
     protected AssistantClient? CreateAssistantClient(GptComponentMetadata promptAgent)
     {
-        var provider = promptAgent.Model?.Provider ?? PROVIDER_OPENAI;
-        if (provider.Equals(PROVIDER_OPENAI, StringComparison.OrdinalIgnoreCase))
+        var model = promptAgent.Model as ExternalModel;
+        var provider = model?.Provider?.Value ?? ModelProvider.OpenAI;
+        if (provider == ModelProvider.OpenAI)
         {
             return CreateOpenAIAssistantClient(promptAgent);
         }
-        else if (provider.Equals(PROVIDER_AZURE, StringComparison.OrdinalIgnoreCase))
+        else if (provider == ModelProvider.AzureOpenAI)
         {
             Throw.IfNull(this._endpoint, "The connection endpoint must be specified to create an Azure OpenAI client.");
             Throw.IfNull(this._tokenCredential, "A token credential must be specified to create an Azure OpenAI client");
@@ -89,12 +91,13 @@ public abstract class OpenAIAgentFactory : AgentFactory
     /// </summary>
     protected OpenAIResponseClient? CreateResponseClient(GptComponentMetadata promptAgent)
     {
-        var provider = promptAgent.Model?.Provider ?? PROVIDER_OPENAI;
-        if (provider.Equals(PROVIDER_OPENAI, StringComparison.OrdinalIgnoreCase))
+        var model = promptAgent.Model as ExternalModel;
+        var provider = model?.Provider?.Value ?? ModelProvider.OpenAI;
+        if (provider == ModelProvider.OpenAI)
         {
             return CreateOpenAIResponseClient(promptAgent);
         }
-        else if (provider.Equals(PROVIDER_AZURE, StringComparison.OrdinalIgnoreCase))
+        else if (provider == ModelProvider.AzureOpenAI)
         {
             Throw.IfNull(this._endpoint, "The connection endpoint must be specified to create an Azure OpenAI client.");
             Throw.IfNull(this._tokenCredential, "A token credential must be specified to create an Azure OpenAI client");
@@ -105,9 +108,6 @@ public abstract class OpenAIAgentFactory : AgentFactory
     }
 
     #region private
-    private const string PROVIDER_OPENAI = "OPENAI";
-    private const string PROVIDER_AZURE = "AZURE";
-
     private readonly Uri? _endpoint;
     private readonly TokenCredential? _tokenCredential;
 
@@ -161,16 +161,20 @@ public abstract class OpenAIAgentFactory : AgentFactory
 
     private static OpenAIClient CreateOpenAIClient(GptComponentMetadata promptAgent)
     {
+        var model = promptAgent.Model as ExternalModel;
+        var connection = model?.Connection;
+
+        // TODO: Fix this when ApiKeyConnection is available
         //var keyConnection = promptAgent.Model?.Connection as ApiKeyConnection;
         //Throw.IfNull(keyConnection, "A key connection must be specified when create an OpenAI client");
 
         //var apiKey = keyConnection.Key?.LiteralValue;
-        var apiKey = promptAgent.Model?.Connection?.ExtensionData?.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("key"))?.Value; // keyConnection.Endpoint?.LiteralValue;
+        var apiKey = connection?.ExtensionData?.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("key"))?.Value; // keyConnection.Endpoint?.LiteralValue;
         Throw.IfNullOrEmpty(apiKey, "The connection key must be specified in the agent definition to create an OpenAI client.");
 
         var clientOptions = new OpenAIClientOptions();
         //var endpoint = keyConnection.Endpoint?.LiteralValue;
-        var endpoint = promptAgent.Model?.Connection?.ExtensionData?.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("endpoint"))?.Value; // keyConnection.Endpoint?.LiteralValue;
+        var endpoint = connection?.ExtensionData?.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("endpoint"))?.Value; // keyConnection.Endpoint?.LiteralValue;
         if (!string.IsNullOrEmpty(endpoint))
         {
             clientOptions.Endpoint = new Uri(endpoint);

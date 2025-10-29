@@ -25,7 +25,7 @@ internal static class PromptAgentExtensions
             return tool switch
             {
                 CodeInterpreterTool => ((CodeInterpreterTool)tool).CreateCodeInterpreterToolDefinition(),
-                FunctionTool => ((FunctionTool)tool).CreateFunctionToolDefinition(),
+                InvokeClientTaskAction => ((InvokeClientTaskAction)tool).CreateFunctionToolDefinition(),
                 FileSearchTool => ((FileSearchTool)tool).CreateFileSearchToolDefinition(),
                 WebSearchTool => ((WebSearchTool)tool).CreateBingGroundingToolDefinition(),
                 McpTool => ((McpTool)tool).CreateMcpToolDefinition(),

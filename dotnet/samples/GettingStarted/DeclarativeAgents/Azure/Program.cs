@@ -33,7 +33,6 @@ if (!File.Exists(yamlFilePath))
 var text = await File.ReadAllTextAsync(yamlFilePath);
 
 // TODO: Remove this workaround when the agent framework supports environment variable substitution in YAML files.
-text = text.Replace("=Env.AZURE_OPENAI_ENDPOINT", endpoint, StringComparison.OrdinalIgnoreCase);
 text = text.Replace("=Env.AZURE_OPENAI_DEPLOYMENT_NAME", deploymentName, StringComparison.OrdinalIgnoreCase);
 
 var endpointUri = new Uri(endpoint);

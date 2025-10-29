@@ -10,7 +10,7 @@ model:
         allowMultipleToolCalls: true
         chatToolMode: auto
 tools:
-  - kind: function
+  - kind: invokeClientTaskAction
     name: GetWeather
     description: Get the weather for a given location.
     parameters:

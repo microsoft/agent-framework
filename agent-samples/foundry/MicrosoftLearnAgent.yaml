@@ -3,7 +3,7 @@ name: MicrosoftLearnAgent
 description: Microsoft Learn Agent
 instructions: You answer questions by searching the Microsoft Learn content only.
 model:
-    kind: CustomModels
+    kind: ExternalModel
     options:
         temperature: 0.9
         topP: 0.95

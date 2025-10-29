@@ -12,7 +12,7 @@ internal static class PromptAgents
         description: Agent description
         instructions: You are a helpful assistant.
         model:
-          kind: OpenAIResponsesModel
+          kind: ExternalModel
           id: gpt-4o
           options:
             temperature: 0.7
@@ -30,7 +30,7 @@ internal static class PromptAgents
             allowMultipleToolCalls: true
         tools:
           - kind: codeInterpreter
-          - kind: function
+          - kind: invokeClientTaskAction
             name: GetWeather
             description: Get the weather for a given location.
             parameters:
@@ -67,7 +67,7 @@ internal static class PromptAgents
         name: Translation Assistant
         description: A helpful assistant that translates text to a specified language.
         model:
-            kind: OpenAIResponsesModel
+            kind: ExternalModel
             id: gpt-4o
             options:
                 temperature: 0.9
@@ -101,10 +101,10 @@ internal static class PromptAgents
         description: Agent description
         instructions: You are a helpful assistant.
         model:
-          kind: OpenAIResponsesModel
+          kind: ExternalModel
           id: gpt-4o
           connection:
-            kind: Key
+            kind: apiKey
             endpoint: https://my-azure-openai-endpoint.openai.azure.com/
             key: my-api-key
         """;
@@ -116,10 +116,10 @@ internal static class PromptAgents
         description: Agent description
         instructions: You are a helpful assistant.
         model:
-          kind: OpenAIResponsesModel
+          kind: ExternalModel
           id: =Env.OpenAIModelId
           connection:
-            kind: Key
+            kind: apiKey
             endpoint: =Env.OpenAIEndpoint
             key: =Env.OpenAIApiKey
         """;
@@ -131,13 +131,13 @@ internal static class PromptAgents
         description: Helpful assistant
         instructions: You are a helpful assistant. You answer questions is the language specified by the user. You return your answers in a JSON format.
         model:
-            kind: OpenAIResponsesModel
+            kind: ExternalModel
             id: =Env.OPENAI_MODEL
             options:
                 temperature: 0.9
                 topP: 0.95
             connection:
-                kind: Key
+                kind: apiKey
                 key: =Env.OPENAI_APIKEY
         outputSchema:
             properties:
@@ -151,14 +151,14 @@ internal static class PromptAgents
                     description: The answer text.        
         """;
 
-    internal const string AgentWithOpenAIChatModel =
+    internal const string AgentWithExternalModel =
         """
         kind: Prompt
         name: AgentName
         description: Agent description
         instructions: You are a helpful assistant.
         model:
-          kind: ChatModel
+          kind: ExternalModel
           id: gpt-4o
           options:
             temperature: 0.7
@@ -177,14 +177,14 @@ internal static class PromptAgents
             chatToolMode: auto
         """;
 
-    internal const string AgentWithOpenAIResponsesModelSnakeCase =
+    internal const string AgentWithExternalModelSnakeCase =
         """
         kind: Prompt
         name: AgentName
         description: Agent description
         instructions: You are a helpful assistant.
         model:
-          kind: OpenAIResponsesModel
+          kind: ExternalModel
           id: gpt-4o
           options:
             temperature: 0.7
@@ -215,7 +215,7 @@ internal static class PromptAgents
             instructions: You are a helpful assistant.
             additionalInstructions: Provide detailed and accurate responses.
             model:
-              kind: OpenAIResponsesModel
+              kind: ExternalModel
               id: gpt-4o
               publisher: {publisher}
               apiType: {apiType}
@@ -237,12 +237,12 @@ internal static class PromptAgents
                 chatToolMode: auto
                 customProperty: customValue
               connection:
-                kind: Key
+                kind: apiKey
                 endpoint: https://my-azure-openai-endpoint.openai.azure.com/
                 key: my-api-key
             tools:
               - kind: codeInterpreter
-              - kind: function
+              - kind: invokeClientTaskAction
                 name: GetWeather
                 description: Get the weather for a given location.
                 parameters:

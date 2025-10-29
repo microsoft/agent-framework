@@ -8,15 +8,15 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Bot.ObjectModel;
 
 /// <summary>
-/// Extension methods for <see cref="FunctionTool"/>.
+/// Extension methods for <see cref="InvokeClientTaskAction"/>.
 /// </summary>
 public static class FunctionToolExtensions
 {
     /// <summary>
-    /// Creates a <see cref="AIFunctionDeclaration"/> from a <see cref="FunctionTool"/>.
+    /// Creates a <see cref="AIFunctionDeclaration"/> from a <see cref="InvokeClientTaskAction"/>.
     /// </summary>
-    /// <param name="tool">Instance of <see cref="FunctionTool"/></param>
-    internal static FunctionToolDefinition CreateFunctionToolDefinition(this FunctionTool tool)
+    /// <param name="tool">Instance of <see cref="InvokeClientTaskAction"/></param>
+    internal static FunctionToolDefinition CreateFunctionToolDefinition(this InvokeClientTaskAction tool)
     {
         Throw.IfNull(tool);
         Throw.IfNull(tool.Name);
@@ -29,7 +29,7 @@ public static class FunctionToolExtensions
             parameters: parameters);
     }
 
-    internal static BinaryData GetParameters(this FunctionTool tool)
+    internal static BinaryData GetParameters(this InvokeClientTaskAction tool)
     {
         Throw.IfNull(tool);
 

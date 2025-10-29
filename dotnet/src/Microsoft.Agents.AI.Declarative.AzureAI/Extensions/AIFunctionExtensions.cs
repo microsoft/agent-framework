@@ -2,13 +2,12 @@
 
 using System;
 using Azure.AI.Agents.Persistent;
-using Microsoft.Bot.ObjectModel;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Extensions.AI;
 
 /// <summary>
-/// Extension methods for <see cref="FunctionTool"/>.
+/// Extension methods for <see cref="AIFunction"/>.
 /// </summary>
 internal static class AIFunctionExtensions
 {

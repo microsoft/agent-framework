@@ -8,16 +8,16 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Bot.ObjectModel;
 
 /// <summary>
-/// Extension methods for <see cref="FunctionTool"/>.
+/// Extension methods for <see cref="InvokeClientTaskAction"/>.
 /// </summary>
 public static class FunctionToolExtensions
 {
     /// <summary>
-    /// Creates a <see cref="AIFunctionDeclaration"/> from a <see cref="FunctionTool"/>.
+    /// Creates a <see cref="AIFunctionDeclaration"/> from a <see cref="InvokeClientTaskAction"/>.
     /// </summary>
-    /// <param name="tool">Instance of <see cref="FunctionTool"/></param>
+    /// <param name="tool">Instance of <see cref="InvokeClientTaskAction"/></param>
     /// <param name="functions">Instance of <see cref="IList{AIFunction}"/></param>
-    internal static AITool CreateFunctionTool(this FunctionTool tool, IList<AIFunction>? functions)
+    internal static AITool CreateFunctionTool(this InvokeClientTaskAction tool, IList<AIFunction>? functions)
     {
         Throw.IfNull(tool);
         Throw.IfNull(tool.Name);
@@ -47,11 +47,11 @@ public static class FunctionToolExtensions
     }
 
     /// <summary>
-    /// Checks if a <see cref="FunctionTool"/> matches an <see cref="AITool"/>.
+    /// Checks if a <see cref="InvokeClientTaskAction"/> matches an <see cref="AITool"/>.
     /// </summary>
-    /// <param name="tool">Instance of <see cref="FunctionTool"/></param>
+    /// <param name="tool">Instance of <see cref="InvokeClientTaskAction"/></param>
     /// <param name="aiFunc">Instance of <see cref="AIFunction"/></param>
-    internal static bool Matches(this FunctionTool tool, AIFunction aiFunc)
+    internal static bool Matches(this InvokeClientTaskAction tool, AIFunction aiFunc)
     {
         Throw.IfNull(tool);
         Throw.IfNull(aiFunc);

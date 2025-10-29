@@ -20,7 +20,7 @@ public class AgentBotElementYamlTests
     [InlineData(PromptAgents.AgentWithEnvironmentVariables)]
     [InlineData(PromptAgents.AgentWithOutputSchema)]
     [InlineData(PromptAgents.OpenAIChatAgent)]
-    [InlineData(PromptAgents.AgentWithOpenAIChatModel)]
+    [InlineData(PromptAgents.AgentWithExternalModel)]
     public void FromYaml_DoesNotThrow(string text)
     {
         // Arrange & Act
@@ -46,10 +46,10 @@ public class AgentBotElementYamlTests
     }
 
     [Fact]
-    public void FromYaml_OpenAIResponsesModel()
+    public void FromYaml_ExternalModel()
     {
         // Arrange & Act
-        var agent = AgentBotElementYaml.FromYaml(PromptAgents.AgentWithOpenAIChatModel);
+        var agent = AgentBotElementYaml.FromYaml(PromptAgents.AgentWithExternalModel);
 
         // Assert
         Assert.NotNull(agent);
@@ -62,8 +62,8 @@ public class AgentBotElementYamlTests
         // Assert contents using extension methods
         Assert.Equal(1024, agent.Model.Options?.MaxOutputTokens?.LiteralValue);
         Assert.Equal(50, agent.Model.Options?.TopK?.LiteralValue);
-        Assert.Equal(0.7f, agent.Model.Options?.FrequencyPenalty?.LiteralValue);
-        Assert.Equal(0.7f, agent.Model.Options?.PrecensePenalty?.LiteralValue);
+        Assert.Equal(0.7f, (float?)agent.Model.Options?.FrequencyPenalty?.LiteralValue);
+        Assert.Equal(0.7f, (float?)agent.Model.Options?.PresencePenalty?.LiteralValue);
         Assert.Equal(42, agent.Model.Options?.Seed?.LiteralValue);
         Assert.Equal(PromptAgents.s_stopSequences, agent.Model.Options?.StopSequences);
         Assert.True(agent.Model.Options?.AllowMultipleToolCalls?.LiteralValue);
@@ -139,9 +139,9 @@ public class AgentBotElementYamlTests
         // Assert
         Assert.NotNull(agent);
         var tools = agent.Tools;
-        var functionTools = tools.Where(t => t is FunctionTool).ToArray();
+        var functionTools = tools.Where(t => t is InvokeClientTaskAction).ToArray();
         Assert.Single(functionTools);
-        var functionTool = functionTools[0] as FunctionTool;
+        var functionTool = functionTools[0] as InvokeClientTaskAction;
         Assert.NotNull(functionTool);
         Assert.Equal("GetWeather", functionTool.Name);
         Assert.Equal("Get the weather for a given location.", functionTool.Description);
@@ -194,10 +194,11 @@ public class AgentBotElementYamlTests
         Assert.NotNull(fileSearchTool);
 
         // Verify VectorScoreIds property exists and has correct values
-        Assert.Equal(3, fileSearchTool.VectorStoreIds.Length);
-        Assert.Equal("1", fileSearchTool.VectorStoreIds[0]);
-        Assert.Equal("2", fileSearchTool.VectorStoreIds[1]);
-        Assert.Equal("3", fileSearchTool.VectorStoreIds[2]);
+        Assert.NotNull(fileSearchTool.VectorStoreIds);
+        Assert.Equal(3, fileSearchTool.VectorStoreIds.LiteralValue.Length);
+        Assert.Equal("1", fileSearchTool.VectorStoreIds.LiteralValue[0]);
+        Assert.Equal("2", fileSearchTool.VectorStoreIds.LiteralValue[1]);
+        Assert.Equal("3", fileSearchTool.VectorStoreIds.LiteralValue[2]);
     }
 
     [Fact]
@@ -209,10 +210,12 @@ public class AgentBotElementYamlTests
         // Assert
         Assert.NotNull(agent);
         Assert.NotNull(agent.Model);
-        Assert.NotNull(agent.Model.Connection);
-        Assert.IsType<ApiKeyConnection>(agent.Model.Connection);
-        Assert.Equal("https://my-azure-openai-endpoint.openai.azure.com/", agent.Model.Connection?.ExtensionData?.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("endpoint"))?.Value);
-        Assert.Equal("my-api-key", agent.Model.Connection?.ExtensionData?.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("apiKey"))?.Value);
+        var model = agent.Model as ExternalModel;
+        Assert.NotNull(model);
+        Assert.NotNull(model.Connection);
+        //Assert.IsType<ApiKeyConnection>(model.Connection);
+        Assert.Equal("https://my-azure-openai-endpoint.openai.azure.com/", model.Connection?.ExtensionData?.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("endpoint"))?.Value);
+        Assert.Equal("my-api-key", model.Connection?.ExtensionData?.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("key"))?.Value);
     }
 
     [Fact]
@@ -234,7 +237,9 @@ public class AgentBotElementYamlTests
         // Assert
         Assert.NotNull(agent);
         Assert.NotNull(agent.Model);
-        Assert.NotNull(agent.Model.Connection);
+        var model = agent.Model as ExternalModel;
+        Assert.NotNull(model);
+        Assert.NotNull(model.Connection);
         //Assert.IsType<KeyConnection>(agent.Model.Connection);
         //Assert.Equal("https://my-azure-openai-endpoint.openai.azure.com/", agent.Model.Connection.Endpoint?.LiteralValue);
         //Assert.Equal("apiKey", connection.Key?.LiteralValue);

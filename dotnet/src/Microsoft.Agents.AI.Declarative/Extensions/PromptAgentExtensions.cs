@@ -38,8 +38,8 @@ public static class PromptAgentExtensions
             MaxOutputTokens = (int?)modelOptions?.MaxOutputTokens?.LiteralValue,
             TopP = (float?)modelOptions?.TopP.LiteralValue,
             TopK = (int?)modelOptions?.TopK?.LiteralValue,
-            FrequencyPenalty = (int?)modelOptions?.FrequencyPenalty?.LiteralValue,
-            PresencePenalty = (float?)modelOptions?.PrecensePenalty?.LiteralValue,
+            FrequencyPenalty = (float?)modelOptions?.FrequencyPenalty?.LiteralValue,
+            PresencePenalty = (float?)modelOptions?.PresencePenalty?.LiteralValue,
             Seed = modelOptions?.Seed?.LiteralValue,
             ResponseFormat = outputSchema?.AsChatResponseFormat(),
             ModelId = promptAgent.Model?.ModelNameHint,
@@ -63,7 +63,7 @@ public static class PromptAgentExtensions
             return tool switch
             {
                 CodeInterpreterTool => ((CodeInterpreterTool)tool).CreateCodeInterpreterTool(),
-                FunctionTool => ((FunctionTool)tool).CreateFunctionTool(functions),
+                InvokeClientTaskAction => ((InvokeClientTaskAction)tool).CreateFunctionTool(functions),
                 McpTool => ((McpTool)tool).CreateMcpTool(),
                 FileSearchTool => ((FileSearchTool)tool).CreateFileSearchTool(),
                 WebSearchTool => ((WebSearchTool)tool).CreateWebSearchTool(),
