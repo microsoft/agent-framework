@@ -4,6 +4,7 @@
     <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
     <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugTargetFrameworks)</TargetFrameworks>
     <VersionSuffix>preview</VersionSuffix>
+    <IsPackable>false</IsPackable>
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />

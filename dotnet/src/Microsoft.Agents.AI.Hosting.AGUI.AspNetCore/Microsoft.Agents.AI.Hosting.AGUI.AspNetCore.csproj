@@ -6,6 +6,7 @@
     <RootNamespace>Microsoft.Agents.AI.Hosting.AGUI.AspNetCore</RootNamespace>
     <VersionSuffix>preview</VersionSuffix>
     <DefineConstants>$(DefineConstants);ASPNETCORE</DefineConstants>
+    <IsPackable>false</IsPackable>
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
