@@ -41,14 +41,11 @@ function isShortField(fieldName: string): boolean {
 function FormField({ name, schema, value, onChange, isRequired = false }: FormFieldProps) {
   const { type, description, enum: enumValues, default: defaultValue } = schema;
 
-  // Determine if this should be a textarea based on JSON Schema format field
-  // or heuristics (long descriptions, specific field types)
   const shouldBeTextarea =
-    schema.format === "textarea" ||  // Explicit format from backend
-    (description && description.length > 100) ||  // Long description suggests multiline
-    (type === "string" && !enumValues && !isShortField(name));  // Default strings to textarea unless they're short metadata fields
+    schema.format === "textarea" ||
+    (description && description.length > 100) ||
+    (type === "string" && !enumValues && !isShortField(name));
 
-  // Determine if this field should span full width
   const shouldSpanFullWidth =
     shouldBeTextarea ||
     (description && description.length > 150);
@@ -56,10 +53,9 @@ function FormField({ name, schema, value, onChange, isRequired = false }: FormFi
   const shouldSpanTwoColumns =
     shouldBeTextarea ||
     (description && description.length > 80) ||
-    type === "array";  // Arrays might need more space for comma-separated values
+    type === "array";
 
   const fieldContent = (() => {
-    // Handle different field types based on JSON Schema
     switch (type) {
       case "string":
         if (enumValues) {
@@ -150,6 +146,34 @@ function FormField({ name, schema, value, onChange, isRequired = false }: FormFi
           );
         }
 
+      case "integer":
+        return (
+          <div className="space-y-2">
+            <Label htmlFor={name}>
+              {name}
+              {isRequired && <span className="text-destructive ml-1">*</span>}
+            </Label>
+            <Input
+              id={name}
+              type="number"
+              step="1"
+              value={typeof value === "number" ? value : ""}
+              onChange={(e) => {
+                const val = parseInt(e.target.value, 10);
+                onChange(isNaN(val) ? "" : val);
+              }}
+              placeholder={
+                typeof defaultValue === "number"
+                  ? defaultValue.toString()
+                  : `Enter ${name}`
+              }
+            />
+            {description && (
+              <p className="text-sm text-muted-foreground">{description}</p>
+            )}
+          </div>
+        );
+
       case "number":
         return (
           <div className="space-y-2">
@@ -160,6 +184,7 @@ function FormField({ name, schema, value, onChange, isRequired = false }: FormFi
             <Input
               id={name}
               type="number"
+              step="any"
               value={typeof value === "number" ? value : ""}
               onChange={(e) => {
                 const val = parseFloat(e.target.value);
@@ -186,9 +211,12 @@ function FormField({ name, schema, value, onChange, isRequired = false }: FormFi
                 checked={Boolean(value)}
                 onCheckedChange={(checked) => onChange(checked)}
               />
-              <Label htmlFor={name}>
+              <Label htmlFor={name} className="cursor-pointer">
                 {name}
                 {isRequired && <span className="text-destructive ml-1">*</span>}
+                <span className="ml-2 text-muted-foreground font-normal">
+                  ({Boolean(value) ? 'true' : 'false'})
+                </span>
               </Label>
             </div>
             {description && (
@@ -198,11 +226,21 @@ function FormField({ name, schema, value, onChange, isRequired = false }: FormFi
         );
 
       case "array":
+        const itemType = schema.items?.type || "string";
+        const itemTypeName = 
+          itemType === "string" ? "strings" :
+          itemType === "integer" ? "integers" :
+          itemType === "number" ? "numbers" :
+          "items";
+        
         return (
           <div className="space-y-2">
             <Label htmlFor={name}>
               {name}
               {isRequired && <span className="text-destructive ml-1">*</span>}
+              <span className="ml-2 text-xs text-muted-foreground font-normal">
+                (list of {itemTypeName})
+              </span>
             </Label>
             <Textarea
               id={name}
@@ -220,8 +258,8 @@ function FormField({ name, schema, value, onChange, isRequired = false }: FormFi
                   .filter((item) => item.length > 0);
                 onChange(arrayValue);
               }}
-              placeholder="Enter items separated by commas"
-              rows={2}
+              placeholder={`Enter ${itemTypeName} separated by commas (e.g., item1, item2, item3)`}
+              rows={3}
             />
             {description && (
               <p className="text-sm text-muted-foreground">{description}</p>
@@ -304,9 +342,9 @@ export function WorkflowInputForm({
   const properties = inputSchema.properties || {};
   const fieldNames = Object.keys(properties);
   const requiredFields = inputSchema.required || [];
-  const isSimpleInput = inputSchema.type === "string" && !inputSchema.enum;
+  const isSimpleInput = inputSchema.type && ["string", "integer", "number", "boolean", "array"].includes(inputSchema.type) && !inputSchema.enum;
 
-  // Plan D: Separate required and optional fields first
+  // Separate required and optional fields
   const allOptionalFieldNames = fieldNames.filter(name => !requiredFields.includes(name));
 
   // Detect ChatMessage-like pattern
@@ -340,13 +378,22 @@ export function WorkflowInputForm({
   const hasCollapsedFields = collapsedOptionalFields.length > 0;
   const hasRequiredFields = requiredFieldNames.length > 0;
 
-  // Update canSubmit to check required fields properly
-  // For ChatMessage: role is auto-filled, so it's always valid
+  // Check if this is an optional type (X | None) via anyOf or default: None
+  const isOptionalType = 
+    (inputSchema.anyOf?.some(schema => schema.type === "null") ?? false) ||
+    ('default' in inputSchema && inputSchema.default === null);
+
+  // Validate form submission readiness
   const canSubmit = isSimpleInput
-    ? formData.value !== undefined && formData.value !== ""
+    ? inputSchema.type === "boolean"
+      ? formData.value !== undefined
+      : inputSchema.type === "array"
+      ? isOptionalType || (Array.isArray(formData.value) && formData.value.length > 0)
+      : formData.value !== undefined && formData.value !== "" || isOptionalType
+    : isOptionalType
+    ? true
     : requiredFields.length > 0
     ? requiredFields.every(fieldName => {
-        // Auto-filled fields are always valid
         if (isChatMessageLike && fieldName === 'role' && formData['role'] === 'user') {
           return true;
         }
@@ -356,8 +403,16 @@ export function WorkflowInputForm({
 
   // Initialize form data
   useEffect(() => {
-    if (inputSchema.type === "string") {
-      setFormData({ value: inputSchema.default || "" });
+    if (inputSchema.type && ["string", "integer", "number", "boolean", "array"].includes(inputSchema.type)) {
+      const defaultValue = 
+        inputSchema.default !== undefined 
+          ? inputSchema.default 
+          : inputSchema.type === "boolean" 
+            ? false
+            : inputSchema.type === "array"
+            ? []
+            : "";
+      setFormData({ value: defaultValue });
     } else if (inputSchema.type === "object" && inputSchema.properties) {
       const initialData: Record<string, unknown> = {};
       Object.entries(inputSchema.properties).forEach(([key, fieldSchema]) => {
@@ -365,10 +420,11 @@ export function WorkflowInputForm({
           initialData[key] = fieldSchema.default;
         } else if (fieldSchema.enum && fieldSchema.enum.length > 0) {
           initialData[key] = fieldSchema.enum[0];
+        } else if (fieldSchema.type === "boolean") {
+          initialData[key] = false;
         }
       });
 
-      // Auto-fill role="user" for ChatMessage-like inputs
       if (isChatMessageLike && !initialData['role']) {
         initialData['role'] = 'user';
       }
@@ -381,9 +437,8 @@ export function WorkflowInputForm({
     e.preventDefault();
     setLoading(true);
 
-    // Simplified submission logic
-    if (inputSchema.type === "string") {
-      onSubmit({ input: formData.value || "" });
+    if (inputSchema.type && ["string", "integer", "number", "boolean", "array"].includes(inputSchema.type)) {
+      onSubmit({ input: formData.value !== undefined ? formData.value : "" });
     } else if (inputSchema.type === "object") {
       const properties = inputSchema.properties || {};
       const fieldNames = Object.keys(properties);
@@ -433,7 +488,7 @@ export function WorkflowInputForm({
               schema={inputSchema}
               value={formData.value}
               onChange={(value) => updateField("value", value)}
-              isRequired={false}
+              isRequired={!isOptionalType}
             />
           )}
 

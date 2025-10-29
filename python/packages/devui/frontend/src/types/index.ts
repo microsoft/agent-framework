@@ -42,7 +42,7 @@ export interface AgentInfo {
 
 // JSON Schema types for workflow input
 export interface JSONSchemaProperty {
-  type: "string" | "number" | "integer" | "boolean" | "array" | "object";
+  type?: "string" | "number" | "integer" | "boolean" | "array" | "object" | "null";
   description?: string;
   default?: unknown;
   enum?: string[];
@@ -50,10 +50,11 @@ export interface JSONSchemaProperty {
   properties?: Record<string, JSONSchemaProperty>;
   required?: string[];
   items?: JSONSchemaProperty;
+  anyOf?: JSONSchemaProperty[];  // For optional types (X | None)
 }
 
 export interface JSONSchema {
-  type: "string" | "number" | "integer" | "boolean" | "array" | "object";
+  type?: "string" | "number" | "integer" | "boolean" | "array" | "object" | "null";
   description?: string;
   default?: unknown;
   enum?: string[];
@@ -61,6 +62,7 @@ export interface JSONSchema {
   properties?: Record<string, JSONSchemaProperty>;
   required?: string[];
   items?: JSONSchemaProperty;
+  anyOf?: JSONSchemaProperty[];  // For optional types (X | None)
 }
 
 export interface WorkflowInfo extends Omit<AgentInfo, "tools"> {

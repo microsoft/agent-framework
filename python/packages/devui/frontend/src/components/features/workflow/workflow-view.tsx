@@ -81,12 +81,26 @@ function RunWorkflowButton({
     if (!inputSchema)
       return { needsInput: false, hasDefaults: false, fieldCount: 0 };
 
-    if (inputSchema.type === "string") {
+    // Handle null type (None in Python) - no input required, can run directly
+    if (inputSchema.type === "null") {
       return {
-        needsInput: !inputSchema.default,
-        hasDefaults: !!inputSchema.default,
+        needsInput: false,
+        hasDefaults: false,
+        fieldCount: 0,
+        canRunDirectly: true,
+      };
+    }
+
+    // Handle primitive types (string, integer, number, boolean, array)
+    // All these types have a single input field
+    const primitiveTypes = ["string", "integer", "number", "boolean", "array"];
+    if (inputSchema.type && primitiveTypes.includes(inputSchema.type as string)) {
+      const hasDefault = "default" in inputSchema;
+      return {
+        needsInput: true, // All primitive inputs have a field to configure
+        hasDefaults: hasDefault,
         fieldCount: 1,
-        canRunDirectly: !!inputSchema.default,
+        canRunDirectly: hasDefault, // Can run immediately if optional (default: null)
       };
     }
 
@@ -95,7 +109,7 @@ function RunWorkflowButton({
       const fields = Object.entries(properties);
       const fieldsWithDefaults = fields.filter(
         ([, schema]: [string, JSONSchemaProperty]) =>
-          schema.default !== undefined ||
+          "default" in schema || // Check if 'default' property exists (even if null)
           (schema.enum && schema.enum.length > 0)
       );
 
@@ -116,27 +130,13 @@ function RunWorkflowButton({
   }, [inputSchema]);
 
   const handleDirectRun = () => {
-    if (inputAnalysis.canRunDirectly) {
-      // Build default data
-      const defaultData: Record<string, unknown> = {};
-
-      if (inputSchema.type === "string" && inputSchema.default) {
-        defaultData.input = inputSchema.default;
-      } else if (inputSchema.type === "object" && inputSchema.properties) {
-        Object.entries(inputSchema.properties).forEach(
-          ([key, schema]: [string, JSONSchemaProperty]) => {
-            if (schema.default !== undefined) {
-              defaultData[key] = schema.default;
-            } else if (schema.enum && schema.enum.length > 0) {
-              defaultData[key] = schema.enum[0];
-            }
-          }
-        );
-      }
-
-      onRun(defaultData);
-    } else {
+    // If workflow needs ANY input (required or optional), show config modal
+    // Only run directly for workflows with NO inputs (type: null)
+    if (inputAnalysis.needsInput) {
       setShowModal(true);
+    } else {
+      // No inputs needed - run directly with empty data
+      onRun({});
     }
   };
 
@@ -144,8 +144,10 @@ function RunWorkflowButton({
     if (workflowState === "running") return "Running...";
     if (workflowState === "completed") return "Run Again";
     if (workflowState === "error") return "Retry";
-    if (inputAnalysis.fieldCount === 0) return "Run Workflow";
-    if (inputAnalysis.canRunDirectly) return "Run Workflow";
+    // If no inputs needed (type: null), just show "Run Workflow"
+    if (!inputAnalysis.needsInput) return "Run Workflow";
+    // If inputs are needed (required OR optional), show "Configure & Run"
+    // This includes both required inputs and optional inputs with defaults
     return "Configure & Run";
   };
 
@@ -153,8 +155,9 @@ function RunWorkflowButton({
     if (workflowState === "running")
       return <Loader2 className="w-4 h-4 animate-spin" />;
     if (workflowState === "error") return <RotateCcw className="w-4 h-4" />;
-    if (inputAnalysis.needsInput && !inputAnalysis.canRunDirectly)
-      return <Settings className="w-4 h-4" />;
+    // Show Settings icon if inputs are needed (required OR optional)
+    if (inputAnalysis.needsInput) return <Settings className="w-4 h-4" />;
+    // Show Play icon only for workflows with no inputs (type: null)
     return <Play className="w-4 h-4" />;
   };
 
@@ -217,6 +220,14 @@ function RunWorkflowButton({
                     ? "No Input"
                     : inputSchema.type === "string"
                     ? "String"
+                    : inputSchema.type === "integer"
+                    ? "Integer"
+                    : inputSchema.type === "number"
+                    ? "Number"
+                    : inputSchema.type === "boolean"
+                    ? "Boolean"
+                    : inputSchema.type === "array"
+                    ? "Array"
                     : "Object"}
                 </code>
                 {inputSchema.type === "object" && inputSchema.properties && (
@@ -235,7 +246,21 @@ function RunWorkflowButton({
           <div className="px-8 py-6 overflow-y-auto flex-1 min-h-0">
             <WorkflowInputForm
               inputSchema={inputSchema}
-              inputTypeName="Input"
+              inputTypeName={
+                inputAnalysis.fieldCount === 0
+                  ? "No Input"
+                  : inputSchema.type === "string"
+                  ? "String"
+                  : inputSchema.type === "integer"
+                  ? "Integer"
+                  : inputSchema.type === "number"
+                  ? "Number"
+                  : inputSchema.type === "boolean"
+                  ? "Boolean"
+                  : inputSchema.type === "array"
+                  ? "Array"
+                  : "Object"
+              }
               onSubmit={(data) => {
                 onRun(data as Record<string, unknown>);
                 setShowModal(false);
