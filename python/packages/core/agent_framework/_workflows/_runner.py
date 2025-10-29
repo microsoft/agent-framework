@@ -94,6 +94,12 @@ class Runner:
                     logger.info("Skipping 'after_initial_execution' checkpoint because we resumed from a checkpoint")
 
             while self._iteration < self._max_iterations:
+                # Check if there are any messages to process before starting iteration
+                # This prevents unnecessary iterations when resuming from completed checkpoints
+                if not await self._ctx.has_messages():
+                    logger.info("No messages to process; workflow is idle")
+                    break
+
                 logger.info(f"Starting superstep {self._iteration + 1}")
 
                 # Run iteration concurrently with live event streaming: we poll

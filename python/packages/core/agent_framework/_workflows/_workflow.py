@@ -303,6 +303,15 @@ class Workflow(DictConvertible):
             saw_request = False
             emitted_in_progress_pending = False
             try:
+                # Reset context for a new run if supported
+                if reset_context:
+                    self._runner.reset_iteration_count()
+                    self._runner.context.reset_for_new_run()
+                    await self._shared_state.clear()
+
+                # Set streaming mode after reset
+                self._runner_context.set_streaming(streaming)
+
                 # Add workflow started event (telemetry + surface state to consumers)
                 span.add_event(OtelAttr.WORKFLOW_STARTED)
                 # Emit explicit start/status events to the stream
@@ -312,15 +321,6 @@ class Workflow(DictConvertible):
                 with _framework_event_origin():
                     in_progress = WorkflowStatusEvent(WorkflowRunState.IN_PROGRESS)
                 yield in_progress
-
-                # Reset context for a new run if supported
-                if reset_context:
-                    self._runner.reset_iteration_count()
-                    self._runner.context.reset_for_new_run()
-                    await self._shared_state.clear()
-
-                # Set streaming mode after reset
-                self._runner_context.set_streaming(streaming)
 
                 # Execute initial setup if provided
                 if initial_executor_fn:
@@ -423,57 +423,61 @@ class Workflow(DictConvertible):
         """
         self._ensure_not_running()
         try:
+            # Restore checkpoint and process any pending messages
+            has_checkpointing = self._runner.context.has_checkpointing()
 
-            async def checkpoint_restoration() -> None:
-                has_checkpointing = self._runner.context.has_checkpointing()
+            if not has_checkpointing and checkpoint_storage is None:
+                raise ValueError(
+                    "Cannot restore from checkpoint: either provide checkpoint_storage parameter "
+                    "or build workflow with WorkflowBuilder.with_checkpointing(checkpoint_storage)."
+                )
 
-                if not has_checkpointing and checkpoint_storage is None:
-                    raise ValueError(
-                        "Cannot restore from checkpoint: either provide checkpoint_storage parameter "
-                        "or build workflow with WorkflowBuilder.with_checkpointing(checkpoint_storage)."
-                    )
+            restored = await self._runner.restore_from_checkpoint(checkpoint_id, checkpoint_storage)
 
-                restored = await self._runner.restore_from_checkpoint(checkpoint_id, checkpoint_storage)
+            if not restored:
+                raise RuntimeError(f"Failed to restore from checkpoint: {checkpoint_id}")
 
-                if not restored:
-                    raise RuntimeError(f"Failed to restore from checkpoint: {checkpoint_id}")
+            # Process any pending messages from the checkpoint first
+            had_messages_before = await self._runner.context.has_messages()
+            if had_messages_before:
+                # Run one iteration to process pending messages
+                await self._runner._run_iteration()  # type: ignore
 
-                # Process any pending messages from the checkpoint first
-                # This ensures that RequestInfoExecutor state is properly populated
-                # before we try to handle responses
-                if await self._runner.context.has_messages():
-                    # Run one iteration to process pending messages
-                    # This will populate RequestInfoExecutor._request_events properly
-                    await self._runner._run_iteration()  # type: ignore
+            # Check if workflow is already complete
+            # Only return early if checkpoint had NO messages to begin with
+            if not had_messages_before and not await self._runner.context.has_messages():
+                return
 
-                if responses:
-                    request_info_executor = self._find_request_info_executor()
-                    if request_info_executor:
-                        for request_id, response_data in responses.items():
-                            ctx: WorkflowContext[Any] = WorkflowContext(
-                                request_info_executor.id,
-                                [self.__class__.__name__],
-                                self._shared_state,
-                                self._runner.context,
-                                trace_contexts=None,  # No parent trace context for new workflow span
-                                source_span_ids=None,  # No source span for response handling
+            # Handle any pre-supplied responses
+            if responses:
+                request_info_executor = self._find_request_info_executor()
+                if request_info_executor:
+                    for request_id, response_data in responses.items():
+                        ctx: WorkflowContext[Any] = WorkflowContext(
+                            request_info_executor.id,
+                            [self.__class__.__name__],
+                            self._shared_state,
+                            self._runner.context,
+                            trace_contexts=None,  # No parent trace context for new workflow span
+                            source_span_ids=None,  # No source span for response handling
+                        )
+
+                        if not await request_info_executor.has_pending_request(request_id, ctx):
+                            logger.debug(
+                                f"Skipping pre-supplied response for request {request_id}; "
+                                f"no pending request found after checkpoint restoration."
                             )
+                            continue
 
-                            if not await request_info_executor.has_pending_request(request_id, ctx):
-                                logger.debug(
-                                    f"Skipping pre-supplied response for request {request_id}; "
-                                    f"no pending request found after checkpoint restoration."
-                                )
-                                continue
+                        await request_info_executor.handle_response(
+                            response_data,
+                            request_id,
+                            ctx,
+                        )
 
-                            await request_info_executor.handle_response(
-                                response_data,
-                                request_id,
-                                ctx,
-                            )
-
+            # Continue workflow execution from restored state
             async for event in self._run_workflow_with_tracing(
-                initial_executor_fn=checkpoint_restoration,
+                initial_executor_fn=None,  # Already restored above
                 reset_context=False,  # Don't reset context when resuming from checkpoint
                 streaming=True,
             ):
@@ -603,59 +607,64 @@ class Workflow(DictConvertible):
         """
         self._ensure_not_running()
         try:
+            # Restore checkpoint and process any pending messages
+            has_checkpointing = self._runner.context.has_checkpointing()
 
-            async def checkpoint_restoration() -> None:
-                has_checkpointing = self._runner.context.has_checkpointing()
+            if not has_checkpointing and checkpoint_storage is None:
+                raise ValueError(
+                    "Cannot restore from checkpoint: either provide checkpoint_storage parameter "
+                    "or build workflow with WorkflowBuilder.with_checkpointing(checkpoint_storage)."
+                )
 
-                if not has_checkpointing and checkpoint_storage is None:
-                    raise ValueError(
-                        "Cannot restore from checkpoint: either provide checkpoint_storage parameter "
-                        "or build workflow with WorkflowBuilder.with_checkpointing(checkpoint_storage)."
-                    )
+            restored = await self._runner.restore_from_checkpoint(checkpoint_id, checkpoint_storage)
 
-                restored = await self._runner.restore_from_checkpoint(checkpoint_id, checkpoint_storage)
+            if not restored:
+                raise RuntimeError(f"Failed to restore from checkpoint: {checkpoint_id}")
 
-                if not restored:
-                    raise RuntimeError(f"Failed to restore from checkpoint: {checkpoint_id}")
+            # Process any pending messages from the checkpoint first
+            had_messages_before = await self._runner.context.has_messages()
+            if had_messages_before:
+                # Run one iteration to process pending messages
+                await self._runner._run_iteration()  # type: ignore
 
-                # Process any pending messages from the checkpoint first
-                # This ensures that RequestInfoExecutor state is properly populated
-                # before we try to handle responses
-                if await self._runner.context.has_messages():
-                    # Run one iteration to process pending messages
-                    # This will populate RequestInfoExecutor._request_events properly
-                    await self._runner._run_iteration()  # type: ignore
+            # Check if workflow is already complete
+            # Only return early if checkpoint had NO messages to begin with
+            if not had_messages_before and not await self._runner.context.has_messages():
+                # Return empty result - workflow was already complete
+                return WorkflowRunResult([], [])
 
-                if responses:
-                    request_info_executor = self._find_request_info_executor()
-                    if request_info_executor:
-                        for request_id, response_data in responses.items():
-                            ctx: WorkflowContext[Any] = WorkflowContext(
-                                request_info_executor.id,
-                                [self.__class__.__name__],
-                                self._shared_state,
-                                self._runner.context,
-                                trace_contexts=None,  # No parent trace context for new workflow span
-                                source_span_ids=None,  # No source span for response handling
+            # Handle any pre-supplied responses
+            if responses:
+                request_info_executor = self._find_request_info_executor()
+                if request_info_executor:
+                    for request_id, response_data in responses.items():
+                        ctx: WorkflowContext[Any] = WorkflowContext(
+                            request_info_executor.id,
+                            [self.__class__.__name__],
+                            self._shared_state,
+                            self._runner.context,
+                            trace_contexts=None,  # No parent trace context for new workflow span
+                            source_span_ids=None,  # No source span for response handling
+                        )
+
+                        if not await request_info_executor.has_pending_request(request_id, ctx):
+                            logger.debug(
+                                f"Skipping pre-supplied response for request {request_id}; "
+                                f"no pending request found after checkpoint restoration."
                             )
+                            continue
 
-                            if not await request_info_executor.has_pending_request(request_id, ctx):
-                                logger.debug(
-                                    f"Skipping pre-supplied response for request {request_id}; "
-                                    f"no pending request found after checkpoint restoration."
-                                )
-                                continue
+                        await request_info_executor.handle_response(
+                            response_data,
+                            request_id,
+                            ctx,
+                        )
 
-                            await request_info_executor.handle_response(
-                                response_data,
-                                request_id,
-                                ctx,
-                            )
-
+            # Continue workflow execution from restored state
             events = [
                 event
                 async for event in self._run_workflow_with_tracing(
-                    initial_executor_fn=checkpoint_restoration,
+                    initial_executor_fn=None,  # Already restored above
                     reset_context=False,  # Don't reset context when resuming from checkpoint
                 )
             ]
