@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to create an Azure AI Agent with the Deep Research Tool.
+// This sample shows how to create an Azure AI Foundry Agent with the Deep Research Tool.
 
 using Azure.AI.Agents.Persistent;
 using Azure.Identity;
