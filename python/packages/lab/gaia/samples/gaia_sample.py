@@ -181,10 +181,10 @@ async def main(
     avg_runtime = sum(r.runtime_seconds or 0 for r in results) / total if total > 0 else 0.0
 
     print("\n=== GAIA Benchmark Summary ===")
-    print(f"Total: {total}, Correct: {correct}, Accuracy: {accuracy:.3f}")
-    print(f"Average runtime: {avg_runtime:.2f}s")
+    print(f"📝 Total: {total}, ✅ Correct: {correct}, 🎯 Accuracy: {accuracy:.3f}")
+    print(f"⏱️  Average runtime: {avg_runtime:.2f}s")
     if result_file:
-        print(f"Detailed results saved to: {result_file}")
+        print(f"💾 Detailed results saved to: {result_file}")
 
 
 if __name__ == "__main__":
