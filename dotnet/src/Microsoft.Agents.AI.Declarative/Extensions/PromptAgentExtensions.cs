@@ -33,7 +33,7 @@ public static class PromptAgentExtensions
 
         return new ChatOptions()
         {
-            Instructions = promptAgent.Instructions?.ToTemplateString(),
+            Instructions = promptAgent.ResponseInstructions?.ToTemplateString(),
             Temperature = (float?)modelOptions?.Temperature.LiteralValue,
             MaxOutputTokens = (int?)modelOptions?.MaxOutputTokens?.LiteralValue,
             TopP = (float?)modelOptions?.TopP.LiteralValue,
