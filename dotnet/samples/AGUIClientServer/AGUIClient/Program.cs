@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 // This sample demonstrates how to use the AG-UI client to connect to a remote AG-UI server
 // and display streaming updates including RunStartedContent, TextContent, and RunFinishedContent.

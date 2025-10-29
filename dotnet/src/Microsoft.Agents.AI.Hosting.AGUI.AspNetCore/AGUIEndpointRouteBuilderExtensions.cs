@@ -2,12 +2,7 @@
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Net.ServerSentEvents;
-using System.Runtime.CompilerServices;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.Shared;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
