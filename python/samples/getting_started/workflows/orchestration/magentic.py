@@ -9,8 +9,6 @@ from agent_framework import (
     MagenticAgentDeltaEvent,
     MagenticAgentMessageEvent,
     MagenticBuilder,
-    MagenticCallbackEvent,
-    MagenticCallbackMode,
     MagenticFinalResultEvent,
     MagenticOrchestratorMessageEvent,
     WorkflowOutputEvent,
@@ -66,40 +64,6 @@ async def main() -> None:
         tools=HostedCodeInterpreterTool(),
     )
 
-    # Unified callback
-    async def on_event(event: MagenticCallbackEvent) -> None:
-        """
-        The `on_event` callback processes events emitted by the workflow.
-        Events include: orchestrator messages, agent delta updates, agent messages, and final result events.
-        """
-        nonlocal last_stream_agent_id, stream_line_open
-        if isinstance(event, MagenticOrchestratorMessageEvent):
-            print(f"\n[ORCH:{event.kind}]\n\n{getattr(event.message, 'text', '')}\n{'-' * 26}")
-        elif isinstance(event, MagenticAgentDeltaEvent):
-            if last_stream_agent_id != event.agent_id or not stream_line_open:
-                if stream_line_open:
-                    print()
-                print(f"\n[STREAM:{event.agent_id}]: ", end="", flush=True)
-                last_stream_agent_id = event.agent_id
-                stream_line_open = True
-            print(event.text, end="", flush=True)
-        elif isinstance(event, MagenticAgentMessageEvent):
-            if stream_line_open:
-                print(" (final)")
-                stream_line_open = False
-                print()
-            msg = event.message
-            if msg is not None:
-                response_text = (msg.text or "").replace("\n", " ")
-                print(f"\n[AGENT:{event.agent_id}] {msg.role.value}\n\n{response_text}\n{'-' * 26}")
-        elif isinstance(event, MagenticFinalResultEvent):
-            print("\n" + "=" * 50)
-            print("FINAL RESULT:")
-            print("=" * 50)
-            if event.message is not None:
-                print(event.message.text)
-            print("=" * 50)
-
     print("\nBuilding Magentic Workflow...")
 
     # State used by on_agent_stream callback
@@ -109,7 +73,6 @@ async def main() -> None:
     workflow = (
         MagenticBuilder()
         .participants(researcher=researcher_agent, coder=coder_agent)
-        .on_event(on_event, mode=MagenticCallbackMode.STREAMING)
         .with_standard_manager(
             chat_client=OpenAIChatClient(),
             max_round_count=10,
@@ -134,9 +97,39 @@ async def main() -> None:
     try:
         output: str | None = None
         async for event in workflow.run_stream(task):
-            print(event)
-            if isinstance(event, WorkflowOutputEvent):
-                output = str(event.data)
+            if isinstance(event, MagenticOrchestratorMessageEvent):
+                print(f"\n[ORCH:{event.kind}]\n\n{getattr(event.message, 'text', '')}\n{'-' * 26}")
+            elif isinstance(event, MagenticAgentDeltaEvent):
+                if last_stream_agent_id != event.agent_id or not stream_line_open:
+                    if stream_line_open:
+                        print()
+                    print(f"\n[STREAM:{event.agent_id}]: ", end="", flush=True)
+                    last_stream_agent_id = event.agent_id
+                    stream_line_open = True
+                if event.text:
+                    print(event.text, end="", flush=True)
+            elif isinstance(event, MagenticAgentMessageEvent):
+                if stream_line_open:
+                    print(" (final)")
+                    stream_line_open = False
+                    print()
+                msg = event.message
+                if msg is not None:
+                    response_text = (msg.text or "").replace("\n", " ")
+                    print(f"\n[AGENT:{event.agent_id}] {msg.role.value}\n\n{response_text}\n{'-' * 26}")
+            elif isinstance(event, MagenticFinalResultEvent):
+                print("\n" + "=" * 50)
+                print("FINAL RESULT:")
+                print("=" * 50)
+                if event.message is not None:
+                    print(event.message.text)
+                print("=" * 50)
+            elif isinstance(event, WorkflowOutputEvent):
+                output = str(event.data) if event.data is not None else None
+
+        if stream_line_open:
+            print()
+            stream_line_open = False
 
         if output is not None:
             print(f"Workflow completed with result:\n\n{output}")

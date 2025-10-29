@@ -1,7 +1,8 @@
-# Copyright (c) Microsoft. All rights reserved.
 # Semantic Kernel → Microsoft Agent Framework Migration Samples
 
 This gallery helps Semantic Kernel (SK) developers move to the Microsoft Agent Framework (AF) with minimal guesswork. Each script pairs SK code with its AF equivalent so you can compare primitives, tooling, and orchestration patterns side by side while you migrate production workloads.
+
+## What’s Included
 
 ## What’s Included
 
@@ -32,7 +33,8 @@ This gallery helps Semantic Kernel (SK) developers move to the Microsoft Agent F
 ### Orchestrations
 - [sequential.py](orchestrations/sequential.py) — Step-by-step SK Team → AF `SequentialBuilder` migration.
 - [concurrent_basic.py](orchestrations/concurrent_basic.py) — Concurrent orchestration parity.
-- [handoff.py](orchestrations/handoff.py) — Support triage handoff migration with specialist routing.
+- [group_chat.py](orchestrations/group_chat.py) — Group chat coordination with an LLM-backed manager in both SDKs.
+- [handoff.py](orchestrations/handoff.py) - Handoff coordination between agents.
 - [magentic.py](orchestrations/magentic.py) — Magentic Team orchestration vs. AF builder wiring.
 
 ### Processes
@@ -55,7 +57,7 @@ python samples/semantic-kernel-migration/chat_completion/01_basic_chat_completio
 Every script accepts no CLI arguments and will first call the SK implementation, followed by the AF version. Adjust the prompt or credentials inside the file as necessary before running.
 
 ## Running Orchestration & Workflow Samples
-Advanced comparisons are split between `samples/semantic-kernel-migration/orchestrations` (Sequential, Concurrent, Group Chat, Handoff, Magentic) and `samples/semantic-kernel-migration/processes` (fan-out/fan-in, nested). You can run them directly, or isolate dependencies in a throwaway virtual environment:
+Advanced comparisons are split between `samantic-kernel-migration/orchestrations` (Sequential, Concurrent, Magentic) and `samantic-kernel-migration/processes` (fan-out/fan-in, nested). You can run them directly, or isolate dependencies in a throwaway virtual environment:
 ```
 cd samples/semantic-kernel-migration
 uv venv --python 3.10 .venv-migration

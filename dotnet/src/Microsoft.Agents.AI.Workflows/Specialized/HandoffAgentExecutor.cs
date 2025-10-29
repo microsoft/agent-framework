@@ -14,7 +14,7 @@ namespace Microsoft.Agents.AI.Workflows.Specialized;
 /// <summary>Executor used to represent an agent in a handoffs workflow, responding to <see cref="HandoffState"/> events.</summary>
 internal sealed class HandoffAgentExecutor(
     AIAgent agent,
-    string? handoffInstructions) : Executor(agent.GetDescriptiveId()), IResettableExecutor
+    string? handoffInstructions) : Executor(agent.GetDescriptiveId(), declareCrossRunShareable: true), IResettableExecutor
 {
     private static readonly JsonElement s_handoffSchema = AIFunctionFactory.Create(
         ([Description("The reason for the handoff")] string? reasonForHandoff) => { }).JsonSchema;
@@ -70,9 +70,9 @@ internal sealed class HandoffAgentExecutor(
             List<ChatMessage>? roleChanges = allMessages.ChangeAssistantToUserForOtherParticipants(this._agent.DisplayName);
 
             await foreach (var update in this._agent.RunStreamingAsync(allMessages,
-                                                                           options: this._agentOptions,
-                                                                           cancellationToken: cancellationToken)
-                                                        .ConfigureAwait(false))
+                                                                       options: this._agentOptions,
+                                                                       cancellationToken: cancellationToken)
+                                                     .ConfigureAwait(false))
             {
                 await AddUpdateAsync(update, cancellationToken).ConfigureAwait(false);
 

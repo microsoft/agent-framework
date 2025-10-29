@@ -24,7 +24,7 @@ public static class Program
     private static async Task Main()
     {
         // Create the workflow
-        var workflow = WorkflowHelper.GetWorkflow();
+        var workflow = WorkflowFactory.BuildWorkflow();
 
         // Execute the workflow
         await using StreamingRun handle = await InProcessExecution.StreamAsync(workflow, NumberSignal.Init);

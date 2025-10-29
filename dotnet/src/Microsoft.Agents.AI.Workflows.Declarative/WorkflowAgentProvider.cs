@@ -16,8 +16,8 @@ public abstract class WorkflowAgentProvider
     /// <summary>
     /// Gets or sets a collection of additional tools an agent is able to automatically invoke.
     /// If an agent is configured with a function tool that is not available, a <see cref="RequestPort"/> is executed
-    /// that provides an <see cref="AgentToolRequest"/> that describes the function calls requested.  The caller may
-    /// then respond with a corrsponding <see cref="AgentToolResponse"/> that includes the results of the function calls.
+    /// that provides an <see cref="AgentFunctionToolRequest"/> that describes the function calls requested.  The caller may
+    /// then respond with a corrsponding <see cref="AgentFunctionToolResponse"/> that includes the results of the function calls.
     /// </summary>
     /// <remarks>
     /// These will not impact the requests sent to the model by the <see cref="FunctionInvokingChatClient"/>.
