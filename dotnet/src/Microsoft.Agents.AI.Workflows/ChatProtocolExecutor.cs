@@ -24,12 +24,6 @@ public class ChatProtocolExecutorOptions
 /// Provides a base class for executors that implement the Agent Workflow Chat Protocol.
 /// This executor maintains a list of chat messages and processes them when a turn is taken.
 /// </summary>
-/// <remarks>
-/// The Chat Protocol is defined as supporting <see cref="List{ChatMessage}"/>, <see cref="ChatMessage"/>,
-/// arrays and collections of chat messages, and <see cref="TurnToken"/> as input. When a turn token is received,
-/// the accumulated messages are processed via the <see cref="TakeTurnAsync(List{ChatMessage}, IWorkflowContext, bool?, CancellationToken)"/>
-/// method, which derived classes must implement.
-/// </remarks>
 public abstract class ChatProtocolExecutor : StatefulExecutor<List<ChatMessage>>
 {
     private readonly static Func<List<ChatMessage>> s_initFunction = () => [];
@@ -40,7 +34,7 @@ public abstract class ChatProtocolExecutor : StatefulExecutor<List<ChatMessage>>
     /// </summary>
     /// <param name="id">The unique identifier for this executor instance. Cannot be null or empty.</param>
     /// <param name="options">Optional configuration settings for the executor. If null, default options are used.</param>
-    /// <param name="declareCrossRunShareable">true to declare that the executor's state can be shared across multiple runs; otherwise, false.</param>
+    /// <param name="declareCrossRunShareable">Declare that this executor may be used simultaneously by multiple runs safely.</param>
     protected ChatProtocolExecutor(string id, ChatProtocolExecutorOptions? options = null, bool declareCrossRunShareable = false)
         : base(id, () => [], declareCrossRunShareable: declareCrossRunShareable)
     {
@@ -68,7 +62,7 @@ public abstract class ChatProtocolExecutor : StatefulExecutor<List<ChatMessage>>
     /// </summary>
     /// <param name="message">The chat message to add.</param>
     /// <param name="context">The workflow context in which the executor executes.</param>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
     protected ValueTask AddMessageAsync(ChatMessage message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
@@ -87,7 +81,7 @@ public abstract class ChatProtocolExecutor : StatefulExecutor<List<ChatMessage>>
     /// </summary>
     /// <param name="messages">The collection of chat messages to add.</param>
     /// <param name="context">The workflow context in which the executor executes.</param>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
     protected ValueTask AddMessagesAsync(IEnumerable<ChatMessage> messages, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
@@ -106,7 +100,7 @@ public abstract class ChatProtocolExecutor : StatefulExecutor<List<ChatMessage>>
     /// </summary>
     /// <param name="token">The turn token that triggers message processing.</param>
     /// <param name="context">The workflow context in which the executor executes.</param>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
     public ValueTask TakeTurnAsync(TurnToken token, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
@@ -131,7 +125,7 @@ public abstract class ChatProtocolExecutor : StatefulExecutor<List<ChatMessage>>
     /// <param name="messages">The list of chat messages accumulated since the last turn.</param>
     /// <param name="context">The workflow context in which the executor executes.</param>
     /// <param name="emitEvents">Indicates whether events should be emitted during processing. If null, the default behavior is used.</param>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
     protected abstract ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellationToken = default);
 }
