@@ -25,9 +25,12 @@ internal static class MessageContentPartConverter
             AudioContentPart audioPart =>
                 new DataContent(audioPart.InputAudio.Data, audioPart.InputAudio.Format.ToUpperInvariant() switch
                 {
-                    // only MP3 or WAV are supported
                     "MP3" => "audio/mpeg",
                     "WAV" => "audio/wav",
+                    "OPUS" => "audio/opus",
+                    "AAC" => "audio/aac",
+                    "FLAC" => "audio/flac",
+                    "PCM16" => "audio/pcm",
                     _ => "audio/*"
                 }),
 

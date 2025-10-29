@@ -8,6 +8,9 @@ using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions.Models;
 
+/// <summary>
+/// Represents a message in a chat completion request.
+/// </summary>
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "role", UnknownDerivedTypeHandling = JsonUnknownDerivedTypeHandling.FailSerialization)]
 [JsonDerivedType(typeof(DeveloperMessage), "developer")]
 [JsonDerivedType(typeof(SystemMessage), "system")]
@@ -29,6 +32,11 @@ internal abstract record ChatCompletionRequestMessage
     [JsonPropertyName("content")]
     public required MessageContent Content { get; init; }
 
+    /// <summary>
+    /// Converts to a <see cref="ChatMessage"/>.
+    /// </summary>
+    /// <returns>A <see cref="ChatMessage"/> representing the message.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the content is neither text nor AI contents.</exception>
     public virtual ChatMessage ToChatMessage()
     {
         if (this.Content.IsText)
@@ -45,6 +53,10 @@ internal abstract record ChatCompletionRequestMessage
     }
 }
 
+/// <summary>
+/// A developer message in a chat completion request.
+/// Developer messages are used to provide instructions to the model at the system level.
+/// </summary>
 internal sealed record DeveloperMessage : ChatCompletionRequestMessage
 {
     /// <inheritdoc/>
@@ -59,6 +71,10 @@ internal sealed record DeveloperMessage : ChatCompletionRequestMessage
     public string? Name { get; init; }
 }
 
+/// <summary>
+/// A system message in a chat completion request.
+/// System messages provide high-level instructions for the conversation.
+/// </summary>
 internal sealed record SystemMessage : ChatCompletionRequestMessage
 {
     /// <inheritdoc/>
@@ -73,6 +89,10 @@ internal sealed record SystemMessage : ChatCompletionRequestMessage
     public string? Name { get; init; }
 }
 
+/// <summary>
+/// A user message in a chat completion request.
+/// User messages represent input from the end user.
+/// </summary>
 internal sealed record UserMessage : ChatCompletionRequestMessage
 {
     /// <inheritdoc/>
@@ -87,6 +107,10 @@ internal sealed record UserMessage : ChatCompletionRequestMessage
     public string? Name { get; init; }
 }
 
+/// <summary>
+/// An assistant message in a chat completion request.
+/// Assistant messages represent previous responses from the model, used in multi-turn conversations.
+/// </summary>
 internal sealed record AssistantMessage : ChatCompletionRequestMessage
 {
     /// <inheritdoc/>
@@ -101,6 +125,10 @@ internal sealed record AssistantMessage : ChatCompletionRequestMessage
     public string? Name { get; init; }
 }
 
+/// <summary>
+/// A tool message in a chat completion request.
+/// Tool messages contain the result of a tool call made by the assistant.
+/// </summary>
 internal sealed record ToolMessage : ChatCompletionRequestMessage
 {
     /// <inheritdoc/>
@@ -114,6 +142,10 @@ internal sealed record ToolMessage : ChatCompletionRequestMessage
     public required string ToolCallId { get; set; }
 }
 
+/// <summary>
+/// Deprecated. A function message in a chat completion request.
+/// Function messages have been replaced by tool messages.
+/// </summary>
 internal sealed record FunctionMessage : ChatCompletionRequestMessage
 {
     /// <inheritdoc/>
@@ -126,6 +158,11 @@ internal sealed record FunctionMessage : ChatCompletionRequestMessage
     [JsonPropertyName("name")]
     public required string Name { get; init; }
 
+    /// <summary>
+    /// Converts to a <see cref="ChatMessage"/>.
+    /// </summary>
+    /// <returns>A <see cref="ChatMessage"/> representing the message.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the content is not text.</exception>
     public override ChatMessage ToChatMessage()
     {
         if (this.Content.IsText)

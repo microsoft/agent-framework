@@ -4,6 +4,10 @@ using System.Text.Json.Serialization;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions.Models;
 
+/// <summary>
+/// Represents a part of message content in a chat completion request.
+/// Message content can be text, images, audio, or files.
+/// </summary>
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "type", UnknownDerivedTypeHandling = JsonUnknownDerivedTypeHandling.FailSerialization)]
 [JsonDerivedType(typeof(TextContentPart), "text")]
 [JsonDerivedType(typeof(ImageContentPart), "image_url")]
@@ -18,29 +22,47 @@ internal abstract record MessageContentPart
     public abstract string Type { get; }
 }
 
+/// <summary>
+/// A text content part in a message.
+/// </summary>
 internal sealed record TextContentPart : MessageContentPart
 {
     /// <inheritdoc />
     [JsonIgnore]
     public override string Type => "text";
 
+    /// <summary>
+    /// The text content.
+    /// </summary>
     [JsonPropertyName("text")]
     public required string Text { get; set; }
 }
 
+/// <summary>
+/// An image content part in a message.
+/// </summary>
 internal sealed record ImageContentPart : MessageContentPart
 {
     /// <inheritdoc />
     [JsonIgnore]
     public override string Type => "image_url";
 
+    /// <summary>
+    /// Details about the image URL or base64-encoded image data.
+    /// </summary>
     [JsonPropertyName("image_url")]
     public required ImageUrl ImageUrl { get; set; }
 
+    /// <summary>
+    /// Gets the URL or base64-encoded data of the image.
+    /// </summary>
     [JsonIgnore]
     public string UrlOrData => this.ImageUrl.Url;
 }
 
+/// <summary>
+/// Details about an image for vision-enabled models.
+/// </summary>
 internal sealed record ImageUrl
 {
     /// <summary>
@@ -56,16 +78,25 @@ internal sealed record ImageUrl
     public string? Detail { get; set; }
 }
 
+/// <summary>
+/// An audio content part in a message.
+/// </summary>
 internal sealed record AudioContentPart : MessageContentPart
 {
     /// <inheritdoc />
     [JsonIgnore]
     public override string Type => "input_audio";
 
+    /// <summary>
+    /// The input audio data.
+    /// </summary>
     [JsonPropertyName("input_audio")]
     public required InputAudio InputAudio { get; set; }
 }
 
+/// <summary>
+/// Input audio data for audio-enabled models.
+/// </summary>
 internal sealed record InputAudio
 {
     /// <summary>
@@ -81,16 +112,25 @@ internal sealed record InputAudio
     public required string Format { get; set; }
 }
 
+/// <summary>
+/// A file content part in a message.
+/// </summary>
 internal sealed record FileContentPart : MessageContentPart
 {
     /// <inheritdoc />
     [JsonIgnore]
     public override string Type => "file";
 
+    /// <summary>
+    /// The input file data.
+    /// </summary>
     [JsonPropertyName("file")]
     public required InputFile File { get; set; }
 }
 
+/// <summary>
+/// Input file data for file-enabled models.
+/// </summary>
 internal sealed record InputFile
 {
     /// <summary>
