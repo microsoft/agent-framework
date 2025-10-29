@@ -26,5 +26,13 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions;
 [JsonSerializable(typeof(AudioContentPart))]
 [JsonSerializable(typeof(FileContentPart))]
 [JsonSerializable(typeof(FileContentPart))]
+[JsonSerializable(typeof(ChatCompletionChoice))]
+[JsonSerializable(typeof(IList<ChatCompletionChoice>))]
+[JsonSerializable(typeof(ChoiceMessage))]
+[JsonSerializable(typeof(ChoiceMessageAnnotation))]
+[JsonSerializable(typeof(ChoiceMessageAudio))]
+[JsonSerializable(typeof(ChoiceMessageFunctionCall))]
+[JsonSerializable(typeof(ChoiceMessageToolCall))]
+[JsonSerializable(typeof(AnnotationUrlCitation))]
 [ExcludeFromCodeCoverage]
 internal sealed partial class ChatCompletionsJsonContext : JsonSerializerContext;

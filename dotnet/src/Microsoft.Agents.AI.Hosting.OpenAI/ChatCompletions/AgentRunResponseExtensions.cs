@@ -2,14 +2,8 @@
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text.Json;
 using Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions.Models;
-using Microsoft.Agents.AI.Hosting.OpenAI.Responses;
-using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Converters;
-using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
 using Microsoft.Extensions.AI;
-using Microsoft.VisualBasic;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions;
 
@@ -43,40 +37,62 @@ internal static class AgentRunResponseExtensions
         {
             foreach (var content in message.Contents)
             {
-                ChatCompletionChoice? choice = content switch
+                ChoiceMessage choiceMessage = content switch
                 {
                     // text
-                    TextContent textContent => new() { Index = index, Message = ChoiceMessage.FromText(role: message.Role, textContent.Text) },
-                    _ => null
+                    TextContent textContent => new()
+                    {
+                        Content = textContent.Text
+                    },
+
+                    // image, see how MessageContentPartConverter packs the content types
+                    DataContent imageContent when imageContent.HasTopLevelMediaType("image") => new()
+                    {
+                        Content = imageContent.Base64Data.ToString()
+                    },
+                    UriContent urlContent when urlContent.HasTopLevelMediaType("image") => new()
+                    {
+                        Content = urlContent.Uri.ToString()
+                    },
+
+                    // audio
+                    DataContent audioContent when audioContent.HasTopLevelMediaType("audio") => new()
+                    {
+                        Audio = new()
+                        {
+                            Data = audioContent.Base64Data.ToString(),
+                            Id = audioContent.Name,
+                            //Transcript = ,
+                            //ExpiresAt = ,
+                        },
+                    },
+
+                    // file
+                    DataContent fileContent when !fileContent.HasTopLevelMediaType("image") && !fileContent.HasTopLevelMediaType("audio") => new()
+                    {
+                        Content = fileContent.Base64Data.ToString()
+                    },
+                    HostedFileContent fileContent => new()
+                    {
+                        Content = fileContent.FileId
+                    },
+
+                    _ => throw new InvalidOperationException($"Got unsupported content: {content.GetType()}")
                 };
 
-                if (choice is null)
-                {
-                    throw new ArgumentOutOfRangeException($"Got unsupported content: {content.GetType()}");
-                }
+                choiceMessage.Role = message.Role.Value;
 
-                switch (content)
+                var choice = new ChatCompletionChoice
                 {
-                    case FunctionCallContent functionCallContent:
-                        // message.Role == ChatRole.Assistant
-                        yield return functionCallContent.ToFunctionToolCallItemResource(idGenerator.GenerateFunctionCallId(), jsonSerializerOptions);
-                        break;
-                    case FunctionResultContent functionResultContent:
-                        // message.Role == ChatRole.Tool
-                        yield return functionResultContent.ToFunctionToolCallOutputItemResource(
-                            idGenerator.GenerateFunctionOutputId());
-                        break;
-                    default:
-                        // message.Role == ChatRole.Assistant
-                        if (ItemContentConverter.ToItemContent(content) is { } itemContent)
-                        {
-                            contents.Add(itemContent);
-                        }
+                    Index = index++,
+                    Message = choiceMessage
+                };
 
-                        break;
-                }
+                chatCompletionChoices.Add(choice);
             }
         }
+
+        return chatCompletionChoices;
     }
 
     /// <summary>
