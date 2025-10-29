@@ -73,7 +73,6 @@ internal sealed record ChoiceMessageAudio
     /// The Unix timestamp (in seconds) for when this audio response will no longer be accessible on the server for use in multi-turn conversations.
     /// </summary>
     [JsonPropertyName("expires_at")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public int ExpiresAt { get; init; }
 
     /// <summary>
