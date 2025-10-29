@@ -1,16 +1,15 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import inspect
 import logging
 from collections import defaultdict
 from collections.abc import Sequence
 from enum import Enum
-from types import UnionType
-from typing import Any, Union, get_args, get_origin
+from typing import Any
 
 from ._edge import Edge, EdgeGroup, FanInEdgeGroup
 from ._executor import Executor
 from ._request_info_executor import RequestInfoExecutor
+from ._typing_utils import is_type_compatible
 
 logger = logging.getLogger(__name__)
 
@@ -308,11 +307,11 @@ class WorkflowGraphValidator:
             for target_type in target_input_types:
                 if isinstance(edge_group, FanInEdgeGroup):
                     # If the edge is part of an edge group, the target expects a list of data types
-                    if self._is_type_compatible(list[source_type], target_type):  # type: ignore[valid-type]
+                    if is_type_compatible(list[source_type], target_type):  # type: ignore[valid-type]
                         compatible = True
                         compatible_pairs.append((list[source_type], target_type))  # type: ignore[valid-type]
                 else:
-                    if self._is_type_compatible(source_type, target_type):
+                    if is_type_compatible(source_type, target_type):
                         compatible = True
                         compatible_pairs.append((source_type, target_type))
 
@@ -524,53 +523,6 @@ class WorkflowGraphValidator:
             "Cycle detected in the workflow graph involving: %s. Ensure termination or iteration limits exist.",
             formatted_cycles,
         )
-
-    # endregion
-
-    # region Type Compatibility Utilities
-    @staticmethod
-    def _is_type_compatible(source_type: type[Any], target_type: type[Any]) -> bool:
-        """Check if source_type is compatible with target_type."""
-        # Handle Any type
-        if source_type is Any or target_type is Any:
-            return True
-
-        # Handle exact match
-        if source_type == target_type:
-            return True
-
-        # Handle inheritance
-        try:
-            if inspect.isclass(source_type) and inspect.isclass(target_type):
-                return issubclass(source_type, target_type)
-        except TypeError:
-            # Handle generic types that can't be used with issubclass
-            pass
-
-        # Handle Union types
-        source_origin = get_origin(source_type)
-        target_origin = get_origin(target_type)
-
-        if target_origin in (Union, UnionType):
-            target_args = get_args(target_type)
-            return any(WorkflowGraphValidator._is_type_compatible(source_type, arg) for arg in target_args)
-
-        if source_origin in (Union, UnionType):
-            source_args = get_args(source_type)
-            return all(WorkflowGraphValidator._is_type_compatible(arg, target_type) for arg in source_args)
-
-        # Handle generic types
-        if source_origin is not None and target_origin is not None and source_origin == target_origin:
-            source_args = get_args(source_type)
-            target_args = get_args(target_type)
-            if len(source_args) == len(target_args):
-                return all(
-                    WorkflowGraphValidator._is_type_compatible(s_arg, t_arg)
-                    for s_arg, t_arg in zip(source_args, target_args, strict=True)
-                )
-
-        # No other special compatibility cases
-        return False
 
     # endregion
 
