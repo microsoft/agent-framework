@@ -31,7 +31,7 @@ public partial class ChatClientAgentTests
                     Id = "test-agent-id",
                     Name = "test name",
                     Description = "test description",
-                    Instructions = "test instructions",
+                    ChatOptions = new ChatOptions() { Instructions = "test instructions" },
                 });
 
         // Assert
@@ -65,7 +65,7 @@ public partial class ChatClientAgentTests
         ChatClientAgent agent =
             new(mockService.Object, options: new()
             {
-                Instructions = "test instructions"
+                ChatOptions = new ChatOptions() { Instructions = "test instructions" },
             });
 
         // Act
@@ -99,7 +99,7 @@ public partial class ChatClientAgentTests
     {
         // Arrange
         var chatClient = new Mock<IChatClient>().Object;
-        ChatClientAgent agent = new(chatClient, options: new() { Instructions = "test instructions" });
+        ChatClientAgent agent = new(chatClient, options: new() { ChatOptions = new ChatOptions() { Instructions = "test instructions" } });
 
         // Act & Assert
         await Assert.ThrowsAsync<ArgumentNullException>(() => agent.RunAsync((IReadOnlyCollection<ChatMessage>)null!));
@@ -120,7 +120,7 @@ public partial class ChatClientAgentTests
                 It.Is<ChatOptions>(opts => opts.MaxOutputTokens == 100),
                 It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
 
-        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions" });
+        ChatClientAgent agent = new(mockService.Object, options: new() { ChatOptions = new() { Instructions = "test instructions" } });
 
         // Act
         await agent.RunAsync([new(ChatRole.User, "test")], options: new ChatClientAgentRunOptions(chatOptions));
@@ -181,7 +181,7 @@ public partial class ChatClientAgentTests
                 capturedMessages.AddRange(msgs))
             .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
 
-        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "base instructions" });
+        ChatClientAgent agent = new(mockService.Object, options: new() { ChatOptions = new ChatOptions() { Instructions = "base instructions" } });
         var runOptions = new AgentRunOptions();
 
         // Act
@@ -210,7 +210,7 @@ public partial class ChatClientAgentTests
                 It.IsAny<ChatOptions>(),
                 It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse(responseMessages));
 
-        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions", Name = "TestAgent" });
+        ChatClientAgent agent = new(mockService.Object, options: new() { ChatOptions = new() { Instructions = "test instructions" }, Name = "TestAgent" });
 
         // Act
         var result = await agent.RunAsync([new(ChatRole.User, "test")]);
@@ -237,7 +237,7 @@ public partial class ChatClientAgentTests
                 capturedMessages.AddRange(msgs))
             .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
 
-        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions" });
+        ChatClientAgent agent = new(mockService.Object, options: new() { ChatOptions = new() { Instructions = "test instructions" } });
 
         // Create a thread using the agent's GetNewThread method
         var thread = agent.GetNewThread();
@@ -268,7 +268,7 @@ public partial class ChatClientAgentTests
                 capturedMessages.AddRange(msgs))
             .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
 
-        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = null });
+        ChatClientAgent agent = new(mockService.Object, options: new() { ChatOptions = new() { Instructions = null } });
 
         // Act
         await agent.RunAsync([new(ChatRole.User, "test message")]);
@@ -298,7 +298,7 @@ public partial class ChatClientAgentTests
                 capturedMessages.AddRange(msgs))
             .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
 
-        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions" });
+        ChatClientAgent agent = new(mockService.Object, options: new() { ChatOptions = new ChatOptions() { Instructions = "test instructions" } });
 
         // Act
         await agent.RunAsync([]);
@@ -324,7 +324,7 @@ public partial class ChatClientAgentTests
                 It.Is<ChatOptions>(opts => opts.ConversationId == "ConvId"),
                 It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]) { ConversationId = "ConvId" });
 
-        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions" });
+        ChatClientAgent agent = new(mockService.Object, options: new() { ChatOptions = new() { Instructions = "test instructions" } });
 
         ChatClientAgentThread thread = new() { ConversationId = "ConvId" };
 
@@ -344,7 +344,7 @@ public partial class ChatClientAgentTests
         var chatOptions = new ChatOptions { ConversationId = "ConvId" };
         Mock<IChatClient> mockService = new();
 
-        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions" });
+        ChatClientAgent agent = new(mockService.Object, options: new() { ChatOptions = new ChatOptions() { Instructions = "test instructions" } });
 
         ChatClientAgentThread thread = new() { ConversationId = "ThreadId" };
 
@@ -367,7 +367,7 @@ public partial class ChatClientAgentTests
                 It.Is<ChatOptions>(opts => opts.MaxOutputTokens == 100 && opts.ConversationId == "ConvId"),
                 It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]) { ConversationId = "ConvId" });
 
-        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions" });
+        ChatClientAgent agent = new(mockService.Object, options: new() { ChatOptions = new ChatOptions() { Instructions = "test instructions" } });
 
         ChatClientAgentThread thread = new() { ConversationId = "ConvId" };
 
@@ -392,7 +392,7 @@ public partial class ChatClientAgentTests
                 It.IsAny<ChatOptions>(),
                 It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
 
-        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions" });
+        ChatClientAgent agent = new(mockService.Object, options: new() { ChatOptions = new() { Instructions = "test instructions" } });
 
         ChatClientAgentThread thread = new() { ConversationId = "ConvId" };
 
@@ -413,7 +413,7 @@ public partial class ChatClientAgentTests
                 It.IsAny<IEnumerable<ChatMessage>>(),
                 It.IsAny<ChatOptions>(),
                 It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]) { ConversationId = "ConvId" });
-        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions" });
+        ChatClientAgent agent = new(mockService.Object, options: new() { ChatOptions = new() { Instructions = "test instructions" } });
         ChatClientAgentThread thread = new();
 
         // Act
@@ -440,7 +440,7 @@ public partial class ChatClientAgentTests
         mockFactory.Setup(f => f(It.IsAny<ChatClientAgentOptions.ChatMessageStoreFactoryContext>())).Returns(new InMemoryChatMessageStore());
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
-            Instructions = "test instructions",
+            ChatOptions = new ChatOptions() { Instructions = "test instructions" },
             ChatMessageStoreFactory = mockFactory.Object
         });
 
@@ -470,7 +470,7 @@ public partial class ChatClientAgentTests
         mockFactory.Setup(f => f(It.IsAny<ChatClientAgentOptions.ChatMessageStoreFactoryContext>())).Returns(new InMemoryChatMessageStore());
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
-            Instructions = "test instructions",
+            ChatOptions = new() { Instructions = "test instructions" },
             ChatMessageStoreFactory = mockFactory.Object
         });
 
@@ -525,7 +525,7 @@ public partial class ChatClientAgentTests
             .Setup(p => p.InvokedAsync(It.IsAny<AIContextProvider.InvokedContext>(), It.IsAny<CancellationToken>()))
             .Returns(new ValueTask());
 
-        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "base instructions", AIContextProviderFactory = _ => mockProvider.Object, ChatOptions = new() { Tools = [AIFunctionFactory.Create(() => { }, "base function")] } });
+        ChatClientAgent agent = new(mockService.Object, options: new() { ChatOptions = new() { Instructions = "base instructions", Tools = [AIFunctionFactory.Create(() => { }, "base function")] }, AIContextProviderFactory = _ => mockProvider.Object });
 
         // Act
         await agent.RunAsync(requestMessages);
@@ -570,7 +570,7 @@ public partial class ChatClientAgentTests
             .Setup(p => p.InvokedAsync(It.IsAny<AIContextProvider.InvokedContext>(), It.IsAny<CancellationToken>()))
             .Returns(new ValueTask());
 
-        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "base instructions", AIContextProviderFactory = _ => mockProvider.Object, ChatOptions = new() { Tools = [AIFunctionFactory.Create(() => { }, "base function")] } });
+        ChatClientAgent agent = new(mockService.Object, options: new() { ChatOptions = new() { Instructions = "base instructions", Tools = [AIFunctionFactory.Create(() => { }, "base function")] }, AIContextProviderFactory = _ => mockProvider.Object });
 
         // Act
         await Assert.ThrowsAsync<InvalidOperationException>(() => agent.RunAsync(requestMessages));
@@ -612,7 +612,7 @@ public partial class ChatClientAgentTests
             .Setup(p => p.InvokingAsync(It.IsAny<AIContextProvider.InvokingContext>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AIContext());
 
-        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "base instructions", AIContextProviderFactory = _ => mockProvider.Object, ChatOptions = new() { Tools = [AIFunctionFactory.Create(() => { }, "base function")] } });
+        ChatClientAgent agent = new(mockService.Object, options: new() { ChatOptions = new() { Instructions = "base instructions", Tools = [AIFunctionFactory.Create(() => { }, "base function")] }, AIContextProviderFactory = _ => mockProvider.Object });
 
         // Act
         await agent.RunAsync([new(ChatRole.User, "user message")]);
@@ -819,7 +819,7 @@ public partial class ChatClientAgentTests
     {
         // Arrange
         var chatClient = new Mock<IChatClient>().Object;
-        var metadata = new ChatClientAgentOptions { Instructions = "You are a helpful assistant" };
+        var metadata = new ChatClientAgentOptions { ChatOptions = new() { Instructions = "You are a helpful assistant" } };
         ChatClientAgent agent = new(chatClient, metadata);
 
         // Act & Assert
@@ -848,7 +848,7 @@ public partial class ChatClientAgentTests
     {
         // Arrange
         var chatClient = new Mock<IChatClient>().Object;
-        var metadata = new ChatClientAgentOptions { Instructions = null };
+        var metadata = new ChatClientAgentOptions { ChatOptions = new() { Instructions = null } };
         ChatClientAgent agent = new(chatClient, metadata);
 
         // Act & Assert
@@ -882,7 +882,7 @@ public partial class ChatClientAgentTests
     /// Verify that ChatOptions property returns null when no params are provided that require a ChatOptions instance.
     /// </summary>
     [Fact]
-    public void ChatOptionsReturnsNullWhenConstructorToolsNotProvided()
+    public void ChatOptionsToolsReturnsNullWhenConstructorToolsNotProvided()
     {
         // Arrange
         var chatClient = new Mock<IChatClient>().Object;
@@ -892,7 +892,7 @@ public partial class ChatClientAgentTests
         Assert.Equal("TestInstructions", agent.Instructions);
         Assert.Equal("TestName", agent.Name);
         Assert.Equal("TestDescription", agent.Description);
-        Assert.Null(agent.ChatOptions);
+        Assert.Null(agent.ChatOptions?.Tools);
     }
 
     #endregion
@@ -983,7 +983,7 @@ public partial class ChatClientAgentTests
     public async Task ChatOptionsMergingUsesAgentOptionsWhenRequestHasNoneAsync()
     {
         // Arrange
-        var agentChatOptions = new ChatOptions { MaxOutputTokens = 100, Temperature = 0.7f };
+        var agentChatOptions = new ChatOptions { MaxOutputTokens = 100, Temperature = 0.7f, Instructions = "test instructions" };
         Mock<IChatClient> mockService = new();
         ChatOptions? capturedChatOptions = null;
         mockService.Setup(
@@ -997,7 +997,6 @@ public partial class ChatClientAgentTests
 
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
-            Instructions = "test instructions",
             ChatOptions = agentChatOptions
         });
         var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
@@ -1026,7 +1025,7 @@ public partial class ChatClientAgentTests
                 capturedChatOptions = opts)
             .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
 
-        ChatClientAgent agent = new(mockService.Object, options: new("test instructions"));
+        ChatClientAgent agent = new(mockService.Object, options: new() { ChatOptions = new() { Instructions = "test instructions" } });
         var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
 
         // Act
@@ -1083,6 +1082,7 @@ public partial class ChatClientAgentTests
             Temperature = 0.7f,
             TopP = 0.9f,
             ModelId = "agent-model",
+            Instructions = "agent instructions",
             AdditionalProperties = new AdditionalPropertiesDictionary { ["key"] = "agent-value" }
         };
         var requestChatOptions = new ChatOptions
@@ -1100,7 +1100,7 @@ public partial class ChatClientAgentTests
             AdditionalProperties = new AdditionalPropertiesDictionary { ["key"] = "request-value" }, // Request value takes priority
             TopP = 0.9f, // Agent value used when request doesn't specify
             ModelId = "agent-model", // Agent value used when request doesn't specify
-            Instructions = "test instructions\nrequest instructions" // Request is in addition to agent instructions
+            Instructions = "agent instructions\nrequest instructions" // Request is in addition to agent instructions
         };
 
         Mock<IChatClient> mockService = new();
@@ -1116,7 +1116,6 @@ public partial class ChatClientAgentTests
 
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
-            Instructions = "test instructions",
             ChatOptions = agentChatOptions
         });
         var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
@@ -1133,34 +1132,6 @@ public partial class ChatClientAgentTests
         Assert.Equal("request-value", capturedChatOptions.AdditionalProperties["key"]); // Request value takes priority
         Assert.Equal(0.9f, capturedChatOptions.TopP); // Agent value used when request doesn't specify
         Assert.Equal("agent-model", capturedChatOptions.ModelId); // Agent value used when request doesn't specify
-    }
-
-    /// <summary>
-    /// Verify that ChatOptions merging returns null when both agent and request have no ChatOptions.
-    /// </summary>
-    [Fact]
-    public async Task ChatOptionsMergingReturnsNullWhenBothAgentAndRequestHaveNoneAsync()
-    {
-        // Arrange
-        Mock<IChatClient> mockService = new();
-        ChatOptions? capturedChatOptions = null;
-        mockService.Setup(
-            s => s.GetResponseAsync(
-                It.IsAny<IEnumerable<ChatMessage>>(),
-                It.IsAny<ChatOptions>(),
-                It.IsAny<CancellationToken>()))
-            .Callback<IEnumerable<ChatMessage>, ChatOptions, CancellationToken>((msgs, opts, ct) =>
-                capturedChatOptions = opts)
-            .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
-
-        ChatClientAgent agent = new(mockService.Object);
-        var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
-
-        // Act
-        await agent.RunAsync(messages);
-
-        // Assert
-        Assert.Null(capturedChatOptions);
     }
 
     /// <summary>
@@ -1195,7 +1166,6 @@ public partial class ChatClientAgentTests
 
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
-            Instructions = "test instructions",
             ChatOptions = agentChatOptions
         });
         var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
@@ -1245,7 +1215,6 @@ public partial class ChatClientAgentTests
 
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
-            Instructions = "test instructions",
             ChatOptions = agentChatOptions
         });
         var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
@@ -1292,7 +1261,6 @@ public partial class ChatClientAgentTests
 
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
-            Instructions = "test instructions",
             ChatOptions = agentChatOptions
         });
         var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
@@ -1348,7 +1316,7 @@ public partial class ChatClientAgentTests
             TopK = 50,
             PresencePenalty = 0.1f,
             FrequencyPenalty = 0.2f,
-            Instructions = "test instructions\nrequest instructions",
+            Instructions = "agent instructions\nrequest instructions",
             ModelId = "agent-model",
             Seed = 12345,
             ConversationId = "agent-conversation",
@@ -1371,7 +1339,6 @@ public partial class ChatClientAgentTests
 
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
-            Instructions = "test instructions",
             ChatOptions = agentChatOptions
         });
         var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
@@ -1421,7 +1388,7 @@ public partial class ChatClientAgentTests
         {
             Id = "test-agent-id",
             Name = "TestAgent",
-            Instructions = "Test instructions"
+            ChatOptions = new ChatOptions() { Instructions = "Test instructions" }
         });
 
         // Act
@@ -1444,7 +1411,7 @@ public partial class ChatClientAgentTests
         var mockChatClient = new Mock<IChatClient>();
         var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
         {
-            Instructions = "Test instructions"
+            ChatOptions = new() { Instructions = "Test instructions" }
         });
 
         // Act
@@ -1468,7 +1435,7 @@ public partial class ChatClientAgentTests
         var mockChatClient = new Mock<IChatClient>();
         var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
         {
-            Instructions = "Test instructions"
+            ChatOptions = new() { Instructions = "Test instructions" }
         });
 
         // Act
@@ -1494,7 +1461,7 @@ public partial class ChatClientAgentTests
 
         var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
         {
-            Instructions = "Test instructions"
+            ChatOptions = new() { Instructions = "Test instructions" }
         });
 
         // Act
@@ -1518,7 +1485,7 @@ public partial class ChatClientAgentTests
 
         var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
         {
-            Instructions = "Test instructions"
+            ChatOptions = new() { Instructions = "Test instructions" }
         });
 
         // Act
@@ -1544,7 +1511,7 @@ public partial class ChatClientAgentTests
 
         var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
         {
-            Instructions = "Test instructions"
+            ChatOptions = new() { Instructions = "Test instructions" }
         });
 
         // Act
@@ -1573,7 +1540,7 @@ public partial class ChatClientAgentTests
 
         var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
         {
-            Instructions = "Test instructions"
+            ChatOptions = new() { Instructions = "Test instructions" }
         });
 
         // Act
@@ -1606,7 +1573,7 @@ public partial class ChatClientAgentTests
         {
             Id = "test-agent-id",
             Name = "TestAgent",
-            Instructions = "Test instructions"
+            ChatOptions = new() { Instructions = "Test instructions" }
         });
 
         // Act
@@ -1633,7 +1600,7 @@ public partial class ChatClientAgentTests
 
         var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
         {
-            Instructions = "Test instructions"
+            ChatOptions = new() { Instructions = "Test instructions" }
         });
 
         // Act
@@ -1668,12 +1635,12 @@ public partial class ChatClientAgentTests
 
         var chatClientAgent1 = new ChatClientAgent(mockChatClient1.Object, new ChatClientAgentOptions
         {
-            Instructions = "Test instructions 1"
+            ChatOptions = new() { Instructions = "Test instructions 1" }
         });
 
         var chatClientAgent2 = new ChatClientAgent(mockChatClient2.Object, new ChatClientAgentOptions
         {
-            Instructions = "Test instructions 2"
+            ChatOptions = new() { Instructions = "Test instructions 2" }
         });
 
         // Act
@@ -1708,7 +1675,7 @@ public partial class ChatClientAgentTests
         var mockChatClient = new Mock<IChatClient>();
         var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
         {
-            Instructions = "Test instructions"
+            ChatOptions = new() { Instructions = "Test instructions" }
         });
 
         // Act
@@ -1732,7 +1699,7 @@ public partial class ChatClientAgentTests
         var mockChatClient = new Mock<IChatClient>();
         var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
         {
-            Instructions = "Test instructions"
+            ChatOptions = new() { Instructions = "Test instructions" }
         });
 
         // Act
@@ -1757,7 +1724,7 @@ public partial class ChatClientAgentTests
         var mockChatClient = new Mock<IChatClient>();
         var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
         {
-            Instructions = "Test instructions"
+            ChatOptions = new() { Instructions = "Test instructions" }
         });
 
         // Act - Request IChatClient with a service key (base.GetService will return null due to serviceKey)
@@ -1782,7 +1749,7 @@ public partial class ChatClientAgentTests
         mockChatClient.Setup(c => c.GetService(typeof(string), "some-key")).Returns("test-result");
         var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
         {
-            Instructions = "Test instructions"
+            ChatOptions = new() { Instructions = "Test instructions" }
         });
 
         // Act - Request string with a service key (base.GetService will return null due to serviceKey)
@@ -1823,7 +1790,7 @@ public partial class ChatClientAgentTests
         ChatClientAgent agent =
             new(mockService.Object, options: new()
             {
-                Instructions = "test instructions"
+                ChatOptions = new() { Instructions = "test instructions" }
             });
 
         // Act
@@ -1870,7 +1837,7 @@ public partial class ChatClientAgentTests
         mockFactory.Setup(f => f(It.IsAny<ChatClientAgentOptions.ChatMessageStoreFactoryContext>())).Returns(new InMemoryChatMessageStore());
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
-            Instructions = "test instructions",
+            ChatOptions = new() { Instructions = "test instructions" },
             ChatMessageStoreFactory = mockFactory.Object
         });
 
@@ -1905,7 +1872,7 @@ public partial class ChatClientAgentTests
         mockFactory.Setup(f => f(It.IsAny<ChatClientAgentOptions.ChatMessageStoreFactoryContext>())).Returns(new InMemoryChatMessageStore());
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
-            Instructions = "test instructions",
+            ChatOptions = new() { Instructions = "test instructions" },
             ChatMessageStoreFactory = mockFactory.Object
         });
 
@@ -1931,7 +1898,7 @@ public partial class ChatClientAgentTests
         var factoryCalled = false;
         var agent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
         {
-            Instructions = "Test instructions",
+            ChatOptions = new() { Instructions = "Test instructions" },
             AIContextProviderFactory = _ =>
             {
                 factoryCalled = true;
