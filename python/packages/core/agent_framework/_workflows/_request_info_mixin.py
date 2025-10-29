@@ -8,7 +8,7 @@ from builtins import type as builtin_type
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from ._typing_utils import is_instance_of
+from ._typing_utils import is_instance_of, is_type_compatible
 from ._workflow_context import WorkflowContext, validate_workflow_context_annotation
 
 if TYPE_CHECKING:
@@ -34,8 +34,9 @@ class RequestInfoMixin:
             return False
 
         for request_type_key, response_type_key in self._response_handlers:
-            # TODO(@taochen): #1753 - Consider covariance/contravariance for request/response types
-            if issubclass(request_type, request_type_key) and issubclass(response_type, response_type_key):
+            if is_type_compatible(request_type, request_type_key) and is_type_compatible(
+                response_type, response_type_key
+            ):
                 return True
 
         return False

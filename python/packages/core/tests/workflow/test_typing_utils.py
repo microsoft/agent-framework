@@ -4,7 +4,12 @@ from dataclasses import dataclass
 from typing import Any, Generic, TypeVar, Union
 
 from agent_framework import RequestInfoEvent
-from agent_framework._workflows._typing_utils import deserialize_type, is_instance_of, serialize_type
+from agent_framework._workflows._typing_utils import (
+    deserialize_type,
+    is_instance_of,
+    is_type_compatible,
+    serialize_type,
+)
 
 
 def test_basic_types() -> None:
@@ -192,3 +197,89 @@ def test_deserialize_type_error_handling() -> None:
     # Test with non-existent type in existing module
     with pytest.raises(AttributeError):
         deserialize_type("builtins.NonExistentType")
+
+
+def test_type_compatibility_basic() -> None:
+    """Test basic type compatibility scenarios."""
+    # Exact type match
+    assert is_type_compatible(str, str)
+    assert is_type_compatible(int, int)
+
+    # bool is a subtype of int
+    assert is_type_compatible(bool, int)
+
+    # Any compatibility
+    assert is_type_compatible(str, Any)
+    assert is_type_compatible(list[int], Any)
+
+    # Subclass compatibility
+    class Animal:
+        pass
+
+    class Dog(Animal):
+        pass
+
+    assert is_type_compatible(Dog, Animal)
+    assert not is_type_compatible(Animal, Dog)
+
+
+def test_type_compatibility_unions() -> None:
+    """Test type compatibility with Union types."""
+    # Source matches target union member
+    assert is_type_compatible(str, Union[str, int])
+    assert is_type_compatible(int, Union[str, int])
+    assert not is_type_compatible(float, Union[str, int])
+
+    # Source union - all members must be compatible with target
+    assert is_type_compatible(Union[str, int], Union[str, int, float])
+    assert not is_type_compatible(Union[str, int, bytes], Union[str, int])
+
+
+def test_type_compatibility_collections() -> None:
+    """Test type compatibility with collection types."""
+
+    # List compatibility - key use case
+    @dataclass
+    class ChatMessage:
+        text: str
+
+    assert is_type_compatible(list[ChatMessage], list[Union[str, ChatMessage]])
+    assert is_type_compatible(list[str], list[Union[str, ChatMessage]])
+    assert not is_type_compatible(list[Union[str, ChatMessage]], list[ChatMessage])
+
+    # Dict compatibility
+    assert is_type_compatible(dict[str, int], dict[str, Union[int, float]])
+    assert not is_type_compatible(dict[str, Union[int, float]], dict[str, int])
+
+    # Set compatibility
+    assert is_type_compatible(set[str], set[Union[str, int]])
+    assert not is_type_compatible(set[Union[str, int]], set[str])
+
+
+def test_type_compatibility_tuples() -> None:
+    """Test type compatibility with tuple types."""
+    # Fixed length tuples
+    assert is_type_compatible(tuple[str, int], tuple[Union[str, bytes], Union[int, float]])
+    assert not is_type_compatible(tuple[str, int], tuple[str, int, bool])  # Different lengths
+
+    # Variable length tuples
+    assert is_type_compatible(tuple[str, ...], tuple[Union[str, bytes], ...])
+    assert is_type_compatible(tuple[str, int, bool], tuple[Union[str, int, bool], ...])
+    assert not is_type_compatible(tuple[str, ...], tuple[str, int])  # Variable to fixed
+
+
+def test_type_compatibility_complex() -> None:
+    """Test complex nested type compatibility."""
+
+    @dataclass
+    class Message:
+        content: str
+
+    # Complex nested structure
+    source = list[dict[str, Message]]
+    target = list[dict[Union[str, bytes], Union[str, Message]]]
+    assert is_type_compatible(source, target)
+
+    # Incompatible nested structure
+    incompatible_target = list[dict[Union[str, bytes], int]]
+    assert not is_type_compatible(source, incompatible_target)

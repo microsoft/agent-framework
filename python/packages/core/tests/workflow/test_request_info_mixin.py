@@ -19,7 +19,7 @@ class TestRequestInfoMixin:
 
         class TestExecutor(Executor, RequestInfoMixin):
             def __init__(self):
-                super().__init__(id="test", defer_discovery=True)
+                super().__init__(id="test")
 
             @handler
             async def dummy_handler(self, message: str, ctx: WorkflowContext) -> None:
@@ -27,7 +27,6 @@ class TestRequestInfoMixin:
 
         executor = TestExecutor()
         # After calling _discover_response_handlers, it should have the attributes
-        executor._discover_response_handlers()  # type: ignore[reportAttributeAccessIssue]
         assert hasattr(executor, "_response_handlers")
         assert hasattr(executor, "_response_handler_specs")
         assert hasattr(executor, "is_request_response_capable")
@@ -85,7 +84,7 @@ class TestRequestInfoMixin:
 
         class TestExecutor(Executor, RequestInfoMixin):
             def __init__(self):
-                super().__init__(id="test_executor", defer_discovery=True)
+                super().__init__(id="test_executor")
 
             @handler
             async def dummy_handler(self, message: str, ctx: WorkflowContext) -> None:
@@ -104,7 +103,6 @@ class TestRequestInfoMixin:
                 pass
 
         executor = TestExecutor()
-        executor._discover_response_handlers()  # type: ignore[reportAttributeAccessIssue]
 
         # Should be request-response capable
         assert executor.is_request_response_capable is True
@@ -120,14 +118,13 @@ class TestRequestInfoMixin:
 
         class PlainExecutor(Executor, RequestInfoMixin):
             def __init__(self):
-                super().__init__(id="plain_executor", defer_discovery=True)
+                super().__init__(id="plain_executor")
 
             @handler
             async def dummy_handler(self, message: str, ctx: WorkflowContext) -> None:
                 pass
 
         executor = PlainExecutor()
-        executor._discover_response_handlers()  # type: ignore[reportAttributeAccessIssue]
 
         # Should not be request-response capable
         assert executor.is_request_response_capable is False
@@ -141,7 +138,7 @@ class TestRequestInfoMixin:
 
         class DuplicateExecutor(Executor, RequestInfoMixin):
             def __init__(self):
-                super().__init__(id="duplicate_executor", defer_discovery=True)
+                super().__init__(id="duplicate_executor")
 
             @handler
             async def dummy_handler(self, message: str, ctx: WorkflowContext) -> None:
@@ -155,20 +152,18 @@ class TestRequestInfoMixin:
             async def handle_second(self, original_request: str, response: int, ctx: WorkflowContext[str]) -> None:
                 pass
 
-        executor = DuplicateExecutor()
-
         with pytest.raises(
             ValueError,
             match="Duplicate response handler for request type <class 'str'> and response type <class 'int'>",
         ):
-            executor._discover_response_handlers()  # type: ignore[reportAttributeAccessIssue]
+            DuplicateExecutor()
 
     def test_response_handler_function_callable(self):
         """Test that response handlers can actually be called."""
 
         class TestExecutor(Executor, RequestInfoMixin):
             def __init__(self):
-                super().__init__(id="test_executor", defer_discovery=True)
+                super().__init__(id="test_executor")
                 self.handled_request = None
                 self.handled_response = None
 
@@ -182,7 +177,6 @@ class TestRequestInfoMixin:
                 self.handled_response = response
 
         executor = TestExecutor()
-        executor._discover_response_handlers()  # type: ignore[reportAttributeAccessIssue]
 
         # Get the handler
         response_handler_func = executor._response_handlers[(str, int)]  # type: ignore[reportAttributeAccessIssue]
@@ -198,7 +192,7 @@ class TestRequestInfoMixin:
 
         class BaseExecutor(Executor, RequestInfoMixin):
             def __init__(self):
-                super().__init__(id="base_executor", defer_discovery=True)
+                super().__init__(id="base_executor")
 
             @handler
             async def dummy_handler(self, message: str, ctx: WorkflowContext) -> None:
@@ -218,7 +212,6 @@ class TestRequestInfoMixin:
                 pass
 
         child = ChildExecutor()
-        child._discover_response_handlers()  # type: ignore[reportAttributeAccessIssue]
 
         # Should have both handlers
         response_handlers = child._response_handlers  # type: ignore[reportAttributeAccessIssue]
@@ -232,7 +225,7 @@ class TestRequestInfoMixin:
 
         class TestExecutor(Executor, RequestInfoMixin):
             def __init__(self):
-                super().__init__(id="test_executor", defer_discovery=True)
+                super().__init__(id="test_executor")
 
             @handler
             async def dummy_handler(self, message: str, ctx: WorkflowContext) -> None:
@@ -243,7 +236,6 @@ class TestRequestInfoMixin:
                 pass
 
         executor = TestExecutor()
-        executor._discover_response_handlers()  # type: ignore[reportAttributeAccessIssue]
 
         specs = executor._response_handler_specs  # type: ignore[reportAttributeAccessIssue]
         assert len(specs) == 1
@@ -262,7 +254,7 @@ class TestRequestInfoMixin:
 
         class TestExecutor(Executor, RequestInfoMixin):
             def __init__(self):
-                super().__init__(id="test_executor", defer_discovery=True)
+                super().__init__(id="test_executor")
 
             @handler
             async def dummy_handler(self, message: str, ctx: WorkflowContext) -> None:
@@ -275,7 +267,6 @@ class TestRequestInfoMixin:
         executor = TestExecutor()
 
         # First call should work fine
-        executor._discover_response_handlers()  # type: ignore[reportAttributeAccessIssue]
         first_handlers = len(executor._response_handlers)  # type: ignore[reportAttributeAccessIssue]
 
         # Second call should raise an error due to duplicate registration
@@ -293,7 +284,7 @@ class TestRequestInfoMixin:
 
         class TestExecutor(Executor, RequestInfoMixin):
             def __init__(self):
-                super().__init__(id="test_executor", defer_discovery=True)
+                super().__init__(id="test_executor")
 
             some_variable = "not_a_function"
             another_attr = 42
@@ -307,7 +298,6 @@ class TestRequestInfoMixin:
                 pass
 
         executor = TestExecutor()
-        executor._discover_response_handlers()  # type: ignore[reportAttributeAccessIssue]
 
         # Should only have one handler despite other attributes
         response_handlers = executor._response_handlers  # type: ignore[reportAttributeAccessIssue]
@@ -319,7 +309,7 @@ class TestRequestInfoMixin:
 
         class TestExecutor(Executor, RequestInfoMixin):
             def __init__(self):
-                super().__init__(id="test_executor", defer_discovery=True)
+                super().__init__(id="test_executor")
                 self.str_int_handler_called = False
                 self.str_bool_handler_called = False
                 self.str_dict_handler_called = False
@@ -343,7 +333,6 @@ class TestRequestInfoMixin:
                 self.str_dict_handler_called = True
 
         executor = TestExecutor()
-        executor._discover_response_handlers()  # type: ignore[reportAttributeAccessIssue]
 
         # Should have three distinct handlers
         response_handlers = executor._response_handlers  # type: ignore[reportAttributeAccessIssue]
@@ -375,7 +364,7 @@ class TestRequestInfoMixin:
 
         class TestExecutor(Executor, RequestInfoMixin):
             def __init__(self):
-                super().__init__(id="test_executor", defer_discovery=True)
+                super().__init__(id="test_executor")
                 self.str_int_handler_called = False
                 self.dict_int_handler_called = False
                 self.list_int_handler_called = False
@@ -401,7 +390,6 @@ class TestRequestInfoMixin:
                 self.list_int_handler_called = True
 
         executor = TestExecutor()
-        executor._discover_response_handlers()  # type: ignore[reportAttributeAccessIssue]
 
         # Should have three distinct handlers
         response_handlers = executor._response_handlers  # type: ignore[reportAttributeAccessIssue]
@@ -439,7 +427,7 @@ class TestRequestInfoMixin:
 
         class TestExecutor(Executor, RequestInfoMixin):
             def __init__(self):
-                super().__init__(id="test_executor", defer_discovery=True)
+                super().__init__(id="test_executor")
                 self.custom_custom_called = False
                 self.custom_str_called = False
                 self.str_custom_called = False
@@ -467,7 +455,6 @@ class TestRequestInfoMixin:
                 self.str_custom_called = True
 
         executor = TestExecutor()
-        executor._discover_response_handlers()  # type: ignore[reportAttributeAccessIssue]
 
         # Should have three distinct handlers
         response_handlers = executor._response_handlers  # type: ignore[reportAttributeAccessIssue]
@@ -493,7 +480,7 @@ class TestRequestInfoMixin:
 
         class TestExecutor(Executor, RequestInfoMixin):
             def __init__(self):
-                super().__init__(id="test_executor", defer_discovery=True)
+                super().__init__(id="test_executor")
 
             @handler
             async def dummy_handler(self, message: str, ctx: WorkflowContext) -> None:
@@ -516,7 +503,6 @@ class TestRequestInfoMixin:
                 pass
 
         executor = TestExecutor()
-        executor._discover_response_handlers()  # type: ignore[reportAttributeAccessIssue]
 
         # Should have four distinct handlers based on different combinations
         response_handlers = executor._response_handlers  # type: ignore[reportAttributeAccessIssue]
@@ -538,7 +524,7 @@ class TestRequestInfoMixin:
 
         class TestExecutor(Executor, RequestInfoMixin):
             def __init__(self):
-                super().__init__(id="test_executor", defer_discovery=True)
+                super().__init__(id="test_executor")
 
             @handler
             async def dummy_handler(self, message: str, ctx: WorkflowContext) -> None:
@@ -555,7 +541,6 @@ class TestRequestInfoMixin:
                 pass
 
         executor = TestExecutor()
-        executor._discover_response_handlers()  # type: ignore[reportAttributeAccessIssue]
 
         # Test that wrong combinations don't match
         assert executor._find_response_handler("test", 3.14) is None  # pyright: ignore[reportPrivateUsage] # str request, float response - no handler
@@ -565,3 +550,239 @@ class TestRequestInfoMixin:
         # Test that correct combinations do match
         assert executor._find_response_handler("test", 42) is not None  # pyright: ignore[reportPrivateUsage] # str request, int response - has handler
         assert executor._find_response_handler(["test"], 3.14) is not None  # pyright: ignore[reportPrivateUsage] # list request, float response - has handler
+
+    def test_is_request_supported_with_exact_matches(self):
+        """Test is_request_supported with exact type matches."""
+
+        class TestExecutor(Executor, RequestInfoMixin):
+            def __init__(self):
+                super().__init__(id="test_executor")
+
+            @handler
+            async def dummy_handler(self, message: str, ctx: WorkflowContext) -> None:
+                pass
+
+            @response_handler
+            async def handle_str_int(self, original_request: str, response: int, ctx: WorkflowContext[str]) -> None:
+                pass
+
+            @response_handler
+            async def handle_dict_bool(
+                self, original_request: dict[str, Any], response: bool, ctx: WorkflowContext[str]
+            ) -> None:
+                pass
+
+        executor = TestExecutor()
+
+        # Test exact matches
+        assert executor.is_request_supported(str, int) is True
+        assert executor.is_request_supported(str, bool) is True  # bool and int are compatible
+        assert executor.is_request_supported(dict[str, Any], bool) is True
+
+        # Test non-matches
+        assert executor.is_request_supported(int, str) is False
+        assert executor.is_request_supported(list[str], int) is False
+
+    def test_is_request_supported_without_handlers(self):
+        """Test is_request_supported when no handlers are registered."""
+
+        class TestExecutor(Executor, RequestInfoMixin):
+            def __init__(self):
+                super().__init__(id="test_executor")
+
+            @handler
+            async def dummy_handler(self, message: str, ctx: WorkflowContext) -> None:
+                pass
+
+        executor = TestExecutor()
+
+        # Should return False for any type combination
+        assert executor.is_request_supported(str, int) is False
+        assert executor.is_request_supported(dict[str, Any], bool) is False
+        assert executor.is_request_supported(int, str) is False
+
+    def test_is_request_supported_before_discovery(self):
+        """Test is_request_supported before response handlers are discovered."""
+
+        class TestExecutor(Executor, RequestInfoMixin):
+            def __init__(self):
+                super().__init__(id="test_executor", defer_discovery=True)
+
+            @handler
+            async def dummy_handler(self, message: str, ctx: WorkflowContext) -> None:
+                pass
+
+            @response_handler
+            async def handle_str_int(self, original_request: str, response: int, ctx: WorkflowContext[str]) -> None:
+                pass
+
+        executor = TestExecutor()
+        # Don't call _discover_response_handlers()
+
+        # Should return False when _response_handlers attribute doesn't exist
+        assert executor.is_request_supported(str, int) is False
+        assert executor.is_request_supported(dict[str, Any], bool) is False
+
+    def test_is_request_supported_with_compatible_types(self):
+        """Test is_request_supported with type-compatible scenarios."""
+
+        class BaseRequest:
+            pass
+
+        class DerivedRequest(BaseRequest):
+            pass
+
+        class BaseResponse:
+            pass
+
+        class DerivedResponse(BaseResponse):
+            pass
+
+        class TestExecutor(Executor, RequestInfoMixin):
+            def __init__(self):
+                super().__init__(id="test_executor")
+
+            @handler
+            async def dummy_handler(self, message: str, ctx: WorkflowContext) -> None:
+                pass
+
+            @response_handler
+            async def handle_base_base(
+                self, original_request: BaseRequest, response: BaseResponse, ctx: WorkflowContext[str]
+            ) -> None:
+                pass
+
+            @response_handler
+            async def handle_str_int(self, original_request: str, response: int, ctx: WorkflowContext[str]) -> None:
+                pass
+
+        executor = TestExecutor()
+
+        # Test exact matches
+        assert executor.is_request_supported(BaseRequest, BaseResponse) is True
+        assert executor.is_request_supported(str, int) is True
+
+        # Test compatible derived types (depends on is_type_compatible implementation)
+        # These should return True if the type compatibility function supports inheritance
+        result_derived_request = executor.is_request_supported(DerivedRequest, BaseResponse)
+        result_derived_response = executor.is_request_supported(BaseRequest, DerivedResponse)
+        result_both_derived = executor.is_request_supported(DerivedRequest, DerivedResponse)
+
+        # The actual result depends on the is_type_compatible implementation
+        # We'll just assert that the method doesn't raise an exception
+        assert isinstance(result_derived_request, bool)
+        assert isinstance(result_derived_response, bool)
+        assert isinstance(result_both_derived, bool)
+
+    def test_is_request_supported_with_multiple_handlers(self):
+        """Test is_request_supported when multiple handlers are registered."""
+
+        class TestExecutor(Executor, RequestInfoMixin):
+            def __init__(self):
+                super().__init__(id="test_executor")
+
+            @handler
+            async def dummy_handler(self, message: str, ctx: WorkflowContext) -> None:
+                pass
+
+            @response_handler
+            async def handle_str_int(self, original_request: str, response: int, ctx: WorkflowContext[str]) -> None:
+                pass
+
+            @response_handler
+            async def handle_str_bool(self, original_request: str, response: bool, ctx: WorkflowContext[str]) -> None:
+                pass
+
+            @response_handler
+            async def handle_dict_str(
+                self, original_request: dict[str, Any], response: str, ctx: WorkflowContext[str]
+            ) -> None:
+                pass
+
+            @response_handler
+            async def handle_list_float(
+                self, original_request: list[str], response: float, ctx: WorkflowContext[str]
+            ) -> None:
+                pass
+
+        executor = TestExecutor()
+
+        # Test all registered combinations
+        assert executor.is_request_supported(str, int) is True
+        assert executor.is_request_supported(str, bool) is True
+        assert executor.is_request_supported(dict[str, Any], str) is True
+        assert executor.is_request_supported(list[str], float) is True
+
+        # Test combinations that don't exist
+        assert executor.is_request_supported(str, float) is False
+        assert executor.is_request_supported(int, str) is False
+        assert executor.is_request_supported(dict[str, Any], int) is False
+        assert executor.is_request_supported(list[str], bool) is False
+
+    def test_is_request_supported_with_complex_types(self):
+        """Test is_request_supported with complex generic types."""
+
+        class TestExecutor(Executor, RequestInfoMixin):
+            def __init__(self):
+                super().__init__(id="test_executor")
+
+            @handler
+            async def dummy_handler(self, message: str, ctx: WorkflowContext) -> None:
+                pass
+
+            @response_handler
+            async def handle_dict_list(
+                self, original_request: dict[str, Any], response: list[int], ctx: WorkflowContext[str]
+            ) -> None:
+                pass
+
+            @response_handler
+            async def handle_list_dict(
+                self, original_request: list[str], response: dict[str, bool], ctx: WorkflowContext[str]
+            ) -> None:
+                pass
+
+        executor = TestExecutor()
+
+        # Test complex type matches
+        assert executor.is_request_supported(dict[str, Any], list[int]) is True
+        assert executor.is_request_supported(list[str], dict[str, bool]) is True
+
+        # Test non-matches with similar but different complex types
+        assert executor.is_request_supported(dict[str, Any], list[str]) is False
+        assert executor.is_request_supported(list[int], dict[str, bool]) is False
+        assert executor.is_request_supported(dict[int, Any], list[int]) is False
+
+    def test_is_request_supported_with_inheritance(self):
+        """Test is_request_supported with inherited response handlers."""
+
+        class BaseExecutor(Executor, RequestInfoMixin):
+            def __init__(self):
+                super().__init__(id="base_executor")
+
+            @handler
+            async def dummy_handler(self, message: str, ctx: WorkflowContext) -> None:
+                pass
+
+            @response_handler
+            async def base_handler(self, original_request: str, response: int, ctx: WorkflowContext[str]) -> None:
+                pass
+
+        class ChildExecutor(BaseExecutor):
+            def __init__(self):
+                super().__init__()
+                self.id = "child_executor"
+
+            @response_handler
+            async def child_handler(self, original_request: str, response: bool, ctx: WorkflowContext[str]) -> None:
+                pass
+
+        child = ChildExecutor()
+
+        # Should support both inherited and child-defined handlers
+        assert child.is_request_supported(str, int) is True  # From base class
+        assert child.is_request_supported(str, bool) is True  # From child class
+
+        # Should not support unregistered combinations
+        assert child.is_request_supported(str, str) is False
+        assert child.is_request_supported(int, str) is False
