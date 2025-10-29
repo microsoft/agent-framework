@@ -22,7 +22,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <PackageReference Include="System.Net.ServerSentEvents" />
     <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" />
     <PackageReference Include="System.Text.Json" />
