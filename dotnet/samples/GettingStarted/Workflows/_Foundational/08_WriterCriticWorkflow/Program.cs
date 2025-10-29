@@ -364,7 +364,7 @@ internal sealed class CriticExecutor : Executor<ChatMessage, CriticDecision>
             string fb = doc.RootElement.TryGetProperty("feedback", out JsonElement el) ? el.GetString() ?? "" : "";
             return (ok, fb);
         }
-        catch
+        catch (JsonException)
         {
             return (false, "Malformed approval JSON.");
         }
