@@ -17,7 +17,12 @@ public sealed record class ActionExecutorResult
     /// </summary>
     public object? Result { get; }
 
-    internal ActionExecutorResult(string executorId, object? result = null)
+    /// <summary>
+    /// %%% COMMENT
+    /// </summary>
+    /// <param name="executorId"></param>
+    /// <param name="result"></param>
+    public ActionExecutorResult(string executorId, object? result = null) // %%% SCOPE
     {
         this.ExecutorId = executorId;
         this.Result = result;

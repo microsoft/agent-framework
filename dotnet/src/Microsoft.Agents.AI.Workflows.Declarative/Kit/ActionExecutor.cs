@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
@@ -40,10 +41,23 @@ public abstract class ActionExecutor(string id, FormulaSession session) : Action
         object? result = executorMessage.Result;
         if (result is TValue resultValue)
         {
+            Console.WriteLine(@$"""{value}"" ?= ""{resultValue}"" = {value.Equals(resultValue)}"); // %%% REMOVE
             return value.Equals(resultValue);
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Convenience method to test if the message has a result defined.
+    /// Intended for use with conditional edges.
+    /// </summary>
+    /// <param name="message">The message being handled, expects <see cref="ActionExecutorResult"/>.</param>
+    /// <returns>true if the message has a result.</returns>
+    public static bool HasResult(object? message)
+    {
+        ActionExecutorResult executorMessage = ActionExecutorResult.ThrowIfNot(message);
+        return executorMessage.Result is not null;
     }
 }
 
@@ -75,11 +89,19 @@ public abstract class ActionExecutor<TMessage> : Executor<TMessage>, IResettable
     /// <inheritdoc/>
     public override async ValueTask HandleAsync(TMessage message, IWorkflowContext context, CancellationToken cancellationToken)
     {
+        Console.WriteLine($"EXECUTE #{this.Id}"); // %%% REMOVE
         object? result = await this.ExecuteAsync(new DeclarativeWorkflowContext(context, this._session.State), message, cancellationToken).ConfigureAwait(false);
         Debug.WriteLine($"RESULT #{this.Id} - {result ?? "(null)"}");
 
         await context.SendResultMessageAsync(this.Id, result, cancellationToken).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// Restore the state of the executor from a checkpoint.
+    /// This must be overridden to restore any state that was saved during checkpointing.
+    /// </summary>
+    protected override ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default) =>
+        this._session.State.RestoreAsync(context, cancellationToken);
 
     /// <summary>
     /// Executes the core logic of the action.

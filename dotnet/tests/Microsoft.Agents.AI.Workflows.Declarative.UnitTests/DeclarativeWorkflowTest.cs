@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
+using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.AI;
@@ -90,6 +91,15 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         this.AssertNotExecuted("sendActivity_1");
         this.AssertNotExecuted("sendActivity_2");
         this.AssertNotExecuted("sendActivity_3");
+    }
+
+    [Fact]
+    public async Task QuestionAsync()
+    {
+        await this.RunWorkflowAsync("Question.yaml");
+        this.AssertExecutionCount(expectedCount: 3, adjustCompletion: true);
+        this.AssertExecuted(QuestionExecutor.Steps.Prepare("question_input"), isScope: true);
+        this.AssertExecuted("question_input", isScope: true);
     }
 
     [Theory]
@@ -225,10 +235,10 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         Assert.True(visitor.HasUnsupportedActions);
     }
 
-    private void AssertExecutionCount(int expectedCount)
+    private void AssertExecutionCount(int expectedCount, bool adjustCompletion = false)
     {
         Assert.Equal(expectedCount + 2, this.WorkflowEventCounts[typeof(ExecutorInvokedEvent)]);
-        Assert.Equal(expectedCount + 2, this.WorkflowEventCounts[typeof(ExecutorCompletedEvent)]);
+        Assert.Equal(expectedCount + (adjustCompletion ? 1 : 2), this.WorkflowEventCounts[typeof(ExecutorCompletedEvent)]);
     }
 
     private void AssertNotExecuted(string executorId)
@@ -266,37 +276,39 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
 
         await foreach (WorkflowEvent workflowEvent in run.WatchStreamAsync())
         {
+            bool exitLoop = false;
             this.WorkflowEvents.Add(workflowEvent);
-
             switch (workflowEvent)
             {
                 case ExecutorInvokedEvent invokeEvent:
                     ActionExecutorResult? message = invokeEvent.Data as ActionExecutorResult;
                     this.Output.WriteLine($"EXEC: {invokeEvent.ExecutorId} << {message?.ExecutorId ?? "?"} [{message?.Result ?? "-"}]");
                     break;
-
                 case DeclarativeActionInvokedEvent actionInvokeEvent:
                     this.Output.WriteLine($"ACTION ENTER: {actionInvokeEvent.ActionId}");
                     break;
-
                 case DeclarativeActionCompletedEvent actionCompleteEvent:
                     this.Output.WriteLine($"ACTION EXIT: {actionCompleteEvent.ActionId}");
                     break;
-
                 case MessageActivityEvent activityEvent:
                     this.Output.WriteLine($"ACTIVITY: {activityEvent.Message}");
                     break;
-
                 case AgentRunResponseEvent messageEvent:
                     this.Output.WriteLine($"MESSAGE: {messageEvent.Response.Messages[0].Text.Trim()}");
                     break;
-
                 case ExecutorFailedEvent failureEvent:
                     Console.WriteLine($"Executor failed [{failureEvent.ExecutorId}]: {failureEvent.Data?.Message ?? "Unknown"}");
                     break;
-
                 case WorkflowErrorEvent errorEvent:
                     throw errorEvent.Data as Exception ?? new XunitException("Unexpected failure...");
+                case RequestInfoEvent:
+                    exitLoop = true;
+                    break;
+            }
+
+            if (exitLoop)
+            {
+                break;
             }
         }
 
