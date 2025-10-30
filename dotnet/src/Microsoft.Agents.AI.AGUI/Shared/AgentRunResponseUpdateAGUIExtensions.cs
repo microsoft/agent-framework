@@ -49,7 +49,7 @@ internal static class AgentRunResponseUpdateAGUIExtensions
                 case RunErrorEvent runError:
                     yield return new AgentRunResponseUpdate(new ChatResponseUpdate(
                         ChatRole.Assistant,
-                        [new ErrorContent(runError.Message, runError.Code)]));
+                        [new RunErrorContent(runError.Message, runError.Code)]));
                     break;
                 case TextMessageStartEvent textStart:
                     if (currentRole != default || currentMessageId != null)
