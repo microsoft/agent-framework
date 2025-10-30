@@ -7,6 +7,7 @@ from typing import Any
 from .._agents import AgentProtocol, ChatAgent
 from .._threads import AgentThread
 from .._types import AgentRunResponse, AgentRunResponseUpdate, ChatMessage
+from ._conversation_state import encode_chat_messages
 from ._events import (
     AgentRunEvent,
     AgentRunUpdateEvent,  # type: ignore[reportPrivateUsage]
@@ -84,6 +85,21 @@ class AgentExecutor(Executor):
         self._agent_thread = agent_thread or self._agent.get_new_thread()
         self._output_response = output_response
         self._cache: list[ChatMessage] = []
+
+        # Check if using AzureAIAgentClient and warn about checkpointing limitations
+        if isinstance(agent, ChatAgent):
+            client_class_name = agent.chat_client.__class__.__name__
+            client_module = agent.chat_client.__class__.__module__
+            if client_class_name == "AzureAIAgentClient" and "azure_ai" in client_module:
+                # TODO(ekzhu): update this warning when we surface the hooks for
+                # custom executor checkpointing.
+                logger.warning(
+                    "AgentExecutor is being used with AzureAIAgentClient which uses server-side threads. "
+                    "Currently, checkpointing does not capture messages from server-side threads. "
+                    "The thread state in checkpoints is not immutable and can be modified by subsequent runs. "
+                    "If you need reliable checkpointing with Azure AI agents, consider implementing a custom "
+                    "executor and managing the thread state yourself."
+                )
 
     @property
     def workflow_output_types(self) -> list[type[Any]]:
@@ -194,41 +210,15 @@ class AgentExecutor(Executor):
     async def snapshot_state(self) -> dict[str, Any]:
         """Capture current executor state for checkpointing.
 
-        For server-side threads (those with service_thread_id), creates a local thread
-        with message store and copies messages from the server-side thread. This ensures
-        checkpoints are self-contained and don't depend on external service state that
-        could be modified or deleted.
+        NOTE: if the thread storage is on the server side, the full thread state
+        may not be serialized locally. Therefore, we are relying on the server-side
+        to ensure the thread state is preserved and immutable across checkpoints.
+        This is not the case for AzureAI Agents, but works for the Responses API.
 
         Returns:
             Dict containing serialized cache and thread state
         """
-        from .._threads import ChatMessageStore
-        from ._conversation_state import encode_chat_messages
-
-        serialized_thread: dict[str, Any]
-
-        # Handle server-side threads by creating a local copy with messages
-        if self._agent_thread.service_thread_id is not None:
-            # Create a new local thread with message store (not server-side)
-            # This makes the checkpoint self-contained and independent of external services
-            message_store = ChatMessageStore()
-            new_thread = AgentThread(
-                message_store=message_store,
-                context_provider=self._agent_thread.context_provider,
-            )
-
-            # Copy messages from the current thread if it has a message store
-            if self._agent_thread.message_store is not None:
-                existing_messages = await self._agent_thread.message_store.list_messages()
-                if existing_messages:
-                    # Use the message store's add_messages directly to avoid on_new_messages
-                    # which has special handling for service threads
-                    await message_store.add_messages(existing_messages)
-
-            serialized_thread = await new_thread.serialize()
-        else:
-            # For local threads, serialize directly
-            serialized_thread = await self._agent_thread.serialize()
+        serialized_thread = await self._agent_thread.serialize()
 
         return {
             "cache": encode_chat_messages(self._cache),
@@ -256,20 +246,8 @@ class AgentExecutor(Executor):
         thread_payload = state.get("agent_thread")
         if thread_payload:
             try:
-                # Deserialize the thread state to get the messages
-                from .._threads import AgentThread
-
-                temp_thread = await AgentThread.deserialize(thread_payload)
-
-                # Create a new thread using the agent's configuration
-                # This ensures the thread type (local vs server-side) matches the agent's setup
-                self._agent_thread = self._agent.get_new_thread()
-
-                # Copy messages from the checkpoint to the new thread
-                if temp_thread.message_store is not None:
-                    messages = await temp_thread.message_store.list_messages()
-                    if messages:
-                        await self._agent_thread.on_new_messages(messages)
+                # Deserialize the thread state directly
+                self._agent_thread = await AgentThread.deserialize(thread_payload)
 
             except Exception as exc:
                 logger.warning("Failed to restore agent thread: %s", exc)
