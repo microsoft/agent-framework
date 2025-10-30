@@ -72,7 +72,7 @@ internal sealed class A2AAgent : AIAgent
     /// <inheritdoc/>
     public override async Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
-        ValidateInputMessages(messages);
+        _ = Throw.IfNull(messages);
 
         var a2aMessage = messages.ToA2AMessage();
 
@@ -124,7 +124,7 @@ internal sealed class A2AAgent : AIAgent
     /// <inheritdoc/>
     public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        ValidateInputMessages(messages);
+        _ = Throw.IfNull(messages);
 
         var a2aMessage = messages.ToA2AMessage();
 
@@ -176,19 +176,6 @@ internal sealed class A2AAgent : AIAgent
 
     /// <inheritdoc/>
     public override string? Description => this._description ?? base.Description;
-
-    private static void ValidateInputMessages(IEnumerable<ChatMessage> messages)
-    {
-        _ = Throw.IfNull(messages);
-
-        foreach (var message in messages)
-        {
-            if (message.Role != ChatRole.User)
-            {
-                throw new ArgumentException($"All input messages for A2A agents must have the role '{ChatRole.User}'. Found '{message.Role}'.", nameof(messages));
-            }
-        }
-    }
 
     private static void UpdateThreadConversationId(A2AAgentThread? thread, string? contextId)
     {

@@ -25,7 +25,7 @@ public static class Program
     private static async Task Main()
     {
         // Create the workflow
-        var workflow = await WorkflowHelper.GetWorkflowAsync();
+        var workflow = WorkflowFactory.BuildWorkflow();
 
         // Create checkpoint manager
         var checkpointManager = CheckpointManager.Default;
@@ -67,7 +67,7 @@ public static class Program
         Console.WriteLine($"Number of checkpoints created: {checkpoints.Count}");
 
         // Rehydrate a new workflow instance from a saved checkpoint and continue execution
-        var newWorkflow = await WorkflowHelper.GetWorkflowAsync();
+        var newWorkflow = WorkflowFactory.BuildWorkflow();
         const int CheckpointIndex = 5;
         Console.WriteLine($"\n\nHydrating a new workflow instance from the {CheckpointIndex + 1}th checkpoint.");
         CheckpointInfo savedCheckpoint = checkpoints[CheckpointIndex];

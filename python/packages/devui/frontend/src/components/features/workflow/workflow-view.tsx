@@ -408,46 +408,82 @@ export function WorkflowView({
     // This preserves the workflow's final output for display
   };
 
-  // Extract workflow events from OpenAI events for executor tracking
+  // Extract workflow and output item events from OpenAI events for executor tracking
   const workflowEvents = useMemo(() => {
     return openAIEvents.filter(
-      (event) => event.type === "response.workflow_event.complete"
+      (event) =>
+        event.type === "response.output_item.added" ||
+        event.type === "response.output_item.done" ||
+        event.type === "response.created" ||
+        event.type === "response.in_progress" ||
+        event.type === "response.completed" ||
+        event.type === "response.failed" ||
+        // Keep legacy support for older backends
+        event.type === "response.workflow_event.complete"
     );
   }, [openAIEvents]);
 
   // Extract executor history from workflow events (filter out workflow-level events)
   const executorHistory = useMemo(() => {
-    return workflowEvents
-      .filter((event) => {
-        if ("data" in event && event.data && typeof event.data === "object") {
-          const data = event.data as Record<string, unknown>;
-          // Filter out workflow-level events (those without executor_id)
-          // These include: WorkflowStartedEvent, WorkflowOutputEvent, WorkflowStatusEvent, etc.
-          return data.executor_id != null;
+    const history: Array<{
+      executorId: string;
+      message: string;
+      timestamp: string;
+      status: "running" | "completed" | "error";
+    }> = [];
+
+    workflowEvents.forEach((event) => {
+      // Handle new standard OpenAI events
+      if (
+        event.type === "response.output_item.added" ||
+        event.type === "response.output_item.done"
+      ) {
+        const item = (event as any).item;
+        if (item && item.type === "executor_action" && item.executor_id) {
+          history.push({
+            executorId: item.executor_id,
+            message:
+              event.type === "response.output_item.added"
+                ? "Executor started"
+                : item.status === "completed"
+                ? "Executor completed"
+                : item.status === "failed"
+                ? "Executor failed"
+                : "Executor processing",
+            timestamp: new Date().toISOString(),
+            status:
+              item.status === "completed"
+                ? "completed"
+                : item.status === "failed"
+                ? "error"
+                : "running",
+          });
         }
-        return false;
-      })
-      .map((event) => {
-        if ("data" in event && event.data && typeof event.data === "object") {
-          const data = event.data as Record<string, unknown>;
-          return {
+      }
+      // Legacy support for older backends
+      else if (
+        event.type === "response.workflow_event.complete" &&
+        "data" in event &&
+        event.data &&
+        typeof event.data === "object"
+      ) {
+        const data = event.data as Record<string, unknown>;
+        if (data.executor_id != null) {
+          history.push({
             executorId: String(data.executor_id),
             message: String(data.event_type || "Processing"),
             timestamp: String(data.timestamp || new Date().toISOString()),
             status: String(data.event_type || "").includes("Completed")
-              ? ("completed" as const)
+              ? "completed"
               : String(data.event_type || "").includes("Error")
-              ? ("error" as const)
-              : ("running" as const),
-          };
+              ? "error"
+              : "running",
+          });
         }
-        return {
-          executorId: "unknown",
-          message: "Processing",
-          timestamp: new Date().toISOString(),
-          status: "running" as const,
-        };
-      });
+      }
+    });
+
+    return history;
   }, [workflowEvents]);
 
   // Track active executors
@@ -525,16 +561,51 @@ export function WorkflowView({
         );
 
         for await (const openAIEvent of streamGenerator) {
-          // Only store workflow events in state for performance
-          // Text deltas are processed directly without state updates
-          if (openAIEvent.type === "response.workflow_event.complete") {
+          // Store workflow-related events for tracking
+          if (
+            openAIEvent.type === "response.output_item.added" ||
+            openAIEvent.type === "response.output_item.done" ||
+            openAIEvent.type === "response.created" ||
+            openAIEvent.type === "response.in_progress" ||
+            openAIEvent.type === "response.completed" ||
+            openAIEvent.type === "response.failed" ||
+            openAIEvent.type === "response.workflow_event.complete" // Legacy
+          ) {
             setOpenAIEvents((prev) => [...prev, openAIEvent]);
           }
 
           // Pass to debug panel
           onDebugEvent(openAIEvent);
 
-          // Handle workflow events to track current executor
+          // Handle new standard OpenAI events
+          if (openAIEvent.type === "response.output_item.added") {
+            const item = (openAIEvent as any).item;
+            if (item && item.type === "executor_action" && item.executor_id) {
+              currentStreamingExecutor.current = item.executor_id;
+              // Initialize output for this executor if not exists
+              if (!executorOutputs.current[item.executor_id]) {
+                executorOutputs.current[item.executor_id] = "";
+              }
+            }
+          }
+
+          // Handle workflow completion
+          if (openAIEvent.type === "response.completed") {
+            // Workflow completed successfully
+            // Final output is already in workflowResult from text streaming
+          }
+
+          // Handle workflow failure
+          if (openAIEvent.type === "response.failed") {
+            const error = (openAIEvent as any).response?.error;
+            if (error) {
+              setWorkflowError(
+                typeof error === "string" ? error : JSON.stringify(error)
+              );
+            }
+          }
+
+          // Legacy support for older backends
           if (
             openAIEvent.type === "response.workflow_event.complete" &&
             "data" in openAIEvent &&

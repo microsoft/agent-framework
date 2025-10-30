@@ -40,7 +40,7 @@ import logging
 from collections.abc import Sequence
 from typing import Any
 
-from agent_framework import AgentProtocol, ChatMessage, Role
+from agent_framework import AgentProtocol, ChatMessage
 
 from ._agent_executor import (
     AgentExecutor,
@@ -51,7 +51,9 @@ from ._executor import (
     Executor,
     handler,
 )
-from ._workflow import Workflow, WorkflowBuilder
+from ._message_utils import normalize_messages_input
+from ._workflow import Workflow
+from ._workflow_builder import WorkflowBuilder
 from ._workflow_context import WorkflowContext
 
 logger = logging.getLogger(__name__)
@@ -62,16 +64,21 @@ class _InputToConversation(Executor):
 
     @handler
     async def from_str(self, prompt: str, ctx: WorkflowContext[list[ChatMessage]]) -> None:
-        await ctx.send_message([ChatMessage(Role.USER, text=prompt)])
+        await ctx.send_message(normalize_messages_input(prompt))
 
     @handler
-    async def from_message(self, message: ChatMessage, ctx: WorkflowContext[list[ChatMessage]]) -> None:  # type: ignore[name-defined]
-        await ctx.send_message([message])
+    async def from_message(self, message: ChatMessage, ctx: WorkflowContext[list[ChatMessage]]) -> None:
+        await ctx.send_message(normalize_messages_input(message))
 
     @handler
-    async def from_messages(self, messages: list[ChatMessage], ctx: WorkflowContext[list[ChatMessage]]) -> None:  # type: ignore[name-defined]
+    async def from_messages(
+        self,
+        messages: list[str | ChatMessage],
+        ctx: WorkflowContext[list[ChatMessage]],
+    ) -> None:
         # Make a copy to avoid mutation downstream
-        await ctx.send_message(list(messages))
+        normalized = normalize_messages_input(messages)
+        await ctx.send_message(list(normalized))
 
 
 class _ResponseToConversation(Executor):

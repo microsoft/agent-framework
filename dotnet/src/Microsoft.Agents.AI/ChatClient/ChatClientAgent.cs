@@ -436,13 +436,13 @@ public sealed partial class ChatClientAgent : AIAgent
         // If no agent chat options were provided, return the request chat options as is.
         if (this._agentOptions?.ChatOptions is null)
         {
-            return requestChatOptions;
+            return ApplyBackgroundResponsesProperties(requestChatOptions, runOptions);
         }
 
         // If no request chat options were provided, use the agent's chat options clone.
         if (requestChatOptions is null)
         {
-            return this._agentOptions?.ChatOptions.Clone();
+            return ApplyBackgroundResponsesProperties(this._agentOptions?.ChatOptions.Clone(), runOptions);
         }
 
         // If both are present, we need to merge them.
@@ -532,7 +532,20 @@ public sealed partial class ChatClientAgent : AIAgent
             }
         }
 
-        return requestChatOptions;
+        return ApplyBackgroundResponsesProperties(requestChatOptions, runOptions);
+
+        static ChatOptions? ApplyBackgroundResponsesProperties(ChatOptions? chatOptions, AgentRunOptions? agentRunOptions)
+        {
+            // If any of the background response properties are set in the run options, we should apply both to the chat options.
+            if (agentRunOptions?.AllowBackgroundResponses is not null || agentRunOptions?.ContinuationToken is not null)
+            {
+                chatOptions ??= new ChatOptions();
+                chatOptions.AllowBackgroundResponses = agentRunOptions.AllowBackgroundResponses;
+                chatOptions.ContinuationToken = agentRunOptions.ContinuationToken;
+            }
+
+            return chatOptions;
+        }
     }
 
     /// <summary>
@@ -551,49 +564,66 @@ public sealed partial class ChatClientAgent : AIAgent
     {
         ChatOptions? chatOptions = this.CreateConfiguredChatOptions(runOptions);
 
+        // Supplying a thread for background responses is required to prevent inconsistent experience
+        // for callers if they forget to provide the thread for initial or follow-up runs.
+        if (chatOptions?.AllowBackgroundResponses is true && thread is null)
+        {
+            throw new InvalidOperationException("A thread must be provided when continuing a background response with a continuation token.");
+        }
+
         thread ??= this.GetNewThread();
         if (thread is not ChatClientAgentThread typedThread)
         {
             throw new InvalidOperationException("The provided thread is not compatible with the agent. Only threads created by the agent can be used.");
         }
 
-        // Add any existing messages from the thread to the messages to be sent to the chat client.
-        List<ChatMessage> threadMessages = [];
-        if (typedThread.MessageStore is not null)
+        // Supplying messages when continuing a background response is not allowed.
+        if (chatOptions?.ContinuationToken is not null && inputMessages.Any())
         {
-            threadMessages.AddRange(await typedThread.MessageStore.GetMessagesAsync(cancellationToken).ConfigureAwait(false));
+            throw new InvalidOperationException("Input messages are not allowed when continuing a background response using a continuation token.");
         }
+        List<ChatMessage> threadMessages = [];
 
-        // If we have an AIContextProvider, we should get context from it, and update our
-        // messages and options with the additional context.
-        if (typedThread.AIContextProvider is not null)
+        // Populate the thread messages only if we are not continuing an existing response as it's not allowed
+        if (chatOptions?.ContinuationToken is null)
         {
-            var invokingContext = new AIContextProvider.InvokingContext(inputMessages);
-            var aiContext = await typedThread.AIContextProvider.InvokingAsync(invokingContext, cancellationToken).ConfigureAwait(false);
-            if (aiContext.Messages is { Count: > 0 })
+            // Add any existing messages from the thread to the messages to be sent to the chat client.
+            if (typedThread.MessageStore is not null)
             {
-                threadMessages.AddRange(aiContext.Messages);
+                threadMessages.AddRange(await typedThread.MessageStore.GetMessagesAsync(cancellationToken).ConfigureAwait(false));
             }
 
-            if (aiContext.Tools is { Count: > 0 })
+            // If we have an AIContextProvider, we should get context from it, and update our
+            // messages and options with the additional context.
+            if (typedThread.AIContextProvider is not null)
             {
-                chatOptions ??= new();
-                chatOptions.Tools ??= [];
-                foreach (AITool tool in aiContext.Tools)
+                var invokingContext = new AIContextProvider.InvokingContext(inputMessages);
+                var aiContext = await typedThread.AIContextProvider.InvokingAsync(invokingContext, cancellationToken).ConfigureAwait(false);
+                if (aiContext.Messages is { Count: > 0 })
                 {
-                    chatOptions.Tools.Add(tool);
+                    threadMessages.AddRange(aiContext.Messages);
+                }
+
+                if (aiContext.Tools is { Count: > 0 })
+                {
+                    chatOptions ??= new();
+                    chatOptions.Tools ??= [];
+                    foreach (AITool tool in aiContext.Tools)
+                    {
+                        chatOptions.Tools.Add(tool);
+                    }
+                }
+
+                if (aiContext.Instructions is not null)
+                {
+                    chatOptions ??= new();
+                    chatOptions.Instructions = string.IsNullOrWhiteSpace(chatOptions.Instructions) ? aiContext.Instructions : $"{chatOptions.Instructions}\n{aiContext.Instructions}";
                 }
             }
 
-            if (aiContext.Instructions is not null)
-            {
-                chatOptions ??= new();
-                chatOptions.Instructions = string.IsNullOrWhiteSpace(chatOptions.Instructions) ? aiContext.Instructions : $"{chatOptions.Instructions}\n{aiContext.Instructions}";
-            }
+            // Add the input messages to the end of thread messages.
+            threadMessages.AddRange(inputMessages);
         }
-
-        // Add the input messages to the end of thread messages.
-        threadMessages.AddRange(inputMessages);
 
         // If a user provided two different thread ids, via the thread object and options, we should throw
         // since we don't know which one to use.

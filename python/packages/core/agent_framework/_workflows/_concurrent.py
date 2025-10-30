@@ -13,7 +13,9 @@ from agent_framework import AgentProtocol, ChatMessage, Role
 from ._agent_executor import AgentExecutorRequest, AgentExecutorResponse
 from ._checkpoint import CheckpointStorage
 from ._executor import Executor, handler
-from ._workflow import Workflow, WorkflowBuilder
+from ._message_utils import normalize_messages_input
+from ._workflow import Workflow
+from ._workflow_builder import WorkflowBuilder
 from ._workflow_context import WorkflowContext
 
 logger = logging.getLogger(__name__)
@@ -49,17 +51,21 @@ class _DispatchToAllParticipants(Executor):
 
     @handler
     async def from_str(self, prompt: str, ctx: WorkflowContext[AgentExecutorRequest]) -> None:
-        request = AgentExecutorRequest(messages=[ChatMessage(Role.USER, text=prompt)], should_respond=True)
+        request = AgentExecutorRequest(messages=normalize_messages_input(prompt), should_respond=True)
         await ctx.send_message(request)
 
     @handler
-    async def from_message(self, message: ChatMessage, ctx: WorkflowContext[AgentExecutorRequest]) -> None:  # type: ignore[name-defined]
-        request = AgentExecutorRequest(messages=[message], should_respond=True)
+    async def from_message(self, message: ChatMessage, ctx: WorkflowContext[AgentExecutorRequest]) -> None:
+        request = AgentExecutorRequest(messages=normalize_messages_input(message), should_respond=True)
         await ctx.send_message(request)
 
     @handler
-    async def from_messages(self, messages: list[ChatMessage], ctx: WorkflowContext[AgentExecutorRequest]) -> None:  # type: ignore[name-defined]
-        request = AgentExecutorRequest(messages=list(messages), should_respond=True)
+    async def from_messages(
+        self,
+        messages: list[str | ChatMessage],
+        ctx: WorkflowContext[AgentExecutorRequest],
+    ) -> None:
+        request = AgentExecutorRequest(messages=normalize_messages_input(messages), should_respond=True)
         await ctx.send_message(request)
 
 

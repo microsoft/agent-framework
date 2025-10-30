@@ -116,7 +116,7 @@ public class SpecializedExecutorSmokeTests
     {
         private readonly StateManager _stateManager = new();
 
-        public List<List<ChatMessage>> Updates { get; } = [];
+        public List<ChatMessage> Updates { get; } = [];
 
         public ValueTask AddEventAsync(WorkflowEvent workflowEvent, CancellationToken cancellationToken = default) =>
             default;
@@ -145,11 +145,11 @@ public class SpecializedExecutorSmokeTests
         {
             if (message is List<ChatMessage> messages)
             {
-                this.Updates.Add(messages);
+                this.Updates.AddRange(messages);
             }
             else if (message is ChatMessage chatMessage)
             {
-                this.Updates.Add([chatMessage]);
+                this.Updates.Add(chatMessage);
             }
 
             return default;
@@ -176,15 +176,6 @@ public class SpecializedExecutorSmokeTests
             "Quisque dignissim ante odio, at facilisis orci porta a. Duis mi augue, fringilla eu egestas a, pellentesque sed lacus."
         ];
 
-        string[][] splits = MessageStrings.Select(t => t.Split()).ToArray();
-        foreach (string[] messageSplits in splits)
-        {
-            for (int i = 0; i < messageSplits.Length - 1; i++)
-            {
-                messageSplits[i] += ' ';
-            }
-        }
-
         List<ChatMessage> expected = TestAIAgent.ToChatMessages(MessageStrings);
 
         TestAIAgent agent = new(expected);
@@ -192,7 +183,7 @@ public class SpecializedExecutorSmokeTests
 
         TestWorkflowContext collectingContext = new(host.Id);
 
-        await host.TakeTurnAsync(new TurnToken(emitEvents: false), collectingContext);
+        await host.TakeTurnAsync(new TurnToken(emitEvents: true), collectingContext);
 
         // The first empty message is skipped.
         collectingContext.Updates.Should().HaveCount(MessageStrings.Length - 1);
@@ -200,28 +191,9 @@ public class SpecializedExecutorSmokeTests
         for (int i = 1; i < MessageStrings.Length; i++)
         {
             string expectedText = MessageStrings[i];
-            string[] expectedSplits = splits[i];
+            ChatMessage collected = collectingContext.Updates[i - 1];
 
-            ChatMessage equivalent = expected[i];
-            List<ChatMessage> collected = collectingContext.Updates[i - 1];
-
-            collected.Should().HaveCount(1);
-            collected[0].Text.Should().Be(expectedText);
-            collected[0].Contents.Should().HaveCount(splits[i].Length);
-
-            Action<AIContent>[] splitCheckActions = splits[i].Select(MakeSplitCheckAction).ToArray();
-            Assert.Collection(collected[0].Contents, splitCheckActions);
-        }
-
-        Action<AIContent> MakeSplitCheckAction(string splitString)
-        {
-            return Check;
-
-            void Check(AIContent content)
-            {
-                TextContent? text = content as TextContent;
-                text!.Text.Should().Be(splitString);
-            }
+            collected.Text.Should().Be(expectedText);
         }
     }
 }

@@ -1,0 +1,29 @@
+{
+  "model": "gpt-4o-mini",
+  "input": "Generate a person object with name, age, and occupation fields.",
+  "max_output_tokens": 100,
+  "text": {
+    "format": {
+      "type": "json_schema",
+      "name": "person",
+      "strict": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "age": {
+            "type": "integer"
+          },
+          "occupation": {
+            "type": "string"
+          }
+        },
+        "required": ["name", "age", "occupation"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "stream": true
+}
