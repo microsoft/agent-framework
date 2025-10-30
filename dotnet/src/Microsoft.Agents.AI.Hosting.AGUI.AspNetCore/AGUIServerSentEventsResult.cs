@@ -13,7 +13,7 @@ using Microsoft.AspNetCore.Http;
 
 namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore;
 
-internal sealed class AGUIServerSentEventsResult : IResult
+internal sealed class AGUIServerSentEventsResult : IResult, IDisposable
 {
     private readonly IAsyncEnumerable<BaseEvent> _events;
     private Utf8JsonWriter? _jsonWriter;
@@ -102,5 +102,10 @@ internal sealed class AGUIServerSentEventsResult : IResult
             this._jsonWriter.Reset(writer);
         }
         JsonSerializer.Serialize(this._jsonWriter, item.Data, AGUIJsonSerializerContext.Default.BaseEvent);
+    }
+
+    public void Dispose()
+    {
+        this._jsonWriter?.Dispose();
     }
 }

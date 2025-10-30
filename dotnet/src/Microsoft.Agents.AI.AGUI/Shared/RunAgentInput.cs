@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -14,11 +13,9 @@ namespace Microsoft.Agents.AI.AGUI.Shared;
 
 internal sealed class RunAgentInput
 {
-    [Required]
     [JsonPropertyName("threadId")]
     public string ThreadId { get; set; } = string.Empty;
 
-    [Required]
     [JsonPropertyName("runId")]
     public string RunId { get; set; } = string.Empty;
 
@@ -26,10 +23,6 @@ internal sealed class RunAgentInput
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public JsonElement State { get; set; }
 
-    [Required]
-#pragma warning disable IL2026 // MinLengthAttribute on arrays is trim-safe
-    [MinLength(1)]
-#pragma warning restore IL2026
     [JsonPropertyName("messages")]
     public IEnumerable<AGUIMessage> Messages { get; set; } = [];
 
