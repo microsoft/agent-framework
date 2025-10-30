@@ -34,7 +34,7 @@ public sealed class AGUIAgentTests
             new RunFinishedEvent { ThreadId = "thread1", RunId = "run1" }
         });
 
-        AGUIAgent agent = new("agent1", "Test agent", [], httpClient, "http://localhost/agent");
+        AGUIAgent agent = new("agent1", "Test agent", httpClient, "http://localhost/agent");
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
@@ -58,7 +58,7 @@ public sealed class AGUIAgentTests
             new RunFinishedEvent { ThreadId = "thread1", RunId = "run1" }
         ]);
 
-        AGUIAgent agent = new("agent1", "Test agent", [], httpClient, "http://localhost/agent");
+        AGUIAgent agent = new("agent1", "Test agent", httpClient, "http://localhost/agent");
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
@@ -67,7 +67,6 @@ public sealed class AGUIAgentTests
         // Assert
         Assert.NotNull(response);
         // RunStarted and RunFinished events are aggregated into messages by ToChatResponse()
-        // So the response will contain metadata messages (RunStartedContent, RunFinishedContent)
         Assert.NotEmpty(response.Messages);
         Assert.All(response.Messages, m => Assert.Equal(ChatRole.Assistant, m.Role));
     }
@@ -77,7 +76,7 @@ public sealed class AGUIAgentTests
     {
         // Arrange
         using HttpClient httpClient = new();
-        AGUIAgent agent = new("agent1", "Test agent", [], httpClient, "http://localhost/agent");
+        AGUIAgent agent = new("agent1", "Test agent", httpClient, "http://localhost/agent");
 
         // Act & Assert
         await Assert.ThrowsAsync<ArgumentNullException>(() => agent.RunAsync(messages: null!));
@@ -93,7 +92,7 @@ public sealed class AGUIAgentTests
             new RunFinishedEvent { ThreadId = "thread1", RunId = "run1" }
         ]);
 
-        AGUIAgent agent = new("agent1", "Test agent", [], httpClient, "http://localhost/agent");
+        AGUIAgent agent = new("agent1", "Test agent", httpClient, "http://localhost/agent");
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
@@ -108,7 +107,7 @@ public sealed class AGUIAgentTests
     {
         // Arrange
         using HttpClient httpClient = new();
-        AGUIAgent agent = new("agent1", "Test agent", [], httpClient, "http://localhost/agent");
+        AGUIAgent agent = new("agent1", "Test agent", httpClient, "http://localhost/agent");
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
         AgentThread invalidThread = new TestInMemoryAgentThread();
 
@@ -129,7 +128,7 @@ public sealed class AGUIAgentTests
             new RunFinishedEvent { ThreadId = "thread1", RunId = "run1" }
         ]);
 
-        AGUIAgent agent = new("agent1", "Test agent", [], httpClient, "http://localhost/agent");
+        AGUIAgent agent = new("agent1", "Test agent", httpClient, "http://localhost/agent");
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
@@ -142,9 +141,9 @@ public sealed class AGUIAgentTests
 
         // Assert
         Assert.NotEmpty(updates);
-        Assert.Contains(updates, u => u.Contents.Any(c => c is RunStartedContent));
+        Assert.Contains(updates, u => u.ResponseId != null); // RunStarted sets ResponseId
         Assert.Contains(updates, u => u.Contents.Any(c => c is TextContent));
-        Assert.Contains(updates, u => u.Contents.Any(c => c is RunFinishedContent));
+        Assert.Contains(updates, u => u.Contents.Count == 0 && u.ResponseId != null); // RunFinished has no text content
     }
 
     [Fact]
@@ -152,7 +151,7 @@ public sealed class AGUIAgentTests
     {
         // Arrange
         using HttpClient httpClient = new();
-        AGUIAgent agent = new("agent1", "Test agent", [], httpClient, "http://localhost/agent");
+        AGUIAgent agent = new("agent1", "Test agent", httpClient, "http://localhost/agent");
 
         // Act & Assert
         await Assert.ThrowsAsync<ArgumentNullException>(async () =>
@@ -175,7 +174,7 @@ public sealed class AGUIAgentTests
             new RunFinishedEvent { ThreadId = "thread1", RunId = "run1" }
         });
 
-        AGUIAgent agent = new("agent1", "Test agent", [], httpClient, "http://localhost/agent");
+        AGUIAgent agent = new("agent1", "Test agent", httpClient, "http://localhost/agent");
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
@@ -195,7 +194,7 @@ public sealed class AGUIAgentTests
     {
         // Arrange
         using HttpClient httpClient = new();
-        AGUIAgent agent = new("agent1", "Test agent", [], httpClient, "http://localhost/agent");
+        AGUIAgent agent = new("agent1", "Test agent", httpClient, "http://localhost/agent");
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
         AgentThread invalidThread = new TestInMemoryAgentThread();
 
@@ -220,7 +219,7 @@ public sealed class AGUIAgentTests
             new RunFinishedEvent { ThreadId = "thread1", RunId = "run1" }
         }, capturedRunIds);
 
-        AGUIAgent agent = new("agent1", "Test agent", [], httpClient, "http://localhost/agent");
+        AGUIAgent agent = new("agent1", "Test agent", httpClient, "http://localhost/agent");
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
@@ -251,7 +250,7 @@ public sealed class AGUIAgentTests
             new RunFinishedEvent { ThreadId = "thread1", RunId = "run1" }
         ]);
 
-        AGUIAgent agent = new("agent1", "Test agent", [], httpClient, "http://localhost/agent");
+        AGUIAgent agent = new("agent1", "Test agent", httpClient, "http://localhost/agent");
         AGUIAgentThread thread = new();
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 

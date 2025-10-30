@@ -52,7 +52,7 @@ public static class AGUIEndpointRouteBuilderExtensions
             var messages = input.Messages.AsChatMessages();
             var contextValues = input.Context;
             var forwardedProps = input.ForwardedProperties;
-            AIAgent agent = agentFactory(messages, [], contextValues, forwardedProps);
+            var agent = agentFactory(messages);
 
             var events = agent.RunStreamingAsync(
                 messages,

@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.AGUI.Shared;
 using Microsoft.Extensions.AI;
@@ -42,7 +43,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         // Arrange
         List<BaseEvent> events =
         [
-            new RunFinishedEvent { ThreadId = "thread1", RunId = "run1", Result = "Success" }
+            new RunFinishedEvent { ThreadId = "thread1", RunId = "run1", Result = JsonDocument.Parse("\"Success\"").RootElement }
         ];
 
         // Act
