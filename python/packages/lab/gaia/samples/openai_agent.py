@@ -22,8 +22,8 @@ Example:
     export OPENAI_RESPONSES_MODEL_ID="gpt-4o"
 """
 
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
 
 from agent_framework import ChatAgent, HostedCodeInterpreterTool, HostedWebSearchTool
 from agent_framework.openai import OpenAIResponsesClient
