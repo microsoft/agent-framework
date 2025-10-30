@@ -132,7 +132,7 @@ public static class Program
         {
             logger.LogInformation("AGUIClient operation was canceled.");
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException and not ThreadAbortException and not AccessViolationException)
         {
             logger.LogError(ex, "An error occurred while running the AGUIClient");
             return;
