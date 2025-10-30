@@ -276,9 +276,7 @@
     <Project Path="src/Microsoft.Agents.AI.Workflows/Microsoft.Agents.AI.Workflows.csproj" />
     <Project Path="src/Microsoft.Agents.AI/Microsoft.Agents.AI.csproj" />
   </Folder>
-  <Folder Name="/Tests/">
-    <Project Path="tests/Microsoft.Agents.AI.AzureAIAgents.UnitTests/Microsoft.Agents.AI.AzureAIAgents.UnitTests.csproj" />
-  </Folder>
+  <Folder Name="/Tests/" />
   <Folder Name="/Tests/IntegrationTests/">
     <Project Path="tests/AgentConformance.IntegrationTests/AgentConformance.IntegrationTests.csproj" />
     <Project Path="tests/AzureAIAgentsPersistent.IntegrationTests/AzureAIAgentsPersistent.IntegrationTests.csproj" />
@@ -293,6 +291,7 @@
     <Project Path="tests/Microsoft.Agents.AI.A2A.UnitTests/Microsoft.Agents.AI.A2A.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Abstractions.UnitTests/Microsoft.Agents.AI.Abstractions.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.AzureAI.UnitTests/Microsoft.Agents.AI.AzureAI.UnitTests.csproj" />
+    <Project Path="tests/Microsoft.Agents.AI.AzureAIAgents.UnitTests/Microsoft.Agents.AI.AzureAIAgents.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Hosting.A2A.Tests/Microsoft.Agents.AI.Hosting.A2A.Tests.csproj" Id="2a1c544d-237d-4436-8732-ba0c447ac06b" />
     <Project Path="tests/Microsoft.Agents.AI.Hosting.OpenAI.UnitTests/Microsoft.Agents.AI.Hosting.OpenAI.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Hosting.UnitTests/Microsoft.Agents.AI.Hosting.UnitTests.csproj" />

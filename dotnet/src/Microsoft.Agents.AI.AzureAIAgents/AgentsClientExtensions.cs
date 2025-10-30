@@ -103,7 +103,7 @@ public static class AgentsClientExtensions
         Throw.IfNullOrWhitespace(model);
         Throw.IfNullOrWhitespace(name);
 
-        var agentRecord = agentsClient.GetAgent(name, cancellationToken)
+        var agentRecord = agentsClient.GetAgent(name, cancellationToken).Value
             ?? throw new InvalidOperationException($"Agent with name '{name}' not found.");
 
         return GetAIAgent(agentsClient, model, agentRecord, chatOptions, clientFactory, openAIClientOptions, cancellationToken);
@@ -136,7 +136,7 @@ public static class AgentsClientExtensions
         Throw.IfNullOrWhitespace(model);
         Throw.IfNullOrWhitespace(name);
 
-        var agentRecord = await agentsClient.GetAgentAsync(name, cancellationToken).ConfigureAwait(false)
+        var agentRecord = (await agentsClient.GetAgentAsync(name, cancellationToken).ConfigureAwait(false)).Value
             ?? throw new InvalidOperationException($"Agent with name '{name}' not found.");
 
         return GetAIAgent(agentsClient, model, agentRecord, chatOptions, clientFactory, openAIClientOptions, cancellationToken);
