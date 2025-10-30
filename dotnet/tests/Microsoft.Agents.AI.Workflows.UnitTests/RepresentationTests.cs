@@ -54,10 +54,10 @@ public class RepresentationTests
         await RunExecutorBindingTestAsync(new TestExecutor());
         await RunExecutorBindingTestAsync(TestRequestPort);
         await RunExecutorBindingTestAsync(new TestAgent());
-        await RunExecutorBindingTestAsync(Step1EntryPoint.WorkflowInstance.AsExecutor(nameof(Step1EntryPoint)));
+        await RunExecutorBindingTestAsync(Step1EntryPoint.WorkflowInstance.BindAsExecutor(nameof(Step1EntryPoint)));
 
         Func<int, IWorkflowContext, CancellationToken, ValueTask> function = MessageHandlerAsync;
-        await RunExecutorBindingTestAsync(function.AsExecutor("FunctionExecutor"));
+        await RunExecutorBindingTestAsync(function.BindAsExecutor("FunctionExecutor"));
 
         Type bindingBaseType = typeof(ExecutorBinding);
         Assembly workflowAssembly = bindingBaseType.Assembly;

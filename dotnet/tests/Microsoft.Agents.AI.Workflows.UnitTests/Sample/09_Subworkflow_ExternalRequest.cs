@@ -110,7 +110,7 @@ internal static class Step9EntryPoint
         Coordinator coordinator = new();
         ResourceCache cache = new();
         QuotaPolicyEngine policyEngine = new();
-        ExecutorBinding subworkflow = CreateSubWorkflow().AsExecutor("ResourceWorkflow");
+        ExecutorBinding subworkflow = CreateSubWorkflow().BindAsExecutor("ResourceWorkflow");
 
         return new WorkflowBuilder(coordinator)
                .AddChain(coordinator, allowRepetition: true, subworkflow, coordinator)
