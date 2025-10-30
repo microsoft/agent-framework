@@ -6,9 +6,8 @@ from collections.abc import Sequence
 from enum import Enum
 from typing import Any
 
-from ._edge import Edge, EdgeGroup, FanInEdgeGroup
+from ._edge import Edge, EdgeGroup, FanInEdgeGroup, InternalEdgeGroup
 from ._executor import Executor
-from ._request_info_executor import RequestInfoExecutor
 from ._typing_utils import is_type_compatible
 
 logger = logging.getLogger(__name__)
@@ -51,20 +50,6 @@ class EdgeDuplicationError(WorkflowValidationError):
             validation_type=ValidationTypeEnum.EDGE_DUPLICATION,
         )
         self.edge_id = edge_id
-
-
-class ExecutorDuplicationError(WorkflowValidationError):
-    """Exception raised when duplicate executor identifiers are detected."""
-
-    def __init__(self, executor_id: str):
-        super().__init__(
-            message=(
-                f"Duplicate executor id detected: '{executor_id}'. Executor ids must be globally unique within a "
-                "workflow."
-            ),
-            validation_type=ValidationTypeEnum.EXECUTOR_DUPLICATION,
-        )
-        self.executor_id = executor_id
 
 
 class TypeCompatibilityError(WorkflowValidationError):
@@ -120,7 +105,6 @@ class WorkflowGraphValidator:
     def __init__(self) -> None:
         self._edges: list[Edge] = []
         self._executors: dict[str, Executor] = {}
-        self._duplicate_executor_ids: set[str] = set()
         self._start_executor_ref: Executor | str | None = None
 
     # region Core Validation Methods
@@ -129,8 +113,6 @@ class WorkflowGraphValidator:
         edge_groups: Sequence[EdgeGroup],
         executors: dict[str, Executor],
         start_executor: Executor | str,
-        *,
-        duplicate_executor_ids: Sequence[str] | None = None,
     ) -> None:
         """Validate the entire workflow graph.
 
@@ -139,16 +121,12 @@ class WorkflowGraphValidator:
             executors: Map of executor IDs to executor instances
             start_executor: The starting executor (can be instance or ID)
 
-        Keyword Args:
-            duplicate_executor_ids: Optional list of known duplicate executor IDs to pre-populate
-
         Raises:
             WorkflowValidationError: If any validation fails
         """
         self._executors = executors
         self._edges = [edge for group in edge_groups for edge in group.edges]
         self._edge_groups = edge_groups
-        self._duplicate_executor_ids = set(duplicate_executor_ids or [])
         self._start_executor_ref = start_executor
 
         # If only the start executor exists, add it to the executor map
@@ -184,7 +162,6 @@ class WorkflowGraphValidator:
                 )
 
         # Run all checks
-        self._validate_executor_id_uniqueness(start_executor_id)
         self._validate_edge_duplication()
         self._validate_handler_output_annotations()
         self._validate_type_compatibility()
@@ -201,8 +178,8 @@ class WorkflowGraphValidator:
         decorator is applied. This method is kept minimal for any edge cases.
         """
         # The comprehensive validation is already done during handler registration:
-        # 1. @handler decorator calls validate_function_signature()
-        # 2. FunctionExecutor constructor calls validate_function_signature()
+        # 1. @handler and @response_handler decorators already have validation logic
+        # 2. FunctionExecutor constructor also has validation logic
         # 3. Both use validate_workflow_context_annotation() for WorkflowContext validation
         #
         # All executors in the workflow must have gone through one of these paths,
@@ -210,26 +187,6 @@ class WorkflowGraphValidator:
         pass
 
     # endregion
-
-    def _validate_executor_id_uniqueness(self, start_executor_id: str) -> None:
-        """Ensure executor identifiers are unique throughout the workflow graph."""
-        duplicates: set[str] = set(self._duplicate_executor_ids)
-
-        id_counts: defaultdict[str, int] = defaultdict(int)
-        for key, executor in self._executors.items():
-            id_counts[executor.id] += 1
-            if key != executor.id:
-                duplicates.add(executor.id)
-
-        duplicates.update({executor_id for executor_id, count in id_counts.items() if count > 1})
-
-        if isinstance(self._start_executor_ref, Executor):
-            mapped = self._executors.get(start_executor_id)
-            if mapped is not None and mapped is not self._start_executor_ref:
-                duplicates.add(start_executor_id)
-
-        if duplicates:
-            raise ExecutorDuplicationError(sorted(duplicates)[0])
 
     # region Edge and Type Validation
     def _validate_edge_duplication(self) -> None:
@@ -272,6 +229,10 @@ class WorkflowGraphValidator:
         Raises:
             TypeCompatibilityError: If type incompatibility is detected
         """
+        if isinstance(edge_group, InternalEdgeGroup):
+            # Skip type compatibility validation for internal edges
+            return
+
         source_executor = self._executors[edge.source_id]
         target_executor = self._executors[edge.target_id]
 
@@ -284,14 +245,13 @@ class WorkflowGraphValidator:
         # If either executor has no type information, log warning and skip validation
         # This allows for dynamic typing scenarios but warns about reduced validation coverage
         if not source_output_types or not target_input_types:
-            # Suppress warnings for RequestInfoExecutor where dynamic typing is expected
-            if not source_output_types and not isinstance(source_executor, RequestInfoExecutor):
+            if not source_output_types:
                 logger.warning(
                     f"Executor '{source_executor.id}' has no output type annotations. "
                     f"Type compatibility validation will be skipped for edges from this executor. "
                     f"Consider adding WorkflowContext[T] generics in handlers for better validation."
                 )
-            if not target_input_types and not isinstance(target_executor, RequestInfoExecutor):
+            if not target_input_types:
                 logger.warning(
                     f"Executor '{target_executor.id}' has no input type annotations. "
                     f"Type compatibility validation will be skipped for edges to this executor. "
@@ -534,8 +494,6 @@ def validate_workflow_graph(
     edge_groups: Sequence[EdgeGroup],
     executors: dict[str, Executor],
     start_executor: Executor | str,
-    *,
-    duplicate_executor_ids: Sequence[str] | None = None,
 ) -> None:
     """Convenience function to validate a workflow graph.
 
@@ -543,9 +501,6 @@ def validate_workflow_graph(
         edge_groups: list of edge groups in the workflow
         executors: Map of executor IDs to executor instances
         start_executor: The starting executor (can be instance or ID)
-
-    Keyword Args:
-        duplicate_executor_ids: Optional list of known duplicate executor IDs to pre-populate
 
     Raises:
         WorkflowValidationError: If any validation fails
@@ -555,5 +510,4 @@ def validate_workflow_graph(
         edge_groups,
         executors,
         start_executor,
-        duplicate_executor_ids=duplicate_executor_ids,
     )
