@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Text.Json.Serialization;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions.Models;
@@ -58,6 +59,12 @@ internal sealed record ImageContentPart : MessageContentPart
     /// </summary>
     [JsonIgnore]
     public string UrlOrData => this.ImageUrl.Url;
+
+    /// <summary>
+    /// Gets the URL of the image.
+    /// </summary>
+    [JsonIgnore]
+    public Uri Url => new(this.ImageUrl.Url);
 }
 
 /// <summary>

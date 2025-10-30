@@ -19,7 +19,7 @@ internal static class MessageContentPartConverter
             ImageContentPart imagePart when !string.IsNullOrEmpty(imagePart.UrlOrData) =>
                 imagePart.UrlOrData.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
                     ? new DataContent(imagePart.UrlOrData, "image/*")
-                    : new UriContent(imagePart.UrlOrData, "image/*"),
+                    : new UriContent(imagePart.Url, ImageUriToMediaType(imagePart.Url)),
 
             // audio
             AudioContentPart audioPart =>
@@ -42,5 +42,18 @@ internal static class MessageContentPartConverter
 
             _ => null
         };
+    }
+
+    private static string ImageUriToMediaType(Uri uri)
+    {
+        string absoluteUri = uri.AbsoluteUri;
+        return
+            absoluteUri.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ? "image/png" :
+            absoluteUri.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) ? "image/jpeg" :
+            absoluteUri.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase) ? "image/jpeg" :
+            absoluteUri.EndsWith(".gif", StringComparison.OrdinalIgnoreCase) ? "image/gif" :
+            absoluteUri.EndsWith(".bmp", StringComparison.OrdinalIgnoreCase) ? "image/bmp" :
+            absoluteUri.EndsWith(".webp", StringComparison.OrdinalIgnoreCase) ? "image/webp" :
+            "image/*";
     }
 }
