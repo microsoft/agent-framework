@@ -22,10 +22,10 @@ var agentDefinition = new PromptAgentDefinition(model: deploymentName) { Instruc
 var agentVersion = agentsClient.CreateAgentVersion(agentName: JokerName, definition: agentDefinition).Value;
 
 // You can retrieve an already created server side agent as an AIAgent.
-AIAgent existingAgent = await agentsClient.GetAIAgentAsync(deploymentName, agentVersion.Name);
+AIAgent existingAgent = await agentsClient.GetAIAgentAsync(agentVersion.Name);
 
 // You can also create a server side persistent agent and return it as an AIAgent directly.
-var createdAgent = agentsClient.CreateAIAgent(deploymentName, name: JokerName, instructions: JokerInstructions);
+var createdAgent = agentsClient.CreateAIAgent(name: JokerName, model: deploymentName, instructions: JokerInstructions);
 
 // You can then invoke the agent like any other AIAgent.
 AgentThread thread = existingAgent.GetNewThread();

@@ -40,7 +40,7 @@ public sealed class TextSearchProvider : AIContextProvider
     private const string DefaultContextPrompt = "## Additional Context\nConsider the following information from source documents when responding to the user:";
     private const string DefaultCitationsPrompt = "Include citations to the source document with document name and link if document name and link is available.";
 
-    private readonly Func<string, CancellationToken, Task<IEnumerable<TextSearchSearchResult>>> _searchAsync;
+    private readonly Func<string, CancellationToken, Task<IEnumerable<TextSearchResult>>> _searchAsync;
     private readonly ILogger<TextSearchProvider>? _logger;
     private readonly AITool[] _tools;
     private readonly Queue<string> _recentMessagesText;
@@ -53,7 +53,7 @@ public sealed class TextSearchProvider : AIContextProvider
     /// <param name="options">Optional configuration options.</param>
     /// <param name="loggerFactory">Optional logger factory.</param>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="searchAsync"/> is <see langword="null"/>.</exception>
-    public TextSearchProvider(Func<string, CancellationToken, Task<IEnumerable<TextSearchSearchResult>>> searchAsync, TextSearchProviderOptions? options = null, ILoggerFactory? loggerFactory = null)
+    public TextSearchProvider(Func<string, CancellationToken, Task<IEnumerable<TextSearchResult>>> searchAsync, TextSearchProviderOptions? options = null, ILoggerFactory? loggerFactory = null)
     {
         this._searchAsync = searchAsync ?? throw new ArgumentNullException(nameof(searchAsync));
         this._options = options ?? new();
@@ -85,7 +85,7 @@ public sealed class TextSearchProvider : AIContextProvider
     /// If a value was not persisted or matches the defaults it will fall back to the built-in defaults.
     /// Custom <see cref="TextSearchProviderOptions.ContextFormatter"/> delegates are not serialized.
     /// </remarks>
-    public TextSearchProvider(Func<string, CancellationToken, Task<IEnumerable<TextSearchSearchResult>>> searchAsync, JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, TextSearchProviderOptions? options = null, ILoggerFactory? loggerFactory = null)
+    public TextSearchProvider(Func<string, CancellationToken, Task<IEnumerable<TextSearchResult>>> searchAsync, JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, TextSearchProviderOptions? options = null, ILoggerFactory? loggerFactory = null)
     {
         this._searchAsync = searchAsync ?? throw new ArgumentNullException(nameof(searchAsync));
         this._options = options ?? new();
@@ -148,7 +148,7 @@ public sealed class TextSearchProvider : AIContextProvider
 
         // Search
         var results = await this._searchAsync(input, cancellationToken).ConfigureAwait(false);
-        IList<TextSearchSearchResult> materialized = results as IList<TextSearchSearchResult> ?? results.ToList();
+        IList<TextSearchResult> materialized = results as IList<TextSearchResult> ?? results.ToList();
         if (materialized.Count == 0)
         {
             this._logger?.LogWarning("TextSearchProvider: No search results found.");
@@ -226,7 +226,7 @@ public sealed class TextSearchProvider : AIContextProvider
     internal async Task<string> SearchAsync(string userQuestion, CancellationToken cancellationToken = default)
     {
         var results = await this._searchAsync(userQuestion, cancellationToken).ConfigureAwait(false);
-        IList<TextSearchSearchResult> materialized = results as IList<TextSearchSearchResult> ?? results.ToList();
+        IList<TextSearchResult> materialized = results as IList<TextSearchResult> ?? results.ToList();
         string formatted = this.FormatResults(materialized);
 
         this._logger?.LogInformation("TextSearchProvider: Retrieved {Count} search results.", materialized.Count);
@@ -240,7 +240,7 @@ public sealed class TextSearchProvider : AIContextProvider
     /// </summary>
     /// <param name="results">The results.</param>
     /// <returns>Formatted string (may be empty).</returns>
-    private string FormatResults(IList<TextSearchSearchResult> results)
+    private string FormatResults(IList<TextSearchResult> results)
     {
         if (this._options.ContextFormatter is not null)
         {
@@ -276,7 +276,7 @@ public sealed class TextSearchProvider : AIContextProvider
     /// <summary>
     /// Represents a single retrieved text search result.
     /// </summary>
-    public sealed class TextSearchSearchResult
+    public sealed class TextSearchResult
     {
         /// <summary>
         /// Gets or sets the display name of the source document (optional).
@@ -297,7 +297,7 @@ public sealed class TextSearchProvider : AIContextProvider
         /// Gets or sets the raw representation of the search result from the data source.
         /// </summary>
         /// <remarks>
-        /// If a <see cref="TextSearchSearchResult"/> is created to represent some underlying object from another object
+        /// If a <see cref="TextSearchResult"/> is created to represent some underlying object from another object
         /// model, this property can be used to store that original object. This can be useful for debugging or
         /// for enabling the <see cref="TextSearchProviderOptions.ContextFormatter"/> to access the underlying object model if needed.
         /// </remarks>

@@ -42,11 +42,11 @@ Console.WriteLine(await agent.RunAsync("How long does standard shipping usually 
 Console.WriteLine("\n>> Asking about product care\n");
 Console.WriteLine(await agent.RunAsync("What is the best way to maintain the TrailRunner tent fabric?", thread));
 
-static Task<IEnumerable<TextSearchProvider.TextSearchSearchResult>> MockSearchAsync(string query, CancellationToken cancellationToken)
+static Task<IEnumerable<TextSearchProvider.TextSearchResult>> MockSearchAsync(string query, CancellationToken cancellationToken)
 {
     // The mock search inspects the user's question and returns pre-defined snippets
     // that resemble documents stored in an external knowledge source.
-    List<TextSearchProvider.TextSearchSearchResult> results = new();
+    List<TextSearchProvider.TextSearchResult> results = new();
 
     if (query.Contains("return", StringComparison.OrdinalIgnoreCase) || query.Contains("refund", StringComparison.OrdinalIgnoreCase))
     {
@@ -78,5 +78,5 @@ static Task<IEnumerable<TextSearchProvider.TextSearchSearchResult>> MockSearchAs
         });
     }
 
-    return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchSearchResult>>(results);
+    return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchResult>>(results);
 }
