@@ -10,7 +10,6 @@ using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.Shared;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using Moq;
 
 namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.UnitTests;
 
