@@ -66,10 +66,15 @@ internal static class AIAgentChatCompletionsProcessor
 
         private async IAsyncEnumerable<SseItem<ChatCompletionChunk>> GetStreamingChunksAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
+            // The Unix timestamp (in seconds) of when the chat completion was created. Each chunk has the same timestamp.
+            DateTimeOffset? createdAt = null;
+
             await foreach (var agentRunResponseUpdate in agent.RunStreamingAsync(chatMessages, options: options, cancellationToken: cancellationToken).WithCancellation(cancellationToken))
             {
                 var choiceChunks = new List<ChatCompletionChoiceChunk>();
                 CompletionUsage? usageDetails = null;
+
+                createdAt ??= agentRunResponseUpdate.CreatedAt;
 
                 foreach (var content in agentRunResponseUpdate.Contents)
                 {
@@ -111,8 +116,8 @@ internal static class AIAgentChatCompletionsProcessor
 
                 var chunk = new ChatCompletionChunk
                 {
-                    Id = Guid.NewGuid().ToString(),
-                    Created = 1,
+                    Id = IdGeneratorHelpers.NewId(prefix: "chatcmpl", delimiter: "-"),
+                    Created = (createdAt ?? DateTimeOffset.UtcNow).ToUnixTimeSeconds(),
                     Model = request.Model,
                     Choices = choiceChunks,
                     Usage = usageDetails

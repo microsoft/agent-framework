@@ -19,13 +19,12 @@ internal static class AgentRunResponseExtensions
 
         return new ChatCompletion
         {
-            Id = agentRunResponse.ResponseId!, // TODO generate an ID here if missing
+            Id = IdGeneratorHelpers.NewId(prefix: "chatcmpl", delimiter: "-"),
             Choices = choices,
             Created = (agentRunResponse.CreatedAt ?? DateTimeOffset.UtcNow).ToUnixTimeSeconds(),
             Model = /* request.Agent?.Name ?? */ request.Model,
             Usage = agentRunResponse.Usage.ToCompletionUsage(),
-            ServiceTier = request.ServiceTier ?? "default",
-            // SystemFingerprint = ...
+            ServiceTier = request.ServiceTier ?? "default"
         };
     }
 
