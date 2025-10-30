@@ -13,6 +13,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
 using Moq;
 
 namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.UnitTests;
@@ -28,7 +29,6 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         // Arrange
         Mock<IEndpointRouteBuilder> endpointsMock = new();
         Mock<IServiceProvider> serviceProviderMock = new();
-        Mock<IEndpointRouteBuilder> dataSourceBuilderMock = new();
 
         endpointsMock.Setup(e => e.ServiceProvider).Returns(serviceProviderMock.Object);
         endpointsMock.Setup(e => e.DataSources).Returns([]);
@@ -229,7 +229,8 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
                     input.RunId,
                     cancellationToken);
 
-            await new AGUIServerSentEventsResult(events).ExecuteAsync(context).ConfigureAwait(false);
+            Mock<ILogger<AGUIServerSentEventsResult>> loggerMock = new();
+            await new AGUIServerSentEventsResult(events, loggerMock.Object).ExecuteAsync(context).ConfigureAwait(false);
         };
     }
 

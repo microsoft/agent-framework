@@ -170,6 +170,7 @@ public sealed class AGUIHttpServiceTests
         {
             await foreach (var _ in service.PostRunAsync(input, cts.Token))
             {
+                // Intentionally empty - consuming stream to trigger cancellation
             }
         });
     }

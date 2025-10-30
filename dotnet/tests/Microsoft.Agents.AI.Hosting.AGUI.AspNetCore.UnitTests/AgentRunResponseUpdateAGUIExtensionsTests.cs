@@ -163,15 +163,3 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         Assert.Contains(endEvents, e => e.MessageId == "msg1");
     }
 }
-
-internal static class AsyncEnumerableExtensions
-{
-    public static async IAsyncEnumerable<T> ToAsyncEnumerableAsync<T>(this IEnumerable<T> source)
-    {
-        foreach (T item in source)
-        {
-            yield return item;
-            await Task.CompletedTask;
-        }
-    }
-}

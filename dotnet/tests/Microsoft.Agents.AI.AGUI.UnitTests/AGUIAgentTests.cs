@@ -158,8 +158,7 @@ public sealed class AGUIAgentTests
         {
             await foreach (var _ in agent.RunStreamingAsync(messages: null!))
             {
-                // Consume the stream
-                // Consume the stream
+                // Intentionally empty - consuming stream to trigger exception
             }
         });
     }

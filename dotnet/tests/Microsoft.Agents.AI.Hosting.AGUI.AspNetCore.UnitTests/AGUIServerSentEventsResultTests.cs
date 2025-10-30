@@ -8,6 +8,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.Shared;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
+using Moq;
 
 namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.UnitTests;
 
@@ -21,7 +23,8 @@ public sealed class AGUIServerSentEventsResultTests
     {
         // Arrange
         List<BaseEvent> events = [];
-        AGUIServerSentEventsResult result = new(events.ToAsyncEnumerableAsync());
+        Mock<ILogger<AGUIServerSentEventsResult>> loggerMock = new();
+        AGUIServerSentEventsResult result = new(events.ToAsyncEnumerableAsync(), loggerMock.Object);
         DefaultHttpContext httpContext = new();
         httpContext.Response.Body = new MemoryStream();
 
@@ -43,7 +46,8 @@ public sealed class AGUIServerSentEventsResultTests
             new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
             new RunFinishedEvent { ThreadId = "thread1", RunId = "run1" }
         ];
-        AGUIServerSentEventsResult result = new(events.ToAsyncEnumerableAsync());
+        Mock<ILogger<AGUIServerSentEventsResult>> loggerMock = new();
+        AGUIServerSentEventsResult result = new(events.ToAsyncEnumerableAsync(), loggerMock.Object);
         DefaultHttpContext httpContext = new();
         MemoryStream responseStream = new();
         httpContext.Response.Body = responseStream;
@@ -69,7 +73,8 @@ public sealed class AGUIServerSentEventsResultTests
             new TextMessageContentEvent { MessageId = "msg1", Delta = "Hello" },
             new RunFinishedEvent { ThreadId = "thread1", RunId = "run1" }
         ];
-        AGUIServerSentEventsResult result = new(events.ToAsyncEnumerableAsync());
+        Mock<ILogger<AGUIServerSentEventsResult>> loggerMock = new();
+        AGUIServerSentEventsResult result = new(events.ToAsyncEnumerableAsync(), loggerMock.Object);
         DefaultHttpContext httpContext = new();
         MemoryStream responseStream = new();
         httpContext.Response.Body = responseStream;
@@ -88,7 +93,8 @@ public sealed class AGUIServerSentEventsResultTests
     {
         // Arrange
         List<BaseEvent> events = [];
-        AGUIServerSentEventsResult result = new(events.ToAsyncEnumerableAsync());
+        Mock<ILogger<AGUIServerSentEventsResult>> loggerMock = new();
+        AGUIServerSentEventsResult result = new(events.ToAsyncEnumerableAsync(), loggerMock.Object);
         DefaultHttpContext httpContext = new();
         httpContext.Response.Body = new MemoryStream();
 
@@ -119,7 +125,8 @@ public sealed class AGUIServerSentEventsResultTests
             }
         }
 
-        AGUIServerSentEventsResult result = new(GetEventsWithCancellationAsync());
+        Mock<ILogger<AGUIServerSentEventsResult>> loggerMock = new();
+        AGUIServerSentEventsResult result = new(GetEventsWithCancellationAsync(), loggerMock.Object);
         DefaultHttpContext httpContext = new();
         httpContext.Response.Body = new MemoryStream();
         httpContext.RequestAborted = cts.Token;
@@ -136,7 +143,8 @@ public sealed class AGUIServerSentEventsResultTests
     {
         // Arrange
         List<BaseEvent> events = [];
-        AGUIServerSentEventsResult result = new(events.ToAsyncEnumerableAsync());
+        Mock<ILogger<AGUIServerSentEventsResult>> loggerMock = new();
+        AGUIServerSentEventsResult result = new(events.ToAsyncEnumerableAsync(), loggerMock.Object);
 
         // Act & Assert
         await Assert.ThrowsAsync<ArgumentNullException>(() => result.ExecuteAsync(null!));

@@ -137,6 +137,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         {
             await foreach (var _ in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync())
             {
+                // Intentionally empty - consuming stream to trigger exception
             }
         });
     }
@@ -157,6 +158,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         {
             await foreach (var _ in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync())
             {
+                // Intentionally empty - consuming stream to trigger exception
             }
         });
     }
@@ -185,17 +187,5 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         Assert.Equal(3, updates.Count);
         Assert.All(updates, u => Assert.Equal(ChatRole.Assistant, u.Role));
         Assert.All(updates, u => Assert.Equal("msg1", u.MessageId));
-    }
-}
-
-internal static class AsyncEnumerableExtensions
-{
-    public static async IAsyncEnumerable<T> ToAsyncEnumerableAsync<T>(this IEnumerable<T> source)
-    {
-        foreach (T item in source)
-        {
-            yield return item;
-            await Task.CompletedTask;
-        }
     }
 }
