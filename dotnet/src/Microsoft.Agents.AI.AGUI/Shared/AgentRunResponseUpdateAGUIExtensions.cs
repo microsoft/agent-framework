@@ -22,34 +22,45 @@ internal static class AgentRunResponseUpdateAGUIExtensions
     {
         string? currentMessageId = null;
         ChatRole currentRole = default!;
-        await foreach (var evt in events.ConfigureAwait(false))
+        string? conversationId = null;
+        string? responseId = null;
+        await foreach (var evt in events.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
             switch (evt)
             {
                 case RunStartedEvent runStarted:
+                    conversationId = runStarted.ThreadId;
+                    responseId = runStarted.RunId;
                     yield return new AgentRunResponseUpdate(new ChatResponseUpdate(
                         ChatRole.Assistant,
                         [])
                     {
-                        ConversationId = runStarted.ThreadId,
-                        ResponseId = runStarted.RunId,
+                        ConversationId = conversationId,
+                        ResponseId = responseId,
                         CreatedAt = DateTimeOffset.UtcNow
                     });
                     break;
                 case RunFinishedEvent runFinished:
-                    yield return new AgentRunResponseUpdate(new ChatResponseUpdate(
-                        ChatRole.Assistant,
-                        runFinished.Result ?? string.Empty)
+                    if (!string.Equals(runFinished.ThreadId, conversationId, StringComparison.Ordinal))
                     {
-                        ConversationId = runFinished.ThreadId,
-                        ResponseId = runFinished.RunId,
+                        throw new InvalidOperationException($"The run finished event didn't match the run started event thread ID: {runFinished.ThreadId}, {conversationId}");
+                    }
+                    if (!string.Equals(runFinished.RunId, responseId, StringComparison.Ordinal))
+                    {
+                        throw new InvalidOperationException($"The run finished event didn't match the run started event run ID: {runFinished.RunId}, {responseId}");
+                    }
+                    yield return new AgentRunResponseUpdate(new ChatResponseUpdate(
+                        ChatRole.Assistant, runFinished.Result?.GetRawText())
+                    {
+                        ConversationId = conversationId,
+                        ResponseId = responseId,
                         CreatedAt = DateTimeOffset.UtcNow
                     });
                     break;
                 case RunErrorEvent runError:
                     yield return new AgentRunResponseUpdate(new ChatResponseUpdate(
                         ChatRole.Assistant,
-                        [new RunErrorContent(runError.Message, runError.Code)]));
+                        [(new ErrorContent(runError.Message) { ErrorCode = runError.Code })]));
                     break;
                 case TextMessageStartEvent textStart:
                     if (currentRole != default || currentMessageId != null)
@@ -65,6 +76,8 @@ internal static class AgentRunResponseUpdateAGUIExtensions
                         currentRole,
                         textContent.Delta)
                     {
+                        ConversationId = conversationId,
+                        ResponseId = responseId,
                         MessageId = textContent.MessageId,
                         CreatedAt = DateTimeOffset.UtcNow
                     });
@@ -98,7 +111,7 @@ internal static class AgentRunResponseUpdateAGUIExtensions
         await foreach (var update in updates.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
             var chatResponse = update.AsChatResponseUpdate();
-            if (chatResponse is { Contents.Count: > 0 } && chatResponse.Contents[0] is TextContent text && !string.Equals(currentMessageId, chatResponse.MessageId, StringComparison.Ordinal))
+            if (chatResponse is { Contents.Count: > 0 } && chatResponse.Contents[0] is TextContent && !string.Equals(currentMessageId, chatResponse.MessageId, StringComparison.Ordinal))
             {
                 // End the previous message if there was one
                 if (currentMessageId is not null)

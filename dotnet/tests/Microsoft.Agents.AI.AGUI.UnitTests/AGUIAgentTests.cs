@@ -24,7 +24,7 @@ public sealed class AGUIAgentTests
     public async Task RunAsync_AggregatesStreamingUpdates_ReturnsCompleteMessagesAsync()
     {
         // Arrange
-        HttpClient httpClient = this.CreateMockHttpClient(new BaseEvent[]
+        using HttpClient httpClient = this.CreateMockHttpClient(new BaseEvent[]
         {
             new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
             new TextMessageStartEvent { MessageId = "msg1", Role = AGUIRoles.Assistant },
@@ -52,7 +52,7 @@ public sealed class AGUIAgentTests
     public async Task RunAsync_WithEmptyUpdateStream_ContainsOnlyMetadataMessagesAsync()
     {
         // Arrange
-        HttpClient httpClient = this.CreateMockHttpClient(
+        using HttpClient httpClient = this.CreateMockHttpClient(
         [
             new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
             new RunFinishedEvent { ThreadId = "thread1", RunId = "run1" }
@@ -76,7 +76,7 @@ public sealed class AGUIAgentTests
     public async Task RunAsync_WithNullMessages_ThrowsArgumentNullExceptionAsync()
     {
         // Arrange
-        HttpClient httpClient = new();
+        using HttpClient httpClient = new();
         AGUIAgent agent = new("agent1", "Test agent", [], httpClient, "http://localhost/agent");
 
         // Act & Assert
@@ -87,7 +87,7 @@ public sealed class AGUIAgentTests
     public async Task RunAsync_WithNullThread_CreatesNewThreadAsync()
     {
         // Arrange
-        HttpClient httpClient = this.CreateMockHttpClient(
+        using HttpClient httpClient = this.CreateMockHttpClient(
         [
             new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
             new RunFinishedEvent { ThreadId = "thread1", RunId = "run1" }
@@ -107,7 +107,7 @@ public sealed class AGUIAgentTests
     public async Task RunAsync_WithNonAGUIAgentThread_ThrowsInvalidOperationExceptionAsync()
     {
         // Arrange
-        HttpClient httpClient = new();
+        using HttpClient httpClient = new();
         AGUIAgent agent = new("agent1", "Test agent", [], httpClient, "http://localhost/agent");
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
         AgentThread invalidThread = new TestInMemoryAgentThread();
@@ -120,7 +120,7 @@ public sealed class AGUIAgentTests
     public async Task RunStreamingAsync_YieldsAllEvents_FromServerStreamAsync()
     {
         // Arrange
-        HttpClient httpClient = this.CreateMockHttpClient(
+        using HttpClient httpClient = this.CreateMockHttpClient(
         [
             new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
             new TextMessageStartEvent { MessageId = "msg1", Role = AGUIRoles.Assistant },
@@ -136,6 +136,7 @@ public sealed class AGUIAgentTests
         List<AgentRunResponseUpdate> updates = [];
         await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(messages))
         {
+            // Consume the stream
             updates.Add(update);
         }
 
@@ -150,7 +151,7 @@ public sealed class AGUIAgentTests
     public async Task RunStreamingAsync_WithNullMessages_ThrowsArgumentNullExceptionAsync()
     {
         // Arrange
-        HttpClient httpClient = new();
+        using HttpClient httpClient = new();
         AGUIAgent agent = new("agent1", "Test agent", [], httpClient, "http://localhost/agent");
 
         // Act & Assert
@@ -158,6 +159,8 @@ public sealed class AGUIAgentTests
         {
             await foreach (var _ in agent.RunStreamingAsync(messages: null!))
             {
+                // Consume the stream
+                // Consume the stream
             }
         });
     }
@@ -166,7 +169,7 @@ public sealed class AGUIAgentTests
     public async Task RunStreamingAsync_WithNullThread_CreatesNewThreadAsync()
     {
         // Arrange
-        HttpClient httpClient = this.CreateMockHttpClient(new BaseEvent[]
+        using HttpClient httpClient = this.CreateMockHttpClient(new BaseEvent[]
         {
             new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
             new RunFinishedEvent { ThreadId = "thread1", RunId = "run1" }
@@ -179,6 +182,7 @@ public sealed class AGUIAgentTests
         List<AgentRunResponseUpdate> updates = [];
         await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(messages, thread: null))
         {
+            // Consume the stream
             updates.Add(update);
         }
 
@@ -190,7 +194,7 @@ public sealed class AGUIAgentTests
     public async Task RunStreamingAsync_WithNonAGUIAgentThread_ThrowsInvalidOperationExceptionAsync()
     {
         // Arrange
-        HttpClient httpClient = new();
+        using HttpClient httpClient = new();
         AGUIAgent agent = new("agent1", "Test agent", [], httpClient, "http://localhost/agent");
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
         AgentThread invalidThread = new TestInMemoryAgentThread();
@@ -200,6 +204,7 @@ public sealed class AGUIAgentTests
         {
             await foreach (var _ in agent.RunStreamingAsync(messages, thread: invalidThread))
             {
+                // Consume the stream
             }
         });
     }
@@ -209,7 +214,7 @@ public sealed class AGUIAgentTests
     {
         // Arrange
         List<string> capturedRunIds = [];
-        HttpClient httpClient = this.CreateMockHttpClientWithCapture(new BaseEvent[]
+        using HttpClient httpClient = this.CreateMockHttpClientWithCapture(new BaseEvent[]
         {
             new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
             new RunFinishedEvent { ThreadId = "thread1", RunId = "run1" }
@@ -221,9 +226,11 @@ public sealed class AGUIAgentTests
         // Act
         await foreach (var _ in agent.RunStreamingAsync(messages))
         {
+            // Consume the stream
         }
         await foreach (var _ in agent.RunStreamingAsync(messages))
         {
+            // Consume the stream
         }
 
         // Assert
@@ -235,7 +242,7 @@ public sealed class AGUIAgentTests
     public async Task RunStreamingAsync_NotifiesThreadOfNewMessages_AfterCompletionAsync()
     {
         // Arrange
-        HttpClient httpClient = this.CreateMockHttpClient(
+        using HttpClient httpClient = this.CreateMockHttpClient(
         [
             new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
             new TextMessageStartEvent { MessageId = "msg1", Role = AGUIRoles.Assistant },
@@ -251,6 +258,7 @@ public sealed class AGUIAgentTests
         // Act
         await foreach (var _ in agent.RunStreamingAsync(messages, thread))
         {
+            // Consume the stream
         }
 
         // Assert
@@ -261,7 +269,8 @@ public sealed class AGUIAgentTests
     public void DeserializeThread_WithValidState_ReturnsAGUIAgentThread()
     {
         // Arrange
-        AGUIAgent agent = new("agent1", "Test agent", [], new HttpClient(), "http://localhost/agent");
+        using var httpClient = new HttpClient();
+        AGUIAgent agent = new("agent1", "Test agent", httpClient, "http://localhost/agent");
         AGUIAgentThread originalThread = new() { ThreadId = "test-thread-123" };
         JsonElement serialized = originalThread.Serialize();
 

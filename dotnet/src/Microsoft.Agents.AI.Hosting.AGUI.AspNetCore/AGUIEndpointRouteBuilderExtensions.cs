@@ -26,7 +26,7 @@ public static class AGUIEndpointRouteBuilderExtensions
     public static IEndpointConventionBuilder MapAGUIAgent(
         this IEndpointRouteBuilder endpoints,
         string pattern,
-        Func<IEnumerable<ChatMessage>, IEnumerable<AITool>, IEnumerable<KeyValuePair<string, string>>, JsonElement, AIAgent> agentFactory)
+        Func<IEnumerable<ChatMessage>, AIAgent> agentFactory)
     {
         return endpoints.MapPost(pattern, async context =>
         {

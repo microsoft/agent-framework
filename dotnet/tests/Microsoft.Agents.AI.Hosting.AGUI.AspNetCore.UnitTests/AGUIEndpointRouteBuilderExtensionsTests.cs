@@ -34,7 +34,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         endpointsMock.Setup(e => e.DataSources).Returns([]);
 
         const string Pattern = "/api/agent";
-        static AIAgent factory(IEnumerable<ChatMessage> messages, IEnumerable<AITool> tools, IEnumerable<KeyValuePair<string, string>> context, JsonElement props) => new TestAgent();
+        static AIAgent factory(IEnumerable<ChatMessage> messages, IEnumerable<AITool> tools, JsonElement props) => new TestAgent();
 
         // Act
         IEndpointConventionBuilder? result = AGUIEndpointRouteBuilderExtensions.MapAGUIAgent(endpointsMock.Object, Pattern, factory);

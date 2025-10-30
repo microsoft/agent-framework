@@ -13,7 +13,7 @@ string endpoint = builder.Configuration["AZURE_OPENAI_ENDPOINT"] ?? throw new In
 string deploymentName = builder.Configuration["AZURE_OPENAI_DEPLOYMENT_NAME"] ?? throw new InvalidOperationException("AZURE_OPENAI_DEPLOYMENT_NAME is not set.");
 
 // Map the AG-UI agent endpoint
-app.MapAGUIAgent("/", (messages, tools, context, forwardedProps) =>
+app.MapAGUIAgent("/", (messages) =>
 {
     return new AzureOpenAIClient(
             new Uri(endpoint),

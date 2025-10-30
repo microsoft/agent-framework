@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 #if ASPNETCORE
@@ -22,5 +23,5 @@ internal sealed class RunFinishedEvent : BaseEvent
     public string RunId { get; set; } = string.Empty;
 
     [JsonPropertyName("result")]
-    public string? Result { get; set; }
+    public JsonElement? Result { get; set; }
 }

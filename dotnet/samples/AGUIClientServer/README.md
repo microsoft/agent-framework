@@ -18,7 +18,7 @@ The demonstration has two components:
 Configure the required Azure OpenAI environment variables:
 
 ```powershell
-$env:AZURE_OPENAI_ENDPOINT="https://ag-ui-agent-framework.openai.azure.com/"
+$env:AZURE_OPENAI_ENDPOINT="<<your-model-endpoint>>"
 $env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4.1-mini"
 ```
 
@@ -180,11 +180,3 @@ The `RunStreamingAsync` method:
 - **TextContent**: Incremental text content streamed from the agent
 - **RunFinishedContent**: Signals successful completion of the agent run
 - **RunErrorContent**: Signals an error occurred during processing
-
-## Next Steps
-
-- Explore adding tools/functions to the agent
-- Implement conversation history management
-- Add authentication and authorization
-- Deploy to production environments
-- Integrate with web applications using the AG-UI protocol
