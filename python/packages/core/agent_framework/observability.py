@@ -279,11 +279,17 @@ def _get_azure_monitor_exporters(
     credential: "TokenCredential | None" = None,
 ) -> list["LogExporter | SpanExporter | MetricExporter"]:
     """Create Azure Monitor Exporters, based on the connection strings and optionally the credential."""
-    from azure.monitor.opentelemetry.exporter import (
-        AzureMonitorLogExporter,
-        AzureMonitorMetricExporter,
-        AzureMonitorTraceExporter,
-    )
+    try:
+        from azure.monitor.opentelemetry.exporter import (
+            AzureMonitorLogExporter,
+            AzureMonitorMetricExporter,
+            AzureMonitorTraceExporter,
+        )
+    except ImportError as e:
+        raise ImportError(
+            "azure-monitor-opentelemetry-exporter is required for Azure Monitor exporters. "
+            "Install it with: pip install azure-monitor-opentelemetry-exporter>=1.0.0b41"
+        ) from e
 
     exporters: list["LogExporter | SpanExporter | MetricExporter"] = []
     for conn_string in connection_strings:
