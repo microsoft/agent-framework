@@ -2,7 +2,7 @@
 
 Below are some ways that you can get involved in the Agent Framework Community.
 
-## Engage on Github
+## Engage on GitHub
 
 - [Discussions](https://github.com/microsoft/agent-framework/discussions): Ask questions, provide feedback and ideas to what you'd like to see from the Agent Framework.
 - [Issues](https://github.com/microsoft/agent-framework/issues) - If you find a bug, unexpected behavior or have a feature request, please open an issue.
