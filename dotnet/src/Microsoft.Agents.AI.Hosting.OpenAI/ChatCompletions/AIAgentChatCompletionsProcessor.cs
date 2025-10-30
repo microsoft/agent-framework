@@ -116,7 +116,7 @@ internal static class AIAgentChatCompletionsProcessor
 
                 var chunk = new ChatCompletionChunk
                 {
-                    Id = IdGeneratorHelpers.NewId(prefix: "chatcmpl", delimiter: "-"),
+                    Id = IdGeneratorHelpers.NewId(prefix: "chatcmpl", delimiter: "-", stringLength: 13),
                     Created = (createdAt ?? DateTimeOffset.UtcNow).ToUnixTimeSeconds(),
                     Model = request.Model,
                     Choices = choiceChunks,
