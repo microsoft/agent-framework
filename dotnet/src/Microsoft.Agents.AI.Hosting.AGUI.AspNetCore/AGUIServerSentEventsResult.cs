@@ -10,19 +10,22 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.Shared;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore;
 
-internal sealed class AGUIServerSentEventsResult : IResult, IDisposable
+internal sealed partial class AGUIServerSentEventsResult : IResult, IDisposable
 {
     private readonly IAsyncEnumerable<BaseEvent> _events;
+    private readonly ILogger<AGUIServerSentEventsResult> _logger;
     private Utf8JsonWriter? _jsonWriter;
 
     public int? StatusCode => StatusCodes.Status200OK;
 
-    internal AGUIServerSentEventsResult(IAsyncEnumerable<BaseEvent> events)
+    internal AGUIServerSentEventsResult(IAsyncEnumerable<BaseEvent> events, ILogger<AGUIServerSentEventsResult> logger)
     {
         this._events = events;
+        this._logger = logger;
     }
 
     public async Task ExecuteAsync(HttpContext httpContext)
@@ -49,6 +52,7 @@ internal sealed class AGUIServerSentEventsResult : IResult, IDisposable
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            LogStreamingError(this._logger, ex);
             // If an error occurs during streaming, try to send an error event before closing
             try
             {
@@ -63,9 +67,10 @@ internal sealed class AGUIServerSentEventsResult : IResult, IDisposable
                     this.SerializeEvent,
                     CancellationToken.None).ConfigureAwait(false);
             }
-            catch
+            catch (Exception sendErrorEx)
             {
                 // If we can't send the error event, just let the connection close
+                LogSendErrorEventFailed(this._logger, sendErrorEx);
             }
         }
 
@@ -108,4 +113,16 @@ internal sealed class AGUIServerSentEventsResult : IResult, IDisposable
     {
         this._jsonWriter?.Dispose();
     }
+
+    [LoggerMessage(
+        Level = LogLevel.Error,
+        Message = "An error occurred while streaming AG-UI events",
+        SkipEnabledCheck = true)]
+    private static partial void LogStreamingError(ILogger logger, Exception exception);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Failed to send error event to client after streaming failure",
+        SkipEnabledCheck = true)]
+    private static partial void LogSendErrorEventFailed(ILogger logger, Exception exception);
 }

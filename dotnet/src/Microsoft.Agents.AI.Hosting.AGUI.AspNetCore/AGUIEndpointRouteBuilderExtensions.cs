@@ -8,6 +8,8 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore;
 
@@ -62,7 +64,8 @@ public static class AGUIEndpointRouteBuilderExtensions
                     input.RunId,
                     cancellationToken);
 
-            await new AGUIServerSentEventsResult(events).ExecuteAsync(context).ConfigureAwait(false);
+            var logger = context.RequestServices.GetRequiredService<ILogger<AGUIServerSentEventsResult>>();
+            await new AGUIServerSentEventsResult(events, logger).ExecuteAsync(context).ConfigureAwait(false);
         });
     }
 }
