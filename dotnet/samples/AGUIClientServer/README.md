@@ -146,23 +146,40 @@ AGUIAgent agent = new(
     httpClient: httpClient,
     endpoint: serverUrl);
 
+bool isFirstUpdate = true;
+AgentRunResponseUpdate? currentUpdate = null;
+
 await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(messages, thread))
 {
+    // First update indicates run started
+    if (isFirstUpdate)
+    {
+        Console.WriteLine($"[Run Started - Thread: {update.ConversationId}, Run: {update.ResponseId}]");
+        isFirstUpdate = false;
+    }
+    
+    currentUpdate = update;
+    
     foreach (AIContent content in update.Contents)
     {
         switch (content)
         {
-            case RunStartedContent runStarted:
-                // Display run started notification
-                break;
             case TextContent textContent:
                 // Display streaming text
+                Console.Write(textContent.Text);
                 break;
-            case RunFinishedContent runFinished:
-                // Display run finished notification
+            case ErrorContent errorContent:
+                // Display error notification
+                Console.WriteLine($"[Error: {errorContent.Message}]");
                 break;
         }
     }
+}
+
+// Last update indicates run finished
+if (currentUpdate != null)
+{
+    Console.WriteLine($"\n[Run Finished - Thread: {currentUpdate.ConversationId}, Run: {currentUpdate.ResponseId}]");
 }
 ```
 
@@ -174,9 +191,14 @@ The `RunStreamingAsync` method:
 
 ## Key Concepts
 
-- **Thread**: Represents a conversation context that persists across multiple runs
-- **Run**: A single execution of the agent for a given set of messages
-- **RunStartedContent**: Signals that the agent has begun processing
-- **TextContent**: Incremental text content streamed from the agent
-- **RunFinishedContent**: Signals successful completion of the agent run
-- **RunErrorContent**: Signals an error occurred during processing
+- **Thread**: Represents a conversation context that persists across multiple runs (accessed via `ConversationId` property)
+- **Run**: A single execution of the agent for a given set of messages (identified by `ResponseId` property)
+- **AgentRunResponseUpdate**: Contains the response data with:
+  - `ResponseId`: The unique run identifier
+  - `ConversationId`: The thread/conversation identifier
+  - `Contents`: Collection of content items (TextContent, ErrorContent, etc.)
+- **Run Lifecycle**: 
+  - The **first** `AgentRunResponseUpdate` in a run indicates the run has started
+  - Subsequent updates contain streaming content as the agent processes
+  - The **last** `AgentRunResponseUpdate` in a run indicates the run has finished
+  - If an error occurs, the update will contain `ErrorContent`

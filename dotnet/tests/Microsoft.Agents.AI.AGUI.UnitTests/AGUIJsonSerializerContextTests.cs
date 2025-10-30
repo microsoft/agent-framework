@@ -264,7 +264,7 @@ public sealed class AGUIJsonSerializerContextTests
     public void RunFinishedEvent_RoundTrip_PreservesData()
     {
         // Arrange
-        RunFinishedEvent original = new() { ThreadId = "thread1", RunId = "run1", Result = JsonDocument.Parse("\"Done\"").RootElement };
+        RunFinishedEvent original = new() { ThreadId = "thread1", RunId = "run1", Result = JsonDocument.Parse("\"Done\"").RootElement.Clone() };
 
         // Act
         string json = JsonSerializer.Serialize(original, AGUIJsonSerializerContext.Default.RunFinishedEvent);
