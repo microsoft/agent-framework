@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0b251028] - 2025-10-28
+
+### Added
+
+- Added thread to AgentRunContext ([#1732](https://github.com/microsoft/agent-framework/pull/1732))
+- AutoGen migration samples ([#1738](https://github.com/microsoft/agent-framework/pull/1738))
+- Add Handoff orchestration pattern support ([#1469](https://github.com/microsoft/agent-framework/pull/1469))
+- Added Samples for HostedCodeInterpreterTool with files ([#1583](https://github.com/microsoft/agent-framework/pull/1583))
+
+### Changed
+
+- [BREAKING] Introduce group chat and refactor orchestrations. Fix as_agent(). Standardize orchestration start msg types. ([#1538](https://github.com/microsoft/agent-framework/pull/1538))
+- [BREAKING] Update Agent Framework Lab Lightning to use Agent-lightning v0.2.0 API ([#1644](https://github.com/microsoft/agent-framework/pull/1644))
+- [BREAKING] Refactor Checkpointing for runner and runner context ([#1645](https://github.com/microsoft/agent-framework/pull/1645))
+- Update lab packages and installation instructions ([#1687](https://github.com/microsoft/agent-framework/pull/1687))
+- Remove deprecated add_agent() calls from workflow samples ([#1508](https://github.com/microsoft/agent-framework/pull/1508))
+
+### Fixed
+
+- Reject @executor on staticmethod/classmethod with clear error message ([#1719](https://github.com/microsoft/agent-framework/pull/1719))
+- DevUI Fix Serialization, Timestamp and Other Issues ([#1584](https://github.com/microsoft/agent-framework/pull/1584))
+- MCP Error Handling Fix + Added Unit Tests ([#1621](https://github.com/microsoft/agent-framework/pull/1621))
+- InMemoryCheckpointManager is not JSON serializable ([#1639](https://github.com/microsoft/agent-framework/pull/1639))
+- Fix gen_ai.operation.name to be invoke_agent ([#1729](https://github.com/microsoft/agent-framework/pull/1729))
+
 ## [1.0.0b251016] - 2025-10-16
 
 ### Added
@@ -99,7 +124,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251016...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251028...HEAD
+[1.0.0b251028]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251016...python-1.0.0b251028
 [1.0.0b251016]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251007...python-1.0.0b251016
 [1.0.0b251007]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251001...python-1.0.0b251007
 [1.0.0b251001]: https://github.com/microsoft/agent-framework/releases/tag/python-1.0.0b251001

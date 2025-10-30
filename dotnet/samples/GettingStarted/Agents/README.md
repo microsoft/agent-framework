@@ -43,6 +43,8 @@ Before you begin, ensure you have the following prerequisites:
 |[Using plugins with an agent](./Agent_Step15_Plugins/)|This sample demonstrates how to use plugins with an agent|
 |[Reducing chat history size](./Agent_Step16_ChatReduction/)|This sample demonstrates how to reduce the chat history to constrain its size, where chat history is maintained locally|
 |[Background responses](./Agent_Step17_BackgroundResponses/)|This sample demonstrates how to use background responses for long-running operations with polling and resumption support|
+|[Adding RAG with text search](./Agent_Step18_TextSearchRag/)|This sample demonstrates how to enrich agent responses with retrieval augmented generation using the text search provider|
+|[Using Mem0-backed memory](./Agent_Step19_Mem0Provider/)|This sample demonstrates how to use the Mem0Provider to persist and recall memories across conversations|
 
 ## Running the samples from the console
 
