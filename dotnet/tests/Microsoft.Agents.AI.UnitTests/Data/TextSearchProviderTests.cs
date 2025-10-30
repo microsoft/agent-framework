@@ -39,17 +39,17 @@ public sealed class TextSearchProviderTests
     public async Task InvokingAsync_ShouldInjectFormattedResultsAsync(string? overrideContextPrompt, string? overrideCitationsPrompt, bool withLogging)
     {
         // Arrange
-        List<TextSearchProvider.TextSearchSearchResult> results =
+        List<TextSearchProvider.TextSearchResult> results =
         [
             new() { Name = "Doc1", Link = "http://example.com/doc1", Value = "Content of Doc1" },
             new() { Name = "Doc2", Link = "http://example.com/doc2", Value = "Content of Doc2" }
         ];
 
         string? capturedInput = null;
-        Task<IEnumerable<TextSearchProvider.TextSearchSearchResult>> SearchDelegateAsync(string input, CancellationToken ct)
+        Task<IEnumerable<TextSearchProvider.TextSearchResult>> SearchDelegateAsync(string input, CancellationToken ct)
         {
             capturedInput = input;
-            return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchSearchResult>>(results);
+            return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchResult>>(results);
         }
 
         var options = new TextSearchProviderOptions
@@ -156,15 +156,15 @@ public sealed class TextSearchProviderTests
     public async Task SearchAsync_ShouldReturnFormattedResultsAsync(string? overrideContextPrompt, string? overrideCitationsPrompt)
     {
         // Arrange
-        List<TextSearchProvider.TextSearchSearchResult> results =
+        List<TextSearchProvider.TextSearchResult> results =
         [
             new() { Name = "Doc1", Link = "http://example.com/doc1", Value = "Content of Doc1" },
             new() { Name = "Doc2", Link = "http://example.com/doc2", Value = "Content of Doc2" }
         ];
 
-        Task<IEnumerable<TextSearchProvider.TextSearchSearchResult>> SearchDelegateAsync(string input, CancellationToken ct)
+        Task<IEnumerable<TextSearchProvider.TextSearchResult>> SearchDelegateAsync(string input, CancellationToken ct)
         {
-            return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchSearchResult>>(results);
+            return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchResult>>(results);
         }
 
         var options = new TextSearchProviderOptions
@@ -208,15 +208,15 @@ public sealed class TextSearchProviderTests
     public async Task InvokingAsync_ShouldUseContextFormatterWhenProvidedAsync()
     {
         // Arrange
-        List<TextSearchProvider.TextSearchSearchResult> results =
+        List<TextSearchProvider.TextSearchResult> results =
         [
             new() { Name = "Doc1", Link = "http://example.com/doc1", Value = "Content of Doc1" },
             new() { Name = "Doc2", Link = "http://example.com/doc2", Value = "Content of Doc2" }
         ];
 
-        Task<IEnumerable<TextSearchProvider.TextSearchSearchResult>> SearchDelegateAsync(string input, CancellationToken ct)
+        Task<IEnumerable<TextSearchProvider.TextSearchResult>> SearchDelegateAsync(string input, CancellationToken ct)
         {
-            return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchSearchResult>>(results);
+            return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchResult>>(results);
         }
 
         var options = new TextSearchProviderOptions
@@ -242,15 +242,15 @@ public sealed class TextSearchProviderTests
         // Arrange
         var payload1 = new RawPayload { Id = "R1" };
         var payload2 = new RawPayload { Id = "R2" };
-        List<TextSearchProvider.TextSearchSearchResult> results =
+        List<TextSearchProvider.TextSearchResult> results =
         [
             new() { Name = "Doc1", Value = "Content 1", RawRepresentation = payload1 },
             new() { Name = "Doc2", Value = "Content 2", RawRepresentation = payload2 }
         ];
 
-        Task<IEnumerable<TextSearchProvider.TextSearchSearchResult>> SearchDelegateAsync(string input, CancellationToken ct)
+        Task<IEnumerable<TextSearchProvider.TextSearchResult>> SearchDelegateAsync(string input, CancellationToken ct)
         {
-            return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchSearchResult>>(results);
+            return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchResult>>(results);
         }
 
         var options = new TextSearchProviderOptions
@@ -299,10 +299,10 @@ public sealed class TextSearchProviderTests
             RecentMessageMemoryLimit = 3
         };
         string? capturedInput = null;
-        Task<IEnumerable<TextSearchProvider.TextSearchSearchResult>> SearchDelegateAsync(string input, CancellationToken ct)
+        Task<IEnumerable<TextSearchProvider.TextSearchResult>> SearchDelegateAsync(string input, CancellationToken ct)
         {
             capturedInput = input;
-            return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchSearchResult>>([]); // No results needed.
+            return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchResult>>([]); // No results needed.
         }
         var provider = new TextSearchProvider(SearchDelegateAsync, options);
 
@@ -338,10 +338,10 @@ public sealed class TextSearchProviderTests
             RecentMessageMemoryLimit = 5
         };
         string? capturedInput = null;
-        Task<IEnumerable<TextSearchProvider.TextSearchSearchResult>> SearchDelegateAsync(string input, CancellationToken ct)
+        Task<IEnumerable<TextSearchProvider.TextSearchResult>> SearchDelegateAsync(string input, CancellationToken ct)
         {
             capturedInput = input;
-            return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchSearchResult>>([]);
+            return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchResult>>([]);
         }
         var provider = new TextSearchProvider(SearchDelegateAsync, options);
 
@@ -443,10 +443,10 @@ public sealed class TextSearchProviderTests
         // Act
         var state = provider.Serialize();
         string? capturedInput = null;
-        Task<IEnumerable<TextSearchProvider.TextSearchSearchResult>> SearchDelegate2Async(string input, CancellationToken ct)
+        Task<IEnumerable<TextSearchProvider.TextSearchResult>> SearchDelegate2Async(string input, CancellationToken ct)
         {
             capturedInput = input;
-            return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchSearchResult>>([]);
+            return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchResult>>([]);
         }
         var roundTrippedProvider = new TextSearchProvider(SearchDelegate2Async, state, options: new TextSearchProviderOptions
         {
@@ -482,10 +482,10 @@ public sealed class TextSearchProviderTests
         var state = initialProvider.Serialize();
 
         string? capturedInput = null;
-        Task<IEnumerable<TextSearchProvider.TextSearchSearchResult>> SearchDelegate2Async(string input, CancellationToken ct)
+        Task<IEnumerable<TextSearchProvider.TextSearchResult>> SearchDelegate2Async(string input, CancellationToken ct)
         {
             capturedInput = input;
-            return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchSearchResult>>([]);
+            return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchResult>>([]);
         }
 
         // Act
@@ -508,10 +508,10 @@ public sealed class TextSearchProviderTests
         var emptyState = JsonSerializer.Deserialize("{}", TestJsonSerializerContext.Default.JsonElement);
 
         string? capturedInput = null;
-        Task<IEnumerable<TextSearchProvider.TextSearchSearchResult>> SearchDelegate2Async(string input, CancellationToken ct)
+        Task<IEnumerable<TextSearchProvider.TextSearchResult>> SearchDelegate2Async(string input, CancellationToken ct)
         {
             capturedInput = input;
-            return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchSearchResult>>([]);
+            return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchResult>>([]);
         }
 
         // Act
@@ -530,9 +530,9 @@ public sealed class TextSearchProviderTests
 
     #endregion
 
-    private Task<IEnumerable<TextSearchProvider.TextSearchSearchResult>> NoResultSearchAsync(string input, CancellationToken ct)
+    private Task<IEnumerable<TextSearchProvider.TextSearchResult>> NoResultSearchAsync(string input, CancellationToken ct)
     {
-        return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchSearchResult>>([]);
+        return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchResult>>([]);
     }
 
     private sealed class RawPayload
