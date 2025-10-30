@@ -123,8 +123,7 @@ public sealed class Mem0ProviderTests : IDisposable
         };
 
         // Act
-        await sut.InvokedAsync(new AIContextProvider.InvokedContext(requestMessages)); // persists request messages
-        await sut.InvokedAsync(new AIContextProvider.InvokedContext(responseMessages)); // persists assistant
+        await sut.InvokedAsync(new AIContextProvider.InvokedContext(requestMessages, aiContextProviderMessages: null) { ResponseMessages = responseMessages });
 
         // Assert
         var memoryPosts = this._handler.Requests.Where(r => r.RequestMessage.RequestUri!.AbsolutePath == "/v1/memories/" && r.RequestMessage.Method == HttpMethod.Post).ToList();
@@ -134,6 +133,27 @@ public sealed class Mem0ProviderTests : IDisposable
             Assert.Contains("\"messages\":[{", req.RequestBody);
         }
         Assert.DoesNotContain(memoryPosts, r => ContainsOrdinal(r.RequestBody, "Tool text"));
+    }
+
+    [Fact]
+    public async Task InvokedAsync_PersistsNothingForFailedRequestAsync()
+    {
+        // Arrange
+        var options = new Mem0ProviderOptions { ApplicationId = "a", AgentId = "b", ThreadId = "c", UserId = "d" };
+        var sut = new Mem0Provider(this._httpClient, options);
+
+        var requestMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "User text"),
+            new(ChatRole.System, "System text"),
+            new(ChatRole.Tool, "Tool text should be ignored")
+        };
+
+        // Act
+        await sut.InvokedAsync(new AIContextProvider.InvokedContext(requestMessages, aiContextProviderMessages: null) { ResponseMessages = null, InvokeException = new InvalidOperationException("Request Failed") });
+
+        // Assert
+        Assert.Empty(this._handler.Requests);
     }
 
     [Fact]

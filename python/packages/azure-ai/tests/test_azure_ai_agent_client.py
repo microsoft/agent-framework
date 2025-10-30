@@ -48,12 +48,10 @@ from azure.ai.agents.models import (
     ThreadRun,
     VectorStore,
 )
-from azure.ai.projects.models import ConnectionType
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import HttpResponseError, ResourceNotFoundError
 from azure.identity.aio import AzureCliCredential
 from pydantic import BaseModel, Field, ValidationError
-from pytest import MonkeyPatch
 
 from agent_framework_azure_ai import AzureAIAgentClient, AzureAISettings
 
@@ -141,8 +139,8 @@ def test_azure_ai_chat_client_init_auto_create_client(
     chat_client.project_client = mock_ai_project_client
     chat_client.agent_id = None
     chat_client.thread_id = None
-    chat_client._should_delete_agent = False
-    chat_client._should_close_client = False
+    chat_client._should_delete_agent = False  # type: ignore
+    chat_client._should_close_client = False  # type: ignore
     chat_client.credential = None
     chat_client.model_id = azure_ai_settings.model_deployment_name
     chat_client.agent_name = None
@@ -294,29 +292,6 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_create_new(
 
     assert agent_id == "test-agent-id"
     assert chat_client._should_delete_agent  # type: ignore
-
-
-async def test_azure_ai_chat_client_tool_results_without_thread_error_via_public_api(
-    mock_ai_project_client: MagicMock,
-) -> None:
-    """Test that tool results without thread ID raise error through public API."""
-    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, agent_id="test-agent")
-
-    # Mock get_agent
-    mock_ai_project_client.agents.get_agent = AsyncMock(return_value=None)
-
-    # Create messages with tool results but no thread/conversation ID
-    messages = [
-        ChatMessage(role=Role.USER, text="Hello"),
-        ChatMessage(
-            role=Role.TOOL, contents=[FunctionResultContent(call_id='["run_123", "call_456"]', result="Result")]
-        ),
-    ]
-
-    # This should raise ValueError when called through public API
-    with pytest.raises(ValueError, match="No thread ID was provided, but chat messages includes tool results"):
-        async for _ in chat_client.get_streaming_response(messages):
-            pass
 
 
 async def test_azure_ai_chat_client_thread_management_through_public_api(mock_ai_project_client: MagicMock) -> None:
@@ -697,7 +672,7 @@ async def test_azure_ai_chat_client_create_run_options_with_none_tool_choice(
     chat_options = ChatOptions()
     chat_options.tool_choice = "none"
 
-    run_options, _ = await chat_client._create_run_options([], chat_options)
+    run_options, _ = await chat_client._create_run_options([], chat_options)  # type: ignore
 
     from azure.ai.agents.models import AgentsToolChoiceOptionMode
 
@@ -713,7 +688,7 @@ async def test_azure_ai_chat_client_create_run_options_with_auto_tool_choice(
     chat_options = ChatOptions()
     chat_options.tool_choice = "auto"
 
-    run_options, _ = await chat_client._create_run_options([], chat_options)
+    run_options, _ = await chat_client._create_run_options([], chat_options)  # type: ignore
 
     from azure.ai.agents.models import AgentsToolChoiceOptionMode
 
@@ -732,7 +707,7 @@ async def test_azure_ai_chat_client_create_run_options_with_response_format(
     chat_options = ChatOptions()
     chat_options.response_format = TestResponseModel
 
-    run_options, _ = await chat_client._create_run_options([], chat_options)
+    run_options, _ = await chat_client._create_run_options([], chat_options)  # type: ignore
 
     assert "response_format" in run_options
     response_format = run_options["response_format"]
@@ -1028,101 +1003,67 @@ async def test_azure_ai_chat_client_prep_tools_file_search_with_vector_stores(
         mock_file_search.assert_called_once_with(vector_store_ids=["vs-123"])
 
 
-async def test_azure_ai_chat_client_prep_tools_file_search_with_ai_search(mock_ai_project_client: MagicMock) -> None:
-    """Test _prep_tools with HostedFileSearchTool using Azure AI Search."""
-
-    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, agent_id="test-agent")
-
-    file_search_tool = HostedFileSearchTool(
-        additional_properties={
-            "index_name": "test-index",
-            "query_type": "simple",
-            "top_k": 5,
-            "filter": "category eq 'docs'",
-        }
-    )
-
-    # Mock connections.get_default
-    mock_connection = MagicMock()
-    mock_connection.id = "search-connection-id"
-    mock_ai_project_client.connections.get_default = AsyncMock(return_value=mock_connection)
-
-    # Mock AzureAISearchTool
-    with patch("agent_framework_azure_ai._chat_client.AzureAISearchTool") as mock_ai_search:
-        mock_search_tool = MagicMock()
-        mock_search_tool.definitions = [{"type": "azure_ai_search"}]
-        mock_ai_search.return_value = mock_search_tool
-
-        # Mock AzureAISearchQueryType
-        with patch("agent_framework_azure_ai._chat_client.AzureAISearchQueryType") as mock_query_type:
-            mock_query_type.SIMPLE = "simple"
-            mock_query_type.return_value = "simple"
-
-            result = await chat_client._prep_tools([file_search_tool])  # type: ignore
-
-            assert len(result) == 1
-            assert result[0] == {"type": "azure_ai_search"}
-            mock_ai_project_client.connections.get_default.assert_called_once_with(ConnectionType.AZURE_AI_SEARCH)
-            mock_ai_search.assert_called_once_with(
-                index_connection_id="search-connection-id",
-                index_name="test-index",
-                query_type="simple",
-                top_k=5,
-                filter="category eq 'docs'",
-            )
-
-
-async def test_azure_ai_chat_client_prep_tools_file_search_invalid_query_type(
+async def test_azure_ai_chat_client_setup_azure_ai_observability_success(
     mock_ai_project_client: MagicMock,
 ) -> None:
-    """Test _prep_tools with HostedFileSearchTool using invalid query_type."""
-
+    """Test setup_azure_ai_observability success case with connection string."""
     chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, agent_id="test-agent")
 
-    file_search_tool = HostedFileSearchTool(
-        additional_properties={"index_name": "test-index", "query_type": "invalid_type"}
+    # Mock successful connection string retrieval
+    mock_ai_project_client.telemetry.get_application_insights_connection_string = AsyncMock(
+        return_value="InstrumentationKey=test-key;IngestionEndpoint=https://test.com"
     )
 
-    # Mock connections.get_default
-    mock_connection = MagicMock()
-    mock_connection.id = "search-connection-id"
-    mock_ai_project_client.connections.get_default = AsyncMock(return_value=mock_connection)
+    # Mock setup_observability function (it's imported inside the method)
+    with patch("agent_framework.observability.setup_observability") as mock_setup:
+        await chat_client.setup_azure_ai_observability(enable_sensitive_data=True)
 
-    # Mock AzureAISearchQueryType to raise ValueError
-    with patch("agent_framework_azure_ai._chat_client.AzureAISearchQueryType") as mock_query_type:
-        mock_query_type.side_effect = ValueError("Invalid query type")
-
-        with pytest.raises(ServiceInitializationError, match="Invalid query_type 'invalid_type'"):
-            await chat_client._prep_tools([file_search_tool])  # type: ignore
+        # Verify setup_observability was called with the correct parameters
+        mock_setup.assert_called_once_with(
+            applicationinsights_connection_string="InstrumentationKey=test-key;IngestionEndpoint=https://test.com",
+            enable_sensitive_data=True,
+        )
 
 
-async def test_azure_ai_chat_client_prep_tools_file_search_no_connection(mock_ai_project_client: MagicMock) -> None:
-    """Test _prep_tools with HostedFileSearchTool when no AI Search connection exists."""
-
-    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, agent_id="test-agent")
-
-    file_search_tool = HostedFileSearchTool(additional_properties={"index_name": "test-index"})
-
-    # Mock connections.get_default to raise ValueError
-    mock_ai_project_client.connections.get_default = AsyncMock(side_effect=ValueError("No connection found"))
-
-    with pytest.raises(ServiceInitializationError, match="No default Azure AI Search connection found"):
-        await chat_client._prep_tools([file_search_tool])  # type: ignore
-
-
-async def test_azure_ai_chat_client_prep_tools_file_search_no_index_name(
-    mock_ai_project_client: MagicMock, monkeypatch: MonkeyPatch
+async def test_azure_ai_chat_client_create_agent_stream_submit_tool_approvals(
+    mock_ai_project_client: MagicMock,
 ) -> None:
-    """Test _prep_tools with HostedFileSearchTool missing index_name and vector stores."""
-    monkeypatch.delenv("AZURE_AI_SEARCH_INDEX_NAME", raising=False)
-
+    """Test _create_agent_stream with tool approvals submission path."""
     chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, agent_id="test-agent")
 
-    # File search tool with no vector stores and no index_name
-    file_search_tool = HostedFileSearchTool()
+    # Mock active thread run that matches the tool run ID
+    mock_thread_run = MagicMock()
+    mock_thread_run.thread_id = "test-thread"
+    mock_thread_run.id = "test-run-id"
+    chat_client._get_active_thread_run = AsyncMock(return_value=mock_thread_run)  # type: ignore
 
-    with pytest.raises(ServiceInitializationError, match="File search tool requires at least one vector store input"):
-        await chat_client._prep_tools([file_search_tool])  # type: ignore
+    # Mock required action results with approval response that matches run ID
+    approval_response = FunctionApprovalResponseContent(
+        id='["test-run-id", "test-call-id"]',
+        function_call=FunctionCallContent(
+            call_id='["test-run-id", "test-call-id"]', name="test_function", arguments="{}"
+        ),
+        approved=True,
+    )
+
+    # Mock submit_tool_outputs_stream
+    mock_handler = MagicMock()
+    mock_ai_project_client.agents.runs.submit_tool_outputs_stream = AsyncMock()
+
+    with patch("azure.ai.agents.models.AsyncAgentEventHandler", return_value=mock_handler):
+        stream, final_thread_id = await chat_client._create_agent_stream(  # type: ignore
+            "test-thread", "test-agent", {}, [approval_response]
+        )
+
+        # Verify the approvals path was taken
+        assert final_thread_id == "test-thread"
+
+        # Verify submit_tool_outputs_stream was called with approvals
+        mock_ai_project_client.agents.runs.submit_tool_outputs_stream.assert_called_once()
+        call_args = mock_ai_project_client.agents.runs.submit_tool_outputs_stream.call_args[1]
+        assert "tool_approvals" in call_args
+        assert call_args["tool_approvals"][0].tool_call_id == "test-call-id"
+        assert call_args["tool_approvals"][0].approve is True
 
 
 async def test_azure_ai_chat_client_prep_tools_dict_tool(mock_ai_project_client: MagicMock) -> None:
@@ -1156,7 +1097,7 @@ async def test_azure_ai_chat_client_get_active_thread_run_with_active_run(mock_a
     mock_run = MagicMock()
     mock_run.status = RunStatus.IN_PROGRESS
 
-    async def mock_list_runs(*args, **kwargs):
+    async def mock_list_runs(*args, **kwargs):  # type: ignore
         yield mock_run
 
     mock_ai_project_client.agents.runs.list = mock_list_runs
@@ -1175,7 +1116,7 @@ async def test_azure_ai_chat_client_get_active_thread_run_no_active_run(mock_ai_
     mock_run = MagicMock()
     mock_run.status = RunStatus.COMPLETED
 
-    async def mock_list_runs(*args, **kwargs):
+    async def mock_list_runs(*args, **kwargs):  # type: ignore
         yield mock_run
 
     mock_ai_project_client.agents.runs.list = mock_list_runs
@@ -1432,7 +1373,7 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_with_tool_resources(
 async def test_azure_ai_chat_client_close_method(mock_ai_project_client: MagicMock) -> None:
     """Test close method."""
     chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, should_delete_agent=True)
-    chat_client._should_close_client = True
+    chat_client._should_close_client = True  # type: ignore
     chat_client.agent_id = "test-agent"
 
     # Mock cleanup methods
@@ -1456,7 +1397,7 @@ async def test_azure_ai_chat_client_create_agent_stream_submit_tool_outputs(
     mock_thread_run = MagicMock()
     mock_thread_run.thread_id = "test-thread"
     mock_thread_run.id = "test-run-id"
-    chat_client._get_active_thread_run = AsyncMock(return_value=mock_thread_run)
+    chat_client._get_active_thread_run = AsyncMock(return_value=mock_thread_run)  # type: ignore
 
     # Mock required action results with matching run ID
     function_result = FunctionResultContent(call_id='["test-run-id", "test-call-id"]', result="test result")
@@ -1466,7 +1407,7 @@ async def test_azure_ai_chat_client_create_agent_stream_submit_tool_outputs(
     mock_ai_project_client.agents.runs.submit_tool_outputs_stream = AsyncMock()
 
     with patch("azure.ai.agents.models.AsyncAgentEventHandler", return_value=mock_handler):
-        stream, final_thread_id = await chat_client._create_agent_stream(
+        stream, final_thread_id = await chat_client._create_agent_stream(  # type: ignore
             thread_id="test-thread", agent_id="test-agent", run_options={}, required_action_results=[function_result]
         )
 
@@ -1518,87 +1459,6 @@ def test_azure_ai_chat_client_extract_url_citations_with_citations(mock_ai_proje
     assert len(citation.annotated_regions) == 1
     assert citation.annotated_regions[0].start_index == 10
     assert citation.annotated_regions[0].end_index == 20
-
-
-def test_azure_ai_chat_client_extract_url_citations_no_citations(mock_ai_project_client: MagicMock) -> None:
-    """Test _extract_url_citations with MessageDeltaChunk containing no citations."""
-    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, agent_id="test-agent")
-
-    # Create mock text content without annotations
-    mock_text_content = MagicMock(spec=MessageDeltaTextContent)
-    mock_text_content.text = None  # No text, so no annotations
-
-    # Create mock delta
-    mock_delta = MagicMock()
-    mock_delta.content = [mock_text_content]
-
-    # Create mock MessageDeltaChunk
-    mock_chunk = MagicMock(spec=MessageDeltaChunk)
-    mock_chunk.delta = mock_delta
-
-    # Call the method
-    citations = chat_client._extract_url_citations(mock_chunk)  # type: ignore
-
-    # Verify no citations returned
-    assert len(citations) == 0
-
-
-def test_azure_ai_chat_client_extract_url_citations_empty_delta(mock_ai_project_client: MagicMock) -> None:
-    """Test _extract_url_citations with empty delta content."""
-    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, agent_id="test-agent")
-
-    # Create mock delta with empty content
-    mock_delta = MagicMock()
-    mock_delta.content = []
-
-    # Create mock MessageDeltaChunk
-    mock_chunk = MagicMock(spec=MessageDeltaChunk)
-    mock_chunk.delta = mock_delta
-
-    # Call the method
-    citations = chat_client._extract_url_citations(mock_chunk)  # type: ignore
-
-    # Verify no citations returned
-    assert len(citations) == 0
-
-
-def test_azure_ai_chat_client_extract_url_citations_without_indices(mock_ai_project_client: MagicMock) -> None:
-    """Test _extract_url_citations with URL citations that don't have start/end indices."""
-    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, agent_id="test-agent")
-
-    # Create mock URL citation annotation without indices
-    mock_url_citation = MagicMock()
-    mock_url_citation.url = "https://example.com/no-indices"
-
-    mock_annotation = MagicMock(spec=MessageDeltaTextUrlCitationAnnotation)
-    mock_annotation.url_citation = mock_url_citation
-    mock_annotation.start_index = None
-    mock_annotation.end_index = None
-
-    # Create mock text content with annotations
-    mock_text = MagicMock()
-    mock_text.annotations = [mock_annotation]
-
-    mock_text_content = MagicMock(spec=MessageDeltaTextContent)
-    mock_text_content.text = mock_text
-
-    # Create mock delta
-    mock_delta = MagicMock()
-    mock_delta.content = [mock_text_content]
-
-    # Create mock MessageDeltaChunk
-    mock_chunk = MagicMock(spec=MessageDeltaChunk)
-    mock_chunk.delta = mock_delta
-
-    # Call the method
-    citations = chat_client._extract_url_citations(mock_chunk)  # type: ignore
-
-    # Verify results
-    assert len(citations) == 1
-    citation = citations[0]
-    assert citation.url == "https://example.com/no-indices"
-    assert citation.annotated_regions is not None
-    assert len(citation.annotated_regions) == 0  # No regions when indices are None
 
 
 async def test_azure_ai_chat_client_setup_azure_ai_observability_resource_not_found(

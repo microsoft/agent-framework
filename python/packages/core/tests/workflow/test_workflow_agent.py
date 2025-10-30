@@ -14,8 +14,6 @@ from agent_framework import (
     FunctionApprovalRequestContent,
     FunctionApprovalResponseContent,
     FunctionCallContent,
-    RequestInfoExecutor,
-    RequestInfoMessage,
     Role,
     TextContent,
     UsageContent,
@@ -24,6 +22,7 @@ from agent_framework import (
     WorkflowBuilder,
     WorkflowContext,
     handler,
+    response_handler,
 )
 
 
@@ -56,15 +55,17 @@ class SimpleExecutor(Executor):
 
 
 class RequestingExecutor(Executor):
-    """Executor that sends RequestInfoMessage to trigger RequestInfoEvent."""
+    """Executor that requests info."""
 
     @handler
-    async def handle_message(self, _: list[ChatMessage], ctx: WorkflowContext[RequestInfoMessage]) -> None:
+    async def handle_message(self, _: list[ChatMessage], ctx: WorkflowContext) -> None:
         # Send a RequestInfoMessage to trigger the request info process
-        await ctx.send_message(RequestInfoMessage())
+        await ctx.request_info("Mock request data", str, str)
 
-    @handler
-    async def handle_request_response(self, _: Any, ctx: WorkflowContext[ChatMessage]) -> None:
+    @response_handler
+    async def handle_request_response(
+        self, original_request: str, response: str, ctx: WorkflowContext[ChatMessage]
+    ) -> None:
         # Handle the response and emit completion response
         update = AgentRunResponseUpdate(
             contents=[TextContent(text="Request completed successfully")],
@@ -148,14 +149,11 @@ class TestWorkflowAgent:
     async def test_end_to_end_request_info_handling(self):
         """Test end-to-end workflow with RequestInfoEvent handling."""
         # Create workflow with requesting executor -> request info executor (no cycle)
+        simple_executor = SimpleExecutor(id="simple", response_text="SimpleResponse", emit_streaming=False)
         requesting_executor = RequestingExecutor(id="requester")
-        request_info_executor = RequestInfoExecutor(id="request_info")
 
         workflow = (
-            WorkflowBuilder()
-            .set_start_executor(requesting_executor)
-            .add_edge(requesting_executor, request_info_executor)
-            .build()
+            WorkflowBuilder().set_start_executor(simple_executor).add_edge(simple_executor, requesting_executor).build()
         )
 
         agent = WorkflowAgent(workflow=workflow, name="Request Test Agent")
