@@ -86,21 +86,6 @@ class AgentExecutor(Executor):
         self._output_response = output_response
         self._cache: list[ChatMessage] = []
 
-        # Check if using AzureAIAgentClient and warn about checkpointing limitations
-        if isinstance(agent, ChatAgent):
-            client_class_name = agent.chat_client.__class__.__name__
-            client_module = agent.chat_client.__class__.__module__
-            if client_class_name == "AzureAIAgentClient" and "azure_ai" in client_module:
-                # TODO(ekzhu): update this warning when we surface the hooks for
-                # custom executor checkpointing.
-                logger.warning(
-                    "AgentExecutor is being used with AzureAIAgentClient which uses server-side threads. "
-                    "Currently, checkpointing does not capture messages from server-side threads. "
-                    "The thread state in checkpoints is not immutable and can be modified by subsequent runs. "
-                    "If you need reliable checkpointing with Azure AI agents, consider implementing a custom "
-                    "executor and managing the thread state yourself."
-                )
-
     @property
     def workflow_output_types(self) -> list[type[Any]]:
         # Override to declare AgentRunResponse as a possible output type only if enabled.
@@ -218,6 +203,24 @@ class AgentExecutor(Executor):
         Returns:
             Dict containing serialized cache and thread state
         """
+        # Check if using AzureAIAgentClient with server-side thread and warn about checkpointing limitations
+        if isinstance(self._agent, ChatAgent) and self._agent_thread.service_thread_id is not None:
+            client_class_name = self._agent.chat_client.__class__.__name__
+            client_module = self._agent.chat_client.__class__.__module__
+
+            if client_class_name == "AzureAIAgentClient" and "azure_ai" in client_module:
+                # TODO(TaoChenOSU): update this warning when we surface the hooks for
+                # custom executor checkpointing.
+                # https://github.com/microsoft/agent-framework/issues/1816
+                logger.warning(
+                    "Checkpointing an AgentExecutor with AzureAIAgentClient that uses server-side threads. "
+                    "Currently, checkpointing does not capture messages from server-side threads "
+                    "(service_thread_id: %s). The thread state in checkpoints is not immutable and can be "
+                    "modified by subsequent runs. If you need reliable checkpointing with Azure AI agents, "
+                    "consider implementing a custom executor and managing the thread state yourself.",
+                    self._agent_thread.service_thread_id,
+                )
+
         serialized_thread = await self._agent_thread.serialize()
 
         return {
