@@ -21,7 +21,7 @@ public static class Program
     {
         // Create the executors
         Func<string, string> uppercaseFunc = s => s.ToUpperInvariant();
-        var uppercase = uppercaseFunc.AsExecutor("UppercaseExecutor");
+        var uppercase = uppercaseFunc.BindAsExecutor("UppercaseExecutor");
 
         ReverseTextExecutor reverse = new();
 

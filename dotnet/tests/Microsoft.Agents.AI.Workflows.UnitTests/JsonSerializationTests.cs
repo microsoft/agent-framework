@@ -167,7 +167,7 @@ public class JsonSerializationTests
         builder.AddEdge(forwardString, stringToInt)
                .AddEdge(stringToInt, forwardInt)
                .AddEdge(forwardInt, intToString)
-               .AddEdge(intToString, StreamingAggregators.Last<int>().AsExecutor("Aggregate"));
+               .AddEdge(intToString, StreamingAggregators.Last<int>().BindAsExecutor("Aggregate"));
 
         return builder.Build();
     }
@@ -180,7 +180,7 @@ public class JsonSerializationTests
 
     private static void ValidateWorkflowInfo(WorkflowInfo actual, WorkflowInfo prototype)
     {
-        ValidateExecutorDictionary(prototype.ExecutorBindings, prototype.Edges, actual.ExecutorBindings, actual.Edges);
+        ValidateExecutorDictionary(prototype.Executors, prototype.Edges, actual.Executors, actual.Edges);
         ValidateRequestPorts(prototype.RequestPorts, actual.RequestPorts);
 
         actual.InputType.Should().Match(prototype.InputType.CreateValidator());

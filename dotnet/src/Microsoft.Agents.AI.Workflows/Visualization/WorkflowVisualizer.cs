@@ -264,9 +264,9 @@ public static class WorkflowVisualizer
 #endif
     }
 
-    private static bool TryGetNestedWorkflow(ExecutorBinding registration, [NotNullWhen(true)] out Workflow? workflow)
+    private static bool TryGetNestedWorkflow(ExecutorBinding binding, [NotNullWhen(true)] out Workflow? workflow)
     {
-        if (registration.RawValue is Workflow subWorkflow)
+        if (binding.RawValue is Workflow subWorkflow)
         {
             workflow = subWorkflow;
             return true;

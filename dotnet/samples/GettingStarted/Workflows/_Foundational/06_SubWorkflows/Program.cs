@@ -40,7 +40,7 @@ public static class Program
             .Build();
 
         // Step 2: Configure the sub-workflow as an executor for use in the parent workflow
-        ExecutorBinding subWorkflowExecutor = subWorkflow.AsExecutor("TextProcessingSubWorkflow");
+        ExecutorBinding subWorkflowExecutor = subWorkflow.BindAsExecutor("TextProcessingSubWorkflow");
 
         // Step 3: Build a main workflow that uses the sub-workflow as an executor
         Console.WriteLine("Building main workflow that uses the sub-workflow as an executor...\n");

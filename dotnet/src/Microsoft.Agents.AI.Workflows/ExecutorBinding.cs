@@ -119,11 +119,11 @@ public abstract record class ExecutorBinding(string Id, Func<string, ValueTask<E
     /// Defines an implicit conversion from a <see cref="RequestPort "/>to an <see cref="ExecutorBinding"/>.
     /// </summary>
     /// <param name="port">The RequestPort instance to convert.</param>
-    public static implicit operator ExecutorBinding(RequestPort port) => port.AsExecutor();
+    public static implicit operator ExecutorBinding(RequestPort port) => port.BindAsExecutor();
 
     /// <summary>
     /// Defines an implicit conversion from an <see cref="AIAgent"/> to an <see cref="ExecutorBinding"/> instance.
     /// </summary>
     /// <param name="agent"></param>
-    public static implicit operator ExecutorBinding(AIAgent agent) => agent.AsExecutor();
+    public static implicit operator ExecutorBinding(AIAgent agent) => agent.BindAsExecutor();
 }
