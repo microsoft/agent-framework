@@ -30,6 +30,9 @@ from openai.types.shared import Metadata, ResponsesModel
 from ._discovery_models import DiscoveryResponse, EntityInfo
 from ._openai_custom import (
     AgentFrameworkRequest,
+    CustomResponseOutputItemAddedEvent,
+    CustomResponseOutputItemDoneEvent,
+    ExecutorActionItem,
     OpenAIError,
     ResponseFunctionResultComplete,
     ResponseTraceEvent,
@@ -46,8 +49,11 @@ __all__ = [
     "Conversation",
     "ConversationDeletedResource",
     "ConversationItem",
+    "CustomResponseOutputItemAddedEvent",
+    "CustomResponseOutputItemDoneEvent",
     "DiscoveryResponse",
     "EntityInfo",
+    "ExecutorActionItem",
     "InputTokensDetails",
     "Metadata",
     "OpenAIError",

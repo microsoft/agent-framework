@@ -3,8 +3,9 @@
 import asyncio
 import tempfile
 from collections.abc import AsyncIterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
+from uuid import uuid4
 
 import pytest
 
@@ -21,9 +22,6 @@ from agent_framework import (
     FileCheckpointStorage,
     Message,
     RequestInfoEvent,
-    RequestInfoExecutor,
-    RequestInfoMessage,
-    RequestResponse,
     Role,
     TextContent,
     WorkflowBuilder,
@@ -33,6 +31,7 @@ from agent_framework import (
     WorkflowRunState,
     WorkflowStatusEvent,
     handler,
+    response_handler,
 )
 
 
@@ -69,6 +68,14 @@ class AggregatorExecutor(Executor):
 
 
 @dataclass
+class MockRequest:
+    """A mock request message for testing purposes."""
+
+    request_id: str = field(default_factory=lambda: str(uuid4()))
+    prompt: str = ""
+
+
+@dataclass
 class ApprovalMessage:
     """A mock message for approval requests."""
 
@@ -79,22 +86,22 @@ class MockExecutorRequestApproval(Executor):
     """A mock executor that simulates a request for approval."""
 
     @handler
-    async def mock_handler_a(self, message: NumberMessage, ctx: WorkflowContext[RequestInfoMessage]) -> None:
+    async def mock_handler_a(self, message: NumberMessage, ctx: WorkflowContext) -> None:
         """A mock handler that requests approval."""
         await ctx.set_shared_state(self.id, message.data)
-        await ctx.send_message(RequestInfoMessage())
+        await ctx.request_info(MockRequest(prompt="Mock approval request"), MockRequest, ApprovalMessage)
 
-    @handler
+    @response_handler
     async def mock_handler_b(
         self,
-        message: RequestResponse[RequestInfoMessage, ApprovalMessage],
+        original_request: MockRequest,
+        response: ApprovalMessage,
         ctx: WorkflowContext[NumberMessage, int],
     ) -> None:
         """A mock handler that processes the approval response."""
         data = await ctx.get_shared_state(self.id)
         assert isinstance(data, int)
-        assert isinstance(message.data, ApprovalMessage)
-        if message.data.approved:
+        if response.approved:
             await ctx.yield_output(data)
         else:
             await ctx.send_message(NumberMessage(data=data))
@@ -182,15 +189,12 @@ async def test_workflow_send_responses_streaming():
     """Test the workflow run with approval."""
     executor_a = IncrementExecutor(id="executor_a")
     executor_b = MockExecutorRequestApproval(id="executor_b")
-    request_info_executor = RequestInfoExecutor(id="request_info")
 
     workflow = (
         WorkflowBuilder()
         .set_start_executor(executor_a)
         .add_edge(executor_a, executor_b)
         .add_edge(executor_b, executor_a)
-        .add_edge(executor_b, request_info_executor)
-        .add_edge(request_info_executor, executor_b)
         .build()
     )
 
@@ -219,15 +223,12 @@ async def test_workflow_send_responses():
     """Test the workflow run with approval."""
     executor_a = IncrementExecutor(id="executor_a")
     executor_b = MockExecutorRequestApproval(id="executor_b")
-    request_info_executor = RequestInfoExecutor(id="request_info")
 
     workflow = (
         WorkflowBuilder()
         .set_start_executor(executor_a)
         .add_edge(executor_a, executor_b)
         .add_edge(executor_b, executor_a)
-        .add_edge(executor_b, request_info_executor)
-        .add_edge(request_info_executor, executor_b)
         .build()
     )
 
@@ -414,9 +415,7 @@ async def test_workflow_run_stream_from_checkpoint_with_external_storage(simple_
             workflow_id="test-workflow",
             messages={},
             shared_state={},
-            executor_states={},
             iteration_count=0,
-            max_iterations=100,
         )
         checkpoint_id = await storage.save_checkpoint(test_checkpoint)
 
@@ -451,9 +450,7 @@ async def test_workflow_run_from_checkpoint_non_streaming(simple_executor: Execu
             workflow_id="test-workflow",
             messages={},
             shared_state={},
-            executor_states={},
             iteration_count=0,
-            max_iterations=100,
         )
         checkpoint_id = await storage.save_checkpoint(test_checkpoint)
 
@@ -484,9 +481,16 @@ async def test_workflow_run_stream_from_checkpoint_with_responses(simple_executo
             workflow_id="test-workflow",
             messages={},
             shared_state={},
-            executor_states={},
+            pending_request_info_events={
+                "request_123": RequestInfoEvent(
+                    request_id="request_123",
+                    source_executor_id=simple_executor.id,
+                    request_type=str,
+                    request_data="Mock",
+                    response_type=str,
+                ).to_dict(),
+            },
             iteration_count=0,
-            max_iterations=100,
         )
         checkpoint_id = await storage.save_checkpoint(test_checkpoint)
 
@@ -500,17 +504,20 @@ async def test_workflow_run_stream_from_checkpoint_with_responses(simple_executo
         )
 
         # Test that run_stream_from_checkpoint accepts responses parameter
-        responses = {"request_123": {"data": "test_response"}}
+        responses = {"request_123": "test_response"}
 
-        try:
-            events: list[WorkflowEvent] = []
-            async for event in workflow.run_stream_from_checkpoint(checkpoint_id, responses=responses):
-                events.append(event)
-                if len(events) >= 2:  # Limit to avoid infinite loops
-                    break
-        except Exception:
-            # Expected since we have minimal setup, but method should accept the parameters
-            pass
+        events: list[WorkflowEvent] = []
+        async for event in workflow.run_stream_from_checkpoint(checkpoint_id):
+            events.append(event)
+
+        assert next(
+            event for event in events if isinstance(event, RequestInfoEvent) and event.request_id == "request_123"
+        )
+
+        async for event in workflow.send_responses_streaming(responses):
+            events.append(event)
+
+        assert len(events) > 0  # Just ensure we processed some events
 
 
 @dataclass
@@ -525,7 +532,9 @@ class StateTrackingExecutor(Executor):
     """An executor that tracks state in shared state to test context reset behavior."""
 
     @handler
-    async def handle_message(self, message: StateTrackingMessage, ctx: WorkflowContext[Any, list]) -> None:
+    async def handle_message(
+        self, message: StateTrackingMessage, ctx: WorkflowContext[StateTrackingMessage, list[str]]
+    ) -> None:
         """Handle the message and track it in shared state."""
         # Get existing messages from shared state
         try:
@@ -741,7 +750,7 @@ async def test_workflow_concurrent_execution_prevention_streaming():
 
     # Create an async generator that will consume the stream slowly
     async def consume_stream_slowly():
-        result = []
+        result: list[WorkflowEvent] = []
         async for event in workflow.run_stream(NumberMessage(data=0)):
             result.append(event)
             await asyncio.sleep(0.01)  # Slow consumption
@@ -774,7 +783,7 @@ async def test_workflow_concurrent_execution_prevention_mixed_methods():
 
     # Start a streaming execution
     async def consume_stream():
-        result = []
+        result: list[WorkflowEvent] = []
         async for event in workflow.run_stream(NumberMessage(data=0)):
             result.append(event)
             await asyncio.sleep(0.01)
@@ -850,6 +859,7 @@ async def test_agent_streaming_vs_non_streaming() -> None:
     assert len(agent_run_events) == 1, "Expected exactly one AgentRunEvent in non-streaming mode"
     assert len(agent_update_events) == 0, "Expected no AgentRunUpdateEvent in non-streaming mode"
     assert agent_run_events[0].executor_id == "agent_exec"
+    assert agent_run_events[0].data is not None
     assert agent_run_events[0].data.messages[0].text == "Hello World"
 
     # Test streaming mode with run_stream()
@@ -870,6 +880,8 @@ async def test_agent_streaming_vs_non_streaming() -> None:
 
     # Verify the updates build up to the full message
     accumulated_text = "".join(
-        e.data.contents[0].text for e in stream_agent_update_events if e.data.contents and e.data.contents[0].text
+        e.data.contents[0].text
+        for e in stream_agent_update_events
+        if e.data and e.data.contents and e.data.contents[0].text
     )
     assert accumulated_text == "Hello World", f"Expected 'Hello World', got '{accumulated_text}'"

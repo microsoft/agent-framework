@@ -217,6 +217,11 @@ class AgentFrameworkExecutor:
             Agent update events and trace events
         """
         try:
+            # Emit agent lifecycle start event
+            from .models._openai_custom import AgentStartedEvent
+
+            yield AgentStartedEvent()
+
             # Convert input to proper ChatMessage or string
             user_message = self._convert_input_to_chat_message(request.input)
 
@@ -266,8 +271,19 @@ class AgentFrameworkExecutor:
             else:
                 raise ValueError("Agent must implement either run() or run_stream() method")
 
+            # Emit agent lifecycle completion event
+            from .models._openai_custom import AgentCompletedEvent
+
+            yield AgentCompletedEvent()
+
         except Exception as e:
             logger.error(f"Error in agent execution: {e}")
+            # Emit agent lifecycle failure event
+            from .models._openai_custom import AgentFailedEvent
+
+            yield AgentFailedEvent(error=e)
+
+            # Still yield the error for backward compatibility
             yield {"type": "error", "message": f"Agent execution error: {e!s}"}
 
     async def _execute_workflow(
@@ -284,14 +300,9 @@ class AgentFrameworkExecutor:
             Workflow events and trace events
         """
         try:
-            # Get input data - prefer structured data from extra_body
-            input_data: str | list[Any] | dict[str, Any]
-            if request.extra_body and isinstance(request.extra_body, dict) and request.extra_body.get("input_data"):
-                input_data = request.extra_body.get("input_data")  # type: ignore
-                logger.debug(f"Using structured input_data from extra_body: {type(input_data)}")
-            else:
-                input_data = request.input
-                logger.debug(f"Using input field as fallback: {type(input_data)}")
+            # Get input data directly from request.input field
+            input_data = request.input
+            logger.debug(f"Using input field: {type(input_data)}")
 
             # Parse input based on workflow's expected input type
             parsed_input = await self._parse_workflow_input(workflow, input_data)

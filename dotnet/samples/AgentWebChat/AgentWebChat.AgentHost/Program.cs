@@ -5,7 +5,6 @@ using AgentWebChat.AgentHost;
 using AgentWebChat.AgentHost.Utilities;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hosting;
-using Microsoft.Agents.AI.Hosting.A2A.AspNetCore;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 
@@ -25,7 +24,8 @@ builder.AddAIAgent(
     "pirate",
     instructions: "You are a pirate. Speak like a pirate",
     description: "An agent that speaks like a pirate.",
-    chatClientServiceKey: "chat-model");
+    chatClientServiceKey: "chat-model")
+    .WithInMemoryThreadStore();
 
 builder.AddAIAgent("knights-and-knaves", (sp, key) =>
 {
