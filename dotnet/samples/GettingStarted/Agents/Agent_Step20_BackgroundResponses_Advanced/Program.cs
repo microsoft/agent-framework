@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to use background responses with ChatClientAgent and AzureOpenAI Responses.
+// This sample demonstrates how to use background responses with ChatClientAgent and AzureOpenAI Responses for long-running operations.
+// It shows polling for completion using continuation tokens, function calling during background operations,
+// and persisting/restoring agent state between polling cycles.
 
 #pragma warning disable CA1050 // Declare types in namespaces
 
@@ -20,8 +22,8 @@ AIAgent agent = new AzureOpenAIClient(
     new AzureCliCredential())
      .GetOpenAIResponseClient(deploymentName)
      .CreateAIAgent(
-        name: "SciFiNovelWriter",
-        instructions: "Always research relevant space facts and generate character profiles for the main characters before writing novels.",
+        name: "SpaceNovelWriter",
+        instructions: "Always research relevant facts and generate character profiles for the main characters before writing novels.",
         tools: [.. new AgentFunctions().AsAITools()]);
 
 // Enable background responses (only supported by {Azure}OpenAI Responses at this time).
@@ -37,7 +39,7 @@ while (response.ContinuationToken is not null)
 {
     stateStore.PersistAgentState(thread, response.ContinuationToken);
 
-    await Task.Delay(TimeSpan.FromSeconds(5));
+    await Task.Delay(TimeSpan.FromSeconds(10));
 
     stateStore.RestoreAgentState(agent, out thread, out object? continuationToken);
 
