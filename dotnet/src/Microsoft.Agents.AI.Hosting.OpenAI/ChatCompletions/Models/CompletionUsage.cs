@@ -4,6 +4,9 @@ using System.Text.Json.Serialization;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions.Models;
 
+/// <summary>
+/// Represents usage statistics for a chat completion request.
+/// </summary>
 internal sealed record CompletionUsage
 {
     public static CompletionUsage Zero { get; } = new()
@@ -43,9 +46,15 @@ internal sealed record CompletionUsage
     [JsonPropertyName("total_tokens")]
     public int? TotalTokens { get; set; }
 
+    /// <summary>
+    /// Breakdown of tokens used in the generated completion.
+    /// </summary>
     [JsonPropertyName("completion_tokens_details")]
     public required CompletionTokensDetails CompletionTokensDetails { get; set; }
 
+    /// <summary>
+    /// Breakdown of tokens used in the prompt.
+    /// </summary>
     [JsonPropertyName("prompt_tokens_details")]
     public required PromptTokensDetails PromptTokensDetails { get; set; }
 

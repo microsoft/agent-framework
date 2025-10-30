@@ -157,7 +157,7 @@ internal sealed record ChoiceMessageToolCall
     /// <summary>
     /// The type of the tool.
     /// </summary>
-    public string? Type => "function";
+    public string Type => "function";
 
     /// <summary>
     /// The function that the model called.
@@ -175,6 +175,7 @@ internal sealed record ChoiceMessageAnnotation
     /// <summary>
     /// The type of annotation. Always 'url_citation' for web search results.
     /// </summary>
+    [JsonPropertyName("type")]
     public string Type => "url_citation";
 
     /// <summary>
