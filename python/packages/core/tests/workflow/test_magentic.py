@@ -312,7 +312,6 @@ async def test_magentic_checkpoint_resume_round_trip():
     async for ev in wf.run_stream(task_text):
         if isinstance(ev, RequestInfoEvent) and ev.request_type is MagenticPlanReviewRequest:
             req_event = ev
-            break
     assert req_event is not None
 
     checkpoints = await storage.list_checkpoints()
@@ -334,10 +333,16 @@ async def test_magentic_checkpoint_resume_round_trip():
 
     reply = MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.APPROVE)
     completed: WorkflowOutputEvent | None = None
+    req_event = None
     async for event in wf_resume.run_stream_from_checkpoint(
         resume_checkpoint.checkpoint_id,
-        responses={req_event.request_id: reply},
     ):
+        if isinstance(event, RequestInfoEvent) and event.request_type is MagenticPlanReviewRequest:
+            req_event = event
+    assert req_event is not None
+
+    responses = {req_event.request_id: reply}
+    async for event in wf_resume.send_responses_streaming(responses=responses):
         if isinstance(event, WorkflowOutputEvent):
             completed = event
     assert completed is not None
@@ -666,7 +671,6 @@ async def test_magentic_checkpoint_resume_rejects_participant_renames():
     async for event in workflow.run_stream("task"):
         if isinstance(event, RequestInfoEvent) and event.request_type is MagenticPlanReviewRequest:
             req_event = event
-            break
 
     assert req_event is not None
 
@@ -685,7 +689,6 @@ async def test_magentic_checkpoint_resume_rejects_participant_renames():
     with pytest.raises(ValueError, match="Workflow graph has changed"):
         async for _ in renamed_workflow.run_stream_from_checkpoint(
             target_checkpoint.checkpoint_id,  # type: ignore[reportUnknownMemberType]
-            responses={req_event.request_id: MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.APPROVE)},
         ):
             pass
 
