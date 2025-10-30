@@ -14,7 +14,7 @@ namespace Microsoft.Agents.AI.Workflows.Execution;
 /// </summary>
 internal sealed class NonThrowingChannelReaderAsyncEnumerable<T>(ChannelReader<T> reader) : IAsyncEnumerable<T>
 {
-    private class Enumerator(ChannelReader<T> reader, CancellationToken initialCallCancellation) : IAsyncEnumerator<T>
+    private class Enumerator(ChannelReader<T> reader, CancellationToken cancellationToken) : IAsyncEnumerator<T>
     {
         private T? _current;
         public T Current => this._current ?? throw new InvalidOperationException("Enumeration not started.");
@@ -28,15 +28,15 @@ internal sealed class NonThrowingChannelReaderAsyncEnumerable<T>(ChannelReader<T
         /// <summary>
         /// Moves to the next item in the channel.
         /// </summary>
-        /// <returns>If successful, returns true, otherwise false.</returns>
+        /// <returns>If successful, returns <c>true</c>, otherwise <c>false</c>.</returns>
         public async ValueTask<bool> MoveNextAsync()
         {
             try
             {
-                bool hasData = await reader.WaitToReadAsync(initialCallCancellation).ConfigureAwait(false);
+                bool hasData = await reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false);
                 if (hasData)
                 {
-                    this._current = await reader.ReadAsync(initialCallCancellation).ConfigureAwait(false);
+                    this._current = await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
                     return true;
                 }
             }
