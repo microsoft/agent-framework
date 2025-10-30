@@ -22,7 +22,7 @@ internal sealed record StopSequences : IEquatable<StopSequences>
         this.Sequences = null;
     }
 
-    private StopSequences(IReadOnlyList<string> sequences)
+    private StopSequences(IList<string> sequences)
     {
         if (sequences is null || sequences.Count == 0)
         {
@@ -46,7 +46,7 @@ internal sealed record StopSequences : IEquatable<StopSequences>
     /// <summary>
     /// Creates a StopSequences from a list of stop sequences.
     /// </summary>
-    public static StopSequences FromSequences(IReadOnlyList<string> sequences) => new(sequences);
+    public static StopSequences FromSequences(IList<string> sequences) => new(sequences);
 
     /// <summary>
     /// Implicit conversion from string to StopSequences.
@@ -83,7 +83,11 @@ internal sealed record StopSequences : IEquatable<StopSequences>
     /// <summary>
     /// Gets the list of stop sequences, or null if this is a single sequence.
     /// </summary>
-    public IReadOnlyList<string>? Sequences { get; }
+    public IList<string>? Sequences { get; }
+
+    public IList<string> SequenceList =>
+        this.IsSingleSequence ? [this.SingleSequence] :
+        this.IsSequences ? this.Sequences : [];
 
     /// <inheritdoc/>
     public bool Equals(StopSequences? other)
@@ -155,7 +159,7 @@ internal sealed class StopSequencesConverter : JsonConverter<StopSequences>
         // Handle array of strings
         if (reader.TokenType == JsonTokenType.StartArray)
         {
-            var sequences = JsonSerializer.Deserialize(ref reader, ChatCompletionsJsonContext.Default.IListString) as IReadOnlyList<string>;
+            var sequences = JsonSerializer.Deserialize(ref reader, ChatCompletionsJsonContext.Default.IListString);
             return sequences?.Count > 0
                 ? StopSequences.FromSequences(sequences)
                 : StopSequences.FromString(string.Empty);

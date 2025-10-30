@@ -37,7 +37,7 @@ internal sealed record CreateChatCompletion
     /// </summary>
     [JsonPropertyName("frequency_penalty")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public double? FrequencyPenalty { get; set; }
+    public float? FrequencyPenalty { get; set; }
 
     /// <summary>
     /// Deprecated in favor of tool_choice. Controls which (if any) function is called by the model.
@@ -126,7 +126,7 @@ internal sealed record CreateChatCompletion
     /// </summary>
     [JsonPropertyName("presence_penalty")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public double? PresencePenalty { get; set; }
+    public float? PresencePenalty { get; set; }
 
     /// <summary>
     /// Used by OpenAI to cache responses for similar requests to optimize your cache hit rates.
@@ -146,7 +146,7 @@ internal sealed record CreateChatCompletion
     /// </summary>
     [JsonPropertyName("response_format")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public object? ResponseFormat { get; set; }
+    public ResponseFormat? ResponseFormat { get; set; }
 
     /// <summary>
     /// A stable identifier used to help detect users of your application that may be violating OpenAI's usage policies.
@@ -162,7 +162,6 @@ internal sealed record CreateChatCompletion
     /// </summary>
     [JsonPropertyName("seed")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    [Obsolete("This feature is in Beta. Determinism is not guaranteed.")]
     public long? Seed { get; set; }
 
     /// <summary>
@@ -211,14 +210,14 @@ internal sealed record CreateChatCompletion
     /// </summary>
     [JsonPropertyName("temperature")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public double? Temperature { get; set; }
+    public float? Temperature { get; set; }
 
     /// <summary>
     /// Controls which (if any) tool is called by the model.
     /// </summary>
     [JsonPropertyName("tool_choice")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public object? ToolChoice { get; set; }
+    public ToolChoice? ToolChoice { get; set; }
 
     /// <summary>
     /// A list of tools the model may call. Can include custom tools or function tools.
@@ -241,7 +240,7 @@ internal sealed record CreateChatCompletion
     /// </summary>
     [JsonPropertyName("top_p")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public double? TopP { get; set; }
+    public float? TopP { get; set; }
 
     /// <summary>
     /// Level of detail in the model's output. Can be "standard" or "verbose".

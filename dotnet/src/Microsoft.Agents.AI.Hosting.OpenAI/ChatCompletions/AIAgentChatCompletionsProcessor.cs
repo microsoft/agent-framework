@@ -8,6 +8,7 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions.Converters;
 using Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions.Models;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
@@ -21,17 +22,23 @@ internal static class AIAgentChatCompletionsProcessor
     {
         ArgumentNullException.ThrowIfNull(agent);
 
+        var chatMessages = request.Messages.Select(i => i.ToChatMessage());
+        var chatClientAgentRunOptions = request.BuildOptions();
+
         if (request.Stream == true)
         {
-            return new StreamingResponse(agent, request);
+            return new StreamingResponse(agent, request, chatMessages, chatClientAgentRunOptions);
         }
 
-        var chatMessages = request.Messages.Select(i => i.ToChatMessage());
-        var response = await agent.RunAsync(chatMessages, cancellationToken: cancellationToken).ConfigureAwait(false);
+        var response = await agent.RunAsync(chatMessages, options: chatClientAgentRunOptions, cancellationToken: cancellationToken).ConfigureAwait(false);
         return Results.Ok(response.ToChatCompletion(request));
     }
 
-    private sealed class StreamingResponse(AIAgent agent, CreateChatCompletion request) : IResult
+    private sealed class StreamingResponse(
+        AIAgent agent,
+        CreateChatCompletion request,
+        IEnumerable<ChatMessage> chatMessages,
+        ChatClientAgentRunOptions? options) : IResult
     {
         public Task ExecuteAsync(HttpContext httpContext)
         {
@@ -59,8 +66,7 @@ internal static class AIAgentChatCompletionsProcessor
 
         private async IAsyncEnumerable<SseItem<ChatCompletionChunk>> GetStreamingChunksAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
-            var chatMessages = request.Messages.Select(i => i.ToChatMessage());
-            await foreach (var agentRunResponseUpdate in agent.RunStreamingAsync(chatMessages, cancellationToken: cancellationToken).WithCancellation(cancellationToken))
+            await foreach (var agentRunResponseUpdate in agent.RunStreamingAsync(chatMessages, options: options, cancellationToken: cancellationToken).WithCancellation(cancellationToken))
             {
                 var choiceChunks = new List<ChatCompletionChoiceChunk>();
                 CompletionUsage? usageDetails = null;
