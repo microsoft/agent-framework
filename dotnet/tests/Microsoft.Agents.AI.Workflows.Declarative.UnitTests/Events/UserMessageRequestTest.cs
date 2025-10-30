@@ -6,14 +6,17 @@ using Xunit.Abstractions;
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.Events;
 
 /// <summary>
-/// Base class for event tests.
+/// Verify <see cref="AnswerRequest"/> class
 /// </summary>
-public sealed class InputRequestTest(ITestOutputHelper output) : EventTest(output)
+public sealed class UserMessageRequestTest(ITestOutputHelper output) : EventTest(output)
 {
     [Fact]
     public void VerifySerialization()
     {
-        InputRequest copy = VerifyEventSerialization(new InputRequest("wassup"));
+        // Arrange & Act
+        AnswerRequest copy = VerifyEventSerialization(new AnswerRequest("wassup"));
+
+        // Assert
         Assert.Equal("wassup", copy.Prompt);
     }
 }
