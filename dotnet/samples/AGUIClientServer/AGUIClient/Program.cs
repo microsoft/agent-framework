@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 // This sample demonstrates how to use the AG-UI client to connect to a remote AG-UI server
-// and display streaming updates including RunStartedContent, TextContent, and RunFinishedContent.
+// and display streaming updates including conversation/response metadata, text content, and errors.
 
 using System.CommandLine;
 using System.Reflection;
@@ -89,41 +89,46 @@ public static class Program
                 ];
 
                 // Call RunStreamingAsync to get streaming updates
+                bool isFirstUpdate = true;
+                string? threadId = null;
                 await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(messages, thread, cancellationToken: cancellationToken))
                 {
+                    // Use AsChatResponseUpdate to access ChatResponseUpdate properties
+                    ChatResponseUpdate chatUpdate = update.AsChatResponseUpdate();
+                    if (chatUpdate.ConversationId != null)
+                    {
+                        threadId = chatUpdate.ConversationId;
+                    }
+
+                    // Display run started information from the first update
+                    if (isFirstUpdate && threadId != null && update.ResponseId != null)
+                    {
+                        Console.ForegroundColor = ConsoleColor.Yellow;
+                        Console.WriteLine($"\n[Run Started - Thread: {threadId}, Run: {update.ResponseId}]");
+                        Console.ResetColor();
+                        isFirstUpdate = false;
+                    }
+
                     // Display different content types with appropriate formatting
                     foreach (AIContent content in update.Contents)
                     {
                         switch (content)
                         {
-                            case RunStartedContent runStarted:
-                                Console.ForegroundColor = ConsoleColor.Yellow;
-                                Console.WriteLine($"\n[Run Started - Thread: {runStarted.ThreadId}, Run: {runStarted.RunId}]");
-                                Console.ResetColor();
-                                break;
-
                             case TextContent textContent:
                                 Console.ForegroundColor = ConsoleColor.Cyan;
                                 Console.Write(textContent.Text);
                                 Console.ResetColor();
                                 break;
 
-                            case RunFinishedContent runFinished:
-                                Console.ForegroundColor = ConsoleColor.Green;
-                                Console.WriteLine($"\n[Run Finished - Thread: {runFinished.ThreadId}, Run: {runFinished.RunId}]");
-                                Console.ResetColor();
-                                break;
-
-                            case RunErrorContent runError:
+                            case ErrorContent errorContent:
                                 Console.ForegroundColor = ConsoleColor.Red;
-                                Console.WriteLine($"\n[Run Error - Code: {runError.Code}, Message: {runError.Message}]");
+                                string code = errorContent.AdditionalProperties?["Code"] as string ?? "Unknown";
+                                Console.WriteLine($"\n[Error - Code: {code}, Message: {errorContent.Message}]");
                                 Console.ResetColor();
                                 break;
                         }
                     }
-                }
-
-                Console.WriteLine();
+                }                Console.WriteLine();
             }
         }
         catch (Exception ex)

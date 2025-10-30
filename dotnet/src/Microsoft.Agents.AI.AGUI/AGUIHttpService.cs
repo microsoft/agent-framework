@@ -46,12 +46,7 @@ internal sealed class AGUIHttpService(HttpClient client, string endpoint)
 
     private static BaseEvent ItemParser(string type, ReadOnlySpan<byte> data)
     {
-        var result = JsonSerializer.Deserialize(data, AGUIJsonSerializerContext.Default.BaseEvent);
-        if (result != null)
-        {
-            return result;
-        }
-
-        throw new InvalidOperationException("Failed to deserialize SSE item.");
+        return JsonSerializer.Deserialize(data, AGUIJsonSerializerContext.Default.BaseEvent) ??
+            throw new InvalidOperationException("Failed to deserialize SSE item.");
     }
 }

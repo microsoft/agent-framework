@@ -48,25 +48,10 @@ internal static class AGUIChatMessageExtensions
         return result ?? [];
     }
 
-    public static ChatRole MapChatRole(string role)
-    {
-        if (string.Equals(role, AGUIRoles.System, StringComparison.OrdinalIgnoreCase))
-        {
-            return ChatRole.System;
-        }
-        else if (string.Equals(role, AGUIRoles.User, StringComparison.OrdinalIgnoreCase))
-        {
-            return ChatRole.User;
-        }
-        else if (string.Equals(role, AGUIRoles.Assistant, StringComparison.OrdinalIgnoreCase))
-        {
-            return ChatRole.Assistant;
-        }
-        else if (string.Equals(role, AGUIRoles.Developer, StringComparison.OrdinalIgnoreCase))
-        {
-            return s_developerChatRole;
-        }
-
+    public static ChatRole MapChatRole(string role) =>
+        string.Equals(role, AGUIRoles.System, StringComparison.OrdinalIgnoreCase) ? ChatRole.System :
+        string.Equals(role, AGUIRoles.User, StringComparison.OrdinalIgnoreCase) ? ChatRole.User :
+        string.Equals(role, AGUIRoles.Assistant, StringComparison.OrdinalIgnoreCase) ? ChatRole.Assistant :
+        string.Equals(role, AGUIRoles.Developer, StringComparison.OrdinalIgnoreCase) ? s_developerChatRole :
         throw new InvalidOperationException($"Unknown chat role: {role}");
-    }
 }

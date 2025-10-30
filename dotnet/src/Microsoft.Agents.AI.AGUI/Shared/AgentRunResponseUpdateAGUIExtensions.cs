@@ -29,20 +29,27 @@ internal static class AgentRunResponseUpdateAGUIExtensions
                 case RunStartedEvent runStarted:
                     yield return new AgentRunResponseUpdate(new ChatResponseUpdate(
                         ChatRole.Assistant,
-                        [new RunStartedContent(runStarted.ThreadId, runStarted.RunId)]));
+                        [])
+                    {
+                        ConversationId = runStarted.ThreadId,
+                        ResponseId = runStarted.RunId,
+                        CreatedAt = DateTimeOffset.UtcNow
+                    });
                     break;
                 case RunFinishedEvent runFinished:
                     yield return new AgentRunResponseUpdate(new ChatResponseUpdate(
                         ChatRole.Assistant,
-                        [new RunFinishedContent(
-                            runFinished.ThreadId,
-                            runFinished.RunId,
-                            runFinished.Result)]));
+                        runFinished.Result ?? string.Empty)
+                    {
+                        ConversationId = runFinished.ThreadId,
+                        ResponseId = runFinished.RunId,
+                        CreatedAt = DateTimeOffset.UtcNow
+                    });
                     break;
                 case RunErrorEvent runError:
                     yield return new AgentRunResponseUpdate(new ChatResponseUpdate(
                         ChatRole.Assistant,
-                        [new RunErrorContent(runError.Message, runError.Code)]));
+                        [new ErrorContent(runError.Message, runError.Code)]));
                     break;
                 case TextMessageStartEvent textStart:
                     if (currentRole != default || currentMessageId != null)
@@ -58,7 +65,8 @@ internal static class AgentRunResponseUpdateAGUIExtensions
                         currentRole,
                         textContent.Delta)
                     {
-                        MessageId = textContent.MessageId
+                        MessageId = textContent.MessageId,
+                        CreatedAt = DateTimeOffset.UtcNow
                     });
                     break;
                 case TextMessageEndEvent textEnd:
