@@ -106,7 +106,7 @@ public class ChatClientAgentOptions
     /// if the agent's <see cref="Name"/> property is <see langword="null"/>. This is useful for compatibility with
     /// strict OpenAI-compatible backends that reject assistant messages with a name field.
     /// When set to <see langword="false"/> (the default), the framework will use "UnnamedAgent" as a fallback name
-    /// when the agent name is not set, maintaining backward compatibility.
+    /// when the agent name is not set.
     /// </remarks>
     public bool SuppressAssistantName { get; set; }
 
