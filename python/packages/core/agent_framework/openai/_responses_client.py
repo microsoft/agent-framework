@@ -70,7 +70,7 @@ from ._shared import OpenAIBase, OpenAIConfigMixin, OpenAISettings
 
 logger = get_logger("agent_framework.openai")
 
-__all__ = ["OpenAIResponsesClient"]
+__all__ = ["OpenAIBaseResponsesClient", "OpenAIResponsesClient"]
 
 # region ResponsesClient
 
@@ -89,10 +89,11 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         chat_options: ChatOptions,
         **kwargs: Any,
     ) -> ChatResponse:
-        options_dict = self._prepare_options(messages, chat_options)
+        client = await self.ensure_client()
+        options_dict = await self.prepare_options(messages, chat_options)
         try:
             if not chat_options.response_format:
-                response = await self.client.responses.create(
+                response = await client.responses.create(
                     stream=False,
                     **options_dict,
                 )
@@ -100,7 +101,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                 return self._create_response_content(response, chat_options=chat_options)
             # create call does not support response_format, so we need to handle it via parse call
             resp_format = chat_options.response_format
-            parsed_response: ParsedResponse[BaseModel] = await self.client.responses.parse(
+            parsed_response: ParsedResponse[BaseModel] = await client.responses.parse(
                 text_format=resp_format,
                 stream=False,
                 **options_dict,
@@ -130,11 +131,12 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         chat_options: ChatOptions,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
-        options_dict = self._prepare_options(messages, chat_options)
+        client = await self.ensure_client()
+        options_dict = await self.prepare_options(messages, chat_options)
         function_call_ids: dict[int, tuple[str, str]] = {}  # output_index: (call_id, name)
         try:
             if not chat_options.response_format:
-                response = await self.client.responses.create(
+                response = await client.responses.create(
                     stream=True,
                     **options_dict,
                 )
@@ -145,7 +147,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                     yield update
                 return
             # create call does not support response_format, so we need to handle it via stream call
-            async with self.client.responses.stream(
+            async with client.responses.stream(
                 text_format=chat_options.response_format,
                 **options_dict,
             ) as response:
@@ -298,7 +300,9 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                     response_tools.append(tool_dict)
         return response_tools
 
-    def _prepare_options(self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions) -> dict[str, Any]:
+    async def prepare_options(
+        self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions
+    ) -> dict[str, Any]:
         """Take ChatOptions and create the specific options for Responses API."""
         options_dict: dict[str, Any] = chat_options.to_dict(
             exclude={
