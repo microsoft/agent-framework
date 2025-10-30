@@ -3125,7 +3125,7 @@ class ChatOptions(SerializationMixin):
     @classmethod
     def _validate_tool_mode(
         cls, tool_choice: ToolMode | Literal["auto", "required", "none"] | Mapping[str, Any] | None
-    ) -> ToolMode | str | None:
+    ) -> ToolMode | None:
         """Validates the tool_choice field to ensure it is a valid ToolMode."""
         if not tool_choice:
             return None
