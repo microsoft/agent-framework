@@ -22,13 +22,16 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
+    # utilities
     "typing-extensions",
     "pydantic>=2,<3",
     "pydantic-settings>=2,<3",
+    # telemetry
     "opentelemetry-api>=1.24",
     "opentelemetry-sdk>=1.24",
     "opentelemetry-exporter-otlp-proto-grpc>=1.36.0",
     "opentelemetry-semantic-conventions-ai>=0.4.13",
+    # connectors and functions
     "openai>=1.99.0,<2",
     "azure-identity>=1,<2",
     "mcp[ws]>=1.13",
