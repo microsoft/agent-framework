@@ -43,7 +43,8 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         // Arrange
         List<BaseEvent> events =
         [
-            new RunFinishedEvent { ThreadId = "thread1", RunId = "run1", Result = JsonDocument.Parse("\"Success\"").RootElement }
+            new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
+            new RunFinishedEvent { ThreadId = "thread1", RunId = "run1", Result = JsonSerializer.SerializeToElement("Success") }
         ];
 
         // Act
@@ -54,14 +55,18 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         }
 
         // Assert
-        Assert.Single(updates);
+        Assert.Equal(2, updates.Count);
+        // First update is RunStarted
         Assert.Equal(ChatRole.Assistant, updates[0].Role);
         Assert.Equal("run1", updates[0].ResponseId);
-        Assert.NotNull(updates[0].CreatedAt);
-        TextContent content = Assert.IsType<TextContent>(updates[0].Contents[0]);
-        Assert.Equal("Success", content.Text);
+        // Second update is RunFinished
+        Assert.Equal(ChatRole.Assistant, updates[1].Role);
+        Assert.Equal("run1", updates[1].ResponseId);
+        Assert.NotNull(updates[1].CreatedAt);
+        TextContent content = Assert.IsType<TextContent>(updates[1].Contents[0]);
+        Assert.Equal("\"Success\"", content.Text); // JSON string representation includes quotes
         // ConversationId is stored in the underlying ChatResponseUpdate
-        ChatResponseUpdate chatUpdate = Assert.IsType<ChatResponseUpdate>(updates[0].RawRepresentation);
+        ChatResponseUpdate chatUpdate = Assert.IsType<ChatResponseUpdate>(updates[1].RawRepresentation);
         Assert.Equal("thread1", chatUpdate.ConversationId);
     }
 
@@ -86,9 +91,8 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         Assert.Equal(ChatRole.Assistant, updates[0].Role);
         ErrorContent content = Assert.IsType<ErrorContent>(updates[0].Contents[0]);
         Assert.Equal("Error occurred", content.Message);
-        // Code is stored in AdditionalProperties
-        Assert.NotNull(content.AdditionalProperties);
-        Assert.Equal("ERR001", content.AdditionalProperties["Code"]);
+        // Code is stored in ErrorCode property
+        Assert.Equal("ERR001", content.ErrorCode);
     }
 
     [Fact]

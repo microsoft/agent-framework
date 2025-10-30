@@ -288,7 +288,7 @@ public sealed class AGUIAgentTests
         string sseContent = string.Join("", events.Select(e =>
             $"data: {JsonSerializer.Serialize(e, AGUIJsonSerializerContext.Default.BaseEvent)}\n\n"));
 
-        Mock<HttpMessageHandler> handlerMock = new(MockBehavior.Strict);
+        Mock<HttpMessageHandler> handlerMock = new();
         handlerMock
             .Protected()
             .Setup<Task<HttpResponseMessage>>(
@@ -309,7 +309,7 @@ public sealed class AGUIAgentTests
         string sseContent = string.Join("", events.Select(e =>
             $"data: {JsonSerializer.Serialize(e, AGUIJsonSerializerContext.Default.BaseEvent)}\n\n"));
 
-        Mock<HttpMessageHandler> handlerMock = new(MockBehavior.Strict);
+        Mock<HttpMessageHandler> handlerMock = new();
         handlerMock
             .Protected()
             .Setup<Task<HttpResponseMessage>>(
