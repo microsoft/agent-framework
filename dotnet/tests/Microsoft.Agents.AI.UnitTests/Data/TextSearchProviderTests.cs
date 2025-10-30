@@ -290,6 +290,45 @@ public sealed class TextSearchProviderTests
     #region Recent Message Memory Tests
 
     [Fact]
+    public async Task InvokingAsync_WithPreviousFailedRequest_ShouldNotIncludeFailedRequestInputInSearchInputAsync()
+    {
+        // Arrange
+        var options = new TextSearchProviderOptions
+        {
+            SearchTime = TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke,
+            RecentMessageMemoryLimit = 3
+        };
+        string? capturedInput = null;
+        Task<IEnumerable<TextSearchProvider.TextSearchResult>> SearchDelegateAsync(string input, CancellationToken ct)
+        {
+            capturedInput = input;
+            return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchResult>>([]); // No results needed.
+        }
+        var provider = new TextSearchProvider(SearchDelegateAsync, options);
+
+        // Populate memory with more messages than the limit (A,B,C,D) -> should retain B,C,D
+        var initialMessages = new[]
+        {
+            new ChatMessage(ChatRole.User, "A"),
+            new ChatMessage(ChatRole.Assistant, "B"),
+            new ChatMessage(ChatRole.User, "C"),
+            new ChatMessage(ChatRole.Assistant, "D"),
+        };
+        await provider.InvokedAsync(new(initialMessages, aiContextProviderMessages: null) { InvokeException = new InvalidOperationException("Request Failed") });
+
+        var invokingContext = new AIContextProvider.InvokingContext(new[]
+        {
+            new ChatMessage(ChatRole.User, "E")
+        });
+
+        // Act
+        await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert
+        Assert.Equal("E", capturedInput); // Only the messages from the current request, since previous failed request should not be stored.
+    }
+
+    [Fact]
     public async Task InvokingAsync_WithRecentMessageMemory_ShouldIncludeStoredMessagesInSearchInputAsync()
     {
         // Arrange
@@ -314,7 +353,7 @@ public sealed class TextSearchProviderTests
             new ChatMessage(ChatRole.User, "C"),
             new ChatMessage(ChatRole.Assistant, "D"),
         };
-        await provider.InvokedAsync(new(initialMessages));
+        await provider.InvokedAsync(new(initialMessages, aiContextProviderMessages: null));
 
         var invokingContext = new AIContextProvider.InvokingContext(new[]
         {
@@ -350,7 +389,7 @@ public sealed class TextSearchProviderTests
         {
             new ChatMessage(ChatRole.User, "A"),
             new ChatMessage(ChatRole.Assistant, "B"),
-        }));
+        }, aiContextProviderMessages: null));
 
         // Second memory update (C,D,E)
         await provider.InvokedAsync(new(new[]
@@ -358,7 +397,7 @@ public sealed class TextSearchProviderTests
             new ChatMessage(ChatRole.User, "C"),
             new ChatMessage(ChatRole.Assistant, "D"),
             new ChatMessage(ChatRole.User, "E"),
-        }));
+        }, aiContextProviderMessages: null));
 
         var invokingContext = new AIContextProvider.InvokingContext(new[] { new ChatMessage(ChatRole.User, "F") });
 
@@ -410,7 +449,7 @@ public sealed class TextSearchProviderTests
         };
 
         // Act
-        await provider.InvokedAsync(new(messages)); // Populate recent memory.
+        await provider.InvokedAsync(new(messages, aiContextProviderMessages: null)); // Populate recent memory.
         var state = provider.Serialize();
 
         // Assert
@@ -438,7 +477,7 @@ public sealed class TextSearchProviderTests
             new ChatMessage(ChatRole.User, "C"),
             new ChatMessage(ChatRole.Assistant, "D"),
         };
-        await provider.InvokedAsync(new(messages));
+        await provider.InvokedAsync(new(messages, aiContextProviderMessages: null));
 
         // Act
         var state = provider.Serialize();
@@ -478,7 +517,7 @@ public sealed class TextSearchProviderTests
             new ChatMessage(ChatRole.Assistant, "L4"),
             new ChatMessage(ChatRole.User, "L5"),
         };
-        await initialProvider.InvokedAsync(new(messages));
+        await initialProvider.InvokedAsync(new(messages, aiContextProviderMessages: null));
         var state = initialProvider.Serialize();
 
         string? capturedInput = null;
