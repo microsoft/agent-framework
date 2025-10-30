@@ -54,7 +54,6 @@ public static class Program
         AGUIAgent agent = new(
             id: "agui-client",
             description: "AG-UI Client Agent",
-            messages: [new(ChatRole.System, "You are a helpful assistant.")],
             httpClient: httpClient,
             endpoint: serverUrl);
 

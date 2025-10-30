@@ -74,6 +74,7 @@ public sealed class AGUIHttpServiceTests
         {
             await foreach (var _ in service.PostRunAsync(input, CancellationToken.None))
             {
+                // Consume the stream
             }
         });
     }
@@ -86,7 +87,7 @@ public sealed class AGUIHttpServiceTests
         {
             new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
             new RunErrorEvent { Message = "Error occurred", Code = "ERR001" },
-            new RunFinishedEvent { ThreadId = "thread1", RunId = "run1", Result = "Success" }
+            new RunFinishedEvent { ThreadId = "thread1", RunId = "run1", Result = JsonDocument.Parse("\"Success\"").RootElement.Clone() }
         };
 
         HttpClient httpClient = this.CreateMockHttpClient(events, HttpStatusCode.OK);
@@ -112,7 +113,7 @@ public sealed class AGUIHttpServiceTests
         RunErrorEvent errorEvent = Assert.IsType<RunErrorEvent>(resultEvents[1]);
         Assert.Equal("Error occurred", errorEvent.Message);
         RunFinishedEvent finishedEvent = Assert.IsType<RunFinishedEvent>(resultEvents[2]);
-        Assert.Equal("Success", finishedEvent.Result);
+        Assert.Equal("Success", finishedEvent.Result?.GetString());
     }
 
     [Fact]

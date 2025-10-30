@@ -222,7 +222,7 @@ public sealed class AGUIJsonSerializerContextTests
     public void RunFinishedEvent_Includes_ThreadIdRunIdAndOptionalResult()
     {
         // Arrange
-        RunFinishedEvent evt = new() { ThreadId = "thread1", RunId = "run1", Result = "Success" };
+        RunFinishedEvent evt = new() { ThreadId = "thread1", RunId = "run1", Result = JsonDocument.Parse("\"Success\"").RootElement.Clone() };
 
         // Act
         string json = JsonSerializer.Serialize(evt, AGUIJsonSerializerContext.Default.RunFinishedEvent);
@@ -257,14 +257,14 @@ public sealed class AGUIJsonSerializerContextTests
         Assert.NotNull(evt);
         Assert.Equal("thread1", evt.ThreadId);
         Assert.Equal("run1", evt.RunId);
-        Assert.Equal("Complete", evt.Result);
+        Assert.Equal("Complete", evt.Result?.GetString());
     }
 
     [Fact]
     public void RunFinishedEvent_RoundTrip_PreservesData()
     {
         // Arrange
-        RunFinishedEvent original = new() { ThreadId = "thread1", RunId = "run1", Result = "Done" };
+        RunFinishedEvent original = new() { ThreadId = "thread1", RunId = "run1", Result = JsonDocument.Parse("\"Done\"").RootElement };
 
         // Act
         string json = JsonSerializer.Serialize(original, AGUIJsonSerializerContext.Default.RunFinishedEvent);
@@ -274,7 +274,7 @@ public sealed class AGUIJsonSerializerContextTests
         Assert.NotNull(deserialized);
         Assert.Equal(original.ThreadId, deserialized.ThreadId);
         Assert.Equal(original.RunId, deserialized.RunId);
-        Assert.Equal(original.Result, deserialized.Result);
+        Assert.Equal(original.Result?.GetString(), deserialized.Result?.GetString());
     }
 
     [Fact]

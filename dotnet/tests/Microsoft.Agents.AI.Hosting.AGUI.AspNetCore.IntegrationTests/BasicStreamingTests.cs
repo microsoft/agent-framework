@@ -29,7 +29,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
     {
         // Arrange
         await this.SetupTestServerAsync();
-        AGUIAgent agent = new("assistant", "Sample assistant", [], this._client!, "");
+        AGUIAgent agent = new("assistant", "Sample assistant", this._client!, "");
         AgentThread thread = agent.GetNewThread();
         ChatMessage userMessage = new(ChatRole.User, "hello");
 
@@ -59,7 +59,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
     {
         // Arrange
         await this.SetupTestServerAsync();
-        AGUIAgent agent = new("assistant", "Sample assistant", [], this._client!, "");
+        AGUIAgent agent = new("assistant", "Sample assistant", this._client!, "");
         AgentThread thread = agent.GetNewThread();
         ChatMessage userMessage = new(ChatRole.User, "test");
 
@@ -73,10 +73,12 @@ public sealed class BasicStreamingTests : IAsyncDisposable
 
         // Assert - RunStarted should be the first update
         updates.Should().NotBeEmpty();
-        updates[0].Contents.Should().ContainSingle();
-        RunStartedContent runStarted = updates[0].Contents[0].Should().BeOfType<RunStartedContent>().Subject;
-        runStarted.ThreadId.Should().NotBeNullOrEmpty();
-        runStarted.RunId.Should().NotBeNullOrEmpty();
+        updates[0].ResponseId.Should().NotBeNullOrEmpty();
+        ChatResponseUpdate firstUpdate = updates[0].AsChatResponseUpdate();
+        string? threadId = firstUpdate.ConversationId;
+        string? runId = updates[0].ResponseId;
+        threadId.Should().NotBeNullOrEmpty();
+        runId.Should().NotBeNullOrEmpty();
 
         // Should have received text updates
         updates.Should().Contain(u => !string.IsNullOrEmpty(u.Text));
@@ -90,10 +92,9 @@ public sealed class BasicStreamingTests : IAsyncDisposable
 
         // RunFinished should be the last update
         AgentRunResponseUpdate lastUpdate = updates[^1];
-        lastUpdate.Contents.Should().ContainSingle();
-        RunFinishedContent runFinished = lastUpdate.Contents[0].Should().BeOfType<RunFinishedContent>().Subject;
-        runFinished.ThreadId.Should().Be(runStarted.ThreadId);
-        runFinished.RunId.Should().Be(runStarted.RunId);
+        lastUpdate.ResponseId.Should().Be(runId);
+        ChatResponseUpdate lastChatUpdate = lastUpdate.AsChatResponseUpdate();
+        lastChatUpdate.ConversationId.Should().Be(threadId);
     }
 
     [Fact]
@@ -101,7 +102,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
     {
         // Arrange
         await this.SetupTestServerAsync();
-        AGUIAgent agent = new("assistant", "Sample assistant", [], this._client!, "");
+        AGUIAgent agent = new("assistant", "Sample assistant", this._client!, "");
         AgentThread thread = agent.GetNewThread();
         ChatMessage userMessage = new(ChatRole.User, "hello");
 
@@ -119,7 +120,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
     {
         // Arrange
         await this.SetupTestServerAsync();
-        AGUIAgent agent = new("assistant", "Sample assistant", [], this._client!, "");
+        AGUIAgent agent = new("assistant", "Sample assistant", this._client!, "");
         AgentThread thread = agent.GetNewThread();
         ChatMessage firstUserMessage = new(ChatRole.User, "First question");
 
@@ -168,7 +169,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
     {
         // Arrange
         await this.SetupTestServerAsync(useMultiMessageAgent: true);
-        AGUIAgent agent = new("assistant", "Sample assistant", [], this._client!, "");
+        AGUIAgent agent = new("assistant", "Sample assistant", this._client!, "");
         AgentThread thread = agent.GetNewThread();
         ChatMessage userMessage = new(ChatRole.User, "Tell me a story");
 
@@ -201,7 +202,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
     {
         // Arrange
         await this.SetupTestServerAsync();
-        AGUIAgent agent = new("assistant", "Sample assistant", [], this._client!, "");
+        AGUIAgent agent = new("assistant", "Sample assistant", this._client!, "");
         AgentThread thread = agent.GetNewThread();
 
         // Multiple user messages sent in one turn
@@ -259,12 +260,12 @@ public sealed class BasicStreamingTests : IAsyncDisposable
 
         if (useMultiMessageAgent)
         {
-            this._app.MapAGUIAgent("/agent", (IEnumerable<ChatMessage> messages, IEnumerable<AITool> tools, IEnumerable<KeyValuePair<string, string>> context, JsonElement forwardedProps) =>
+            this._app.MapAGUIAgent("/agent", (IEnumerable<ChatMessage> messages) =>
                 this._app.Services.GetRequiredService<FakeMultiMessageAgent>());
         }
         else
         {
-            this._app.MapAGUIAgent("/agent", (IEnumerable<ChatMessage> messages, IEnumerable<AITool> tools, IEnumerable<KeyValuePair<string, string>> context, JsonElement forwardedProps) =>
+            this._app.MapAGUIAgent("/agent", (IEnumerable<ChatMessage> messages) =>
                 this._app.Services.GetRequiredService<FakeChatClientAgent>());
         }
 
