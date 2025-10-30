@@ -177,8 +177,8 @@ omit = [
 ]
 
 [tool.pyright]
-include = ["agent_framework", "samples"]
-exclude = ["**/tests/**", "docs", "**/.venv/**", "samples/semantic-kernel-migration/**", "samples/autogen-migration/**", "packages/devui/frontend/**"]
+include = ["agent_framework*"]
+exclude = ["**/tests/**", "docs", "**/.venv/**", "packages/devui/frontend/**"]
 typeCheckingMode = "strict"
 reportUnnecessaryIsInstance = false
 reportMissingTypeStubs = false
@@ -206,7 +206,6 @@ executor.type = "uv"
 
 [tool.poe.tasks]
 markdown-code-lint = """uv run python check_md_code_blocks.py README.md ./packages/**/README.md ./samples/**/*.md --exclude cookiecutter-agent-framework-lab --exclude tau2 --exclude packages/devui/frontend"""
-samples-code-check = """pyright ./samples"""
 docs-install = "uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit --group=docs"
 docs-clean = "rm -rf docs/build"
 docs-build = "uv run python ./docs/generate_docs.py"
@@ -230,8 +229,8 @@ build-meta = "python -m flit build"
 build = ["build-packages", "build-meta"]
 publish = "uv publish"
 # combined checks
-check = ["fmt", "lint", "pyright", "mypy", "test", "markdown-code-lint", "samples-code-check"]
-pre-commit-check = ["fmt", "lint", "pyright", "markdown-code-lint", "samples-code-check"]
+check = ["fmt", "lint", "pyright", "mypy", "test", "markdown-code-lint"]
+pre-commit-check = ["fmt", "lint", "pyright", "markdown-code-lint"]
 
 [tool.poe.tasks.all-tests-cov]
 cmd = """

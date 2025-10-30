@@ -43,21 +43,6 @@ async def main() -> None:
 
 See the [gaia_sample.py](./samples/gaia_sample.py) for more detail.
 
-### Run the evaluation
-
-Run the evaluation script using `uv`:
-
-```bash
-uv run python run_gaia.py
-```
-
-By default, the script will first look for cached GAIA data in the `data_gaia_hub` directory,
-and download it if not found.
-The result will be saved to `gaia_results_<timestamp>.jsonl`.
-
-**Don't run the script inside this directory because it will confuse the local `agent_framework` namespace
-package with the real one.**
-
 ## View results
 
 We provide a console viewer for reading GAIA results:

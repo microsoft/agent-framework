@@ -25,7 +25,6 @@ dependencies = [
     "agent-framework-core",
     "azure-ai-projects >= 1.0.0b11",
     "azure-ai-agents == 1.2.0b5",
-    "aiohttp ~= 3.8",
 ]
 
 [tool.uv]
@@ -55,8 +54,7 @@ omit = [
 ]
 
 [tool.pyright]
-extend = "../../pyproject.toml"
-exclude = ['tests']
+extends = "../../pyproject.toml"
 
 [tool.mypy]
 plugins = ['pydantic.mypy']
