@@ -1,0 +1,37 @@
+# Copyright (c) Microsoft. All rights reserved.
+
+from dataclasses import fields, is_dataclass
+from typing import Any
+from urllib.parse import urlencode
+
+from urllib3.util import Url, parse_url
+
+
+def dict_to_dataclass(data: dict[str, Any], dataclass_type: type[Any]) -> Any:
+    if not is_dataclass(dataclass_type):
+        raise ValueError(f"{dataclass_type} is not a dataclass")
+
+    # Retrieve the dataclass fields
+    field_names = {field.name: field.type for field in fields(dataclass_type)}
+    filtered_data = {}
+
+    for key, value in data.items():
+        if key in field_names:
+            field_type = field_names[key]
+            if isinstance(value, dict) and is_dataclass(field_type):  # Check for nested dataclass
+                filtered_data[key] = dict_to_dataclass(value, field_type)  # type: ignore[arg-type]
+            else:
+                filtered_data[key] = value
+
+    return dataclass_type(**filtered_data)
+
+
+def append_url_args(url: str | Url, args: dict[str, Any]) -> Url:
+    if isinstance(url, str):
+        url = parse_url(url)
+    encoded_args = ""
+    if len(args) == 0:
+        return url
+    encoded_args += urlencode(args)
+    url_str = f"{url}&{encoded_args}" if "?" in url.url else f"{url}?{encoded_args}"
+    return parse_url(url_str)
