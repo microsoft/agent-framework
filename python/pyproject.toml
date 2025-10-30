@@ -250,13 +250,7 @@ packages/**/tests
 """
 
 [tool.poe.tasks.all-tests]
-cmd = """
-pytest --import-mode=importlib
---ignore-glob=packages/lab/**
---ignore-glob=packages/devui/**
--n logical --dist loadfile --dist worksteal
-packages/**/tests
-"""
+cmd = "python run_tasks_in_packages_if_exists.py test --exclude packages/lab --exclude packages/devui"
 
 [tool.poe.tasks.azure-ai-tests]
 cmd = """
