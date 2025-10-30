@@ -103,7 +103,7 @@ public sealed class AGUIServerSentEventsResultTests
     public async Task ExecuteAsync_RespectsCancellationToken_WhenCancelledAsync()
     {
         // Arrange
-        CancellationTokenSource cts = new();
+        using CancellationTokenSource cts = new();
         List<BaseEvent> events =
         [
             new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },

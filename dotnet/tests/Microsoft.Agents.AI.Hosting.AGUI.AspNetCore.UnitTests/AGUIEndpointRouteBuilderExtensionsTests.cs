@@ -127,7 +127,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
     public async Task MapAGUIAgent_PassesCancellationToken_ToAgentExecutionAsync()
     {
         // Arrange
-        CancellationTokenSource cts = new();
+        using CancellationTokenSource cts = new();
         cts.Cancel();
 
         DefaultHttpContext httpContext = new();
