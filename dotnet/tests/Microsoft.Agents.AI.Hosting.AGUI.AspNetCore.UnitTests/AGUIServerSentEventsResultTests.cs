@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.Shared;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
 namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.UnitTests;
@@ -23,8 +24,8 @@ public sealed class AGUIServerSentEventsResultTests
     {
         // Arrange
         List<BaseEvent> events = [];
-        Mock<ILogger<AGUIServerSentEventsResult>> loggerMock = new();
-        AGUIServerSentEventsResult result = new(events.ToAsyncEnumerableAsync(), loggerMock.Object);
+        ILogger<AGUIServerSentEventsResult> logger = NullLogger<AGUIServerSentEventsResult>.Instance;
+        AGUIServerSentEventsResult result = new(events.ToAsyncEnumerableAsync(), logger);
         DefaultHttpContext httpContext = new();
         httpContext.Response.Body = new MemoryStream();
 
@@ -46,8 +47,8 @@ public sealed class AGUIServerSentEventsResultTests
             new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
             new RunFinishedEvent { ThreadId = "thread1", RunId = "run1" }
         ];
-        Mock<ILogger<AGUIServerSentEventsResult>> loggerMock = new();
-        AGUIServerSentEventsResult result = new(events.ToAsyncEnumerableAsync(), loggerMock.Object);
+        ILogger<AGUIServerSentEventsResult> logger = NullLogger<AGUIServerSentEventsResult>.Instance;
+        AGUIServerSentEventsResult result = new(events.ToAsyncEnumerableAsync(), logger);
         DefaultHttpContext httpContext = new();
         MemoryStream responseStream = new();
         httpContext.Response.Body = responseStream;
@@ -73,8 +74,8 @@ public sealed class AGUIServerSentEventsResultTests
             new TextMessageContentEvent { MessageId = "msg1", Delta = "Hello" },
             new RunFinishedEvent { ThreadId = "thread1", RunId = "run1" }
         ];
-        Mock<ILogger<AGUIServerSentEventsResult>> loggerMock = new();
-        AGUIServerSentEventsResult result = new(events.ToAsyncEnumerableAsync(), loggerMock.Object);
+        ILogger<AGUIServerSentEventsResult> logger = NullLogger<AGUIServerSentEventsResult>.Instance;
+        AGUIServerSentEventsResult result = new(events.ToAsyncEnumerableAsync(), logger);
         DefaultHttpContext httpContext = new();
         MemoryStream responseStream = new();
         httpContext.Response.Body = responseStream;
@@ -93,8 +94,8 @@ public sealed class AGUIServerSentEventsResultTests
     {
         // Arrange
         List<BaseEvent> events = [];
-        Mock<ILogger<AGUIServerSentEventsResult>> loggerMock = new();
-        AGUIServerSentEventsResult result = new(events.ToAsyncEnumerableAsync(), loggerMock.Object);
+        ILogger<AGUIServerSentEventsResult> logger = NullLogger<AGUIServerSentEventsResult>.Instance;
+        AGUIServerSentEventsResult result = new(events.ToAsyncEnumerableAsync(), logger);
         DefaultHttpContext httpContext = new();
         httpContext.Response.Body = new MemoryStream();
 
@@ -125,8 +126,8 @@ public sealed class AGUIServerSentEventsResultTests
             }
         }
 
-        Mock<ILogger<AGUIServerSentEventsResult>> loggerMock = new();
-        AGUIServerSentEventsResult result = new(GetEventsWithCancellationAsync(), loggerMock.Object);
+        ILogger<AGUIServerSentEventsResult> logger = NullLogger<AGUIServerSentEventsResult>.Instance;
+        AGUIServerSentEventsResult result = new(GetEventsWithCancellationAsync(), logger);
         DefaultHttpContext httpContext = new();
         httpContext.Response.Body = new MemoryStream();
         httpContext.RequestAborted = cts.Token;
@@ -143,8 +144,8 @@ public sealed class AGUIServerSentEventsResultTests
     {
         // Arrange
         List<BaseEvent> events = [];
-        Mock<ILogger<AGUIServerSentEventsResult>> loggerMock = new();
-        AGUIServerSentEventsResult result = new(events.ToAsyncEnumerableAsync(), loggerMock.Object);
+        ILogger<AGUIServerSentEventsResult> logger = NullLogger<AGUIServerSentEventsResult>.Instance;
+        AGUIServerSentEventsResult result = new(events.ToAsyncEnumerableAsync(), logger);
 
         // Act & Assert
         await Assert.ThrowsAsync<ArgumentNullException>(() => result.ExecuteAsync(null!));
