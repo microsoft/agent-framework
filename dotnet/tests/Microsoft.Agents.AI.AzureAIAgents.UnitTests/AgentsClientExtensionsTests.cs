@@ -737,7 +737,7 @@ public sealed class AgentsClientExtensionsTests
         return ModelReaderWriter.Read<AgentRecord>(BinaryData.FromString(AgentTestJsonObject))!;
     }
 
-    public const string AgentTestJsonObject = """
+    private const string AgentTestJsonObject = """
             {
               "object": "agent",
               "id": "agent_abc123",
@@ -761,7 +761,7 @@ public sealed class AgentsClientExtensionsTests
             }
             """;
 
-    public const string AgentVersionTestJsonObject = """
+    private const string AgentVersionTestJsonObject = """
             {
               "object": "agent.version",
               "id": "agent_abc123:1",
