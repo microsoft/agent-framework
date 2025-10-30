@@ -6,10 +6,12 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 from agent_framework import BaseChatClient, ChatMessage, ChatResponse
+from agent_framework._middleware import use_chat_middleware
 
 from ._types import CuaModelId
 
 
+@use_chat_middleware
 class CuaChatClient(BaseChatClient):
     """Chat client for Cua integration.
 
