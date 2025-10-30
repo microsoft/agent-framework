@@ -26,10 +26,9 @@ public sealed class AGUIAgent : AIAgent
     /// </summary>
     /// <param name="id">The agent ID.</param>
     /// <param name="description">Optional description of the agent.</param>
-    /// <param name="messages">Initial conversation messages.</param>
     /// <param name="httpClient">The HTTP client to use for communication with the AG-UI server.</param>
     /// <param name="endpoint">The URL for the AG-UI server.</param>
-    public AGUIAgent(string id, string description, IEnumerable<ChatMessage> messages, HttpClient httpClient, string endpoint)
+    public AGUIAgent(string id, string description, HttpClient httpClient, string endpoint)
     {
         this.Id = Throw.IfNullOrWhitespace(id);
         this.Description = description;
@@ -86,7 +85,6 @@ public sealed class AGUIAgent : AIAgent
             ThreadId = typedThread.ThreadId,
             RunId = runId,
             Messages = messages.AsAGUIMessages(),
-            Context = new Dictionary<string, string>(StringComparer.Ordinal)
         };
 
         await foreach (var update in this._client.PostRunAsync(input, cancellationToken).AsAgentRunResponseUpdatesAsync(cancellationToken).ConfigureAwait(false))

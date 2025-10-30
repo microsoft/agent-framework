@@ -17,35 +17,26 @@ internal static class AGUIChatMessageExtensions
     public static IEnumerable<ChatMessage> AsChatMessages(
         this IEnumerable<AGUIMessage> aguiMessages)
     {
-        List<ChatMessage>? result = null;
         foreach (var message in aguiMessages)
         {
-            result ??= [];
-            var chatMessage = new ChatMessage(
+            yield return new ChatMessage(
                 MapChatRole(message.Role),
                 message.Content);
-
-            result.Add(chatMessage);
         }
-        return result ?? [];
     }
 
     public static IEnumerable<AGUIMessage> AsAGUIMessages(
         this IEnumerable<ChatMessage> chatMessages)
     {
-        List<AGUIMessage>? result = null;
         foreach (var message in chatMessages)
         {
-            result ??= [];
-            var aguiMessage = new AGUIMessage
+            yield return new AGUIMessage
             {
                 Id = message.MessageId,
                 Role = message.Role.Value,
                 Content = message.Text,
             };
-            result.Add(aguiMessage);
         }
-        return result ?? [];
     }
 
     public static ChatRole MapChatRole(string role) =>

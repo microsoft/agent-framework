@@ -46,18 +46,15 @@ public static class Program
         logger.LogInformation("Connecting to AG-UI server at: {ServerUrl}", serverUrl);
 
         // Create the AG-UI client agent
-        HttpClient httpClient = new()
+        using HttpClient httpClient = new()
         {
             Timeout = TimeSpan.FromSeconds(60)
         };
 
-        // Initial system message with instructions
-        List<ChatMessage> initialMessages = [new(ChatRole.System, "You are a helpful assistant.")];
-
         AGUIAgent agent = new(
             id: "agui-client",
             description: "AG-UI Client Agent",
-            messages: initialMessages,
+            messages: [new(ChatRole.System, "You are a helpful assistant.")],
             httpClient: httpClient,
             endpoint: serverUrl);
 
@@ -128,8 +125,13 @@ public static class Program
                                 break;
                         }
                     }
-                }                Console.WriteLine();
+                }
+                Console.WriteLine();
             }
+        }
+        catch (OperationCanceledException)
+        {
+            logger.LogInformation("AGUIClient operation was canceled.");
         }
         catch (Exception ex)
         {
