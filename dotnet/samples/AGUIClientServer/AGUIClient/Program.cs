@@ -58,7 +58,7 @@ public static class Program
             endpoint: serverUrl);
 
         AgentThread thread = agent.GetNewThread();
-
+        List<ChatMessage> messages = [new(ChatRole.System, "You are a helpful assistant.")];
         try
         {
             while (true)
@@ -77,12 +77,7 @@ public static class Program
                     break;
                 }
 
-                // Create chat messages with system message and user message
-                List<ChatMessage> messages =
-                [
-                    new(ChatRole.System, "You are a helpful assistant."),
-                    new(ChatRole.User, message)
-                ];
+                messages.Add(new(ChatRole.User, message));
 
                 // Call RunStreamingAsync to get streaming updates
                 bool isFirstUpdate = true;
@@ -125,6 +120,7 @@ public static class Program
                         }
                     }
                 }
+                messages.Clear();
                 Console.WriteLine();
             }
         }

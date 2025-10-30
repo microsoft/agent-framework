@@ -80,11 +80,13 @@ public sealed class AGUIAgent : AIAgent
 
         string runId = Guid.NewGuid().ToString();
 
+        var llmMessages = typedThread.MessageStore.Concat(messages);
+
         RunAgentInput input = new()
         {
             ThreadId = typedThread.ThreadId,
             RunId = runId,
-            Messages = messages.AsAGUIMessages(),
+            Messages = llmMessages.AsAGUIMessages(),
         };
 
         await foreach (var update in this._client.PostRunAsync(input, cancellationToken).AsAgentRunResponseUpdatesAsync(cancellationToken).ConfigureAwait(false))
