@@ -221,4 +221,24 @@ public class ChatClientAgentOptionsTests
         Assert.Null(clone.ChatMessageStoreFactory);
         Assert.Null(clone.AIContextProviderFactory);
     }
+
+    [Fact]
+    public void Clone_CopiesSuppressAssistantNameProperty()
+    {
+        // Arrange
+        var original = new ChatClientAgentOptions
+        {
+            Name = "Test Agent",
+            SuppressAssistantName = true,
+            UseProvidedChatClientAsIs = true
+        };
+
+        // Act
+        var clone = original.Clone();
+
+        // Assert
+        Assert.NotSame(original, clone);
+        Assert.Equal(original.SuppressAssistantName, clone.SuppressAssistantName);
+        Assert.Equal(original.UseProvidedChatClientAsIs, clone.UseProvidedChatClientAsIs);
+    }
 }
