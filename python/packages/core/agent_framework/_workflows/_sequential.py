@@ -52,6 +52,7 @@ from ._executor import (
     handler,
 )
 from ._message_utils import normalize_messages_input
+from ._orchestrator_helpers import clean_conversation_for_handoff
 from ._workflow import Workflow
 from ._workflow_builder import WorkflowBuilder
 from ._workflow_context import WorkflowContext
@@ -89,7 +90,10 @@ class _ResponseToConversation(Executor):
         # Always use full_conversation; AgentExecutor guarantees it is populated.
         if response.full_conversation is None:  # Defensive: indicates a contract violation
             raise RuntimeError("AgentExecutorResponse.full_conversation missing. AgentExecutor must populate it.")
-        await ctx.send_message(list(response.full_conversation))
+
+        # Clean tool-related content before sending to next agent
+        cleaned_conversation = clean_conversation_for_handoff(response.full_conversation)
+        await ctx.send_message(cleaned_conversation)
 
 
 class _EndWithConversation(Executor):
