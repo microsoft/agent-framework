@@ -119,7 +119,7 @@ omit = [
 ]
 
 [tool.pyright]
-extend = "../../pyproject.toml"
+extends = "../../pyproject.toml"
 exclude = ['gaia/tests', 'lightning/tests', 'tau2/tests', 'namespace', '**/samples']
 
 [tool.mypy]
