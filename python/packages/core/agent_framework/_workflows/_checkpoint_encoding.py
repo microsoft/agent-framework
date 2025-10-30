@@ -15,7 +15,6 @@ DATACLASS_MARKER = "__af_dataclass__"
 _MAX_ENCODE_DEPTH = 100
 _CYCLE_SENTINEL = "<cycle>"
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -75,7 +74,7 @@ def encode_checkpoint_value(value: Any) -> Any:
                 # type(v) already narrows sufficiently; cast was redundant
                 dc_cls: type[Any] = type(v)
                 field_values: dict[str, Any] = {}
-                for f in fields(v):  # type: ignore[arg-type]
+                for f in fields(v):
                     field_values[f.name] = _enc(getattr(v, f.name), stack, depth + 1)
                 return {
                     DATACLASS_MARKER: f"{dc_cls.__module__}:{dc_cls.__name__}",
@@ -189,6 +188,35 @@ def decode_checkpoint_value(value: Any) -> Any:
     return value
 
 
+def _supports_model_protocol(obj: object) -> bool:
+    """Detect objects that expose dictionary serialization hooks."""
+    try:
+        obj_type: type[Any] = type(obj)
+    except Exception:
+        return False
+
+    has_to_dict = hasattr(obj, "to_dict") and callable(getattr(obj, "to_dict", None))  # type: ignore[arg-type]
+    has_from_dict = hasattr(obj_type, "from_dict") and callable(getattr(obj_type, "from_dict", None))
+
+    has_to_json = hasattr(obj, "to_json") and callable(getattr(obj, "to_json", None))  # type: ignore[arg-type]
+    has_from_json = hasattr(obj_type, "from_json") and callable(getattr(obj_type, "from_json", None))
+
+    return (has_to_dict and has_from_dict) or (has_to_json and has_from_json)
+
+
+def _import_qualified_name(qualname: str) -> type[Any] | None:
+    if ":" not in qualname:
+        return None
+    module_name, class_name = qualname.split(":", 1)
+    module = sys.modules.get(module_name)
+    if module is None:
+        module = importlib.import_module(module_name)
+    attr: Any = module
+    for part in class_name.split("."):
+        attr = getattr(attr, part)
+    return attr if isinstance(attr, type) else None
+
+
 def _instantiate_checkpoint_dataclass(cls: type[Any], payload: Any) -> Any | None:
     if not isinstance(cls, type):
         logger.debug(f"Checkpoint decoder received non-type dataclass reference: {cls!r}")
@@ -220,32 +248,3 @@ def _instantiate_checkpoint_dataclass(cls: type[Any], payload: Any) -> Any | Non
     except Exception as exc:
         logger.warning(f"Checkpoint decoder encountered unexpected error calling {cls.__name__}({payload!r}): {exc}")
     return None
-
-
-def _supports_model_protocol(obj: object) -> bool:
-    """Detect objects that expose dictionary serialization hooks."""
-    try:
-        obj_type: type[Any] = type(obj)
-    except Exception:
-        return False
-
-    has_to_dict = hasattr(obj, "to_dict") and callable(getattr(obj, "to_dict", None))  # type: ignore[arg-type]
-    has_from_dict = hasattr(obj_type, "from_dict") and callable(getattr(obj_type, "from_dict", None))
-
-    has_to_json = hasattr(obj, "to_json") and callable(getattr(obj, "to_json", None))  # type: ignore[arg-type]
-    has_from_json = hasattr(obj_type, "from_json") and callable(getattr(obj_type, "from_json", None))
-
-    return (has_to_dict and has_from_dict) or (has_to_json and has_from_json)
-
-
-def _import_qualified_name(qualname: str) -> type[Any] | None:
-    if ":" not in qualname:
-        return None
-    module_name, class_name = qualname.split(":", 1)
-    module = sys.modules.get(module_name)
-    if module is None:
-        module = importlib.import_module(module_name)
-    attr: Any = module
-    for part in class_name.split("."):
-        attr = getattr(attr, part)
-    return attr if isinstance(attr, type) else None

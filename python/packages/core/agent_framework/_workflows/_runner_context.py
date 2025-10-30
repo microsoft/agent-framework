@@ -5,16 +5,28 @@ import logging
 import uuid
 from copy import copy
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any, Protocol, TypedDict, TypeVar, runtime_checkable
 
 from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
 from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
-from ._events import WorkflowEvent
+from ._const import INTERNAL_SOURCE_ID
+from ._events import RequestInfoEvent, WorkflowEvent
 from ._shared_state import SharedState
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+
+class MessageType(Enum):
+    """Enumeration of message types in the workflow."""
+
+    STANDARD = "standard"
+    """A standard message between executors."""
+
+    RESPONSE = "response"
+    """A response message to a pending request."""
 
 
 @dataclass
@@ -24,11 +36,15 @@ class Message:
     data: Any
     source_id: str
     target_id: str | None = None
+    type: MessageType = MessageType.STANDARD
 
     # OpenTelemetry trace context fields for message propagation
     # These are plural to support fan-in scenarios where multiple messages are aggregated
     trace_contexts: list[dict[str, str]] | None = None  # W3C Trace Context headers from multiple sources
     source_span_ids: list[str] | None = None  # Publishing span IDs for linking from multiple sources
+
+    # For response messages, the original request data
+    original_request: Any = None
 
     # Backward compatibility properties
     @property
@@ -41,6 +57,38 @@ class Message:
         """Get the first source span ID for backward compatibility."""
         return self.source_span_ids[0] if self.source_span_ids else None
 
+    def to_dict(self) -> dict[str, Any]:
+        """Convert the Message to a dictionary for serialization."""
+        return {
+            "data": encode_checkpoint_value(self.data),
+            "source_id": self.source_id,
+            "target_id": self.target_id,
+            "type": self.type.value,
+            "trace_contexts": self.trace_contexts,
+            "source_span_ids": self.source_span_ids,
+            "original_request": self.original_request,
+        }
+
+    @staticmethod
+    def from_dict(data: dict[str, Any]) -> "Message":
+        """Create a Message from a dictionary."""
+        # Validation
+        if "data" not in data:
+            raise KeyError("Missing 'data' field in Message dictionary.")
+
+        if "source_id" not in data:
+            raise KeyError("Missing 'source_id' field in Message dictionary.")
+
+        return Message(
+            data=decode_checkpoint_value(data["data"]),
+            source_id=data["source_id"],
+            target_id=data.get("target_id"),
+            type=MessageType(data.get("type", "standard")),
+            trace_contexts=data.get("trace_contexts"),
+            source_span_ids=data.get("source_span_ids"),
+            original_request=data.get("original_request"),
+        )
+
 
 class _WorkflowState(TypedDict):
     """TypedDict representing the serializable state of a workflow execution.
@@ -51,6 +99,7 @@ class _WorkflowState(TypedDict):
     messages: dict[str, list[dict[str, Any]]]
     shared_state: dict[str, Any]
     iteration_count: int
+    pending_request_info_events: dict[str, dict[str, Any]]
 
 
 @runtime_checkable
@@ -186,6 +235,31 @@ class RunnerContext(Protocol):
         """
         ...
 
+    async def add_request_info_event(self, event: RequestInfoEvent) -> None:
+        """Add a RequestInfoEvent to the context and track it for correlation.
+
+        Args:
+            event: The RequestInfoEvent to be added.
+        """
+        ...
+
+    async def send_request_info_response(self, request_id: str, response: Any) -> None:
+        """Send a response correlated to a pending request.
+
+        Args:
+            request_id: The ID of the original request.
+            response: The response data to be sent.
+        """
+        ...
+
+    async def get_pending_request_info_events(self) -> dict[str, RequestInfoEvent]:
+        """Get the mapping of request IDs to their corresponding RequestInfoEvent.
+
+        Returns:
+            A dictionary mapping request IDs to their corresponding RequestInfoEvent.
+        """
+        ...
+
 
 class InProcRunnerContext:
     """In-process execution context for local execution and optional checkpointing."""
@@ -199,6 +273,9 @@ class InProcRunnerContext:
         self._messages: dict[str, list[Message]] = {}
         # Event queue for immediate streaming of events (e.g., AgentRunUpdateEvent)
         self._event_queue: asyncio.Queue[WorkflowEvent] = asyncio.Queue()
+
+        # An additional storage for pending request info events
+        self._pending_request_info_events: dict[str, RequestInfoEvent] = {}
 
         # Checkpointing configuration/state
         self._checkpoint_storage = checkpoint_storage
@@ -271,6 +348,7 @@ class InProcRunnerContext:
             workflow_id=self._workflow_id,
             messages=state["messages"],
             shared_state=state["shared_state"],
+            pending_request_info_events=state["pending_request_info_events"],
             iteration_count=state["iteration_count"],
             metadata=metadata or {},
         )
@@ -294,6 +372,8 @@ class InProcRunnerContext:
         self._streaming = False  # Reset streaming flag
 
     async def apply_checkpoint(self, checkpoint: WorkflowCheckpoint) -> None:
+        """Apply a checkpoint to the current context, mutating its state."""
+        # Restore messages
         self._messages.clear()
         messages_data = checkpoint.messages
         for source_id, message_list in messages_data.items():
@@ -308,6 +388,15 @@ class InProcRunnerContext:
                 for msg in message_list
             ]
 
+        # Restore pending request info events
+        self._pending_request_info_events.clear()
+        pending_requests_data = checkpoint.pending_request_info_events
+        for request_id, request_data in pending_requests_data.items():
+            request_info_event = RequestInfoEvent.from_dict(request_data)
+            self._pending_request_info_events[request_id] = request_info_event
+            await self.add_event(request_info_event)
+
+        # Restore workflow ID
         self._workflow_id = checkpoint.workflow_id
 
     # endregion Checkpointing
@@ -332,21 +421,63 @@ class InProcRunnerContext:
         return self._streaming
 
     async def _get_serialized_workflow_state(self, shared_state: SharedState, iteration_count: int) -> _WorkflowState:
-        serializable_messages: dict[str, list[dict[str, Any]]] = {}
+        serialized_messages: dict[str, list[dict[str, Any]]] = {}
         for source_id, message_list in self._messages.items():
-            serializable_messages[source_id] = [
-                {
-                    "data": encode_checkpoint_value(msg.data),
-                    "source_id": msg.source_id,
-                    "target_id": msg.target_id,
-                    "trace_contexts": msg.trace_contexts,
-                    "source_span_ids": msg.source_span_ids,
-                }
-                for msg in message_list
-            ]
+            serialized_messages[source_id] = [msg.to_dict() for msg in message_list]
+
+        serialized_pending_request_info_events: dict[str, dict[str, Any]] = {
+            request_id: request.to_dict() for request_id, request in self._pending_request_info_events.items()
+        }
 
         return {
-            "messages": serializable_messages,
+            "messages": serialized_messages,
             "shared_state": encode_checkpoint_value(await shared_state.export_state()),
             "iteration_count": iteration_count,
+            "pending_request_info_events": serialized_pending_request_info_events,
         }
+
+    async def add_request_info_event(self, event: RequestInfoEvent) -> None:
+        """Add a RequestInfoEvent to the context and track it for correlation.
+
+        Args:
+            event: The RequestInfoEvent to be added.
+        """
+        self._pending_request_info_events[event.request_id] = event
+        await self.add_event(event)
+
+    async def send_request_info_response(self, request_id: str, response: Any) -> None:
+        """Send a response correlated to a pending request.
+
+        Args:
+            request_id: The ID of the original request.
+            response: The response data to be sent.
+        """
+        event = self._pending_request_info_events.pop(request_id, None)
+        if not event:
+            raise ValueError(f"No pending request found for request_id: {request_id}")
+
+        # Validate response type if specified
+        if event.response_type and not isinstance(response, event.response_type):
+            raise TypeError(
+                f"Response type mismatch for request_id {request_id}: "
+                f"expected {event.response_type.__name__}, got {type(response).__name__}"
+            )
+
+        # Create ResponseMessage instance
+        response_msg = Message(
+            data=response,
+            source_id=INTERNAL_SOURCE_ID(event.source_executor_id),
+            target_id=event.source_executor_id,
+            type=MessageType.RESPONSE,
+            original_request=event.data,
+        )
+
+        await self.send_message(response_msg)
+
+    async def get_pending_request_info_events(self) -> dict[str, RequestInfoEvent]:
+        """Get the mapping of request IDs to their corresponding RequestInfoEvent.
+
+        Returns:
+            A dictionary mapping request IDs to their corresponding RequestInfoEvent.
+        """
+        return dict(self._pending_request_info_events)

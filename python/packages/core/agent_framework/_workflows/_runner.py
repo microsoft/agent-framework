@@ -4,7 +4,7 @@ import asyncio
 import logging
 from collections import defaultdict
 from collections.abc import AsyncGenerator, Sequence
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
 from ._checkpoint_encoding import DATACLASS_MARKER, MODEL_MARKER, decode_checkpoint_value
@@ -18,9 +18,6 @@ from ._runner_context import (
     RunnerContext,
 )
 from ._shared_state import SharedState
-
-if TYPE_CHECKING:
-    from ._request_info_executor import RequestInfoExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +133,8 @@ class Runner:
                 raise RuntimeError(f"Runner did not converge after {self._max_iterations} iterations.")
 
             logger.info(f"Workflow completed after {self._iteration} supersteps")
+            # TODO(@taochen): iteration is reset to zero, even in the event of a request info event.
+            # Should iteration be preserved in the event of a request info event?
             self._iteration = 0
             self._resumed_from_checkpoint = False  # Reset resume flag for next run
         finally:
@@ -164,6 +163,10 @@ class Runner:
 
             # Route all messages through normal workflow edges
             associated_edge_runners = self._edge_runner_map.get(source_executor_id, [])
+            if not associated_edge_runners:
+                logger.warning(f"No outgoing edges found for executor {source_executor_id}; dropping messages.")
+                return
+
             for message in messages:
                 _normalize_message_payload(message)
                 # Deliver a message through all edge runners associated with the source executor concurrently.
@@ -281,7 +284,7 @@ class Runner:
 
             self._workflow_id = checkpoint.workflow_id
             # Restore shared state
-            await self._shared_state.import_state(checkpoint.shared_state)
+            await self._shared_state.import_state(decode_checkpoint_value(checkpoint.shared_state))
             # Restore executor states using the restored shared state
             await self._restore_executor_states()
             # Apply the checkpoint to the context
@@ -346,39 +349,6 @@ class Runner:
                 parsed[source_executor_id].append(runner)
 
         return parsed
-
-    def _find_request_info_executor(self) -> "RequestInfoExecutor | None":
-        """Find the RequestInfoExecutor instance in this workflow.
-
-        Returns:
-            The RequestInfoExecutor instance if found, None otherwise.
-        """
-        from ._request_info_executor import RequestInfoExecutor
-
-        for executor in self._executors.values():
-            if isinstance(executor, RequestInfoExecutor):
-                return executor
-        return None
-
-    def _is_message_to_request_info_executor(self, msg: "Message") -> bool:
-        """Check if message targets any RequestInfoExecutor in this workflow.
-
-        Args:
-            msg: The message to check.
-
-        Returns:
-            True if the message targets a RequestInfoExecutor, False otherwise.
-        """
-        from ._request_info_executor import RequestInfoExecutor
-
-        if not msg.target_id:
-            return False
-
-        # Check all executors to see if target_id matches a RequestInfoExecutor
-        for executor in self._executors.values():
-            if executor.id == msg.target_id and isinstance(executor, RequestInfoExecutor):
-                return True
-        return False
 
     def _mark_resumed(self, iteration: int) -> None:
         """Mark the runner as having resumed from a checkpoint.

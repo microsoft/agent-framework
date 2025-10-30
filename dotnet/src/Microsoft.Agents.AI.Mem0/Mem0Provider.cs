@@ -161,6 +161,11 @@ public sealed class Mem0Provider : AIContextProvider
     /// <inheritdoc />
     public override async ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default)
     {
+        if (context.InvokeException is not null)
+        {
+            return; // Do not update memory on failed invocations.
+        }
+
         // Persist request and response messages after invocation.
         await this.PersistMessagesAsync(context.RequestMessages, cancellationToken).ConfigureAwait(false);
 

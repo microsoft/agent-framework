@@ -2,7 +2,7 @@
 
 import pytest
 
-from agent_framework import Executor, WorkflowContext, handler
+from agent_framework import Executor, Message, WorkflowContext, handler
 
 
 def test_executor_without_id():
@@ -64,9 +64,9 @@ def test_executor_with_valid_handlers():
     executor = MockExecutorWithValidHandlers(id="test")
     assert executor.id is not None
     assert len(executor._handlers) == 2  # type: ignore
-    assert executor.can_handle("text") is True
-    assert executor.can_handle(42) is True
-    assert executor.can_handle(3.14) is False
+    assert executor.can_handle(Message(data="text", source_id="mock")) is True
+    assert executor.can_handle(Message(data=42, source_id="mock")) is True
+    assert executor.can_handle(Message(data=3.14, source_id="mock")) is False
 
 
 def test_executor_handlers_with_output_types():

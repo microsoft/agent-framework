@@ -44,6 +44,7 @@ class WorkflowCheckpoint:
     # Core workflow state
     messages: dict[str, list[dict[str, Any]]] = field(default_factory=dict)  # type: ignore[misc]
     shared_state: dict[str, Any] = field(default_factory=dict)  # type: ignore[misc]
+    pending_request_info_events: dict[str, dict[str, Any]] = field(default_factory=dict)  # type: ignore[misc]
 
     # Runtime state
     iteration_count: int = 0

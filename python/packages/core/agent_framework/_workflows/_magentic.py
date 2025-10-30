@@ -40,7 +40,7 @@ from ._group_chat import (
 from ._message_utils import normalize_messages_input
 from ._model_utils import DictConvertible, encode_value
 from ._participant_utils import GroupChatParticipantSpec, participant_description
-from ._request_info_executor import RequestInfoExecutor, RequestInfoMessage, RequestResponse
+from ._request_info_mixin import response_handler
 from ._workflow import Workflow, WorkflowRunResult
 from ._workflow_context import WorkflowContext
 
@@ -421,11 +421,10 @@ class _MagenticResponseMessage(_GroupChatResponseMessage):
 
 
 @dataclass
-class _MagenticPlanReviewRequest(RequestInfoMessage):
+class _MagenticPlanReviewRequest:
     """Internal: Human-in-the-loop request to review and optionally edit the plan before execution."""
 
-    # Because RequestInfoMessage defines a default field (request_id),
-    # subclass fields must also have defaults to satisfy dataclass rules.
+    request_id: str = field(default_factory=lambda: str(uuid4()))
     task_text: str = ""
     facts_text: str = ""
     plan_text: str = ""
@@ -1214,7 +1213,7 @@ class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
 
         # If a human must sign off, ask now and return. The response handler will resume.
         if self._require_plan_signoff:
-            await self._send_plan_review_request(context)
+            await self._send_plan_review_request(cast(WorkflowContext, context))
             return
 
         # Add task ledger to conversation history
@@ -1290,10 +1289,11 @@ class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
         # Continue with inner loop
         await self._run_inner_loop(context)
 
-    @handler
+    @response_handler
     async def handle_plan_review_response(
         self,
-        response: RequestResponse[_MagenticPlanReviewRequest, _MagenticPlanReviewReply],
+        original_request: _MagenticPlanReviewRequest,
+        response: _MagenticPlanReviewReply,
         context: WorkflowContext[
             # may broadcast ledger next, or ask for another round of review
             _MagenticResponseMessage | _MagenticRequestMessage | _MagenticPlanReviewRequest, ChatMessage
@@ -1305,26 +1305,21 @@ class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
         if self._context is None:
             return
 
-        human = response.data
-        if human is None:  # type: ignore[unreachable]
-            # Defensive fallback: treat as revise with empty comments
-            human = _MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.REVISE, comments="")
-
-        if human.decision == MagenticPlanReviewDecision.APPROVE:
+        if response.decision == MagenticPlanReviewDecision.APPROVE:
             # Close the review loop on approval (no further plan review requests this run)
             self._require_plan_signoff = False
             # If the user supplied an edited plan, adopt it
-            if human.edited_plan_text:
+            if response.edited_plan_text:
                 # Update the manager's internal ledger and rebuild the combined message
                 mgr_ledger = getattr(self._manager, "task_ledger", None)
                 if mgr_ledger is not None:
-                    mgr_ledger.plan.text = human.edited_plan_text
+                    mgr_ledger.plan.text = response.edited_plan_text
                 team_text = _team_block(self._participants)
                 combined = self._manager.task_ledger_full_prompt.format(
                     task=self._context.task.text,
                     team=team_text,
                     facts=(mgr_ledger.facts.text if mgr_ledger else ""),
-                    plan=human.edited_plan_text,
+                    plan=response.edited_plan_text,
                 )
                 self._task_ledger = ChatMessage(
                     role=Role.ASSISTANT,
@@ -1332,10 +1327,10 @@ class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
                     author_name=MAGENTIC_MANAGER_NAME,
                 )
             # If approved with comments but no edited text, apply comments via replan and proceed (no extra review)
-            elif human.comments:
+            elif response.comments:
                 # Record the human feedback for grounding
                 self._context.chat_history.append(
-                    ChatMessage(role=Role.USER, text=f"Human plan feedback: {human.comments}")
+                    ChatMessage(role=Role.USER, text=f"Human plan feedback: {response.comments}")
                 )
                 # Ask the manager to replan based on comments; proceed immediately
                 self._task_ledger = await self._manager.replan(self._context.clone(deep=True))
@@ -1381,31 +1376,31 @@ class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
             return
 
         # If the user provided an edited plan, adopt it directly and ask them to confirm once more
-        if human.edited_plan_text:
+        if response.edited_plan_text:
             mgr_ledger2 = getattr(self._manager, "task_ledger", None)
             if mgr_ledger2 is not None:
-                mgr_ledger2.plan.text = human.edited_plan_text
+                mgr_ledger2.plan.text = response.edited_plan_text
             # Rebuild combined message for preview in the next review request
             team_text = _team_block(self._participants)
             combined = self._manager.task_ledger_full_prompt.format(
                 task=self._context.task.text,
                 team=team_text,
                 facts=(mgr_ledger2.facts.text if mgr_ledger2 else ""),
-                plan=human.edited_plan_text,
+                plan=response.edited_plan_text,
             )
             self._task_ledger = ChatMessage(role=Role.ASSISTANT, text=combined, author_name=MAGENTIC_MANAGER_NAME)
-            await self._send_plan_review_request(context)
+            await self._send_plan_review_request(cast(WorkflowContext, context))
             return
 
         # Else pass comments into the chat history and replan with the manager
-        if human.comments:
+        if response.comments:
             self._context.chat_history.append(
-                ChatMessage(role=Role.USER, text=f"Human plan feedback: {human.comments}")
+                ChatMessage(role=Role.USER, text=f"Human plan feedback: {response.comments}")
             )
 
         # Ask the manager to replan; this only adjusts the plan stage, not a full reset
         self._task_ledger = await self._manager.replan(self._context.clone(deep=True))
-        await self._send_plan_review_request(context)
+        await self._send_plan_review_request(cast(WorkflowContext, context))
 
     async def _run_outer_loop(
         self,
@@ -1601,13 +1596,8 @@ class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
 
         return True
 
-    async def _send_plan_review_request(
-        self,
-        context: WorkflowContext[
-            _MagenticResponseMessage | _MagenticRequestMessage | _MagenticPlanReviewRequest, ChatMessage
-        ],
-    ) -> None:
-        """Emit a PlanReviewRequest via RequestInfoExecutor."""
+    async def _send_plan_review_request(self, context: WorkflowContext) -> None:
+        """Send a PlanReviewRequest."""
         # If plan sign-off is disabled (e.g., ran out of review rounds), do nothing
         if not self._require_plan_signoff:
             return
@@ -1622,7 +1612,7 @@ class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
             plan_text=plan_text,
             round_index=self._plan_review_round,
         )
-        await context.send_message(req)
+        await context.request_info(req, _MagenticPlanReviewRequest, _MagenticPlanReviewReply)
 
 
 # region Magentic Executors
@@ -2271,12 +2261,6 @@ class MagenticBuilder:
         if self._checkpoint_storage is not None:
             group_builder = group_builder.with_checkpointing(self._checkpoint_storage)
 
-        if self._enable_plan_review:
-            group_builder = group_builder.with_request_handler(
-                lambda _wiring: RequestInfoExecutor(id="magentic_plan_review"),
-                condition=lambda msg: isinstance(msg, _MagenticPlanReviewRequest),
-            )
-
         return group_builder.build()
 
     def start_with_string(self, task: str) -> "MagenticWorkflow":
@@ -2462,11 +2446,10 @@ class MagenticWorkflow:
         self,
         checkpoint_id: str,
         checkpoint_storage: CheckpointStorage | None = None,
-        responses: dict[str, Any] | None = None,
     ) -> AsyncIterable[WorkflowEvent]:
         """Resume orchestration from a checkpoint and stream resulting events."""
         await self._validate_checkpoint_participants(checkpoint_id, checkpoint_storage)
-        async for event in self._workflow.run_stream_from_checkpoint(checkpoint_id, checkpoint_storage, responses):
+        async for event in self._workflow.run_stream_from_checkpoint(checkpoint_id, checkpoint_storage):
             yield event
 
     async def run_with_string(self, task_text: str) -> WorkflowRunResult:
@@ -2516,11 +2499,10 @@ class MagenticWorkflow:
         self,
         checkpoint_id: str,
         checkpoint_storage: CheckpointStorage | None = None,
-        responses: dict[str, Any] | None = None,
     ) -> WorkflowRunResult:
         """Resume orchestration from a checkpoint and collect all resulting events."""
         events: list[WorkflowEvent] = []
-        async for event in self.run_stream_from_checkpoint(checkpoint_id, checkpoint_storage, responses):
+        async for event in self.run_stream_from_checkpoint(checkpoint_id, checkpoint_storage):
             events.append(event)
         return WorkflowRunResult(events)
 

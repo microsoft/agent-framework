@@ -16,6 +16,7 @@ from ._edge import (
     EdgeGroup,
     FanInEdgeGroup,
     FanOutEdgeGroup,
+    InternalEdgeGroup,
     SingleEdgeGroup,
     SwitchCaseEdgeGroup,
     SwitchCaseEdgeGroupCase,
@@ -56,7 +57,6 @@ class WorkflowBuilder:
         """
         self._edge_groups: list[EdgeGroup] = []
         self._executors: dict[str, Executor] = {}
-        self._duplicate_executor_ids: set[str] = set()
         self._start_executor: Executor | str | None = None
         self._checkpoint_storage: CheckpointStorage | None = None
         self._max_iterations: int = max_iterations
@@ -73,10 +73,18 @@ class WorkflowBuilder:
     def _add_executor(self, executor: Executor) -> str:
         """Add an executor to the map and return its ID."""
         existing = self._executors.get(executor.id)
-        if existing is not None and existing is not executor:
-            self._duplicate_executor_ids.add(executor.id)
-        else:
-            self._executors[executor.id] = executor
+        if existing is not None:
+            if existing is executor:
+                # Already added
+                return executor.id
+            # ID conflict
+            raise ValueError(f"Duplicate executor ID '{executor.id}' detected in workflow.")
+
+        # New executor
+        self._executors[executor.id] = executor
+        # Add an internal edge group for each unique executor
+        self._edge_groups.append(InternalEdgeGroup(executor.id))  # type: ignore[call-arg]
+
         return executor.id
 
     def _maybe_wrap_agent(
@@ -408,7 +416,6 @@ class WorkflowBuilder:
                     self._edge_groups,
                     self._executors,
                     self._start_executor,
-                    duplicate_executor_ids=tuple(self._duplicate_executor_ids),
                 )
 
                 # Add validation completed event

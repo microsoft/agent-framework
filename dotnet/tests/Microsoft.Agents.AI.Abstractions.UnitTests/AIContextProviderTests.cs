@@ -16,7 +16,7 @@ public class AIContextProviderTests
     {
         var provider = new TestAIContextProvider();
         var messages = new ReadOnlyCollection<ChatMessage>([]);
-        var task = provider.InvokedAsync(new(messages));
+        var task = provider.InvokedAsync(new(messages, aiContextProviderMessages: null));
         Assert.Equal(default, task);
     }
 
@@ -37,7 +37,7 @@ public class AIContextProviderTests
     [Fact]
     public void InvokedContext_Constructor_ThrowsForNullMessages()
     {
-        Assert.Throws<ArgumentNullException>(() => new AIContextProvider.InvokedContext(null!));
+        Assert.Throws<ArgumentNullException>(() => new AIContextProvider.InvokedContext(null!, aiContextProviderMessages: null));
     }
 
     #region GetService Method Tests
