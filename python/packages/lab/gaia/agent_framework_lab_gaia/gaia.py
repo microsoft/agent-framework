@@ -243,9 +243,11 @@ def _load_gaia_local(repo_dir: Path, wanted_levels: list[int] | None = None, max
                 # Convert level to int if it's a string
                 def _parse_level(lvl: Any) -> int | None:
                     """Parse level value to integer if possible."""
+                    if isinstance(lvl, int):
+                        return lvl
                     if isinstance(lvl, str) and lvl.isdigit():
                         return int(lvl)
-                    return lvl
+                    return None
 
                 lvl = _parse_level(lvl)
                 fname = row.get("file_name") or row.get("filename") or None
