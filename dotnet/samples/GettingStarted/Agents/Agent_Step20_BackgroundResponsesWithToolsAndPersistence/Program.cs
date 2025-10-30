@@ -6,6 +6,7 @@
 
 #pragma warning disable CA1050 // Declare types in namespaces
 
+using System.Diagnostics;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
@@ -23,7 +24,8 @@ AIAgent agent = new AzureOpenAIClient(
      .GetOpenAIResponseClient(deploymentName)
      .CreateAIAgent(
         name: "SpaceNovelWriter",
-        instructions: "Always research relevant facts and generate character profiles for the main characters before writing novels.",
+        instructions: "You are a space novel writer. Always research relevant facts and generate character profiles for the main characters before writing novels." +
+                      "Write complete chapters without asking for approval or feedback. Do not ask the user about tone, style, pace, or format preferences - just write the novel based on the request.",
         tools: [.. new AgentFunctions().AsAITools()]);
 
 // Enable background responses (only supported by {Azure}OpenAI Responses at this time).
