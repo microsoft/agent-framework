@@ -294,29 +294,6 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_create_new(
     assert chat_client._should_delete_agent  # type: ignore
 
 
-async def test_azure_ai_chat_client_tool_results_without_thread_error_via_public_api(
-    mock_ai_project_client: MagicMock,
-) -> None:
-    """Test that tool results without thread ID raise error through public API."""
-    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, agent_id="test-agent")
-
-    # Mock get_agent
-    mock_ai_project_client.agents.get_agent = AsyncMock(return_value=None)
-
-    # Create messages with tool results but no thread/conversation ID
-    messages = [
-        ChatMessage(role=Role.USER, text="Hello"),
-        ChatMessage(
-            role=Role.TOOL, contents=[FunctionResultContent(call_id='["run_123", "call_456"]', result="Result")]
-        ),
-    ]
-
-    # This should raise ValueError when called through public API
-    with pytest.raises(ValueError, match="No thread ID was provided, but chat messages includes tool results"):
-        async for _ in chat_client.get_streaming_response(messages):
-            pass
-
-
 async def test_azure_ai_chat_client_thread_management_through_public_api(mock_ai_project_client: MagicMock) -> None:
     """Test thread creation and management through public API."""
     chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, agent_id="test-agent")

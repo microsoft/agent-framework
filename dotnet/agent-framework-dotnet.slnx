@@ -136,9 +136,6 @@
     <Project Path="samples/GettingStarted/Workflows/_Foundational/06_SubWorkflows/06_SubWorkflows.csproj" />
     <Project Path="samples/GettingStarted/Workflows/_Foundational/07_MixedWorkflowAgentsAndExecutors/07_MixedWorkflowAgentsAndExecutors.csproj" />
   </Folder>
-  <Folder Name="/Samples/SemanticKernelMigration/">
-    <File Path="samples/SemanticKernelMigration/README.md" />
-  </Folder>
   <Folder Name="/Samples/Catalog/">
     <Project Path="samples/Catalog/DeepResearchAgent/DeepResearchAgent.csproj" />
   </Folder>
