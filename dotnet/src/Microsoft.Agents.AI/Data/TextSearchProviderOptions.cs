@@ -45,7 +45,7 @@ public sealed class TextSearchProviderOptions
     /// <remarks>
     /// If provided, <see cref="ContextPrompt"/> and <see cref="CitationsPrompt"/> are ignored.
     /// </remarks>
-    public Func<IList<TextSearchProvider.TextSearchSearchResult>, string>? ContextFormatter { get; set; }
+    public Func<IList<TextSearchProvider.TextSearchResult>, string>? ContextFormatter { get; set; }
 
     /// <summary>
     /// Gets or sets the number of recent conversation messages (both user and assistant) to keep in memory
