@@ -24,8 +24,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="System.Net.ServerSentEvents" />
-    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" />
+    <PackageReference Include="System.Net.ServerSentEvents" VersionOverride="10.0.0-rc.2.25502.107" />
+    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" VersionOverride="10.0.0-rc.2.25502.107" />
     <PackageReference Include="System.Net.Http.Json" />
     <PackageReference Include="System.Threading.Channels" />
   </ItemGroup>

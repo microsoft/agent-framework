@@ -1,7 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Buffers;
 using System.Collections.Generic;
+using System.Net.ServerSentEvents;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -12,10 +15,8 @@ namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore;
 
 internal sealed class AGUIServerSentEventsResult : IResult
 {
-    private static readonly ReadOnlyMemory<byte> s_data = "data: "u8.ToArray().AsMemory();
-    private static readonly ReadOnlyMemory<byte> s_newLines = "\n\n"u8.ToArray().AsMemory();
-
     private readonly IAsyncEnumerable<BaseEvent> _events;
+    private Utf8JsonWriter? _jsonWriter;
 
     public int? StatusCode => StatusCodes.Status200OK;
 
@@ -40,16 +41,11 @@ internal sealed class AGUIServerSentEventsResult : IResult
 
         try
         {
-            await foreach (var item in this._events.ConfigureAwait(false))
-            {
-                await body.WriteAsync(s_data, cancellationToken).ConfigureAwait(false);
-                await JsonSerializer.SerializeAsync(
-                    body,
-                    item,
-                    AGUIJsonSerializerContext.Default.BaseEvent, cancellationToken).ConfigureAwait(false);
-                await body.WriteAsync(s_newLines, cancellationToken).ConfigureAwait(false);
-                await body.FlushAsync(cancellationToken).ConfigureAwait(false);
-            }
+            await SseFormatter.WriteAsync(
+                WrapEventsAsSseItemsAsync(this._events, cancellationToken),
+                body,
+                this.SerializeEvent,
+                cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -61,14 +57,11 @@ internal sealed class AGUIServerSentEventsResult : IResult
                     Code = "StreamingError",
                     Message = ex.Message
                 };
-                await body.WriteAsync(s_data, CancellationToken.None).ConfigureAwait(false);
-                await JsonSerializer.SerializeAsync(
+                await SseFormatter.WriteAsync(
+                    WrapEventsAsSseItemsAsync([errorEvent]),
                     body,
-                    errorEvent,
-                    AGUIJsonSerializerContext.Default.BaseEvent,
+                    this.SerializeEvent,
                     CancellationToken.None).ConfigureAwait(false);
-                await body.WriteAsync(s_newLines, CancellationToken.None).ConfigureAwait(false);
-                await body.FlushAsync(CancellationToken.None).ConfigureAwait(false);
             }
             catch
             {
@@ -77,5 +70,37 @@ internal sealed class AGUIServerSentEventsResult : IResult
         }
 
         await body.FlushAsync(httpContext.RequestAborted).ConfigureAwait(false);
+    }
+
+    private static async IAsyncEnumerable<SseItem<BaseEvent>> WrapEventsAsSseItemsAsync(
+        IAsyncEnumerable<BaseEvent> events,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await foreach (BaseEvent evt in events.WithCancellation(cancellationToken).ConfigureAwait(false))
+        {
+            yield return new SseItem<BaseEvent>(evt);
+        }
+    }
+
+    private static async IAsyncEnumerable<SseItem<BaseEvent>> WrapEventsAsSseItemsAsync(
+        IEnumerable<BaseEvent> events)
+    {
+        foreach (BaseEvent evt in events)
+        {
+            yield return new SseItem<BaseEvent>(evt);
+        }
+    }
+
+    private void SerializeEvent(SseItem<BaseEvent> item, IBufferWriter<byte> writer)
+    {
+        if (this._jsonWriter == null)
+        {
+            this._jsonWriter = new Utf8JsonWriter(writer);
+        }
+        else
+        {
+            this._jsonWriter.Reset(writer);
+        }
+        JsonSerializer.Serialize(this._jsonWriter, item.Data, AGUIJsonSerializerContext.Default.BaseEvent);
     }
 }

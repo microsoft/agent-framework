@@ -11,7 +11,7 @@ namespace Microsoft.Agents.AI.AGUI.UnitTests;
 public sealed class AgentRunResponseUpdateAGUIExtensionsTests
 {
     [Fact]
-    public async Task AsAgentRunResponseUpdatesAsync_ConvertsRunStartedEvent_ToRunStartedContentAsync()
+    public async Task AsAgentRunResponseUpdatesAsync_ConvertsRunStartedEvent_ToResponseUpdateWithMetadataAsync()
     {
         // Arrange
         List<BaseEvent> events =
@@ -29,13 +29,15 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         // Assert
         Assert.Single(updates);
         Assert.Equal(ChatRole.Assistant, updates[0].Role);
-        RunStartedContent content = Assert.IsType<RunStartedContent>(updates[0].Contents[0]);
-        Assert.Equal("thread1", content.ThreadId);
-        Assert.Equal("run1", content.RunId);
+        Assert.Equal("run1", updates[0].ResponseId);
+        Assert.NotNull(updates[0].CreatedAt);
+        // ConversationId is stored in the underlying ChatResponseUpdate
+        ChatResponseUpdate chatUpdate = Assert.IsType<ChatResponseUpdate>(updates[0].RawRepresentation);
+        Assert.Equal("thread1", chatUpdate.ConversationId);
     }
 
     [Fact]
-    public async Task AsAgentRunResponseUpdatesAsync_ConvertsRunFinishedEvent_ToRunFinishedContentAsync()
+    public async Task AsAgentRunResponseUpdatesAsync_ConvertsRunFinishedEvent_ToResponseUpdateWithMetadataAsync()
     {
         // Arrange
         List<BaseEvent> events =
@@ -53,14 +55,17 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         // Assert
         Assert.Single(updates);
         Assert.Equal(ChatRole.Assistant, updates[0].Role);
-        RunFinishedContent content = Assert.IsType<RunFinishedContent>(updates[0].Contents[0]);
-        Assert.Equal("thread1", content.ThreadId);
-        Assert.Equal("run1", content.RunId);
-        Assert.Equal("Success", content.Result);
+        Assert.Equal("run1", updates[0].ResponseId);
+        Assert.NotNull(updates[0].CreatedAt);
+        TextContent content = Assert.IsType<TextContent>(updates[0].Contents[0]);
+        Assert.Equal("Success", content.Text);
+        // ConversationId is stored in the underlying ChatResponseUpdate
+        ChatResponseUpdate chatUpdate = Assert.IsType<ChatResponseUpdate>(updates[0].RawRepresentation);
+        Assert.Equal("thread1", chatUpdate.ConversationId);
     }
 
     [Fact]
-    public async Task AsAgentRunResponseUpdatesAsync_ConvertsRunErrorEvent_ToRunErrorContentAsync()
+    public async Task AsAgentRunResponseUpdatesAsync_ConvertsRunErrorEvent_ToErrorContentAsync()
     {
         // Arrange
         List<BaseEvent> events =
@@ -78,9 +83,11 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         // Assert
         Assert.Single(updates);
         Assert.Equal(ChatRole.Assistant, updates[0].Role);
-        RunErrorContent content = Assert.IsType<RunErrorContent>(updates[0].Contents[0]);
+        ErrorContent content = Assert.IsType<ErrorContent>(updates[0].Contents[0]);
         Assert.Equal("Error occurred", content.Message);
-        Assert.Equal("ERR001", content.Code);
+        // Code is stored in AdditionalProperties
+        Assert.NotNull(content.AdditionalProperties);
+        Assert.Equal("ERR001", content.AdditionalProperties["Code"]);
     }
 
     [Fact]
