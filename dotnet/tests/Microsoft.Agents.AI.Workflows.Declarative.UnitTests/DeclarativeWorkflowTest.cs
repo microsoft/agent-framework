@@ -250,7 +250,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         // Arrange
         const string WorkflowInput = "Test input message";
         Workflow workflow = this.CreateWorkflow(workflowPath, WorkflowInput);
-        await using StreamingRun run = await InProcessExecution.StreamAsync<string>(workflow, WorkflowInput);
+        await using StreamingRun run = await InProcessExecution.StreamAsync(workflow: workflow, input: WorkflowInput);
 
         // Act
         await foreach (WorkflowEvent workflowEvent in run.WatchStreamAsync())
