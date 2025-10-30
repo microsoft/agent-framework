@@ -15,6 +15,7 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions;
         WriteIndented = false)]
 [JsonSerializable(typeof(Dictionary<string, string>))]
 [JsonSerializable(typeof(CreateChatCompletion))]
+[JsonSerializable(typeof(StopSequences))]
 [JsonSerializable(typeof(ChatCompletion))]
 [JsonSerializable(typeof(ChatCompletionRequestMessage))]
 [JsonSerializable(typeof(IList<ChatCompletionRequestMessage>))]

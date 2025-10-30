@@ -67,8 +67,8 @@ internal static class AgentRunResponseExtensions
                         },
                     },
 
-                    // file
-                    DataContent fileContent when !fileContent.HasTopLevelMediaType("image") && !fileContent.HasTopLevelMediaType("audio") => new()
+                    // file (neither audio nor image)
+                    DataContent fileContent => new()
                     {
                         Content = fileContent.Base64Data.ToString()
                     },

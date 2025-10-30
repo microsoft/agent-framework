@@ -181,7 +181,7 @@ internal sealed record CreateChatCompletion
     /// </summary>
     [JsonPropertyName("stop")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public object? Stop { get; set; }
+    public StopSequences? Stop { get; set; }
 
     /// <summary>
     /// Whether or not to store the output of this chat completion request for use in model distillation or evals products.
