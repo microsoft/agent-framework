@@ -22,6 +22,8 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     private readonly CosmosClient _cosmosClient;
     private readonly Container _container;
     private readonly string _conversationId;
+    private readonly string _databaseId;
+    private readonly string _containerId;
     private readonly bool _ownsClient;
     private bool _disposed;
 
@@ -53,6 +55,21 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     /// Default is 86400 seconds (24 hours). Set to null to disable TTL.
     /// </summary>
     public int? MessageTtlSeconds { get; set; } = 86400;
+
+    /// <summary>
+    /// Gets the conversation ID associated with this message store.
+    /// </summary>
+    public string ConversationId => this._conversationId;
+
+    /// <summary>
+    /// Gets the database ID associated with this message store.
+    /// </summary>
+    public string DatabaseId => this._databaseId;
+
+    /// <summary>
+    /// Gets the container ID associated with this message store.
+    /// </summary>
+    public string ContainerId => this._containerId;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="CosmosChatMessageStore"/> class using a connection string.
@@ -101,6 +118,8 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
         this._cosmosClient = new CosmosClient(connectionString);
         this._container = this._cosmosClient.GetContainer(databaseId, containerId);
         this._conversationId = conversationId;
+        this._databaseId = databaseId;
+        this._containerId = containerId;
         this._ownsClient = true;
     }
 
@@ -158,6 +177,8 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
         this._cosmosClient = new CosmosClient(accountEndpoint, new DefaultAzureCredential());
         this._container = this._cosmosClient.GetContainer(databaseId, containerId);
         this._conversationId = conversationId;
+        this._databaseId = databaseId;
+        this._containerId = containerId;
         this._ownsClient = true;
     }
 
@@ -205,6 +226,8 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
 
         this._container = this._cosmosClient.GetContainer(databaseId, containerId);
         this._conversationId = conversationId;
+        this._databaseId = databaseId;
+        this._containerId = containerId;
     }
 
     /// <summary>
@@ -225,9 +248,11 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
         if (serializedStoreState.ValueKind is JsonValueKind.Object)
         {
             var state = JsonSerializer.Deserialize<StoreState>(serializedStoreState, jsonSerializerOptions);
-            if (state?.ConversationId is { } conversationId && state.DatabaseId is { } databaseId && state.ContainerId is { } containerId)
+            if (state?.ConversationIdentifier is { } conversationId && state.DatabaseIdentifier is { } databaseId && state.ContainerIdentifier is { } containerId)
             {
                 this._conversationId = conversationId;
+                this._databaseId = databaseId;
+                this._containerId = containerId;
                 this._container = this._cosmosClient.GetContainer(databaseId, containerId);
                 return;
             }
@@ -235,21 +260,6 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
 
         throw new ArgumentException("Invalid serialized state", nameof(serializedStoreState));
     }
-
-    /// <summary>
-    /// Gets the unique identifier for this conversation thread.
-    /// </summary>
-    public string ConversationId => this._conversationId;
-
-    /// <summary>
-    /// Gets the identifier of the Cosmos DB database.
-    /// </summary>
-    public string DatabaseId => this._container.Database.Id;
-
-    /// <summary>
-    /// Gets the identifier of the Cosmos DB container.
-    /// </summary>
-    public string ContainerId => this._container.Id;
 
     /// <inheritdoc />
     [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access", Justification = "ChatMessage deserialization is controlled")]
@@ -406,9 +416,9 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
 
         var state = new StoreState
         {
-            ConversationId = this._conversationId,
-            DatabaseId = this.DatabaseId,
-            ContainerId = this.ContainerId
+            ConversationIdentifier = this._conversationId,
+            DatabaseIdentifier = this.DatabaseId,
+            ContainerIdentifier = this.ContainerId
         };
 
         var options = jsonSerializerOptions ?? s_defaultJsonOptions;
@@ -431,7 +441,7 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
 #pragma warning restore CA1513
 
         // Efficient count query
-        var query = new QueryDefinition("SELECT VALUE COUNT(1) FROM c WHERE c.conversationId = @conversationId AND c.type = @type")
+        var query = new QueryDefinition("SELECT VALUE COUNT(1) FROM c WHERE c.conversationId = @conversationId AND c.Type = @type")
             .WithParameter("@conversationId", this._conversationId)
             .WithParameter("@type", "ChatMessage");
 
@@ -465,11 +475,11 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
 #pragma warning restore CA1513
 
         // Batch delete for efficiency
-        var query = new QueryDefinition("SELECT c.id FROM c WHERE c.conversationId = @conversationId AND c.type = @type")
+        var query = new QueryDefinition("SELECT VALUE c.id FROM c WHERE c.conversationId = @conversationId AND c.Type = @type")
             .WithParameter("@conversationId", this._conversationId)
             .WithParameter("@type", "ChatMessage");
 
-        var iterator = this._container.GetItemQueryIterator<JsonElement>(query, requestOptions: new QueryRequestOptions
+        var iterator = this._container.GetItemQueryIterator<string>(query, requestOptions: new QueryRequestOptions
         {
             PartitionKey = new PartitionKey(this._conversationId),
             MaxItemCount = this.MaxItemCount
@@ -484,11 +494,11 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
             var batch = this._container.CreateTransactionalBatch(partitionKey);
             var batchItemCount = 0;
 
-            foreach (var item in response)
+            foreach (var itemId in response)
             {
-                if (item.TryGetProperty("id", out var idElement) && idElement.ValueKind == JsonValueKind.String)
+                if (!string.IsNullOrEmpty(itemId))
                 {
-                    batch.DeleteItem(idElement.GetString());
+                    batch.DeleteItem(itemId);
                     batchItemCount++;
                     deletedCount++;
                 }
@@ -518,9 +528,9 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
 
     private sealed class StoreState
     {
-        public string ConversationId { get; set; } = string.Empty;
-        public string DatabaseId { get; set; } = string.Empty;
-        public string ContainerId { get; set; } = string.Empty;
+        public string ConversationIdentifier { get; set; } = string.Empty;
+        public string DatabaseIdentifier { get; set; } = string.Empty;
+        public string ContainerIdentifier { get; set; } = string.Empty;
     }
 
     /// <summary>
