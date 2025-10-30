@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Linq;
+using System.Text.Json;
 using Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions.Models;
 using Microsoft.Extensions.AI;
 
@@ -8,6 +10,8 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions.Converters;
 
 internal static class ChatClientAgentRunOptionsConverter
 {
+    private static readonly JsonElement s_emptyJson = JsonDocument.Parse("{}").RootElement;
+
     public static ChatClientAgentRunOptions BuildOptions(this CreateChatCompletion request)
     {
         ChatOptions chatOptions = new()
@@ -25,6 +29,11 @@ internal static class ChatClientAgentRunOptionsConverter
         if (request.ToolChoice is not null)
         {
             chatOptions.ToolMode = request.ToolChoice.ToChatToolMode();
+        }
+
+        if (request.Tools?.Count > 0)
+        {
+            chatOptions.Tools = request.Tools.Select(x => x.ToAITool()).ToList();
         }
 
         return new()
@@ -50,6 +59,22 @@ internal static class ChatClientAgentRunOptionsConverter
         }
 
         throw new ArgumentOutOfRangeException(nameof(responseFormat));
+    }
+
+    private static AITool ToAITool(this Tool tool)
+    {
+        if (tool is FunctionTool functionTool)
+        {
+            var function = functionTool.Function;
+            return AIFunctionFactory.CreateDeclaration(function.Name, function.Description, function.Parameters ?? s_emptyJson);
+        }
+        if (tool is CustomTool customTool)
+        {
+            var custom = customTool.Custom;
+            return new CustomAITool(custom.Name, custom.Description, custom.Format?.AdditionalProperties);
+        }
+
+        throw new ArgumentOutOfRangeException(nameof(tool));
     }
 
     private static ChatToolMode? ToChatToolMode(this ToolChoice toolChoice)

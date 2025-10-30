@@ -224,7 +224,7 @@ internal sealed record CreateChatCompletion
     /// </summary>
     [JsonPropertyName("tools")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public IList<object>? Tools { get; set; }
+    public IList<Tool>? Tools { get; set; }
 
     /// <summary>
     /// An integer between 0 and 20 specifying the number of most likely tokens to return at each token position.

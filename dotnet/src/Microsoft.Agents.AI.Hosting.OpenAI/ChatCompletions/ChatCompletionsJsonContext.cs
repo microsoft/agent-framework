@@ -52,5 +52,12 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions;
 [JsonSerializable(typeof(JsonSchemaResponseFormat))]
 [JsonSerializable(typeof(JsonSchemaConfiguration))]
 [JsonSerializable(typeof(JsonObjectResponseFormat))]
+[JsonSerializable(typeof(Tool))]
+[JsonSerializable(typeof(IList<Tool>))]
+[JsonSerializable(typeof(FunctionTool))]
+[JsonSerializable(typeof(FunctionDefinition))]
+[JsonSerializable(typeof(CustomTool))]
+[JsonSerializable(typeof(CustomToolProperties))]
+[JsonSerializable(typeof(CustomToolFormat))]
 [ExcludeFromCodeCoverage]
 internal sealed partial class ChatCompletionsJsonContext : JsonSerializerContext;
