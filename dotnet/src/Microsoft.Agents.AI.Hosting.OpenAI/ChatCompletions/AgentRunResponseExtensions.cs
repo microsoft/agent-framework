@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions.Models;
 using Microsoft.Extensions.AI;
 
@@ -81,6 +82,7 @@ internal static class AgentRunResponseExtensions
                 };
 
                 choiceMessage.Role = message.Role.Value;
+                choiceMessage.Annotations = content.Annotations?.ToChoiceMessageAnnotations();
 
                 var choice = new ChatCompletionChoice
                 {
@@ -123,5 +125,51 @@ internal static class AgentRunResponseExtensions
             CompletionTokensDetails = new() { ReasoningTokens = reasoningTokens },
             TotalTokens = (int)(usage.TotalTokenCount ?? 0)
         };
+    }
+
+    public static IList<ChoiceMessageAnnotation> ToChoiceMessageAnnotations(this IList<AIAnnotation> annotations)
+    {
+        var result = new List<ChoiceMessageAnnotation>();
+        foreach (var annotation in annotations.OfType<CitationAnnotation>())
+        {
+            if (annotation is null)
+            {
+                continue;
+            }
+
+            // may point to mulitple regions in the AIContent.
+            // we need to unroll another loop for regions then -> chatCompletions only point to single region per annotation
+
+            var regions = annotation.AnnotatedRegions?.OfType<TextSpanAnnotatedRegion>().Where(x => x.StartIndex is not null && x.EndIndex is not null);
+            if (regions is not null)
+            {
+                foreach (var region in regions)
+                {
+                    result.Add(new()
+                    {
+                        AnnotationUrlCitation = new AnnotationUrlCitation
+                        {
+                            Url = annotation.Url?.ToString(),
+                            Title = annotation.Title,
+                            StartIndex = region.StartIndex,
+                            EndIndex = region.EndIndex
+                        }
+                    });
+                }
+            }
+            else
+            {
+                result.Add(new()
+                {
+                    AnnotationUrlCitation = new AnnotationUrlCitation
+                    {
+                        Url = annotation.Url?.ToString(),
+                        Title = annotation.Title
+                    }
+                });
+            }
+        }
+
+        return result;
     }
 }

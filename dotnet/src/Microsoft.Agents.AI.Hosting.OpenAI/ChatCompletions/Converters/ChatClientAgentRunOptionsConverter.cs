@@ -18,7 +18,6 @@ internal static class ChatClientAgentRunOptionsConverter
             PresencePenalty = request.PresencePenalty,
             Seed = request.Seed,
             TopP = request.TopP,
-            TopK = request.TopLogprobs,
             StopSequences = request.Stop?.SequenceList ?? [],
             ResponseFormat = request.ResponseFormat?.ToChatResponseFormat()
         };
