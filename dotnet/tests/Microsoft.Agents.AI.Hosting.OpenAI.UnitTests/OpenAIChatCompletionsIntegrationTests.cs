@@ -16,8 +16,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using OpenAI;
 using OpenAI.Chat;
-using ChatMessage = OpenAI.Chat.ChatMessage;
 using ChatFinishReason = OpenAI.Chat.ChatFinishReason;
+using ChatMessage = OpenAI.Chat.ChatMessage;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.UnitTests;
 
