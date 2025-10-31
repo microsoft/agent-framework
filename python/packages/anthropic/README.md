@@ -14,5 +14,5 @@ The Anthropic integration enables communication with the Anthropic API, allowing
 
 See the [Anthropic agent examples](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/agents/anthropic/) which demonstrate:
 
-- Connecting to a Anthropic endpoint with a agent
+- Connecting to a Anthropic endpoint with an agent
 - Streaming and non-streaming responses
