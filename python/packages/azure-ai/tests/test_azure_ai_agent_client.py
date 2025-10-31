@@ -30,11 +30,14 @@ from agent_framework import (
     HostedWebSearchTool,
     Role,
     TextContent,
+    ToolMode,
     UriContent,
 )
 from agent_framework._serialization import SerializationMixin
 from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.agents.models import (
+    AgentsNamedToolChoice,
+    AgentsNamedToolChoiceType,
     CodeInterpreterToolDefinition,
     FileInfo,
     MessageDeltaChunk,
@@ -716,6 +719,49 @@ async def test_azure_ai_chat_client_create_run_options_with_auto_tool_choice(
     from azure.ai.agents.models import AgentsToolChoiceOptionMode
 
     assert run_options["tool_choice"] == AgentsToolChoiceOptionMode.AUTO
+
+
+async def test_azure_ai_chat_client_prepare_tool_choice_none_string(
+    mock_ai_project_client: MagicMock,
+) -> None:
+    """Test _prepare_tool_choice when tool_choice is string 'none'."""
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client)
+
+    # Create a mock tool for testing
+    mock_tool = MagicMock(spec=AIFunction)
+    chat_options = ChatOptions(tools=[mock_tool], tool_choice="none")
+
+    # Call the method
+    chat_client._prepare_tool_choice(chat_options)  # type: ignore
+
+    # Verify tools are cleared and tool_choice is set to NONE mode
+    assert chat_options.tools is None
+    assert chat_options.tool_choice == ToolMode.NONE.mode
+
+
+async def test_azure_ai_chat_client_create_run_options_tool_choice_required_specific_function(
+    mock_ai_project_client: MagicMock,
+) -> None:
+    """Test _create_run_options with ToolMode.REQUIRED specifying a specific function name."""
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client)
+
+    required_tool_mode = ToolMode.REQUIRED("specific_function_name")
+
+    # Create a mock AIFunction tool
+    mock_tool = MagicMock(spec=AIFunction)
+    mock_tool.to_json_schema_spec.return_value = {"type": "function", "function": {"name": "test_function"}}
+
+    chat_options = ChatOptions(tools=[mock_tool], tool_choice=required_tool_mode)
+    messages = [ChatMessage(role=Role.USER, text="Hello")]
+
+    run_options, _ = await chat_client._create_run_options(messages, chat_options)  # type: ignore
+
+    # Verify tool_choice is set to the specific named function
+    assert "tool_choice" in run_options
+    tool_choice = run_options["tool_choice"]
+    assert isinstance(tool_choice, AgentsNamedToolChoice)
+    assert tool_choice.type == AgentsNamedToolChoiceType.FUNCTION
+    assert tool_choice.function.name == "specific_function_name"  # type: ignore
 
 
 async def test_azure_ai_chat_client_create_run_options_with_response_format(
