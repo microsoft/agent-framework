@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.AGUI.Shared;
@@ -187,5 +188,185 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         Assert.Equal(3, updates.Count);
         Assert.All(updates, u => Assert.Equal(ChatRole.Assistant, u.Role));
         Assert.All(updates, u => Assert.Equal("msg1", u.MessageId));
+    }
+
+    [Fact]
+    public async Task AsAgentRunResponseUpdatesAsync_ConvertsToolCallEvents_ToFunctionCallContentAsync()
+    {
+        // Arrange
+        List<BaseEvent> events =
+        [
+            new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
+            new ToolCallStartEvent { ToolCallId = "call_1", ToolCallName = "GetWeather", ParentMessageId = "msg1" },
+            new ToolCallArgsEvent { ToolCallId = "call_1", Delta = "{\"location\":" },
+            new ToolCallArgsEvent { ToolCallId = "call_1", Delta = "\"Seattle\"}" },
+            new ToolCallEndEvent { ToolCallId = "call_1" },
+            new RunFinishedEvent { ThreadId = "thread1", RunId = "run1" }
+        ];
+
+        // Act
+        List<AgentRunResponseUpdate> updates = [];
+        await foreach (AgentRunResponseUpdate update in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+        {
+            updates.Add(update);
+        }
+
+        // Assert
+        AgentRunResponseUpdate toolCallUpdate = updates.First(u => u.Contents.Any(c => c is FunctionCallContent));
+        FunctionCallContent functionCall = Assert.IsType<FunctionCallContent>(toolCallUpdate.Contents[0]);
+        Assert.Equal("call_1", functionCall.CallId);
+        Assert.Equal("GetWeather", functionCall.Name);
+        Assert.NotNull(functionCall.Arguments);
+        Assert.Equal("Seattle", functionCall.Arguments!["location"]?.ToString());
+    }
+
+    [Fact]
+    public async Task AsAgentRunResponseUpdatesAsync_WithMultipleToolCallArgsEvents_AccumulatesArgsCorrectlyAsync()
+    {
+        // Arrange
+        List<BaseEvent> events =
+        [
+            new ToolCallStartEvent { ToolCallId = "call_1", ToolCallName = "TestTool", ParentMessageId = "msg1" },
+            new ToolCallArgsEvent { ToolCallId = "call_1", Delta = "{\"par" },
+            new ToolCallArgsEvent { ToolCallId = "call_1", Delta = "t1\":\"val" },
+            new ToolCallArgsEvent { ToolCallId = "call_1", Delta = "ue1\",\"part2" },
+            new ToolCallArgsEvent { ToolCallId = "call_1", Delta = "\":\"value2\"}" },
+            new ToolCallEndEvent { ToolCallId = "call_1" }
+        ];
+
+        // Act
+        List<AgentRunResponseUpdate> updates = [];
+        await foreach (AgentRunResponseUpdate update in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+        {
+            updates.Add(update);
+        }
+
+        // Assert
+        FunctionCallContent functionCall = updates
+            .SelectMany(u => u.Contents)
+            .OfType<FunctionCallContent>()
+            .Single();
+        Assert.Equal("value1", functionCall.Arguments!["part1"]?.ToString());
+        Assert.Equal("value2", functionCall.Arguments!["part2"]?.ToString());
+    }
+
+    [Fact]
+    public async Task AsAgentRunResponseUpdatesAsync_WithEmptyToolCallArgs_HandlesGracefullyAsync()
+    {
+        // Arrange
+        List<BaseEvent> events =
+        [
+            new ToolCallStartEvent { ToolCallId = "call_1", ToolCallName = "NoArgsTool", ParentMessageId = "msg1" },
+            new ToolCallArgsEvent { ToolCallId = "call_1", Delta = "" },
+            new ToolCallEndEvent { ToolCallId = "call_1" }
+        ];
+
+        // Act
+        List<AgentRunResponseUpdate> updates = [];
+        await foreach (AgentRunResponseUpdate update in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+        {
+            updates.Add(update);
+        }
+
+        // Assert
+        FunctionCallContent functionCall = updates
+            .SelectMany(u => u.Contents)
+            .OfType<FunctionCallContent>()
+            .Single();
+        Assert.Equal("call_1", functionCall.CallId);
+        Assert.Equal("NoArgsTool", functionCall.Name);
+        Assert.Null(functionCall.Arguments);
+    }
+
+    [Fact]
+    public async Task AsAgentRunResponseUpdatesAsync_WithOverlappingToolCalls_ThrowsInvalidOperationExceptionAsync()
+    {
+        // Arrange
+        List<BaseEvent> events =
+        [
+            new ToolCallStartEvent { ToolCallId = "call_1", ToolCallName = "Tool1", ParentMessageId = "msg1" },
+            new ToolCallArgsEvent { ToolCallId = "call_1", Delta = "{}" },
+            new ToolCallStartEvent { ToolCallId = "call_2", ToolCallName = "Tool2", ParentMessageId = "msg1" } // Second start before first ends
+        ];
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await foreach (var _ in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+            {
+            }
+        });
+    }
+
+    [Fact]
+    public async Task AsAgentRunResponseUpdatesAsync_WithMismatchedToolCallId_ThrowsInvalidOperationExceptionAsync()
+    {
+        // Arrange
+        List<BaseEvent> events =
+        [
+            new ToolCallStartEvent { ToolCallId = "call_1", ToolCallName = "Tool1", ParentMessageId = "msg1" },
+            new ToolCallArgsEvent { ToolCallId = "call_2", Delta = "{}" } // Wrong call ID
+        ];
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await foreach (var _ in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+            {
+            }
+        });
+    }
+
+    [Fact]
+    public async Task AsAgentRunResponseUpdatesAsync_WithMismatchedToolCallEndId_ThrowsInvalidOperationExceptionAsync()
+    {
+        // Arrange
+        List<BaseEvent> events =
+        [
+            new ToolCallStartEvent { ToolCallId = "call_1", ToolCallName = "Tool1", ParentMessageId = "msg1" },
+            new ToolCallArgsEvent { ToolCallId = "call_1", Delta = "{}" },
+            new ToolCallEndEvent { ToolCallId = "call_2" } // Wrong call ID
+        ];
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await foreach (var _ in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+            {
+            }
+        });
+    }
+
+    [Fact]
+    public async Task AsAgentRunResponseUpdatesAsync_WithMultipleSequentialToolCalls_ProcessesAllCorrectlyAsync()
+    {
+        // Arrange
+        List<BaseEvent> events =
+        [
+            new ToolCallStartEvent { ToolCallId = "call_1", ToolCallName = "Tool1", ParentMessageId = "msg1" },
+            new ToolCallArgsEvent { ToolCallId = "call_1", Delta = "{\"arg1\":\"val1\"}" },
+            new ToolCallEndEvent { ToolCallId = "call_1" },
+            new ToolCallStartEvent { ToolCallId = "call_2", ToolCallName = "Tool2", ParentMessageId = "msg2" },
+            new ToolCallArgsEvent { ToolCallId = "call_2", Delta = "{\"arg2\":\"val2\"}" },
+            new ToolCallEndEvent { ToolCallId = "call_2" }
+        ];
+
+        // Act
+        List<AgentRunResponseUpdate> updates = [];
+        await foreach (AgentRunResponseUpdate update in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+        {
+            updates.Add(update);
+        }
+
+        // Assert
+        List<FunctionCallContent> functionCalls = updates
+            .SelectMany(u => u.Contents)
+            .OfType<FunctionCallContent>()
+            .ToList();
+        Assert.Equal(2, functionCalls.Count);
+        Assert.Equal("call_1", functionCalls[0].CallId);
+        Assert.Equal("Tool1", functionCalls[0].Name);
+        Assert.Equal("call_2", functionCalls[1].CallId);
+        Assert.Equal("Tool2", functionCalls[1].Name);
     }
 }

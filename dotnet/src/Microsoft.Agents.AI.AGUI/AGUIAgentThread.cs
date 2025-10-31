@@ -17,6 +17,7 @@ internal sealed class AGUIAgentThread : InMemoryAgentThread
     public AGUIAgentThread(JsonElement serializedThreadState, JsonSerializerOptions? jsonSerializerOptions = null)
         : base(UnwrapState(serializedThreadState), jsonSerializerOptions)
     {
+        this.ThreadSerializationOptions = jsonSerializerOptions;
         var threadId = serializedThreadState.TryGetProperty(nameof(AGUIAgentThreadState.ThreadId), out var stateElement)
             ? stateElement.GetString()
             : null;
@@ -40,6 +41,8 @@ internal sealed class AGUIAgentThread : InMemoryAgentThread
     }
 
     public string ThreadId { get; set; }
+
+    public JsonSerializerOptions? ThreadSerializationOptions { get; set; }
 
     public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
     {

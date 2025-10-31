@@ -27,6 +27,16 @@ namespace Microsoft.Agents.AI.AGUI;
 [JsonSerializable(typeof(ToolCallArgsEvent))]
 [JsonSerializable(typeof(ToolCallEndEvent))]
 [JsonSerializable(typeof(IDictionary<string, object?>))]
+[JsonSerializable(typeof(Dictionary<string, object?>))]
+[JsonSerializable(typeof(System.Text.Json.JsonElement))]
+[JsonSerializable(typeof(Dictionary<string, System.Text.Json.JsonElement>))]
+[JsonSerializable(typeof(string))]
+[JsonSerializable(typeof(int))]
+[JsonSerializable(typeof(long))]
+[JsonSerializable(typeof(double))]
+[JsonSerializable(typeof(float))]
+[JsonSerializable(typeof(bool))]
+[JsonSerializable(typeof(decimal))]
 #if !ASPNETCORE
 [JsonSerializable(typeof(AGUIAgentThread.AGUIAgentThreadState))]
 #endif

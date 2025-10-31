@@ -162,4 +162,125 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         Assert.NotEmpty(endEvents);
         Assert.Contains(endEvents, e => e.MessageId == "msg1");
     }
+
+    [Fact]
+    public async Task AsAGUIEventStreamAsync_WithFunctionCallContent_EmitsToolCallEventsAsync()
+    {
+        // Arrange
+        const string ThreadId = "thread1";
+        const string RunId = "run1";
+        Dictionary<string, object?> arguments = new() { ["location"] = "Seattle", ["units"] = "fahrenheit" };
+        FunctionCallContent functionCall = new("call_123", "GetWeather", arguments);
+        List<AgentRunResponseUpdate> updates =
+        [
+            new AgentRunResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, [functionCall]) { MessageId = "msg1" })
+        ];
+
+        // Act
+        List<BaseEvent> events = [];
+        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync(ThreadId, RunId, AGUIJsonSerializerContext.Default.Options, CancellationToken.None))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        ToolCallStartEvent? startEvent = events.OfType<ToolCallStartEvent>().FirstOrDefault();
+        Assert.NotNull(startEvent);
+        Assert.Equal("call_123", startEvent.ToolCallId);
+        Assert.Equal("GetWeather", startEvent.ToolCallName);
+        Assert.Equal("msg1", startEvent.ParentMessageId);
+
+        ToolCallArgsEvent? argsEvent = events.OfType<ToolCallArgsEvent>().FirstOrDefault();
+        Assert.NotNull(argsEvent);
+        Assert.Equal("call_123", argsEvent.ToolCallId);
+        Assert.Contains("location", argsEvent.Delta);
+        Assert.Contains("Seattle", argsEvent.Delta);
+
+        ToolCallEndEvent? endEvent = events.OfType<ToolCallEndEvent>().FirstOrDefault();
+        Assert.NotNull(endEvent);
+        Assert.Equal("call_123", endEvent.ToolCallId);
+    }
+
+    [Fact]
+    public async Task AsAGUIEventStreamAsync_WithMultipleFunctionCalls_EmitsAllToolCallEventsAsync()
+    {
+        // Arrange
+        const string ThreadId = "thread1";
+        const string RunId = "run1";
+        FunctionCallContent call1 = new("call_1", "Tool1", new Dictionary<string, object?>());
+        FunctionCallContent call2 = new("call_2", "Tool2", new Dictionary<string, object?>());
+        ChatResponseUpdate response = new(ChatRole.Assistant, [call1, call2]) { MessageId = "msg1" };
+        List<AgentRunResponseUpdate> updates = [new AgentRunResponseUpdate(response)];
+
+        // Act
+        List<BaseEvent> events = [];
+        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync(ThreadId, RunId, AGUIJsonSerializerContext.Default.Options, CancellationToken.None))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        List<ToolCallStartEvent> startEvents = events.OfType<ToolCallStartEvent>().ToList();
+        Assert.Equal(2, startEvents.Count);
+        Assert.Contains(startEvents, e => e.ToolCallId == "call_1" && e.ToolCallName == "Tool1");
+        Assert.Contains(startEvents, e => e.ToolCallId == "call_2" && e.ToolCallName == "Tool2");
+
+        List<ToolCallEndEvent> endEvents = events.OfType<ToolCallEndEvent>().ToList();
+        Assert.Equal(2, endEvents.Count);
+    }
+
+    [Fact]
+    public async Task AsAGUIEventStreamAsync_WithFunctionCallWithNullArguments_EmitsEventsCorrectlyAsync()
+    {
+        // Arrange
+        const string ThreadId = "thread1";
+        const string RunId = "run1";
+        FunctionCallContent functionCall = new("call_456", "NoArgsTool", null);
+        List<AgentRunResponseUpdate> updates =
+        [
+            new AgentRunResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, [functionCall]) { MessageId = "msg1" })
+        ];
+
+        // Act
+        List<BaseEvent> events = [];
+        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync(ThreadId, RunId, AGUIJsonSerializerContext.Default.Options, CancellationToken.None))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        Assert.Contains(events, e => e is ToolCallStartEvent);
+        Assert.Contains(events, e => e is ToolCallArgsEvent);
+        Assert.Contains(events, e => e is ToolCallEndEvent);
+    }
+
+    [Fact]
+    public async Task AsAGUIEventStreamAsync_WithMixedContentTypes_EmitsAllEventTypesAsync()
+    {
+        // Arrange
+        const string ThreadId = "thread1";
+        const string RunId = "run1";
+        List<AgentRunResponseUpdate> updates =
+        [
+            new AgentRunResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, "Text message") { MessageId = "msg1" }),
+            new AgentRunResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, [new FunctionCallContent("call_1", "Tool1", null)]) { MessageId = "msg2" })
+        ];
+
+        // Act
+        List<BaseEvent> events = [];
+        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync(ThreadId, RunId, AGUIJsonSerializerContext.Default.Options, CancellationToken.None))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        Assert.Contains(events, e => e is RunStartedEvent);
+        Assert.Contains(events, e => e is TextMessageStartEvent);
+        Assert.Contains(events, e => e is TextMessageContentEvent);
+        Assert.Contains(events, e => e is TextMessageEndEvent);
+        Assert.Contains(events, e => e is ToolCallStartEvent);
+        Assert.Contains(events, e => e is ToolCallArgsEvent);
+        Assert.Contains(events, e => e is ToolCallEndEvent);
+        Assert.Contains(events, e => e is RunFinishedEvent);
+    }
 }

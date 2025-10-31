@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using Microsoft.Extensions.AI;
 
 #if ASPNETCORE
@@ -28,8 +29,7 @@ internal static class AGUIChatMessageExtensions
                 object? content = message.Content;
                 if (!string.IsNullOrEmpty(message.Content))
                 {
-                    var typeInfo = jsonSerializerOptions.GetTypeInfo(typeof(JsonElement)) as System.Text.Json.Serialization.Metadata.JsonTypeInfo<JsonElement>;
-                    content = JsonSerializer.Deserialize(message.Content, typeInfo!);
+                    content = JsonSerializer.Deserialize(message.Content, AGUIJsonSerializerContext.Default.JsonElement);
                 }
 
                 yield return new ChatMessage(
@@ -67,9 +67,10 @@ internal static class AGUIChatMessageExtensions
                     string contentJson = string.Empty;
                     if (functionResult.Result is not null)
                     {
-                        var typeInfo = jsonSerializerOptions.TypeInfoResolver?.GetTypeInfo(functionResult.Result.GetType(), jsonSerializerOptions)
-                            ?? throw new InvalidOperationException("TypeInfoResolver must be configured for AOT-compatible serialization.");
-                        contentJson = JsonSerializer.Serialize(functionResult.Result, typeInfo);
+                        // Convert the result to JsonElement for AOT-compatible serialization
+                        JsonElement resultElement = ConvertToJsonElement(functionResult.Result, jsonSerializerOptions);
+                        // JsonElement has a built-in GetRawText() method that returns the JSON string representation
+                        contentJson = resultElement.GetRawText();
                     }
 
                     yield return new AGUIMessage
@@ -99,4 +100,48 @@ internal static class AGUIChatMessageExtensions
         string.Equals(role, AGUIRoles.Developer, StringComparison.OrdinalIgnoreCase) ? s_developerChatRole :
         string.Equals(role, AGUIRoles.Tool, StringComparison.OrdinalIgnoreCase) ? ChatRole.Tool :
         throw new InvalidOperationException($"Unknown chat role: {role}");
+
+    private static JsonElement ConvertToJsonElement(object value, JsonSerializerOptions jsonSerializerOptions)
+    {
+        // If already a JsonElement, return it directly
+        if (value is JsonElement element)
+        {
+            return element;
+        }
+
+        // If it's a dictionary with object values, convert to Dictionary<string, JsonElement>
+        if (value is IDictionary<string, object?> dict)
+        {
+            var elementDict = new Dictionary<string, JsonElement>(dict.Count);
+            foreach (var kvp in dict)
+            {
+                if (kvp.Value is null)
+                {
+                    elementDict[kvp.Key] = default;
+                }
+                else
+                {
+                    // Recursively convert each value to JsonElement
+                    elementDict[kvp.Key] = ConvertToJsonElement(kvp.Value, jsonSerializerOptions);
+                }
+            }
+            // Serialize the Dictionary<string, JsonElement> which is AOT-compatible
+            string json = JsonSerializer.Serialize(elementDict, AGUIJsonSerializerContext.Default.DictionaryStringJsonElement);
+            using JsonDocument doc = JsonDocument.Parse(json);
+            return doc.RootElement.Clone();
+        }
+
+        // For primitive types and other objects, serialize to a document and extract the root element
+        // This handles int, string, bool, arrays, etc.
+        JsonTypeInfo? typeInfo = jsonSerializerOptions.TypeInfoResolver?.GetTypeInfo(value.GetType(), jsonSerializerOptions);
+        if (typeInfo is not null)
+        {
+            string json = JsonSerializer.Serialize(value, typeInfo);
+            using JsonDocument doc = JsonDocument.Parse(json);
+            return doc.RootElement.Clone();
+        }
+
+        // Fallback: if no TypeInfoResolver, throw an exception
+        throw new InvalidOperationException("TypeInfoResolver must be configured for AOT-compatible serialization of tool results.");
+    }
 }

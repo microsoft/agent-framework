@@ -20,6 +20,8 @@ namespace Microsoft.Agents.AI.AGUI;
 public sealed class AGUIAgent : AIAgent
 {
     private readonly AGUIHttpService _client;
+    private readonly JsonSerializerOptions _jsonSerializerOptions;
+    private readonly IList<AITool> _tools;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AGUIAgent"/> class.
@@ -28,13 +30,23 @@ public sealed class AGUIAgent : AIAgent
     /// <param name="description">Optional description of the agent.</param>
     /// <param name="httpClient">The HTTP client to use for communication with the AG-UI server.</param>
     /// <param name="endpoint">The URL for the AG-UI server.</param>
-    public AGUIAgent(string id, string description, HttpClient httpClient, string endpoint)
+    /// <param name="jsonSerializerOptions">JSON serializer options for tool call argument serialization. If null, AGUIJsonSerializerContext.Default.Options will be used.</param>
+    /// <param name="tools">Tools to make available to the agent.</param>
+    public AGUIAgent(
+        string id,
+        string description,
+        HttpClient httpClient,
+        string endpoint,
+        JsonSerializerOptions? jsonSerializerOptions,
+        IList<AITool> tools)
     {
         this.Id = Throw.IfNullOrWhitespace(id);
         this.Description = description;
         this._client = new AGUIHttpService(
             httpClient ?? Throw.IfNull(httpClient),
             endpoint ?? Throw.IfNullOrEmpty(endpoint));
+        this._jsonSerializerOptions = jsonSerializerOptions ?? AGUIJsonSerializerContext.Default.Options;
+        this._tools = tools ?? throw new ArgumentNullException(nameof(tools));
     }
 
     /// <inheritdoc/>
@@ -76,13 +88,10 @@ public sealed class AGUIAgent : AIAgent
             throw new InvalidOperationException("The provided thread is not compatible with the agent. Only threads created by the agent can be used.");
         }
 
-        var aguiOptions = (options as AGUIAgentRunOptions)
-            ?? throw new InvalidOperationException($"AGUIAgent requires {nameof(AGUIAgentRunOptions)} with {nameof(AGUIAgentRunOptions.JsonSerializerOptions)} to be provided.");
-
         Dictionary<string, AIFunction>? toolsLookup = null;
-        if (aguiOptions.Tools is { Count: > 0 })
+        if (this._tools is { Count: > 0 })
         {
-            toolsLookup = aguiOptions.Tools
+            toolsLookup = this._tools
                 .OfType<AIFunction>()
                 .ToDictionary(f => f.Name, StringComparer.Ordinal);
         }
@@ -106,7 +115,7 @@ public sealed class AGUIAgent : AIAgent
                 allUpdates.Clear();
             }
 
-            await foreach (var update in this.RunStreamingCoreAsync(ongoingMessages, typedThread, aguiOptions, cancellationToken).ConfigureAwait(false))
+            await foreach (var update in this.RunStreamingCoreAsync(ongoingMessages, typedThread, cancellationToken).ConfigureAwait(false))
             {
                 allUpdates.Add(update.AsChatResponseUpdate());
                 yield return update;
@@ -121,26 +130,28 @@ public sealed class AGUIAgent : AIAgent
     private async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingCoreAsync(
         IEnumerable<ChatMessage> messages,
         AGUIAgentThread thread,
-        AGUIAgentRunOptions options,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         string runId = Guid.NewGuid().ToString();
 
         var llmMessages = thread.MessageStore.Concat(messages);
 
+        // Use thread's JsonSerializerOptions if available, otherwise fall back to constructor-provided options
+        var serializerOptions = thread.ThreadSerializationOptions ?? this._jsonSerializerOptions;
+
         RunAgentInput input = new()
         {
             ThreadId = thread.ThreadId,
             RunId = runId,
-            Messages = llmMessages.AsAGUIMessages(options.JsonSerializerOptions),
+            Messages = llmMessages.AsAGUIMessages(serializerOptions),
         };
 
-        if (options.Tools is { Count: > 0 })
+        if (this._tools is { Count: > 0 })
         {
-            input.Tools = options.Tools.AsAGUITools();
+            input.Tools = this._tools.AsAGUITools();
         }
 
-        await foreach (var update in this._client.PostRunAsync(input, cancellationToken).AsAgentRunResponseUpdatesAsync(options.JsonSerializerOptions, cancellationToken).ConfigureAwait(false))
+        await foreach (var update in this._client.PostRunAsync(input, cancellationToken).AsAgentRunResponseUpdatesAsync(serializerOptions, cancellationToken).ConfigureAwait(false))
         {
             yield return update;
         }

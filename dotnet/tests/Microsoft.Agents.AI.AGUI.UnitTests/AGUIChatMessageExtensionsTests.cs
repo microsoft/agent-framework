@@ -185,4 +185,166 @@ public sealed class AGUIChatMessageExtensionsTests
         // Arrange & Act & Assert
         Assert.Throws<InvalidOperationException>(() => AGUIChatMessageExtensions.MapChatRole("unknown"));
     }
+
+    [Fact]
+    public void AsAGUIMessages_WithToolResultMessage_SerializesResultCorrectly()
+    {
+        // Arrange
+        var result = new Dictionary<string, object?> { ["temperature"] = 72, ["condition"] = "Sunny" };
+        FunctionResultContent toolResult = new("call_123", result);
+        ChatMessage toolMessage = new(ChatRole.Tool, [toolResult]);
+        List<ChatMessage> messages = [toolMessage];
+
+        // Act
+        List<AGUIMessage> aguiMessages = messages.AsAGUIMessages(AGUIJsonSerializerContext.Default.Options).ToList();
+
+        // Assert
+        AGUIMessage aguiMessage = Assert.Single(aguiMessages);
+        Assert.Equal(AGUIRoles.Tool, aguiMessage.Role);
+        Assert.Equal("call_123", aguiMessage.CallId);
+        Assert.NotEmpty(aguiMessage.Content);
+        // Content should be serialized JSON
+        Assert.Contains("temperature", aguiMessage.Content);
+        Assert.Contains("72", aguiMessage.Content);
+    }
+
+    [Fact]
+    public void AsAGUIMessages_WithNullToolResult_HandlesGracefully()
+    {
+        // Arrange
+        FunctionResultContent toolResult = new("call_456", null);
+        ChatMessage toolMessage = new(ChatRole.Tool, [toolResult]);
+        List<ChatMessage> messages = [toolMessage];
+
+        // Act
+        List<AGUIMessage> aguiMessages = messages.AsAGUIMessages(AGUIJsonSerializerContext.Default.Options).ToList();
+
+        // Assert
+        AGUIMessage aguiMessage = Assert.Single(aguiMessages);
+        Assert.Equal(AGUIRoles.Tool, aguiMessage.Role);
+        Assert.Equal("call_456", aguiMessage.CallId);
+        Assert.Equal(string.Empty, aguiMessage.Content);
+    }
+
+    [Fact]
+    public void AsAGUIMessages_WithoutTypeInfoResolver_ThrowsInvalidOperationException()
+    {
+        // Arrange
+        FunctionResultContent toolResult = new("call_789", "Result");
+        ChatMessage toolMessage = new(ChatRole.Tool, [toolResult]);
+        List<ChatMessage> messages = [toolMessage];
+        System.Text.Json.JsonSerializerOptions optionsWithoutResolver = new();
+
+        // Act & Assert
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => messages.AsAGUIMessages(optionsWithoutResolver).ToList());
+        Assert.Contains("TypeInfoResolver", ex.Message);
+        Assert.Contains("AOT-compatible", ex.Message);
+    }
+
+    [Fact]
+    public void AsChatMessages_WithToolMessage_DeserializesResultCorrectly()
+    {
+        // Arrange
+        const string JsonContent = "{\"status\":\"success\",\"value\":42}";
+        List<AGUIMessage> aguiMessages =
+        [
+            new AGUIMessage
+            {
+                Id = "msg1",
+                Role = AGUIRoles.Tool,
+                Content = JsonContent,
+                CallId = "call_abc"
+            }
+        ];
+
+        // Act
+        List<ChatMessage> chatMessages = aguiMessages.AsChatMessages(AGUIJsonSerializerContext.Default.Options).ToList();
+
+        // Assert
+        ChatMessage message = Assert.Single(chatMessages);
+        Assert.Equal(ChatRole.Tool, message.Role);
+        FunctionResultContent result = Assert.IsType<FunctionResultContent>(message.Contents[0]);
+        Assert.Equal("call_abc", result.CallId);
+        Assert.NotNull(result.Result);
+    }
+
+    [Fact]
+    public void AsChatMessages_WithEmptyToolContent_CreatesNullResult()
+    {
+        // Arrange
+        List<AGUIMessage> aguiMessages =
+        [
+            new AGUIMessage
+            {
+                Id = "msg1",
+                Role = AGUIRoles.Tool,
+                Content = string.Empty,
+                CallId = "call_def"
+            }
+        ];
+
+        // Act
+        List<ChatMessage> chatMessages = aguiMessages.AsChatMessages(AGUIJsonSerializerContext.Default.Options).ToList();
+
+        // Assert
+        ChatMessage message = Assert.Single(chatMessages);
+        FunctionResultContent result = Assert.IsType<FunctionResultContent>(message.Contents[0]);
+        Assert.Equal("call_def", result.CallId);
+        Assert.Equal(string.Empty, result.Result);
+    }
+
+    [Fact]
+    public void AsChatMessages_WithToolMessageWithoutCallId_TreatsAsRegularMessage()
+    {
+        // Arrange
+        List<AGUIMessage> aguiMessages =
+        [
+            new AGUIMessage
+            {
+                Id = "msg1",
+                Role = AGUIRoles.Tool,
+                Content = "Some content",
+                CallId = null
+            }
+        ];
+
+        // Act
+        List<ChatMessage> chatMessages = aguiMessages.AsChatMessages(AGUIJsonSerializerContext.Default.Options).ToList();
+
+        // Assert
+        ChatMessage message = Assert.Single(chatMessages);
+        Assert.Equal(ChatRole.Tool, message.Role);
+        Assert.Equal("Some content", message.Text);
+    }
+
+    [Fact]
+    public void RoundTrip_ToolResultMessage_PreservesData()
+    {
+        // Arrange
+        var resultData = new Dictionary<string, object?> { ["location"] = "Seattle", ["temperature"] = 68, ["forecast"] = "Partly cloudy" };
+        FunctionResultContent originalResult = new("call_roundtrip", resultData);
+        ChatMessage originalMessage = new(ChatRole.Tool, [originalResult]);
+
+        // Act - Convert to AGUI and back
+        List<ChatMessage> originalList = [originalMessage];
+        AGUIMessage aguiMessage = originalList.AsAGUIMessages(AGUIJsonSerializerContext.Default.Options).Single();
+        List<AGUIMessage> aguiList = [aguiMessage];
+        ChatMessage reconstructedMessage = aguiList.AsChatMessages(AGUIJsonSerializerContext.Default.Options).Single();
+
+        // Assert
+        Assert.Equal(ChatRole.Tool, reconstructedMessage.Role);
+        FunctionResultContent reconstructedResult = Assert.IsType<FunctionResultContent>(reconstructedMessage.Contents[0]);
+        Assert.Equal("call_roundtrip", reconstructedResult.CallId);
+        Assert.NotNull(reconstructedResult.Result);
+    }
+
+    [Fact]
+    public void MapChatRole_WithToolRole_ReturnsToolChatRole()
+    {
+        // Arrange & Act
+        ChatRole role = AGUIChatMessageExtensions.MapChatRole(AGUIRoles.Tool);
+
+        // Assert
+        Assert.Equal(ChatRole.Tool, role);
+    }
 }
