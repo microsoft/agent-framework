@@ -3,6 +3,7 @@
 using System;
 using System.ClientModel.Primitives;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Linq;
 using System.Net.Http;
 using System.Runtime.CompilerServices;
@@ -12,6 +13,7 @@ using Azure.AI.Agents;
 using Azure.Core;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.AI;
+using OpenAI.Responses;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative;
 
@@ -55,60 +57,65 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
     /// <inheritdoc/>
     public override async Task<ChatMessage> CreateMessageAsync(string conversationId, ChatMessage conversationMessage, CancellationToken cancellationToken = default)
     {
-        AgentResponseItem newMessage =
-            await this.GetAgentsClient().CreateMessageAsync(
+        IList<ResponseItem> responseItems = [];
+        ReadOnlyCollection<ResponseItem> newMessages =
+            await this.GetAgentsClient().GetConversationClient().CreateConversationItemsAsync(
                 conversationId,
-                role: s_roleMap[conversationMessage.Role.Value.ToUpperInvariant()],
-                contentBlocks: GetContent(),
-                attachments: null,
-                metadata: GetMetadata(),
+                items: responseItems, // %%% ??!?!?!?!!!
+                include: null,
                 cancellationToken).ConfigureAwait(false);
 
-        return ToChatMessage(newMessage);
+        //role: s_roleMap[conversationMessage.Role.Value.ToUpperInvariant()],
+        //contentBlocks: GetContent(),
+        //attachments: null,
+        //metadata: GetMetadata(),
 
-        Dictionary<string, string>? GetMetadata()
-        {
-            if (conversationMessage.AdditionalProperties is null)
-            {
-                return null;
-            }
+        return ToChatMessage(newMessages[0]); // %%% ??!?!?!?!!!
 
-            return conversationMessage.AdditionalProperties.ToDictionary(prop => prop.Key, prop => prop.Value?.ToString() ?? string.Empty);
-        }
+        //Dictionary<string, string>? GetMetadata()
+        //{
+        //    if (conversationMessage.AdditionalProperties is null)
+        //    {
+        //        return null;
+        //    }
 
-        IEnumerable<MessageInputContentBlock> GetContent()
-        {
-            foreach (AIContent content in conversationMessage.Contents)
-            {
-                MessageInputContentBlock? contentBlock =
-                    content switch
-                    {
-                        TextContent textContent => new MessageInputTextBlock(textContent.Text),
-                        HostedFileContent fileContent => new MessageInputImageFileBlock(new MessageImageFileParam(fileContent.FileId)),
-                        UriContent uriContent when uriContent.Uri is not null => new MessageInputImageUriBlock(new MessageImageUriParam(uriContent.Uri.ToString())),
-                        DataContent dataContent when dataContent.Uri is not null => new MessageInputImageUriBlock(new MessageImageUriParam(dataContent.Uri)),
-                        _ => null // Unsupported content type
-                    };
+        //    return conversationMessage.AdditionalProperties.ToDictionary(prop => prop.Key, prop => prop.Value?.ToString() ?? string.Empty);
+        //}
 
-                if (contentBlock is not null)
-                {
-                    yield return contentBlock;
-                }
-            }
-        }
+        //IEnumerable<MessageInputContentBlock> GetContent()
+        //{
+        //    foreach (AIContent content in conversationMessage.Contents)
+        //    {
+        //        MessageInputContentBlock? contentBlock =
+        //            content switch
+        //            {
+        //                TextContent textContent => new MessageInputTextBlock(textContent.Text),
+        //                HostedFileContent fileContent => new MessageInputImageFileBlock(new MessageImageFileParam(fileContent.FileId)),
+        //                UriContent uriContent when uriContent.Uri is not null => new MessageInputImageUriBlock(new MessageImageUriParam(uriContent.Uri.ToString())),
+        //                DataContent dataContent when dataContent.Uri is not null => new MessageInputImageUriBlock(new MessageImageUriParam(dataContent.Uri)),
+        //                _ => null // Unsupported content type
+        //            };
+
+        //        if (contentBlock is not null)
+        //        {
+        //            yield return contentBlock;
+        //        }
+        //    }
+        //}
     }
 
     /// <inheritdoc/>
     public override async Task<AIAgent> GetAgentAsync(string agentId, CancellationToken cancellationToken = default)
     {
-        AgentRecord agent =
-            await this.GetAgentsClient().GetAgentAsync(
+        AgentsClient client = this.GetAgentsClient();
+        AgentRecord agentRecord =
+            await client.GetAgentAsync(
                 agentId,
-                //new RequestOptions()// %%% ??!?!?!?!!!
-                //{
-                //    AllowMultipleToolCalls = this.AllowMultipleToolCalls,// %%% ??!?!?!?!!!
-                //},
                 cancellationToken).ConfigureAwait(false);
+
+        //AllowMultipleToolCalls = this.AllowMultipleToolCalls,// %%% ??!?!?!?!!!
+
+        AIAgent agent = client.GetAIAgent("gpt-4.1", agentRecord, options: null, clientFactory: null, openAIClientOptions: null, cancellationToken);
 
         FunctionInvokingChatClient? functionInvokingClient = agent.GetService<FunctionInvokingChatClient>();
         if (functionInvokingClient is not null)
@@ -150,8 +157,8 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
         bool newestFirst = false,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        ListSortOrder order = newestFirst ? ListSortOrder.Ascending : ListSortOrder.Descending;
-        await foreach (PersistentThreadMessage message in this.GetAgentsClient().Messages.GetMessagesAsync(conversationId, runId: null, limit, order, after, before, cancellationToken).ConfigureAwait(false))
+        AgentsListOrder order = newestFirst ? AgentsListOrder.Asc : AgentsListOrder.Desc;
+        await foreach (AgentResponseItem message in this.GetAgentsClient().GetConversationClient().GetConversationItemsAsync(conversationId, limit, order, after, before, itemType: null, cancellationToken).ConfigureAwait(false))
         {
             yield return ToChatMessage(message);
         }
@@ -176,7 +183,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
         return this._agentsClient;
     }
 
-    private static ChatMessage ToChatMessage(AgentResponsem message)
+    private static ChatMessage ToChatMessage(AgentResponseItem message)
     {
         return
            new ChatMessage(new ChatRole(message.Role.ToString()), [.. GetContent()])
