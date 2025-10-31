@@ -238,6 +238,7 @@ pytest --import-mode=importlib
 --cov=agent_framework
 --cov=agent_framework_a2a
 --cov=agent_framework_azure_ai
+--cov=agent_framework_azurefunctions
 --cov=agent_framework_copilotstudio
 --cov=agent_framework_mem0
 --cov=agent_framework_redis
