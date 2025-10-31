@@ -175,19 +175,12 @@ public class CosmosCheckpointStore<T> : JsonCheckpointStore, IDisposable
             throw new ObjectDisposedException(GetType().FullName);
 #pragma warning restore CA1513
 
-        QueryDefinition query;
-
-        if (withParent == null)
-        {
-            query = new QueryDefinition("SELECT c.runId, c.checkpointId FROM c WHERE c.runId = @runId ORDER BY c.timestamp ASC")
-                .WithParameter("@runId", runId);
-        }
-        else
-        {
-            query = new QueryDefinition("SELECT c.runId, c.checkpointId FROM c WHERE c.runId = @runId AND c.parentCheckpointId = @parentCheckpointId ORDER BY c.timestamp ASC")
+        QueryDefinition query = withParent == null
+            ? new QueryDefinition("SELECT c.runId, c.checkpointId FROM c WHERE c.runId = @runId ORDER BY c.timestamp ASC")
+                .WithParameter("@runId", runId)
+            : new QueryDefinition("SELECT c.runId, c.checkpointId FROM c WHERE c.runId = @runId AND c.parentCheckpointId = @parentCheckpointId ORDER BY c.timestamp ASC")
                 .WithParameter("@runId", runId)
                 .WithParameter("@parentCheckpointId", withParent.CheckpointId);
-        }
 
         var iterator = _container.GetItemQueryIterator<CheckpointQueryResult>(query);
         var checkpoints = new List<CheckpointInfo>();

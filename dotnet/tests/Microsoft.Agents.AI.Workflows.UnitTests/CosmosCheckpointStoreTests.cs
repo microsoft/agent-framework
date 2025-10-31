@@ -64,7 +64,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
 
             _emulatorAvailable = true;
         }
-        catch (Exception)
+        catch (Exception ex) when (!(ex is OutOfMemoryException || ex is StackOverflowException || ex is AccessViolationException))
         {
             // Emulator not available, tests will be skipped
             _emulatorAvailable = false;
@@ -91,9 +91,10 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
                     await _database!.DeleteAsync();
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                // Ignore cleanup errors
+                // Ignore cleanup errors, but log for diagnostics
+                Console.WriteLine($"[DisposeAsync] Cleanup error: {ex.Message}\n{ex.StackTrace}");
             }
             finally
             {
@@ -116,6 +117,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
     [Fact]
     public void Constructor_WithCosmosClient_SetsProperties()
     {
+        // Arrange
         SkipIfEmulatorNotAvailable();
 
         // Act
@@ -129,6 +131,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
     [Fact]
     public void Constructor_WithConnectionString_SetsProperties()
     {
+        // Arrange
         SkipIfEmulatorNotAvailable();
 
         // Act

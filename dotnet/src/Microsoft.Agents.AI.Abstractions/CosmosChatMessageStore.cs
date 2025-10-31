@@ -308,7 +308,6 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
         this._conversationId = sessionId; // Use sessionId as conversationId for compatibility
         this._databaseId = databaseId;
         this._containerId = containerId;
-        this._containerId = containerId;
 
         // Initialize hierarchical partitioning mode
         this._tenantId = tenantId;
@@ -375,7 +374,6 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
         this._container = this._cosmosClient.GetContainer(databaseId, containerId);
         this._conversationId = sessionId; // Use sessionId as conversationId for compatibility
         this._databaseId = databaseId;
-        this._containerId = containerId;
         this._containerId = containerId;
 
         // Initialize hierarchical partitioning mode
@@ -478,19 +476,13 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
                 this._userId = state.UserId;
                 this._useHierarchicalPartitioning = state.UseHierarchicalPartitioning;
 
-                if (this._useHierarchicalPartitioning && this._tenantId != null && this._userId != null)
-                {
-                    // Use native hierarchical partition key with PartitionKeyBuilder
-                    this._partitionKey = new PartitionKeyBuilder()
+                this._partitionKey = (this._useHierarchicalPartitioning && this._tenantId != null && this._userId != null)
+                    ? new PartitionKeyBuilder()
                         .Add(this._tenantId)
                         .Add(this._userId)
                         .Add(conversationId)
-                        .Build();
-                }
-                else
-                {
-                    this._partitionKey = new PartitionKey(conversationId);
-                }
+                        .Build()
+                    : new PartitionKey(conversationId);
 
                 return;
             }
