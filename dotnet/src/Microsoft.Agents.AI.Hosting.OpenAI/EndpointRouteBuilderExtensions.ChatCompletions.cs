@@ -4,6 +4,7 @@ using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Hosting;
 using Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions;
 using Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions.Models;
 using Microsoft.AspNetCore.Mvc;
@@ -18,11 +19,19 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
     /// Maps OpenAI ChatCompletions API endpoints to the specified <see cref="IEndpointRouteBuilder"/> for the given <see cref="AIAgent"/>.
     /// </summary>
     /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the OpenAI ChatCompletions endpoints to.</param>
-    /// <param name="agentName">The name of <see cref="AIAgent"/> to map the OpenAI ChatCompletions endpoints for.</param>
+    /// <param name="agentBuilder">The builder for <see cref="AIAgent"/> to map the OpenAI ChatCompletions endpoints for.</param>
+    public static IEndpointConventionBuilder MapOpenAIChatCompletions(this IEndpointRouteBuilder endpoints, IHostedAgentBuilder agentBuilder)
+        => MapOpenAIChatCompletions(endpoints, agentBuilder, path: null);
+
+    /// <summary>
+    /// Maps OpenAI ChatCompletions API endpoints to the specified <see cref="IEndpointRouteBuilder"/> for the given <see cref="AIAgent"/>.
+    /// </summary>
+    /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the OpenAI ChatCompletions endpoints to.</param>
+    /// <param name="agentBuilder">The builder for <see cref="AIAgent"/> to map the OpenAI ChatCompletions endpoints for.</param>
     /// <param name="path">Custom route path for the chat completions endpoint.</param>
-    public static IEndpointConventionBuilder MapOpenAIChatCompletions(this IEndpointRouteBuilder endpoints, string agentName, string? path = null)
+    public static IEndpointConventionBuilder MapOpenAIChatCompletions(this IEndpointRouteBuilder endpoints, IHostedAgentBuilder agentBuilder, string? path)
     {
-        var agent = endpoints.ServiceProvider.GetRequiredKeyedService<AIAgent>(agentName);
+        var agent = endpoints.ServiceProvider.GetRequiredKeyedService<AIAgent>(agentBuilder.Name);
         return MapOpenAIChatCompletions(endpoints, agent, path);
     }
 
@@ -43,7 +52,7 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
     public static IEndpointConventionBuilder MapOpenAIChatCompletions(
         this IEndpointRouteBuilder endpoints,
         AIAgent agent,
-        [StringSyntax("Route")] string? path = null)
+        [StringSyntax("Route")] string? path)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
         ArgumentNullException.ThrowIfNull(agent);
