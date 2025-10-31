@@ -76,7 +76,7 @@ class Coordinator(Executor):
         else:
             # Not in cache, forward to external
             self._pending_sub_workflow_requests[domain_request.id] = sub_workflow_request
-            await ctx.request_info(domain_request, DomainCheckRequest, bool)
+            await ctx.request_info(domain_request, bool)
 
     @response_handler
     async def handle_domain_response(
@@ -138,7 +138,7 @@ class EmailDomainValidator(Executor):
             return
 
         # Request domain check from external source
-        await ctx.request_info(request, DomainCheckRequest, bool)
+        await ctx.request_info(request, bool)
 
     @response_handler
     async def handle_domain_response(
@@ -302,7 +302,7 @@ async def test_workflow_scoped_interception() -> None:
 
             # Unknown source, forward to external
             self._pending_sub_workflow_requests[domain_request.id] = sub_workflow_request
-            await ctx.request_info(domain_request, DomainCheckRequest, bool)
+            await ctx.request_info(domain_request, bool)
 
         @response_handler
         async def handle_domain_response(
@@ -386,7 +386,7 @@ async def test_concurrent_sub_workflow_execution() -> None:
 
             domain_request = sub_workflow_request.source_event.data
             self._pending_sub_workflow_requests[domain_request.id] = sub_workflow_request
-            await ctx.request_info(domain_request, DomainCheckRequest, bool)
+            await ctx.request_info(domain_request, bool)
 
         @response_handler
         async def handle_domain_response(

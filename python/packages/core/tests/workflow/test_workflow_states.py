@@ -78,7 +78,7 @@ class Requester(Executor):
 
     @handler
     async def ask(self, _: str, ctx: WorkflowContext) -> None:  # pragma: no cover
-        await ctx.request_info("Mock request data", str, str)
+        await ctx.request_info("Mock request data", str)
 
 
 async def test_idle_with_pending_requests_status_streaming():
