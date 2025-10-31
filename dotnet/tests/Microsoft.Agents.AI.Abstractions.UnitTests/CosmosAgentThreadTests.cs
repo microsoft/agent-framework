@@ -43,7 +43,7 @@ public sealed class CosmosAgentThreadTests : IAsyncLifetime, IDisposable
     private const string EmulatorKey = "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==";
 
     // Use static container names like CosmosChatMessageStoreTests for consistency
-    private readonly string _testDatabaseId = "AgentFrameworkTests";
+    private readonly string _testDatabaseId = $"AgentFrameworkTests-Thread-{Guid.NewGuid():N}";
     private readonly string _testContainerId = "ChatMessages"; // Use the same container as CosmosChatMessageStoreTests
 
     private string _connectionString = string.Empty;

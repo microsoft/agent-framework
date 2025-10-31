@@ -42,8 +42,10 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
     // Cosmos DB Emulator connection settings
     private const string EmulatorEndpoint = "https://localhost:8081";
     private const string EmulatorKey = "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==";
-    private const string TestDatabaseId = "AgentFrameworkTests";
     private const string TestContainerId = "ChatMessages";
+
+    // Use unique database ID per test run to avoid conflicts between parallel test executions
+    private readonly string _testDatabaseId = $"AgentFrameworkTests-ChatStore-{Guid.NewGuid():N}";
 
     private string _connectionString = string.Empty;
     private bool _emulatorAvailable;
@@ -54,40 +56,40 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
     {
         // Check environment variable to determine if we should preserve containers
         // Set COSMOS_PRESERVE_CONTAINERS=true to keep containers and data for inspection
-        _preserveContainer = string.Equals(Environment.GetEnvironmentVariable("COSMOS_PRESERVE_CONTAINERS"), "true", StringComparison.OrdinalIgnoreCase);
+        this._preserveContainer = string.Equals(Environment.GetEnvironmentVariable("COSMOS_PRESERVE_CONTAINERS"), "true", StringComparison.OrdinalIgnoreCase);
 
-        _connectionString = $"AccountEndpoint={EmulatorEndpoint};AccountKey={EmulatorKey}";
+        this._connectionString = $"AccountEndpoint={EmulatorEndpoint};AccountKey={EmulatorKey}";
 
         try
         {
             // Only create CosmosClient for test setup - the actual tests will use connection string constructors
-            _setupClient = new CosmosClient(EmulatorEndpoint, EmulatorKey);
+            this._setupClient = new CosmosClient(EmulatorEndpoint, EmulatorKey);
 
             // Test connection by attempting to create database
-            var databaseResponse = await this._setupClient.CreateDatabaseIfNotExistsAsync(TestDatabaseId);
+            var databaseResponse = await this._setupClient.CreateDatabaseIfNotExistsAsync(this._testDatabaseId);
             await databaseResponse.Database.CreateContainerIfNotExistsAsync(
                 TestContainerId,
                 "/conversationId",
                 throughput: 400);
 
-            _emulatorAvailable = true;
+            this._emulatorAvailable = true;
         }
         catch (Exception)
         {
             // Emulator not available, tests will be skipped
-            _emulatorAvailable = false;
-            _setupClient?.Dispose();
-            _setupClient = null;
+            this._emulatorAvailable = false;
+            this._setupClient?.Dispose();
+            this._setupClient = null;
         }
     }
 
     public async Task DisposeAsync()
     {
-        if (_setupClient != null && _emulatorAvailable)
+        if (this._setupClient != null && this._emulatorAvailable)
         {
             try
             {
-                if (_preserveContainer)
+                if (this._preserveContainer)
                 {
                     // Preserve mode: Don't delete the database/container, keep data for inspection
                     // This allows viewing data in the Cosmos DB Emulator Data Explorer
@@ -96,30 +98,31 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
                 else
                 {
                     // Clean mode: Delete the test database and all data
-                    var database = _setupClient.GetDatabase(TestDatabaseId);
+                    var database = this._setupClient.GetDatabase(this._testDatabaseId);
                     await database.DeleteAsync();
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                // Ignore cleanup errors
+                // Ignore cleanup errors during test teardown
+                Console.WriteLine($"Warning: Cleanup failed: {ex.Message}");
             }
             finally
             {
-                _setupClient.Dispose();
+                this._setupClient.Dispose();
             }
         }
     }
 
     public void Dispose()
     {
-        _setupClient?.Dispose();
+        this._setupClient?.Dispose();
         GC.SuppressFinalize(this);
     }
 
     private void SkipIfEmulatorNotAvailable()
     {
-        if (!_emulatorAvailable)
+        if (!this._emulatorAvailable)
         {
             Assert.Fail("Cosmos DB Emulator is not available. Start the emulator to run these tests.");
         }
@@ -135,12 +138,12 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         this.SkipIfEmulatorNotAvailable();
 
         // Act
-        using var store = new CosmosChatMessageStore(this._connectionString, TestDatabaseId, TestContainerId, "test-conversation");
+        using var store = new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, TestContainerId, "test-conversation");
 
         // Assert
         Assert.NotNull(store);
         Assert.Equal("test-conversation", store.ConversationId);
-        Assert.Equal(TestDatabaseId, store.DatabaseId);
+        Assert.Equal(this._testDatabaseId, store.DatabaseId);
         Assert.Equal(TestContainerId, store.ContainerId);
     }
 
@@ -152,12 +155,12 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         this.SkipIfEmulatorNotAvailable();
 
         // Act
-        using var store = new CosmosChatMessageStore(this._connectionString, TestDatabaseId, TestContainerId);
+        using var store = new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, TestContainerId);
 
         // Assert
         Assert.NotNull(store);
         Assert.NotNull(store.ConversationId);
-        Assert.Equal(TestDatabaseId, store.DatabaseId);
+        Assert.Equal(this._testDatabaseId, store.DatabaseId);
         Assert.Equal(TestContainerId, store.ContainerId);
     }
 
@@ -167,7 +170,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
     {
         // Arrange & Act & Assert
         Assert.Throws<ArgumentException>(() =>
-            new CosmosChatMessageStore((string)null!, TestDatabaseId, TestContainerId, "test-conversation"));
+            new CosmosChatMessageStore((string)null!, this._testDatabaseId, TestContainerId, "test-conversation"));
     }
 
     [Fact]
@@ -175,10 +178,10 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
     public void Constructor_WithEmptyConversationId_ShouldThrowArgumentException()
     {
         // Arrange & Act & Assert
-        SkipIfEmulatorNotAvailable();
+        this.SkipIfEmulatorNotAvailable();
 
         Assert.Throws<ArgumentException>(() =>
-            new CosmosChatMessageStore(this._connectionString, TestDatabaseId, TestContainerId, ""));
+            new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, TestContainerId, ""));
     }
 
     #endregion
@@ -192,7 +195,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         // Arrange
         this.SkipIfEmulatorNotAvailable();
         var conversationId = Guid.NewGuid().ToString();
-        using var store = new CosmosChatMessageStore(this._connectionString, TestDatabaseId, TestContainerId, conversationId);
+        using var store = new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, TestContainerId, conversationId);
         var message = new ChatMessage(ChatRole.User, "Hello, world!");
 
         // Act
@@ -211,7 +214,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
             // Let's check if we can find ANY items in the container for this conversation
             var directQuery = new QueryDefinition("SELECT VALUE COUNT(1) FROM c WHERE c.conversationId = @conversationId")
                 .WithParameter("@conversationId", conversationId);
-            var countIterator = this._setupClient!.GetDatabase(TestDatabaseId).GetContainer(TestContainerId)
+            var countIterator = this._setupClient!.GetDatabase(this._testDatabaseId).GetContainer(TestContainerId)
                 .GetItemQueryIterator<int>(directQuery, requestOptions: new QueryRequestOptions
                 {
                     PartitionKey = new PartitionKey(conversationId)
@@ -223,7 +226,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
             // Debug: Let's see what the raw query returns
             var rawQuery = new QueryDefinition("SELECT * FROM c WHERE c.conversationId = @conversationId")
                 .WithParameter("@conversationId", conversationId);
-            var rawIterator = this._setupClient!.GetDatabase(TestDatabaseId).GetContainer(TestContainerId)
+            var rawIterator = this._setupClient!.GetDatabase(this._testDatabaseId).GetContainer(TestContainerId)
                 .GetItemQueryIterator<dynamic>(rawQuery, requestOptions: new QueryRequestOptions
                 {
                     PartitionKey = new PartitionKey(conversationId)
@@ -252,7 +255,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         // Arrange
         SkipIfEmulatorNotAvailable();
         var conversationId = Guid.NewGuid().ToString();
-        using var store = new CosmosChatMessageStore(this._connectionString, TestDatabaseId, TestContainerId, conversationId);
+        using var store = new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, TestContainerId, conversationId);
         var messages = new[]
         {
             new ChatMessage(ChatRole.User, "First message"),
@@ -282,7 +285,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
     {
         // Arrange
         SkipIfEmulatorNotAvailable();
-        using var store = new CosmosChatMessageStore(this._connectionString, TestDatabaseId, TestContainerId, Guid.NewGuid().ToString());
+        using var store = new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, TestContainerId, Guid.NewGuid().ToString());
 
         // Act
         var messages = await store.GetMessagesAsync();
@@ -300,8 +303,8 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         var conversation1 = Guid.NewGuid().ToString();
         var conversation2 = Guid.NewGuid().ToString();
 
-        using var store1 = new CosmosChatMessageStore(this._connectionString, TestDatabaseId, TestContainerId, conversation1);
-        using var store2 = new CosmosChatMessageStore(this._connectionString, TestDatabaseId, TestContainerId, conversation2);
+        using var store1 = new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, TestContainerId, conversation1);
+        using var store2 = new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, TestContainerId, conversation2);
 
         await store1.AddMessagesAsync([new ChatMessage(ChatRole.User, "Message for conversation 1")]);
         await store2.AddMessagesAsync([new ChatMessage(ChatRole.User, "Message for conversation 2")]);
@@ -329,7 +332,8 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
     {
         // Arrange
         SkipIfEmulatorNotAvailable();
-        using var originalStore = new CosmosChatMessageStore(this._connectionString, TestDatabaseId, TestContainerId, "test-conversation");
+        var conversationId = $"test-conversation-{Guid.NewGuid():N}"; // Use unique conversation ID
+        using var originalStore = new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, TestContainerId, conversationId);
 
         var messages = new[]
         {
@@ -349,7 +353,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         Assert.Equal(5, retrievedList.Count);
 
         // Act 3: Create new store instance for same conversation (test persistence)
-        using var newStore = new CosmosChatMessageStore(this._connectionString, TestDatabaseId, TestContainerId, "test-conversation");
+        using var newStore = new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, TestContainerId, conversationId);
         var persistedMessages = await newStore.GetMessagesAsync();
         var persistedList = persistedMessages.ToList();
 
@@ -372,7 +376,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
     {
         // Arrange
         SkipIfEmulatorNotAvailable();
-        var store = new CosmosChatMessageStore(this._connectionString, TestDatabaseId, TestContainerId, Guid.NewGuid().ToString());
+        var store = new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, TestContainerId, Guid.NewGuid().ToString());
 
         // Act & Assert
         store.Dispose(); // Should not throw
@@ -384,7 +388,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
     {
         // Arrange
         SkipIfEmulatorNotAvailable();
-        var store = new CosmosChatMessageStore(this._connectionString, TestDatabaseId, TestContainerId, Guid.NewGuid().ToString());
+        var store = new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, TestContainerId, Guid.NewGuid().ToString());
 
         // Act & Assert
         store.Dispose(); // First call

@@ -31,9 +31,12 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
     // Cosmos DB Emulator connection settings
     private const string EmulatorEndpoint = "https://localhost:8081";
     private const string EmulatorKey = "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==";
-    private const string TestDatabaseId = "AgentFrameworkTests";
     private const string TestContainerId = "Checkpoints";
 
+    // Use unique database ID per test run to avoid conflicts between parallel test executions
+    private readonly string _testDatabaseId = $"AgentFrameworkTests-CheckpointStore-{Guid.NewGuid():N}";
+
+    private string _connectionString = string.Empty;
     private CosmosClient? _cosmosClient;
     private Database? _database;
     private Container? _container;
@@ -46,12 +49,14 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
         // Set COSMOS_PRESERVE_CONTAINERS=true to keep containers and data for inspection
         _preserveContainer = string.Equals(Environment.GetEnvironmentVariable("COSMOS_PRESERVE_CONTAINERS"), "true", StringComparison.OrdinalIgnoreCase);
 
+        _connectionString = $"AccountEndpoint={EmulatorEndpoint};AccountKey={EmulatorKey}";
+
         try
         {
             _cosmosClient = new CosmosClient(EmulatorEndpoint, EmulatorKey);
 
             // Test connection by attempting to create database
-            _database = await _cosmosClient.CreateDatabaseIfNotExistsAsync(TestDatabaseId);
+            _database = await _cosmosClient.CreateDatabaseIfNotExistsAsync(_testDatabaseId);
             _container = await _database.CreateContainerIfNotExistsAsync(
                 TestContainerId,
                 "/runId",
@@ -114,10 +119,10 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
         SkipIfEmulatorNotAvailable();
 
         // Act
-        using var store = new CosmosCheckpointStore(_cosmosClient!, TestDatabaseId, TestContainerId);
+        using var store = new CosmosCheckpointStore(_cosmosClient!, _testDatabaseId, TestContainerId);
 
         // Assert
-        Assert.Equal(TestDatabaseId, store.DatabaseId);
+        Assert.Equal(_testDatabaseId, store.DatabaseId);
         Assert.Equal(TestContainerId, store.ContainerId);
     }
 
@@ -126,14 +131,11 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
     {
         SkipIfEmulatorNotAvailable();
 
-        // Arrange
-        var connectionString = $"AccountEndpoint={EmulatorEndpoint};AccountKey={EmulatorKey};";
-
         // Act
-        using var store = new CosmosCheckpointStore(connectionString, TestDatabaseId, TestContainerId);
+        using var store = new CosmosCheckpointStore(_connectionString, _testDatabaseId, TestContainerId);
 
         // Assert
-        Assert.Equal(TestDatabaseId, store.DatabaseId);
+        Assert.Equal(_testDatabaseId, store.DatabaseId);
         Assert.Equal(TestContainerId, store.ContainerId);
     }
 
@@ -142,7 +144,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
     {
         // Act & Assert
         Assert.Throws<ArgumentNullException>(() =>
-            new CosmosCheckpointStore((CosmosClient)null!, TestDatabaseId, TestContainerId));
+            new CosmosCheckpointStore((CosmosClient)null!, _testDatabaseId, TestContainerId));
     }
 
     [Fact]
@@ -150,7 +152,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
     {
         // Act & Assert
         Assert.Throws<ArgumentException>(() =>
-            new CosmosCheckpointStore((string)null!, TestDatabaseId, TestContainerId));
+            new CosmosCheckpointStore((string)null!, _testDatabaseId, TestContainerId));
     }
 
     #endregion
@@ -163,7 +165,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
         SkipIfEmulatorNotAvailable();
 
         // Arrange
-        using var store = new CosmosCheckpointStore(_cosmosClient!, TestDatabaseId, TestContainerId);
+        using var store = new CosmosCheckpointStore(_cosmosClient!, _testDatabaseId, TestContainerId);
         var runId = Guid.NewGuid().ToString();
         var checkpointValue = JsonSerializer.SerializeToElement(new { data = "test checkpoint" });
 
@@ -183,7 +185,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
         SkipIfEmulatorNotAvailable();
 
         // Arrange
-        using var store = new CosmosCheckpointStore(_cosmosClient!, TestDatabaseId, TestContainerId);
+        using var store = new CosmosCheckpointStore(_cosmosClient!, _testDatabaseId, TestContainerId);
         var runId = Guid.NewGuid().ToString();
         var originalData = new { message = "Hello, World!", timestamp = DateTimeOffset.UtcNow };
         var checkpointValue = JsonSerializer.SerializeToElement(originalData);
@@ -204,7 +206,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
         SkipIfEmulatorNotAvailable();
 
         // Arrange
-        using var store = new CosmosCheckpointStore(_cosmosClient!, TestDatabaseId, TestContainerId);
+        using var store = new CosmosCheckpointStore(_cosmosClient!, _testDatabaseId, TestContainerId);
         var runId = Guid.NewGuid().ToString();
         var fakeCheckpointInfo = new CheckpointInfo(runId, "nonexistent-checkpoint");
 
@@ -219,7 +221,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
         SkipIfEmulatorNotAvailable();
 
         // Arrange
-        using var store = new CosmosCheckpointStore(_cosmosClient!, TestDatabaseId, TestContainerId);
+        using var store = new CosmosCheckpointStore(_cosmosClient!, _testDatabaseId, TestContainerId);
         var runId = Guid.NewGuid().ToString();
 
         // Act
@@ -236,7 +238,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
         SkipIfEmulatorNotAvailable();
 
         // Arrange
-        using var store = new CosmosCheckpointStore(_cosmosClient!, TestDatabaseId, TestContainerId);
+        using var store = new CosmosCheckpointStore(_cosmosClient!, _testDatabaseId, TestContainerId);
         var runId = Guid.NewGuid().ToString();
         var checkpointValue = JsonSerializer.SerializeToElement(new { data = "test" });
 
@@ -261,7 +263,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
         SkipIfEmulatorNotAvailable();
 
         // Arrange
-        using var store = new CosmosCheckpointStore(_cosmosClient!, TestDatabaseId, TestContainerId);
+        using var store = new CosmosCheckpointStore(_cosmosClient!, _testDatabaseId, TestContainerId);
         var runId = Guid.NewGuid().ToString();
         var checkpointValue = JsonSerializer.SerializeToElement(new { data = "test" });
 
@@ -281,7 +283,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
         SkipIfEmulatorNotAvailable();
 
         // Arrange
-        using var store = new CosmosCheckpointStore(_cosmosClient!, TestDatabaseId, TestContainerId);
+        using var store = new CosmosCheckpointStore(_cosmosClient!, _testDatabaseId, TestContainerId);
         var runId = Guid.NewGuid().ToString();
         var checkpointValue = JsonSerializer.SerializeToElement(new { data = "test" });
 
@@ -317,7 +319,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
         SkipIfEmulatorNotAvailable();
 
         // Arrange
-        using var store = new CosmosCheckpointStore(_cosmosClient!, TestDatabaseId, TestContainerId);
+        using var store = new CosmosCheckpointStore(_cosmosClient!, _testDatabaseId, TestContainerId);
         var runId1 = Guid.NewGuid().ToString();
         var runId2 = Guid.NewGuid().ToString();
         var checkpointValue = JsonSerializer.SerializeToElement(new { data = "test" });
@@ -347,7 +349,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
         SkipIfEmulatorNotAvailable();
 
         // Arrange
-        using var store = new CosmosCheckpointStore(_cosmosClient!, TestDatabaseId, TestContainerId);
+        using var store = new CosmosCheckpointStore(_cosmosClient!, _testDatabaseId, TestContainerId);
         var checkpointValue = JsonSerializer.SerializeToElement(new { data = "test" });
 
         // Act & Assert
@@ -361,7 +363,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
         SkipIfEmulatorNotAvailable();
 
         // Arrange
-        using var store = new CosmosCheckpointStore(_cosmosClient!, TestDatabaseId, TestContainerId);
+        using var store = new CosmosCheckpointStore(_cosmosClient!, _testDatabaseId, TestContainerId);
         var checkpointValue = JsonSerializer.SerializeToElement(new { data = "test" });
 
         // Act & Assert
@@ -375,7 +377,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
         SkipIfEmulatorNotAvailable();
 
         // Arrange
-        using var store = new CosmosCheckpointStore(_cosmosClient!, TestDatabaseId, TestContainerId);
+        using var store = new CosmosCheckpointStore(_cosmosClient!, _testDatabaseId, TestContainerId);
         var runId = Guid.NewGuid().ToString();
 
         // Act & Assert
@@ -393,7 +395,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
         SkipIfEmulatorNotAvailable();
 
         // Arrange
-        var store = new CosmosCheckpointStore(_cosmosClient!, TestDatabaseId, TestContainerId);
+        var store = new CosmosCheckpointStore(_cosmosClient!, _testDatabaseId, TestContainerId);
         var checkpointValue = JsonSerializer.SerializeToElement(new { data = "test" });
 
         // Act
@@ -410,7 +412,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
         SkipIfEmulatorNotAvailable();
 
         // Arrange
-        var store = new CosmosCheckpointStore(_cosmosClient!, TestDatabaseId, TestContainerId);
+        var store = new CosmosCheckpointStore(_cosmosClient!, _testDatabaseId, TestContainerId);
 
         // Act & Assert (should not throw)
         store.Dispose();
