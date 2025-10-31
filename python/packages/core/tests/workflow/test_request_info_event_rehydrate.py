@@ -96,7 +96,7 @@ async def test_rehydrate_fails_when_request_type_missing() -> None:
 
 
 async def test_rehydrate_fails_when_request_type_mismatch() -> None:
-    """Rehydration should fail is the request type is mismatched."""
+    """Rehydration should fail if the request type is mismatched."""
     request_info_event = RequestInfoEvent(
         request_id="request-123",
         source_executor_id="review_gateway",
