@@ -115,7 +115,6 @@ class TurnManager(Executor):
         # Send a request with a prompt as the payload and expect a string reply.
         await ctx.request_info(
             request_data=HumanFeedbackRequest(prompt=prompt),
-            request_type=HumanFeedbackRequest,
             response_type=str,
         )
 

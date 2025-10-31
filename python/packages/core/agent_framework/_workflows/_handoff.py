@@ -504,7 +504,7 @@ class _UserInputGateway(Executor):
             prompt=self._prompt,
             source_executor_id=self.id,
         )
-        await ctx.request_info(request, HandoffUserInputRequest, object)
+        await ctx.request_info(request, object)
 
     @response_handler
     async def resume_from_user(

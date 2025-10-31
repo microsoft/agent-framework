@@ -128,9 +128,8 @@ class Coordinator(Executor):
             "Keep it under 30 words."
         )
         await ctx.request_info(
-            DraftFeedbackRequest(prompt=prompt, draft_text=draft_text, conversation=conversation),
-            DraftFeedbackRequest,
-            str,
+            request_data=DraftFeedbackRequest(prompt=prompt, draft_text=draft_text, conversation=conversation),
+            response_type=str,
         )
 
     @response_handler

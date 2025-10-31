@@ -353,9 +353,9 @@ public sealed partial class ChatClientAgent : AIAgent
 
         chatClient = ApplyRunOptionsTransformations(options, chatClient);
 
-        var agentName = this.GetLoggingAgentName();
+        var loggingAgentName = this.GetLoggingAgentName();
 
-        this._logger.LogAgentChatClientInvokingAgent(nameof(RunAsync), this.Id, agentName, this._chatClientType);
+        this._logger.LogAgentChatClientInvokingAgent(nameof(RunAsync), this.Id, loggingAgentName, this._chatClientType);
 
         // Call the IChatClient and notify the AIContextProvider of any failures.
         TChatClientResponse chatResponse;
@@ -369,7 +369,7 @@ public sealed partial class ChatClientAgent : AIAgent
             throw;
         }
 
-        this._logger.LogAgentChatClientInvokedAgent(nameof(RunAsync), this.Id, agentName, this._chatClientType, inputMessages.Count);
+        this._logger.LogAgentChatClientInvokedAgent(nameof(RunAsync), this.Id, loggingAgentName, this._chatClientType, inputMessages.Count);
 
         // We can derive the type of supported thread from whether we have a conversation id,
         // so let's update it and set the conversation id for the service thread case.
@@ -378,7 +378,7 @@ public sealed partial class ChatClientAgent : AIAgent
         // Ensure that the author name is set for each message in the response.
         foreach (ChatMessage chatResponseMessage in chatResponse.Messages)
         {
-            chatResponseMessage.AuthorName ??= agentName;
+            chatResponseMessage.AuthorName ??= this.Name;
         }
 
         // Only notify the thread of new messages if the chatResponse was successful to avoid inconsistent message state in the thread.

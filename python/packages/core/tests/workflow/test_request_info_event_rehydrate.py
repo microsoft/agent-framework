@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import pytest
 
 from agent_framework import InMemoryCheckpointStorage, InProcRunnerContext
-from agent_framework._workflows._checkpoint_encoding import encode_checkpoint_value
+from agent_framework._workflows._checkpoint_encoding import DATACLASS_MARKER, encode_checkpoint_value
 from agent_framework._workflows._checkpoint_summary import get_checkpoint_summary
 from agent_framework._workflows._events import RequestInfoEvent
 from agent_framework._workflows._shared_state import SharedState
@@ -39,7 +39,6 @@ async def test_rehydrate_request_info_event() -> None:
     request_info_event = RequestInfoEvent(
         request_id="request-123",
         source_executor_id="review_gateway",
-        request_type=MockRequest,
         request_data=MockRequest(),
         response_type=bool,
     )
@@ -73,7 +72,6 @@ async def test_rehydrate_fails_when_request_type_missing() -> None:
     request_info_event = RequestInfoEvent(
         request_id="request-123",
         source_executor_id="review_gateway",
-        request_type=MockRequest,
         request_data=MockRequest(),
         response_type=bool,
     )
@@ -97,12 +95,41 @@ async def test_rehydrate_fails_when_request_type_missing() -> None:
         await runner_context.apply_checkpoint(checkpoint)
 
 
+async def test_rehydrate_fails_when_request_type_mismatch() -> None:
+    """Rehydration should fail if the request type is mismatched."""
+    request_info_event = RequestInfoEvent(
+        request_id="request-123",
+        source_executor_id="review_gateway",
+        request_data=MockRequest(),
+        response_type=bool,
+    )
+
+    runner_context = InProcRunnerContext(InMemoryCheckpointStorage())
+    await runner_context.add_request_info_event(request_info_event)
+
+    checkpoint_id = await runner_context.create_checkpoint(SharedState(), iteration_count=1)
+    checkpoint = await runner_context.load_checkpoint(checkpoint_id)
+
+    assert checkpoint is not None
+    assert checkpoint.pending_request_info_events
+    assert "request-123" in checkpoint.pending_request_info_events
+    assert "request_type" in checkpoint.pending_request_info_events["request-123"]
+
+    # Modify the checkpoint to simulate mismatched request type in the serialized data
+    checkpoint.pending_request_info_events["request-123"]["data"][DATACLASS_MARKER] = (
+        "nonexistent.module:MissingRequest"
+    )
+
+    # Rehydrate the context
+    with pytest.raises(TypeError):
+        await runner_context.apply_checkpoint(checkpoint)
+
+
 async def test_pending_requests_in_summary() -> None:
     """Test that pending requests are correctly summarized in the checkpoint summary."""
     request_info_event = RequestInfoEvent(
         request_id="request-123",
         source_executor_id="review_gateway",
-        request_type=MockRequest,
         request_data=MockRequest(),
         response_type=bool,
     )
@@ -134,14 +161,12 @@ async def test_request_info_event_serializes_non_json_payloads() -> None:
     req_1 = RequestInfoEvent(
         request_id="req-1",
         source_executor_id="source",
-        request_type=TimedApproval,
         request_data=TimedApproval(issued_at=datetime(2024, 5, 4, 12, 30, 45)),
         response_type=bool,
     )
     req_2 = RequestInfoEvent(
         request_id="req-2",
         source_executor_id="source",
-        request_type=SlottedApproval,
         request_data=SlottedApproval(note="slot-based"),
         response_type=bool,
     )
