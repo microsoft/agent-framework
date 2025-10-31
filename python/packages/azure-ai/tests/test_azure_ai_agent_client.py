@@ -728,7 +728,7 @@ async def test_azure_ai_chat_client_prepare_tool_choice_none_string(
     chat_client = create_test_azure_ai_chat_client(mock_ai_project_client)
 
     # Create a mock tool for testing
-    mock_tool = MagicMock(spec=AIFunction)
+    mock_tool = MagicMock()
     chat_options = ChatOptions(tools=[mock_tool], tool_choice="none")
 
     # Call the method
@@ -748,7 +748,7 @@ async def test_azure_ai_chat_client_create_run_options_tool_choice_required_spec
     required_tool_mode = ToolMode.REQUIRED("specific_function_name")
 
     # Create a mock AIFunction tool
-    mock_tool = MagicMock(spec=AIFunction)
+    mock_tool = MagicMock()
     mock_tool.to_json_schema_spec.return_value = {"type": "function", "function": {"name": "test_function"}}
 
     chat_options = ChatOptions(tools=[mock_tool], tool_choice=required_tool_mode)
