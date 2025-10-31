@@ -71,6 +71,10 @@ internal static class AIAgentChatCompletionsProcessor
 
             await foreach (var agentRunResponseUpdate in agent.RunStreamingAsync(chatMessages, options: options, cancellationToken: cancellationToken).WithCancellation(cancellationToken))
             {
+                var finishReason = (agentRunResponseUpdate.RawRepresentation is ChatResponseUpdate { FinishReason: not null } chatResponseUpdate)
+                    ? chatResponseUpdate.FinishReason.ToString()
+                    : "stop";
+
                 var choiceChunks = new List<ChatCompletionChoiceChunk>();
                 CompletionUsage? usageDetails = null;
 
@@ -108,7 +112,8 @@ internal static class AIAgentChatCompletionsProcessor
                     var choiceChunk = new ChatCompletionChoiceChunk
                     {
                         Index = 0,
-                        Delta = delta
+                        Delta = delta,
+                        FinishReason = finishReason
                     };
 
                     choiceChunks.Add(choiceChunk);

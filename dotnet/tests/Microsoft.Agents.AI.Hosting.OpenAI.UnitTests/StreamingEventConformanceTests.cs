@@ -24,8 +24,8 @@ public sealed class StreamingEventConformanceTests : ConformanceTestBase
     public async Task ParseStreamingEvents_BasicFormat_SuccessAsync()
     {
         // Arrange
-        string requestJson = LoadTraceFile("streaming/request.json");
-        string expectedSseContent = LoadTraceFile("streaming/response.txt");
+        string requestJson = LoadResponsesTraceFile("streaming/request.json");
+        string expectedSseContent = LoadResponsesTraceFile("streaming/response.txt");
 
         // Extract expected text
         var expectedEvents = ParseSseEvents(expectedSseContent);
@@ -35,7 +35,7 @@ public sealed class StreamingEventConformanceTests : ConformanceTestBase
         HttpClient client = await this.CreateTestServerAsync("streaming-basic-agent", "You are a helpful assistant.", expectedText);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, "streaming-basic-agent", requestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, "streaming-basic-agent", requestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
 
         // Act
@@ -55,8 +55,8 @@ public sealed class StreamingEventConformanceTests : ConformanceTestBase
     public async Task ParseStreamingEvents_HasCorrectEventTypesAsync()
     {
         // Arrange
-        string requestJson = LoadTraceFile("streaming/request.json");
-        string expectedSseContent = LoadTraceFile("streaming/response.txt");
+        string requestJson = LoadResponsesTraceFile("streaming/request.json");
+        string expectedSseContent = LoadResponsesTraceFile("streaming/response.txt");
 
         var expectedEvents = ParseSseEvents(expectedSseContent);
         var deltaEvents = expectedEvents.Where(e => e.GetProperty("type").GetString() == "response.output_text.delta").ToList();
@@ -65,7 +65,7 @@ public sealed class StreamingEventConformanceTests : ConformanceTestBase
         HttpClient client = await this.CreateTestServerAsync("streaming-types-agent", "You are a helpful assistant.", expectedText);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, "streaming-types-agent", requestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, "streaming-types-agent", requestJson);
 
         // Assert - HTTP response validation
         Assert.Equal(System.Net.HttpStatusCode.OK, httpResponse.StatusCode);
@@ -118,8 +118,8 @@ public sealed class StreamingEventConformanceTests : ConformanceTestBase
     public async Task ParseStreamingEvents_DeserializeCreatedEvent_SuccessAsync()
     {
         // Arrange
-        string requestJson = LoadTraceFile("streaming/request.json");
-        string expectedSseContent = LoadTraceFile("streaming/response.txt");
+        string requestJson = LoadResponsesTraceFile("streaming/request.json");
+        string expectedSseContent = LoadResponsesTraceFile("streaming/response.txt");
 
         var expectedEvents = ParseSseEvents(expectedSseContent);
         var deltaEvents = expectedEvents.Where(e => e.GetProperty("type").GetString() == "response.output_text.delta").ToList();
@@ -128,7 +128,7 @@ public sealed class StreamingEventConformanceTests : ConformanceTestBase
         HttpClient client = await this.CreateTestServerAsync("streaming-created-agent", "You are a helpful assistant.", expectedText);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, "streaming-created-agent", requestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, "streaming-created-agent", requestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
         var events = ParseSseEvents(sseContent);
         var createdEventJson = events.First(e => e.GetProperty("type").GetString() == "response.created");
@@ -151,8 +151,8 @@ public sealed class StreamingEventConformanceTests : ConformanceTestBase
     public async Task ParseStreamingEvents_DeserializeInProgressEvent_SuccessAsync()
     {
         // Arrange
-        string requestJson = LoadTraceFile("streaming/request.json");
-        string expectedSseContent = LoadTraceFile("streaming/response.txt");
+        string requestJson = LoadResponsesTraceFile("streaming/request.json");
+        string expectedSseContent = LoadResponsesTraceFile("streaming/response.txt");
 
         var expectedEvents = ParseSseEvents(expectedSseContent);
         var deltaEvents = expectedEvents.Where(e => e.GetProperty("type").GetString() == "response.output_text.delta").ToList();
@@ -161,7 +161,7 @@ public sealed class StreamingEventConformanceTests : ConformanceTestBase
         HttpClient client = await this.CreateTestServerAsync("streaming-progress-agent", "You are a helpful assistant.", expectedText);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, "streaming-progress-agent", requestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, "streaming-progress-agent", requestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
         var events = ParseSseEvents(sseContent);
         var inProgressEventJson = events.First(e => e.GetProperty("type").GetString() == "response.in_progress");
@@ -183,8 +183,8 @@ public sealed class StreamingEventConformanceTests : ConformanceTestBase
     public async Task ParseStreamingEvents_DeserializeOutputItemAdded_SuccessAsync()
     {
         // Arrange
-        string requestJson = LoadTraceFile("streaming/request.json");
-        string expectedSseContent = LoadTraceFile("streaming/response.txt");
+        string requestJson = LoadResponsesTraceFile("streaming/request.json");
+        string expectedSseContent = LoadResponsesTraceFile("streaming/response.txt");
 
         var expectedEvents = ParseSseEvents(expectedSseContent);
         var deltaEvents = expectedEvents.Where(e => e.GetProperty("type").GetString() == "response.output_text.delta").ToList();
@@ -193,7 +193,7 @@ public sealed class StreamingEventConformanceTests : ConformanceTestBase
         HttpClient client = await this.CreateTestServerAsync("streaming-item-agent", "You are a helpful assistant.", expectedText);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, "streaming-item-agent", requestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, "streaming-item-agent", requestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
         var events = ParseSseEvents(sseContent);
         var itemAddedJson = events.First(e => e.GetProperty("type").GetString() == "response.output_item.added");
@@ -214,8 +214,8 @@ public sealed class StreamingEventConformanceTests : ConformanceTestBase
     public async Task ParseStreamingEvents_DeserializeContentPartAdded_SuccessAsync()
     {
         // Arrange
-        string requestJson = LoadTraceFile("streaming/request.json");
-        string expectedSseContent = LoadTraceFile("streaming/response.txt");
+        string requestJson = LoadResponsesTraceFile("streaming/request.json");
+        string expectedSseContent = LoadResponsesTraceFile("streaming/response.txt");
 
         var expectedEvents = ParseSseEvents(expectedSseContent);
         var deltaEvents = expectedEvents.Where(e => e.GetProperty("type").GetString() == "response.output_text.delta").ToList();
@@ -224,7 +224,7 @@ public sealed class StreamingEventConformanceTests : ConformanceTestBase
         HttpClient client = await this.CreateTestServerAsync("streaming-part-agent", "You are a helpful assistant.", expectedText);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, "streaming-part-agent", requestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, "streaming-part-agent", requestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
         var events = ParseSseEvents(sseContent);
         var partAddedJson = events.First(e => e.GetProperty("type").GetString() == "response.content_part.added");
@@ -247,8 +247,8 @@ public sealed class StreamingEventConformanceTests : ConformanceTestBase
     public async Task ParseStreamingEvents_DeserializeTextDelta_SuccessAsync()
     {
         // Arrange
-        string requestJson = LoadTraceFile("streaming/request.json");
-        string expectedSseContent = LoadTraceFile("streaming/response.txt");
+        string requestJson = LoadResponsesTraceFile("streaming/request.json");
+        string expectedSseContent = LoadResponsesTraceFile("streaming/response.txt");
 
         var expectedEvents = ParseSseEvents(expectedSseContent);
         var deltaEvents = expectedEvents.Where(e => e.GetProperty("type").GetString() == "response.output_text.delta").ToList();
@@ -257,7 +257,7 @@ public sealed class StreamingEventConformanceTests : ConformanceTestBase
         HttpClient client = await this.CreateTestServerAsync("streaming-delta-agent", "You are a helpful assistant.", expectedText);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, "streaming-delta-agent", requestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, "streaming-delta-agent", requestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
         var events = ParseSseEvents(sseContent);
         var textDeltaJson = events.First(e => e.GetProperty("type").GetString() == "response.output_text.delta");
@@ -280,8 +280,8 @@ public sealed class StreamingEventConformanceTests : ConformanceTestBase
     public async Task ParseStreamingEvents_AccumulateTextDeltas_MatchesFinalTextAsync()
     {
         // Arrange
-        string requestJson = LoadTraceFile("streaming/request.json");
-        string expectedSseContent = LoadTraceFile("streaming/response.txt");
+        string requestJson = LoadResponsesTraceFile("streaming/request.json");
+        string expectedSseContent = LoadResponsesTraceFile("streaming/response.txt");
 
         var expectedEvents = ParseSseEvents(expectedSseContent);
         var deltaEvents = expectedEvents.Where(e => e.GetProperty("type").GetString() == "response.output_text.delta").ToList();
@@ -290,7 +290,7 @@ public sealed class StreamingEventConformanceTests : ConformanceTestBase
         HttpClient client = await this.CreateTestServerAsync("streaming-accumulate-agent", "You are a helpful assistant.", expectedText);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, "streaming-accumulate-agent", requestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, "streaming-accumulate-agent", requestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
         var events = ParseSseEvents(sseContent);
 
@@ -325,8 +325,8 @@ public sealed class StreamingEventConformanceTests : ConformanceTestBase
     public async Task ParseStreamingEvents_SequenceNumbersAreSequentialAsync()
     {
         // Arrange
-        string requestJson = LoadTraceFile("streaming/request.json");
-        string expectedSseContent = LoadTraceFile("streaming/response.txt");
+        string requestJson = LoadResponsesTraceFile("streaming/request.json");
+        string expectedSseContent = LoadResponsesTraceFile("streaming/response.txt");
 
         var expectedEvents = ParseSseEvents(expectedSseContent);
         var deltaEvents = expectedEvents.Where(e => e.GetProperty("type").GetString() == "response.output_text.delta").ToList();
@@ -335,7 +335,7 @@ public sealed class StreamingEventConformanceTests : ConformanceTestBase
         HttpClient client = await this.CreateTestServerAsync("streaming-sequence-agent", "You are a helpful assistant.", expectedText);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, "streaming-sequence-agent", requestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, "streaming-sequence-agent", requestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
         var events = ParseSseEvents(sseContent);
 
@@ -363,8 +363,8 @@ public sealed class StreamingEventConformanceTests : ConformanceTestBase
     public async Task ParseStreamingEvents_FinalEvent_IsTerminalStateAsync()
     {
         // Arrange
-        string requestJson = LoadTraceFile("streaming/request.json");
-        string expectedSseContent = LoadTraceFile("streaming/response.txt");
+        string requestJson = LoadResponsesTraceFile("streaming/request.json");
+        string expectedSseContent = LoadResponsesTraceFile("streaming/response.txt");
 
         var expectedEvents = ParseSseEvents(expectedSseContent);
         var deltaEvents = expectedEvents.Where(e => e.GetProperty("type").GetString() == "response.output_text.delta").ToList();
@@ -373,7 +373,7 @@ public sealed class StreamingEventConformanceTests : ConformanceTestBase
         HttpClient client = await this.CreateTestServerAsync("streaming-terminal-agent", "You are a helpful assistant.", expectedText);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, "streaming-terminal-agent", requestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, "streaming-terminal-agent", requestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
         var events = ParseSseEvents(sseContent);
         var lastEventJson = events.Last();
@@ -396,8 +396,8 @@ public sealed class StreamingEventConformanceTests : ConformanceTestBase
     public async Task ParseStreamingEvents_AllEvents_CanBeDeserializedAsync()
     {
         // Arrange
-        string requestJson = LoadTraceFile("streaming/request.json");
-        string expectedSseContent = LoadTraceFile("streaming/response.txt");
+        string requestJson = LoadResponsesTraceFile("streaming/request.json");
+        string expectedSseContent = LoadResponsesTraceFile("streaming/response.txt");
 
         var expectedEvents = ParseSseEvents(expectedSseContent);
         var deltaEvents = expectedEvents.Where(e => e.GetProperty("type").GetString() == "response.output_text.delta").ToList();
@@ -406,7 +406,7 @@ public sealed class StreamingEventConformanceTests : ConformanceTestBase
         HttpClient client = await this.CreateTestServerAsync("streaming-deserialize-agent", "You are a helpful assistant.", expectedText);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, "streaming-deserialize-agent", requestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, "streaming-deserialize-agent", requestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
 
         // Act & Assert
@@ -439,8 +439,8 @@ public sealed class StreamingEventConformanceTests : ConformanceTestBase
     public async Task ParseStreamingEvents_IdConsistency_ValidAsync()
     {
         // Arrange
-        string requestJson = LoadTraceFile("streaming/request.json");
-        string expectedSseContent = LoadTraceFile("streaming/response.txt");
+        string requestJson = LoadResponsesTraceFile("streaming/request.json");
+        string expectedSseContent = LoadResponsesTraceFile("streaming/response.txt");
 
         var expectedEvents = ParseSseEvents(expectedSseContent);
         var deltaEvents = expectedEvents.Where(e => e.GetProperty("type").GetString() == "response.output_text.delta").ToList();
@@ -449,7 +449,7 @@ public sealed class StreamingEventConformanceTests : ConformanceTestBase
         HttpClient client = await this.CreateTestServerAsync("streaming-id-agent", "You are a helpful assistant.", expectedText);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, "streaming-id-agent", requestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, "streaming-id-agent", requestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
         var events = ParseSseEvents(sseContent);
 
@@ -530,8 +530,8 @@ public sealed class StreamingEventConformanceTests : ConformanceTestBase
     public async Task ParseStreamingEvents_IndexConsistency_ValidAsync()
     {
         // Arrange
-        string requestJson = LoadTraceFile("streaming/request.json");
-        string expectedSseContent = LoadTraceFile("streaming/response.txt");
+        string requestJson = LoadResponsesTraceFile("streaming/request.json");
+        string expectedSseContent = LoadResponsesTraceFile("streaming/response.txt");
 
         var expectedEvents = ParseSseEvents(expectedSseContent);
         var deltaEvents = expectedEvents.Where(e => e.GetProperty("type").GetString() == "response.output_text.delta").ToList();
@@ -540,7 +540,7 @@ public sealed class StreamingEventConformanceTests : ConformanceTestBase
         HttpClient client = await this.CreateTestServerAsync("streaming-index-agent", "You are a helpful assistant.", expectedText);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, "streaming-index-agent", requestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, "streaming-index-agent", requestJson);
 
         // Assert - All events with output_index should have valid values
         foreach (var eventJson in ParseSseEvents(await httpResponse.Content.ReadAsStringAsync()))
@@ -587,8 +587,8 @@ public sealed class StreamingEventConformanceTests : ConformanceTestBase
     public async Task ParseStreamingEvents_ResponseObjectEvolution_ValidAsync()
     {
         // Arrange
-        string requestJson = LoadTraceFile("streaming/request.json");
-        string expectedSseContent = LoadTraceFile("streaming/response.txt");
+        string requestJson = LoadResponsesTraceFile("streaming/request.json");
+        string expectedSseContent = LoadResponsesTraceFile("streaming/response.txt");
 
         var expectedEvents = ParseSseEvents(expectedSseContent);
         var deltaEvents = expectedEvents.Where(e => e.GetProperty("type").GetString() == "response.output_text.delta").ToList();
@@ -597,7 +597,7 @@ public sealed class StreamingEventConformanceTests : ConformanceTestBase
         HttpClient client = await this.CreateTestServerAsync("streaming-evolution-agent", "You are a helpful assistant.", expectedText);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, "streaming-evolution-agent", requestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, "streaming-evolution-agent", requestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
         var events = ParseSseEvents(sseContent);
 
@@ -655,8 +655,8 @@ public sealed class StreamingEventConformanceTests : ConformanceTestBase
     public async Task ParseStreamingEvents_SseFormatCompliance_ValidAsync()
     {
         // Arrange
-        string requestJson = LoadTraceFile("streaming/request.json");
-        string expectedSseContent = LoadTraceFile("streaming/response.txt");
+        string requestJson = LoadResponsesTraceFile("streaming/request.json");
+        string expectedSseContent = LoadResponsesTraceFile("streaming/response.txt");
 
         var expectedEvents = ParseSseEvents(expectedSseContent);
         var deltaEvents = expectedEvents.Where(e => e.GetProperty("type").GetString() == "response.output_text.delta").ToList();
@@ -665,7 +665,7 @@ public sealed class StreamingEventConformanceTests : ConformanceTestBase
         HttpClient client = await this.CreateTestServerAsync("streaming-sse-agent", "You are a helpful assistant.", expectedText);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, "streaming-sse-agent", requestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, "streaming-sse-agent", requestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
 
         // Assert - SSE format validation
@@ -699,8 +699,8 @@ public sealed class StreamingEventConformanceTests : ConformanceTestBase
     public async Task ParseStreamingEvents_EventPairing_ValidAsync()
     {
         // Arrange
-        string requestJson = LoadTraceFile("streaming/request.json");
-        string expectedSseContent = LoadTraceFile("streaming/response.txt");
+        string requestJson = LoadResponsesTraceFile("streaming/request.json");
+        string expectedSseContent = LoadResponsesTraceFile("streaming/response.txt");
 
         var expectedEvents = ParseSseEvents(expectedSseContent);
         var deltaEvents = expectedEvents.Where(e => e.GetProperty("type").GetString() == "response.output_text.delta").ToList();
@@ -709,7 +709,7 @@ public sealed class StreamingEventConformanceTests : ConformanceTestBase
         HttpClient client = await this.CreateTestServerAsync("streaming-pairing-agent", "You are a helpful assistant.", expectedText);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, "streaming-pairing-agent", requestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, "streaming-pairing-agent", requestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
         var events = ParseSseEvents(sseContent);
 
@@ -755,8 +755,8 @@ public sealed class StreamingEventConformanceTests : ConformanceTestBase
     public async Task ParseStreamingEvents_NoDuplicateSequenceNumbers_ValidAsync()
     {
         // Arrange
-        string requestJson = LoadTraceFile("streaming/request.json");
-        string expectedSseContent = LoadTraceFile("streaming/response.txt");
+        string requestJson = LoadResponsesTraceFile("streaming/request.json");
+        string expectedSseContent = LoadResponsesTraceFile("streaming/response.txt");
 
         var expectedEvents = ParseSseEvents(expectedSseContent);
         var deltaEvents = expectedEvents.Where(e => e.GetProperty("type").GetString() == "response.output_text.delta").ToList();
@@ -765,7 +765,7 @@ public sealed class StreamingEventConformanceTests : ConformanceTestBase
         HttpClient client = await this.CreateTestServerAsync("streaming-nodup-agent", "You are a helpful assistant.", expectedText);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, "streaming-nodup-agent", requestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, "streaming-nodup-agent", requestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
         var events = ParseSseEvents(sseContent);
 
