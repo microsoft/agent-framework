@@ -30,7 +30,7 @@ internal static class PromptAgents
             allowMultipleToolCalls: true
         tools:
           - kind: codeInterpreter
-          - kind: invokeClientTaskAction
+          - kind: function
             name: GetWeather
             description: Get the weather for a given location.
             parameters:
@@ -48,7 +48,9 @@ internal static class PromptAgents
           - kind: mcp
             name: PersonInfoTool
             description: Get information about a person.
-            url: https://my-mcp-endpoint.com/api
+            connection:
+                kind: AnonymousConnection
+                endpoint: https://my-mcp-endpoint.com/api
           - kind: webSearch
             name: WebSearchTool
             description: Search the web for information.
@@ -104,7 +106,7 @@ internal static class PromptAgents
           kind: ExternalModel
           id: gpt-4o
           connection:
-            kind: apiKey
+            kind: ApiKeyConnection
             endpoint: https://my-azure-openai-endpoint.openai.azure.com/
             key: my-api-key
         """;
@@ -242,7 +244,7 @@ internal static class PromptAgents
                 key: my-api-key
             tools:
               - kind: codeInterpreter
-              - kind: invokeClientTaskAction
+              - kind: function
                 name: GetWeather
                 description: Get the weather for a given location.
                 parameters:
@@ -260,7 +262,9 @@ internal static class PromptAgents
               - kind: mcp
                 name: PersonInfoTool
                 description: Get information about a person.
-                url: https://my-mcp-endpoint.com/api
+                connection:
+                    kind: AnonymousConnection
+                    endpoint: https://my-mcp-endpoint.com/api
               - kind: webSearch
                 name: WebSearchTool
                 description: Search the web for information.

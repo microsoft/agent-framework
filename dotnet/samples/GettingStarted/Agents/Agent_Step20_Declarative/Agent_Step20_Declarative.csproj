@@ -12,8 +12,8 @@
     <PackageReference Include="Azure.AI.OpenAI" />
     <PackageReference Include="Azure.Identity" />
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" />
-    <PackageReference Include="Microsoft.Bot.ObjectModel" VersionOverride="1.2025.1029.1-preview" />
-    <PackageReference Include="Microsoft.Bot.ObjectModel.Json" VersionOverride="1.2025.1029.1-preview" />
+    <PackageReference Include="Microsoft.Bot.ObjectModel" VersionOverride="1.2025.1030.1-preview" />
+    <PackageReference Include="Microsoft.Bot.ObjectModel.Json" VersionOverride="1.2025.1030.1-preview" />
     <PackageReference Include="Microsoft.Bot.ObjectModel.PowerFx" VersionOverride="1.2025.1008-1-preview" />
   </ItemGroup>
 

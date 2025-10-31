@@ -162,7 +162,9 @@ public class AgentBotElementYamlTests
         var mcpTool = mcpTools[0] as McpTool;
         Assert.NotNull(mcpTool);
         Assert.Equal("PersonInfoTool", mcpTool.Name?.LiteralValue);
-        Assert.Equal("https://my-mcp-endpoint.com/api", mcpTool.Url?.LiteralValue);
+        var connection = mcpTool.Connection as AnonymousConnection;
+        Assert.NotNull(connection);
+        Assert.Equal("https://my-mcp-endpoint.com/api", connection.Endpoint?.LiteralValue);
     }
 
     [Fact]
@@ -213,9 +215,11 @@ public class AgentBotElementYamlTests
         var model = agent.Model as ExternalModel;
         Assert.NotNull(model);
         Assert.NotNull(model.Connection);
-        //Assert.IsType<ApiKeyConnection>(model.Connection);
-        Assert.Equal("https://my-azure-openai-endpoint.openai.azure.com/", model.Connection?.ExtensionData?.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("endpoint"))?.Value);
-        Assert.Equal("my-api-key", model.Connection?.ExtensionData?.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("key"))?.Value);
+        Assert.IsType<ApiKeyConnection>(model.Connection);
+        var connection = model.Connection as ApiKeyConnection;
+        Assert.NotNull(connection);
+        Assert.Equal("https://my-azure-openai-endpoint.openai.azure.com/", connection.Endpoint?.LiteralValue);
+        Assert.Equal("my-api-key", connection.Key?.LiteralValue);
     }
 
     [Fact]

@@ -18,8 +18,14 @@ internal static class McpToolExtensions
     {
         Throw.IfNull(tool);
         Throw.IfNull(tool.Name?.LiteralValue);
-        Throw.IfNull(tool.Url);
+        Throw.IfNull(tool.Connection);
 
-        return new MCPToolDefinition(tool.Name?.LiteralValue, tool.Url.ToString());
+        var connection = tool.Connection as AnonymousConnection;
+        Throw.IfNull(connection);
+
+        var serverUrl = connection.Endpoint?.LiteralValue;
+        Throw.IfNullOrEmpty(serverUrl, nameof(connection.Endpoint));
+
+        return new MCPToolDefinition(tool.Name?.LiteralValue, serverUrl);
     }
 }

@@ -18,10 +18,16 @@ public static class McpToolExtensions
     {
         Throw.IfNull(tool);
         Throw.IfNull(tool.Name?.LiteralValue);
-        Throw.IfNull(tool.Url?.LiteralValue);
+        Throw.IfNull(tool.Connection);
 
         // TODO: Add support for ServerDescription, AllowedTools, ApprovalMode, and Headers.
 
-        return new HostedMcpServerTool(tool.Name.LiteralValue, tool.Url.LiteralValue);
+        var connection = tool.Connection as AnonymousConnection;
+        Throw.IfNull(connection);
+
+        var serverUrl = connection.Endpoint?.LiteralValue;
+        Throw.IfNullOrEmpty(serverUrl, nameof(connection.Endpoint));
+
+        return new HostedMcpServerTool(tool.Name.LiteralValue, serverUrl);
     }
 }
