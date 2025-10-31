@@ -20,7 +20,7 @@ builder.Services.AddProblemDetails();
 // Configure the chat model and our agent.
 builder.AddKeyedChatClient("chat-model");
 
-builder.AddAIAgent(
+var pirateAgent = builder.AddAIAgent(
     "pirate",
     instructions: "You are a pirate. Speak like a pirate",
     description: "An agent that speaks like a pirate.",
@@ -78,8 +78,20 @@ var literatureAgent = builder.AddAIAgent("literator",
     description: "An agent that helps with literature.",
     chatClientServiceKey: "chat-model");
 
-builder.AddSequentialWorkflow("science-sequential-workflow", [chemistryAgent, mathsAgent, literatureAgent]).AddAsAIAgent();
-builder.AddConcurrentWorkflow("science-concurrent-workflow", [chemistryAgent, mathsAgent, literatureAgent]).AddAsAIAgent();
+var scienceSequentialWorkflow = builder.AddWorkflow("science-sequential-workflow", (sp, key) =>
+{
+    List<IHostedAgentBuilder> usedAgents = [chemistryAgent, mathsAgent, literatureAgent];
+    var agents = usedAgents.Select(ab => sp.GetRequiredKeyedService<AIAgent>(ab.Name));
+    return AgentWorkflowBuilder.BuildSequential(workflowName: key, agents: agents);
+}).AddAsAIAgent();
+
+var scienceConcurrentWorkflow = builder.AddWorkflow("science-concurrent-workflow", (sp, key) =>
+{
+    List<IHostedAgentBuilder> usedAgents = [chemistryAgent, mathsAgent, literatureAgent];
+    var agents = usedAgents.Select(ab => sp.GetRequiredKeyedService<AIAgent>(ab.Name));
+    return AgentWorkflowBuilder.BuildConcurrent(workflowName: key, agents: agents);
+}).AddAsAIAgent();
+
 builder.AddOpenAIResponses();
 
 var app = builder.Build();
@@ -91,7 +103,7 @@ app.UseSwaggerUI(options => options.SwaggerEndpoint("/openapi/v1.json", "Agents 
 app.UseExceptionHandler();
 
 // attach a2a with simple message communication
-app.MapA2A(agentName: "pirate", path: "/a2a/pirate");
+app.MapA2A(pirateAgent, path: "/a2a/pirate");
 app.MapA2A(agentName: "knights-and-knaves", path: "/a2a/knights-and-knaves", agentCard: new()
 {
     Name = "Knights and Knaves",
@@ -104,8 +116,10 @@ app.MapA2A(agentName: "knights-and-knaves", path: "/a2a/knights-and-knaves", age
 
 app.MapOpenAIResponses();
 
-app.MapOpenAIChatCompletions("pirate");
+app.MapOpenAIChatCompletions(pirateAgent);
 app.MapOpenAIChatCompletions("knights-and-knaves");
+app.MapOpenAIChatCompletions(scienceSequentialWorkflow);
+app.MapOpenAIChatCompletions(scienceConcurrentWorkflow);
 
 // Map the agents HTTP endpoints
 app.MapAgentDiscovery("/agents");
