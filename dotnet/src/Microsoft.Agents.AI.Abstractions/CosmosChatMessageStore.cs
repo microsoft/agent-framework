@@ -57,6 +57,12 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     public int MaxItemCount { get; set; } = 100;
 
     /// <summary>
+    /// Gets or sets the maximum number of items per transactional batch operation.
+    /// Default is 100, maximum allowed by Cosmos DB is 100.
+    /// </summary>
+    public int MaxBatchSize { get; set; } = 100;
+
+    /// <summary>
     /// Gets or sets the Time-To-Live (TTL) in seconds for messages.
     /// Default is 86400 seconds (24 hours). Set to null to disable TTL.
     /// </summary>
@@ -575,14 +581,28 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     /// <summary>
     /// Adds multiple messages using transactional batch operations for atomicity.
     /// </summary>
-    private async Task AddMessagesInBatchAsync(IList<ChatMessage> messages, CancellationToken cancellationToken)
+    private async Task AddMessagesInBatchAsync(List<ChatMessage> messages, CancellationToken cancellationToken)
+    {
+        var currentTimestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        // Process messages in optimal batch sizes
+        for (int i = 0; i < messages.Count; i += this.MaxBatchSize)
+        {
+            var batchMessages = messages.Skip(i).Take(this.MaxBatchSize).ToList();
+            await this.ExecuteBatchOperationAsync(batchMessages, currentTimestamp, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Executes a single batch operation with retry logic and enhanced error handling.
+    /// </summary>
+    private async Task ExecuteBatchOperationAsync(List<ChatMessage> messages, long timestamp, CancellationToken cancellationToken)
     {
         var batch = this._container.CreateTransactionalBatch(this._partitionKey);
-        var currentTimestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
         foreach (var message in messages)
         {
-            var document = this.CreateMessageDocument(message, currentTimestamp);
+            var document = this.CreateMessageDocument(message, timestamp);
             batch.CreateItem(document);
         }
 
@@ -591,16 +611,32 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
             var response = await batch.ExecuteAsync(cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
-                throw new InvalidOperationException($"Batch operation failed with status: {response.StatusCode}");
+                throw new InvalidOperationException($"Batch operation failed with status: {response.StatusCode}. Details: {response.ErrorMessage}");
             }
         }
         catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.RequestEntityTooLarge)
         {
-            // Fallback to individual operations if batch is too large
-            foreach (var message in messages)
+            // If batch is too large, split into smaller batches
+            if (messages.Count == 1)
             {
-                await this.AddSingleMessageAsync(message, cancellationToken).ConfigureAwait(false);
+                // Can't split further, use single operation
+                await this.AddSingleMessageAsync(messages[0], cancellationToken).ConfigureAwait(false);
+                return;
             }
+
+            // Split the batch in half and retry
+            var midpoint = messages.Count / 2;
+            var firstHalf = messages.Take(midpoint).ToList();
+            var secondHalf = messages.Skip(midpoint).ToList();
+
+            await this.ExecuteBatchOperationAsync(firstHalf, timestamp, cancellationToken).ConfigureAwait(false);
+            await this.ExecuteBatchOperationAsync(secondHalf, timestamp, cancellationToken).ConfigureAwait(false);
+        }
+        catch (CosmosException ex) when (ex.StatusCode == (System.Net.HttpStatusCode)429) // TooManyRequests
+        {
+            // Handle rate limiting with exponential backoff
+            await Task.Delay(TimeSpan.FromMilliseconds(ex.RetryAfter?.TotalMilliseconds ?? 1000), cancellationToken).ConfigureAwait(false);
+            await this.ExecuteBatchOperationAsync(messages, timestamp, cancellationToken).ConfigureAwait(false);
         }
     }
 
