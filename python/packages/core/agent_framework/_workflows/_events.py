@@ -210,23 +210,21 @@ class RequestInfoEvent(WorkflowEvent):
         self,
         request_id: str,
         source_executor_id: str,
-        request_type: type,
         request_data: Any,
-        response_type: type,
+        response_type: type[Any],
     ):
         """Initialize the request info event.
 
         Args:
             request_id: Unique identifier for the request.
             source_executor_id: ID of the executor that made the request.
-            request_type: Type of the request (e.g., a specific data type).
             request_data: The data associated with the request.
             response_type: Expected type of the response.
         """
         super().__init__(request_data)
         self.request_id = request_id
         self.source_executor_id = source_executor_id
-        self.request_type = request_type
+        self.request_type: type[Any] = type(request_data)
         self.response_type = response_type
 
     def __repr__(self) -> str:
@@ -258,13 +256,20 @@ class RequestInfoEvent(WorkflowEvent):
             if property not in data:
                 raise KeyError(f"Missing '{property}' field in RequestInfoEvent dictionary.")
 
-        return RequestInfoEvent(
+        request_info_event = RequestInfoEvent(
             request_id=data["request_id"],
             source_executor_id=data["source_executor_id"],
-            request_type=deserialize_type(data["request_type"]),
             request_data=decode_checkpoint_value(data["data"]),
             response_type=deserialize_type(data["response_type"]),
         )
+
+        # Verify that the deserialized request_data matches the declared request_type
+        if deserialize_type(data["request_type"]) is not type(request_info_event.data):
+            raise TypeError(
+                "Mismatch between deserialized request_data type and request_type field in RequestInfoEvent dictionary."
+            )
+
+        return request_info_event
 
 
 class WorkflowOutputEvent(WorkflowEvent):
