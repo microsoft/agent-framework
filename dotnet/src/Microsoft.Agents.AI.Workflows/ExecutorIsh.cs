@@ -254,7 +254,7 @@ public sealed class ExecutorIsh :
         Type.Unbound => this._idValue ?? throw new InvalidOperationException("This ExecutorIsh is unbound and has no ID."),
         Type.Executor => this._configuredExecutor!.Id,
         Type.RequestPort => this._requestPortValue!.Id,
-        Type.Agent => this._aiAgentValue!.Id,
+        Type.Agent => this._aiAgentValue!.DisplayName,
         Type.Function => this._configuredExecutor!.Id,
         Type.Workflow => this._configuredExecutor!.Id,
         _ => throw new InvalidOperationException($"Unknown ExecutorIsh type: {this.ExecutorType}")

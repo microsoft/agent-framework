@@ -14,7 +14,7 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
     private readonly AIAgent _agent;
     private AgentThread? _thread;
 
-    public AIAgentHostExecutor(AIAgent agent, bool emitEvents = false) : base(id: agent.Id)
+    public AIAgentHostExecutor(AIAgent agent, bool emitEvents = false) : base(id: agent.DisplayName)
     {
         this._agent = agent;
         this._emitEvents = emitEvents;
