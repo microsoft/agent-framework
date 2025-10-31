@@ -337,9 +337,6 @@ class AzureAIAgentClient(BaseChatClient):
             else run_options.get("conversation_id", self.thread_id)
         )
 
-        if thread_id is None and required_action_results is not None:
-            raise ValueError("No thread ID was provided, but chat messages includes tool results.")
-
         # Determine which agent to use and create if needed
         agent_id = await self._get_agent_id_or_create(run_options)
 
