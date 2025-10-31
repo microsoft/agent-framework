@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions.Converters;
 using Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions.Models;
+using Microsoft.Agents.AI.Hosting.OpenAI.Responses;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.AI;
@@ -90,7 +91,7 @@ internal static class AIAgentChatCompletionsProcessor
                         continue;
                     }
 
-                    ChatCompletionDelta delta = content switch
+                    ChatCompletionDelta? delta = content switch
                     {
                         TextContent textContent => new() { Content = textContent.Text },
 
@@ -106,8 +107,24 @@ internal static class AIAgentChatCompletionsProcessor
                             => new() { Content = fileContent.Base64Data.ToString() },
                         HostedFileContent fileContent => new() { Content = fileContent.FileId },
 
+                        // function call
+                        FunctionCallContent functionCallContent => new()
+                        {
+                            ToolCalls = [functionCallContent.ToChoiceMessageToolCall()]
+                        },
+
+                        // function result. ChatCompletions dont provide the results of function result per API reference
+                        FunctionResultContent functionResultContent => null,
+
                         _ => throw new InvalidOperationException($"Got unsupported content: {content.GetType()}")
                     };
+
+                    if (delta is null)
+                    {
+                        // unsupported but expected content type.
+                        continue;
+                    }
+
                     delta.Role = agentRunResponseUpdate.Role?.Value ?? "user";
 
                     var choiceChunk = new ChatCompletionChoiceChunk

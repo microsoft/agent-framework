@@ -42,7 +42,7 @@ internal static class AgentRunResponseExtensions
         {
             foreach (var content in message.Contents)
             {
-                ChoiceMessage choiceMessage = content switch
+                ChoiceMessage? choiceMessage = content switch
                 {
                     // text
                     TextContent textContent => new()
@@ -82,14 +82,23 @@ internal static class AgentRunResponseExtensions
                         Content = fileContent.FileId
                     },
 
-                    // function
+                    // function call
                     FunctionCallContent functionCallContent => new()
                     {
                         ToolCalls = [functionCallContent.ToChoiceMessageToolCall()]
                     },
 
+                    // function result. ChatCompletions dont provide the results of function result per API reference
+                    FunctionResultContent functionResultContent => null,
+
                     _ => throw new InvalidOperationException($"Got unsupported content: {content.GetType()}")
                 };
+
+                if (choiceMessage is null)
+                {
+                    // not supported, but expected content type.
+                    continue;
+                }
 
                 choiceMessage.Role = message.Role.Value;
                 choiceMessage.Annotations = content.Annotations?.ToChoiceMessageAnnotations();
@@ -184,7 +193,7 @@ internal static class AgentRunResponseExtensions
         return result;
     }
 
-    private static ChoiceMessageToolCall ToChoiceMessageToolCall(this FunctionCallContent functionCall)
+    public static ChoiceMessageToolCall ToChoiceMessageToolCall(this FunctionCallContent functionCall)
     {
         return new()
         {
