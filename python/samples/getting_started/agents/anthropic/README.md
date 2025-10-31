@@ -6,7 +6,7 @@ This folder contains examples demonstrating how to use Anthropic's Claude models
 
 | File | Description |
 |------|-------------|
-| [`anthropic_simple.py`](anthropic_simple.py) | Demonstrates how to setup a simple agent using the AnthropicClient, with both streaming and non-streaming responses. |
+| [`anthropic_basic.py`](anthropic_basic.py) | Demonstrates how to setup a simple agent using the AnthropicClient, with both streaming and non-streaming responses. |
 | [`anthropic_advanced.py`](anthropic_advanced.py) | Shows advanced usage of the AnthropicClient, including hosted tools and `thinking`. |
 
 ## Environment Variables
