@@ -14,4 +14,4 @@ This folder contains examples demonstrating how to use Anthropic's Claude models
 Set the following environment variables before running the examples:
 
 - `ANTHROPIC_API_KEY`: Your Anthropic API key (get one from [Anthropic Console](https://console.anthropic.com/))
-- `ANTHROPIC_MODEL`: The Claude model to use (e.g., `claude-3-5-sonnet`, `claude-3-haiku-20240307`)
+- `ANTHROPIC_MODEL`: The Claude model to use (e.g., `claude-haiku-4-5`, `claude-sonnet-4-5-20250929`)

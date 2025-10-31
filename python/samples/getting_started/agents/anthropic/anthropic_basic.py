@@ -9,7 +9,7 @@ from agent_framework.anthropic import AnthropicClient
 """
 Anthropic Chat Agent Example
 
-This sample demonstrates using Anthropic with a agent.
+This sample demonstrates using Anthropic with an agent and a single custom tool.
 """
 
 
