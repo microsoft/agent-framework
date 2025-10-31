@@ -50,7 +50,7 @@ from pydantic import SecretStr, ValidationError
 logger = get_logger("agent_framework.anthropic")
 
 ANTHROPIC_DEFAULT_MAX_TOKENS: Final[int] = 1024
-
+BETA_FLAGS: Final[list[str]] = ["mcp-client-2025-04-04", "code-execution-2025-08-25"]
 
 ROLE_MAP: dict[Role, str] = {
     Role.USER: "user",
@@ -132,6 +132,8 @@ class AnthropicClient(BaseChatClient):
             api_key: The Anthropic API key to use for authentication.
             model_id: The ID of the model to use.
             anthropic_client: An existing Anthropic client to use. If not provided, one will be created.
+                This can be used to further configure the client before passing it in.
+                For instance if you need to set a different base_url for testing or private deployments.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
             kwargs: Additional keyword arguments passed to the parent class.
@@ -154,6 +156,18 @@ class AnthropicClient(BaseChatClient):
 
                 # Or loading from a .env file
                 client = AnthropicClient(env_file_path="path/to/.env")
+
+                # Or passing in an existing client
+                from anthropic import AsyncAnthropic
+
+                anthropic_client = AsyncAnthropic(
+                    api_key="your_anthropic_api_key", base_url="https://custom-anthropic-endpoint.com"
+                )
+                client = AnthropicClient(
+                    model_id="claude-sonnet-4-5-20250929",
+                    anthropic_client=anthropic_client,
+                )
+
         """
         try:
             anthropic_settings = AnthropicSettings(
@@ -172,7 +186,10 @@ class AnthropicClient(BaseChatClient):
                     "or 'ANTHROPIC_API_KEY' environment variable."
                 )
 
-            anthropic_client = AsyncAnthropic(api_key=anthropic_settings.api_key.get_secret_value())
+            anthropic_client = AsyncAnthropic(
+                api_key=anthropic_settings.api_key.get_secret_value(),
+                default_headers={"User-Agent": AGENT_FRAMEWORK_USER_AGENT},
+            )
 
         # Initialize parent
         super().__init__(**kwargs)
@@ -234,7 +251,7 @@ class AnthropicClient(BaseChatClient):
             "messages": self._convert_messages_to_anthropic_format(messages),
             "max_tokens": chat_options.max_tokens or ANTHROPIC_DEFAULT_MAX_TOKENS,
             "extra_headers": {"User-Agent": AGENT_FRAMEWORK_USER_AGENT},
-            "betas": ["mcp-client-2025-04-04", "code-execution-2025-08-25"],
+            "betas": BETA_FLAGS,
         }
 
         # Add any additional options from chat_options or kwargs

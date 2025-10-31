@@ -8,14 +8,15 @@ from agent_framework.anthropic import AnthropicClient
 """
 Anthropic Chat Agent Example
 
-This sample demonstrates using Anthropic with a agent.
+This sample demonstrates using Anthropic with:
+- Setting up an Anthropic-based agent with hosted tools.
+- Using the `thinking` feature.
+- Displaying both thinking and usage information during streaming responses.
 """
 
 
 async def streaming_example() -> None:
     """Example of streaming response (get results as they are generated)."""
-    print("=== Streaming Response Example ===")
-
     agent = AnthropicClient().create_agent(
         name="DocsAgent",
         instructions="You are a helpful agent for both Microsoft docs questions and general questions.",
