@@ -1,20 +1,18 @@
-# Get Started with Microsoft Agent Framework A2A
+# Get Started with Microsoft Agent Framework Anthropic
 
 Please install this package via pip:
 
 ```bash
-pip install agent-framework-a2a --pre
+pip install agent-framework-anthropic --pre
 ```
 
-## A2A Agent Integration
+## Anthropic Integration
 
-The A2A agent integration enables communication with remote A2A-compliant agents using the standardized A2A protocol. This allows your Agent Framework applications to connect to agents running on different platforms, languages, or services.
+The Anthropic integration enables communication with the Anthropic API, allowing your Agent Framework applications to leverage Anthropic's capabilities.
 
 ### Basic Usage Example
 
-See the [A2A agent examples](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/agents/a2a/) which demonstrate:
+See the [Anthropic agent examples](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/agents/anthropic/) which demonstrate:
 
-- Connecting to remote A2A agents
-- Sending messages and receiving responses
-- Handling different content types (text, files, data)
-- Streaming responses and real-time interaction
+- Connecting to a Anthropic endpoint with a agent
+- Streaming and non-streaming responses

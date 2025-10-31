@@ -651,7 +651,7 @@ class TextContent(BaseContent):
         *,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         **kwargs: Any,
     ):
         """Initializes a TextContent instance.
