@@ -23,7 +23,7 @@ A2ACardResolver agentCardResolver = new(new Uri(a2aAgentHost));
 AgentCard agentCard = await agentCardResolver.GetAgentCardAsync();
 
 // Create an instance of the AIAgent for an existing A2A agent specified by the agent card.
-AIAgent a2aAgent = await agentCard.GetAIAgentAsync();
+AIAgent a2aAgent = agentCard.GetAIAgent();
 
 // Create the main agent, and provide the a2a agent skills as a function tools.
 AIAgent agent = new AzureOpenAIClient(
