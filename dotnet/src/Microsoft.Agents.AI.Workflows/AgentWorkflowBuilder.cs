@@ -40,7 +40,7 @@ public static partial class AgentWorkflowBuilder
         // Create a builder that chains the agents together in sequence. The workflow simply begins
         // with the first agent in the sequence.
         WorkflowBuilder? builder = null;
-        ExecutorIsh? previous = null;
+        ExecutorBinding? previous = null;
         foreach (var agent in agents)
         {
             AgentRunStreamingExecutor agentExecutor = new(agent, includeInputInOutput: true);
@@ -125,8 +125,8 @@ public static partial class AgentWorkflowBuilder
         // so that the final accumulator receives a single list of messages from each agent. Otherwise, the
         // accumulator would not be able to determine what came from what agent, as there's currently no
         // provenance tracking exposed in the workflow context passed to a handler.
-        ExecutorIsh[] agentExecutors = (from agent in agents select (ExecutorIsh)new AgentRunStreamingExecutor(agent, includeInputInOutput: false)).ToArray();
-        ExecutorIsh[] accumulators = [.. from agent in agentExecutors select (ExecutorIsh)new CollectChatMessagesExecutor($"Batcher/{agent.Id}")];
+        ExecutorBinding[] agentExecutors = (from agent in agents select (ExecutorBinding)new AgentRunStreamingExecutor(agent, includeInputInOutput: false)).ToArray();
+        ExecutorBinding[] accumulators = [.. from agent in agentExecutors select (ExecutorBinding)new CollectChatMessagesExecutor($"Batcher/{agent.Id}")];
         builder.AddFanOutEdge(start, targets: agentExecutors);
         for (int i = 0; i < agentExecutors.Length; i++)
         {
@@ -141,7 +141,7 @@ public static partial class AgentWorkflowBuilder
         Func<string, string, ValueTask<ConcurrentEndExecutor>> endFactory =
             (string _, string __) => new(new ConcurrentEndExecutor(agentExecutors.Length, aggregator));
 
-        ExecutorIsh end = endFactory.ConfigureFactory(ConcurrentEndExecutor.ExecutorId);
+        ExecutorBinding end = endFactory.BindExecutor(ConcurrentEndExecutor.ExecutorId);
 
         builder.AddFanInEdge(end, sources: accumulators);
 

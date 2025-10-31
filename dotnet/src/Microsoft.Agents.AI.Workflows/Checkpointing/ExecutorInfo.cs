@@ -12,7 +12,7 @@ internal sealed record class ExecutorInfo(TypeId ExecutorType, string ExecutorId
         this.ExecutorType.IsMatch(executor.GetType())
             && this.ExecutorId == executor.Id;
 
-    public bool IsMatch(ExecutorRegistration registration) =>
-        this.ExecutorType.IsMatch(registration.ExecutorType)
-            && this.ExecutorId == registration.Id;
+    public bool IsMatch(ExecutorBinding binding) =>
+        this.ExecutorType.IsMatch(binding.ExecutorType)
+            && this.ExecutorId == binding.Id;
 }

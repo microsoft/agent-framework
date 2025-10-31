@@ -30,9 +30,9 @@ public partial class WorkflowBuilderSmokeTests
 
         workflow.StartExecutorId.Should().Be("start");
 
-        workflow.Registrations.Should().HaveCount(1);
-        workflow.Registrations.Should().ContainKey("start");
-        workflow.Registrations["start"].ExecutorType.Should().Be<NoOpExecutor>();
+        workflow.ExecutorBindings.Should().HaveCount(1);
+        workflow.ExecutorBindings.Should().ContainKey("start");
+        workflow.ExecutorBindings["start"].ExecutorType.Should().Be<NoOpExecutor>();
     }
 
     [Fact]
@@ -45,9 +45,9 @@ public partial class WorkflowBuilderSmokeTests
 
         workflow.StartExecutorId.Should().Be("start");
 
-        workflow.Registrations.Should().HaveCount(1);
-        workflow.Registrations.Should().ContainKey("start");
-        workflow.Registrations["start"].ExecutorType.Should().Be<NoOpExecutor>();
+        workflow.ExecutorBindings.Should().HaveCount(1);
+        workflow.ExecutorBindings.Should().ContainKey("start");
+        workflow.ExecutorBindings["start"].ExecutorType.Should().Be<NoOpExecutor>();
     }
 
     [Fact]
@@ -77,9 +77,9 @@ public partial class WorkflowBuilderSmokeTests
 
         workflow.StartExecutorId.Should().Be("start");
 
-        workflow.Registrations.Should().HaveCount(1);
-        workflow.Registrations.Should().ContainKey("start");
-        workflow.Registrations["start"].ExecutorType.Should().Be<NoOpExecutor>();
+        workflow.ExecutorBindings.Should().HaveCount(1);
+        workflow.ExecutorBindings.Should().ContainKey("start");
+        workflow.ExecutorBindings["start"].ExecutorType.Should().Be<NoOpExecutor>();
     }
 
     [Fact]
