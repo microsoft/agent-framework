@@ -9,7 +9,7 @@ using OpenAI.Responses;
 
 #pragma warning disable OPENAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
-namespace Microsoft.Agents.AI.AzureAIAgents;
+namespace Microsoft.Agents.AI.AzureAI;
 
 /// <summary>
 /// Provides a chat client implementation that integrates with Azure AI Agents, enabling chat interactions using

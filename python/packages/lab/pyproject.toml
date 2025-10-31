@@ -32,6 +32,7 @@ gaia = [
   "tqdm>=4.60.0",
   "huggingface-hub>=0.20.0",
   "orjson>=3.8.0",
+  "pyarrow>=10.0.0",  # For reading parquet files
 ]
 
 # Lightning RL training module dependencies
@@ -111,7 +112,13 @@ extend = "../../pyproject.toml"
 extend-exclude = ["**/data/**"]
 
 [tool.ruff.lint]
-ignore = ["T201", "ASYNC230", "INP001"]  # Allow print statements, blocking file operations, and implicit namespace packages in lab modules
+ignore = [
+    "T201",  # Allow print statements in experimental/lab code for debugging purposes.
+    "ASYNC230",  # Allow 'await' outside of async functions in test and experimental code.
+    "INP001",  # Ignore missing __init__.py in namespace packages.
+    "RUF029",  # Allow use of 'assert' statements; assertions are used for internal checks in experimental code.
+    "ASYNC240",  # Allow 'async for' outside of async functions in test and experimental code.
+] 
 
 [tool.coverage.run]
 omit = [

@@ -62,7 +62,7 @@ class ApprovalRequiredExecutor(Executor, RequestInfoMixin):
             prompt=f"Please approve the operation: {message}",
             context="This is a critical operation that requires human approval.",
         )
-        await ctx.request_info(approval_request, UserApprovalRequest, bool)
+        await ctx.request_info(approval_request, bool)
 
     @response_handler
     async def handle_approval_response(
@@ -96,7 +96,7 @@ class CalculationExecutor(Executor, RequestInfoMixin):
             try:
                 operands = [float(x) for x in parts[1:]]
                 calc_request = CalculationRequest(operation=operation, operands=operands)
-                await ctx.request_info(calc_request, CalculationRequest, float)
+                await ctx.request_info(calc_request, float)
             except ValueError:
                 await ctx.send_message("Invalid calculation format")
         else:
@@ -126,11 +126,11 @@ class MultiRequestExecutor(Executor, RequestInfoMixin):
         approval_request = UserApprovalRequest(
             prompt="Approve batch operation", context="Multiple operations will be performed"
         )
-        await ctx.request_info(approval_request, UserApprovalRequest, bool)
+        await ctx.request_info(approval_request, bool)
 
         # Request calculation
         calc_request = CalculationRequest(operation="multiply", operands=[10.0, 5.0])
-        await ctx.request_info(calc_request, CalculationRequest, float)
+        await ctx.request_info(calc_request, float)
 
     @response_handler
     async def handle_approval_response(

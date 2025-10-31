@@ -122,7 +122,7 @@ def build_resource_request_distribution_workflow() -> Workflow:
 
         @handler
         async def run(self, request: ResourceRequest, ctx: WorkflowContext) -> None:
-            await ctx.request_info(request, ResourceRequest, ResourceResponse)
+            await ctx.request_info(request_data=request, response_type=ResourceResponse)
 
         @response_handler
         async def handle_response(
@@ -136,7 +136,7 @@ def build_resource_request_distribution_workflow() -> Workflow:
 
         @handler
         async def run(self, request: PolicyRequest, ctx: WorkflowContext) -> None:
-            await ctx.request_info(request, PolicyRequest, PolicyResponse)
+            await ctx.request_info(request_data=request, response_type=PolicyResponse)
 
         @response_handler
         async def handle_response(
@@ -219,7 +219,7 @@ class ResourceAllocator(Executor):
         else:
             # Request cannot be fulfilled via cache, forward the request to external
             self._pending_requests[request_payload.id] = source_event
-            await ctx.request_info(request_payload, ResourceRequest, ResourceResponse)
+            await ctx.request_info(request_data=request_payload, response_type=ResourceResponse)
 
     @response_handler
     async def handle_external_response(
@@ -270,7 +270,7 @@ class PolicyEngine(Executor):
         else:
             # For other policy types, forward to external system
             self._pending_requests[request_payload.id] = source_event
-            await ctx.request_info(request_payload, PolicyRequest, PolicyResponse)
+            await ctx.request_info(request_data=request_payload, response_type=PolicyResponse)
 
     @response_handler
     async def handle_external_response(

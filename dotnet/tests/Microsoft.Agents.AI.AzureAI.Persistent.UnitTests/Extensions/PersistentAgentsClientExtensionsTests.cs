@@ -13,7 +13,7 @@ using Azure.Core;
 using Microsoft.Extensions.AI;
 using Moq;
 
-namespace Microsoft.Agents.AI.AzureAI.UnitTests.Extensions;
+namespace Microsoft.Agents.AI.AzureAI.Persistent.UnitTests.Extensions;
 
 public sealed class PersistentAgentsClientExtensionsTests
 {
