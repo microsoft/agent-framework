@@ -1,6 +1,6 @@
 # What This Sample Shows
 
-This sample demonstrates how to use background responses with ChatCompletionAgent and AzureOpenAI Responses for long-running operations. Background responses support:
+This sample demonstrates how to use background responses with ChatCompletionAgent and Azure OpenAI Responses for long-running operations. Background responses support:
 
 - **Polling for completion** - Non-streaming APIs can start a background operation and return a continuation token. Poll with the token until the response completes.
 - **Function calling** - Functions can be called during background operations.
