@@ -1,5 +1,7 @@
 # Get Started with Microsoft Agent Framework Durable Functions
 
+[![PyPI](https://img.shields.io/pypi/v/agent-framework-azurefunctions)](https://pypi.org/project/agent-framework-azurefunctions/)
+
 Please install this package via pip:
 
 ```bash
