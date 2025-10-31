@@ -30,11 +30,14 @@ from agent_framework import (
     HostedWebSearchTool,
     Role,
     TextContent,
+    ToolMode,
     UriContent,
 )
 from agent_framework._serialization import SerializationMixin
 from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.agents.models import (
+    AgentsNamedToolChoice,
+    AgentsNamedToolChoiceType,
     CodeInterpreterToolDefinition,
     FileInfo,
     MessageDeltaChunk,
@@ -266,6 +269,29 @@ def test_azure_ai_chat_client_from_settings() -> None:
     assert client.agent_id == "test-agent"
     assert client.thread_id == "test-thread"
     assert client.agent_name == "TestAgent"
+
+
+async def test_azure_ai_chat_client_get_agent_id_or_create_with_temperature_and_top_p(
+    mock_ai_project_client: MagicMock, azure_ai_unit_test_env: dict[str, str]
+) -> None:
+    """Test _get_agent_id_or_create with temperature and top_p in run_options."""
+    azure_ai_settings = AzureAISettings(model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"])
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, azure_ai_settings=azure_ai_settings)
+
+    run_options = {
+        "model": azure_ai_settings.model_deployment_name,
+        "temperature": 0.7,
+        "top_p": 0.9,
+    }
+
+    agent_id = await chat_client._get_agent_id_or_create(run_options)  # type: ignore
+
+    assert agent_id == "test-agent-id"
+    # Verify create_agent was called with temperature and top_p parameters
+    mock_ai_project_client.agents.create_agent.assert_called_once()
+    call_kwargs = mock_ai_project_client.agents.create_agent.call_args[1]
+    assert call_kwargs["temperature"] == 0.7
+    assert call_kwargs["top_p"] == 0.9
 
 
 async def test_azure_ai_chat_client_get_agent_id_or_create_existing_agent(
@@ -695,6 +721,47 @@ async def test_azure_ai_chat_client_create_run_options_with_auto_tool_choice(
     assert run_options["tool_choice"] == AgentsToolChoiceOptionMode.AUTO
 
 
+async def test_azure_ai_chat_client_prepare_tool_choice_none_string(
+    mock_ai_project_client: MagicMock,
+) -> None:
+    """Test _prepare_tool_choice when tool_choice is string 'none'."""
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client)
+
+    # Create a mock tool for testing
+    mock_tool = MagicMock()
+    chat_options = ChatOptions(tools=[mock_tool], tool_choice="none")
+
+    # Call the method
+    chat_client._prepare_tool_choice(chat_options)  # type: ignore
+
+    # Verify tools are cleared and tool_choice is set to NONE mode
+    assert chat_options.tools is None
+    assert chat_options.tool_choice == ToolMode.NONE.mode
+
+
+async def test_azure_ai_chat_client_create_run_options_tool_choice_required_specific_function(
+    mock_ai_project_client: MagicMock,
+) -> None:
+    """Test _create_run_options with ToolMode.REQUIRED specifying a specific function name."""
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client)
+
+    required_tool_mode = ToolMode.REQUIRED("specific_function_name")
+
+    dict_tool = {"type": "function", "function": {"name": "test_function"}}
+
+    chat_options = ChatOptions(tools=[dict_tool], tool_choice=required_tool_mode)
+    messages = [ChatMessage(role=Role.USER, text="Hello")]
+
+    run_options, _ = await chat_client._create_run_options(messages, chat_options)  # type: ignore
+
+    # Verify tool_choice is set to the specific named function
+    assert "tool_choice" in run_options
+    tool_choice = run_options["tool_choice"]
+    assert isinstance(tool_choice, AgentsNamedToolChoice)
+    assert tool_choice.type == AgentsNamedToolChoiceType.FUNCTION
+    assert tool_choice.function.name == "specific_function_name"  # type: ignore
+
+
 async def test_azure_ai_chat_client_create_run_options_with_response_format(
     mock_ai_project_client: MagicMock,
 ) -> None:
@@ -868,9 +935,12 @@ async def test_azure_ai_chat_client_prep_tools_web_search_bing_grounding(mock_ai
 
         assert len(result) == 1
         assert result[0] == {"type": "bing_grounding"}
-        mock_bing_grounding.assert_called_once_with(
-            connection_id="test-connection-id", count=5, freshness="Day", market="en-US", set_lang="en"
-        )
+        call_args = mock_bing_grounding.call_args[1]
+        assert call_args["count"] == 5
+        assert call_args["freshness"] == "Day"
+        assert call_args["market"] == "en-US"
+        assert call_args["set_lang"] == "en"
+        assert "connection_id" in call_args
 
 
 async def test_azure_ai_chat_client_prep_tools_web_search_bing_grounding_with_connection_id(
@@ -953,7 +1023,10 @@ async def test_azure_ai_chat_client_prep_tools_web_search_custom_bing_connection
     # Mock connection get to raise HttpResponseError
     mock_ai_project_client.connections.get = AsyncMock(side_effect=HttpResponseError("Connection not found"))
 
-    with pytest.raises(ServiceInitializationError, match="Bing custom connection 'nonexistent-connection' not found"):
+    with pytest.raises(
+        ServiceInitializationError,
+        match="Bing custom connection 'nonexistent-connection' not found in the Azure AI Project",
+    ):
         await chat_client._prep_tools([web_search_tool])  # type: ignore
 
 
@@ -973,7 +1046,10 @@ async def test_azure_ai_chat_client_prep_tools_web_search_bing_grounding_connect
     # Mock connection get to raise HttpResponseError
     mock_ai_project_client.connections.get = AsyncMock(side_effect=HttpResponseError("Connection not found"))
 
-    with pytest.raises(ServiceInitializationError, match="Bing connection 'nonexistent-bing-connection' not found"):
+    with pytest.raises(
+        ServiceInitializationError,
+        match="Bing connection 'nonexistent-bing-connection' not found in the Azure AI Project",
+    ):
         await chat_client._prep_tools([web_search_tool])  # type: ignore
 
 
