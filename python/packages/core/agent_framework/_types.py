@@ -574,7 +574,7 @@ class BaseContent(SerializationMixin):
             raw_representation: Optional raw representation of the content from an underlying implementation.
             **kwargs: Additional keyword arguments (merged into additional_properties).
         """
-        self.annotations: Sequence[Annotations] | None = None
+        self.annotations: list[Annotations] | None = None
         # Handle annotations conversion from dict format (for SerializationMixin support)
         if annotations is not None:
             converted_annotations: list[Annotations] = []
