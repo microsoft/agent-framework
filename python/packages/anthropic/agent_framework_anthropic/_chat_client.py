@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import json
 from collections.abc import AsyncIterable, MutableMapping, MutableSequence, Sequence
 from typing import Any, ClassVar, Final, TypeVar
 
@@ -29,6 +28,7 @@ from agent_framework import (
     UsageContent,
     UsageDetails,
     get_logger,
+    prepare_function_call_results,
     use_chat_middleware,
     use_function_invocation,
 )
@@ -346,7 +346,7 @@ class AnthropicClient(BaseChatClient):
                     a_content.append({
                         "type": "tool_result",
                         "tool_use_id": content.call_id,
-                        "content": json.dumps(content.result),  # TODO (eavanvalkenburg): handle other content types
+                        "content": prepare_function_call_results(content.result),
                         "is_error": content.exception is not None,
                     })
                 case "text_reasoning":
