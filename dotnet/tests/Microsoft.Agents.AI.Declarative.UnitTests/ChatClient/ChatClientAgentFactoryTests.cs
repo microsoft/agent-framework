@@ -19,7 +19,7 @@ public sealed class ChatClientAgentFactoryTests
     }
 
     [Fact]
-    public async Task TryCreateAsync_WithChatClientInConstructor_CreatesAgent()
+    public async Task TryCreateAsync_WithChatClientInConstructor_CreatesAgentAsync()
     {
         // Arrange
         var promptAgent = PromptAgents.CreateTestPromptAgent();
@@ -36,7 +36,7 @@ public sealed class ChatClientAgentFactoryTests
     }
 
     [Fact]
-    public async Task TryCreateAsync_Creates_ChatClientAgent()
+    public async Task TryCreateAsync_Creates_ChatClientAgentAsync()
     {
         // Arrange
         var promptAgent = PromptAgents.CreateTestPromptAgent();
@@ -56,7 +56,7 @@ public sealed class ChatClientAgentFactoryTests
     }
 
     [Fact]
-    public async Task TryCreateAsync_Creates_ChatOptions()
+    public async Task TryCreateAsync_Creates_ChatOptionsAsync()
     {
         // Arrange
         var promptAgent = PromptAgents.CreateTestPromptAgent();
@@ -88,7 +88,7 @@ public sealed class ChatClientAgentFactoryTests
     }
 
     [Fact]
-    public async Task TryCreateAsync_Creates_Tools()
+    public async Task TryCreateAsync_Creates_ToolsAsync()
     {
         // Arrange
         var promptAgent = PromptAgents.CreateTestPromptAgent();

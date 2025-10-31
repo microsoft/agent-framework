@@ -162,19 +162,15 @@ public abstract class OpenAIAgentFactory : AgentFactory
     private static OpenAIClient CreateOpenAIClient(GptComponentMetadata promptAgent)
     {
         var model = promptAgent.Model as ExternalModel;
-        var connection = model?.Connection;
 
-        // TODO: Fix this when ApiKeyConnection is available
-        //var keyConnection = promptAgent.Model?.Connection as ApiKeyConnection;
-        //Throw.IfNull(keyConnection, "A key connection must be specified when create an OpenAI client");
+        var keyConnection = model?.Connection as ApiKeyConnection;
+        Throw.IfNull(keyConnection, "A key connection must be specified when create an OpenAI client");
 
-        //var apiKey = keyConnection.Key?.LiteralValue;
-        var apiKey = connection?.ExtensionData?.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("key"))?.Value; // keyConnection.Endpoint?.LiteralValue;
+        var apiKey = keyConnection.Key?.LiteralValue;
         Throw.IfNullOrEmpty(apiKey, "The connection key must be specified in the agent definition to create an OpenAI client.");
 
         var clientOptions = new OpenAIClientOptions();
-        //var endpoint = keyConnection.Endpoint?.LiteralValue;
-        var endpoint = connection?.ExtensionData?.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("endpoint"))?.Value; // keyConnection.Endpoint?.LiteralValue;
+        var endpoint = keyConnection.Endpoint?.LiteralValue;
         if (!string.IsNullOrEmpty(endpoint))
         {
             clientOptions.Endpoint = new Uri(endpoint);

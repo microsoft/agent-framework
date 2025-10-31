@@ -6,18 +6,18 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Bot.ObjectModel;
 
 /// <summary>
-/// Extension methods for <see cref="McpTool"/>.
+/// Extension methods for <see cref="McpServerTool"/>.
 /// </summary>
-public static class McpToolExtensions
+public static class McpServerToolExtensions
 {
     /// <summary>
-    /// Creates a <see cref="HostedMcpServerTool"/> from a <see cref="McpTool"/>.
+    /// Creates a <see cref="HostedMcpServerTool"/> from a <see cref="McpServerTool"/>.
     /// </summary>
-    /// <param name="tool">Instance of <see cref="McpTool"/></param>
-    internal static HostedMcpServerTool CreateMcpTool(this McpTool tool)
+    /// <param name="tool">Instance of <see cref="McpServerTool"/></param>
+    internal static HostedMcpServerTool CreateMcpTool(this McpServerTool tool)
     {
         Throw.IfNull(tool);
-        Throw.IfNull(tool.Name?.LiteralValue);
+        Throw.IfNull(tool.ServerName?.LiteralValue);
         Throw.IfNull(tool.Connection);
 
         // TODO: Add support for ServerDescription, AllowedTools, ApprovalMode, and Headers.
@@ -28,6 +28,6 @@ public static class McpToolExtensions
         var serverUrl = connection.Endpoint?.LiteralValue;
         Throw.IfNullOrEmpty(serverUrl, nameof(connection.Endpoint));
 
-        return new HostedMcpServerTool(tool.Name.LiteralValue, serverUrl);
+        return new HostedMcpServerTool(tool.ServerName.LiteralValue, serverUrl);
     }
 }

@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Linq;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
@@ -21,8 +22,15 @@ public static class FileSearchToolExtensions
 
         return new HostedFileSearchTool()
         {
-            MaximumResultCount = (int?)tool.MaxNumberOfResults?.LiteralValue,
-            Inputs = tool.VectorStoreIds?.LiteralValue.Select(vsi => (AIContent)new HostedVectorStoreContent(vsi!)).ToList(),
+            MaximumResultCount = (int?)tool.MaximumResultCount?.LiteralValue,
+            Inputs = tool.Inputs.Select(input =>
+            {
+                return input switch
+                {
+                    VectorStoreContent => (Microsoft.Extensions.AI.AIContent)new HostedVectorStoreContent(((VectorStoreContent)input).VectorStoreId!),
+                    _ => throw new NotSupportedException($"Unable to create file search input because of unsupported input type: {input.Kind}"),
+                };
+            }).ToList(),
         };
     }
 }

@@ -16,11 +16,13 @@ public class AgentBotElementYamlTests
 {
     [Theory]
     [InlineData(PromptAgents.AgentWithEverything)]
-    [InlineData(PromptAgents.AgentWithKeyConnection)]
+    [InlineData(PromptAgents.AgentWithApiKeyConnection)]
     [InlineData(PromptAgents.AgentWithEnvironmentVariables)]
     [InlineData(PromptAgents.AgentWithOutputSchema)]
     [InlineData(PromptAgents.OpenAIChatAgent)]
     [InlineData(PromptAgents.AgentWithExternalModel)]
+    [InlineData(PromptAgents.AgentWithFoundryConnection)]
+    [InlineData(PromptAgents.AgentForSalesAnalyst)]
     public void FromYaml_DoesNotThrow(string text)
     {
         // Arrange & Act
@@ -157,11 +159,11 @@ public class AgentBotElementYamlTests
         // Assert
         Assert.NotNull(agent);
         var tools = agent.Tools;
-        var mcpTools = tools.Where(t => t is McpTool).ToArray();
+        var mcpTools = tools.Where(t => t is McpServerTool).ToArray();
         Assert.Single(mcpTools);
-        var mcpTool = mcpTools[0] as McpTool;
+        var mcpTool = mcpTools[0] as McpServerTool;
         Assert.NotNull(mcpTool);
-        Assert.Equal("PersonInfoTool", mcpTool.Name?.LiteralValue);
+        Assert.Equal("PersonInfoTool", mcpTool.ServerName?.LiteralValue);
         var connection = mcpTool.Connection as AnonymousConnection;
         Assert.NotNull(connection);
         Assert.Equal("https://my-mcp-endpoint.com/api", connection.Endpoint?.LiteralValue);
@@ -195,19 +197,22 @@ public class AgentBotElementYamlTests
         var fileSearchTool = fileSearchTools[0] as FileSearchTool;
         Assert.NotNull(fileSearchTool);
 
-        // Verify VectorScoreIds property exists and has correct values
-        Assert.NotNull(fileSearchTool.VectorStoreIds);
-        Assert.Equal(3, fileSearchTool.VectorStoreIds.LiteralValue.Length);
-        Assert.Equal("1", fileSearchTool.VectorStoreIds.LiteralValue[0]);
-        Assert.Equal("2", fileSearchTool.VectorStoreIds.LiteralValue[1]);
-        Assert.Equal("3", fileSearchTool.VectorStoreIds.LiteralValue[2]);
+        // Verify vector store content property exists and has correct values
+        Assert.NotEmpty(fileSearchTool.Inputs);
+        Assert.Equal(3, fileSearchTool.Inputs.Length);
+        Assert.IsAssignableFrom<VectorStoreContent>(fileSearchTool.Inputs[0]);
+        Assert.Equal("1", ((VectorStoreContent)fileSearchTool.Inputs[0]).VectorStoreId);
+        Assert.IsAssignableFrom<VectorStoreContent>(fileSearchTool.Inputs[1]);
+        Assert.Equal("2", ((VectorStoreContent)fileSearchTool.Inputs[1]).VectorStoreId);
+        Assert.IsAssignableFrom<VectorStoreContent>(fileSearchTool.Inputs[2]);
+        Assert.Equal("3", ((VectorStoreContent)fileSearchTool.Inputs[2]).VectorStoreId);
     }
 
     [Fact]
-    public void FromYaml_KeyConnection()
+    public void FromYaml_ApiKeyConnection()
     {
         // Arrange & Act
-        var agent = AgentBotElementYaml.FromYaml(PromptAgents.AgentWithKeyConnection);
+        var agent = AgentBotElementYaml.FromYaml(PromptAgents.AgentWithApiKeyConnection);
 
         // Assert
         Assert.NotNull(agent);
@@ -220,6 +225,24 @@ public class AgentBotElementYamlTests
         Assert.NotNull(connection);
         Assert.Equal("https://my-azure-openai-endpoint.openai.azure.com/", connection.Endpoint?.LiteralValue);
         Assert.Equal("my-api-key", connection.Key?.LiteralValue);
+    }
+
+    [Fact]
+    public void FromYaml_FoundryConnection()
+    {
+        // Arrange & Act
+        var agent = AgentBotElementYaml.FromYaml(PromptAgents.AgentWithFoundryConnection);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.NotNull(agent.Model);
+        var model = agent.Model as ExternalModel;
+        Assert.NotNull(model);
+        Assert.NotNull(model.Connection);
+        //Assert.IsType<FoundryConnection>(model.Connection);
+        //var connection = model.Connection as FoundryConnection;
+        //Assert.NotNull(connection);
+        //Assert.Equal("https://my-azure-openai-endpoint.openai.azure.com/", connection.Endpoint?.LiteralValue);
     }
 
     [Fact]

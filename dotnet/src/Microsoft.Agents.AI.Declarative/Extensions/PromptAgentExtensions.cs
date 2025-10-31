@@ -64,7 +64,7 @@ public static class PromptAgentExtensions
             {
                 CodeInterpreterTool => ((CodeInterpreterTool)tool).CreateCodeInterpreterTool(),
                 InvokeClientTaskAction => ((InvokeClientTaskAction)tool).CreateFunctionTool(functions),
-                McpTool => ((McpTool)tool).CreateMcpTool(),
+                McpServerTool => ((McpServerTool)tool).CreateMcpTool(),
                 FileSearchTool => ((FileSearchTool)tool).CreateFileSearchTool(),
                 WebSearchTool => ((WebSearchTool)tool).CreateWebSearchTool(),
                 _ => throw new NotSupportedException($"Unable to create tool definition because of unsupported tool type: {tool.Kind}, supported tool types are: {string.Join(",", s_validToolKinds)}"),

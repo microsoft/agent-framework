@@ -28,7 +28,7 @@ internal static class PromptAgentExtensions
                 InvokeClientTaskAction => ((InvokeClientTaskAction)tool).CreateFunctionToolDefinition(),
                 FileSearchTool => ((FileSearchTool)tool).CreateFileSearchToolDefinition(),
                 WebSearchTool => ((WebSearchTool)tool).CreateBingGroundingToolDefinition(),
-                McpTool => ((McpTool)tool).CreateMcpToolDefinition(),
+                McpServerTool => ((McpServerTool)tool).CreateMcpToolDefinition(),
                 // TODO: Add other tool types when implemented
                 // AzureAISearch
                 // AzureFunction
