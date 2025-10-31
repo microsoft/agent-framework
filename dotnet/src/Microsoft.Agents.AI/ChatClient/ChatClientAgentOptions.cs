@@ -99,6 +99,24 @@ public class ChatClientAgentOptions
     public bool UseProvidedChatClientAsIs { get; set; }
 
     /// <summary>
+    /// Gets or sets a value indicating whether to suppress the assistant name on response messages when <see cref="Name"/> is <see langword="null"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// When <see langword="true"/> and <see cref="Name"/> is <see langword="null"/>, assistant messages will not include an author name
+    /// (the <see cref="ChatMessage.AuthorName"/> property will be <see langword="null"/>).
+    /// </para>
+    /// <para>
+    /// When <see langword="false"/> (default), the framework uses <c>"UnnamedAgent"</c> as a fallback when <see cref="Name"/> is <see langword="null"/>.
+    /// This maintains backward compatibility with existing behavior.
+    /// </para>
+    /// <para>
+    /// When <see cref="Name"/> is explicitly set to a non-null value, the name is always used regardless of this setting.
+    /// </para>
+    /// </remarks>
+    public bool SuppressAssistantName { get; set; }
+
+    /// <summary>
     /// Creates a new instance of <see cref="ChatClientAgentOptions"/> with the same values as this instance.
     /// </summary>
     public ChatClientAgentOptions Clone()
@@ -111,6 +129,8 @@ public class ChatClientAgentOptions
             ChatOptions = this.ChatOptions?.Clone(),
             ChatMessageStoreFactory = this.ChatMessageStoreFactory,
             AIContextProviderFactory = this.AIContextProviderFactory,
+            UseProvidedChatClientAsIs = this.UseProvidedChatClientAsIs,
+            SuppressAssistantName = this.SuppressAssistantName,
         };
 
     /// <summary>

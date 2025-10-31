@@ -209,6 +209,7 @@ public sealed partial class ChatClientAgent : AIAgent
         chatClient = ApplyRunOptionsTransformations(options, chatClient);
 
         var loggingAgentName = this.GetLoggingAgentName();
+        var messageAuthorName = this.GetMessageAuthorName();
 
         this._logger.LogAgentChatClientInvokingAgent(nameof(RunStreamingAsync), this.Id, loggingAgentName, this._chatClientType);
 
@@ -246,7 +247,7 @@ public sealed partial class ChatClientAgent : AIAgent
             var update = responseUpdatesEnumerator.Current;
             if (update is not null)
             {
-                update.AuthorName ??= this.Name;
+                update.AuthorName ??= messageAuthorName;
 
                 responseUpdates.Add(update);
                 yield return new(update) { AgentId = this.Id };
@@ -376,9 +377,10 @@ public sealed partial class ChatClientAgent : AIAgent
         this.UpdateThreadWithTypeAndConversationId(safeThread, chatResponse.ConversationId);
 
         // Ensure that the author name is set for each message in the response.
+        var messageAuthorName = this.GetMessageAuthorName();
         foreach (ChatMessage chatResponseMessage in chatResponse.Messages)
         {
-            chatResponseMessage.AuthorName ??= agentName;
+            chatResponseMessage.AuthorName ??= messageAuthorName;
         }
 
         // Only notify the thread of new messages if the chatResponse was successful to avoid inconsistent message state in the thread.
@@ -687,5 +689,32 @@ public sealed partial class ChatClientAgent : AIAgent
     }
 
     private string GetLoggingAgentName() => this.Name ?? "UnnamedAgent";
+
+    /// <summary>
+    /// Gets the author name to set on assistant messages, respecting the <see cref="ChatClientAgentOptions.SuppressAssistantName"/> setting.
+    /// </summary>
+    /// <remarks>
+    /// <para>If the agent's name is explicitly set, it is always used regardless of the SuppressAssistantName flag.</para>
+    /// <para>If the agent's name is null and SuppressAssistantName is true, returns null (no author name will be set).</para>
+    /// <para>If the agent's name is null and SuppressAssistantName is false, returns "UnnamedAgent" as a fallback for backward compatibility.</para>
+    /// </remarks>
+    /// <returns>The author name to set on messages, or null if the name should be suppressed.</returns>
+    private string? GetMessageAuthorName()
+    {
+        // If name is explicitly set, always use it
+        if (this.Name is not null)
+        {
+            return this.Name;
+        }
+
+        // If SuppressAssistantName is true, return null (no name field)
+        if (this._agentOptions?.SuppressAssistantName == true)
+        {
+            return null;
+        }
+
+        // Default behavior: use "UnnamedAgent" fallback for backward compatibility
+        return "UnnamedAgent";
+    }
     #endregion
 }
