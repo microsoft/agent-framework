@@ -124,7 +124,7 @@ def build_email_address_validation_workflow() -> Workflow:
             print(f"🔍 Validating domain: '{domain}'")
             self._pending_domains[domain] = partial_result
             # Send a request to the external system via the request_info mechanism
-            await ctx.request_info(domain, str, bool)
+            await ctx.request_info(request_data=domain, response_type=bool)
 
         @response_handler
         async def handle_domain_validation_response(
