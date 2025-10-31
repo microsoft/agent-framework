@@ -8,6 +8,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
+using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Execution;
 using Microsoft.Agents.AI.Workflows.Specialized;
 using Microsoft.Extensions.AI;
@@ -195,5 +196,34 @@ public class SpecializedExecutorSmokeTests
 
             collected.Text.Should().Be(expectedText);
         }
+    }
+
+    [Fact]
+    public void Test_AIAgent_ExecutorId_Use_Agent_Name()
+    {
+        const string AgentAName = "TestAgentAName";
+        const string AgentBName = "TestAgentBName";
+        TestAIAgent agentA = new(name: AgentAName);
+        TestAIAgent agentB = new(name: AgentBName);
+        var workflow = new WorkflowBuilder(agentA).AddEdge(agentA, agentB).Build();
+        var definition = workflow.ToWorkflowInfo();
+
+        // Verify that the agent host executor IDs in the workflow definition match the agent names when agent names are provided.
+        definition.Executors[agentA.DisplayName].ExecutorId.Should().Be(AgentAName);
+        definition.Executors[agentB.DisplayName].ExecutorId.Should().Be(AgentBName);
+    }
+
+    [Fact]
+    public void Test_AIAgent_ExecutorId_Use_Agent_ID_When_Name_Not_Provided()
+    {
+        TestAIAgent agentA = new();
+        TestAIAgent agentB = new();
+        var workflow = new WorkflowBuilder(agentA).AddEdge(agentA, agentB).Build();
+        var definition = workflow.ToWorkflowInfo();
+
+        // Verify that the agent host executor IDs in the workflow definition match the agent IDs when agent names are not provided.
+        // The property DisplayName falls back to using the agent ID when Name is not set.
+        definition.Executors[agentA.DisplayName].ExecutorId.Should().Be(agentA.Id);
+        definition.Executors[agentB.DisplayName].ExecutorId.Should().Be(agentB.Id);
     }
 }
