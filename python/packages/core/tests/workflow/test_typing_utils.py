@@ -179,7 +179,6 @@ def test_serialize_deserialize_roundtrip() -> None:
     instance = deserialized(
         request_id="request-123",
         source_executor_id="executor_1",
-        request_type=str,
         request_data="test",
         response_type=str,
     )

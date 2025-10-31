@@ -76,7 +76,7 @@ class ReviewerWithHumanInTheLoop(Executor):
         print("Reviewer: Escalating to human manager...")
 
         # Forward the request to a human manager by sending a HumanReviewRequest.
-        await ctx.request_info(HumanReviewRequest(agent_request=request), HumanReviewRequest, ReviewResponse)
+        await ctx.request_info(request_data=HumanReviewRequest(agent_request=request), response_type=ReviewResponse)
 
     @response_handler
     async def accept_human_review(

@@ -89,7 +89,7 @@ class MockExecutorRequestApproval(Executor):
     async def mock_handler_a(self, message: NumberMessage, ctx: WorkflowContext) -> None:
         """A mock handler that requests approval."""
         await ctx.set_shared_state(self.id, message.data)
-        await ctx.request_info(MockRequest(prompt="Mock approval request"), MockRequest, ApprovalMessage)
+        await ctx.request_info(MockRequest(prompt="Mock approval request"), ApprovalMessage)
 
     @response_handler
     async def mock_handler_b(
@@ -485,7 +485,6 @@ async def test_workflow_run_stream_from_checkpoint_with_responses(simple_executo
                 "request_123": RequestInfoEvent(
                     request_id="request_123",
                     source_executor_id=simple_executor.id,
-                    request_type=str,
                     request_data="Mock",
                     response_type=str,
                 ).to_dict(),
