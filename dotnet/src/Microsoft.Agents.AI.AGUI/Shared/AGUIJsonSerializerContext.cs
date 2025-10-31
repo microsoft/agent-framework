@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Collections.Generic;
 using System.Text.Json.Serialization;
 
 #if ASPNETCORE
@@ -14,6 +15,7 @@ namespace Microsoft.Agents.AI.AGUI;
 
 [JsonSourceGenerationOptions(WriteIndented = false, DefaultIgnoreCondition = JsonIgnoreCondition.Never)]
 [JsonSerializable(typeof(RunAgentInput))]
+[JsonSerializable(typeof(AGUITool))]
 [JsonSerializable(typeof(BaseEvent))]
 [JsonSerializable(typeof(RunStartedEvent))]
 [JsonSerializable(typeof(RunFinishedEvent))]
@@ -21,6 +23,10 @@ namespace Microsoft.Agents.AI.AGUI;
 [JsonSerializable(typeof(TextMessageStartEvent))]
 [JsonSerializable(typeof(TextMessageContentEvent))]
 [JsonSerializable(typeof(TextMessageEndEvent))]
+[JsonSerializable(typeof(ToolCallStartEvent))]
+[JsonSerializable(typeof(ToolCallArgsEvent))]
+[JsonSerializable(typeof(ToolCallEndEvent))]
+[JsonSerializable(typeof(IDictionary<string, object?>))]
 #if !ASPNETCORE
 [JsonSerializable(typeof(AGUIAgentThread.AGUIAgentThreadState))]
 #endif

@@ -19,4 +19,10 @@ internal static class AGUIEventTypes
     public const string TextMessageContent = "TEXT_MESSAGE_CONTENT";
 
     public const string TextMessageEnd = "TEXT_MESSAGE_END";
+
+    public const string ToolCallStart = "TOOL_CALL_START";
+
+    public const string ToolCallArgs = "TOOL_CALL_ARGS";
+
+    public const string ToolCallEnd = "TOOL_CALL_END";
 }

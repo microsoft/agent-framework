@@ -3,6 +3,9 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -18,12 +21,17 @@ internal static class AgentRunResponseUpdateAGUIExtensions
 #if !ASPNETCORE
     public static async IAsyncEnumerable<AgentRunResponseUpdate> AsAgentRunResponseUpdatesAsync(
         this IAsyncEnumerable<BaseEvent> events,
+        JsonSerializerOptions jsonSerializerOptions,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         string? currentMessageId = null;
         ChatRole currentRole = default!;
         string? conversationId = null;
         string? responseId = null;
+        string? currentToolCallId = null;
+        string? currentToolCallName = null;
+        StringBuilder? accumulatedArgs = null;
+        string? currentToolCallParentMessageId = null;
         await foreach (var evt in events.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
             switch (evt)
@@ -90,6 +98,57 @@ internal static class AgentRunResponseUpdateAGUIExtensions
                     currentRole = default!;
                     currentMessageId = null;
                     break;
+                case ToolCallStartEvent toolCallStart:
+                    if (currentToolCallId != null)
+                    {
+                        throw new InvalidOperationException("Received ToolCallStartEvent while another tool call is being processed.");
+                    }
+                    currentToolCallId = toolCallStart.ToolCallId;
+                    currentToolCallName = toolCallStart.ToolCallName;
+                    currentToolCallParentMessageId = toolCallStart.ParentMessageId;
+                    accumulatedArgs = new StringBuilder();
+                    break;
+                case ToolCallArgsEvent toolCallArgs:
+                    if (currentToolCallId != toolCallArgs.ToolCallId)
+                    {
+                        throw new InvalidOperationException("Received ToolCallArgsEvent for a different tool call than the current one.");
+                    }
+                    accumulatedArgs!.Append(toolCallArgs.Delta);
+                    break;
+                case ToolCallEndEvent toolCallEnd:
+                    if (currentToolCallId != toolCallEnd.ToolCallId)
+                    {
+                        throw new InvalidOperationException("Received ToolCallEndEvent for a different tool call than the current one.");
+                    }
+
+                    string argsJson = accumulatedArgs!.ToString();
+                    IDictionary<string, object?>? arguments = null;
+                    if (!string.IsNullOrEmpty(argsJson))
+                    {
+                        var typeInfo = jsonSerializerOptions.GetTypeInfo(typeof(IDictionary<string, object?>)) as JsonTypeInfo<IDictionary<string, object?>>;
+                        arguments = JsonSerializer.Deserialize(argsJson, typeInfo!);
+                    }
+
+                    var functionCallContent = new FunctionCallContent(
+                        currentToolCallId!,
+                        currentToolCallName!,
+                        arguments);
+
+                    yield return new AgentRunResponseUpdate(new ChatResponseUpdate(
+                        ChatRole.Assistant,
+                        [functionCallContent])
+                    {
+                        ConversationId = conversationId,
+                        ResponseId = responseId,
+                        MessageId = currentToolCallParentMessageId,
+                        CreatedAt = DateTimeOffset.UtcNow
+                    });
+
+                    currentToolCallId = null;
+                    currentToolCallName = null;
+                    accumulatedArgs = null;
+                    currentToolCallParentMessageId = null;
+                    break;
             }
         }
     }
@@ -99,6 +158,7 @@ internal static class AgentRunResponseUpdateAGUIExtensions
         this IAsyncEnumerable<AgentRunResponseUpdate> updates,
         string threadId,
         string runId,
+        JsonSerializerOptions jsonSerializerOptions,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         yield return new RunStartedEvent
@@ -140,6 +200,38 @@ internal static class AgentRunResponseUpdateAGUIExtensions
                     MessageId = chatResponse.MessageId!,
                     Delta = textContent.Text ?? string.Empty
                 };
+            }
+
+            // Emit tool call events
+            if (chatResponse is { Contents.Count: > 0 })
+            {
+                foreach (var content in chatResponse.Contents)
+                {
+                    if (content is FunctionCallContent functionCallContent)
+                    {
+                        yield return new ToolCallStartEvent
+                        {
+                            ToolCallId = functionCallContent.CallId,
+                            ToolCallName = functionCallContent.Name,
+                            ParentMessageId = chatResponse.MessageId
+                        };
+
+                        string argumentsJson = JsonSerializer.Serialize(
+                            functionCallContent.Arguments,
+                            jsonSerializerOptions.GetTypeInfo(typeof(IDictionary<string, object?>)));
+
+                        yield return new ToolCallArgsEvent
+                        {
+                            ToolCallId = functionCallContent.CallId,
+                            Delta = argumentsJson
+                        };
+
+                        yield return new ToolCallEndEvent
+                        {
+                            ToolCallId = functionCallContent.CallId
+                        };
+                    }
+                }
             }
         }
 

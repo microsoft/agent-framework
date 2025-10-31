@@ -26,6 +26,10 @@ internal sealed class RunAgentInput
     [JsonPropertyName("messages")]
     public IEnumerable<AGUIMessage> Messages { get; set; } = [];
 
+    [JsonPropertyName("tools")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public IEnumerable<AGUITool>? Tools { get; set; }
+
     [JsonPropertyName("context")]
     public Dictionary<string, string> Context { get; set; } = new(StringComparer.Ordinal);
 

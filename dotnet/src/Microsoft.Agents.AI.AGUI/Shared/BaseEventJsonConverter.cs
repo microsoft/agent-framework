@@ -53,6 +53,9 @@ internal sealed class BaseEventJsonConverter : JsonConverter<BaseEvent>
             AGUIEventTypes.TextMessageStart => jsonElement.Deserialize(context.TextMessageStartEvent),
             AGUIEventTypes.TextMessageContent => jsonElement.Deserialize(context.TextMessageContentEvent),
             AGUIEventTypes.TextMessageEnd => jsonElement.Deserialize(context.TextMessageEndEvent),
+            AGUIEventTypes.ToolCallStart => jsonElement.Deserialize(context.ToolCallStartEvent),
+            AGUIEventTypes.ToolCallArgs => jsonElement.Deserialize(context.ToolCallArgsEvent),
+            AGUIEventTypes.ToolCallEnd => jsonElement.Deserialize(context.ToolCallEndEvent),
             _ => throw new JsonException($"Unknown BaseEvent type discriminator: '{discriminator}'")
         };
 
@@ -95,6 +98,15 @@ internal sealed class BaseEventJsonConverter : JsonConverter<BaseEvent>
                 break;
             case TextMessageEndEvent textEnd:
                 JsonSerializer.Serialize(writer, textEnd, context.TextMessageEndEvent);
+                break;
+            case ToolCallStartEvent toolCallStart:
+                JsonSerializer.Serialize(writer, toolCallStart, context.ToolCallStartEvent);
+                break;
+            case ToolCallArgsEvent toolCallArgs:
+                JsonSerializer.Serialize(writer, toolCallArgs, context.ToolCallArgsEvent);
+                break;
+            case ToolCallEndEvent toolCallEnd:
+                JsonSerializer.Serialize(writer, toolCallEnd, context.ToolCallEndEvent);
                 break;
             default:
                 throw new JsonException($"Unknown BaseEvent type: {value.GetType().Name}");

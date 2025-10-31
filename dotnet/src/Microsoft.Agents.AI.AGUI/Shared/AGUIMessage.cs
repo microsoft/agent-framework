@@ -18,4 +18,7 @@ internal sealed class AGUIMessage
 
     [JsonPropertyName("content")]
     public string Content { get; set; } = string.Empty;
+
+    [JsonPropertyName("callId")]
+    public string? CallId { get; set; }
 }

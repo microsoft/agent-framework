@@ -21,7 +21,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
 
         // Act
         List<BaseEvent> events = [];
-        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync(ThreadId, RunId, CancellationToken.None))
+        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync(ThreadId, RunId, AGUIJsonSerializerContext.Default.Options, CancellationToken.None))
         {
             events.Add(evt);
         }
@@ -44,7 +44,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
 
         // Act
         List<BaseEvent> events = [];
-        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync(ThreadId, RunId, CancellationToken.None))
+        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync(ThreadId, RunId, AGUIJsonSerializerContext.Default.Options, CancellationToken.None))
         {
             events.Add(evt);
         }
@@ -71,7 +71,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
 
         // Act
         List<BaseEvent> events = [];
-        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync(ThreadId, RunId, CancellationToken.None))
+        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync(ThreadId, RunId, AGUIJsonSerializerContext.Default.Options, CancellationToken.None))
         {
             events.Add(evt);
         }
@@ -98,7 +98,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
 
         // Act
         List<BaseEvent> events = [];
-        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync(ThreadId, RunId, CancellationToken.None))
+        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync(ThreadId, RunId, AGUIJsonSerializerContext.Default.Options, CancellationToken.None))
         {
             events.Add(evt);
         }
@@ -126,7 +126,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
 
         // Act
         List<BaseEvent> events = [];
-        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync(ThreadId, RunId, CancellationToken.None))
+        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync(ThreadId, RunId, AGUIJsonSerializerContext.Default.Options, CancellationToken.None))
         {
             events.Add(evt);
         }
@@ -152,7 +152,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
 
         // Act
         List<BaseEvent> events = [];
-        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync(ThreadId, RunId, CancellationToken.None))
+        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync(ThreadId, RunId, AGUIJsonSerializerContext.Default.Options, CancellationToken.None))
         {
             events.Add(evt);
         }

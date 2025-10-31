@@ -20,7 +20,7 @@ public sealed class AGUIChatMessageExtensionsTests
         List<AGUIMessage> aguiMessages = [];
 
         // Act
-        IEnumerable<ChatMessage> chatMessages = aguiMessages.AsChatMessages();
+        IEnumerable<ChatMessage> chatMessages = aguiMessages.AsChatMessages(AGUIJsonSerializerContext.Default.Options);
 
         // Assert
         Assert.NotNull(chatMessages);
@@ -42,7 +42,7 @@ public sealed class AGUIChatMessageExtensionsTests
         ];
 
         // Act
-        IEnumerable<ChatMessage> chatMessages = aguiMessages.AsChatMessages();
+        IEnumerable<ChatMessage> chatMessages = aguiMessages.AsChatMessages(AGUIJsonSerializerContext.Default.Options);
 
         // Assert
         ChatMessage message = Assert.Single(chatMessages);
@@ -62,7 +62,7 @@ public sealed class AGUIChatMessageExtensionsTests
         ];
 
         // Act
-        List<ChatMessage> chatMessages = aguiMessages.AsChatMessages().ToList();
+        List<ChatMessage> chatMessages = aguiMessages.AsChatMessages(AGUIJsonSerializerContext.Default.Options).ToList();
 
         // Assert
         Assert.Equal(3, chatMessages.Count);
@@ -84,7 +84,7 @@ public sealed class AGUIChatMessageExtensionsTests
         ];
 
         // Act
-        List<ChatMessage> chatMessages = aguiMessages.AsChatMessages().ToList();
+        List<ChatMessage> chatMessages = aguiMessages.AsChatMessages(AGUIJsonSerializerContext.Default.Options).ToList();
 
         // Assert
         Assert.Equal(4, chatMessages.Count);
@@ -101,7 +101,7 @@ public sealed class AGUIChatMessageExtensionsTests
         List<ChatMessage> chatMessages = [];
 
         // Act
-        IEnumerable<AGUIMessage> aguiMessages = chatMessages.AsAGUIMessages();
+        IEnumerable<AGUIMessage> aguiMessages = chatMessages.AsAGUIMessages(AGUIJsonSerializerContext.Default.Options);
 
         // Assert
         Assert.NotNull(aguiMessages);
@@ -118,7 +118,7 @@ public sealed class AGUIChatMessageExtensionsTests
         ];
 
         // Act
-        IEnumerable<AGUIMessage> aguiMessages = chatMessages.AsAGUIMessages();
+        IEnumerable<AGUIMessage> aguiMessages = chatMessages.AsAGUIMessages(AGUIJsonSerializerContext.Default.Options);
 
         // Assert
         AGUIMessage message = Assert.Single(aguiMessages);
@@ -139,7 +139,7 @@ public sealed class AGUIChatMessageExtensionsTests
         ];
 
         // Act
-        List<AGUIMessage> aguiMessages = chatMessages.AsAGUIMessages().ToList();
+        List<AGUIMessage> aguiMessages = chatMessages.AsAGUIMessages(AGUIJsonSerializerContext.Default.Options).ToList();
 
         // Assert
         Assert.Equal(3, aguiMessages.Count);
@@ -158,7 +158,7 @@ public sealed class AGUIChatMessageExtensionsTests
         ];
 
         // Act
-        IEnumerable<AGUIMessage> aguiMessages = chatMessages.AsAGUIMessages();
+        IEnumerable<AGUIMessage> aguiMessages = chatMessages.AsAGUIMessages(AGUIJsonSerializerContext.Default.Options);
 
         // Assert
         AGUIMessage message = Assert.Single(aguiMessages);

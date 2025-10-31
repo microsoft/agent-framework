@@ -22,7 +22,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
 
         // Act
         List<AgentRunResponseUpdate> updates = [];
-        await foreach (AgentRunResponseUpdate update in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync())
+        await foreach (AgentRunResponseUpdate update in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
         {
             updates.Add(update);
         }
@@ -49,7 +49,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
 
         // Act
         List<AgentRunResponseUpdate> updates = [];
-        await foreach (AgentRunResponseUpdate update in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync())
+        await foreach (AgentRunResponseUpdate update in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
         {
             updates.Add(update);
         }
@@ -81,7 +81,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
 
         // Act
         List<AgentRunResponseUpdate> updates = [];
-        await foreach (AgentRunResponseUpdate update in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync())
+        await foreach (AgentRunResponseUpdate update in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
         {
             updates.Add(update);
         }
@@ -109,7 +109,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
 
         // Act
         List<AgentRunResponseUpdate> updates = [];
-        await foreach (AgentRunResponseUpdate update in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync())
+        await foreach (AgentRunResponseUpdate update in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
         {
             updates.Add(update);
         }
@@ -135,7 +135,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         // Act & Assert
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
         {
-            await foreach (var _ in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync())
+            await foreach (var _ in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
             {
                 // Intentionally empty - consuming stream to trigger exception
             }
@@ -156,7 +156,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         // Act & Assert
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
         {
-            await foreach (var _ in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync())
+            await foreach (var _ in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
             {
                 // Intentionally empty - consuming stream to trigger exception
             }
@@ -178,7 +178,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
 
         // Act
         List<AgentRunResponseUpdate> updates = [];
-        await foreach (AgentRunResponseUpdate update in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync())
+        await foreach (AgentRunResponseUpdate update in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
         {
             updates.Add(update);
         }
