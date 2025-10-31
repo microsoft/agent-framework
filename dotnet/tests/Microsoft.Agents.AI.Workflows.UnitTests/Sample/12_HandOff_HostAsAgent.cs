@@ -10,7 +10,7 @@ using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.Sample;
 
-internal sealed class HandoffTestEchoAgent(string id, string name, string prefix = "")
+internal sealed class HandOffTestEchoAgent(string id, string name, string prefix = "")
     : TestEchoAgent(id, name, prefix)
 {
     protected override IEnumerable<ChatMessage> GetEpilogueMessages(AgentRunOptions? options = null)
@@ -20,7 +20,7 @@ internal sealed class HandoffTestEchoAgent(string id, string name, string prefix
         {
             IEnumerable<AITool>? handoffs = chatClientOptions.ChatOptions
                                                              .Tools?
-                                                             .Where(tool => tool.Name?.StartsWith(HandoffsWorkflowBuilder.FunctionPrefix,
+                                                             .Where(tool => tool.Name?.StartsWith(HandOffWorkflowBuilder.FunctionPrefix,
                                                                                                   StringComparison.OrdinalIgnoreCase) is true);
 
             if (handoffs != null)
@@ -55,11 +55,11 @@ internal static class Step12EntryPoint
     public static Workflow CreateWorkflow()
     {
         TestEchoAgent[] echoAgents = Enumerable.Range(1, AgentCount)
-            .Select(i => new HandoffTestEchoAgent($"{EchoAgentIdPrefix}{i}", $"{EchoAgentNamePrefix}{i}", EchoPrefixForAgent(i)))
+            .Select(i => new HandOffTestEchoAgent($"{EchoAgentIdPrefix}{i}", $"{EchoAgentNamePrefix}{i}", EchoPrefixForAgent(i)))
             .ToArray();
 
-        return new HandoffsWorkflowBuilder(echoAgents[0])
-                   .WithHandoff(echoAgents[0], echoAgents[1])
+        return new HandOffWorkflowBuilder(echoAgents[0])
+                   .WithHandOff(echoAgents[0], echoAgents[1])
                    .Build();
     }
 

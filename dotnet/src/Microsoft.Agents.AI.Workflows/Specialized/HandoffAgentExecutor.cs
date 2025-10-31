@@ -11,13 +11,13 @@ using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.Specialized;
 
-/// <summary>Executor used to represent an agent in a handoffs workflow, responding to <see cref="HandoffState"/> events.</summary>
-internal sealed class HandoffAgentExecutor(
+/// <summary>Executor used to represent an agent in a handoffs workflow, responding to <see cref="HandOffState"/> events.</summary>
+internal sealed class HandOffAgentExecutor(
     AIAgent agent,
     string? handoffInstructions) : Executor(agent.GetDescriptiveId(), declareCrossRunShareable: true), IResettableExecutor
 {
     private static readonly JsonElement s_handoffSchema = AIFunctionFactory.Create(
-        ([Description("The reason for the handoff")] string? reasonForHandoff) => { }).JsonSchema;
+        ([Description("The reason for the handoff")] string? reasonForHandOff) => { }).JsonSchema;
 
     private readonly AIAgent _agent = agent;
     private readonly HashSet<string> _handoffFunctionNames = [];
@@ -26,8 +26,8 @@ internal sealed class HandoffAgentExecutor(
     public void Initialize(
         WorkflowBuilder builder,
         Executor end,
-        Dictionary<string, HandoffAgentExecutor> executors,
-        HashSet<HandoffTarget> handoffs) =>
+        Dictionary<string, HandOffAgentExecutor> executors,
+        HashSet<HandOffTarget> handoffs) =>
         builder.AddSwitch(this, sb =>
         {
             if (handoffs.Count != 0)
@@ -44,16 +44,16 @@ internal sealed class HandoffAgentExecutor(
                 };
 
                 int index = 0;
-                foreach (HandoffTarget handoff in handoffs)
+                foreach (HandOffTarget handoff in handoffs)
                 {
                     index++;
-                    var handoffFunc = AIFunctionFactory.CreateDeclaration($"{HandoffsWorkflowBuilder.FunctionPrefix}{index}", handoff.Reason, s_handoffSchema);
+                    var handoffFunc = AIFunctionFactory.CreateDeclaration($"{HandOffWorkflowBuilder.FunctionPrefix}{index}", handoff.Reason, s_handoffSchema);
 
                     this._handoffFunctionNames.Add(handoffFunc.Name);
 
                     this._agentOptions.ChatOptions.Tools.Add(handoffFunc);
 
-                    sb.AddCase<HandoffState>(state => state?.InvokedHandoff == handoffFunc.Name, executors[handoff.Target.Id]);
+                    sb.AddCase<HandOffState>(state => state?.InvokedHandOff == handoffFunc.Name, executors[handoff.Target.Id]);
                 }
             }
 
@@ -61,9 +61,9 @@ internal sealed class HandoffAgentExecutor(
         });
 
     protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
-        routeBuilder.AddHandler<HandoffState>(async (handoffState, context, cancellationToken) =>
+        routeBuilder.AddHandler<HandOffState>(async (handoffState, context, cancellationToken) =>
         {
-            string? requestedHandoff = null;
+            string? requestedHandOff = null;
             List<AgentRunResponseUpdate> updates = [];
             List<ChatMessage> allMessages = handoffState.Messages;
 
@@ -80,7 +80,7 @@ internal sealed class HandoffAgentExecutor(
                 {
                     if (c is FunctionCallContent fcc && this._handoffFunctionNames.Contains(fcc.Name))
                     {
-                        requestedHandoff = fcc.Name;
+                        requestedHandOff = fcc.Name;
                         await AddUpdateAsync(
                                 new AgentRunResponseUpdate
                                 {
@@ -102,7 +102,7 @@ internal sealed class HandoffAgentExecutor(
 
             roleChanges.ResetUserToAssistantForChangedRoles();
 
-            await context.SendMessageAsync(new HandoffState(handoffState.TurnToken, requestedHandoff, allMessages), cancellationToken: cancellationToken).ConfigureAwait(false);
+            await context.SendMessageAsync(new HandOffState(handoffState.TurnToken, requestedHandOff, allMessages), cancellationToken: cancellationToken).ConfigureAwait(false);
 
             async Task AddUpdateAsync(AgentRunResponseUpdate update, CancellationToken cancellationToken)
             {

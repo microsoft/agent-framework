@@ -10,46 +10,55 @@ namespace Microsoft.Agents.AI.Workflows;
 /// <summary>
 /// Provides a builder for specifying the handoff relationships between agents and building the resulting workflow.
 /// </summary>
-public sealed class HandoffsWorkflowBuilder
+public sealed class HandOffWorkflowBuilder
 {
     internal const string FunctionPrefix = "handoff_to_";
     private readonly AIAgent _initialAgent;
-    private readonly Dictionary<AIAgent, HashSet<HandoffTarget>> _targets = [];
+    private readonly Dictionary<AIAgent, HashSet<HandOffTarget>> _targets = [];
     private readonly HashSet<AIAgent> _allAgents = new(AIAgentIDEqualityComparer.Instance);
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="HandoffsWorkflowBuilder"/> class with no handoff relationships.
+    /// Initializes a new instance of the <see cref="HandOffWorkflowBuilder"/> class with no handoff relationships.
     /// </summary>
     /// <param name="initialAgent">The first agent to be invoked (prior to any handoff).</param>
-    internal HandoffsWorkflowBuilder(AIAgent initialAgent)
+    internal HandOffWorkflowBuilder(AIAgent initialAgent)
     {
         this._initialAgent = initialAgent;
         this._allAgents.Add(initialAgent);
     }
 
+    private string? _handoffInstructions =
+         $"""
+              You are one agent in a multi-agent system. You can hand off the conversation to another agent if appropriate. HandOffs are achieved
+              by calling a handoff function, named in the form `{FunctionPrefix}<agent_id>`; the description of the function provides details on the
+              target agent of that handoff. HandOffs between agents are handled seamlessly in the background; never mention or narrate these handoffs
+              in your conversation with the user.
+              """;
+
     /// <summary>
-    /// Gets or sets additional instructions to provide to an agent that has handoffs about how and when to perform them.
+    /// Sets additional instructions to provide to an agent that has handoffs about how and when to perform them.
     /// </summary>
+    /// <param name="handoffInstructions">The additional instructions.</param>
+    /// <returns>The updated <see cref="HandOffWorkflowBuilder"/> instance.</returns>
     /// <remarks>
     /// By default, simple instructions are included. This may be set to <see langword="null"/> to avoid including
     /// any additional instructions, or may be customized to provide more specific guidance.
     /// </remarks>
-    public string? HandoffInstructions { get; set; } =
-         $"""
-              You are one agent in a multi-agent system. You can hand off the conversation to another agent if appropriate. Handoffs are achieved
-              by calling a handoff function, named in the form `{FunctionPrefix}<agent_id>`; the description of the function provides details on the
-              target agent of that handoff. Handoffs between agents are handled seamlessly in the background; never mention or narrate these handoffs
-              in your conversation with the user.
-              """;
+    public HandOffWorkflowBuilder WithHandOffs(string handoffInstructions)
+    {
+        this._handoffInstructions = handoffInstructions;
+
+        return this;
+    }
 
     /// <summary>
     /// Adds handoff relationships from a source agent to one or more target agents.
     /// </summary>
     /// <param name="from">The source agent.</param>
     /// <param name="to">The target agents to add as handoff targets for the source agent.</param>
-    /// <returns>The updated <see cref="HandoffsWorkflowBuilder"/> instance.</returns>
+    /// <returns>The updated <see cref="HandOffWorkflowBuilder"/> instance.</returns>
     /// <remarks>The handoff reason for each target in <paramref name="to"/> is derived from that agent's description or name.</remarks>
-    public HandoffsWorkflowBuilder WithHandoffs(AIAgent from, IEnumerable<AIAgent> to)
+    public HandOffWorkflowBuilder WithHandOffs(AIAgent from, IEnumerable<AIAgent> to)
     {
         Throw.IfNull(from);
         Throw.IfNull(to);
@@ -61,7 +70,7 @@ public sealed class HandoffsWorkflowBuilder
                 Throw.ArgumentNullException(nameof(to), "One or more target agents are null.");
             }
 
-            this.WithHandoff(from, target);
+            this.WithHandOff(from, target);
         }
 
         return this;
@@ -76,8 +85,8 @@ public sealed class HandoffsWorkflowBuilder
     /// The reason the <paramref name="from"/> should hand off to the <paramref name="to"/>.
     /// If <see langword="null"/>, the reason is derived from <paramref name="to"/>'s description or name.
     /// </param>
-    /// <returns>The updated <see cref="HandoffsWorkflowBuilder"/> instance.</returns>
-    public HandoffsWorkflowBuilder WithHandoffs(IEnumerable<AIAgent> from, AIAgent to, string? handoffReason = null)
+    /// <returns>The updated <see cref="HandOffWorkflowBuilder"/> instance.</returns>
+    public HandOffWorkflowBuilder WithHandOffs(IEnumerable<AIAgent> from, AIAgent to, string? handoffReason = null)
     {
         Throw.IfNull(from);
         Throw.IfNull(to);
@@ -89,7 +98,7 @@ public sealed class HandoffsWorkflowBuilder
                 Throw.ArgumentNullException(nameof(from), "One or more source agents are null.");
             }
 
-            this.WithHandoff(source, to, handoffReason);
+            this.WithHandOff(source, to, handoffReason);
         }
 
         return this;
@@ -104,8 +113,8 @@ public sealed class HandoffsWorkflowBuilder
     /// The reason the <paramref name="from"/> should hand off to the <paramref name="to"/>.
     /// If <see langword="null"/>, the reason is derived from <paramref name="to"/>'s description or name.
     /// </param>
-    /// <returns>The updated <see cref="HandoffsWorkflowBuilder"/> instance.</returns>
-    public HandoffsWorkflowBuilder WithHandoff(AIAgent from, AIAgent to, string? handoffReason = null)
+    /// <returns>The updated <see cref="HandOffWorkflowBuilder"/> instance.</returns>
+    public HandOffWorkflowBuilder WithHandOff(AIAgent from, AIAgent to, string? handoffReason = null)
     {
         Throw.IfNull(from);
         Throw.IfNull(to);
@@ -145,12 +154,12 @@ public sealed class HandoffsWorkflowBuilder
     /// <returns>The workflow built based on the handoffs in the builder.</returns>
     public Workflow Build()
     {
-        HandoffsStartExecutor start = new();
-        HandoffsEndExecutor end = new();
+        HandOffStartExecutor start = new();
+        HandOffEndExecutor end = new();
         WorkflowBuilder builder = new(start);
 
         // Create an AgentExecutor for each again.
-        Dictionary<string, HandoffAgentExecutor> executors = this._allAgents.ToDictionary(a => a.Id, a => new HandoffAgentExecutor(a, this.HandoffInstructions));
+        Dictionary<string, HandOffAgentExecutor> executors = this._allAgents.ToDictionary(a => a.Id, a => new HandOffAgentExecutor(a, this._handoffInstructions));
 
         // Connect the start executor to the initial agent.
         builder.AddEdge(start, executors[this._initialAgent.Id]);
@@ -159,7 +168,7 @@ public sealed class HandoffsWorkflowBuilder
         foreach (var agent in this._allAgents)
         {
             executors[agent.Id].Initialize(builder, end, executors,
-                this._targets.TryGetValue(agent, out HashSet<HandoffTarget>? targets) ? targets : []);
+                this._targets.TryGetValue(agent, out HashSet<HandOffTarget>? targets) ? targets : []);
         }
 
         // Build the workflow.

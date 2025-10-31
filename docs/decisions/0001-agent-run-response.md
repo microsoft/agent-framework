@@ -20,7 +20,7 @@ Agents may produce lots of output during a run including
 4. Reasoning/Thinking output.
     1. **[Primary]** In some cases an LLM may return reasoning output intermixed with as part of the answer to the caller, since the caller's prompt asked for this detail in some way. This should be considered a specialization of 1.
     1. **[Secondary]** Reasonining models optionally produce reasoning output separate from the answer to the caller's question, and this should be considered secondary content.
-5. **[Secondary]** Handoffs / transitions from agent to agent where an agent contains sub agents.
+5. **[Secondary]** HandOffs / transitions from agent to agent where an agent contains sub agents.
 6. **[Secondary]** An indication that the agent is responding (i.e. typing) as if it's a real human.
 7. Complete messages in addition to updates, when streaming
 8. Id for long running process that is launched
@@ -476,7 +476,7 @@ We need to decide what AIContent types, each agent response type will be mapped 
 | 3. | Function invocation activities executed (both local and remote). For information only. | FunctionCallContent + FunctionResultContent |
 | 4. | Tool invocation activities executed (both local and remote). For information only. | FunctionCallContent/FunctionResultContent/Custom ? |
 | 5. | Reasoning/Thinking output. For information only. | TextReasoningContent |
-| 6. | Handoffs / transitions from agent to agent. | ? |
+| 6. | HandOffs / transitions from agent to agent. | ? |
 | 7. | An indication that the agent is responding (i.e. typing) as if it's a real human. | ? |
 | 8. | Complete messages in addition to updates, when streaming | TextContent |
 | 9. | Id for long running process that is launched | ? |
