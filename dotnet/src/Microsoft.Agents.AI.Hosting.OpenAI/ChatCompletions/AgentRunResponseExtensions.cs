@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions.Models;
 using Microsoft.Extensions.AI;
 
@@ -79,6 +80,12 @@ internal static class AgentRunResponseExtensions
                     HostedFileContent fileContent => new()
                     {
                         Content = fileContent.FileId
+                    },
+
+                    // function
+                    FunctionCallContent functionCallContent => new()
+                    {
+                        ToolCalls = [functionCallContent.ToChoiceMessageToolCall()]
                     },
 
                     _ => throw new InvalidOperationException($"Got unsupported content: {content.GetType()}")
@@ -175,5 +182,18 @@ internal static class AgentRunResponseExtensions
         }
 
         return result;
+    }
+
+    private static ChoiceMessageToolCall ToChoiceMessageToolCall(this FunctionCallContent functionCall)
+    {
+        return new()
+        {
+            Id = functionCall.CallId,
+            Function = new()
+            {
+                Name = functionCall.Name,
+                Arguments = JsonSerializer.Serialize(functionCall.Arguments, ChatCompletionsJsonContext.Default.DictionaryStringObject)
+            }
+        };
     }
 }

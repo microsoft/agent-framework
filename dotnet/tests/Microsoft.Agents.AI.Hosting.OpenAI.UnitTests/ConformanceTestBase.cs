@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
@@ -82,6 +83,20 @@ public abstract class ConformanceTestBase : IAsyncDisposable
         if (!element.TryGetProperty(propertyName, out _))
         {
             throw new Xunit.Sdk.XunitException($"Expected property '{propertyName}' not found in JSON");
+        }
+    }
+
+    /// <summary>
+    /// Asserts that a JSON element has any of the passed string values.
+    /// </summary>
+    protected static void AssertJsonPropertyEquals(JsonElement element, string propertyName, params string[] anyOfValues)
+    {
+        AssertJsonPropertyExists(element, propertyName);
+        var actualValue = element.GetProperty(propertyName).GetString();
+
+        if (!anyOfValues.Contains(actualValue))
+        {
+            throw new Xunit.Sdk.XunitException($"Property '{propertyName}': expected any of '{string.Join("; ", anyOfValues)}', got '{actualValue}'");
         }
     }
 
