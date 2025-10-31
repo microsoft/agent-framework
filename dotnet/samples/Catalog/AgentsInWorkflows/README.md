@@ -9,7 +9,7 @@ This workflow uses three translation agents:
 
 The agents are connected sequentially, creating a translation chain that demonstrates how AI-powered components can be seamlessly integrated into workflow pipelines.
 
-# Prerequisites
+## Prerequisites
 
 Before you begin, ensure you have the following prerequisites:
 
