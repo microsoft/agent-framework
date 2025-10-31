@@ -116,7 +116,7 @@ public sealed class TextSearchProviderTests
                 l => l.Log(
                     LogLevel.Trace,
                     It.IsAny<EventId>(),
-                    It.Is<It.IsAnyType>((v, t) => v.ToString()!.Contains("TextSearchProvider Input:Sample user question?\nAdditional part\nContext Instructions")),
+                    It.Is<It.IsAnyType>((v, t) => v.ToString()!.Contains("TextSearchProvider: Search Results\nInput:Sample user question?\nAdditional part\nOutput")),
                     It.IsAny<Exception?>(),
                     It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
                 Times.AtLeastOnce);
@@ -148,6 +148,29 @@ public sealed class TextSearchProviderTests
         var tool = aiContext.Tools.Single();
         Assert.Equal(expectedName, tool.Name);
         Assert.Equal(expectedDescription, tool.Description);
+    }
+
+    [Fact]
+    public async Task InvokingAsync_ShouldNotThrow_WhenSearchFailsAsync()
+    {
+        // Arrange
+        var provider = new TextSearchProvider(this.FailingSearchAsync, loggerFactory: this._loggerFactoryMock.Object);
+        var invokingContext = new AIContextProvider.InvokingContext(new[] { new ChatMessage(ChatRole.User, "Q?") });
+
+        // Act
+        var aiContext = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert
+        Assert.Null(aiContext.Messages);
+        Assert.Null(aiContext.Tools);
+        this._loggerMock.Verify(
+            l => l.Log(
+                LogLevel.Error,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, t) => v.ToString()!.Contains("TextSearchProvider: Failed to search for data due to error")),
+                It.IsAny<Exception>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.AtLeastOnce);
     }
 
     [Theory]
@@ -572,6 +595,11 @@ public sealed class TextSearchProviderTests
     private Task<IEnumerable<TextSearchProvider.TextSearchResult>> NoResultSearchAsync(string input, CancellationToken ct)
     {
         return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchResult>>([]);
+    }
+
+    private Task<IEnumerable<TextSearchProvider.TextSearchResult>> FailingSearchAsync(string input, CancellationToken ct)
+    {
+        throw new InvalidOperationException("Search Failed");
     }
 
     private sealed class RawPayload

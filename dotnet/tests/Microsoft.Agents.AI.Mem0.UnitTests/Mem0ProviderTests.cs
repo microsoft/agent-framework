@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
+using Moq;
 
 namespace Microsoft.Agents.AI.Mem0.UnitTests;
 
@@ -17,13 +18,23 @@ namespace Microsoft.Agents.AI.Mem0.UnitTests;
 /// </summary>
 public sealed class Mem0ProviderTests : IDisposable
 {
+    private readonly Mock<ILogger<Mem0Provider>> _loggerMock;
+    private readonly Mock<ILoggerFactory> _loggerFactoryMock;
     private readonly RecordingHandler _handler = new();
     private readonly HttpClient _httpClient;
-    private readonly ILoggerFactory _loggerFactory = LoggerFactory.Create(b => b.AddProvider(new NullLoggerProvider()));
     private bool _disposed;
 
     public Mem0ProviderTests()
     {
+        this._loggerMock = new();
+        this._loggerFactoryMock = new();
+        this._loggerFactoryMock
+            .Setup(f => f.CreateLogger(It.IsAny<string>()))
+            .Returns(this._loggerMock.Object);
+        this._loggerFactoryMock
+            .Setup(f => f.CreateLogger(typeof(Mem0Provider).FullName!))
+            .Returns(this._loggerMock.Object);
+
         this._httpClient = new HttpClient(this._handler)
         {
             BaseAddress = new Uri("https://localhost/")
@@ -80,7 +91,7 @@ public sealed class Mem0ProviderTests : IDisposable
             ThreadId = "thread",
             UserId = "user"
         };
-        var sut = new Mem0Provider(this._httpClient, options, this._loggerFactory);
+        var sut = new Mem0Provider(this._httpClient, options, this._loggerFactoryMock.Object);
         var invokingContext = new AIContextProvider.InvokingContext(new[] { new ChatMessage(ChatRole.User, "What is my name?") });
 
         // Act
@@ -99,6 +110,24 @@ public sealed class Mem0ProviderTests : IDisposable
         var contextMessage = Assert.Single(aiContext.Messages);
         Assert.Equal(ChatRole.User, contextMessage.Role);
         Assert.Contains("Name is Caoimhe", contextMessage.Text);
+
+        this._loggerMock.Verify(
+            l => l.Log(
+                LogLevel.Information,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, t) => v.ToString()!.Contains("Mem0AIContextProvider: Retrieved 1 memories.")),
+                It.IsAny<Exception>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once);
+
+        this._loggerMock.Verify(
+            l => l.Log(
+                LogLevel.Trace,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, t) => v.ToString()!.Contains("Mem0AIContextProvider: Search Results\nInput:What is my name?\nOutput")),
+                It.IsAny<Exception>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once);
     }
 
     [Fact]
@@ -154,6 +183,39 @@ public sealed class Mem0ProviderTests : IDisposable
 
         // Assert
         Assert.Empty(this._handler.Requests);
+    }
+
+    [Fact]
+    public async Task InvokedAsync_ShouldNotThrow_WhenStorageFailsAsync()
+    {
+        // Arrange
+        var options = new Mem0ProviderOptions { ApplicationId = "a", AgentId = "b", ThreadId = "c", UserId = "d" };
+        var sut = new Mem0Provider(this._httpClient, options, this._loggerFactoryMock.Object);
+        this._handler.EnqueueEmptyInternalServerError();
+
+        var requestMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "User text"),
+            new(ChatRole.System, "System text"),
+            new(ChatRole.Tool, "Tool text should be ignored")
+        };
+        var responseMessages = new List<ChatMessage>
+        {
+            new(ChatRole.Assistant, "Assistant text")
+        };
+
+        // Act
+        await sut.InvokedAsync(new AIContextProvider.InvokedContext(requestMessages, aiContextProviderMessages: null) { ResponseMessages = responseMessages });
+
+        // Assert
+        this._loggerMock.Verify(
+            l => l.Log(
+                LogLevel.Error,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, t) => v.ToString()!.Contains("Mem0AIContextProvider: Failed to send messages to Mem0 due to error")),
+                It.IsAny<Exception>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once);
     }
 
     [Fact]
@@ -267,6 +329,30 @@ public sealed class Mem0ProviderTests : IDisposable
         await Assert.ThrowsAsync<ArgumentException>(() => sut.InvokingAsync(ctx).AsTask());
     }
 
+    [Fact]
+    public async Task InvokingAsync_ShouldNotThrow_WhenSearchFailsAsync()
+    {
+        // Arrange
+        var options = new Mem0ProviderOptions { ApplicationId = "app" };
+        var provider = new Mem0Provider(this._httpClient, options, loggerFactory: this._loggerFactoryMock.Object);
+        var invokingContext = new AIContextProvider.InvokingContext(new[] { new ChatMessage(ChatRole.User, "Q?") });
+
+        // Act
+        var aiContext = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert
+        Assert.Null(aiContext.Messages);
+        Assert.Null(aiContext.Tools);
+        this._loggerMock.Verify(
+            l => l.Log(
+                LogLevel.Error,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, t) => v.ToString()!.Contains("Mem0AIContextProvider: Failed to search Mem0 for memories due to error")),
+                It.IsAny<Exception>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once);
+    }
+
     private static bool ContainsOrdinal(string source, string value) => source.IndexOf(value, StringComparison.Ordinal) >= 0;
 
     public void Dispose()
@@ -275,7 +361,6 @@ public sealed class Mem0ProviderTests : IDisposable
         {
             this._httpClient.Dispose();
             this._handler.Dispose();
-            this._loggerFactory.Dispose();
             this._disposed = true;
         }
     }
@@ -309,18 +394,7 @@ public sealed class Mem0ProviderTests : IDisposable
         }
 
         public void EnqueueEmptyOk() => this._responses.Enqueue(new HttpResponseMessage(System.Net.HttpStatusCode.OK));
-    }
 
-    private sealed class NullLoggerProvider : ILoggerProvider
-    {
-        public ILogger CreateLogger(string categoryName) => new NullLogger();
-        public void Dispose() { }
-
-        private sealed class NullLogger : ILogger
-        {
-            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
-            public bool IsEnabled(LogLevel logLevel) => false;
-            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) { }
-        }
+        public void EnqueueEmptyInternalServerError() => this._responses.Enqueue(new HttpResponseMessage(System.Net.HttpStatusCode.InternalServerError));
     }
 }
