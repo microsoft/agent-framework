@@ -220,6 +220,81 @@ public partial class ChatClientAgentTests
     }
 
     /// <summary>
+    /// Verify that RunAsync respects SuppressAssistantName option when setting AuthorName.
+    /// </summary>
+    [Theory]
+    [InlineData(true, null, null)]  // SuppressAssistantName=true, Name=null -> AuthorName=null
+    [InlineData(false, null, "UnnamedAgent")]  // SuppressAssistantName=false, Name=null -> AuthorName="UnnamedAgent"
+    [InlineData(true, "MyAgent", "MyAgent")]  // SuppressAssistantName=true, Name="MyAgent" -> AuthorName="MyAgent"
+    public async Task RunAsyncRespectsSuppressAssistantNameOptionAsync(bool suppressAssistantName, string? agentName, string? expectedAuthorName)
+    {
+        // Arrange
+        Mock<IChatClient> mockService = new();
+        var responseMessages = new[]
+        {
+            new ChatMessage(ChatRole.Assistant, "response")
+        };
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse(responseMessages));
+
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            Instructions = "test instructions",
+            Name = agentName,
+            SuppressAssistantName = suppressAssistantName
+        });
+
+        // Act
+        var result = await agent.RunAsync([new(ChatRole.User, "test")]);
+
+        // Assert
+        Assert.All(result.Messages, msg => Assert.Equal(expectedAuthorName, msg.AuthorName));
+    }
+
+    /// <summary>
+    /// Verify that RunStreamingAsync respects SuppressAssistantName option when setting AuthorName.
+    /// </summary>
+    [Theory]
+    [InlineData(true, null, null)]  // SuppressAssistantName=true, Name=null -> AuthorName=null
+    [InlineData(false, null, "UnnamedAgent")]  // SuppressAssistantName=false, Name=null -> AuthorName="UnnamedAgent"
+    [InlineData(true, "MyAgent", "MyAgent")]  // SuppressAssistantName=true, Name="MyAgent" -> AuthorName="MyAgent"
+    public async Task RunStreamingAsyncRespectsSuppressAssistantNameOptionAsync(bool suppressAssistantName, string? agentName, string? expectedAuthorName)
+    {
+        // Arrange
+        Mock<IChatClient> mockService = new();
+        var responseUpdates = new[]
+        {
+            new ChatResponseUpdate(role: ChatRole.Assistant, content: "response")
+        };
+        mockService.Setup(
+            s => s.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>())).Returns(ToAsyncEnumerableAsync(responseUpdates));
+
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            Instructions = "test instructions",
+            Name = agentName,
+            SuppressAssistantName = suppressAssistantName
+        });
+
+        // Act
+        var updates = agent.RunStreamingAsync([new(ChatRole.User, "test")]);
+        List<AgentRunResponseUpdate> result = [];
+        await foreach (var update in updates)
+        {
+            result.Add(update);
+        }
+
+        // Assert
+        Assert.All(result, update => Assert.Equal(expectedAuthorName, update.AuthorName));
+    }
+
+    /// <summary>
     /// Verify that RunAsync works with existing thread and can retreive messages if the thread has a MessageStore.
     /// </summary>
     [Fact]

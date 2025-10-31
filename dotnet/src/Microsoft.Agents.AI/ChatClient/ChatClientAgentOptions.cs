@@ -99,6 +99,18 @@ public class ChatClientAgentOptions
     public bool UseProvidedChatClientAsIs { get; set; }
 
     /// <summary>
+    /// Gets or sets a value indicating whether to suppress the name field on assistant messages when the agent name is not set.
+    /// </summary>
+    /// <remarks>
+    /// When set to <see langword="true"/>, assistant messages will not include a name field in the serialized payload
+    /// if the agent's <see cref="Name"/> property is <see langword="null"/>. This is useful for compatibility with
+    /// strict OpenAI-compatible backends that reject assistant messages with a name field.
+    /// When set to <see langword="false"/> (the default), the framework will use "UnnamedAgent" as a fallback name
+    /// when the agent name is not set.
+    /// </remarks>
+    public bool SuppressAssistantName { get; set; }
+
+    /// <summary>
     /// Creates a new instance of <see cref="ChatClientAgentOptions"/> with the same values as this instance.
     /// </summary>
     public ChatClientAgentOptions Clone()
@@ -111,6 +123,7 @@ public class ChatClientAgentOptions
             ChatOptions = this.ChatOptions?.Clone(),
             ChatMessageStoreFactory = this.ChatMessageStoreFactory,
             AIContextProviderFactory = this.AIContextProviderFactory,
+            SuppressAssistantName = this.SuppressAssistantName,
         };
 
     /// <summary>

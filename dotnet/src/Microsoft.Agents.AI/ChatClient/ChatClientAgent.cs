@@ -246,7 +246,11 @@ public sealed partial class ChatClientAgent : AIAgent
             var update = responseUpdatesEnumerator.Current;
             if (update is not null)
             {
-                update.AuthorName ??= this.Name;
+                var messageAuthorName = this.GetMessageAuthorName();
+                if (messageAuthorName is not null)
+                {
+                    update.AuthorName ??= messageAuthorName;
+                }
 
                 responseUpdates.Add(update);
                 yield return new(update) { AgentId = this.Id };
@@ -376,9 +380,13 @@ public sealed partial class ChatClientAgent : AIAgent
         this.UpdateThreadWithTypeAndConversationId(safeThread, chatResponse.ConversationId);
 
         // Ensure that the author name is set for each message in the response.
+        var messageAuthorName = this.GetMessageAuthorName();
         foreach (ChatMessage chatResponseMessage in chatResponse.Messages)
         {
-            chatResponseMessage.AuthorName ??= agentName;
+            if (messageAuthorName is not null)
+            {
+                chatResponseMessage.AuthorName ??= messageAuthorName;
+            }
         }
 
         // Only notify the thread of new messages if the chatResponse was successful to avoid inconsistent message state in the thread.
@@ -687,5 +695,22 @@ public sealed partial class ChatClientAgent : AIAgent
     }
 
     private string GetLoggingAgentName() => this.Name ?? "UnnamedAgent";
+
+    /// <summary>
+    /// Gets the author name to use for messages.
+    /// </summary>
+    /// <returns>
+    /// The agent's name, or "UnnamedAgent" if the name is not set, or <see langword="null"/> if
+    /// <see cref="ChatClientAgentOptions.SuppressAssistantName"/> is <see langword="true"/> and the agent has no name.
+    /// </returns>
+    private string? GetMessageAuthorName()
+    {
+        if (this._agentOptions?.SuppressAssistantName is true && this.Name is null)
+        {
+            return null;
+        }
+
+        return this.Name ?? "UnnamedAgent";
+    }
     #endregion
 }
