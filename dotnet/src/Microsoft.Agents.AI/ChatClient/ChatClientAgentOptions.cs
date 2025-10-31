@@ -123,7 +123,6 @@ public class ChatClientAgentOptions
             ChatOptions = this.ChatOptions?.Clone(),
             ChatMessageStoreFactory = this.ChatMessageStoreFactory,
             AIContextProviderFactory = this.AIContextProviderFactory,
-            UseProvidedChatClientAsIs = this.UseProvidedChatClientAsIs,
             SuppressAssistantName = this.SuppressAssistantName,
         };
 
