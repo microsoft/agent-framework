@@ -747,11 +747,9 @@ async def test_azure_ai_chat_client_create_run_options_tool_choice_required_spec
 
     required_tool_mode = ToolMode.REQUIRED("specific_function_name")
 
-    # Create a mock AIFunction tool
-    mock_tool = MagicMock()
-    mock_tool.to_json_schema_spec.return_value = {"type": "function", "function": {"name": "test_function"}}
+    dict_tool = {"type": "function", "function": {"name": "test_function"}}
 
-    chat_options = ChatOptions(tools=[mock_tool], tool_choice=required_tool_mode)
+    chat_options = ChatOptions(tools=[dict_tool], tool_choice=required_tool_mode)
     messages = [ChatMessage(role=Role.USER, text="Hello")]
 
     run_options, _ = await chat_client._create_run_options(messages, chat_options)  # type: ignore
