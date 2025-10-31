@@ -2596,6 +2596,114 @@ public partial class ChatClientAgentTests
 
     #endregion
 
+    #region SuppressAssistantName Tests
+
+    /// <summary>
+    /// Verify that RunAsync respects the SuppressAssistantName option with different scenarios.
+    /// </summary>
+    [Theory]
+    [InlineData(true, null, null)]
+    [InlineData(false, null, "UnnamedAgent")]
+    [InlineData(true, "MyAgent", "MyAgent")]
+    public async Task RunAsyncRespectsSuppressAssistantNameOptionAsync(bool suppressAssistantName, string? agentName, string? expectedAuthorName)
+    {
+        // Arrange
+        Mock<IChatClient> mockService = new();
+        var responseMessages = new[]
+        {
+            new ChatMessage(ChatRole.Assistant, "response 1"),
+            new ChatMessage(ChatRole.Assistant, "response 2")
+        };
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse(responseMessages));
+
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            Instructions = "test instructions",
+            Name = agentName,
+            SuppressAssistantName = suppressAssistantName
+        });
+
+        // Act
+        var result = await agent.RunAsync([new(ChatRole.User, "test")]);
+
+        // Assert
+        Assert.All(result.Messages, msg => Assert.Equal(expectedAuthorName, msg.AuthorName));
+    }
+
+    /// <summary>
+    /// Verify that RunStreamingAsync respects the SuppressAssistantName option with different scenarios.
+    /// </summary>
+    [Theory]
+    [InlineData(true, null, null)]
+    [InlineData(false, null, "UnnamedAgent")]
+    [InlineData(true, "MyAgent", "MyAgent")]
+    public async Task RunStreamingAsyncRespectsSuppressAssistantNameOptionAsync(bool suppressAssistantName, string? agentName, string? expectedAuthorName)
+    {
+        // Arrange
+        var returnUpdates = new[]
+        {
+            new ChatResponseUpdate(role: ChatRole.Assistant, content: "response 1"),
+            new ChatResponseUpdate(role: ChatRole.Assistant, content: "response 2"),
+        };
+
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>())).Returns(ToAsyncEnumerableAsync(returnUpdates));
+
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            Instructions = "test instructions",
+            Name = agentName,
+            SuppressAssistantName = suppressAssistantName
+        });
+
+        // Act
+        var updates = new List<AgentRunResponseUpdate>();
+        await foreach (var update in agent.RunStreamingAsync([new(ChatRole.User, "test")]))
+        {
+            updates.Add(update);
+        }
+
+        // Assert
+        Assert.All(updates, update => Assert.Equal(expectedAuthorName, update.AuthorName));
+    }
+
+    /// <summary>
+    /// Verify that Clone() method copies the SuppressAssistantName property.
+    /// </summary>
+    [Fact]
+    public void Clone_CopiesSuppressAssistantNameProperty()
+    {
+        // Arrange
+        var originalOptions = new ChatClientAgentOptions
+        {
+            Id = "test-id",
+            Name = "test-name",
+            Instructions = "test-instructions",
+            SuppressAssistantName = true,
+            UseProvidedChatClientAsIs = true
+        };
+
+        // Act
+        var clonedOptions = originalOptions.Clone();
+
+        // Assert
+        Assert.Equal(originalOptions.Id, clonedOptions.Id);
+        Assert.Equal(originalOptions.Name, clonedOptions.Name);
+        Assert.Equal(originalOptions.Instructions, clonedOptions.Instructions);
+        Assert.True(clonedOptions.SuppressAssistantName);
+        Assert.True(clonedOptions.UseProvidedChatClientAsIs);
+    }
+
+    #endregion
+
     private static async IAsyncEnumerable<T> ToAsyncEnumerableAsync<T>(IEnumerable<T> values)
     {
         await Task.Yield();
