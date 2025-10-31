@@ -11,12 +11,12 @@ internal sealed class AgentFunctions
     /// <param name="topic">The specific space-related topic to research (e.g., "galaxy formation", "space travel", "astronaut training").</param>
     /// <returns>Research findings about the specified space topic.</returns>
     [Description("Researches relevant space facts and scientific information for writing a science fiction novel")]
-    public string ResearchSpaceFacts(string topic)
+    public async Task<string> ResearchSpaceFactsAsync(string topic)
     {
         Console.WriteLine($"[ResearchSpaceFacts] Researching topic: {topic}");
 
         // Simulate a research operation
-        Thread.Sleep(TimeSpan.FromSeconds(10));
+        await Task.Delay(TimeSpan.FromSeconds(10));
 
         string result = topic.ToUpperInvariant() switch
         {
@@ -35,12 +35,12 @@ internal sealed class AgentFunctions
     /// </summary>
     /// <returns>Detailed character profiles including background, personality traits, and role in the story.</returns>
     [Description("Generates character profiles for the main astronaut characters in the novel")]
-    public IEnumerable<string> GenerateCharacterProfiles()
+    public async Task<IEnumerable<string>> GenerateCharacterProfilesAsync()
     {
         Console.WriteLine("[GenerateCharacterProfiles] Generating character profiles...");
 
         // Simulate a character generation operation
-        Thread.Sleep(TimeSpan.FromSeconds(10));
+        await Task.Delay(TimeSpan.FromSeconds(10));
 
         string[] profiles = [
             "Captain Elena Voss: A seasoned mission commander with 15 years of experience. Strong-willed and decisive, she struggles with the weight of responsibility for her crew. Former military pilot turned astronaut.",
@@ -59,7 +59,7 @@ internal sealed class AgentFunctions
     /// </summary>
     public IEnumerable<AITool> AsAITools()
     {
-        yield return AIFunctionFactory.Create(this.ResearchSpaceFacts);
-        yield return AIFunctionFactory.Create(this.GenerateCharacterProfiles);
+        yield return AIFunctionFactory.Create(this.ResearchSpaceFactsAsync);
+        yield return AIFunctionFactory.Create(this.GenerateCharacterProfilesAsync);
     }
 }

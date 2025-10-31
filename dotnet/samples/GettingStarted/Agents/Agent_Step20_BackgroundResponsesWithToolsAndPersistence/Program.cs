@@ -6,7 +6,6 @@
 
 #pragma warning disable CA1050 // Declare types in namespaces
 
-using System.Diagnostics;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
@@ -29,7 +28,7 @@ AIAgent agent = new AzureOpenAIClient(
         tools: [.. new AgentFunctions().AsAITools()]);
 
 // Enable background responses (only supported by {Azure}OpenAI Responses at this time).
-ChatClientAgentRunOptions options = new() { AllowBackgroundResponses = true };
+AgentRunOptions options = new() { AllowBackgroundResponses = true };
 
 AgentThread thread = agent.GetNewThread();
 
