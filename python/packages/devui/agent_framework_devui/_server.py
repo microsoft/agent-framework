@@ -17,7 +17,8 @@ from fastapi.staticfiles import StaticFiles
 from ._discovery import EntityDiscovery
 from ._executor import AgentFrameworkExecutor
 from ._mapper import MessageMapper
-from .models import AgentFrameworkRequest, OpenAIError
+from ._openai import OpenAIExecutor
+from .models import AgentFrameworkRequest, MetaResponse, OpenAIError
 from .models._discovery_models import DiscoveryResponse, EntityInfo
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,7 @@ class DevServer:
         host: str = "127.0.0.1",
         cors_origins: list[str] | None = None,
         ui_enabled: bool = True,
+        ui_mode: str = "developer",
     ) -> None:
         """Initialize the development server.
 
@@ -42,13 +44,16 @@ class DevServer:
             host: Host to bind server to
             cors_origins: List of allowed CORS origins
             ui_enabled: Whether to enable the UI
+            ui_mode: UI interface mode - 'developer' or 'user'
         """
         self.entities_dir = entities_dir
         self.port = port
         self.host = host
         self.cors_origins = cors_origins or ["*"]
         self.ui_enabled = ui_enabled
+        self.ui_mode = ui_mode
         self.executor: AgentFrameworkExecutor | None = None
+        self.openai_executor: OpenAIExecutor | None = None
         self._app: FastAPI | None = None
         self._pending_entities: list[Any] | None = None
 
@@ -84,6 +89,29 @@ class DevServer:
 
         return self.executor
 
+    async def _ensure_openai_executor(self) -> OpenAIExecutor:
+        """Ensure OpenAI executor is initialized.
+
+        Returns:
+            OpenAI executor instance
+
+        Raises:
+            ValueError: If OpenAI executor cannot be initialized
+        """
+        if self.openai_executor is None:
+            # Initialize local executor first to get conversation_store
+            local_executor = await self._ensure_executor()
+
+            # Create OpenAI executor with shared conversation store
+            self.openai_executor = OpenAIExecutor(local_executor.conversation_store)
+
+            if self.openai_executor.is_configured:
+                logger.info("OpenAI proxy mode available (OPENAI_API_KEY configured)")
+            else:
+                logger.info("OpenAI proxy mode disabled (OPENAI_API_KEY not set)")
+
+        return self.openai_executor
+
     async def _cleanup_entities(self) -> None:
         """Cleanup entity resources (close clients, MCP tools, credentials, etc.)."""
         if not self.executor:
@@ -94,12 +122,28 @@ class DevServer:
         closed_count = 0
         mcp_tools_closed = 0
         credentials_closed = 0
+        hook_count = 0
 
         for entity_info in entities:
-            try:
-                entity_obj = self.executor.entity_discovery.get_entity_object(entity_info.id)
+            entity_id = entity_info.id
 
-                # Close chat clients and their credentials
+            try:
+                # Step 1: Execute registered cleanup hooks (NEW)
+                cleanup_hooks = self.executor.entity_discovery.get_cleanup_hooks(entity_id)
+                for hook in cleanup_hooks:
+                    try:
+                        if inspect.iscoroutinefunction(hook):
+                            await hook()
+                        else:
+                            hook()
+                        hook_count += 1
+                        logger.debug(f"✓ Executed cleanup hook for: {entity_id}")
+                    except Exception as e:
+                        logger.warning(f"⚠ Cleanup hook failed for {entity_id}: {e}")
+
+                # Step 2: Close chat clients and their credentials (EXISTING)
+                entity_obj = self.executor.entity_discovery.get_entity_object(entity_id)
+
                 if entity_obj and hasattr(entity_obj, "chat_client"):
                     client = entity_obj.chat_client
 
@@ -144,14 +188,24 @@ class DevServer:
                                 logger.warning(f"Error closing MCP tool for {entity_info.id}: {e}")
 
             except Exception as e:
-                logger.warning(f"Error closing entity {entity_info.id}: {e}")
+                logger.warning(f"Error cleaning up entity {entity_id}: {e}")
 
+        if hook_count > 0:
+            logger.info(f"✓ Executed {hook_count} cleanup hook(s)")
         if closed_count > 0:
-            logger.info(f"Closed {closed_count} entity client(s)")
+            logger.info(f"✓ Closed {closed_count} entity client(s)")
         if credentials_closed > 0:
-            logger.info(f"Closed {credentials_closed} credential(s)")
+            logger.info(f"✓ Closed {credentials_closed} credential(s)")
         if mcp_tools_closed > 0:
-            logger.info(f"Closed {mcp_tools_closed} MCP tool(s)")
+            logger.info(f"✓ Closed {mcp_tools_closed} MCP tool(s)")
+
+        # Close OpenAI executor if it exists
+        if self.openai_executor:
+            try:
+                await self.openai_executor.close()
+                logger.info("Closed OpenAI executor")
+            except Exception as e:
+                logger.warning(f"Error closing OpenAI executor: {e}")
 
     def create_app(self) -> FastAPI:
         """Create the FastAPI application."""
@@ -161,6 +215,7 @@ class DevServer:
             # Startup
             logger.info("Starting Agent Framework Server")
             await self._ensure_executor()
+            await self._ensure_openai_executor()  # Initialize OpenAI executor
             yield
             # Shutdown
             logger.info("Shutting down Agent Framework Server")
@@ -201,6 +256,26 @@ class DevServer:
             entities = executor.entity_discovery.list_entities()
 
             return {"status": "healthy", "entities_count": len(entities), "framework": "agent_framework"}
+
+        @app.get("/meta", response_model=MetaResponse)
+        async def get_meta() -> MetaResponse:
+            """Get server metadata and configuration."""
+            import os
+
+            from . import __version__
+
+            # Ensure executors are initialized to check capabilities
+            openai_executor = await self._ensure_openai_executor()
+
+            return MetaResponse(
+                ui_mode=self.ui_mode,  # type: ignore[arg-type]
+                version=__version__,
+                framework="agent_framework",
+                capabilities={
+                    "tracing": os.getenv("ENABLE_OTEL") == "true",
+                    "openai_proxy": openai_executor.is_configured,
+                },
+            )
 
         @app.get("/v1/entities", response_model=DiscoveryResponse)
         async def discover_entities() -> DiscoveryResponse:
@@ -304,12 +379,18 @@ class DevServer:
                     if hasattr(entity_obj, "executors") and entity_obj.executors:
                         executor_list = [getattr(ex, "executor_id", str(ex)) for ex in entity_obj.executors]
 
+                    # Check if workflow supports checkpointing
+                    from ._executor import workflow_supports_checkpointing
+
+                    supports_checkpointing = workflow_supports_checkpointing(entity_obj)
+
                     # Create copy of entity info and populate workflow-specific fields
                     update_payload: dict[str, Any] = {
                         "workflow_dump": workflow_dump,
                         "input_schema": input_schema,
                         "input_type_name": input_type_name,
                         "start_executor_id": start_executor_id,
+                        "supports_checkpointing": supports_checkpointing,
                     }
                     if executor_list:
                         update_payload["executors"] = executor_list
@@ -355,8 +436,36 @@ class DevServer:
 
         @app.post("/v1/responses")
         async def create_response(request: AgentFrameworkRequest, raw_request: Request) -> Any:
-            """OpenAI Responses API endpoint."""
+            """OpenAI Responses API endpoint - routes to local or OpenAI executor."""
             try:
+                # Check if frontend requested OpenAI proxy mode
+                proxy_mode = raw_request.headers.get("X-Proxy-Backend")
+
+                if proxy_mode == "openai":
+                    # Route to OpenAI executor
+                    logger.info("🔀 Routing to OpenAI proxy mode")
+                    openai_executor = await self._ensure_openai_executor()
+
+                    if not openai_executor.is_configured:
+                        error = OpenAIError.create(
+                            "OpenAI proxy mode not configured. Set OPENAI_API_KEY environment variable."
+                        )
+                        return JSONResponse(status_code=503, content=error.to_dict())
+
+                    # Execute via OpenAI with dedicated streaming method
+                    if request.stream:
+                        return StreamingResponse(
+                            self._stream_openai_execution(openai_executor, request),
+                            media_type="text/event-stream",
+                            headers={
+                                "Cache-Control": "no-cache",
+                                "Connection": "keep-alive",
+                                "Access-Control-Allow-Origin": "*",
+                            },
+                        )
+                    return await openai_executor.execute_sync(request)
+
+                # Route to local Agent Framework executor (original behavior)
                 raw_body = await raw_request.body()
                 logger.info(f"Raw request body: {raw_body.decode()}")
                 logger.info(f"Parsed request: model={request.model}, extra_body={request.extra_body}")
@@ -400,10 +509,78 @@ class DevServer:
         # OpenAI Conversations API (Standard)
         # ========================================
 
-        @app.post("/v1/conversations")
-        async def create_conversation(request_data: dict[str, Any]) -> dict[str, Any]:
-            """Create a new conversation - OpenAI standard."""
+        @app.post("/v1/conversations", response_model=None)
+        async def create_conversation(raw_request: Request) -> dict[str, Any] | JSONResponse:
+            """Create a new conversation - routes to OpenAI or local based on mode."""
             try:
+                # Parse request body
+                request_data = await raw_request.json()
+
+                # Check if frontend requested OpenAI proxy mode
+                proxy_mode = raw_request.headers.get("X-Proxy-Backend")
+
+                if proxy_mode == "openai":
+                    # Create conversation in OpenAI
+                    openai_executor = await self._ensure_openai_executor()
+                    if not openai_executor.is_configured:
+                        error = OpenAIError.create(
+                            "OpenAI proxy mode not configured. Set OPENAI_API_KEY environment variable.",
+                            type="configuration_error",
+                            code="openai_not_configured",
+                        )
+                        return JSONResponse(status_code=503, content=error.to_dict())
+
+                    # Use OpenAI client to create conversation
+                    from openai import APIStatusError, AsyncOpenAI, AuthenticationError, PermissionDeniedError
+
+                    client = AsyncOpenAI(
+                        api_key=openai_executor.api_key,
+                        base_url=openai_executor.base_url,
+                    )
+
+                    try:
+                        metadata = request_data.get("metadata")
+                        logger.debug(f"Creating OpenAI conversation with metadata: {metadata}")
+                        conversation = await client.conversations.create(metadata=metadata)
+                        logger.info(f"Created OpenAI conversation: {conversation.id}")
+                        return conversation.model_dump()
+                    except AuthenticationError as e:
+                        # 401 - Invalid API key or authentication issue
+                        logger.error(f"OpenAI authentication error creating conversation: {e}")
+                        error_body = e.body if hasattr(e, "body") else {}
+                        error_data = error_body.get("error", {}) if isinstance(error_body, dict) else {}
+                        error = OpenAIError.create(
+                            message=error_data.get("message", str(e)),
+                            type=error_data.get("type", "authentication_error"),
+                            code=error_data.get("code", "invalid_api_key"),
+                        )
+                        return JSONResponse(status_code=401, content=error.to_dict())
+                    except PermissionDeniedError as e:
+                        # 403 - Permission denied
+                        logger.error(f"OpenAI permission denied creating conversation: {e}")
+                        error_body = e.body if hasattr(e, "body") else {}
+                        error_data = error_body.get("error", {}) if isinstance(error_body, dict) else {}
+                        error = OpenAIError.create(
+                            message=error_data.get("message", str(e)),
+                            type=error_data.get("type", "permission_denied"),
+                            code=error_data.get("code", "insufficient_permissions"),
+                        )
+                        return JSONResponse(status_code=403, content=error.to_dict())
+                    except APIStatusError as e:
+                        # Other OpenAI API errors (rate limit, etc.)
+                        logger.error(f"OpenAI API error creating conversation: {e}")
+                        error_body = e.body if hasattr(e, "body") else {}
+                        error_data = error_body.get("error", {}) if isinstance(error_body, dict) else {}
+                        error = OpenAIError.create(
+                            message=error_data.get("message", str(e)),
+                            type=error_data.get("type", "api_error"),
+                            code=error_data.get("code", "unknown_error"),
+                        )
+                        return JSONResponse(
+                            status_code=e.status_code if hasattr(e, "status_code") else 500, content=error.to_dict()
+                        )
+
+                # Local mode - use DevUI conversation store
                 metadata = request_data.get("metadata")
                 executor = await self._ensure_executor()
                 conversation = executor.conversation_store.create_conversation(metadata=metadata)
@@ -411,8 +588,9 @@ class DevServer:
             except HTTPException:
                 raise
             except Exception as e:
-                logger.error(f"Error creating conversation: {e}")
-                raise HTTPException(status_code=500, detail=f"Failed to create conversation: {e!s}") from e
+                logger.error(f"Error creating conversation: {e}", exc_info=True)
+                error = OpenAIError.create(f"Failed to create conversation: {e!s}")
+                return JSONResponse(status_code=500, content=error.to_dict())
 
         @app.get("/v1/conversations")
         async def list_conversations(agent_id: str | None = None) -> dict[str, Any]:
@@ -585,6 +763,63 @@ class DevServer:
         except Exception as e:
             logger.error(f"Error in streaming execution: {e}")
             error_event = {"id": "error", "object": "error", "error": {"message": str(e), "type": "execution_error"}}
+            yield f"data: {json.dumps(error_event)}\n\n"
+
+    async def _stream_openai_execution(
+        self, executor: OpenAIExecutor, request: AgentFrameworkRequest
+    ) -> AsyncGenerator[str, None]:
+        """Stream execution through OpenAI executor.
+
+        OpenAI events are already in final format - no conversion or aggregation needed.
+        Just serialize and stream them as SSE.
+
+        Args:
+            executor: OpenAI executor instance
+            request: Request to execute
+
+        Yields:
+            SSE-formatted event strings
+        """
+        try:
+            # Stream events from OpenAI - they're already ResponseStreamEvent objects
+            async for event in executor.execute_streaming(request):
+                # Handle error dicts from executor
+                if isinstance(event, dict):
+                    payload = json.dumps(event)
+                    yield f"data: {payload}\n\n"
+                    continue
+
+                # OpenAI SDK events have model_dump_json() - use it for single-line JSON
+                if hasattr(event, "model_dump_json"):
+                    payload = event.model_dump_json()  # type: ignore[attr-defined]
+                    yield f"data: {payload}\n\n"
+                else:
+                    # Fallback (shouldn't happen with OpenAI SDK)
+                    logger.warning(f"Unexpected event type from OpenAI: {type(event)}")
+                    payload = json.dumps(str(event))
+                    yield f"data: {payload}\n\n"
+
+            # OpenAI already sends response.completed event - no aggregation needed!
+            # Just send [DONE] marker
+            yield "data: [DONE]\n\n"
+
+        except Exception as e:
+            logger.error(f"Error in OpenAI streaming execution: {e}", exc_info=True)
+            # Emit proper response.failed event
+            import os
+
+            error_event = {
+                "type": "response.failed",
+                "response": {
+                    "id": f"resp_{os.urandom(16).hex()}",
+                    "status": "failed",
+                    "error": {
+                        "message": str(e),
+                        "type": "internal_error",
+                        "code": "streaming_error",
+                    },
+                },
+            }
             yield f"data: {json.dumps(error_event)}\n\n"
 
     def _mount_ui(self, app: FastAPI) -> None:

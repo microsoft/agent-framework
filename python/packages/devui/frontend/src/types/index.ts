@@ -71,6 +71,7 @@ export interface WorkflowInfo extends Omit<AgentInfo, "tools"> {
   input_schema: JSONSchema; // JSON Schema for workflow input
   input_type_name: string; // Human-readable input type name
   start_executor_id: string; // Entry point executor ID
+  supports_checkpointing?: boolean; // Whether workflow supports checkpoints
 }
 
 // OpenAI Conversations API (standard)
@@ -89,6 +90,22 @@ export interface RunAgentRequest {
 export interface RunWorkflowRequest {
   input_data: Record<string, unknown>;
   conversation_id?: string;
+  checkpoint_id?: string;
+}
+
+// OpenAI Proxy Mode Configuration
+export interface OAIProxyMode {
+  enabled: boolean;
+  model: string; // Model ID like "gpt-4o", "gpt-4o-mini", or custom
+
+  // Optional OpenAI Responses API parameters
+  temperature?: number;
+  max_output_tokens?: number;
+  top_p?: number;
+  instructions?: string;
+
+  // Reasoning parameters (for o-series models)
+  reasoning_effort?: "minimal" | "low" | "medium" | "high";
 }
 
 // Legacy types - DEPRECATED - use new structured events from openai.ts instead
@@ -131,6 +148,16 @@ export interface HealthResponse {
   status: "healthy";
   agents_dir?: string;
   version: string;
+}
+
+export interface MetaResponse {
+  ui_mode: "developer" | "user";
+  version: string;
+  framework: string;
+  capabilities: {
+    tracing: boolean;
+    openai_proxy: boolean;
+  };
 }
 
 // Chat message types matching Agent Framework

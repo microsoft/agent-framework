@@ -23,6 +23,10 @@ from agent_framework import (
     Case,
     Default,
     Executor,
+    InMemoryCheckpointStorage,
+    RequestInfoExecutor,
+    RequestInfoMessage,
+    RequestResponse,
     WorkflowBuilder,
     WorkflowContext,
     handler,
@@ -65,6 +69,16 @@ class SpamDetectorResponse:
         """Initialize spam_reasons list if None."""
         if self.spam_reasons is None:
             self.spam_reasons = []
+
+
+@dataclass
+class SpamApprovalRequest(RequestInfoMessage):
+    """Human-in-the-loop approval request for spam classification."""
+
+    email_message: str = ""
+    detected_as_spam: bool = False
+    confidence: float = 0.0
+    reasons: str = ""
 
 
 @dataclass
@@ -153,14 +167,15 @@ class ContentAnalyzer(Executor):
 class SpamDetector(Executor):
     """Step 3: An executor that determines if a message is spam based on analysis."""
 
-    def __init__(self, spam_keywords: list[str], id: str):
+    def __init__(self, spam_keywords: list[str], human_reviewer_id: str, id: str):
         """Initialize the executor with spam keywords."""
         super().__init__(id=id)
         self._spam_keywords = spam_keywords
+        self._human_reviewer_id = human_reviewer_id
 
     @handler
-    async def handle_analysis(self, analysis: ContentAnalysis, ctx: WorkflowContext[SpamDetectorResponse]) -> None:
-        """Determine if the message is spam based on content analysis."""
+    async def handle_analysis(self, analysis: ContentAnalysis, ctx: WorkflowContext[SpamApprovalRequest]) -> None:
+        """Determine if the message is spam and request human approval."""
         await asyncio.sleep(1.8)  # Simulate detection time
 
         # Check for spam keywords
@@ -189,11 +204,78 @@ class SpamDetector(Executor):
 
         is_spam = spam_score >= 0.5
 
-        result = SpamDetectorResponse(
-            analysis=analysis, is_spam=is_spam, confidence_score=spam_score, spam_reasons=spam_reasons
+        # Store detection result in executor state for later use
+        # Store minimal data needed (not complex objects that don't serialize well)
+        await ctx.set_executor_state({
+            "original_message": analysis.email_content.original_message,
+            "cleaned_message": analysis.email_content.cleaned_message,
+            "word_count": analysis.email_content.word_count,
+            "is_spam": is_spam,
+            "confidence_score": spam_score,
+            "spam_reasons": spam_reasons
+        })
+
+        # Request human approval before proceeding
+        approval_request = SpamApprovalRequest(
+            email_message=email_text[:200],  # First 200 chars
+            detected_as_spam=is_spam,
+            confidence=spam_score,
+            reasons=", ".join(spam_reasons) if spam_reasons else "no specific reasons"
         )
 
+        await ctx.send_message(approval_request, target_id=self._human_reviewer_id)
+
+    @handler
+    async def handle_human_response(
+        self,
+        response: RequestResponse[SpamApprovalRequest, str],
+        ctx: WorkflowContext[SpamDetectorResponse]
+    ) -> None:
+        """Process human approval response and continue workflow."""
+        print(f"[SpamDetector] handle_human_response called with response: {response.data}")
+
+        # Get stored detection result
+        state = await ctx.get_executor_state() or {}
+        print(f"[SpamDetector] Retrieved state: {state}")
+        is_spam = state.get("is_spam", False)
+        confidence_score = state.get("confidence_score", 0.0)
+        spam_reasons = state.get("spam_reasons", [])
+
+        # Parse human decision
+        human_decision = (response.data or "").strip().lower()
+
+        # Override spam detection if human disagrees
+        if human_decision in ["approve", "not spam", "legitimate", "no"]:
+            is_spam = False
+        elif human_decision in ["reject", "spam", "yes"]:
+            is_spam = True
+
+        # Reconstruct EmailContent and ContentAnalysis from stored primitives
+        email_content = EmailContent(
+            original_message=state.get("original_message", ""),
+            cleaned_message=state.get("cleaned_message", ""),
+            word_count=state.get("word_count", 0),
+            has_suspicious_patterns=False  # Not critical for final output
+        )
+
+        analysis = ContentAnalysis(
+            email_content=email_content,
+            sentiment_score=0.5,  # Not critical for final output
+            contains_links=False,
+            has_attachments=False,
+            risk_indicators=[]
+        )
+
+        result = SpamDetectorResponse(
+            analysis=analysis,
+            is_spam=is_spam,
+            confidence_score=confidence_score,
+            spam_reasons=spam_reasons
+        )
+
+        print(f"[SpamDetector] Sending SpamDetectorResponse: is_spam={is_spam}, confidence={confidence_score}")
         await ctx.send_message(result)
+        print(f"[SpamDetector] Message sent successfully")
 
 
 class SpamHandler(Executor):
@@ -281,35 +363,45 @@ class FinalProcessor(Executor):
         await ctx.yield_output(completion_message)
 
 
+# Create checkpoint storage for HIL support
+checkpoint_storage = InMemoryCheckpointStorage()
+
 # Create the workflow instance that DevUI can discover
 spam_keywords = ["spam", "advertisement", "offer", "click here", "winner", "congratulations", "urgent"]
 
 # Create all the executors for the 5-step workflow
 email_preprocessor = EmailPreprocessor(id="email_preprocessor")
 content_analyzer = ContentAnalyzer(id="content_analyzer")
-spam_detector = SpamDetector(spam_keywords, id="spam_detector")
+human_reviewer = RequestInfoExecutor(id="human_reviewer")
+spam_detector = SpamDetector(spam_keywords, human_reviewer_id=human_reviewer.id, id="spam_detector")
 spam_handler = SpamHandler(id="spam_handler")
 message_responder = MessageResponder(id="message_responder")
 final_processor = FinalProcessor(id="final_processor")
 
-# Build the comprehensive 5-step workflow with branching logic
+# Build the comprehensive 5-step workflow with branching logic and HIL support
 workflow = (
     WorkflowBuilder(
         name="Email Spam Detector",
-        description="5-step email classification workflow with spam/legitimate routing",
+        description="5-step email classification workflow with human-in-the-loop spam approval",
     )
     .set_start_executor(email_preprocessor)
     .add_edge(email_preprocessor, content_analyzer)
     .add_edge(content_analyzer, spam_detector)
+    # HIL: spam_detector -> human_reviewer -> spam_detector
+    .add_edge(spam_detector, human_reviewer)
+    .add_edge(human_reviewer, spam_detector)
+    # Continue with branching logic after human approval
+    # Only route SpamDetectorResponse messages (not SpamApprovalRequest)
     .add_switch_case_edge_group(
         spam_detector,
         [
-            Case(condition=lambda x: x.is_spam, target=spam_handler),
-            Default(target=message_responder),
+            Case(condition=lambda x: isinstance(x, SpamDetectorResponse) and x.is_spam, target=spam_handler),
+            Default(target=message_responder),  # Default handles non-spam and non-SpamDetectorResponse messages
         ],
     )
     .add_edge(spam_handler, final_processor)
     .add_edge(message_responder, final_processor)
+    .with_checkpointing(checkpoint_storage=checkpoint_storage)
     .build()
 )
 

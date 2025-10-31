@@ -352,9 +352,9 @@ export function processWorkflowEvents(
     else if (event.type === "response.created" || event.type === "response.in_progress") {
       hasWorkflowStarted = true;
     }
-    // Legacy support for older backends
+    // Handle workflow event format
     else if (
-      event.type === "response.workflow_event.complete" &&
+      event.type === "response.workflow_event.completed" &&
       "data" in event &&
       event.data
     ) {
@@ -466,9 +466,9 @@ export function getCurrentlyExecutingExecutors(
         };
       }
     }
-    // Legacy support for older backends
+    // Handle workflow event format
     else if (
-      event.type === "response.workflow_event.complete" &&
+      event.type === "response.workflow_event.completed" &&
       "data" in event &&
       event.data
     ) {
@@ -515,7 +515,7 @@ export function updateEdgesWithSequenceAnalysis(
 
   events.forEach((event) => {
     if (
-      event.type === "response.workflow_event.complete" &&
+      event.type === "response.workflow_event.completed" &&
       "data" in event &&
       event.data
     ) {

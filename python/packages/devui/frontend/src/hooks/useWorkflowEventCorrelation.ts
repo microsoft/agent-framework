@@ -48,7 +48,7 @@ export function useWorkflowEventCorrelation(
 
     // Process workflow events
     events.forEach((event) => {
-      if (event.type === "response.workflow_event.complete" && "data" in event && event.data) {
+      if (event.type === "response.workflow_event.completed" && "data" in event && event.data) {
         const data = event.data as any;
         const executorId = data.executor_id;
         
@@ -105,7 +105,7 @@ export function useWorkflowEventCorrelation(
   const getExecutorEvents = useCallback(
     (executorId: string): ExtendedResponseStreamEvent[] => {
       return events.filter((event) => {
-        if (event.type === "response.workflow_event.complete" && "data" in event && event.data) {
+        if (event.type === "response.workflow_event.completed" && "data" in event && event.data) {
           const data = event.data as any;
           return data.executor_id === executorId;
         }

@@ -49,6 +49,7 @@ class EntityInfo(BaseModel):
     input_schema: dict[str, Any] | None = None
     input_type_name: str | None = None
     start_executor_id: str | None = None
+    supports_checkpointing: bool | None = None
 
 
 class DiscoveryResponse(BaseModel):

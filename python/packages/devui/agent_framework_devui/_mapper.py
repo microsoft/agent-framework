@@ -34,6 +34,9 @@ from .models import (
     ResponseFunctionCallArgumentsDeltaEvent,
     ResponseFunctionResultComplete,
     ResponseFunctionToolCall,
+    ResponseOutputData,
+    ResponseOutputFile,
+    ResponseOutputImage,
     ResponseOutputItemAddedEvent,
     ResponseOutputMessage,
     ResponseOutputText,
@@ -160,7 +163,7 @@ class MessageMapper:
         if isinstance(raw_event, ResponseTraceEvent):
             return [
                 ResponseTraceEventComplete(
-                    type="response.trace.complete",
+                    type="response.trace.completed",
                     data=raw_event.data,
                     item_id=context["item_id"],
                     sequence_number=self._next_sequence(context),
@@ -337,6 +340,50 @@ class MessageMapper:
         """
         context["sequence_counter"] += 1
         return int(context["sequence_counter"])
+
+    def _serialize_request_data(self, request_data: Any) -> dict[str, Any]:
+        """Serialize RequestInfoMessage to dict for JSON transmission.
+
+        Args:
+            request_data: The RequestInfoMessage instance
+
+        Returns:
+            Serialized dict representation
+        """
+        from dataclasses import asdict, is_dataclass
+
+        if request_data is None:
+            return {}
+
+        # Handle dict first (most common)
+        if isinstance(request_data, dict):
+            return request_data
+
+        # Handle dataclasses - only instances, not types
+        # is_dataclass() returns True for both types and instances
+        # We check it's not a type to ensure it's an instance
+        if is_dataclass(request_data) and not isinstance(request_data, type):
+            try:
+                return asdict(request_data)  # type: ignore[arg-type]
+            except Exception as e:
+                logger.debug(f"Failed to serialize dataclass with asdict(): {e}")
+
+        # Handle Pydantic models (have model_dump method)
+        if hasattr(request_data, "model_dump") and callable(getattr(request_data, "model_dump", None)):
+            try:
+                return request_data.model_dump()  # type: ignore[attr-defined, no-any-return]
+            except Exception as e:
+                logger.debug(f"Failed to serialize Pydantic model: {e}")
+
+        # Handle SerializationMixin (have to_dict method)
+        if hasattr(request_data, "to_dict") and callable(getattr(request_data, "to_dict", None)):
+            try:
+                return request_data.to_dict()  # type: ignore[attr-defined, no-any-return]
+            except Exception as e:
+                logger.debug(f"Failed to serialize with to_dict(): {e}")
+
+        # Fallback: string representation
+        return {"raw": str(request_data)}
 
     async def _convert_agent_update(self, update: Any, context: dict[str, Any]) -> Sequence[Any]:
         """Convert agent text updates to proper content part events.
@@ -778,8 +825,62 @@ class MessageMapper:
                     )
                 ]
 
-            # Handle informational workflow events (status, warnings, errors)
-            if event_class in ["WorkflowStatusEvent", "WorkflowWarningEvent", "WorkflowErrorEvent", "RequestInfoEvent"]:
+            # Handle RequestInfoEvent specially - emit as HIL event with schema
+            if event_class == "RequestInfoEvent":
+                from .models._openai_custom import ResponseRequestInfoEvent
+
+                request_id = getattr(event, "request_id", "")
+                source_executor_id = getattr(event, "source_executor_id", "")
+                request_type_class = getattr(event, "request_type", None)
+                request_data = getattr(event, "data", None)
+
+                # Serialize request data
+                serialized_data = self._serialize_request_data(request_data)
+
+                # Get request type name for debugging
+                request_type_name = "Unknown"
+                if request_type_class:
+                    request_type_name = f"{request_type_class.__module__}:{request_type_class.__name__}"
+
+                # Get response schema that was attached by executor
+                # This tells the UI what format to collect from the user
+                response_schema = getattr(event, "_response_schema", None)
+                if not response_schema:
+                    # Fallback to string if somehow not set (shouldn't happen with current executor enrichment)
+                    logger.debug(f"Response schema not found for {request_type_name}, using default")
+                    response_schema = {"type": "string"}
+
+                # Wrap primitive schemas in object for form rendering
+                # The UI's SchemaFormRenderer expects an object with properties
+                if response_schema.get("type") in ["string", "integer", "number", "boolean"]:
+                    # Wrap primitive type in object with "response" field
+                    wrapped_schema = {
+                        "type": "object",
+                        "properties": {"response": response_schema},
+                        "required": ["response"],
+                    }
+                else:
+                    wrapped_schema = response_schema
+
+                # Create HIL request event with response schema
+                hil_event = ResponseRequestInfoEvent(
+                    type="response.request_info.requested",
+                    request_id=request_id,
+                    source_executor_id=source_executor_id,
+                    request_type=request_type_name,
+                    request_data=serialized_data,
+                    request_schema=wrapped_schema,  # Send wrapped schema for form rendering
+                    response_schema=response_schema,  # Keep original for reference
+                    item_id=context["item_id"],
+                    output_index=context.get("output_index", 0),
+                    sequence_number=self._next_sequence(context),
+                    timestamp=datetime.now().isoformat(),
+                )
+
+                return [hil_event]
+
+            # Handle other informational workflow events (status, warnings, errors)
+            if event_class in ["WorkflowStatusEvent", "WorkflowWarningEvent", "WorkflowErrorEvent"]:
                 # These are informational events that don't map to OpenAI lifecycle events
                 # Convert them to trace events for debugging visibility
                 event_data: dict[str, Any] = {}
@@ -792,13 +893,10 @@ class MessageMapper:
                 elif event_class == "WorkflowErrorEvent":
                     event_data["message"] = str(getattr(event, "message", ""))
                     event_data["error"] = str(getattr(event, "error", ""))
-                elif event_class == "RequestInfoEvent":
-                    request_info = getattr(event, "data", {})
-                    event_data["request_info"] = request_info if isinstance(request_info, dict) else str(request_info)
 
                 # Create a trace event for debugging
                 trace_event = ResponseTraceEventComplete(
-                    type="response.trace.complete",
+                    type="response.trace.completed",
                     data={
                         "trace_type": "workflow_info",
                         "event_type": event_class,
@@ -827,7 +925,7 @@ class MessageMapper:
 
             # Create structured workflow event (keeping for backward compatibility)
             workflow_event = ResponseWorkflowEventComplete(
-                type="response.workflow_event.complete",
+                type="response.workflow_event.completed",
                 data={
                     "event_type": event.__class__.__name__,
                     "data": serialized_event_data,
@@ -1053,30 +1151,227 @@ class MessageMapper:
         # NO EVENT RETURNED - usage goes in final Response only
         return
 
-    async def _map_data_content(self, content: Any, context: dict[str, Any]) -> ResponseTraceEventComplete:
-        """Map DataContent to structured trace event."""
-        return ResponseTraceEventComplete(
-            type="response.trace.complete",
-            data={
-                "content_type": "data",
-                "data": getattr(content, "data", None),
-                "mime_type": getattr(content, "mime_type", "application/octet-stream"),
-                "size_bytes": len(str(getattr(content, "data", ""))) if getattr(content, "data", None) else 0,
-                "timestamp": datetime.now().isoformat(),
-            },
-            item_id=context["item_id"],
+    async def _map_data_content(
+        self, content: Any, context: dict[str, Any]
+    ) -> ResponseOutputItemAddedEvent | ResponseTraceEventComplete:
+        """Map DataContent to proper output item (image/file/data) or fallback to trace.
+
+        Maps Agent Framework DataContent to appropriate output types:
+        - Images (image/*) → ResponseOutputImage
+        - Common files (pdf, audio, video) → ResponseOutputFile
+        - Generic data → ResponseOutputData
+        - Unknown/debugging content → ResponseTraceEventComplete (fallback)
+        """
+        mime_type = getattr(content, "mime_type", "application/octet-stream")
+        item_id = f"item_{uuid.uuid4().hex[:16]}"
+
+        # Extract data/uri
+        data_value = getattr(content, "data", None)
+        uri_value = getattr(content, "uri", None)
+
+        # Handle images
+        if mime_type.startswith("image/"):
+            # Prefer URI, but create data URI from data if needed
+            if uri_value:
+                image_url = uri_value
+            elif data_value:
+                # Convert bytes to base64 data URI
+                import base64
+
+                if isinstance(data_value, bytes):
+                    b64_data = base64.b64encode(data_value).decode("utf-8")
+                else:
+                    b64_data = str(data_value)
+                image_url = f"data:{mime_type};base64,{b64_data}"
+            else:
+                # No data available, fallback to trace
+                logger.warning(f"DataContent with {mime_type} has no data or uri, falling back to trace")
+                return ResponseTraceEventComplete(
+                    type="response.trace.completed",
+                    data={"content_type": "data", "mime_type": mime_type, "error": "No data or uri"},
+                    item_id=context["item_id"],
+                    output_index=context["output_index"],
+                    sequence_number=self._next_sequence(context),
+                )
+
+            return ResponseOutputItemAddedEvent(
+                type="response.output_item.added",
+                item=ResponseOutputImage(  # type: ignore[arg-type]
+                    id=item_id,
+                    type="output_image",
+                    image_url=image_url,
+                    mime_type=mime_type,
+                    alt_text=None,
+                ),
+                output_index=context["output_index"],
+                sequence_number=self._next_sequence(context),
+            )
+
+        # Handle common file types
+        if mime_type in [
+            "application/pdf",
+            "audio/mp3",
+            "audio/wav",
+            "audio/m4a",
+            "audio/ogg",
+            "audio/flac",
+            "audio/aac",
+            "audio/mpeg",
+            "video/mp4",
+            "video/webm",
+        ]:
+            # Determine filename from mime type
+            ext = mime_type.split("/")[-1]
+            if ext == "mpeg":
+                ext = "mp3"  # audio/mpeg → .mp3
+            filename = f"output.{ext}"
+
+            # Prefer URI
+            if uri_value:
+                file_url = uri_value
+                file_data = None
+            elif data_value:
+                # Convert bytes to base64
+                import base64
+
+                if isinstance(data_value, bytes):
+                    b64_data = base64.b64encode(data_value).decode("utf-8")
+                else:
+                    b64_data = str(data_value)
+                file_url = f"data:{mime_type};base64,{b64_data}"
+                file_data = b64_data
+            else:
+                # No data available, fallback to trace
+                logger.warning(f"DataContent with {mime_type} has no data or uri, falling back to trace")
+                return ResponseTraceEventComplete(
+                    type="response.trace.completed",
+                    data={"content_type": "data", "mime_type": mime_type, "error": "No data or uri"},
+                    item_id=context["item_id"],
+                    output_index=context["output_index"],
+                    sequence_number=self._next_sequence(context),
+                )
+
+            return ResponseOutputItemAddedEvent(
+                type="response.output_item.added",
+                item=ResponseOutputFile(  # type: ignore[arg-type]
+                    id=item_id,
+                    type="output_file",
+                    filename=filename,
+                    file_url=file_url,
+                    file_data=file_data,
+                    mime_type=mime_type,
+                ),
+                output_index=context["output_index"],
+                sequence_number=self._next_sequence(context),
+            )
+
+        # Handle generic data (structured data, JSON, etc.)
+        data_str = ""
+        if uri_value:
+            data_str = uri_value
+        elif data_value:
+            if isinstance(data_value, bytes):
+                try:
+                    data_str = data_value.decode("utf-8")
+                except UnicodeDecodeError:
+                    # Binary data, encode as base64 for display
+                    import base64
+
+                    data_str = base64.b64encode(data_value).decode("utf-8")
+            else:
+                data_str = str(data_value)
+
+        return ResponseOutputItemAddedEvent(
+            type="response.output_item.added",
+            item=ResponseOutputData(  # type: ignore[arg-type]
+                id=item_id,
+                type="output_data",
+                data=data_str,
+                mime_type=mime_type,
+                description=None,
+            ),
             output_index=context["output_index"],
             sequence_number=self._next_sequence(context),
         )
 
-    async def _map_uri_content(self, content: Any, context: dict[str, Any]) -> ResponseTraceEventComplete:
-        """Map UriContent to structured trace event."""
+    async def _map_uri_content(
+        self, content: Any, context: dict[str, Any]
+    ) -> ResponseOutputItemAddedEvent | ResponseTraceEventComplete:
+        """Map UriContent to proper output item (image/file) based on MIME type.
+
+        UriContent has a URI and MIME type, so we can create appropriate output items:
+        - Images → ResponseOutputImage
+        - Common files → ResponseOutputFile
+        - Other URIs → ResponseTraceEventComplete (fallback for debugging)
+        """
+        mime_type = getattr(content, "mime_type", "text/plain")
+        uri = getattr(content, "uri", "")
+        item_id = f"item_{uuid.uuid4().hex[:16]}"
+
+        if not uri:
+            # No URI available, fallback to trace
+            logger.warning("UriContent has no uri, falling back to trace")
+            return ResponseTraceEventComplete(
+                type="response.trace.completed",
+                data={"content_type": "uri", "mime_type": mime_type, "error": "No uri"},
+                item_id=context["item_id"],
+                output_index=context["output_index"],
+                sequence_number=self._next_sequence(context),
+            )
+
+        # Handle images
+        if mime_type.startswith("image/"):
+            return ResponseOutputItemAddedEvent(
+                type="response.output_item.added",
+                item=ResponseOutputImage(  # type: ignore[arg-type]
+                    id=item_id,
+                    type="output_image",
+                    image_url=uri,
+                    mime_type=mime_type,
+                    alt_text=None,
+                ),
+                output_index=context["output_index"],
+                sequence_number=self._next_sequence(context),
+            )
+
+        # Handle common file types
+        if mime_type in [
+            "application/pdf",
+            "audio/mp3",
+            "audio/wav",
+            "audio/m4a",
+            "audio/ogg",
+            "audio/flac",
+            "audio/aac",
+            "audio/mpeg",
+            "video/mp4",
+            "video/webm",
+        ]:
+            # Extract filename from URI or use generic name
+            filename = uri.split("/")[-1] if "/" in uri else f"output.{mime_type.split('/')[-1]}"
+
+            return ResponseOutputItemAddedEvent(
+                type="response.output_item.added",
+                item=ResponseOutputFile(  # type: ignore[arg-type]
+                    id=item_id,
+                    type="output_file",
+                    filename=filename,
+                    file_url=uri,
+                    file_data=None,
+                    mime_type=mime_type,
+                ),
+                output_index=context["output_index"],
+                sequence_number=self._next_sequence(context),
+            )
+
+        # For other URI types (text/plain, application/json, etc.), use trace for now
+        logger.debug(f"UriContent with unsupported MIME type {mime_type}, using trace event")
         return ResponseTraceEventComplete(
-            type="response.trace.complete",
+            type="response.trace.completed",
             data={
                 "content_type": "uri",
-                "uri": getattr(content, "uri", ""),
-                "mime_type": getattr(content, "mime_type", "text/plain"),
+                "uri": uri,
+                "mime_type": mime_type,
                 "timestamp": datetime.now().isoformat(),
             },
             item_id=context["item_id"],
@@ -1085,9 +1380,15 @@ class MessageMapper:
         )
 
     async def _map_hosted_file_content(self, content: Any, context: dict[str, Any]) -> ResponseTraceEventComplete:
-        """Map HostedFileContent to structured trace event."""
+        """Map HostedFileContent to trace event.
+
+        HostedFileContent references external file IDs (like OpenAI file IDs).
+        These remain as traces since they're metadata about hosted resources,
+        not direct content to display. To display them, agents should return
+        DataContent or UriContent with the actual file data/URL.
+        """
         return ResponseTraceEventComplete(
-            type="response.trace.complete",
+            type="response.trace.completed",
             data={
                 "content_type": "hosted_file",
                 "file_id": getattr(content, "file_id", "unknown"),
@@ -1101,9 +1402,14 @@ class MessageMapper:
     async def _map_hosted_vector_store_content(
         self, content: Any, context: dict[str, Any]
     ) -> ResponseTraceEventComplete:
-        """Map HostedVectorStoreContent to structured trace event."""
+        """Map HostedVectorStoreContent to trace event.
+
+        HostedVectorStoreContent references external vector store IDs.
+        These remain as traces since they're metadata about hosted resources,
+        not direct content to display.
+        """
         return ResponseTraceEventComplete(
-            type="response.trace.complete",
+            type="response.trace.completed",
             data={
                 "content_type": "hosted_vector_store",
                 "vector_store_id": getattr(content, "vector_store_id", "unknown"),

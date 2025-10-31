@@ -13,7 +13,9 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ExternalLink, RotateCcw } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { ExternalLink, RotateCcw, Info, ChevronRight } from "lucide-react";
+import { useDevUIStore } from "@/stores";
 
 interface SettingsModalProps {
   open: boolean;
@@ -21,13 +23,30 @@ interface SettingsModalProps {
   onBackendUrlChange?: (url: string) => void;
 }
 
-type Tab = "about" | "settings";
+type Tab = "backend" | "proxy" | "about";
 
-export function SettingsModal({ open, onOpenChange, onBackendUrlChange }: SettingsModalProps) {
-  const [activeTab, setActiveTab] = useState<Tab>("settings");
+// Preset OpenAI models for quick selection
+const PRESET_MODELS = [
+  "gpt-4.1",
+  "gpt-4.1-mini",
+  "o1",
+  "o1-mini",
+  "o3-mini",
+] as const;
+
+export function SettingsModal({
+  open,
+  onOpenChange,
+  onBackendUrlChange,
+}: SettingsModalProps) {
+  const [activeTab, setActiveTab] = useState<Tab>("backend");
+
+  // OpenAI proxy mode from store
+  const { oaiMode, setOAIMode } = useDevUIStore();
 
   // Get current backend URL from localStorage or default
-  const defaultUrl = import.meta.env.VITE_API_BASE_URL || "http://localhost:8080";
+  const defaultUrl =
+    import.meta.env.VITE_API_BASE_URL || "http://localhost:8080";
   const [backendUrl, setBackendUrl] = useState(() => {
     return localStorage.getItem("devui_backend_url") || defaultUrl;
   });
@@ -64,25 +83,38 @@ export function SettingsModal({ open, onOpenChange, onBackendUrlChange }: Settin
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[600px] max-w-[90vw]">
-        <DialogHeader className="p-6 pb-2">
+      <DialogContent className="w-[600px] max-w-[90vw] flex flex-col max-h-[85vh]">
+        <DialogHeader className="p-6 pb-2 flex-shrink-0">
           <DialogTitle>Settings</DialogTitle>
         </DialogHeader>
 
         <DialogClose onClose={() => onOpenChange(false)} />
 
         {/* Tabs */}
-        <div className="flex border-b px-6">
+        <div className="flex border-b px-6 flex-shrink-0">
           <button
-            onClick={() => setActiveTab("settings")}
+            onClick={() => setActiveTab("backend")}
             className={`px-4 py-2 text-sm font-medium transition-colors relative ${
-              activeTab === "settings"
+              activeTab === "backend"
                 ? "text-foreground"
                 : "text-muted-foreground hover:text-foreground"
             }`}
           >
-            Settings
-            {activeTab === "settings" && (
+            Backend
+            {activeTab === "backend" && (
+              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+            )}
+          </button>
+          <button
+            onClick={() => setActiveTab("proxy")}
+            className={`px-4 py-2 text-sm font-medium transition-colors relative ${
+              activeTab === "proxy"
+                ? "text-foreground"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            OpenAI Proxy
+            {activeTab === "proxy" && (
               <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
             )}
           </button>
@@ -101,9 +133,9 @@ export function SettingsModal({ open, onOpenChange, onBackendUrlChange }: Settin
           </button>
         </div>
 
-        {/* Tab Content */}
-        <div className="px-6 pb-6 min-h-[240px]">
-          {activeTab === "settings" && (
+        {/* Tab Content - Scrollable with min-height */}
+        <div className="px-6 pb-6 overflow-y-auto flex-1 min-h-[400px]">
+          {activeTab === "backend" && (
             <div className="space-y-6 pt-4">
               {/* Backend URL Setting */}
               <div className="space-y-3">
@@ -142,11 +174,7 @@ export function SettingsModal({ open, onOpenChange, onBackendUrlChange }: Settin
                 <div className="flex gap-2 pt-2 min-h-[36px]">
                   {isModified && (
                     <>
-                      <Button
-                        onClick={handleSave}
-                        size="sm"
-                        className="flex-1"
-                      >
+                      <Button onClick={handleSave} size="sm" className="flex-1">
                         Apply & Reload
                       </Button>
                       <Button
@@ -161,6 +189,252 @@ export function SettingsModal({ open, onOpenChange, onBackendUrlChange }: Settin
                   )}
                 </div>
               </div>
+            </div>
+          )}
+
+          {activeTab === "proxy" && (
+            <div className="space-y-6 pt-4">
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label className="text-base font-medium">
+                      OpenAI Proxy Mode
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      Route requests through DevUI backend to OpenAI API
+                    </p>
+                  </div>
+                  <Switch
+                    checked={oaiMode.enabled}
+                    onCheckedChange={(checked: boolean) =>
+                      setOAIMode({ ...oaiMode, enabled: checked })
+                    }
+                  />
+                </div>
+
+                {/* Info box when disabled - prominent */}
+                {!oaiMode.enabled && (
+                  <div className="bordder border-muted bg-muted/30 rounded-lg p-4 space-y-3">
+                    <div className="flex items-start gap-2">
+                      <Info className="h-4 w-4 flex-shrink-0 mt-0.5 text-blue-600 dark:text-blue-400" />
+                      <div className="space-y-2">
+                        <p className="text-sm font-medium">
+                          About OpenAI Proxy Mode
+                        </p>
+                        <p className="text-xs text-muted-foreground leading-relaxed">
+                          When enabled, your chat requests are sent to your
+                          DevUI backend{" "}
+                          <span className="font-mono font-semibold">
+                            ({backendUrl})
+                          </span>
+                          , which then forwards them to OpenAI's API. This keeps
+                          your{" "}
+                          <span className="font-mono font-semibold">
+                            OPENAI_API_KEY
+                          </span>{" "}
+                          secure on the server instead of exposing it in the
+                          browser.
+                        </p>
+
+                        <div className="space-y-1.5 pt-1">
+                          <p className="text-xs font-medium">Requirements:</p>
+                          <ul className="text-xs text-muted-foreground space-y-0.5 list-disc list-inside">
+                            <li>
+                              Backend must have{" "}
+                              <span className="font-mono">OPENAI_API_KEY</span>{" "}
+                              configured
+                            </li>
+                            <li>
+                              Backend must support OpenAI Responses API proxying
+                              (DevUI does)
+                            </li>
+                          </ul>
+                        </div>
+
+                        <div className="space-y-1.5 pt-1">
+                          <p className="text-xs font-medium">Why use this?</p>
+                          <p className="text-xs text-muted-foreground">
+                            Quickly test and compare OpenAI models directly
+                            through the DevUI interface without creating custom
+                            agents or exposing API keys in the browser.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {oaiMode.enabled && (
+                  <div className="space-y-4 pl-4 border-l-2 border-muted">
+                    {/* Model ID Input - Primary control */}
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium">Model</Label>
+                      <Input
+                        type="text"
+                        value={oaiMode.model}
+                        onChange={(e) =>
+                          setOAIMode({ ...oaiMode, model: e.target.value })
+                        }
+                        placeholder="gpt-4.1-mini"
+                        className="font-mono text-sm"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Enter any OpenAI model ID (e.g., gpt-4.1, o1, o3-mini)
+                      </p>
+                    </div>
+
+                    {/* Quick Preset Buttons */}
+                    <div className="space-y-2">
+                      <Label className="text-xs text-muted-foreground">
+                        Common presets
+                      </Label>
+                      <div className="flex flex-wrap gap-2">
+                        {PRESET_MODELS.map((model) => (
+                          <Button
+                            key={model}
+                            variant={
+                              oaiMode.model === model ? "default" : "outline"
+                            }
+                            size="sm"
+                            onClick={() => setOAIMode({ ...oaiMode, model })}
+                            className="text-xs h-7"
+                          >
+                            {model}
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Advanced Parameters */}
+                    <details className="group">
+                      <summary className="cursor-pointer text-sm font-medium text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
+                        <ChevronRight className="h-3 w-3 transition-transform group-open:rotate-90" />
+                        Advanced Parameters (optional)
+                      </summary>
+                      <div className="space-y-3 mt-3 pl-4">
+                        {/* Temperature */}
+                        <div className="space-y-1">
+                          <Label className="text-xs">Temperature</Label>
+                          <Input
+                            type="number"
+                            step="0.1"
+                            min="0"
+                            max="2"
+                            value={oaiMode.temperature ?? ""}
+                            onChange={(e) =>
+                              setOAIMode({
+                                ...oaiMode,
+                                temperature: e.target.value
+                                  ? parseFloat(e.target.value)
+                                  : undefined,
+                              })
+                            }
+                            placeholder="1.0 (default)"
+                            className="text-sm"
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            Controls randomness (0-2)
+                          </p>
+                        </div>
+
+                        {/* Max Output Tokens */}
+                        <div className="space-y-1">
+                          <Label className="text-xs">Max Output Tokens</Label>
+                          <Input
+                            type="number"
+                            min="1"
+                            value={oaiMode.max_output_tokens ?? ""}
+                            onChange={(e) =>
+                              setOAIMode({
+                                ...oaiMode,
+                                max_output_tokens: e.target.value
+                                  ? parseInt(e.target.value)
+                                  : undefined,
+                              })
+                            }
+                            placeholder="Auto"
+                            className="text-sm"
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            Maximum tokens in response
+                          </p>
+                        </div>
+
+                        {/* Top P */}
+                        <div className="space-y-1">
+                          <Label className="text-xs">Top P</Label>
+                          <Input
+                            type="number"
+                            step="0.1"
+                            min="0"
+                            max="1"
+                            value={oaiMode.top_p ?? ""}
+                            onChange={(e) =>
+                              setOAIMode({
+                                ...oaiMode,
+                                top_p: e.target.value
+                                  ? parseFloat(e.target.value)
+                                  : undefined,
+                              })
+                            }
+                            placeholder="1.0 (default)"
+                            className="text-sm"
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            Nucleus sampling (0-1)
+                          </p>
+                        </div>
+
+                        {/* Reasoning Effort */}
+                        <div className="space-y-1">
+                          <Label className="text-xs">Reasoning Effort (o-series models)</Label>
+                          <select
+                            value={oaiMode.reasoning_effort ?? ""}
+                            onChange={(e) =>
+                              setOAIMode({
+                                ...oaiMode,
+                                reasoning_effort: e.target.value
+                                  ? (e.target.value as "minimal" | "low" | "medium" | "high")
+                                  : undefined,
+                              })
+                            }
+                            className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                          >
+                            <option value="">Auto (default)</option>
+                            <option value="minimal">Minimal</option>
+                            <option value="low">Low</option>
+                            <option value="medium">Medium</option>
+                            <option value="high">High</option>
+                          </select>
+                          <p className="text-xs text-muted-foreground">
+                            Constrains reasoning effort (faster/cheaper vs thorough)
+                          </p>
+                        </div>
+                      </div>
+                    </details>
+                  </div>
+                )}
+              </div>
+
+              {/* Collapsed info at bottom when enabled */}
+              {oaiMode.enabled && (
+                <div className="flex items-start gap-2 text-xs text-muted-foreground bg-muted/50 p-3 rounded">
+                  <Info className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <p>
+                      Requests route through{" "}
+                      <span className="font-mono font-semibold">
+                        {backendUrl}
+                      </span>{" "}
+                      to OpenAI API. Server must have{" "}
+                      <span className="font-mono font-semibold">
+                        OPENAI_API_KEY
+                      </span>{" "}
+                      configured.
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

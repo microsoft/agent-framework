@@ -62,6 +62,27 @@ serve(entities=[agent])
 
 MCP tools use lazy initialization and connect automatically on first use. DevUI attempts to clean up connections on shutdown
 
+## Resource Cleanup
+
+Register cleanup hooks to properly close credentials and resources on shutdown:
+
+```python
+from azure.identity.aio import DefaultAzureCredential
+from agent_framework import ChatAgent
+from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework_devui import register_cleanup, serve
+
+credential = DefaultAzureCredential()
+client = AzureOpenAIChatClient()
+agent = ChatAgent(name="MyAgent", chat_client=client)
+
+# Register cleanup hook - credential will be closed on shutdown
+register_cleanup(agent, credential.close)
+serve(entities=[agent])
+```
+
+Works with multiple resources and file-based discovery. See tests for more examples.
+
 ## Directory Structure
 
 For your agents to be discovered by the DevUI, they must be organized in a directory structure like below. Each agent/workflow must have an `__init__.py` that exports the required variable (`agent` or `workflow`).
@@ -150,6 +171,22 @@ response2 = client.responses.create(
 
 **How it works:** DevUI automatically retrieves the conversation's message history from the stored thread and passes it to the agent. You don't need to manually manage message history - just provide the same `conversation` ID for follow-up requests.
 
+### OpenAI Proxy Mode
+
+DevUI provides an **OpenAI Proxy** feature for testing OpenAI models directly through the interface without creating custom agents. Enable via Settings → OpenAI Proxy tab.
+
+**How it works:** The UI sends requests to the DevUI backend (with `X-Proxy-Backend: openai` header), which then proxies them to OpenAI's Responses API (and Conversations API for multi-turn chats). This proxy approach keeps your `OPENAI_API_KEY` secure on the server—never exposed in the browser or client-side code.
+
+**Example:**
+
+```bash
+curl -X POST http://localhost:8080/v1/responses \
+  -H "X-Proxy-Backend: openai" \
+  -d '{"model": "gpt-4.1-mini", "input": "Hello"}'
+```
+
+**Note:** Requires `OPENAI_API_KEY` environment variable configured on the backend.
+
 ## CLI Options
 
 ```bash
@@ -187,6 +224,10 @@ Given that DevUI offers an OpenAI Responses API, it internally maps messages and
 | `response.function_result.complete`                          | `FunctionResultContent`           | DevUI    |
 | `response.function_approval.requested`                       | `FunctionApprovalRequestContent`  | DevUI    |
 | `response.function_approval.responded`                       | `FunctionApprovalResponseContent` | DevUI    |
+| `response.output_item.added` (ResponseOutputImage)           | `DataContent` (images)            | DevUI    |
+| `response.output_item.added` (ResponseOutputFile)            | `DataContent` (files)             | DevUI    |
+| `response.output_item.added` (ResponseOutputData)            | `DataContent` (other)             | DevUI    |
+| `response.output_item.added` (ResponseOutputImage/File)      | `UriContent` (images/files)       | DevUI    |
 | `error`                                                      | `ErrorContent`                    | OpenAI   |
 | Final `Response.usage` field (not streamed)                  | `UsageContent`                    | OpenAI   |
 |                                                              | **Workflow Events**               |          |
@@ -197,8 +238,8 @@ Given that DevUI offers an OpenAI Responses API, it internally maps messages and
 | `response.trace.complete`                                    | `WorkflowStatusEvent`             | DevUI    |
 | `response.trace.complete`                                    | `WorkflowWarningEvent`            | DevUI    |
 |                                                              | **Trace Content**                 |          |
-| `response.trace.complete`                                    | `DataContent`                     | DevUI    |
-| `response.trace.complete`                                    | `UriContent`                      | DevUI    |
+| `response.trace.complete`                                    | `DataContent` (no data/errors)    | DevUI    |
+| `response.trace.complete`                                    | `UriContent` (unsupported MIME)   | DevUI    |
 | `response.trace.complete`                                    | `HostedFileContent`               | DevUI    |
 | `response.trace.complete`                                    | `HostedVectorStoreContent`        | DevUI    |
 
@@ -213,15 +254,19 @@ DevUI follows the OpenAI Responses API specification for maximum compatibility:
 
 **OpenAI Standard Event Types Used:**
 
-- `ResponseOutputItemAddedEvent` - Output item notifications (function calls and results)
+- `ResponseOutputItemAddedEvent` - Output item notifications (function calls, images, files, data)
 - `ResponseOutputItemDoneEvent` - Output item completion notifications
 - `Response.usage` - Token usage (in final response, not streamed)
-- All standard text, reasoning, and function call events
 
 **Custom DevUI Extensions:**
 
+- `response.output_item.added` with custom item types:
+  - `ResponseOutputImage` - Agent-generated images (inline display)
+  - `ResponseOutputFile` - Agent-generated files (inline display)
+  - `ResponseOutputData` - Agent-generated structured data (inline display)
 - `response.function_approval.requested` - Function approval requests (for interactive approval workflows)
 - `response.function_approval.responded` - Function approval responses (user approval/rejection)
+- `response.function_result.complete` - Server-side function execution results
 - `response.workflow_event.complete` - Agent Framework workflow events
 - `response.trace.complete` - Execution traces and internal content (DataContent, UriContent, hosted files/stores)
 

@@ -35,14 +35,17 @@ class ConversationStore(ABC):
     """
 
     @abstractmethod
-    def create_conversation(self, metadata: dict[str, str] | None = None) -> Conversation:
+    def create_conversation(
+        self, metadata: dict[str, str] | None = None, conversation_id: str | None = None
+    ) -> Conversation:
         """Create a new conversation (wraps AgentThread creation).
 
         Args:
             metadata: Optional metadata dict (e.g., {"agent_id": "weather_agent"})
+            conversation_id: Optional conversation ID (if None, generates one)
 
         Returns:
-            Conversation object with generated ID
+            Conversation object with generated or provided ID
         """
         pass
 
@@ -184,9 +187,11 @@ class InMemoryConversationStore(ConversationStore):
         # Item index for O(1) lookup: {conversation_id: {item_id: ConversationItem}}
         self._item_index: dict[str, dict[str, ConversationItem]] = {}
 
-    def create_conversation(self, metadata: dict[str, str] | None = None) -> Conversation:
+    def create_conversation(
+        self, metadata: dict[str, str] | None = None, conversation_id: str | None = None
+    ) -> Conversation:
         """Create a new conversation with underlying AgentThread."""
-        conv_id = f"conv_{uuid.uuid4().hex}"
+        conv_id = conversation_id or f"conv_{uuid.uuid4().hex}"
         created_at = int(time.time())
 
         # Create AgentThread with default ChatMessageStore

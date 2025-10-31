@@ -55,6 +55,13 @@ Examples:
 
     parser.add_argument("--tracing", action="store_true", help="Enable OpenTelemetry tracing for Agent Framework")
 
+    parser.add_argument(
+        "--mode",
+        choices=["developer", "user"],
+        default="developer",
+        help="UI interface mode - 'developer' shows debug tools, 'user' shows simplified interface",
+    )
+
     parser.add_argument("--version", action="version", version=f"Agent Framework DevUI {get_version()}")
 
     return parser
@@ -78,11 +85,11 @@ def validate_directory(directory: str) -> str:
     abs_dir = os.path.abspath(directory)
 
     if not os.path.exists(abs_dir):
-        print(f"❌ Error: Directory '{directory}' does not exist", file=sys.stderr)  # noqa: T201
+        print(f"Error: Directory '{directory}' does not exist", file=sys.stderr)  # noqa: T201
         sys.exit(1)
 
     if not os.path.isdir(abs_dir):
-        print(f"❌ Error: '{directory}' is not a directory", file=sys.stderr)  # noqa: T201
+        print(f"Error: '{directory}' is not a directory", file=sys.stderr)  # noqa: T201
         sys.exit(1)
 
     return abs_dir
@@ -90,14 +97,14 @@ def validate_directory(directory: str) -> str:
 
 def print_startup_info(entities_dir: str, host: str, port: int, ui_enabled: bool, reload: bool) -> None:
     """Print startup information."""
-    print("🤖 Agent Framework DevUI")  # noqa: T201
+    print("Agent Framework DevUI")  # noqa: T201
     print("=" * 50)  # noqa: T201
-    print(f"📁 Entities directory: {entities_dir}")  # noqa: T201
-    print(f"🌐 Server URL: http://{host}:{port}")  # noqa: T201
-    print(f"🎨 UI enabled: {'Yes' if ui_enabled else 'No'}")  # noqa: T201
-    print(f"🔄 Auto-reload: {'Yes' if reload else 'No'}")  # noqa: T201
+    print(f"Entities directory: {entities_dir}")  # noqa: T201
+    print(f"Server URL: http://{host}:{port}")  # noqa: T201
+    print(f"UI enabled: {'Yes' if ui_enabled else 'No'}")  # noqa: T201
+    print(f"Auto-reload: {'Yes' if reload else 'No'}")  # noqa: T201
     print("=" * 50)  # noqa: T201
-    print("🔍 Scanning for entities...")  # noqa: T201
+    print("Scanning for entities...")  # noqa: T201
 
 
 def main() -> None:
@@ -128,14 +135,15 @@ def main() -> None:
             auto_open=not args.no_open,
             ui_enabled=ui_enabled,
             tracing_enabled=args.tracing,
+            ui_mode=args.mode,
         )
 
     except KeyboardInterrupt:
-        print("\n👋 Shutting down Agent Framework DevUI...")  # noqa: T201
+        print("\nShutting down Agent Framework DevUI...")  # noqa: T201
         sys.exit(0)
     except Exception as e:
         logger.exception("Failed to start server")
-        print(f"❌ Error: {e}", file=sys.stderr)  # noqa: T201
+        print(f"Error: {e}", file=sys.stderr)  # noqa: T201
         sys.exit(1)
 
 

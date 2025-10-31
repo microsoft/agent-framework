@@ -8,7 +8,7 @@ import { AppHeader, DebugPanel, SettingsModal, DeploymentModal } from "@/compone
 import { GalleryView } from "@/components/features/gallery";
 import { AgentView } from "@/components/features/agent";
 import { WorkflowView } from "@/components/features/workflow";
-import { Toast } from "@/components/ui/toast";
+import { Toast, ToastContainer } from "@/components/ui/toast";
 import { apiClient } from "@/services/api";
 import { PanelRightOpen, ChevronDown, ServerOff, Rocket } from "lucide-react";
 import type {
@@ -26,6 +26,12 @@ export default function App() {
   const selectedAgent = useDevUIStore((state) => state.selectedAgent);
   const isLoadingEntities = useDevUIStore((state) => state.isLoadingEntities);
   const entityError = useDevUIStore((state) => state.entityError);
+
+  // OpenAI proxy mode
+  const oaiMode = useDevUIStore((state) => state.oaiMode);
+
+  // UI mode
+  const uiMode = useDevUIStore((state) => state.uiMode);
 
   // Entity actions
   const setAgents = useDevUIStore((state) => state.setAgents);
@@ -61,10 +67,21 @@ export default function App() {
   const setShowDeployModal = useDevUIStore((state) => state.setShowDeployModal);
   const setShowEntityNotFoundToast = useDevUIStore((state) => state.setShowEntityNotFoundToast);
 
+  // Toast state and actions
+  const toasts = useDevUIStore((state) => state.toasts);
+  const removeToast = useDevUIStore((state) => state.removeToast);
+
   // Initialize app - load agents and workflows
   useEffect(() => {
     const loadData = async () => {
       try {
+        // Fetch server metadata first (ui_mode, capabilities)
+        const meta = await apiClient.getMeta();
+        useDevUIStore.getState().setServerMeta({
+          uiMode: meta.ui_mode,
+          capabilities: meta.capabilities,
+        });
+
         // Single API call instead of two parallel calls to same endpoint
         const { agents: agentList, workflows: workflowList } = await apiClient.getEntities();
 
@@ -149,6 +166,17 @@ export default function App() {
 
     loadData();
   }, [setAgents, setWorkflows, selectEntity, updateAgent, updateWorkflow, setIsLoadingEntities, setEntityError, setShowEntityNotFoundToast]);
+
+  // Auto-switch from workflow to agent when OpenAI proxy mode is enabled
+  useEffect(() => {
+    if (oaiMode.enabled && selectedAgent?.type === "workflow") {
+      // Workflows don't work with OpenAI proxy - switch to first available agent
+      const firstAgent = agents[0];
+      if (firstAgent) {
+        selectEntity(firstAgent);
+      }
+    }
+  }, [oaiMode.enabled, selectedAgent, agents, selectEntity]);
 
   // Handle resize drag
   const handleMouseDown = useCallback(
@@ -377,7 +405,7 @@ export default function App() {
               )}
             </div>
 
-            {showDebugPanel ? (
+            {uiMode === "developer" && showDebugPanel ? (
               <>
                 {/* Resize Handle */}
                 <div
@@ -424,7 +452,7 @@ export default function App() {
                   </div>
                 </div>
               </>
-            ) : (
+            ) : uiMode === "developer" ? (
               /* Button to reopen when closed */
               <div className="flex-shrink-0">
                 <Button
@@ -437,7 +465,7 @@ export default function App() {
                   <PanelRightOpen className="h-4 w-4" />
                 </Button>
               </div>
-            )}
+            ) : null}
           </>
         )}
       </div>
@@ -460,6 +488,9 @@ export default function App() {
           onClose={() => setShowEntityNotFoundToast(false)}
         />
       )}
+
+      {/* Toast Container for reload and other notifications */}
+      <ToastContainer toasts={toasts} onRemove={removeToast} />
     </div>
   );
 }

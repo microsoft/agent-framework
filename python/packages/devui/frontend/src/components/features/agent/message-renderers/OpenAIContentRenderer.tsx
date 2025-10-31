@@ -37,12 +37,12 @@ function TextContentRenderer({ content, className, isStreaming }: ContentRendere
   );
 }
 
-// Image content renderer
+// Image content renderer (handles both input and output images)
 function ImageContentRenderer({ content, className }: ContentRendererProps) {
   const [imageError, setImageError] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
 
-  if (content.type !== "input_image") return null;
+  if (content.type !== "input_image" && content.type !== "output_image") return null;
 
   const imageUrl = content.image_url;
 
@@ -77,9 +77,9 @@ function ImageContentRenderer({ content, className }: ContentRendererProps) {
   );
 }
 
-// File content renderer
+// File content renderer (handles both input and output files)
 function FileContentRenderer({ content, className }: ContentRendererProps) {
-  if (content.type !== "input_file") return null;
+  if (content.type !== "input_file" && content.type !== "output_file") return null;
 
   const fileUrl = content.file_url || content.file_data;
   const filename = content.filename || "file";
@@ -156,15 +156,64 @@ function FileContentRenderer({ content, className }: ContentRendererProps) {
   );
 }
 
+// Data content renderer (for generic structured data outputs)
+function DataContentRenderer({ content, className }: ContentRendererProps) {
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  if (content.type !== "output_data") return null;
+
+  const data = content.data;
+  const mimeType = content.mime_type;
+  const description = content.description;
+
+  // Try to parse as JSON for pretty printing
+  let displayData = data;
+  try {
+    const parsed = JSON.parse(data);
+    displayData = JSON.stringify(parsed, null, 2);
+  } catch {
+    // Not JSON, display as-is
+  }
+
+  return (
+    <div className={`my-2 p-3 border rounded-lg bg-muted ${className || ""}`}>
+      <div
+        className="flex items-center gap-2 cursor-pointer"
+        onClick={() => setIsExpanded(!isExpanded)}
+      >
+        <FileText className="h-4 w-4 text-muted-foreground" />
+        <span className="text-sm font-medium">
+          {description || "Data Output"}
+        </span>
+        <span className="text-xs text-muted-foreground ml-auto">{mimeType}</span>
+        {isExpanded ? (
+          <ChevronDown className="h-4 w-4 text-muted-foreground" />
+        ) : (
+          <ChevronRight className="h-4 w-4 text-muted-foreground" />
+        )}
+      </div>
+      {isExpanded && (
+        <pre className="mt-2 text-xs overflow-auto max-h-64 bg-background p-2 rounded border font-mono">
+          {displayData}
+        </pre>
+      )}
+    </div>
+  );
+}
+
 // Main content renderer that delegates to specific renderers
 export function OpenAIContentRenderer({ content, className, isStreaming }: ContentRendererProps) {
   switch (content.type) {
     case "text":
       return <TextContentRenderer content={content} className={className} isStreaming={isStreaming} />;
     case "input_image":
+    case "output_image":
       return <ImageContentRenderer content={content} className={className} />;
     case "input_file":
+    case "output_file":
       return <FileContentRenderer content={content} className={className} />;
+    case "output_data":
+      return <DataContentRenderer content={content} className={className} />;
     default:
       return null;
   }

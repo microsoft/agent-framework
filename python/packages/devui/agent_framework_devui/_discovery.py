@@ -31,6 +31,7 @@ class EntityDiscovery:
         self.entities_dir = entities_dir
         self._entities: dict[str, EntityInfo] = {}
         self._loaded_objects: dict[str, Any] = {}
+        self._cleanup_hooks: dict[str, list[Any]] = {}
 
     async def discover_entities(self) -> list[EntityInfo]:
         """Scan for Agent Framework entities.
@@ -127,6 +128,17 @@ class EntityDiscovery:
 
         # Cache the loaded object
         self._loaded_objects[entity_id] = entity_obj
+
+        # Check module-level registry for cleanup hooks
+        from . import _get_registered_cleanup_hooks
+
+        registered_hooks = _get_registered_cleanup_hooks(entity_obj)
+        if registered_hooks:
+            if entity_id not in self._cleanup_hooks:
+                self._cleanup_hooks[entity_id] = []
+            self._cleanup_hooks[entity_id].extend(registered_hooks)
+            logger.debug(f"Discovered {len(registered_hooks)} registered cleanup hook(s) for: {entity_id}")
+
         logger.info(f"Successfully loaded entity: {entity_id} (type: {enriched_info.type})")
 
         return entity_obj
@@ -187,6 +199,17 @@ class EntityDiscovery:
         """
         return list(self._entities.values())
 
+    def get_cleanup_hooks(self, entity_id: str) -> list[Any]:
+        """Get cleanup hooks registered for an entity.
+
+        Args:
+            entity_id: Entity identifier
+
+        Returns:
+            List of cleanup hooks for the entity
+        """
+        return self._cleanup_hooks.get(entity_id, [])
+
     def invalidate_entity(self, entity_id: str) -> None:
         """Invalidate (clear cache for) an entity to enable hot reload.
 
@@ -239,6 +262,17 @@ class EntityDiscovery:
         """
         self._entities[entity_id] = entity_info
         self._loaded_objects[entity_id] = entity_object
+
+        # Check module-level registry for cleanup hooks
+        from . import _get_registered_cleanup_hooks
+
+        registered_hooks = _get_registered_cleanup_hooks(entity_object)
+        if registered_hooks:
+            if entity_id not in self._cleanup_hooks:
+                self._cleanup_hooks[entity_id] = []
+            self._cleanup_hooks[entity_id].extend(registered_hooks)
+            logger.debug(f"Discovered {len(registered_hooks)} registered cleanup hook(s) for: {entity_id}")
+
         logger.debug(f"Registered entity: {entity_id} ({entity_info.type})")
 
     async def create_entity_info_from_object(

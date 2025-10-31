@@ -324,6 +324,121 @@ def generate_schema_from_dataclass(cls: type[Any]) -> dict[str, Any]:
     return schema
 
 
+def extract_response_type_from_executor(executor: Any, request_type: type) -> type | None:
+    """Extract the expected response type from an executor's RequestResponse handler.
+
+    Looks for a handler method that accepts RequestResponse[request_type, ResponseType]
+    and extracts the ResponseType.
+
+    Args:
+        executor: Executor object that should have a handler for the request type
+        request_type: The request message type
+
+    Returns:
+        The response type class, or None if not found
+    """
+    try:
+        from typing import get_type_hints
+
+        from agent_framework import RequestResponse
+
+        # Check if executor has _handlers dict
+        if not hasattr(executor, "_handlers"):
+            return None
+
+        handlers = executor._handlers
+        if not isinstance(handlers, dict):
+            return None
+
+        # Look for a handler that accepts RequestResponse with our request_type
+        for handler_type, _handler_func in handlers.items():
+            # Check if this handler accepts RequestResponse
+            origin = get_origin(handler_type)
+            # Compare using contextlib.suppress to handle type comparison robustly
+            # get_origin can return various types including ParamSpec which can't be compared directly
+            # We need to check if the origin is the RequestResponse generic type
+            is_request_response = False
+            if origin is not None:
+                from contextlib import suppress
+
+                with suppress(AttributeError, TypeError):
+                    # Check by identity first, then by name as fallback
+                    # Use type: ignore to allow comparison that mypy flags as overlap
+                    is_request_response = (
+                        origin is RequestResponse  # type: ignore[comparison-overlap]
+                        or getattr(origin, "__name__", None) == "RequestResponse"
+                    )
+
+            if is_request_response:
+                args = get_args(handler_type)
+                if len(args) >= 2:
+                    # Check if first arg matches our request_type
+                    matches = args[0] == request_type or (
+                        hasattr(args[0], "__name__")
+                        and hasattr(request_type, "__name__")
+                        and args[0].__name__ == request_type.__name__
+                    )
+                    if matches:
+                        # Second arg is the response type
+                        # get_args() returns tuple[Any, ...], so we cast to type
+                        logger.debug(f"Found response type {args[1]} for request {request_type} via _handlers")
+                        result_type: type = args[1]  # type: ignore[assignment]
+                        return result_type
+
+        # Alternative: introspect handler methods directly
+        for attr_name in dir(executor):
+            if attr_name.startswith("_"):
+                continue
+            attr = getattr(executor, attr_name, None)
+            if not callable(attr):
+                continue
+
+            # Get type hints for this method
+            try:
+                type_hints = get_type_hints(attr)
+                for param_name, param_type in type_hints.items():
+                    if param_name in ("self", "return", "ctx"):
+                        continue
+
+                    origin = get_origin(param_type)
+                    # Compare using contextlib.suppress to handle type comparison robustly
+                    is_request_response_param = False
+                    if origin is not None:
+                        from contextlib import suppress
+
+                        with suppress(AttributeError, TypeError):
+                            # Use type: ignore to allow comparison that mypy flags as overlap
+                            is_request_response_param = (
+                                origin is RequestResponse  # type: ignore[comparison-overlap]
+                                or getattr(origin, "__name__", None) == "RequestResponse"
+                            )
+
+                    if is_request_response_param:
+                        args = get_args(param_type)
+                        if len(args) >= 2 and (
+                            args[0] == request_type
+                            or (
+                                hasattr(args[0], "__name__")
+                                and hasattr(request_type, "__name__")
+                                and args[0].__name__ == request_type.__name__
+                            )
+                        ):
+                            logger.debug(
+                                f"Found response type {args[1]} for request {request_type} via method introspection"
+                            )
+                            # get_args() returns tuple[Any, ...], so we cast to type
+                            introspected_type: type = args[1]  # type: ignore[assignment]
+                            return introspected_type
+            except Exception as e:
+                logger.debug(f"Failed to get type hints for {attr_name}: {e}")
+                continue
+
+    except Exception as e:
+        logger.debug(f"Failed to extract response type from executor: {e}")
+
+    return None
+
+
 def generate_input_schema(input_type: type) -> dict[str, Any]:
     """Generate JSON schema for workflow input type.
 

@@ -8,6 +8,7 @@ import type {
   AgentSource,
   Conversation,
   HealthResponse,
+  MetaResponse,
   RunAgentRequest,
   RunWorkflowRequest,
   WorkflowInfo,
@@ -114,6 +115,11 @@ class ApiClient {
     return this.request<HealthResponse>("/health");
   }
 
+  // Server metadata
+  async getMeta(): Promise<MetaResponse> {
+    return this.request<MetaResponse>("/meta");
+  }
+
   // Entity discovery using new unified endpoint
   async getEntities(): Promise<{
     entities: (AgentInfo | WorkflowInfo)[];
@@ -207,6 +213,16 @@ class ApiClient {
     );
   }
 
+  async reloadEntity(entityId: string): Promise<{ success: boolean; message: string }> {
+    // Hot reload entity - clears cache and forces reimport on next access
+    return this.request<{ success: boolean; message: string }>(
+      `/v1/entities/${entityId}/reload`,
+      {
+        method: "POST",
+      }
+    );
+  }
+
   // ========================================
   // Conversation Management (OpenAI Standard)
   // ========================================
@@ -214,10 +230,23 @@ class ApiClient {
   async createConversation(
     metadata?: Record<string, string>
   ): Promise<Conversation> {
+    // Check if OAI proxy mode is enabled
+    const { oaiMode } = await import("@/stores").then((m) => ({
+      oaiMode: m.useDevUIStore.getState().oaiMode,
+    }));
+
+    const headers: Record<string, string> = {};
+
+    // Add proxy mode header if enabled
+    if (oaiMode.enabled) {
+      headers["X-Proxy-Backend"] = "openai";
+    }
+
     const response = await this.request<ConversationApiResponse>(
       "/v1/conversations",
       {
         method: "POST",
+        headers,
         body: JSON.stringify({ metadata }),
       }
     );
@@ -318,12 +347,45 @@ class ApiClient {
     openAIRequest: AgentFrameworkRequest
   ): AsyncGenerator<ExtendedResponseStreamEvent, void, unknown> {
 
+    // Check if OpenAI proxy mode is enabled
+    const { oaiMode } = await import("@/stores").then((m) => ({
+      oaiMode: m.useDevUIStore.getState().oaiMode,
+    }));
+
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Accept: "text/event-stream",
+    };
+
+    // If OAI mode enabled, add proxy header and merge params
+    if (oaiMode.enabled) {
+      headers["X-Proxy-Backend"] = "openai";
+
+      // Override model with OAI model
+      openAIRequest.model = oaiMode.model;
+
+      // Merge optional OpenAI parameters
+      if (oaiMode.temperature !== undefined) {
+        openAIRequest.temperature = oaiMode.temperature;
+      }
+      if (oaiMode.max_output_tokens !== undefined) {
+        openAIRequest.max_output_tokens = oaiMode.max_output_tokens;
+      }
+      if (oaiMode.top_p !== undefined) {
+        openAIRequest.top_p = oaiMode.top_p;
+      }
+      if (oaiMode.instructions !== undefined) {
+        openAIRequest.instructions = oaiMode.instructions;
+      }
+      // Reasoning parameters (for o-series models)
+      if (oaiMode.reasoning_effort !== undefined) {
+        openAIRequest.reasoning = { effort: oaiMode.reasoning_effort };
+      }
+    }
+
     const response = await fetch(`${this.baseUrl}/v1/responses`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "text/event-stream",
-      },
+      headers,
       body: JSON.stringify(openAIRequest),
     });
 
@@ -400,6 +462,9 @@ class ApiClient {
       input: request.input_data || "", // Send dict directly, no stringification needed
       stream: true,
       conversation: request.conversation_id, // Include conversation if present
+      extra_body: request.checkpoint_id
+        ? { entity_id: workflowId, checkpoint_id: request.checkpoint_id }
+        : undefined, // Pass checkpoint_id if provided
     };
 
     const response = await fetch(`${this.baseUrl}/v1/responses`, {

@@ -9,6 +9,7 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 from agent_framework import AgentProtocol
+from agent_framework._workflows._events import RequestInfoEvent
 
 from ._conversations import ConversationStore, InMemoryConversationStore
 from ._discovery import EntityDiscovery
@@ -18,6 +19,35 @@ from .models import AgentFrameworkRequest, OpenAIResponse
 from .models._discovery_models import EntityInfo
 
 logger = logging.getLogger(__name__)
+
+
+def workflow_supports_checkpointing(workflow: Any) -> bool:
+    """Check if workflow has checkpointing enabled.
+
+    Args:
+        workflow: Workflow object to check
+
+    Returns:
+        True if workflow was built with .with_checkpointing(), False otherwise
+    """
+    try:
+        # Check if workflow has the runner
+        if not hasattr(workflow, "_runner"):
+            return False
+
+        # Check if runner has context
+        if not hasattr(workflow._runner, "context"):
+            return False
+
+        # Check if context has checkpoint storage
+        runner_context = workflow._runner.context
+        if not hasattr(runner_context, "_checkpoint_storage"):
+            return False
+
+        # Check if storage is actually set (not None)
+        return runner_context._checkpoint_storage is not None
+    except Exception:
+        return False
 
 
 class EntityNotFoundError(Exception):
@@ -300,23 +330,140 @@ class AgentFrameworkExecutor:
             Workflow events and trace events
         """
         try:
-            # Get input data directly from request.input field
-            input_data = request.input
-            logger.debug(f"Using input field: {type(input_data)}")
+            # Check if this is a HIL response continuation
+            hil_responses = self._extract_workflow_hil_responses(request.input)
 
-            # Parse input based on workflow's expected input type
-            parsed_input = await self._parse_workflow_input(workflow, input_data)
+            if hil_responses:
+                # HIL continuation mode - resume from checkpoint
+                logger.info(f"Resuming workflow with HIL responses for {len(hil_responses)} request(s)")
 
-            logger.debug(f"Executing workflow with parsed input type: {type(parsed_input)}")
+                # Unwrap primitive responses that were wrapped in {response: value} format
+                # The UI wraps primitive types in an object for form compatibility
+                unwrapped_responses = {}
+                for request_id, response_value in hil_responses.items():
+                    if isinstance(response_value, dict) and "response" in response_value:
+                        # Unwrap: {response: "value"} -> "value"
+                        unwrapped_responses[request_id] = response_value["response"]
+                    else:
+                        # Keep as-is for complex response objects
+                        unwrapped_responses[request_id] = response_value
 
-            # Use Agent Framework workflow's native streaming
-            async for event in workflow.run_stream(parsed_input):
-                # Yield any pending trace events first
-                for trace_event in trace_collector.get_pending_events():
-                    yield trace_event
+                hil_responses = unwrapped_responses
 
-                # Then yield the workflow event
-                yield event
+                # Get checkpoint_id from extra_body or conversation metadata
+                checkpoint_id = None
+                if request.extra_body and "checkpoint_id" in request.extra_body:
+                    # Explicit checkpoint_id in request
+                    checkpoint_id = request.extra_body["checkpoint_id"]
+                    logger.info(f"Using checkpoint_id from extra_body: {checkpoint_id}")
+                else:
+                    # Fall back to conversation metadata
+                    conversation_id = request.get_conversation_id()
+                    if conversation_id:
+                        checkpoint_id = await self._get_checkpoint_for_conversation(conversation_id)
+                    else:
+                        logger.warning("No conversation_id in HIL resume request - cannot retrieve checkpoint")
+
+                if checkpoint_id:
+                    # Resume workflow from checkpoint with HIL responses
+                    logger.info(f"Resuming workflow from checkpoint {checkpoint_id}")
+
+                    # Reset running flags - breaking from initial stream leaves them True
+                    # This prevents run_stream_from_checkpoint from executing
+                    if hasattr(workflow, "_is_running"):
+                        workflow._is_running = False
+                    if hasattr(workflow, "_runner") and hasattr(workflow._runner, "_running"):
+                        workflow._runner._running = False
+
+                    try:
+                        async for event in workflow.run_stream_from_checkpoint(checkpoint_id, responses=hil_responses):
+                            # Yield any pending trace events first
+                            for trace_event in trace_collector.get_pending_events():
+                                yield trace_event
+
+                            # Then yield the workflow event
+                            yield event
+
+                    except ValueError as e:
+                        error_msg = f"Cannot resume workflow: {e}. Workflow must be built with .with_checkpointing()"
+                        logger.error(error_msg)
+                        yield {"type": "error", "message": error_msg}
+                else:
+                    error_msg = "No checkpoint found for conversation - cannot resume workflow"
+                    logger.error(error_msg)
+                    yield {"type": "error", "message": error_msg}
+            else:
+                # Check if explicit checkpoint_id provided (resume without responses)
+                checkpoint_id = None
+                if request.extra_body and "checkpoint_id" in request.extra_body:
+                    checkpoint_id = request.extra_body["checkpoint_id"]
+                    logger.info(f"Resuming from explicit checkpoint: {checkpoint_id}")
+
+                if checkpoint_id:
+                    # Resume from checkpoint without responses (will re-emit RequestInfoEvent)
+                    # Reset running flags
+                    if hasattr(workflow, "_is_running"):
+                        workflow._is_running = False
+                    if hasattr(workflow, "_runner") and hasattr(workflow._runner, "_running"):
+                        workflow._runner._running = False
+
+                    try:
+                        async for event in workflow.run_stream_from_checkpoint(checkpoint_id):
+                            # Enrich RequestInfoEvent if we see it
+                            if isinstance(event, RequestInfoEvent):
+                                self._enrich_request_info_event_with_response_schema(event, workflow)
+
+                            # Yield any pending trace events first
+                            for trace_event in trace_collector.get_pending_events():
+                                yield trace_event
+
+                            # Yield the workflow event
+                            yield event
+
+                            # Break at RequestInfoEvent (will show modal)
+                            if isinstance(event, RequestInfoEvent):
+                                break
+                    except ValueError as e:
+                        error_msg = f"Cannot resume from checkpoint: {e}"
+                        logger.error(error_msg)
+                        yield {"type": "error", "message": error_msg}
+                else:
+                    # Normal execution mode - start fresh
+                    input_data = request.input
+                    logger.debug(f"Using input field: {type(input_data)}")
+
+                    # Parse input based on workflow's expected input type
+                    parsed_input = await self._parse_workflow_input(workflow, input_data)
+
+                    logger.debug(f"Executing workflow with parsed input type: {type(parsed_input)}")
+
+                    # Use Agent Framework workflow's native streaming
+                    async for event in workflow.run_stream(parsed_input):
+                        # Handle RequestInfoEvent - save checkpoint and enrich with response schema
+                        if isinstance(event, RequestInfoEvent):
+                            conversation_id = request.get_conversation_id()
+                            entity_id = request.get_entity_id()
+                            if conversation_id and entity_id:
+                                await self._save_checkpoint_for_conversation(conversation_id, workflow, entity_id)
+                            else:
+                                logger.warning(
+                                    "RequestInfoEvent without conversation_id or entity_id - checkpoint not saved"
+                                )
+
+                            # Enrich event with response schema for UI form rendering
+                            self._enrich_request_info_event_with_response_schema(event, workflow)
+
+                        # Yield any pending trace events first
+                        for trace_event in trace_collector.get_pending_events():
+                            yield trace_event
+
+                        # Yield the workflow event
+                        yield event
+
+                        # Break after RequestInfoEvent to pause workflow execution
+                        # Workflow will resume via run_stream_from_checkpoint when user responds
+                        if isinstance(event, RequestInfoEvent):
+                            break
 
         except Exception as e:
             logger.error(f"Error in workflow execution: {e}")
@@ -569,6 +716,132 @@ class AgentFrameworkExecutor:
 
         return start_executor, message_types
 
+    def _extract_workflow_hil_responses(self, input_data: Any) -> dict[str, Any] | None:
+        """Extract workflow HIL responses from OpenAI input format.
+
+        Looks for special content type: workflow_hil_response
+
+        Args:
+            input_data: OpenAI ResponseInputParam
+
+        Returns:
+            Dict of {request_id: response_value} if found, None otherwise
+        """
+        if not isinstance(input_data, list):
+            return None
+
+        for item in input_data:
+            if isinstance(item, dict) and item.get("type") == "message":
+                message_content = item.get("content", [])
+
+                if isinstance(message_content, list):
+                    for content_item in message_content:
+                        if isinstance(content_item, dict):
+                            content_type = content_item.get("type")
+
+                            if content_type == "workflow_hil_response":
+                                # Extract responses dict
+                                # dict.get() returns Any, so we explicitly type it
+                                responses: dict[str, Any] = content_item.get("responses", {})  # type: ignore[assignment]
+                                logger.info(f"Found workflow HIL responses: {list(responses.keys())}")
+                                return responses
+
+        return None
+
+    def _get_or_create_conversation(self, conversation_id: str, entity_id: str) -> Any:
+        """Get existing conversation or create a new one.
+
+        Args:
+            conversation_id: Conversation ID from frontend
+            entity_id: Entity ID (e.g., "spam_workflow") for metadata filtering
+
+        Returns:
+            Conversation object
+        """
+        conversation = self.conversation_store.get_conversation(conversation_id)
+        if not conversation:
+            # Create conversation with frontend's ID
+            # Use agent_id in metadata so it can be filtered by list_conversations(agent_id=...)
+            conversation = self.conversation_store.create_conversation(
+                metadata={"agent_id": entity_id}, conversation_id=conversation_id
+            )
+            logger.info(f"Created conversation {conversation_id} for entity {entity_id}")
+
+        return conversation
+
+    async def _save_checkpoint_for_conversation(self, conversation_id: str, workflow: Any, entity_id: str) -> None:
+        """Save the latest checkpoint_id for a workflow to conversation metadata.
+
+        This uses a hacky approach to get checkpoint storage from workflow since there's no public API.
+        The workflow must have been built with .with_checkpointing() for this to work.
+
+        Args:
+            conversation_id: Conversation ID
+            workflow: Workflow object that has checkpoints
+            entity_id: Entity ID (e.g., "spam_workflow") for metadata filtering
+        """
+        try:
+            # Access checkpoint storage via _runner (no public API available)
+            # This is safe because we only read from it, and it's the only way
+            if not hasattr(workflow, "_runner") or not hasattr(workflow._runner, "context"):
+                logger.debug(f"Workflow {workflow.id} doesn't have expected structure - skipping checkpoint save")
+                return
+
+            runner_context = workflow._runner.context
+            if not hasattr(runner_context, "_checkpoint_storage") or runner_context._checkpoint_storage is None:
+                logger.debug(f"Workflow {workflow.id} doesn't have checkpointing enabled - skipping checkpoint save")
+                return
+
+            checkpoint_storage = runner_context._checkpoint_storage
+            checkpoints = await checkpoint_storage.list_checkpoints(workflow_id=workflow.id)
+
+            if not checkpoints:
+                logger.debug(f"No checkpoints found for workflow {workflow.id}")
+                return
+
+            # Get latest checkpoint
+            latest_checkpoint = max(checkpoints, key=lambda cp: cp.timestamp)
+            checkpoint_id = latest_checkpoint.checkpoint_id
+
+            # Save checkpoint_id to conversation metadata
+            # Use entity_id (not workflow.id) so frontend can filter by agent_id
+            conversation = self._get_or_create_conversation(conversation_id, entity_id)
+            if conversation.metadata is None:
+                conversation.metadata = {}
+            conversation.metadata["checkpoint_id"] = checkpoint_id
+            # Also store workflow_id for backward compatibility
+            conversation.metadata["workflow_id"] = workflow.id
+
+            logger.info(f"Saved checkpoint {checkpoint_id} for conversation {conversation_id}")
+
+        except Exception as e:
+            logger.error(f"Failed to save checkpoint for conversation {conversation_id}: {e}")
+
+    async def _get_checkpoint_for_conversation(self, conversation_id: str) -> str | None:
+        """Retrieve the checkpoint_id from conversation metadata.
+
+        Args:
+            conversation_id: Conversation ID
+
+        Returns:
+            Checkpoint ID if found, None otherwise
+        """
+        try:
+            conversation = self.conversation_store.get_conversation(conversation_id)
+            if conversation and conversation.metadata:
+                # metadata is typed as 'object' in OpenAI SDK, cast to dict for access
+                metadata = conversation.metadata
+                if isinstance(metadata, dict):
+                    # dict.get() returns Any, so we explicitly type it
+                    checkpoint_id: str | None = metadata.get("checkpoint_id")  # type: ignore[assignment]
+                    if checkpoint_id:
+                        logger.debug(f"Retrieved checkpoint {checkpoint_id} for conversation {conversation_id}")
+                        return checkpoint_id
+        except Exception as e:
+            logger.error(f"Failed to retrieve checkpoint for conversation {conversation_id}: {e}")
+
+        return None
+
     def _parse_structured_workflow_input(self, workflow: Any, input_data: dict[str, Any]) -> Any:
         """Parse structured input data for workflow execution.
 
@@ -644,3 +917,50 @@ class AgentFrameworkExecutor:
         except Exception as e:
             logger.debug(f"Error parsing workflow input: {e}")
             return raw_input
+
+    def _enrich_request_info_event_with_response_schema(self, event: Any, workflow: Any) -> None:
+        """Extract response type from workflow executor and attach response schema to RequestInfoEvent.
+
+        Args:
+            event: RequestInfoEvent to enrich
+            workflow: Workflow object containing executors
+        """
+        try:
+            from agent_framework_devui._utils import extract_response_type_from_executor, generate_input_schema
+
+            # Get source executor ID and request type from event
+            source_executor_id = getattr(event, "source_executor_id", None)
+            request_type = getattr(event, "request_type", None)
+
+            if not source_executor_id or not request_type:
+                logger.debug("RequestInfoEvent missing source_executor_id or request_type")
+                return
+
+            # Find the source executor in the workflow
+            if not hasattr(workflow, "executors") or not isinstance(workflow.executors, dict):
+                logger.debug("Workflow doesn't have executors dict")
+                return
+
+            source_executor = workflow.executors.get(source_executor_id)
+            if not source_executor:
+                logger.debug(f"Could not find executor '{source_executor_id}' in workflow")
+                return
+
+            # Extract response type from the executor's handler signature
+            response_type = extract_response_type_from_executor(source_executor, request_type)
+
+            if response_type:
+                # Generate JSON schema for response type
+                response_schema = generate_input_schema(response_type)
+
+                # Attach response_schema to event for mapper to include in output
+                event._response_schema = response_schema
+                logger.info(f"Successfully extracted response schema for {request_type.__name__}: {response_schema}")
+            else:
+                # Even if extraction fails, provide a reasonable default to avoid warnings
+                logger.info(f"Could not extract response type for {request_type.__name__}, using default string schema")
+                response_schema = {"type": "string"}
+                event._response_schema = response_schema
+
+        except Exception as e:
+            logger.warning(f"Failed to enrich RequestInfoEvent with response schema: {e}")

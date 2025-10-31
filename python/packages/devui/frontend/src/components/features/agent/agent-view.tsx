@@ -36,6 +36,7 @@ import {
   X,
   Copy,
   CheckCheck,
+  RefreshCw,
 } from "lucide-react";
 import { apiClient } from "@/services/api";
 import type {
@@ -160,7 +161,12 @@ function ConversationItemBubble({ item }: ConversationItemBubbleProps) {
           </div>
 
           <div className="flex items-center gap-2 text-xs text-muted-foreground font-mono">
-            <span>{new Date().toLocaleTimeString()}</span>
+            <span>
+              {item.created_at
+                ? new Date(item.created_at * 1000).toLocaleTimeString()
+                : new Date().toLocaleTimeString() // Fallback for legacy items without timestamp
+              }
+            </span>
             {!isUser && item.usage && (
               <>
                 <span>•</span>
@@ -206,8 +212,10 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
   const loadingConversations = useDevUIStore((state) => state.loadingConversations);
   const inputValue = useDevUIStore((state) => state.inputValue);
   const attachments = useDevUIStore((state) => state.attachments);
+  const uiMode = useDevUIStore((state) => state.uiMode);
   const conversationUsage = useDevUIStore((state) => state.conversationUsage);
   const pendingApprovals = useDevUIStore((state) => state.pendingApprovals);
+  const oaiMode = useDevUIStore((state) => state.oaiMode);
 
   // Get conversation actions from Zustand (only the ones we actually use)
   const setCurrentConversation = useDevUIStore((state) => state.setCurrentConversation);
@@ -226,6 +234,12 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
   const [dragCounter, setDragCounter] = useState(0);
   const [pasteNotification, setPasteNotification] = useState<string | null>(null);
   const [detailsModalOpen, setDetailsModalOpen] = useState(false);
+  const [conversationError, setConversationError] = useState<{
+    message: string;
+    code?: string;
+    type?: string;
+  } | null>(null);
+  const [isReloading, setIsReloading] = useState(false);
 
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -371,13 +385,21 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
         setAvailableConversations([newConversation]);
         setChatItems([]);
         setIsStreaming(false);
+        setConversationError(null); // Clear any previous errors
 
         // Save to localStorage
         localStorage.setItem(cachedKey, JSON.stringify([newConversation]));
-      } catch {
+      } catch (error) {
         setAvailableConversations([]);
         setChatItems([]);
         setIsStreaming(false);
+
+        // Extract error details for display
+        const errorMessage = error instanceof Error ? error.message : "Failed to create conversation";
+        setConversationError({
+          message: errorMessage,
+          type: "conversation_creation_error",
+        });
       } finally {
         setLoadingConversations(false);
       }
@@ -624,6 +646,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
       setAvailableConversations([newConversation, ...useDevUIStore.getState().availableConversations]);
       setChatItems([]);
       setIsStreaming(false);
+      setConversationError(null); // Clear any previous errors
       // Reset conversation usage by setting it to initial state
       useDevUIStore.setState({ conversationUsage: { total_tokens: 0, message_count: 0 } });
       accumulatedText.current = "";
@@ -632,8 +655,13 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
       const cachedKey = `devui_convs_${selectedAgent.id}`;
       const updated = [newConversation, ...availableConversations];
       localStorage.setItem(cachedKey, JSON.stringify(updated));
-    } catch {
-      // Failed to create conversation
+    } catch (error) {
+      // Failed to create conversation - show error to user
+      const errorMessage = error instanceof Error ? error.message : "Failed to create conversation";
+      setConversationError({
+        message: errorMessage,
+        type: "conversation_creation_error",
+      });
     }
   }, [selectedAgent, availableConversations, setCurrentConversation, setAvailableConversations, setChatItems, setIsStreaming]);
 
@@ -696,6 +724,42 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
     },
     [availableConversations, currentConversation, selectedAgent, onDebugEvent, setAvailableConversations, setCurrentConversation, setChatItems, setIsStreaming]
   );
+
+  // Handle entity reload (hot reload)
+  const handleReloadEntity = useCallback(async () => {
+    if (isReloading || !selectedAgent) return;
+
+    setIsReloading(true);
+    const addToast = useDevUIStore.getState().addToast;
+    const updateAgent = useDevUIStore.getState().updateAgent;
+
+    try {
+      // Call backend reload endpoint
+      await apiClient.reloadEntity(selectedAgent.id);
+
+      // Fetch updated entity info
+      const updatedAgent = await apiClient.getAgentInfo(selectedAgent.id);
+
+      // Update store with fresh metadata
+      updateAgent(updatedAgent);
+
+      // Show success toast
+      addToast({
+        message: `${selectedAgent.name} has been reloaded successfully`,
+        type: "success",
+      });
+    } catch (error) {
+      // Show error toast
+      const errorMessage = error instanceof Error ? error.message : "Failed to reload entity";
+      addToast({
+        message: `Failed to reload: ${errorMessage}`,
+        type: "error",
+        duration: 6000,
+      });
+    } finally {
+      setIsReloading(false);
+    }
+  }, [isReloading, selectedAgent]);
 
   // Handle conversation selection
   const handleConversationSelect = useCallback(
@@ -813,6 +877,9 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
         }
       }
 
+      // Capture timestamp once for both user and assistant messages
+      const messageTimestamp = Math.floor(Date.now() / 1000); // Unix seconds
+
       // Add user message to UI state (OpenAI ConversationMessage)
       const userMessage: import("@/types/openai").ConversationMessage = {
         id: `user-${Date.now()}`,
@@ -820,6 +887,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
         role: "user",
         content: messageContent,
         status: "completed",
+        created_at: messageTimestamp,
       };
 
       setChatItems([...useDevUIStore.getState().chatItems, userMessage]);
@@ -832,6 +900,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
         role: "assistant",
         content: [], // Will be filled during streaming
         status: "in_progress",
+        created_at: messageTimestamp,
       };
 
       setChatItems([...useDevUIStore.getState().chatItems, assistantMessage]);
@@ -846,8 +915,17 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
             });
             setCurrentConversation(conversationToUse);
             setAvailableConversations([conversationToUse, ...useDevUIStore.getState().availableConversations]);
-          } catch {
-            // Failed to create conversation
+            setConversationError(null); // Clear any previous errors
+          } catch (error) {
+            // Failed to create conversation - show error and stop execution
+            const errorMessage = error instanceof Error ? error.message : "Failed to create conversation";
+            setConversationError({
+              message: errorMessage,
+              type: "conversation_creation_error",
+            });
+            setIsSubmitting(false);
+            setIsStreaming(false);
+            return; // Stop execution - can't send message without conversation
           }
         }
 
@@ -882,6 +960,44 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
               };
             }
             continue; // Continue processing other events
+          }
+
+          // Handle response.failed event (OpenAI standard)
+          if (openAIEvent.type === "response.failed") {
+            const failedEvent = openAIEvent as import("@/types/openai").ResponseFailedEvent;
+            const error = failedEvent.response?.error;
+
+            // Format error message with details
+            let errorMessage = "Request failed";
+            if (error) {
+              if (typeof error === "object" && "message" in error) {
+                errorMessage = error.message as string;
+                if ("code" in error && error.code) {
+                  errorMessage += ` (Code: ${error.code})`;
+                }
+              } else if (typeof error === "string") {
+                errorMessage = error;
+              }
+            }
+
+            // Update assistant message with error
+            const currentItems = useDevUIStore.getState().chatItems;
+            setChatItems(currentItems.map((item) =>
+              item.id === assistantMessage.id && item.type === "message"
+                ? {
+                    ...item,
+                    content: [
+                      {
+                        type: "text",
+                        text: errorMessage,
+                      } as import("@/types/openai").MessageTextContent,
+                    ],
+                    status: "incomplete" as const,
+                  }
+                : item
+            ));
+            setIsStreaming(false);
+            return; // Exit stream processing on failure
           }
 
           // Handle function approval request events
@@ -937,6 +1053,57 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
             return; // Exit stream processing early on error
           }
 
+          // Handle output item added events (images, files, data)
+          if (openAIEvent.type === "response.output_item.added") {
+            const outputItemEvent = openAIEvent as import("@/types/openai").ResponseOutputItemAddedEvent;
+            const item = outputItemEvent.item;
+
+            // Add output items to assistant message content
+            const currentItems = useDevUIStore.getState().chatItems;
+            setChatItems(currentItems.map((chatItem) => {
+              if (chatItem.id === assistantMessage.id && chatItem.type === "message") {
+                const existingContent = chatItem.content;
+                let newContent: import("@/types/openai").MessageContent | null = null;
+
+                // Map output items to message content
+                if (item.type === "output_image") {
+                  newContent = {
+                    type: "output_image",
+                    image_url: item.image_url,
+                    alt_text: item.alt_text,
+                    mime_type: item.mime_type,
+                  } as import("@/types/openai").MessageOutputImage;
+                } else if (item.type === "output_file") {
+                  newContent = {
+                    type: "output_file",
+                    filename: item.filename,
+                    file_url: item.file_url,
+                    file_data: item.file_data,
+                    mime_type: item.mime_type,
+                  } as import("@/types/openai").MessageOutputFile;
+                } else if (item.type === "output_data") {
+                  newContent = {
+                    type: "output_data",
+                    data: item.data,
+                    mime_type: item.mime_type,
+                    description: item.description,
+                  } as import("@/types/openai").MessageOutputData;
+                }
+
+                // If we created new content, append it
+                if (newContent) {
+                  return {
+                    ...chatItem,
+                    content: [...existingContent, newContent],
+                    status: "in_progress" as const,
+                  };
+                }
+              }
+              return chatItem;
+            }));
+            continue; // Continue to next event
+          }
+
           // Handle text delta events for chat
           if (
             openAIEvent.type === "response.output_text.delta" &&
@@ -946,21 +1113,26 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
             accumulatedText.current += openAIEvent.delta;
 
             // Update assistant message with accumulated content
+            // Preserve any existing non-text content (images, files, data)
             const currentItems = useDevUIStore.getState().chatItems;
-            setChatItems(currentItems.map((item) =>
-              item.id === assistantMessage.id && item.type === "message"
-                ? {
-                    ...item,
-                    content: [
-                      {
-                        type: "text",
-                        text: accumulatedText.current,
-                      } as import("@/types/openai").MessageTextContent,
-                    ],
-                    status: "in_progress" as const,
-                  }
-                : item
-            ));
+            setChatItems(currentItems.map((item) => {
+              if (item.id === assistantMessage.id && item.type === "message") {
+                // Keep existing non-text content, update text content
+                const existingNonTextContent = item.content.filter(c => c.type !== "text");
+                return {
+                  ...item,
+                  content: [
+                    ...existingNonTextContent,
+                    {
+                      type: "text",
+                      text: accumulatedText.current,
+                    } as import("@/types/openai").MessageTextContent,
+                  ],
+                  status: "in_progress" as const,
+                };
+              }
+              return item;
+            }));
           }
 
           // Handle completion/error by detecting when streaming stops
@@ -1145,19 +1317,42 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
               <div className="flex items-center gap-2">
                 <Bot className="h-4 w-4 flex-shrink-0" />
                 <span className="truncate">
-                  Chat with {selectedAgent.name || selectedAgent.id}
+                  {oaiMode.enabled
+                    ? `Chat with ${oaiMode.model}`
+                    : `Chat with ${selectedAgent.name || selectedAgent.id}`
+                  }
                 </span>
               </div>
             </h2>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setDetailsModalOpen(true)}
-              className="h-6 w-6 p-0 flex-shrink-0"
-              title="View agent details"
-            >
-              <Info className="h-4 w-4" />
-            </Button>
+            {!oaiMode.enabled && uiMode === "developer" && (
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setDetailsModalOpen(true)}
+                  className="h-6 w-6 p-0 flex-shrink-0"
+                  title="View agent details"
+                >
+                  <Info className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleReloadEntity}
+                  disabled={isReloading || selectedAgent.metadata?.source === "in_memory"}
+                  className="h-6 w-6 p-0 flex-shrink-0"
+                  title={
+                    selectedAgent.metadata?.source === "in_memory"
+                      ? "In-memory entities cannot be reloaded"
+                      : isReloading
+                      ? "Reloading..."
+                      : "Reload entity code (hot reload)"
+                  }
+                >
+                  <RefreshCw className={`h-4 w-4 ${isReloading ? "animate-spin" : ""}`} />
+                </Button>
+              </>
+            )}
           </div>
 
           {/* Conversation Controls */}
@@ -1249,12 +1444,45 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
           </div>
         </div>
 
-        {selectedAgent.description && (
+        {oaiMode.enabled ? (
           <p className="text-sm text-muted-foreground">
-            {selectedAgent.description}
+            Using OpenAI model directly. Local agent tools and instructions are not applied.
           </p>
+        ) : (
+          selectedAgent.description && (
+            <p className="text-sm text-muted-foreground">
+              {selectedAgent.description}
+            </p>
+          )
         )}
       </div>
+
+      {/* Error Banner */}
+      {conversationError && (
+        <div className="mx-4 mt-2 p-3 bg-destructive/10 border border-destructive/30 rounded-md flex items-start gap-2">
+          <AlertCircle className="h-4 w-4 text-destructive mt-0.5 flex-shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-medium text-destructive">
+              Failed to Create Conversation
+            </div>
+            <div className="text-xs text-destructive/90 mt-1 break-words">
+              {conversationError.message}
+            </div>
+            {conversationError.code && (
+              <div className="text-xs text-destructive/70 mt-1">
+                Error Code: {conversationError.code}
+              </div>
+            )}
+          </div>
+          <button
+            onClick={() => setConversationError(null)}
+            className="text-destructive hover:text-destructive/80 flex-shrink-0"
+            title="Dismiss error"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
 
       {/* Messages */}
       <ScrollArea className="flex-1 p-4 h-0" ref={scrollAreaRef}>
