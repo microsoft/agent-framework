@@ -31,7 +31,7 @@ public sealed class A2AAgentCardExtensionsTests
     }
 
     [Fact]
-    public async Task GetAIAgentAsync_ReturnsAIAgentAsync()
+    public void GetAIAgent_ReturnsAIAgent()
     {
         // Act
         var agent = this._agentCard.GetAIAgent();
