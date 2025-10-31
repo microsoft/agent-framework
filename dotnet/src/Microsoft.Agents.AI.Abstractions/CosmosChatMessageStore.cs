@@ -27,6 +27,12 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     private readonly bool _ownsClient;
     private bool _disposed;
 
+    // Hierarchical partition key support
+    private readonly string? _tenantId;
+    private readonly string? _userId;
+    private readonly PartitionKey _partitionKey;
+    private readonly bool _useHierarchicalPartitioning;
+
     /// <summary>
     /// Cached JSON serializer options for .NET 9.0 compatibility.
     /// </summary>
@@ -121,6 +127,12 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
         this._databaseId = databaseId;
         this._containerId = containerId;
         this._ownsClient = true;
+
+        // Initialize simple partitioning mode
+        this._tenantId = null;
+        this._userId = null;
+        this._useHierarchicalPartitioning = false;
+        this._partitionKey = new PartitionKey(conversationId);
     }
 
     /// <summary>
@@ -180,6 +192,12 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
         this._databaseId = databaseId;
         this._containerId = containerId;
         this._ownsClient = true;
+
+        // Initialize simple partitioning mode
+        this._tenantId = null;
+        this._userId = null;
+        this._useHierarchicalPartitioning = false;
+        this._partitionKey = new PartitionKey(conversationId);
     }
 
     /// <summary>
@@ -228,6 +246,200 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
         this._conversationId = conversationId;
         this._databaseId = databaseId;
         this._containerId = containerId;
+
+        // Initialize simple partitioning mode
+        this._tenantId = null;
+        this._userId = null;
+        this._useHierarchicalPartitioning = false;
+        this._partitionKey = new PartitionKey(conversationId);
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="CosmosChatMessageStore"/> class using a connection string with hierarchical partition keys.
+    /// </summary>
+    /// <param name="connectionString">The Cosmos DB connection string.</param>
+    /// <param name="databaseId">The identifier of the Cosmos DB database.</param>
+    /// <param name="containerId">The identifier of the Cosmos DB container.</param>
+    /// <param name="tenantId">The tenant identifier for hierarchical partitioning.</param>
+    /// <param name="userId">The user identifier for hierarchical partitioning.</param>
+    /// <param name="sessionId">The session identifier for hierarchical partitioning.</param>
+    /// <exception cref="ArgumentNullException">Thrown when any required parameter is null.</exception>
+    /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
+    public CosmosChatMessageStore(string connectionString, string databaseId, string containerId, string tenantId, string userId, string sessionId)
+    {
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            throw new ArgumentException("Connection string cannot be null or whitespace.", nameof(connectionString));
+        }
+
+        if (string.IsNullOrWhiteSpace(databaseId))
+        {
+            throw new ArgumentException("Database ID cannot be null or whitespace.", nameof(databaseId));
+        }
+
+        if (string.IsNullOrWhiteSpace(containerId))
+        {
+            throw new ArgumentException("Container ID cannot be null or whitespace.", nameof(containerId));
+        }
+
+        if (string.IsNullOrWhiteSpace(tenantId))
+        {
+            throw new ArgumentException("Tenant ID cannot be null or whitespace.", nameof(tenantId));
+        }
+
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            throw new ArgumentException("User ID cannot be null or whitespace.", nameof(userId));
+        }
+
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            throw new ArgumentException("Session ID cannot be null or whitespace.", nameof(sessionId));
+        }
+
+        this._cosmosClient = new CosmosClient(connectionString);
+        this._container = this._cosmosClient.GetContainer(databaseId, containerId);
+        this._conversationId = sessionId; // Use sessionId as conversationId for compatibility
+        this._databaseId = databaseId;
+        this._containerId = containerId;
+        this._containerId = containerId;
+
+        // Initialize hierarchical partitioning mode
+        this._tenantId = tenantId;
+        this._userId = userId;
+        this._useHierarchicalPartitioning = true;
+        // Use native hierarchical partition key with PartitionKeyBuilder
+        this._partitionKey = new PartitionKeyBuilder()
+            .Add(tenantId)
+            .Add(userId)
+            .Add(sessionId)
+            .Build();
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="CosmosChatMessageStore"/> class using DefaultAzureCredential with hierarchical partition keys.
+    /// </summary>
+    /// <param name="accountEndpoint">The Cosmos DB account endpoint URI.</param>
+    /// <param name="databaseId">The identifier of the Cosmos DB database.</param>
+    /// <param name="containerId">The identifier of the Cosmos DB container.</param>
+    /// <param name="tenantId">The tenant identifier for hierarchical partitioning.</param>
+    /// <param name="userId">The user identifier for hierarchical partitioning.</param>
+    /// <param name="sessionId">The session identifier for hierarchical partitioning.</param>
+    /// <param name="useManagedIdentity">This parameter is used to distinguish this constructor from the connection string constructor. Always pass true.</param>
+    /// <exception cref="ArgumentNullException">Thrown when any required parameter is null.</exception>
+    /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
+    public CosmosChatMessageStore(string accountEndpoint, string databaseId, string containerId, string tenantId, string userId, string sessionId, bool useManagedIdentity)
+    {
+        if (string.IsNullOrWhiteSpace(accountEndpoint))
+        {
+            throw new ArgumentException("Cannot be null or whitespace", nameof(accountEndpoint));
+        }
+
+        if (string.IsNullOrWhiteSpace(databaseId))
+        {
+            throw new ArgumentException("Cannot be null or whitespace", nameof(databaseId));
+        }
+
+        if (string.IsNullOrWhiteSpace(containerId))
+        {
+            throw new ArgumentException("Cannot be null or whitespace", nameof(containerId));
+        }
+
+        if (string.IsNullOrWhiteSpace(tenantId))
+        {
+            throw new ArgumentException("Tenant ID cannot be null or whitespace.", nameof(tenantId));
+        }
+
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            throw new ArgumentException("User ID cannot be null or whitespace.", nameof(userId));
+        }
+
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            throw new ArgumentException("Session ID cannot be null or whitespace.", nameof(sessionId));
+        }
+
+        if (!useManagedIdentity)
+        {
+            throw new ArgumentException("This constructor requires useManagedIdentity to be true. Use the connection string constructor for key-based authentication.", nameof(useManagedIdentity));
+        }
+
+        this._cosmosClient = new CosmosClient(accountEndpoint, new DefaultAzureCredential());
+        this._container = this._cosmosClient.GetContainer(databaseId, containerId);
+        this._conversationId = sessionId; // Use sessionId as conversationId for compatibility
+        this._databaseId = databaseId;
+        this._containerId = containerId;
+        this._containerId = containerId;
+
+        // Initialize hierarchical partitioning mode
+        this._tenantId = tenantId;
+        this._userId = userId;
+        this._useHierarchicalPartitioning = true;
+        // Use native hierarchical partition key with PartitionKeyBuilder
+        this._partitionKey = new PartitionKeyBuilder()
+            .Add(tenantId)
+            .Add(userId)
+            .Add(sessionId)
+            .Build();
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="CosmosChatMessageStore"/> class using an existing <see cref="CosmosClient"/> with hierarchical partition keys.
+    /// </summary>
+    /// <param name="cosmosClient">The <see cref="CosmosClient"/> instance to use for Cosmos DB operations.</param>
+    /// <param name="databaseId">The identifier of the Cosmos DB database.</param>
+    /// <param name="containerId">The identifier of the Cosmos DB container.</param>
+    /// <param name="tenantId">The tenant identifier for hierarchical partitioning.</param>
+    /// <param name="userId">The user identifier for hierarchical partitioning.</param>
+    /// <param name="sessionId">The session identifier for hierarchical partitioning.</param>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="cosmosClient"/> is null.</exception>
+    /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
+    public CosmosChatMessageStore(CosmosClient cosmosClient, string databaseId, string containerId, string tenantId, string userId, string sessionId)
+    {
+        this._cosmosClient = cosmosClient ?? throw new ArgumentNullException(nameof(cosmosClient));
+        this._ownsClient = false;
+
+        if (string.IsNullOrWhiteSpace(databaseId))
+        {
+            throw new ArgumentException("Cannot be null or whitespace", nameof(databaseId));
+        }
+
+        if (string.IsNullOrWhiteSpace(containerId))
+        {
+            throw new ArgumentException("Cannot be null or whitespace", nameof(containerId));
+        }
+
+        if (string.IsNullOrWhiteSpace(tenantId))
+        {
+            throw new ArgumentException("Tenant ID cannot be null or whitespace.", nameof(tenantId));
+        }
+
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            throw new ArgumentException("User ID cannot be null or whitespace.", nameof(userId));
+        }
+
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            throw new ArgumentException("Session ID cannot be null or whitespace.", nameof(sessionId));
+        }
+
+        this._container = this._cosmosClient.GetContainer(databaseId, containerId);
+        this._conversationId = sessionId; // Use sessionId as conversationId for compatibility
+        this._databaseId = databaseId;
+        this._containerId = containerId;
+
+        // Initialize hierarchical partitioning mode
+        this._tenantId = tenantId;
+        this._userId = userId;
+        this._useHierarchicalPartitioning = true;
+        // Use native hierarchical partition key with PartitionKeyBuilder
+        this._partitionKey = new PartitionKeyBuilder()
+            .Add(tenantId)
+            .Add(userId)
+            .Add(sessionId)
+            .Build();
     }
 
     /// <summary>
@@ -254,6 +466,26 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
                 this._databaseId = databaseId;
                 this._containerId = containerId;
                 this._container = this._cosmosClient.GetContainer(databaseId, containerId);
+
+                // Initialize hierarchical partitioning if available in state
+                this._tenantId = state.TenantId;
+                this._userId = state.UserId;
+                this._useHierarchicalPartitioning = state.UseHierarchicalPartitioning;
+
+                if (this._useHierarchicalPartitioning && this._tenantId != null && this._userId != null)
+                {
+                    // Use native hierarchical partition key with PartitionKeyBuilder
+                    this._partitionKey = new PartitionKeyBuilder()
+                        .Add(this._tenantId)
+                        .Add(this._userId)
+                        .Add(conversationId)
+                        .Build();
+                }
+                else
+                {
+                    this._partitionKey = new PartitionKey(conversationId);
+                }
+
                 return;
             }
         }
@@ -280,7 +512,7 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
 
         var iterator = this._container.GetItemQueryIterator<CosmosMessageDocument>(query, requestOptions: new QueryRequestOptions
         {
-            PartitionKey = new PartitionKey(this._conversationId),
+            PartitionKey = this._partitionKey,
             MaxItemCount = this.MaxItemCount // Configurable query performance
         });
 
@@ -345,8 +577,7 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     /// </summary>
     private async Task AddMessagesInBatchAsync(IList<ChatMessage> messages, CancellationToken cancellationToken)
     {
-        var partitionKey = new PartitionKey(this._conversationId);
-        var batch = this._container.CreateTransactionalBatch(partitionKey);
+        var batch = this._container.CreateTransactionalBatch(this._partitionKey);
         var currentTimestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
         foreach (var message in messages)
@@ -379,7 +610,7 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     private async Task AddSingleMessageAsync(ChatMessage message, CancellationToken cancellationToken)
     {
         var document = this.CreateMessageDocument(message, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
-        await this._container.CreateItemAsync(document, new PartitionKey(this._conversationId), cancellationToken: cancellationToken).ConfigureAwait(false);
+        await this._container.CreateItemAsync(document, this._partitionKey, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -398,7 +629,11 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
             Role = message.Role.Value ?? "unknown",
             Message = JsonSerializer.Serialize(message, s_defaultJsonOptions),
             Type = "ChatMessage", // Type discriminator
-            Ttl = this.MessageTtlSeconds // Configurable TTL
+            Ttl = this.MessageTtlSeconds, // Configurable TTL
+            // Include hierarchical metadata when using hierarchical partitioning
+            TenantId = this._useHierarchicalPartitioning ? this._tenantId : null,
+            UserId = this._useHierarchicalPartitioning ? this._userId : null,
+            SessionId = this._useHierarchicalPartitioning ? this._conversationId : null
         };
     }
 
@@ -418,7 +653,10 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
         {
             ConversationIdentifier = this._conversationId,
             DatabaseIdentifier = this.DatabaseId,
-            ContainerIdentifier = this.ContainerId
+            ContainerIdentifier = this.ContainerId,
+            TenantId = this._tenantId,
+            UserId = this._userId,
+            UseHierarchicalPartitioning = this._useHierarchicalPartitioning
         };
 
         var options = jsonSerializerOptions ?? s_defaultJsonOptions;
@@ -447,7 +685,7 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
 
         var iterator = this._container.GetItemQueryIterator<int>(query, requestOptions: new QueryRequestOptions
         {
-            PartitionKey = new PartitionKey(this._conversationId)
+            PartitionKey = this._partitionKey
         });
 
         if (iterator.HasMoreResults)
@@ -531,6 +769,9 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
         public string ConversationIdentifier { get; set; } = string.Empty;
         public string DatabaseIdentifier { get; set; } = string.Empty;
         public string ContainerIdentifier { get; set; } = string.Empty;
+        public string? TenantId { get; set; }
+        public string? UserId { get; set; }
+        public bool UseHierarchicalPartitioning { get; set; }
     }
 
     /// <summary>
@@ -562,5 +803,23 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
 
         [Newtonsoft.Json.JsonProperty(nameof(Ttl))]
         public int? Ttl { get; set; }
+
+        /// <summary>
+        /// Tenant ID for hierarchical partitioning scenarios (optional).
+        /// </summary>
+        [Newtonsoft.Json.JsonProperty("tenantId")]
+        public string? TenantId { get; set; }
+
+        /// <summary>
+        /// User ID for hierarchical partitioning scenarios (optional).
+        /// </summary>
+        [Newtonsoft.Json.JsonProperty("userId")]
+        public string? UserId { get; set; }
+
+        /// <summary>
+        /// Session ID for hierarchical partitioning scenarios (same as ConversationId for compatibility).
+        /// </summary>
+        [Newtonsoft.Json.JsonProperty("sessionId")]
+        public string? SessionId { get; set; }
     }
 }

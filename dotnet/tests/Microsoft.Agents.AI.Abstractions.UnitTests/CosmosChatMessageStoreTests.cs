@@ -3,6 +3,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using System.Threading.Tasks;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.AI;
@@ -43,6 +45,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
     private const string EmulatorEndpoint = "https://localhost:8081";
     private const string EmulatorKey = "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==";
     private const string TestContainerId = "ChatMessages";
+    private const string HierarchicalTestContainerId = "HierarchicalChatMessages";
 
     // Use unique database ID per test run to avoid conflicts between parallel test executions
     private readonly string _testDatabaseId = $"AgentFrameworkTests-ChatStore-{Guid.NewGuid():N}";
@@ -67,9 +70,17 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
 
             // Test connection by attempting to create database
             var databaseResponse = await this._setupClient.CreateDatabaseIfNotExistsAsync(this._testDatabaseId);
+
+            // Create container for simple partitioning tests
             await databaseResponse.Database.CreateContainerIfNotExistsAsync(
                 TestContainerId,
                 "/conversationId",
+                throughput: 400);
+
+            // Create container for hierarchical partitioning tests with hierarchical partition key
+            var hierarchicalContainerProperties = new ContainerProperties(HierarchicalTestContainerId, new List<string> { "/tenantId", "/userId", "/sessionId" });
+            await databaseResponse.Database.CreateContainerIfNotExistsAsync(
+                hierarchicalContainerProperties,
                 throughput: 400);
 
             this._emulatorAvailable = true;
@@ -393,6 +404,284 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         // Act & Assert
         store.Dispose(); // First call
         store.Dispose(); // Second call - should not throw
+    }
+
+    #endregion
+
+    #region Hierarchical Partitioning Tests
+
+    [Fact]
+    [Trait("Category", "CosmosDB")]
+    public void Constructor_WithHierarchicalConnectionString_ShouldCreateInstance()
+    {
+        // Arrange & Act
+        this.SkipIfEmulatorNotAvailable();
+
+        // Act
+        using var store = new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, HierarchicalTestContainerId, "tenant-123", "user-456", "session-789");
+
+        // Assert
+        Assert.NotNull(store);
+        Assert.Equal("session-789", store.ConversationId);
+        Assert.Equal(this._testDatabaseId, store.DatabaseId);
+        Assert.Equal(HierarchicalTestContainerId, store.ContainerId);
+    }
+
+    [Fact]
+    [Trait("Category", "CosmosDB")]
+    public void Constructor_WithHierarchicalEndpoint_ShouldCreateInstance()
+    {
+        // Arrange & Act
+        this.SkipIfEmulatorNotAvailable();
+
+        // Act
+        using var store = new CosmosChatMessageStore(EmulatorEndpoint, this._testDatabaseId, HierarchicalTestContainerId, "tenant-123", "user-456", "session-789", useManagedIdentity: true);
+
+        // Assert
+        Assert.NotNull(store);
+        Assert.Equal("session-789", store.ConversationId);
+        Assert.Equal(this._testDatabaseId, store.DatabaseId);
+        Assert.Equal(HierarchicalTestContainerId, store.ContainerId);
+    }
+
+    [Fact]
+    [Trait("Category", "CosmosDB")]
+    public void Constructor_WithHierarchicalCosmosClient_ShouldCreateInstance()
+    {
+        // Arrange & Act
+        this.SkipIfEmulatorNotAvailable();
+
+        using var cosmosClient = new CosmosClient(EmulatorEndpoint, EmulatorKey);
+        using var store = new CosmosChatMessageStore(cosmosClient, this._testDatabaseId, HierarchicalTestContainerId, "tenant-123", "user-456", "session-789");
+
+        // Assert
+        Assert.NotNull(store);
+        Assert.Equal("session-789", store.ConversationId);
+        Assert.Equal(this._testDatabaseId, store.DatabaseId);
+        Assert.Equal(HierarchicalTestContainerId, store.ContainerId);
+    }
+
+    [Fact]
+    [Trait("Category", "CosmosDB")]
+    public void Constructor_WithHierarchicalNullTenantId_ShouldThrowArgumentException()
+    {
+        // Arrange & Act & Assert
+        this.SkipIfEmulatorNotAvailable();
+
+        Assert.Throws<ArgumentException>(() =>
+            new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, TestContainerId, null!, "user-456", "session-789"));
+    }
+
+    [Fact]
+    [Trait("Category", "CosmosDB")]
+    public void Constructor_WithHierarchicalEmptyUserId_ShouldThrowArgumentException()
+    {
+        // Arrange & Act & Assert
+        this.SkipIfEmulatorNotAvailable();
+
+        Assert.Throws<ArgumentException>(() =>
+            new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, HierarchicalTestContainerId, "tenant-123", "", "session-789"));
+    }
+
+    [Fact]
+    [Trait("Category", "CosmosDB")]
+    public void Constructor_WithHierarchicalWhitespaceSessionId_ShouldThrowArgumentException()
+    {
+        // Arrange & Act & Assert
+        this.SkipIfEmulatorNotAvailable();
+
+        Assert.Throws<ArgumentException>(() =>
+            new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, HierarchicalTestContainerId, "tenant-123", "user-456", "   "));
+    }
+
+    [Fact]
+    [Trait("Category", "CosmosDB")]
+    public async Task AddMessagesAsync_WithHierarchicalPartitioning_ShouldAddMessageWithMetadataAsync()
+    {
+        // Arrange
+        this.SkipIfEmulatorNotAvailable();
+        const string TenantId = "tenant-123";
+        const string UserId = "user-456";
+        const string SessionId = "session-789";
+        // Test hierarchical partitioning constructor with connection string
+        using var store = new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, HierarchicalTestContainerId, TenantId, UserId, SessionId);
+        var message = new ChatMessage(ChatRole.User, "Hello from hierarchical partitioning!");
+
+        // Act
+        await store.AddMessagesAsync([message]);
+
+        // Wait a moment for eventual consistency
+        await Task.Delay(100);
+
+        // Assert
+        var messages = await store.GetMessagesAsync();
+        var messageList = messages.ToList();
+
+        Assert.Single(messageList);
+        Assert.Equal("Hello from hierarchical partitioning!", messageList[0].Text);
+        Assert.Equal(ChatRole.User, messageList[0].Role);
+
+        // Verify that the document is stored with hierarchical partitioning metadata
+        var directQuery = new QueryDefinition("SELECT * FROM c WHERE c.conversationId = @conversationId AND c.Type = @type")
+            .WithParameter("@conversationId", SessionId)
+            .WithParameter("@type", "ChatMessage");
+
+        var iterator = this._setupClient!.GetDatabase(this._testDatabaseId).GetContainer(HierarchicalTestContainerId)
+            .GetItemQueryIterator<dynamic>(directQuery, requestOptions: new QueryRequestOptions
+            {
+                PartitionKey = new PartitionKeyBuilder().Add(TenantId).Add(UserId).Add(SessionId).Build()
+            });
+
+        var response = await iterator.ReadNextAsync();
+        var document = response.FirstOrDefault();
+
+        Assert.NotNull(document);
+        // The document should have hierarchical metadata
+        Assert.Equal(SessionId, (string)document!.conversationId);
+        Assert.Equal(TenantId, (string)document!.tenantId);
+        Assert.Equal(UserId, (string)document!.userId);
+        Assert.Equal(SessionId, (string)document!.sessionId);
+    }
+
+    [Fact]
+    [Trait("Category", "CosmosDB")]
+    public async Task AddMessagesAsync_WithHierarchicalMultipleMessages_ShouldAddAllMessagesAsync()
+    {
+        // Arrange
+        this.SkipIfEmulatorNotAvailable();
+        const string TenantId = "tenant-batch";
+        const string UserId = "user-batch";
+        const string SessionId = "session-batch";
+        // Test hierarchical partitioning constructor with connection string
+        using var store = new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, HierarchicalTestContainerId, TenantId, UserId, SessionId);
+        var messages = new[]
+        {
+            new ChatMessage(ChatRole.User, "First hierarchical message"),
+            new ChatMessage(ChatRole.Assistant, "Second hierarchical message"),
+            new ChatMessage(ChatRole.User, "Third hierarchical message")
+        };
+
+        // Act
+        await store.AddMessagesAsync(messages);
+
+        // Wait a moment for eventual consistency
+        await Task.Delay(100);
+
+        // Assert
+        var retrievedMessages = await store.GetMessagesAsync();
+        var messageList = retrievedMessages.ToList();
+
+        Assert.Equal(3, messageList.Count);
+        Assert.Equal("First hierarchical message", messageList[0].Text);
+        Assert.Equal("Second hierarchical message", messageList[1].Text);
+        Assert.Equal("Third hierarchical message", messageList[2].Text);
+    }
+
+    [Fact]
+    [Trait("Category", "CosmosDB")]
+    public async Task GetMessagesAsync_WithHierarchicalPartitionIsolation_ShouldIsolateMessagesByUserIdAsync()
+    {
+        // Arrange
+        this.SkipIfEmulatorNotAvailable();
+        const string TenantId = "tenant-isolation";
+        const string UserId1 = "user-1";
+        const string UserId2 = "user-2";
+        const string SessionId = "session-isolation";
+
+        // Different userIds create different hierarchical partitions, providing proper isolation
+        using var store1 = new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, HierarchicalTestContainerId, TenantId, UserId1, SessionId);
+        using var store2 = new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, HierarchicalTestContainerId, TenantId, UserId2, SessionId);
+
+        // Add messages to both stores
+        await store1.AddMessagesAsync([new ChatMessage(ChatRole.User, "Message from user 1")]);
+        await store2.AddMessagesAsync([new ChatMessage(ChatRole.User, "Message from user 2")]);
+
+        // Wait a moment for eventual consistency
+        await Task.Delay(100);
+
+        // Act & Assert
+        var messages1 = await store1.GetMessagesAsync();
+        var messageList1 = messages1.ToList();
+
+        var messages2 = await store2.GetMessagesAsync();
+        var messageList2 = messages2.ToList();
+
+        // With true hierarchical partitioning, each user sees only their own messages
+        Assert.Single(messageList1);
+        Assert.Single(messageList2);
+        Assert.Equal("Message from user 1", messageList1[0].Text);
+        Assert.Equal("Message from user 2", messageList2[0].Text);
+    }
+
+    [Fact]
+    [Trait("Category", "CosmosDB")]
+    public async Task SerializeDeserialize_WithHierarchicalPartitioning_ShouldPreserveStateAsync()
+    {
+        // Arrange
+        this.SkipIfEmulatorNotAvailable();
+        const string TenantId = "tenant-serialize";
+        const string UserId = "user-serialize";
+        const string SessionId = "session-serialize";
+
+        using var originalStore = new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, HierarchicalTestContainerId, TenantId, UserId, SessionId);
+        await originalStore.AddMessagesAsync([new ChatMessage(ChatRole.User, "Test serialization message")]);
+
+        // Act - Serialize the store state
+        var serializedState = originalStore.Serialize();
+
+        // Create a new store from the serialized state
+        using var cosmosClient = new CosmosClient(EmulatorEndpoint, EmulatorKey);
+        var serializerOptions = new JsonSerializerOptions
+        {
+            TypeInfoResolver = new DefaultJsonTypeInfoResolver()
+        };
+        using var deserializedStore = new CosmosChatMessageStore(serializedState, cosmosClient, serializerOptions);
+
+        // Wait a moment for eventual consistency
+        await Task.Delay(100);
+
+        // Assert - The deserialized store should have the same functionality
+        var messages = await deserializedStore.GetMessagesAsync();
+        var messageList = messages.ToList();
+
+        Assert.Single(messageList);
+        Assert.Equal("Test serialization message", messageList[0].Text);
+        Assert.Equal(SessionId, deserializedStore.ConversationId);
+        Assert.Equal(this._testDatabaseId, deserializedStore.DatabaseId);
+        Assert.Equal(HierarchicalTestContainerId, deserializedStore.ContainerId);
+    }
+
+    [Fact]
+    [Trait("Category", "CosmosDB")]
+    public async Task HierarchicalAndSimplePartitioning_ShouldCoexistAsync()
+    {
+        // Arrange
+        this.SkipIfEmulatorNotAvailable();
+        const string SessionId = "coexist-session";
+
+        // Create simple store using simple partitioning container and hierarchical store using hierarchical container
+        using var simpleStore = new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, TestContainerId, SessionId);
+        using var hierarchicalStore = new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, HierarchicalTestContainerId, "tenant-coexist", "user-coexist", SessionId);
+
+        // Add messages to both
+        await simpleStore.AddMessagesAsync([new ChatMessage(ChatRole.User, "Simple partitioning message")]);
+        await hierarchicalStore.AddMessagesAsync([new ChatMessage(ChatRole.User, "Hierarchical partitioning message")]);
+
+        // Wait a moment for eventual consistency
+        await Task.Delay(100);
+
+        // Act & Assert
+        var simpleMessages = await simpleStore.GetMessagesAsync();
+        var simpleMessageList = simpleMessages.ToList();
+
+        var hierarchicalMessages = await hierarchicalStore.GetMessagesAsync();
+        var hierarchicalMessageList = hierarchicalMessages.ToList();
+
+        // Each should only see its own messages since they use different containers
+        Assert.Single(simpleMessageList);
+        Assert.Single(hierarchicalMessageList);
+        Assert.Equal("Simple partitioning message", simpleMessageList[0].Text);
+        Assert.Equal("Hierarchical partitioning message", hierarchicalMessageList[0].Text);
     }
 
     #endregion
