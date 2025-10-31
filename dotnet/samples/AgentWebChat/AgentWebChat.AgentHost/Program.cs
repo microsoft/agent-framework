@@ -20,14 +20,14 @@ builder.Services.AddProblemDetails();
 // Configure the chat model and our agent.
 builder.AddKeyedChatClient("chat-model");
 
-builder.AddAIAgent(
+var pirateAgentBuilder = builder.AddAIAgent(
     "pirate",
     instructions: "You are a pirate. Speak like a pirate",
     description: "An agent that speaks like a pirate.",
     chatClientServiceKey: "chat-model")
     .WithInMemoryThreadStore();
 
-builder.AddAIAgent("knights-and-knaves", (sp, key) =>
+var knightsKnavesAgentBuilder = builder.AddAIAgent("knights-and-knaves", (sp, key) =>
 {
     var chatClient = sp.GetRequiredKeyedService<IChatClient>("chat-model");
 
@@ -80,6 +80,8 @@ var literatureAgent = builder.AddAIAgent("literator",
 
 builder.AddSequentialWorkflow("science-sequential-workflow", [chemistryAgent, mathsAgent, literatureAgent]).AddAsAIAgent();
 builder.AddConcurrentWorkflow("science-concurrent-workflow", [chemistryAgent, mathsAgent, literatureAgent]).AddAsAIAgent();
+
+builder.AddOpenAIChatCompletions();
 builder.AddOpenAIResponses();
 
 var app = builder.Build();
@@ -104,8 +106,8 @@ app.MapA2A(agentName: "knights-and-knaves", path: "/a2a/knights-and-knaves", age
 
 app.MapOpenAIResponses();
 
-app.MapOpenAIChatCompletions("pirate");
-app.MapOpenAIChatCompletions("knights-and-knaves");
+app.MapOpenAIChatCompletions(pirateAgentBuilder);
+app.MapOpenAIChatCompletions(knightsKnavesAgentBuilder);
 
 // Map the agents HTTP endpoints
 app.MapAgentDiscovery("/agents");

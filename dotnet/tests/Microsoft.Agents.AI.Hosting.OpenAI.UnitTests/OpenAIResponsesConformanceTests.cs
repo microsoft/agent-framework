@@ -22,8 +22,8 @@ public sealed class OpenAIResponsesConformanceTests : ConformanceTestBase
     public async Task BasicRequestResponseAsync()
     {
         // Arrange
-        string requestJson = LoadTraceFile("basic/request.json");
-        using var expectedResponseDoc = LoadTraceDocument("basic/response.json");
+        string requestJson = LoadResponsesTraceFile("basic/request.json");
+        using var expectedResponseDoc = LoadResponsesTraceDocument("basic/response.json");
         var expectedResponse = expectedResponseDoc.RootElement;
 
         // Get the expected response text from the trace to use as mock response
@@ -34,7 +34,7 @@ public sealed class OpenAIResponsesConformanceTests : ConformanceTestBase
         HttpClient client = await this.CreateTestServerAsync("basic-agent", "You are a helpful assistant.", expectedText);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, "basic-agent", requestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, "basic-agent", requestJson);
         using var responseDoc = await ParseResponseAsync(httpResponse);
         var response = responseDoc.RootElement;
 
@@ -160,8 +160,8 @@ public sealed class OpenAIResponsesConformanceTests : ConformanceTestBase
     public async Task ConversationRequestResponseAsync()
     {
         // Arrange
-        string requestJson = LoadTraceFile("conversation/request.json");
-        using var expectedResponseDoc = LoadTraceDocument("conversation/response.json");
+        string requestJson = LoadResponsesTraceFile("conversation/request.json");
+        using var expectedResponseDoc = LoadResponsesTraceDocument("conversation/response.json");
         var expectedResponse = expectedResponseDoc.RootElement;
 
         // Get the expected response text
@@ -172,7 +172,7 @@ public sealed class OpenAIResponsesConformanceTests : ConformanceTestBase
         HttpClient client = await this.CreateTestServerAsync("conversation-agent", "You are a helpful assistant.", expectedText);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, "conversation-agent", requestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, "conversation-agent", requestJson);
         using var responseDoc = await ParseResponseAsync(httpResponse);
         var response = responseDoc.RootElement;
 
@@ -270,8 +270,8 @@ public sealed class OpenAIResponsesConformanceTests : ConformanceTestBase
     public async Task ToolCallRequestResponseAsync()
     {
         // Arrange
-        string requestJson = LoadTraceFile("tool_call/request.json");
-        using var expectedResponseDoc = LoadTraceDocument("tool_call/response.json");
+        string requestJson = LoadResponsesTraceFile("tool_call/request.json");
+        using var expectedResponseDoc = LoadResponsesTraceDocument("tool_call/response.json");
         var expectedResponse = expectedResponseDoc.RootElement;
 
         // Get function call details from expected response
@@ -282,7 +282,7 @@ public sealed class OpenAIResponsesConformanceTests : ConformanceTestBase
         HttpClient client = await this.CreateTestServerAsync("tool-agent", "You are a helpful assistant.", functionName);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, "tool-agent", requestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, "tool-agent", requestJson);
         using var responseDoc = await ParseResponseAsync(httpResponse);
         var response = responseDoc.RootElement;
 
@@ -429,8 +429,8 @@ public sealed class OpenAIResponsesConformanceTests : ConformanceTestBase
     public async Task StreamingRequestResponseAsync()
     {
         // Arrange
-        string requestJson = LoadTraceFile("streaming/request.json");
-        string expectedResponseSse = LoadTraceFile("streaming/response.txt");
+        string requestJson = LoadResponsesTraceFile("streaming/request.json");
+        string expectedResponseSse = LoadResponsesTraceFile("streaming/response.txt");
 
         // Extract expected text from SSE events
         var expectedEvents = ParseSseEventsFromContent(expectedResponseSse);
@@ -440,7 +440,7 @@ public sealed class OpenAIResponsesConformanceTests : ConformanceTestBase
         HttpClient client = await this.CreateTestServerAsync("streaming-agent", "You are a helpful assistant.", expectedText);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, "streaming-agent", requestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, "streaming-agent", requestJson);
 
         // Assert - Response should be SSE format
         Assert.Equal("text/event-stream", httpResponse.Content.Headers.ContentType?.MediaType);
@@ -634,8 +634,8 @@ public sealed class OpenAIResponsesConformanceTests : ConformanceTestBase
     public async Task MetadataRequestResponseAsync()
     {
         // Arrange
-        string requestJson = LoadTraceFile("metadata/request.json");
-        using var expectedResponseDoc = LoadTraceDocument("metadata/response.json");
+        string requestJson = LoadResponsesTraceFile("metadata/request.json");
+        using var expectedResponseDoc = LoadResponsesTraceDocument("metadata/response.json");
         var expectedResponse = expectedResponseDoc.RootElement;
 
         // Get expected text (truncated due to max_output_tokens)
@@ -646,7 +646,7 @@ public sealed class OpenAIResponsesConformanceTests : ConformanceTestBase
         HttpClient client = await this.CreateTestServerAsync("metadata-agent", "Respond in a friendly, educational tone.", expectedText);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, "metadata-agent", requestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, "metadata-agent", requestJson);
         using var responseDoc = await ParseResponseAsync(httpResponse);
         var response = responseDoc.RootElement;
 
@@ -761,8 +761,8 @@ public sealed class OpenAIResponsesConformanceTests : ConformanceTestBase
     public async Task ReasoningRequestResponseAsync()
     {
         // Arrange
-        string requestJson = LoadTraceFile("reasoning/request.json");
-        using var expectedResponseDoc = LoadTraceDocument("reasoning/response.json");
+        string requestJson = LoadResponsesTraceFile("reasoning/request.json");
+        using var expectedResponseDoc = LoadResponsesTraceDocument("reasoning/response.json");
         var expectedResponse = expectedResponseDoc.RootElement;
 
         // Get expected text from the message output
@@ -773,7 +773,7 @@ public sealed class OpenAIResponsesConformanceTests : ConformanceTestBase
         HttpClient client = await this.CreateTestServerAsync("reasoning-agent", "You are a helpful assistant.", expectedText);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, "reasoning-agent", requestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, "reasoning-agent", requestJson);
         using var responseDoc = await ParseResponseAsync(httpResponse);
         var response = responseDoc.RootElement;
 
@@ -843,8 +843,8 @@ public sealed class OpenAIResponsesConformanceTests : ConformanceTestBase
     public async Task JsonOutputRequestResponseAsync()
     {
         // Arrange
-        string requestJson = LoadTraceFile("json_output/request.json");
-        using var expectedResponseDoc = LoadTraceDocument("json_output/response.json");
+        string requestJson = LoadResponsesTraceFile("json_output/request.json");
+        using var expectedResponseDoc = LoadResponsesTraceDocument("json_output/response.json");
         var expectedResponse = expectedResponseDoc.RootElement;
 
         // Get expected JSON text from response
@@ -855,7 +855,7 @@ public sealed class OpenAIResponsesConformanceTests : ConformanceTestBase
         HttpClient client = await this.CreateTestServerAsync("json-agent", "You are a helpful assistant.", expectedText);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, "json-agent", requestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, "json-agent", requestJson);
         using var responseDoc = await ParseResponseAsync(httpResponse);
         var response = responseDoc.RootElement;
 
@@ -927,8 +927,8 @@ public sealed class OpenAIResponsesConformanceTests : ConformanceTestBase
     public async Task RefusalRequestResponseAsync()
     {
         // Arrange
-        string requestJson = LoadTraceFile("refusal/request.json");
-        using var expectedResponseDoc = LoadTraceDocument("refusal/response.json");
+        string requestJson = LoadResponsesTraceFile("refusal/request.json");
+        using var expectedResponseDoc = LoadResponsesTraceDocument("refusal/response.json");
         var expectedResponse = expectedResponseDoc.RootElement;
 
         // Get expected refusal text
@@ -939,7 +939,7 @@ public sealed class OpenAIResponsesConformanceTests : ConformanceTestBase
         HttpClient client = await this.CreateTestServerAsync("refusal-agent", "You are a helpful assistant.", expectedText);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, "refusal-agent", requestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, "refusal-agent", requestJson);
         using var responseDoc = await ParseResponseAsync(httpResponse);
         var response = responseDoc.RootElement;
 
@@ -986,8 +986,8 @@ public sealed class OpenAIResponsesConformanceTests : ConformanceTestBase
     public async Task ImageInputRequestResponseAsync()
     {
         // Arrange
-        string requestJson = LoadTraceFile("image_input/request.json");
-        using var expectedResponseDoc = LoadTraceDocument("image_input/response.json");
+        string requestJson = LoadResponsesTraceFile("image_input/request.json");
+        using var expectedResponseDoc = LoadResponsesTraceDocument("image_input/response.json");
         var expectedResponse = expectedResponseDoc.RootElement;
 
         // Get expected text
@@ -998,7 +998,7 @@ public sealed class OpenAIResponsesConformanceTests : ConformanceTestBase
         HttpClient client = await this.CreateTestServerAsync("image-agent", "You are a helpful assistant.", expectedText);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, "image-agent", requestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, "image-agent", requestJson);
         using var responseDoc = await ParseResponseAsync(httpResponse);
         var response = responseDoc.RootElement;
 
@@ -1059,8 +1059,8 @@ public sealed class OpenAIResponsesConformanceTests : ConformanceTestBase
     public async Task ReasoningStreamingRequestResponseAsync()
     {
         // Arrange
-        string requestJson = LoadTraceFile("reasoning_streaming/request.json");
-        string expectedResponseSse = LoadTraceFile("reasoning_streaming/response.txt");
+        string requestJson = LoadResponsesTraceFile("reasoning_streaming/request.json");
+        string expectedResponseSse = LoadResponsesTraceFile("reasoning_streaming/response.txt");
 
         // Extract expected text from SSE events
         var expectedEvents = ParseSseEventsFromContent(expectedResponseSse);
@@ -1070,7 +1070,7 @@ public sealed class OpenAIResponsesConformanceTests : ConformanceTestBase
         HttpClient client = await this.CreateTestServerAsync("reasoning-streaming-agent", "You are a helpful assistant.", expectedText);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, "reasoning-streaming-agent", requestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, "reasoning-streaming-agent", requestJson);
 
         // Assert - Response should be SSE format
         Assert.Equal("text/event-stream", httpResponse.Content.Headers.ContentType?.MediaType);
@@ -1137,8 +1137,8 @@ public sealed class OpenAIResponsesConformanceTests : ConformanceTestBase
     public async Task JsonOutputStreamingRequestResponseAsync()
     {
         // Arrange
-        string requestJson = LoadTraceFile("json_output_streaming/request.json");
-        string expectedResponseSse = LoadTraceFile("json_output_streaming/response.txt");
+        string requestJson = LoadResponsesTraceFile("json_output_streaming/request.json");
+        string expectedResponseSse = LoadResponsesTraceFile("json_output_streaming/response.txt");
 
         // Extract expected text from SSE events
         var expectedEvents = ParseSseEventsFromContent(expectedResponseSse);
@@ -1148,7 +1148,7 @@ public sealed class OpenAIResponsesConformanceTests : ConformanceTestBase
         HttpClient client = await this.CreateTestServerAsync("json-streaming-agent", "You are a helpful assistant.", expectedText);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, "json-streaming-agent", requestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, "json-streaming-agent", requestJson);
 
         // Assert - Response should be SSE format
         Assert.Equal("text/event-stream", httpResponse.Content.Headers.ContentType?.MediaType);
@@ -1197,8 +1197,8 @@ public sealed class OpenAIResponsesConformanceTests : ConformanceTestBase
     public async Task RefusalStreamingRequestResponseAsync()
     {
         // Arrange
-        string requestJson = LoadTraceFile("refusal_streaming/request.json");
-        string expectedResponseSse = LoadTraceFile("refusal_streaming/response.txt");
+        string requestJson = LoadResponsesTraceFile("refusal_streaming/request.json");
+        string expectedResponseSse = LoadResponsesTraceFile("refusal_streaming/response.txt");
 
         // Extract expected text from SSE events
         var expectedEvents = ParseSseEventsFromContent(expectedResponseSse);
@@ -1208,7 +1208,7 @@ public sealed class OpenAIResponsesConformanceTests : ConformanceTestBase
         HttpClient client = await this.CreateTestServerAsync("refusal-streaming-agent", "You are a helpful assistant.", expectedText);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, "refusal-streaming-agent", requestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, "refusal-streaming-agent", requestJson);
 
         // Assert - Response should be SSE format
         Assert.Equal("text/event-stream", httpResponse.Content.Headers.ContentType?.MediaType);
@@ -1254,8 +1254,8 @@ public sealed class OpenAIResponsesConformanceTests : ConformanceTestBase
     public async Task ImageInputStreamingRequestResponseAsync()
     {
         // Arrange
-        string requestJson = LoadTraceFile("image_input_streaming/request.json");
-        string expectedResponseSse = LoadTraceFile("image_input_streaming/response.txt");
+        string requestJson = LoadResponsesTraceFile("image_input_streaming/request.json");
+        string expectedResponseSse = LoadResponsesTraceFile("image_input_streaming/response.txt");
 
         // Extract expected text from SSE events
         var expectedEvents = ParseSseEventsFromContent(expectedResponseSse);
@@ -1265,7 +1265,7 @@ public sealed class OpenAIResponsesConformanceTests : ConformanceTestBase
         HttpClient client = await this.CreateTestServerAsync("image-streaming-agent", "You are a helpful assistant.", expectedText);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, "image-streaming-agent", requestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, "image-streaming-agent", requestJson);
 
         // Assert - Response should be SSE format
         Assert.Equal("text/event-stream", httpResponse.Content.Headers.ContentType?.MediaType);
