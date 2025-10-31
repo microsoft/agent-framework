@@ -86,7 +86,10 @@ public static class Program
 
         // Create the workflow and turn it into an agent with OpenTelemetry instrumentation
         var workflow = WorkflowHelper.GetWorkflow(chatClient, SourceName);
-        var agent = new OpenTelemetryAgent(workflow.AsAgent("workflow-agent", "Workflow Agent"), SourceName);
+        var agent = new OpenTelemetryAgent(workflow.AsAgent("workflow-agent", "Workflow Agent"), SourceName)
+        {
+            EnableSensitiveData = true  // enable sensitive data at the agent level such as prompts and responses
+        };
         var thread = agent.GetNewThread();
 
         // Start an interactive loop to interact with the workflow as if it were an agent
