@@ -70,10 +70,10 @@ public sealed class FoundryPersistentAgentFactory : AgentFactory
     private PersistentAgentsClient CreatePersistentAgentClient(GptComponentMetadata promptAgent)
     {
         var externalModel = promptAgent.Model as ExternalModel;
-        var connection = externalModel?.Connection;
-        if (connection is not null/* && connection is ApiKeyConnection keyConnection*/)
+        var connection = externalModel?.Connection as ExternalReferenceConnection;
+        if (connection is not null)
         {
-            var endpoint = connection.ExtensionData?.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("endpoint"))?.Value; // keyConnection.Endpoint?.LiteralValue;
+            var endpoint = connection.Endpoint?.LiteralValue;
             if (string.IsNullOrEmpty(endpoint))
             {
                 throw new InvalidOperationException("The endpoint must be specified in the agent definition model connection to create an PersistentAgentsClient.");

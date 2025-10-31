@@ -21,8 +21,7 @@ public class AgentBotElementYamlTests
     [InlineData(PromptAgents.AgentWithOutputSchema)]
     [InlineData(PromptAgents.OpenAIChatAgent)]
     [InlineData(PromptAgents.AgentWithExternalModel)]
-    [InlineData(PromptAgents.AgentWithFoundryConnection)]
-    [InlineData(PromptAgents.AgentForSalesAnalyst)]
+    [InlineData(PromptAgents.AgentWithExternalReferenceConnection)]
     public void FromYaml_DoesNotThrow(string text)
     {
         // Arrange & Act
@@ -228,10 +227,10 @@ public class AgentBotElementYamlTests
     }
 
     [Fact]
-    public void FromYaml_FoundryConnection()
+    public void FromYaml_ExternalReferenceConnection()
     {
         // Arrange & Act
-        var agent = AgentBotElementYaml.FromYaml(PromptAgents.AgentWithFoundryConnection);
+        var agent = AgentBotElementYaml.FromYaml(PromptAgents.AgentWithExternalReferenceConnection);
 
         // Assert
         Assert.NotNull(agent);
@@ -239,10 +238,10 @@ public class AgentBotElementYamlTests
         var model = agent.Model as ExternalModel;
         Assert.NotNull(model);
         Assert.NotNull(model.Connection);
-        //Assert.IsType<FoundryConnection>(model.Connection);
-        //var connection = model.Connection as FoundryConnection;
-        //Assert.NotNull(connection);
-        //Assert.Equal("https://my-azure-openai-endpoint.openai.azure.com/", connection.Endpoint?.LiteralValue);
+        Assert.IsType<ExternalReferenceConnection>(model.Connection);
+        var connection = model.Connection as ExternalReferenceConnection;
+        Assert.NotNull(connection);
+        Assert.Equal("https://my-azure-openai-endpoint.openai.azure.com/", connection.Endpoint?.LiteralValue);
     }
 
     [Fact]
