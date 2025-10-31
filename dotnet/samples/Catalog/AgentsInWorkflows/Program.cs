@@ -24,7 +24,7 @@ AIAgent spanishAgent = GetTranslationAgent("Spanish", chatClient);
 AIAgent englishAgent = GetTranslationAgent("English", chatClient);
 
 // Build the workflow by adding executors and connecting them
-var workflow = new WorkflowBuilder(frenchAgent)
+Workflow workflow = new WorkflowBuilder(frenchAgent)
     .AddEdge(frenchAgent, spanishAgent)
     .AddEdge(spanishAgent, englishAgent)
 .Build();
