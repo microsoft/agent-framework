@@ -44,7 +44,7 @@ internal static class WorkflowHelper
             name: $"{targetLanguage}Agent"
         )
         .AsBuilder()
-        .UseOpenTelemetry(sourceName)   // enable telemetry at the agent level
+        .UseOpenTelemetry(sourceName, configure: (cfg) => cfg.EnableSensitiveData = true)   // enable telemetry at the agent level
         .Build();
 
     /// <summary>
