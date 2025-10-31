@@ -36,6 +36,7 @@ members = [
     "agent-framework-core",
     "agent-framework-devui",
     "agent-framework-lab",
+    "agent-framework-litellm",
     "agent-framework-mem0",
     "agent-framework-purview",
     "agent-framework-redis",
@@ -81,6 +82,7 @@ dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-devui", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-lab", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-litellm", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-mem0", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-purview", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-redis", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -122,6 +124,7 @@ requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "agent-framework-devui", editable = "packages/devui" },
     { name = "agent-framework-lab", editable = "packages/lab" },
+    { name = "agent-framework-litellm", editable = "packages/litellm" },
     { name = "agent-framework-mem0", editable = "packages/mem0" },
     { name = "agent-framework-purview", editable = "packages/purview" },
     { name = "agent-framework-redis", editable = "packages/redis" },
@@ -225,6 +228,7 @@ all = [
     { name = "agent-framework-azure-ai", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-copilotstudio", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-devui", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-litellm", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-mem0", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-redis", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
@@ -235,6 +239,7 @@ requires-dist = [
     { name = "agent-framework-azure-ai", marker = "extra == 'all'", editable = "packages/azure-ai" },
     { name = "agent-framework-copilotstudio", marker = "extra == 'all'", editable = "packages/copilotstudio" },
     { name = "agent-framework-devui", marker = "extra == 'all'", editable = "packages/devui" },
+    { name = "agent-framework-litellm", marker = "extra == 'all'", editable = "packages/litellm" },
     { name = "agent-framework-mem0", marker = "extra == 'all'", editable = "packages/mem0" },
     { name = "agent-framework-redis", marker = "extra == 'all'", editable = "packages/redis" },
     { name = "azure-identity", specifier = ">=1,<2" },
@@ -373,6 +378,27 @@ dev = [
     { name = "tomli" },
     { name = "tomli-w" },
     { name = "uv", specifier = ">=0.8.2,<0.9.0" },
+]
+
+[[package]]
+name = "agent-framework-litellm"
+version = "1.0.0b251007"
+source = { editable = "packages/litellm" }
+dependencies = [
+    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "aiohttp", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "azure-ai-agents", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "azure-ai-projects", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "litellm", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agent-framework-core", editable = "packages/core" },
+    { name = "aiohttp", specifier = "~=3.8" },
+    { name = "azure-ai-agents", specifier = "==1.2.0b5" },
+    { name = "azure-ai-projects", specifier = ">=1.0.0b11" },
+    { name = "litellm", specifier = ">=1.78.0" },
 ]
 
 [[package]]
