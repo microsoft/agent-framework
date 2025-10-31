@@ -397,9 +397,7 @@ class ApiClient {
     // Convert to OpenAI format - use model field for entity_id (same as agents)
     const openAIRequest: AgentFrameworkRequest = {
       model: workflowId, // Use workflow ID in model field (matches agent pattern)
-      input: typeof request.input_data === 'string'
-        ? request.input_data
-        : JSON.stringify(request.input_data || ""), // Convert input_data to string
+      input: request.input_data || "", // Send dict directly, no stringification needed
       stream: true,
       conversation: request.conversation_id, // Include conversation if present
     };

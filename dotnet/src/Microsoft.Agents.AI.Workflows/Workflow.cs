@@ -86,14 +86,14 @@ public class Workflow
     }
 
     private bool _needsReset;
-    private bool IsResettable => this.Registrations.Values.All(registration => !registration.IsUnresettableSharedInstance);
-
+    private bool HasResettable => this.Registrations.Values.Any(registration => registration.SupportsResetting);
     private async ValueTask<bool> TryResetExecutorRegistrationsAsync()
     {
-        if (this.IsResettable)
+        if (this.HasResettable)
         {
             foreach (ExecutorRegistration registration in this.Registrations.Values)
             {
+                // TryResetAsync returns true if the executor does not need resetting
                 if (!await registration.TryResetAsync().ConfigureAwait(false))
                 {
                     return false;
@@ -158,7 +158,7 @@ public class Workflow
                 });
         }
 
-        this._needsReset = true;
+        this._needsReset = this.HasResettable;
         this._ownedAsSubworkflow = subworkflow;
     }
 

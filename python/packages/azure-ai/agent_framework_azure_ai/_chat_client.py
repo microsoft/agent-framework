@@ -51,8 +51,6 @@ from azure.ai.agents.models import (
     AgentStreamEvent,
     AsyncAgentEventHandler,
     AsyncAgentRunStream,
-    AzureAISearchQueryType,
-    AzureAISearchTool,
     BingCustomSearchTool,
     BingGroundingTool,
     CodeInterpreterToolDefinition,
@@ -88,7 +86,6 @@ from azure.ai.agents.models import (
     ToolOutput,
 )
 from azure.ai.projects.aio import AIProjectClient
-from azure.ai.projects.models import ConnectionType
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import HttpResponseError, ResourceNotFoundError
 from pydantic import ValidationError
@@ -339,9 +336,6 @@ class AzureAIAgentClient(BaseChatClient):
             if chat_options.conversation_id is not None
             else run_options.get("conversation_id", self.thread_id)
         )
-
-        if thread_id is None and required_action_results is not None:
-            raise ValueError("No thread ID was provided, but chat messages includes tool results.")
 
         # Determine which agent to use and create if needed
         agent_id = await self._get_agent_id_or_create(run_options)
@@ -988,49 +982,6 @@ class AzureAIAgentClient(BaseChatClient):
                         # Set tool_resources for file search to work properly with Azure AI
                         if run_options is not None and "tool_resources" not in run_options:
                             run_options["tool_resources"] = file_search.resources
-                    else:
-                        additional_props = tool.additional_properties or {}
-                        index_name = additional_props.get("index_name") or os.getenv("AZURE_AI_SEARCH_INDEX_NAME")
-                        if not index_name:
-                            raise ServiceInitializationError(
-                                "File search tool requires at least one vector store input, "
-                                "for file search in the Azure AI Project "
-                                "or an 'index_name' to use Azure AI Search, "
-                                "in additional_properties or environment variable 'AZURE_AI_SEARCH_INDEX_NAME'."
-                            )
-                        try:
-                            azs_conn_id = await self.project_client.connections.get_default(
-                                ConnectionType.AZURE_AI_SEARCH
-                            )
-                        except ValueError as err:
-                            raise ServiceInitializationError(
-                                "No default Azure AI Search connection found in the Azure AI Project. "
-                                "Please create one or provide vector store inputs for the file search tool.",
-                                err,
-                            ) from err
-                        else:
-                            query_type_enum = AzureAISearchQueryType.SIMPLE
-                            if query_type := additional_props.get("query_type"):
-                                try:
-                                    query_type_enum = AzureAISearchQueryType(query_type)
-                                except ValueError as ex:
-                                    raise ServiceInitializationError(
-                                        f"Invalid query_type '{query_type}' for Azure AI Search. "
-                                        f"Valid values are: {[qt.value for qt in AzureAISearchQueryType]}",
-                                        ex,
-                                    ) from ex
-                            ai_search = AzureAISearchTool(
-                                index_connection_id=azs_conn_id.id,
-                                index_name=index_name,
-                                query_type=query_type_enum,
-                                top_k=additional_props.get("top_k", 3),
-                                filter=additional_props.get("filter", ""),
-                            )
-                            tool_definitions.extend(ai_search.definitions)
-                            # Add tool resources for Azure AI Search
-                            if run_options is not None:
-                                run_options.setdefault("tool_resources", {})
-                                run_options["tool_resources"].update(ai_search.resources)
                 case ToolDefinition():
                     tool_definitions.append(tool)
                 case dict():

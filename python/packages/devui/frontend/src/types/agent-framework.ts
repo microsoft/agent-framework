@@ -68,13 +68,13 @@ export type ResponseInputParam = ResponseInputItem[];
 // Agent Framework extension fields (matches backend AgentFrameworkExtraBody)
 export interface AgentFrameworkExtraBody {
   entity_id: string;
-  input_data?: Record<string, unknown>;
+  // input_data removed - now using standard input field for all data
 }
 
 // Agent Framework Request - OpenAI ResponseCreateParams with extensions
 export interface AgentFrameworkRequest {
   model: string;
-  input: string | ResponseInputParam; // Union type matching OpenAI
+  input: string | ResponseInputParam | Record<string, unknown>; // Union type matching OpenAI + dict for workflows
   stream?: boolean;
 
   // OpenAI conversation parameter (standard!)

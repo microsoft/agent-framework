@@ -17,6 +17,7 @@ ignorePatterns:
   - pattern: "https://api.powerplatform.com/.default"
   - pattern: "https://your-resource.openai.azure.com/"
   - pattern: "http://host.docker.internal"
+  - pattern: "https://openai.github.io/openai-agents-js/openai/agents/classes/"
 # excludedDirs:
   # Folders which include links to localhost, since it's not ignored with regular expressions
 baseUrl: https://github.com/microsoft/agent-framework/

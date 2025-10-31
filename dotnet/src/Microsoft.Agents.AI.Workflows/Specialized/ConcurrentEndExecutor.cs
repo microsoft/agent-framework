@@ -14,12 +14,14 @@ namespace Microsoft.Agents.AI.Workflows.Specialized;
 /// </summary>
 internal sealed class ConcurrentEndExecutor : Executor, IResettableExecutor
 {
+    public const string ExecutorId = "ConcurrentEnd";
+
     private readonly int _expectedInputs;
     private readonly Func<IList<List<ChatMessage>>, List<ChatMessage>> _aggregator;
     private List<List<ChatMessage>> _allResults;
     private int _remaining;
 
-    public ConcurrentEndExecutor(int expectedInputs, Func<IList<List<ChatMessage>>, List<ChatMessage>> aggregator) : base("ConcurrentEnd")
+    public ConcurrentEndExecutor(int expectedInputs, Func<IList<List<ChatMessage>>, List<ChatMessage>> aggregator) : base(ExecutorId)
     {
         this._expectedInputs = expectedInputs;
         this._aggregator = Throw.IfNull(aggregator);
