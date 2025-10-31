@@ -88,7 +88,7 @@ DEFAULT_MAX_ITERATIONS: Final[int] = 10
 TChatClient = TypeVar("TChatClient", bound="ChatClientProtocol")
 # region Helpers
 
-ArgsT = TypeVar("ArgsT", bound=BaseModel | None)
+ArgsT = TypeVar("ArgsT", bound=BaseModel)
 ReturnT = TypeVar("ReturnT")
 
 
@@ -630,7 +630,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
         """Resolve the input model for the function."""
         if input_model is None:
             if self.func is None:
-                return EmptyInputModel
+                return cast(type[ArgsT], EmptyInputModel)
             return cast(type[ArgsT], _create_input_model_from_func(func=self.func, name=self.name))
         if inspect.isclass(input_model) and issubclass(input_model, BaseModel):
             return input_model
@@ -674,6 +674,8 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
         Raises:
             TypeError: If arguments is not an instance of the expected input model.
         """
+        if self.declaration_only:
+            raise ToolException(f"Function '{self.name}' is declaration only and cannot be invoked.")
         global OBSERVABILITY_SETTINGS
         from .observability import OBSERVABILITY_SETTINGS
 
