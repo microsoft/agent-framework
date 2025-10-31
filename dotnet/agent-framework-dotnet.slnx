@@ -136,6 +136,7 @@
     <Project Path="samples/GettingStarted/Workflows/_Foundational/07_MixedWorkflowAgentsAndExecutors/07_MixedWorkflowAgentsAndExecutors.csproj" />
   </Folder>
   <Folder Name="/Samples/Catalog/">
+    <Project Path="samples/Catalog/AgentWithTextSearchRag/AgentWithTextSearchRag.csproj" />
     <Project Path="samples/Catalog/DeepResearchAgent/DeepResearchAgent.csproj" />
   </Folder>
   <Folder Name="/Solution Items/">
