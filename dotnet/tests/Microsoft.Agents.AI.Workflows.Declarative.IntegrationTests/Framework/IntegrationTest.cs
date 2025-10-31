@@ -77,7 +77,7 @@ public abstract class IntegrationTest : IDisposable
                 .AddInMemoryCollection(agentMap)
                 .Build();
 
-        AzureAgentProvider agentProvider =
+        AzurePersistentAgentProvider agentProvider =
             new(this.FoundryConfiguration.Endpoint, new AzureCliCredential())
             {
                 Functions = functionTools,

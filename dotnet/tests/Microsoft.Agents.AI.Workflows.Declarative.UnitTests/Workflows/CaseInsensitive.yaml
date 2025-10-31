@@ -21,7 +21,7 @@ trigger:
         - id: condition_match
           condition: =Local.TestValue1 + Local.TestValue2 = 7
           actions:
-            - kind: EndDialog
+            - kind: EndWorkflow
               id: end_when_match
 
     - kind: SendActivity

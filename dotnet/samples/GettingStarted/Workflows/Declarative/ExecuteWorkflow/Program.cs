@@ -123,7 +123,7 @@ internal sealed class Program
     private Workflow CreateWorkflow()
     {
         // Use DeclarativeWorkflowBuilder to build a workflow based on a YAML file.
-        AzureAgentProvider agentProvider = new(this.FoundryEndpoint, new AzureCliCredential())
+        AzurePersistentAgentProvider agentProvider = new(this.FoundryEndpoint, new AzureCliCredential())
         {
             // Functions included here will be auto-executed by the framework.
             Functions = IncludeFunctions ? this.FunctionMap.Values : null,
@@ -184,7 +184,6 @@ internal sealed class Program
 
     private async Task<ExternalRequest?> MonitorAndDisposeWorkflowRunAsync(Checkpointed<StreamingRun> run, object? response = null)
     {
-        // Always dispose the run when done.
         await using IAsyncDisposable disposeRun = run;
 
         bool hasStreamed = false;
@@ -232,7 +231,7 @@ internal sealed class Program
                     }
                     else
                     {
-                        // Yield to handle the external request
+                        await run.Run.DisposeAsync();
                         return requestInfo.Request;
                     }
                     break;
@@ -327,7 +326,7 @@ internal sealed class Program
             }
         }
 
-        return null; // No request to handle
+        return default;
     }
 
     /// <summary>

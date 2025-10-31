@@ -26,7 +26,6 @@ internal static class AgentProviderExtensions
         string agentName,
         string? conversationId,
         bool autoSend,
-        string? additionalInstructions = null,
         IEnumerable<ChatMessage>? inputMessages = null,
         CancellationToken cancellationToken = default)
     {
@@ -39,7 +38,6 @@ internal static class AgentProviderExtensions
                 new ChatOptions()
                 {
                     ConversationId = conversationId,
-                    Instructions = additionalInstructions,
                 });
 
         // Initialize the agent thread.

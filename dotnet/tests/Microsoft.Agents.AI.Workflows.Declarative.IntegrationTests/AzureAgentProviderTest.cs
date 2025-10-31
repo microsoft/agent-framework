@@ -18,7 +18,7 @@ public sealed class AzureAgentProviderTest(ITestOutputHelper output) : Integrati
     public async Task ConversationTestAsync()
     {
         // Arrange
-        AzureAgentProvider provider = new(this.FoundryConfiguration.Endpoint, new AzureCliCredential());
+        AzurePersistentAgentProvider provider = new(this.FoundryConfiguration.Endpoint, new AzureCliCredential());
         // Act
         string conversationId = await provider.CreateConversationAsync();
         // Assert
@@ -48,7 +48,7 @@ public sealed class AzureAgentProviderTest(ITestOutputHelper output) : Integrati
     public async Task GetAgentTestAsync()
     {
         // Arrange
-        AzureAgentProvider provider = new(this.FoundryConfiguration.Endpoint, new AzureCliCredential());
+        AzurePersistentAgentProvider provider = new(this.FoundryConfiguration.Endpoint, new AzureCliCredential());
         string agentName = $"TestAgent-{DateTime.UtcNow:yyMMdd-HHmmss-fff}";
 
         string agent1Id = await this.CreateAgentAsync();

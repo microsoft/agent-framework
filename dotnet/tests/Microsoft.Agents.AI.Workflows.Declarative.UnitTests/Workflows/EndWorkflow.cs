@@ -43,46 +43,25 @@ public static class WorkflowProvider
     {
         protected override async ValueTask ExecuteAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken)
         {
-            // Set environment variables
-            await this.InitializeEnvironmentAsync(
-                context,
-                "MY_STUDENT").ConfigureAwait(false);
-    
         }
     }
     
     /// <summary>
-    /// Invokes an agent to process messages and return a response within a conversation context.
+    /// Formats a message template and sends an activity event.
     /// </summary>
-    internal sealed class InvokeAgentExecutor(FormulaSession session, WorkflowAgentProvider agentProvider) : AgentExecutor(id: "invoke_agent", session, agentProvider)
+    internal sealed class SendActivity1Executor(FormulaSession session) : ActionExecutor(id: "send_activity_1", session)
     {
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            string? agentName = await context.ReadStateAsync<string>(key: "MY_STUDENT", scopeName: "Env").ConfigureAwait(false);
-    
-            if (string.IsNullOrWhiteSpace(agentName))
-            {
-                throw new DeclarativeActionException($"Agent name must be defined: {this.Id}");
-            }
-    
-            string? conversationId = await context.ReadStateAsync<string>(key: "ConversationId", scopeName: "System").ConfigureAwait(false);
-            bool autoSend = true;
-            IList<ChatMessage>? inputMessages = await context.EvaluateListAsync<ChatMessage>("[UserMessage(System.LastMessageText)]").ConfigureAwait(false);
-    
-            AgentRunResponse agentResponse =
-                await InvokeAgentAsync(
-                    context,
-                    agentName,
-                    conversationId,
-                    autoSend,
-                    inputMessages,
-                    cancellationToken).ConfigureAwait(false);
-    
-            if (autoSend)
-            {
-                await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
-            }
+            string activityText =
+                await context.FormatTemplateAsync(
+                    """
+                    NEVER 1!
+                    """
+                );
+            AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
+            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);
     
             return default;
         }
@@ -97,14 +76,17 @@ public static class WorkflowProvider
         inputTransform ??= (message) => DeclarativeWorkflowBuilder.DefaultTransform(message);
         MyWorkflowRootExecutor<TInput> myWorkflowRoot = new(options, inputTransform);
         DelegateExecutor myWorkflow = new(id: "my_workflow", myWorkflowRoot.Session);
-        InvokeAgentExecutor invokeAgent = new(myWorkflowRoot.Session, options.AgentProvider);
+        DelegateExecutor endAll = new(id: "end_all", myWorkflowRoot.Session);
+        DelegateExecutor endAllRestart = new(id: "end_all_Restart", myWorkflowRoot.Session);
+        SendActivity1Executor sendActivity1 = new(myWorkflowRoot.Session);
 
         // Define the workflow builder
         WorkflowBuilder builder = new(myWorkflowRoot);
 
         // Connect executors
         builder.AddEdge(myWorkflowRoot, myWorkflow);
-        builder.AddEdge(myWorkflow, invokeAgent);
+        builder.AddEdge(myWorkflow, endAll);
+        builder.AddEdge(endAllRestart, sendActivity1);
 
         // Build the workflow
         return builder.Build();

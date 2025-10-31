@@ -12,43 +12,43 @@ trigger:
         - condition: =IsBlank(System.Conversation)
           id: conversation_check
           actions:
-            - kind: EndDialog
+            - kind: EndWorkflow
               id: conversation_bad
 
         - condition: =IsBlank(System.Conversation.Id)
           id: conversation_id_check1
           actions:
-            - kind: EndDialog
+            - kind: EndWorkflow
               id: conversation_id_bad1
 
         - condition: =IsBlank(System.ConversationId)
           id: conversation_id_check2
           actions:
-            - kind: EndDialog
+            - kind: EndWorkflow
               id: conversation_id_bad2
 
         - condition: =IsBlank(System.LastMessage)
           id: message_check
           actions:
-            - kind: EndDialog
+            - kind: EndWorkflow
               id: message_bad
 
         - condition: =IsBlank(System.LastMessage.Id)
           id: message_id_check1
           actions:
-            - kind: EndDialog
+            - kind: EndWorkflow
               id: message_id_bad1
 
         - condition: =IsBlank(System.LastMessageId)
           id: message_id_check2
           actions:
-            - kind: EndDialog
+            - kind: EndWorkflow
               id: message_id_bad2
 
         - condition: =IsBlank(System.LastMessageText)
           id: message_text_check
           actions:
-            - kind: EndDialog
+            - kind: EndWorkflow
               id: message_text_bad
 
       elseActions:
