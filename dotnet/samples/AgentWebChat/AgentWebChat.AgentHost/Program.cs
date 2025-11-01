@@ -82,7 +82,7 @@ builder.AddSequentialWorkflow("science-sequential-workflow", [chemistryAgent, ma
 builder.AddConcurrentWorkflow("science-concurrent-workflow", [chemistryAgent, mathsAgent, literatureAgent]).AddAsAIAgent();
 
 builder.AddOpenAIChatCompletions();
-builder.AddOpenAIResponses();
+builder.Services.AddOpenAIResponses();
 
 var app = builder.Build();
 

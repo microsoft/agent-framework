@@ -4,7 +4,6 @@ using System;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.UnitTests;
 
@@ -38,7 +37,7 @@ public sealed class EndpointRouteBuilderExtensionsTests
     {
         // Arrange
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
-        builder.AddOpenAIResponses();
+        builder.Services.AddOpenAIResponses();
         using WebApplication app = builder.Build();
 
         // Act & Assert
@@ -95,7 +94,7 @@ public sealed class EndpointRouteBuilderExtensionsTests
         IChatClient mockChatClient = new TestHelpers.SimpleMockChatClient();
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
         builder.AddAIAgent(validName, "Instructions", chatClientServiceKey: "chat-client");
-        builder.AddOpenAIResponses();
+        builder.Services.AddOpenAIResponses();
         using WebApplication app = builder.Build();
         AIAgent agent = app.Services.GetRequiredKeyedService<AIAgent>(validName);
 
@@ -115,7 +114,7 @@ public sealed class EndpointRouteBuilderExtensionsTests
         IChatClient mockChatClient = new TestHelpers.SimpleMockChatClient();
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
         builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
-        builder.AddOpenAIResponses();
+        builder.Services.AddOpenAIResponses();
         using WebApplication app = builder.Build();
         AIAgent agent = app.Services.GetRequiredKeyedService<AIAgent>("agent");
 
@@ -136,7 +135,7 @@ public sealed class EndpointRouteBuilderExtensionsTests
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
         builder.AddAIAgent("agent1", "Instructions1", chatClientServiceKey: "chat-client");
         builder.AddAIAgent("agent2", "Instructions2", chatClientServiceKey: "chat-client");
-        builder.AddOpenAIResponses();
+        builder.Services.AddOpenAIResponses();
         using WebApplication app = builder.Build();
         AIAgent agent1 = app.Services.GetRequiredKeyedService<AIAgent>("agent1");
         AIAgent agent2 = app.Services.GetRequiredKeyedService<AIAgent>("agent2");
@@ -159,12 +158,68 @@ public sealed class EndpointRouteBuilderExtensionsTests
         IChatClient mockChatClient = new TestHelpers.SimpleMockChatClient();
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
         builder.AddAIAgent(longName, "Instructions", chatClientServiceKey: "chat-client");
-        builder.AddOpenAIResponses();
+        builder.Services.AddOpenAIResponses();
         using WebApplication app = builder.Build();
         AIAgent agent = app.Services.GetRequiredKeyedService<AIAgent>(longName);
 
         // Act & Assert - Should not throw
         app.MapOpenAIResponses(agent);
+        Assert.NotNull(app);
+    }
+
+    /// <summary>
+    /// Verifies that MapOpenAIResponses without agent parameter works correctly.
+    /// </summary>
+    [Fact]
+    public void MapOpenAIResponses_WithoutAgent_Succeeds()
+    {
+        // Arrange
+        WebApplicationBuilder builder = WebApplication.CreateBuilder();
+        IChatClient mockChatClient = new TestHelpers.SimpleMockChatClient();
+        builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
+        builder.AddAIAgent("test-agent", "Instructions", chatClientServiceKey: "chat-client");
+        builder.Services.AddOpenAIResponses();
+        using WebApplication app = builder.Build();
+
+        // Act & Assert - Should not throw
+        app.MapOpenAIResponses();
+        Assert.NotNull(app);
+    }
+
+    /// <summary>
+    /// Verifies that MapOpenAIResponses without agent parameter requires AddOpenAIResponses to be called.
+    /// </summary>
+    [Fact]
+    public void MapOpenAIResponses_WithoutAgent_NoServiceRegistered_ThrowsInvalidOperationException()
+    {
+        // Arrange
+        WebApplicationBuilder builder = WebApplication.CreateBuilder();
+        using WebApplication app = builder.Build();
+
+        // Act & Assert
+        InvalidOperationException exception = Assert.Throws<InvalidOperationException>(() =>
+            app.MapOpenAIResponses());
+
+        Assert.Contains("IResponsesService is not registered", exception.Message);
+        Assert.Contains("AddOpenAIResponses()", exception.Message);
+    }
+
+    /// <summary>
+    /// Verifies that MapOpenAIResponses without agent parameter with custom path works correctly.
+    /// </summary>
+    [Fact]
+    public void MapOpenAIResponses_WithoutAgent_CustomPath_Succeeds()
+    {
+        // Arrange
+        WebApplicationBuilder builder = WebApplication.CreateBuilder();
+        IChatClient mockChatClient = new TestHelpers.SimpleMockChatClient();
+        builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
+        builder.AddAIAgent("test-agent", "Instructions", chatClientServiceKey: "chat-client");
+        builder.Services.AddOpenAIResponses();
+        using WebApplication app = builder.Build();
+
+        // Act & Assert - Should not throw
+        app.MapOpenAIResponses(responsesPath: "/custom/path/responses");
         Assert.NotNull(app);
     }
 }

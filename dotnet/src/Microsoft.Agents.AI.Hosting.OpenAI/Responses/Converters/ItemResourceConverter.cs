@@ -14,16 +14,7 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses.Converters;
 [ExcludeFromCodeCoverage]
 internal sealed class ItemResourceConverter : JsonConverter<ItemResource>
 {
-    private readonly ResponsesJsonContext _context;
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="ItemResourceConverter"/> class.
-    /// </summary>
-    public ItemResourceConverter()
-    {
-        this._context = ResponsesJsonContext.Default;
-    }
-
+    /// <inheritdoc/>
     public override ItemResource? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
         // Clone the reader to peek at the JSON
@@ -57,8 +48,16 @@ internal sealed class ItemResourceConverter : JsonConverter<ItemResource>
 
                 if (readerClone.TokenType is JsonTokenType.StartObject or JsonTokenType.StartArray)
                 {
-                    // Skip nested objects/arrays
-                    readerClone.Skip();
+                    // The Utf8JsonReader.Skip() method will fail fast if it detects that we're reading
+                    // from a partially read buffer, regardless of whether the next value is available.
+                    // This can result in erroneous failures in cases where a custom converter is calling
+                    // into a built-in converter (cf. https://github.com/dotnet/runtime/issues/74108).
+                    // For this reason we need to call the TrySkip() method instead -- the serializer
+                    // should guarantee sufficient read-ahead has been performed for the current object.
+                    if (!readerClone.TrySkip())
+                    {
+                        throw new InvalidOperationException("Failed to skip nested JSON value. Serializer should guarantee sufficient read-ahead has been done.");
+                    }
                 }
             }
         }
@@ -66,82 +65,83 @@ internal sealed class ItemResourceConverter : JsonConverter<ItemResource>
         // Determine the concrete type based on the type discriminator and deserialize using the source generation context
         return type switch
         {
-            ResponsesMessageItemResource.ItemType => JsonSerializer.Deserialize(ref reader, this._context.ResponsesMessageItemResource),
-            FileSearchToolCallItemResource.ItemType => JsonSerializer.Deserialize(ref reader, this._context.FileSearchToolCallItemResource),
-            FunctionToolCallItemResource.ItemType => JsonSerializer.Deserialize(ref reader, this._context.FunctionToolCallItemResource),
-            FunctionToolCallOutputItemResource.ItemType => JsonSerializer.Deserialize(ref reader, this._context.FunctionToolCallOutputItemResource),
-            ComputerToolCallItemResource.ItemType => JsonSerializer.Deserialize(ref reader, this._context.ComputerToolCallItemResource),
-            ComputerToolCallOutputItemResource.ItemType => JsonSerializer.Deserialize(ref reader, this._context.ComputerToolCallOutputItemResource),
-            WebSearchToolCallItemResource.ItemType => JsonSerializer.Deserialize(ref reader, this._context.WebSearchToolCallItemResource),
-            ReasoningItemResource.ItemType => JsonSerializer.Deserialize(ref reader, this._context.ReasoningItemResource),
-            ItemReferenceItemResource.ItemType => JsonSerializer.Deserialize(ref reader, this._context.ItemReferenceItemResource),
-            ImageGenerationToolCallItemResource.ItemType => JsonSerializer.Deserialize(ref reader, this._context.ImageGenerationToolCallItemResource),
-            CodeInterpreterToolCallItemResource.ItemType => JsonSerializer.Deserialize(ref reader, this._context.CodeInterpreterToolCallItemResource),
-            LocalShellToolCallItemResource.ItemType => JsonSerializer.Deserialize(ref reader, this._context.LocalShellToolCallItemResource),
-            LocalShellToolCallOutputItemResource.ItemType => JsonSerializer.Deserialize(ref reader, this._context.LocalShellToolCallOutputItemResource),
-            MCPListToolsItemResource.ItemType => JsonSerializer.Deserialize(ref reader, this._context.MCPListToolsItemResource),
-            MCPApprovalRequestItemResource.ItemType => JsonSerializer.Deserialize(ref reader, this._context.MCPApprovalRequestItemResource),
-            MCPApprovalResponseItemResource.ItemType => JsonSerializer.Deserialize(ref reader, this._context.MCPApprovalResponseItemResource),
-            MCPCallItemResource.ItemType => JsonSerializer.Deserialize(ref reader, this._context.MCPCallItemResource),
+            ResponsesMessageItemResource.ItemType => JsonSerializer.Deserialize(ref reader, OpenAIHostingJsonContext.Default.ResponsesMessageItemResource),
+            FileSearchToolCallItemResource.ItemType => JsonSerializer.Deserialize(ref reader, OpenAIHostingJsonContext.Default.FileSearchToolCallItemResource),
+            FunctionToolCallItemResource.ItemType => JsonSerializer.Deserialize(ref reader, OpenAIHostingJsonContext.Default.FunctionToolCallItemResource),
+            FunctionToolCallOutputItemResource.ItemType => JsonSerializer.Deserialize(ref reader, OpenAIHostingJsonContext.Default.FunctionToolCallOutputItemResource),
+            ComputerToolCallItemResource.ItemType => JsonSerializer.Deserialize(ref reader, OpenAIHostingJsonContext.Default.ComputerToolCallItemResource),
+            ComputerToolCallOutputItemResource.ItemType => JsonSerializer.Deserialize(ref reader, OpenAIHostingJsonContext.Default.ComputerToolCallOutputItemResource),
+            WebSearchToolCallItemResource.ItemType => JsonSerializer.Deserialize(ref reader, OpenAIHostingJsonContext.Default.WebSearchToolCallItemResource),
+            ReasoningItemResource.ItemType => JsonSerializer.Deserialize(ref reader, OpenAIHostingJsonContext.Default.ReasoningItemResource),
+            ItemReferenceItemResource.ItemType => JsonSerializer.Deserialize(ref reader, OpenAIHostingJsonContext.Default.ItemReferenceItemResource),
+            ImageGenerationToolCallItemResource.ItemType => JsonSerializer.Deserialize(ref reader, OpenAIHostingJsonContext.Default.ImageGenerationToolCallItemResource),
+            CodeInterpreterToolCallItemResource.ItemType => JsonSerializer.Deserialize(ref reader, OpenAIHostingJsonContext.Default.CodeInterpreterToolCallItemResource),
+            LocalShellToolCallItemResource.ItemType => JsonSerializer.Deserialize(ref reader, OpenAIHostingJsonContext.Default.LocalShellToolCallItemResource),
+            LocalShellToolCallOutputItemResource.ItemType => JsonSerializer.Deserialize(ref reader, OpenAIHostingJsonContext.Default.LocalShellToolCallOutputItemResource),
+            MCPListToolsItemResource.ItemType => JsonSerializer.Deserialize(ref reader, OpenAIHostingJsonContext.Default.MCPListToolsItemResource),
+            MCPApprovalRequestItemResource.ItemType => JsonSerializer.Deserialize(ref reader, OpenAIHostingJsonContext.Default.MCPApprovalRequestItemResource),
+            MCPApprovalResponseItemResource.ItemType => JsonSerializer.Deserialize(ref reader, OpenAIHostingJsonContext.Default.MCPApprovalResponseItemResource),
+            MCPCallItemResource.ItemType => JsonSerializer.Deserialize(ref reader, OpenAIHostingJsonContext.Default.MCPCallItemResource),
             _ => throw new JsonException($"Unknown item type: {type}")
         };
     }
 
+    /// <inheritdoc/>
     public override void Write(Utf8JsonWriter writer, ItemResource value, JsonSerializerOptions options)
     {
         // Directly serialize using the appropriate type info from the context
         switch (value)
         {
             case ResponsesMessageItemResource message:
-                JsonSerializer.Serialize(writer, message, this._context.ResponsesMessageItemResource);
+                JsonSerializer.Serialize(writer, message, OpenAIHostingJsonContext.Default.ResponsesMessageItemResource);
                 break;
             case FileSearchToolCallItemResource fileSearch:
-                JsonSerializer.Serialize(writer, fileSearch, this._context.FileSearchToolCallItemResource);
+                JsonSerializer.Serialize(writer, fileSearch, OpenAIHostingJsonContext.Default.FileSearchToolCallItemResource);
                 break;
             case FunctionToolCallItemResource functionCall:
-                JsonSerializer.Serialize(writer, functionCall, this._context.FunctionToolCallItemResource);
+                JsonSerializer.Serialize(writer, functionCall, OpenAIHostingJsonContext.Default.FunctionToolCallItemResource);
                 break;
             case FunctionToolCallOutputItemResource functionOutput:
-                JsonSerializer.Serialize(writer, functionOutput, this._context.FunctionToolCallOutputItemResource);
+                JsonSerializer.Serialize(writer, functionOutput, OpenAIHostingJsonContext.Default.FunctionToolCallOutputItemResource);
                 break;
             case ComputerToolCallItemResource computerCall:
-                JsonSerializer.Serialize(writer, computerCall, this._context.ComputerToolCallItemResource);
+                JsonSerializer.Serialize(writer, computerCall, OpenAIHostingJsonContext.Default.ComputerToolCallItemResource);
                 break;
             case ComputerToolCallOutputItemResource computerOutput:
-                JsonSerializer.Serialize(writer, computerOutput, this._context.ComputerToolCallOutputItemResource);
+                JsonSerializer.Serialize(writer, computerOutput, OpenAIHostingJsonContext.Default.ComputerToolCallOutputItemResource);
                 break;
             case WebSearchToolCallItemResource webSearch:
-                JsonSerializer.Serialize(writer, webSearch, this._context.WebSearchToolCallItemResource);
+                JsonSerializer.Serialize(writer, webSearch, OpenAIHostingJsonContext.Default.WebSearchToolCallItemResource);
                 break;
             case ReasoningItemResource reasoning:
-                JsonSerializer.Serialize(writer, reasoning, this._context.ReasoningItemResource);
+                JsonSerializer.Serialize(writer, reasoning, OpenAIHostingJsonContext.Default.ReasoningItemResource);
                 break;
             case ItemReferenceItemResource itemReference:
-                JsonSerializer.Serialize(writer, itemReference, this._context.ItemReferenceItemResource);
+                JsonSerializer.Serialize(writer, itemReference, OpenAIHostingJsonContext.Default.ItemReferenceItemResource);
                 break;
             case ImageGenerationToolCallItemResource imageGeneration:
-                JsonSerializer.Serialize(writer, imageGeneration, this._context.ImageGenerationToolCallItemResource);
+                JsonSerializer.Serialize(writer, imageGeneration, OpenAIHostingJsonContext.Default.ImageGenerationToolCallItemResource);
                 break;
             case CodeInterpreterToolCallItemResource codeInterpreter:
-                JsonSerializer.Serialize(writer, codeInterpreter, this._context.CodeInterpreterToolCallItemResource);
+                JsonSerializer.Serialize(writer, codeInterpreter, OpenAIHostingJsonContext.Default.CodeInterpreterToolCallItemResource);
                 break;
             case LocalShellToolCallItemResource localShell:
-                JsonSerializer.Serialize(writer, localShell, this._context.LocalShellToolCallItemResource);
+                JsonSerializer.Serialize(writer, localShell, OpenAIHostingJsonContext.Default.LocalShellToolCallItemResource);
                 break;
             case LocalShellToolCallOutputItemResource localShellOutput:
-                JsonSerializer.Serialize(writer, localShellOutput, this._context.LocalShellToolCallOutputItemResource);
+                JsonSerializer.Serialize(writer, localShellOutput, OpenAIHostingJsonContext.Default.LocalShellToolCallOutputItemResource);
                 break;
             case MCPListToolsItemResource mcpListTools:
-                JsonSerializer.Serialize(writer, mcpListTools, this._context.MCPListToolsItemResource);
+                JsonSerializer.Serialize(writer, mcpListTools, OpenAIHostingJsonContext.Default.MCPListToolsItemResource);
                 break;
             case MCPApprovalRequestItemResource mcpApprovalRequest:
-                JsonSerializer.Serialize(writer, mcpApprovalRequest, this._context.MCPApprovalRequestItemResource);
+                JsonSerializer.Serialize(writer, mcpApprovalRequest, OpenAIHostingJsonContext.Default.MCPApprovalRequestItemResource);
                 break;
             case MCPApprovalResponseItemResource mcpApprovalResponse:
-                JsonSerializer.Serialize(writer, mcpApprovalResponse, this._context.MCPApprovalResponseItemResource);
+                JsonSerializer.Serialize(writer, mcpApprovalResponse, OpenAIHostingJsonContext.Default.MCPApprovalResponseItemResource);
                 break;
             case MCPCallItemResource mcpCall:
-                JsonSerializer.Serialize(writer, mcpCall, this._context.MCPCallItemResource);
+                JsonSerializer.Serialize(writer, mcpCall, OpenAIHostingJsonContext.Default.MCPCallItemResource);
                 break;
             default:
                 throw new JsonException($"Unknown item type: {value.GetType().Name}");

@@ -22,10 +22,16 @@ internal static class Step7EntryPoint
             AgentThread thread = agent.GetNewThread();
             await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(thread).ConfigureAwait(false))
             {
+                if (update.RawRepresentation is WorkflowEvent)
+                {
+                    // Skip workflow status updates
+                    continue;
+                }
+
                 string updateText = $"{update.AuthorName
-                                       ?? update.AgentId
-                                       ?? update.Role.ToString()
-                                       ?? ChatRole.Assistant.ToString()}: {update.Text}";
+                                           ?? update.AgentId
+                                           ?? update.Role.ToString()
+                                           ?? ChatRole.Assistant.ToString()}: {update.Text}";
                 writer.WriteLine(updateText);
             }
         }

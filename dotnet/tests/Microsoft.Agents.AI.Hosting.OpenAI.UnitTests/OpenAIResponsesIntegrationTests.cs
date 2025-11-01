@@ -13,7 +13,6 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using OpenAI;
 using OpenAI.Responses;
 
@@ -1132,7 +1131,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
 
         builder.Services.AddKeyedSingleton($"chat-client-{agentName}", chatClient);
         builder.AddAIAgent(agentName, instructions, chatClientServiceKey: $"chat-client-{agentName}");
-        builder.AddOpenAIResponses();
+        builder.Services.AddOpenAIResponses();
 
         this._app = builder.Build();
         AIAgent agent = this._app.Services.GetRequiredKeyedService<AIAgent>(agentName);
@@ -1159,7 +1158,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
             builder.AddAIAgent(name, instructions, chatClientServiceKey: $"chat-client-{name}");
         }
 
-        builder.AddOpenAIResponses();
+        builder.Services.AddOpenAIResponses();
 
         this._app = builder.Build();
 
