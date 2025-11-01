@@ -16,7 +16,7 @@ namespace Microsoft.Agents.AI.AGUI;
 /// <summary>
 /// Provides an <see cref="IChatClient"/> implementation that communicates with an AG-UI compliant server.
 /// </summary>
-internal sealed class AGUIChatClient : IChatClient
+public sealed class AGUIChatClient : IChatClient
 {
     private readonly AGUIHttpService _httpService;
     private readonly JsonSerializerOptions _jsonSerializerOptions;
@@ -82,18 +82,16 @@ internal sealed class AGUIChatClient : IChatClient
             throw new ArgumentNullException(nameof(messages));
         }
 
-        var messagesList = messages.ToList();
-
         // Extract thread ID from options if available
-        string threadId = options?.ConversationId ?? Guid.NewGuid().ToString();
-        string runId = Guid.NewGuid().ToString();
+        var threadId = options?.ConversationId ?? Guid.NewGuid().ToString();
+        var runId = Guid.NewGuid().ToString();
 
         // Create the input for the AGUI service
         var input = new RunAgentInput
         {
             ThreadId = threadId,
             RunId = runId,
-            Messages = messagesList.AsAGUIMessages(this._jsonSerializerOptions),
+            Messages = messages.AsAGUIMessages(this._jsonSerializerOptions),
         };
 
         // Add tools if provided

@@ -16,6 +16,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\..\src\Microsoft.Agents.AI\Microsoft.Agents.AI.csproj" />
     <ProjectReference Include="..\..\..\src\Microsoft.Agents.AI.AGUI\Microsoft.Agents.AI.AGUI.csproj" />
   </ItemGroup>
 

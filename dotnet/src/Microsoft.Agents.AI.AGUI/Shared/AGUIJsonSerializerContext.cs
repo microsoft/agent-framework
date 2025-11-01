@@ -37,9 +37,6 @@ namespace Microsoft.Agents.AI.AGUI;
 [JsonSerializable(typeof(float))]
 [JsonSerializable(typeof(bool))]
 [JsonSerializable(typeof(decimal))]
-#if !ASPNETCORE
-[JsonSerializable(typeof(AGUIAgentThread.AGUIAgentThreadState))]
-#endif
 internal partial class AGUIJsonSerializerContext : JsonSerializerContext
 {
 }

@@ -51,12 +51,15 @@ public static class Program
             Timeout = TimeSpan.FromSeconds(60)
         };
 
-        AGUIAgent agent = new(
-            id: "agui-client",
+        var chatClient = new AGUIChatClient(
+            httpClient,
+            serverUrl,
+            modelId: "agui-client",
+            jsonSerializerOptions: null);
+
+        AIAgent agent = chatClient.CreateAIAgent(
+            name: "agui-client",
             description: "AG-UI Client Agent",
-            httpClient: httpClient,
-            endpoint: serverUrl,
-            jsonSerializerOptions: null,
             tools: []);
 
         AgentThread thread = agent.GetNewThread();
