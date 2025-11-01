@@ -90,23 +90,23 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         **kwargs: Any,
     ) -> ChatResponse:
         client = await self.ensure_client()
-        options_dict = await self.prepare_options(messages, chat_options)
+        run_options = await self.prepare_options(messages, chat_options)
         try:
             if not chat_options.response_format:
                 response = await client.responses.create(
                     stream=False,
-                    **options_dict,
+                    **run_options,
                 )
-                chat_options.conversation_id = response.id if chat_options.store is True else None
+                chat_options.conversation_id = self.get_conversation_id(response, chat_options.store)
                 return self._create_response_content(response, chat_options=chat_options)
             # create call does not support response_format, so we need to handle it via parse call
             resp_format = chat_options.response_format
             parsed_response: ParsedResponse[BaseModel] = await client.responses.parse(
                 text_format=resp_format,
                 stream=False,
-                **options_dict,
+                **run_options,
             )
-            chat_options.conversation_id = parsed_response.id if chat_options.store is True else None
+            chat_options.conversation_id = self.get_conversation_id(parsed_response, chat_options.store)
             return self._create_response_content(parsed_response, chat_options=chat_options)
         except BadRequestError as ex:
             if ex.code == "content_filter":
@@ -132,13 +132,13 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         client = await self.ensure_client()
-        options_dict = await self.prepare_options(messages, chat_options)
+        run_options = await self.prepare_options(messages, chat_options)
         function_call_ids: dict[int, tuple[str, str]] = {}  # output_index: (call_id, name)
         try:
             if not chat_options.response_format:
                 response = await client.responses.create(
                     stream=True,
-                    **options_dict,
+                    **run_options,
                 )
                 async for chunk in response:
                     update = self._create_streaming_response_content(
@@ -149,7 +149,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
             # create call does not support response_format, so we need to handle it via stream call
             async with client.responses.stream(
                 text_format=chat_options.response_format,
-                **options_dict,
+                **run_options,
             ) as response:
                 async for chunk in response:
                     update = self._create_streaming_response_content(
@@ -171,6 +171,13 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                 f"{type(self)} service failed to complete the prompt: {ex}",
                 inner_exception=ex,
             ) from ex
+
+    def get_conversation_id(
+        self, response: OpenAIResponse | ParsedResponse[BaseModel], run_options: dict[str, Any]
+    ) -> str | None:
+        """Gets conversation ID from response."""
+        store = run_options.get("store", False)
+        return response.id if store else None
 
     # region Prep methods
 
@@ -304,7 +311,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions
     ) -> dict[str, Any]:
         """Take ChatOptions and create the specific options for Responses API."""
-        options_dict: dict[str, Any] = chat_options.to_dict(
+        run_options: dict[str, Any] = chat_options.to_dict(
             exclude={
                 "type",
                 "response_format",  # handled in inner get methods
@@ -323,33 +330,33 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
             "max_tokens": "max_output_tokens",
         }
         for old_key, new_key in translations.items():
-            if old_key in options_dict and old_key != new_key:
-                options_dict[new_key] = options_dict.pop(old_key)
+            if old_key in run_options and old_key != new_key:
+                run_options[new_key] = run_options.pop(old_key)
 
         # tools
         if chat_options.tools is None:
-            options_dict.pop("parallel_tool_calls", None)
+            run_options.pop("parallel_tool_calls", None)
         else:
-            options_dict["tools"] = self._tools_to_response_tools(chat_options.tools)
+            run_options["tools"] = self._tools_to_response_tools(chat_options.tools)
 
         # model id
-        if not options_dict.get("model"):
-            options_dict["model"] = self.model_id
+        if not run_options.get("model"):
+            run_options["model"] = self.model_id
 
         # messages
         request_input = self._prepare_chat_messages_for_request(messages)
         if not request_input:
             raise ServiceInvalidRequestError("Messages are required for chat completions")
-        options_dict["input"] = request_input
+        run_options["input"] = request_input
 
         # additional provider specific settings
-        if additional_properties := options_dict.pop("additional_properties", None):
+        if additional_properties := run_options.pop("additional_properties", None):
             for key, value in additional_properties.items():
                 if value is not None:
-                    options_dict[key] = value
-        if "store" not in options_dict:
-            options_dict["store"] = False
-        return options_dict
+                    run_options[key] = value
+        if "store" not in run_options:
+            run_options["store"] = False
+        return run_options
 
     def _prepare_chat_messages_for_request(self, chat_messages: Sequence[ChatMessage]) -> list[dict[str, Any]]:
         """Prepare the chat messages for a request.
@@ -851,7 +858,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                 contents.append(TextReasoningContent(text=event.text, raw_representation=event))
                 metadata.update(self._get_metadata_from_response(event))
             case "response.completed":
-                conversation_id = event.response.id if chat_options.store is True else None
+                conversation_id = self.get_conversation_id(event.response, chat_options.store)
                 model = event.response.model
                 if event.response.usage:
                     usage = self._usage_details_from_openai(event.response.usage)

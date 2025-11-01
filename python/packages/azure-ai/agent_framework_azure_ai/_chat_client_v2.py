@@ -8,6 +8,7 @@ from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     ChatMessage,
     ChatOptions,
+    TextContent,
     get_logger,
     use_chat_middleware,
     use_function_invocation,
@@ -20,7 +21,11 @@ from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import PromptAgentDefinition
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import ResourceNotFoundError
-from pydantic import ValidationError
+from openai.types.responses.parsed_response import (
+    ParsedResponse,
+)
+from openai.types.responses.response import Response as OpenAIResponse
+from pydantic import BaseModel, ValidationError
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -89,7 +94,7 @@ class AzureAIAgentClientV2(OpenAIBaseResponsesClient):
         project_client: AIProjectClient | None = None,
         agent_name: str | None = None,
         agent_version: str | None = None,
-        thread_id: str | None = None,
+        conversation_id: str | None = None,
         project_endpoint: str | None = None,
         model_deployment_name: str | None = None,
         async_credential: AsyncTokenCredential | None = None,
@@ -103,7 +108,7 @@ class AzureAIAgentClientV2(OpenAIBaseResponsesClient):
             project_client: An existing AIProjectClient to use. If not provided, one will be created.
             agent_name: The name to use when creating new agents.
             agent_version: The version of the agent to use.
-            thread_id: Default thread ID to use for conversations. Can be overridden by
+            conversation_id: Default conversation ID to use for conversations. Can be overridden by
                 conversation_id property when making a request.
             project_endpoint: The Azure AI Project endpoint URL.
                 Can also be set via environment variable AZURE_AI_PROJECT_ENDPOINT.
@@ -179,12 +184,12 @@ class AzureAIAgentClientV2(OpenAIBaseResponsesClient):
         )
 
         # Initialize instance variables
+        self.agent_name = agent_name
+        self.agent_version = agent_version
         self.project_client = project_client
         self.credential = async_credential
-        self.agent_name = agent_name or "UnnamedAgent"
-        self.agent_version = agent_version
         self.model_id = azure_ai_settings.model_deployment_name
-        self.thread_id = thread_id
+        self.conversation_id = conversation_id
         self._should_close_client = should_close_client  # Track whether we should close client connection
 
     async def setup_azure_ai_observability(self, enable_sensitive_data: bool | None = None) -> None:
@@ -230,7 +235,7 @@ class AzureAIAgentClientV2(OpenAIBaseResponsesClient):
         return cls(
             project_client=settings.get("project_client"),
             agent_id=settings.get("agent_id"),
-            thread_id=settings.get("thread_id"),
+            conversation_id=settings.get("conversation_id"),
             project_endpoint=settings.get("project_endpoint"),
             model_deployment_name=settings.get("model_deployment_name"),
             agent_name=settings.get("agent_name"),
@@ -238,13 +243,14 @@ class AzureAIAgentClientV2(OpenAIBaseResponsesClient):
             env_file_path=settings.get("env_file_path"),
         )
 
-    async def _get_agent_reference_or_create(self, run_options: dict[str, Any] | None = None) -> dict[str, str]:
+    async def _get_agent_reference_or_create(
+        self, run_options: dict[str, Any], messages_instructions: str | None
+    ) -> dict[str, str]:
         """Determine which agent to use and create if needed.
 
         Returns:
             str: The agent_name to use
         """
-        run_options = run_options or {}
         # If no agent_version is provided, create a new agent
         if self.agent_version is None:
             if "model" not in run_options or not run_options["model"]:
@@ -258,8 +264,15 @@ class AzureAIAgentClientV2(OpenAIBaseResponsesClient):
             }
             if "tools" in run_options:
                 args["tools"] = run_options["tools"]
-            if "instructions" in run_options:
-                args["instructions"] = run_options["instructions"]
+
+            # Combine instructions from messages and options
+            combined_instructions = [
+                instructions
+                for instructions in [messages_instructions, run_options.get("instructions")]
+                if instructions
+            ]
+            if combined_instructions:
+                args["instructions"] = "".join(combined_instructions)
 
             # TODO (dmytrostruk): Add response format
 
@@ -272,16 +285,56 @@ class AzureAIAgentClientV2(OpenAIBaseResponsesClient):
 
         return {"name": self.agent_name, "version": self.agent_version, "type": "agent_reference"}
 
+    async def _add_messages_to_conversation(self, run_options: dict[str, Any]) -> str:
+        conversation_id = run_options.get("conversation_id", self.conversation_id)
+        messages = run_options["input"]
+
+        # Add messages to existing conversation
+        if conversation_id:
+            await self.client.conversations.items.create(conversation_id=conversation_id, items=messages)
+            return conversation_id
+
+        # Create a new conversation with messages
+        created_conversation = await self.client.conversations.create(items=messages)
+        return created_conversation.id
+
     async def _close_client_if_needed(self) -> None:
         """Close project_client session if we created it."""
         if self._should_close_client:
             await self.project_client.close()
 
+    def _prepare_input(self, messages: MutableSequence[ChatMessage]) -> tuple[list[ChatMessage], str | None]:
+        """Prepares input from messages and converts system/developer messages to instructions."""
+        result: list[ChatMessage] = []
+        instructions_list: list[str] = []
+        instructions: str | None = None
+
+        # System/developer messages are turned into instructions, since there is no such message roles in Azure AI.
+        for message in messages:
+            if message.role.value in ["system", "developer"]:
+                for text_content in [content for content in message.contents if isinstance(content, TextContent)]:
+                    instructions_list.append(text_content.text)
+            else:
+                result.append(message)
+
+        if len(instructions_list) > 0:
+            instructions = "".join(instructions_list)
+
+        return result, instructions
+
     async def prepare_options(
         self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions
     ) -> dict[str, Any]:
-        run_options = await super().prepare_options(messages, chat_options)
-        agent_reference = await self._get_agent_reference_or_create(run_options)
+        prepared_messages, instructions = self._prepare_input(messages)
+        run_options = await super().prepare_options(prepared_messages, chat_options)
+        agent_reference = await self._get_agent_reference_or_create(run_options, instructions)
+
+        store = run_options.get("store", False)
+
+        if store:
+            conversation_id = await self._add_messages_to_conversation(run_options)
+            run_options["conversation"] = conversation_id
+            run_options["input"] = ""  # TODO (dmytrostruk): Remove 'input' once service is fixed
 
         run_options["extra_body"] = {"agent": agent_reference}
 
@@ -297,3 +350,18 @@ class AzureAIAgentClientV2(OpenAIBaseResponsesClient):
     async def initialize_client(self):
         """Initializes OpenAI client asynchronously."""
         self.client = await self.project_client.get_openai_client()  # type: ignore
+
+    def get_conversation_id(self, response: OpenAIResponse | ParsedResponse[BaseModel], store: bool) -> str | None:
+        """Gets conversation ID from response."""
+        return response.conversation.id if response.conversation and store else None
+
+    def _update_agent_name(self, agent_name: str | None) -> None:
+        """Update the agent name in the chat client.
+
+        Args:
+            agent_name: The new name for the agent.
+        """
+        # This is a no-op in the base class, but can be overridden by subclasses
+        # to update the agent name in the client.
+        if agent_name and not self.agent_name:
+            self.agent_name = agent_name
