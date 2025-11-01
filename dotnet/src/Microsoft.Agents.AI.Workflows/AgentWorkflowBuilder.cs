@@ -127,7 +127,7 @@ public static partial class AgentWorkflowBuilder
         // provenance tracking exposed in the workflow context passed to a handler.
         ExecutorIsh[] agentExecutors = (from agent in agents select (ExecutorIsh)new AgentRunStreamingExecutor(agent, includeInputInOutput: false)).ToArray();
         ExecutorIsh[] accumulators = [.. from agent in agentExecutors select (ExecutorIsh)new CollectChatMessagesExecutor($"Batcher/{agent.Id}")];
-        builder.AddFanOutEdge(start, targets: agentExecutors);
+        builder.AddFanOutEdge(start, null, targets: agentExecutors);
         for (int i = 0; i < agentExecutors.Length; i++)
         {
             builder.AddEdge(agentExecutors[i], accumulators[i]);

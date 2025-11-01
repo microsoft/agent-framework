@@ -52,8 +52,8 @@ public static class Program
 
         // Build the workflow by adding executors and connecting them
         var workflow = new WorkflowBuilder(startExecutor)
-            .AddFanOutEdge(startExecutor, targets: [physicist, chemist])
-            .AddFanInEdge(aggregationExecutor, sources: [physicist, chemist])
+            .AddFanOutEdge(startExecutor, "fan-out", targets: [physicist, chemist])
+            .AddFanInEdge(aggregationExecutor, "fan-in", sources: [physicist, chemist])
             .WithOutputFrom(aggregationExecutor)
             .Build();
 
