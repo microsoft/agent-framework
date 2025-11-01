@@ -8,7 +8,6 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.AI.AGUI.Shared;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
@@ -17,10 +16,9 @@ namespace Microsoft.Agents.AI.AGUI;
 /// <summary>
 /// Provides an <see cref="AIAgent"/> implementation that communicates with an AG-UI compliant server.
 /// </summary>
-public sealed class AGUIAgent : AIAgent
+public sealed class AGUIAgent : AIAgent, IDisposable
 {
-    private readonly AGUIHttpService _client;
-    private readonly JsonSerializerOptions _jsonSerializerOptions;
+    private readonly IChatClient _chatClient;
     private readonly IList<AITool> _tools;
 
     /// <summary>
@@ -42,10 +40,15 @@ public sealed class AGUIAgent : AIAgent
     {
         this.Id = Throw.IfNullOrWhitespace(id);
         this.Description = description;
-        this._client = new AGUIHttpService(
+
+        var innerClient = new AGUIChatClient(
             httpClient ?? Throw.IfNull(httpClient),
-            endpoint ?? Throw.IfNullOrEmpty(endpoint));
-        this._jsonSerializerOptions = jsonSerializerOptions ?? AGUIJsonSerializerContext.Default.Options;
+            endpoint ?? Throw.IfNullOrEmpty(endpoint),
+            modelId: id,
+            jsonSerializerOptions: jsonSerializerOptions);
+
+        // Wrap with FunctionInvokingChatClient to handle automatic tool invocation
+        this._chatClient = new FunctionInvokingChatClient(innerClient);
         this._tools = tools ?? throw new ArgumentNullException(nameof(tools));
     }
 
@@ -88,160 +91,36 @@ public sealed class AGUIAgent : AIAgent
             throw new InvalidOperationException("The provided thread is not compatible with the agent. Only threads created by the agent can be used.");
         }
 
-        Dictionary<string, AIFunction>? toolsLookup = null;
+        // Create chat options with thread ID and tools
+        var chatOptions = new ChatOptions
+        {
+            ConversationId = typedThread.ThreadId,
+        };
+
         if (this._tools is { Count: > 0 })
         {
-            toolsLookup = this._tools
-                .OfType<AIFunction>()
-                .ToDictionary(f => f.Name, StringComparer.Ordinal);
+            chatOptions.Tools = this._tools;
         }
 
-        var ongoingMessages = messages.ToList();
+        var llmMessages = typedThread.MessageStore.Concat(messages);
         List<ChatResponseUpdate> allUpdates = [];
 
-        do
+        // FunctionInvokingChatClient handles automatic tool invocation
+        await foreach (var update in this._chatClient.GetStreamingResponseAsync(llmMessages, chatOptions, cancellationToken).ConfigureAwait(false))
         {
-            if (TryGetExecutablePendingToolCalls(allUpdates, toolsLookup, out var pendingToolCalls))
-            {
-                // Append messages from existing updates
-                var response = allUpdates.ToChatResponse();
-                ongoingMessages.AddRange(response.Messages);
-
-                // Invoke tools and collect results
-                var toolResultMessages = await InvokeToolsAsync(pendingToolCalls, cancellationToken).ConfigureAwait(false);
-
-                // Append tool call results
-                ongoingMessages.AddRange(toolResultMessages);
-                allUpdates.Clear();
-            }
-
-            await foreach (var update in this.RunStreamingCoreAsync(ongoingMessages, typedThread, cancellationToken).ConfigureAwait(false))
-            {
-                allUpdates.Add(update.AsChatResponseUpdate());
-                yield return update;
-            }
+            allUpdates.Add(update);
+            yield return new AgentRunResponseUpdate(update);
         }
-        while (TryGetExecutablePendingToolCalls(allUpdates, toolsLookup, out _));
 
         var finalResponse = allUpdates.ToChatResponse();
         await NotifyThreadOfNewMessagesAsync(typedThread, messages.Concat(finalResponse.Messages), cancellationToken).ConfigureAwait(false);
     }
 
-    private async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingCoreAsync(
-        IEnumerable<ChatMessage> messages,
-        AGUIAgentThread thread,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
+    /// <summary>
+    /// Disposes the agent and releases associated resources.
+    /// </summary>
+    public void Dispose()
     {
-        string runId = Guid.NewGuid().ToString();
-
-        var llmMessages = thread.MessageStore.Concat(messages);
-
-        // Use thread's JsonSerializerOptions if available, otherwise fall back to constructor-provided options
-        var serializerOptions = thread.ThreadSerializationOptions ?? this._jsonSerializerOptions;
-
-        RunAgentInput input = new()
-        {
-            ThreadId = thread.ThreadId,
-            RunId = runId,
-            Messages = llmMessages.AsAGUIMessages(serializerOptions),
-        };
-
-        if (this._tools is { Count: > 0 })
-        {
-            input.Tools = this._tools.AsAGUITools();
-        }
-
-        await foreach (var update in this._client.PostRunAsync(input, cancellationToken).AsAgentRunResponseUpdatesAsync(serializerOptions, cancellationToken).ConfigureAwait(false))
-        {
-            yield return update;
-        }
-    }
-
-    private static bool TryGetExecutablePendingToolCalls(
-        List<ChatResponseUpdate> updates,
-        Dictionary<string, AIFunction>? toolsLookup,
-        out List<PendingToolCallContext> pendingToolCalls)
-    {
-        pendingToolCalls = null!;
-
-        if (updates.Count == 0 || toolsLookup is not { Count: > 0 })
-        {
-            return false;
-        }
-
-        var lastUpdate = updates[updates.Count - 1];
-        var functionCalls = lastUpdate.Contents.OfType<FunctionCallContent>().ToList();
-
-        if (functionCalls.Count == 0)
-        {
-            return false;
-        }
-
-        // Check if all function calls can be executed by finding matching AIFunction tools
-        var executableCalls = new List<PendingToolCallContext>();
-        foreach (var functionCall in functionCalls)
-        {
-            if (toolsLookup.TryGetValue(functionCall.Name, out var aiFunction))
-            {
-                executableCalls.Add(new PendingToolCallContext(functionCall, aiFunction));
-            }
-        }
-
-        // If we can't execute all tool calls, we must not execute any of them and let the caller handle it.
-        // This ensures we don't send partial tool results back to the server.
-        if (executableCalls.Count != functionCalls.Count)
-        {
-            return false;
-        }
-
-        pendingToolCalls = executableCalls;
-        return true;
-    }
-
-    private static async Task<List<ChatMessage>> InvokeToolsAsync(
-        List<PendingToolCallContext> pendingToolCalls,
-        CancellationToken cancellationToken)
-    {
-        var toolResultMessages = new List<ChatMessage>();
-
-        foreach (var pending in pendingToolCalls)
-        {
-            object? result;
-            Exception? exception = null;
-
-            try
-            {
-                var arguments = pending.FunctionCall.Arguments is not null
-                    ? new AIFunctionArguments(pending.FunctionCall.Arguments)
-                    : null;
-                result = await pending.Function.InvokeAsync(arguments, cancellationToken).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                exception = ex;
-                result = $"Error invoking tool: {ex.Message}";
-            }
-
-            var functionResult = exception is null
-                ? new FunctionResultContent(pending.FunctionCall.CallId, result)
-                : new FunctionResultContent(pending.FunctionCall.CallId, result) { Exception = exception };
-
-            toolResultMessages.Add(new ChatMessage(ChatRole.Tool, [functionResult]));
-        }
-
-        return toolResultMessages;
-    }
-
-    private readonly struct PendingToolCallContext
-    {
-        public PendingToolCallContext(FunctionCallContent functionCall, AIFunction function)
-        {
-            this.FunctionCall = functionCall;
-            this.Function = function;
-        }
-
-        public FunctionCallContent FunctionCall { get; }
-
-        public AIFunction Function { get; }
+        this._chatClient?.Dispose();
     }
 }

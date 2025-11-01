@@ -19,7 +19,7 @@ namespace Microsoft.Agents.AI.AGUI.Shared;
 internal static class AgentRunResponseUpdateAGUIExtensions
 {
 #if !ASPNETCORE
-    public static async IAsyncEnumerable<AgentRunResponseUpdate> AsAgentRunResponseUpdatesAsync(
+    public static async IAsyncEnumerable<ChatResponseUpdate> AsChatResponseUpdatesAsync(
         this IAsyncEnumerable<BaseEvent> events,
         JsonSerializerOptions jsonSerializerOptions,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -39,14 +39,14 @@ internal static class AgentRunResponseUpdateAGUIExtensions
                 case RunStartedEvent runStarted:
                     conversationId = runStarted.ThreadId;
                     responseId = runStarted.RunId;
-                    yield return new AgentRunResponseUpdate(new ChatResponseUpdate(
+                    yield return new ChatResponseUpdate(
                         ChatRole.Assistant,
                         [])
                     {
                         ConversationId = conversationId,
                         ResponseId = responseId,
                         CreatedAt = DateTimeOffset.UtcNow
-                    });
+                    };
                     break;
                 case RunFinishedEvent runFinished:
                     if (!string.Equals(runFinished.ThreadId, conversationId, StringComparison.Ordinal))
@@ -57,18 +57,18 @@ internal static class AgentRunResponseUpdateAGUIExtensions
                     {
                         throw new InvalidOperationException($"The run finished event didn't match the run started event run ID: {runFinished.RunId}, {responseId}");
                     }
-                    yield return new AgentRunResponseUpdate(new ChatResponseUpdate(
+                    yield return new ChatResponseUpdate(
                         ChatRole.Assistant, runFinished.Result?.GetRawText())
                     {
                         ConversationId = conversationId,
                         ResponseId = responseId,
                         CreatedAt = DateTimeOffset.UtcNow
-                    });
+                    };
                     break;
                 case RunErrorEvent runError:
-                    yield return new AgentRunResponseUpdate(new ChatResponseUpdate(
+                    yield return new ChatResponseUpdate(
                         ChatRole.Assistant,
-                        [(new ErrorContent(runError.Message) { ErrorCode = runError.Code })]));
+                        [(new ErrorContent(runError.Message) { ErrorCode = runError.Code })]);
                     break;
                 case TextMessageStartEvent textStart:
                     if (currentRole != default || currentMessageId != null)
@@ -80,7 +80,7 @@ internal static class AgentRunResponseUpdateAGUIExtensions
                     currentMessageId = textStart.MessageId;
                     break;
                 case TextMessageContentEvent textContent:
-                    yield return new AgentRunResponseUpdate(new ChatResponseUpdate(
+                    yield return new ChatResponseUpdate(
                         currentRole,
                         textContent.Delta)
                     {
@@ -88,7 +88,7 @@ internal static class AgentRunResponseUpdateAGUIExtensions
                         ResponseId = responseId,
                         MessageId = textContent.MessageId,
                         CreatedAt = DateTimeOffset.UtcNow
-                    });
+                    };
                     break;
                 case TextMessageEndEvent textEnd:
                     if (currentMessageId != textEnd.MessageId)
@@ -134,7 +134,7 @@ internal static class AgentRunResponseUpdateAGUIExtensions
                         currentToolCallName!,
                         arguments);
 
-                    yield return new AgentRunResponseUpdate(new ChatResponseUpdate(
+                    yield return new ChatResponseUpdate(
                         ChatRole.Assistant,
                         [functionCallContent])
                     {
@@ -142,7 +142,7 @@ internal static class AgentRunResponseUpdateAGUIExtensions
                         ResponseId = responseId,
                         MessageId = currentToolCallParentMessageId,
                         CreatedAt = DateTimeOffset.UtcNow
-                    });
+                    };
 
                     currentToolCallId = null;
                     currentToolCallName = null;
@@ -152,10 +152,24 @@ internal static class AgentRunResponseUpdateAGUIExtensions
             }
         }
     }
+
+    /// <summary>
+    /// Converts AGUI BaseEvent stream to AgentRunResponseUpdate stream (wrapper for backward compatibility).
+    /// </summary>
+    public static async IAsyncEnumerable<AgentRunResponseUpdate> AsAgentRunResponseUpdatesAsync(
+        this IAsyncEnumerable<BaseEvent> events,
+        JsonSerializerOptions jsonSerializerOptions,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        await foreach (var chatResponseUpdate in events.AsChatResponseUpdatesAsync(jsonSerializerOptions, cancellationToken).ConfigureAwait(false))
+        {
+            yield return new AgentRunResponseUpdate(chatResponseUpdate);
+        }
+    }
 #endif
 
     public static async IAsyncEnumerable<BaseEvent> AsAGUIEventStreamAsync(
-        this IAsyncEnumerable<AgentRunResponseUpdate> updates,
+        this IAsyncEnumerable<ChatResponseUpdate> updates,
         string threadId,
         string runId,
         JsonSerializerOptions jsonSerializerOptions,
@@ -168,9 +182,8 @@ internal static class AgentRunResponseUpdateAGUIExtensions
         };
 
         string? currentMessageId = null;
-        await foreach (var update in updates.WithCancellation(cancellationToken).ConfigureAwait(false))
+        await foreach (var chatResponse in updates.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
-            var chatResponse = update.AsChatResponseUpdate();
             if (chatResponse is { Contents.Count: > 0 } && chatResponse.Contents[0] is TextContent && !string.Equals(currentMessageId, chatResponse.MessageId, StringComparison.Ordinal))
             {
                 // End the previous message if there was one
@@ -249,5 +262,29 @@ internal static class AgentRunResponseUpdateAGUIExtensions
             ThreadId = threadId,
             RunId = runId,
         };
+    }
+
+    /// <summary>
+    /// Converts AgentRunResponseUpdate stream to AGUI BaseEvent stream (wrapper for backward compatibility).
+    /// </summary>
+    public static async IAsyncEnumerable<BaseEvent> AsAGUIEventStreamAsync(
+        this IAsyncEnumerable<AgentRunResponseUpdate> updates,
+        string threadId,
+        string runId,
+        JsonSerializerOptions jsonSerializerOptions,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        async IAsyncEnumerable<ChatResponseUpdate> ConvertToChatAsync([EnumeratorCancellation] CancellationToken ct = default)
+        {
+            await foreach (var update in updates.WithCancellation(ct).ConfigureAwait(false))
+            {
+                yield return update.AsChatResponseUpdate();
+            }
+        }
+
+        await foreach (var evt in ConvertToChatAsync(cancellationToken).AsAGUIEventStreamAsync(threadId, runId, jsonSerializerOptions, cancellationToken).ConfigureAwait(false))
+        {
+            yield return evt;
+        }
     }
 }

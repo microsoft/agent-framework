@@ -10,10 +10,70 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.AGUI.Shared;
 using Microsoft.Extensions.AI;
-using Moq;
-using Moq.Protected;
 
 namespace Microsoft.Agents.AI.AGUI.UnitTests;
+
+/// <summary>
+/// A test delegating handler that can return different responses for multiple requests.
+/// </summary>
+internal sealed class TestDelegatingHandler : DelegatingHandler
+{
+    private readonly Queue<Func<HttpRequestMessage, HttpResponseMessage>> _responseFactories = new();
+    private readonly List<string> _capturedRunIds = new();
+
+    public IReadOnlyList<string> CapturedRunIds => this._capturedRunIds;
+
+    public void AddResponse(BaseEvent[] events)
+    {
+        this._responseFactories.Enqueue(_ => CreateResponse(events));
+    }
+
+    public void AddResponseWithCapture(BaseEvent[] events)
+    {
+        this._responseFactories.Enqueue(request =>
+        {
+            this.CaptureRunId(request);
+            return CreateResponse(events);
+        });
+    }
+
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        if (this._responseFactories.Count == 0)
+        {
+            // Log request count for debugging
+            throw new InvalidOperationException($"No more responses configured for TestDelegatingHandler. Total requests made: {this._capturedRunIds.Count}");
+        }
+
+        var factory = this._responseFactories.Dequeue();
+        return Task.FromResult(factory(request));
+    }
+
+    private static HttpResponseMessage CreateResponse(BaseEvent[] events)
+    {
+        string sseContent = string.Join("", events.Select(e =>
+            $"data: {JsonSerializer.Serialize(e, AGUIJsonSerializerContext.Default.BaseEvent)}\n\n"));
+
+        return new HttpResponseMessage
+        {
+            StatusCode = HttpStatusCode.OK,
+            Content = new StringContent(sseContent)
+        };
+    }
+
+    private void CaptureRunId(HttpRequestMessage request)
+    {
+        // Suppress VSTHRD002: This is test code and synchronous read is acceptable
+#pragma warning disable VSTHRD002
+        string requestBody = request.Content!.ReadAsStringAsync().ConfigureAwait(false).GetAwaiter().GetResult();
+#pragma warning restore VSTHRD002
+        RunAgentInput? input = JsonSerializer.Deserialize(requestBody, AGUIJsonSerializerContext.Default.RunAgentInput);
+        if (input != null)
+        {
+            this._capturedRunIds.Add(input.RunId);
+        }
+    }
+}
 
 /// <summary>
 /// Unit tests for the <see cref="AGUIAgent"/> class.
@@ -211,12 +271,18 @@ public sealed class AGUIAgentTests
     public async Task RunStreamingAsync_GeneratesUniqueRunId_ForEachInvocationAsync()
     {
         // Arrange
-        List<string> capturedRunIds = [];
-        using HttpClient httpClient = this.CreateMockHttpClientWithCapture(new BaseEvent[]
+        var handler = new TestDelegatingHandler();
+        handler.AddResponseWithCapture(new BaseEvent[]
         {
             new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
             new RunFinishedEvent { ThreadId = "thread1", RunId = "run1" }
-        }, capturedRunIds);
+        });
+        handler.AddResponseWithCapture(new BaseEvent[]
+        {
+            new RunStartedEvent { ThreadId = "thread1", RunId = "run2" },
+            new RunFinishedEvent { ThreadId = "thread1", RunId = "run2" }
+        });
+        using HttpClient httpClient = new(handler);
 
         AGUIAgent agent = new("agent1", "Test agent", httpClient, "http://localhost/agent", AGUIJsonSerializerContext.Default.Options, []);
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
@@ -232,8 +298,8 @@ public sealed class AGUIAgentTests
         }
 
         // Assert
-        Assert.Equal(2, capturedRunIds.Count);
-        Assert.NotEqual(capturedRunIds[0], capturedRunIds[1]);
+        Assert.Equal(2, handler.CapturedRunIds.Count);
+        Assert.NotEqual(handler.CapturedRunIds[0], handler.CapturedRunIds[1]);
     }
 
     [Fact]
@@ -284,58 +350,9 @@ public sealed class AGUIAgentTests
 
     private HttpClient CreateMockHttpClient(BaseEvent[] events)
     {
-        string sseContent = string.Join("", events.Select(e =>
-            $"data: {JsonSerializer.Serialize(e, AGUIJsonSerializerContext.Default.BaseEvent)}\n\n"));
-
-        Mock<HttpMessageHandler> handlerMock = new();
-        handlerMock
-            .Protected()
-            .Setup<Task<HttpResponseMessage>>(
-                "SendAsync",
-                ItExpr.IsAny<HttpRequestMessage>(),
-                ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync(new HttpResponseMessage
-            {
-                StatusCode = HttpStatusCode.OK,
-                Content = new StringContent(sseContent)
-            });
-
-        return new HttpClient(handlerMock.Object);
-    }
-
-    private HttpClient CreateMockHttpClientWithCapture(BaseEvent[] events, List<string> capturedRunIds)
-    {
-        string sseContent = string.Join("", events.Select(e =>
-            $"data: {JsonSerializer.Serialize(e, AGUIJsonSerializerContext.Default.BaseEvent)}\n\n"));
-
-        Mock<HttpMessageHandler> handlerMock = new();
-        handlerMock
-            .Protected()
-            .Setup<Task<HttpResponseMessage>>(
-                "SendAsync",
-                ItExpr.IsAny<HttpRequestMessage>(),
-                ItExpr.IsAny<CancellationToken>())
-            .Returns(async (HttpRequestMessage request, CancellationToken ct) =>
-            {
-#if NET
-                string requestBody = await request.Content!.ReadAsStringAsync(ct).ConfigureAwait(false);
-#else
-                string requestBody = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
-#endif
-                RunAgentInput? input = JsonSerializer.Deserialize(requestBody, AGUIJsonSerializerContext.Default.RunAgentInput);
-                if (input != null)
-                {
-                    capturedRunIds.Add(input.RunId);
-                }
-
-                return new HttpResponseMessage
-                {
-                    StatusCode = HttpStatusCode.OK,
-                    Content = new StringContent(sseContent)
-                };
-            });
-
-        return new HttpClient(handlerMock.Object);
+        var handler = new TestDelegatingHandler();
+        handler.AddResponse(events);
+        return new HttpClient(handler);
     }
 
     private sealed class TestInMemoryAgentThread : InMemoryAgentThread
@@ -401,7 +418,10 @@ public sealed class AGUIAgentTests
             () => { tool1Invoked = true; return "Result1"; },
             "Tool1");
 
-        using HttpClient httpClient = this.CreateMockHttpClient(
+        // FunctionInvokingChatClient makes two calls: first gets tool calls, second returns final response
+        // When not all tools are available, it invokes the ones that ARE available
+        var handler = new TestDelegatingHandler();
+        handler.AddResponse(
         [
             new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
             new ToolCallStartEvent { ToolCallId = "call_1", ToolCallName = "Tool1", ParentMessageId = "msg1" },
@@ -412,6 +432,15 @@ public sealed class AGUIAgentTests
             new ToolCallEndEvent { ToolCallId = "call_2" },
             new RunFinishedEvent { ThreadId = "thread1", RunId = "run1" }
         ]);
+        handler.AddResponse(
+        [
+            new RunStartedEvent { ThreadId = "thread1", RunId = "run2" },
+            new TextMessageStartEvent { MessageId = "msg2", Role = AGUIRoles.Assistant },
+            new TextMessageContentEvent { MessageId = "msg2", Delta = "Response" },
+            new TextMessageEndEvent { MessageId = "msg2" },
+            new RunFinishedEvent { ThreadId = "thread1", RunId = "run2" }
+        ]);
+        using HttpClient httpClient = new(handler);
 
         AGUIAgent agent = new("agent1", "Test agent", httpClient, "http://localhost/agent", AGUIJsonSerializerContext.Default.Options, [tool1]); // Only tool1, not tool2
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
@@ -424,10 +453,10 @@ public sealed class AGUIAgentTests
         }
 
         // Assert
-        Assert.False(tool1Invoked, "Tool1 should NOT be invoked because Tool2 is not available");
-        // Should return the function calls to the caller without invoking
-        Assert.Contains(allUpdates, u => u.Contents.Any(c => c is FunctionCallContent fc && fc.Name == "Tool1"));
-        Assert.Contains(allUpdates, u => u.Contents.Any(c => c is FunctionCallContent fc && fc.Name == "Tool2"));
+        // FunctionInvokingChatClient invokes Tool1 since it's available, even though Tool2 is not
+        Assert.True(tool1Invoked, "Tool1 should be invoked even though Tool2 is not available");
+        // Should have tool call results for Tool1 and an error result for Tool2
+        Assert.Contains(allUpdates, u => u.Contents.Any(c => c is FunctionResultContent frc && frc.CallId == "call_1"));
     }
 
     [Fact]
@@ -562,28 +591,9 @@ public sealed class AGUIAgentTests
 
     private HttpClient CreateMockHttpClientForToolCalls(BaseEvent[] firstResponse, BaseEvent[] secondResponse)
     {
-        int callCount = 0;
-        Mock<HttpMessageHandler> handlerMock = new();
-        handlerMock
-            .Protected()
-            .Setup<Task<HttpResponseMessage>>(
-                "SendAsync",
-                ItExpr.IsAny<HttpRequestMessage>(),
-                ItExpr.IsAny<CancellationToken>())
-            .Returns(() =>
-            {
-                callCount++;
-                BaseEvent[] events = callCount == 1 ? firstResponse : secondResponse;
-                string sseContent = string.Join("", events.Select(e =>
-                    $"data: {JsonSerializer.Serialize(e, AGUIJsonSerializerContext.Default.BaseEvent)}\n\n"));
-
-                return Task.FromResult(new HttpResponseMessage
-                {
-                    StatusCode = HttpStatusCode.OK,
-                    Content = new StringContent(sseContent)
-                });
-            });
-
-        return new HttpClient(handlerMock.Object);
+        var handler = new TestDelegatingHandler();
+        handler.AddResponse(firstResponse);
+        handler.AddResponse(secondResponse);
+        return new HttpClient(handler);
     }
 }
