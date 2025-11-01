@@ -2,16 +2,18 @@
 
 import inspect
 import logging
-from collections.abc import Callable
+import uuid
 from types import UnionType
-from typing import Any, Generic, Union, cast, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Generic, Union, cast, get_args, get_origin
 
 from opentelemetry.propagate import inject
 from opentelemetry.trace import SpanKind
 from typing_extensions import Never, TypeVar
 
 from ..observability import OtelAttr, create_workflow_span
+from ._const import EXECUTOR_STATE_KEY
 from ._events import (
+    RequestInfoEvent,
     WorkflowEvent,
     WorkflowEventSource,
     WorkflowFailedEvent,
@@ -20,10 +22,13 @@ from ._events import (
     WorkflowStartedEvent,
     WorkflowStatusEvent,
     WorkflowWarningEvent,
-    _framework_event_origin,
+    _framework_event_origin,  # type: ignore
 )
 from ._runner_context import Message, RunnerContext
 from ._shared_state import SharedState
+
+if TYPE_CHECKING:
+    from ._executor import Executor
 
 T_Out = TypeVar("T_Out", default=Never)
 T_W_Out = TypeVar("T_W_Out", default=Never)
@@ -197,68 +202,6 @@ def validate_workflow_context_annotation(
     return infer_output_types_from_ctx_annotation(annotation)
 
 
-def validate_function_signature(
-    func: Callable[..., Any], context_description: str
-) -> tuple[type, Any, list[type[Any]], list[type[Any]]]:
-    """Validate function signature for executor functions.
-
-    Args:
-        func: The function to validate
-        context_description: Description for error messages (e.g., "Function", "Handler method")
-
-    Returns:
-        Tuple of (message_type, ctx_annotation, output_types, workflow_output_types)
-
-    Raises:
-        ValueError: If the function signature is invalid
-    """
-    signature = inspect.signature(func)
-    params = list(signature.parameters.values())
-
-    # Determine expected parameter count based on context
-    expected_counts: tuple[int, ...]
-    if context_description.startswith("Function"):
-        # Function executor: (message) or (message, ctx)
-        expected_counts = (1, 2)
-        param_description = "(message: T) or (message: T, ctx: WorkflowContext[U])"
-    else:
-        # Handler method: (self, message, ctx)
-        expected_counts = (3,)
-        param_description = "(self, message: T, ctx: WorkflowContext[U])"
-
-    if len(params) not in expected_counts:
-        raise ValueError(
-            f"{context_description} {func.__name__} must have {param_description}. Got {len(params)} parameters."
-        )
-
-    # Extract message parameter (index 0 for functions, index 1 for methods)
-    message_param_idx = 0 if context_description.startswith("Function") else 1
-    message_param = params[message_param_idx]
-
-    # Check message parameter has type annotation
-    if message_param.annotation == inspect.Parameter.empty:
-        raise ValueError(f"{context_description} {func.__name__} must have a type annotation for the message parameter")
-
-    message_type = message_param.annotation
-
-    # Check if there's a context parameter
-    ctx_param_idx = message_param_idx + 1
-    if len(params) > ctx_param_idx:
-        ctx_param = params[ctx_param_idx]
-        output_types, workflow_output_types = validate_workflow_context_annotation(
-            ctx_param.annotation, f"parameter '{ctx_param.name}'", context_description
-        )
-        ctx_annotation = ctx_param.annotation
-    else:
-        # No context parameter (only valid for function executors)
-        if not context_description.startswith("Function"):
-            raise ValueError(f"{context_description} {func.__name__} must have a WorkflowContext parameter")
-        output_types, workflow_output_types = [], []
-        ctx_annotation = None
-
-    return message_type, ctx_annotation, output_types, workflow_output_types
-
-
 _FRAMEWORK_LIFECYCLE_EVENT_TYPES: tuple[type[WorkflowEvent], ...] = cast(
     tuple[type[WorkflowEvent], ...],
     tuple(get_args(WorkflowLifecycleEvent))
@@ -319,7 +262,7 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
 
     def __init__(
         self,
-        executor_id: str,
+        executor: "Executor",
         source_executor_ids: list[str],
         shared_state: SharedState,
         runner_context: RunnerContext,
@@ -329,7 +272,7 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
         """Initialize the executor context with the given workflow context.
 
         Args:
-            executor_id: The unique identifier of the executor that this context belongs to.
+            executor: The executor instance that this context belongs to.
             source_executor_ids: The IDs of the source executors that sent messages to this executor.
                 This is a list to support fan_in scenarios where multiple sources send aggregated
                 messages to the same executor.
@@ -338,7 +281,8 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
             trace_contexts: Optional trace contexts from multiple sources for OpenTelemetry propagation.
             source_span_ids: Optional source span IDs from multiple sources for linking (not for nesting).
         """
-        self._executor_id = executor_id
+        self._executor = executor
+        self._executor_id = executor.id
         self._source_executor_ids = source_executor_ids
         self._runner_context = runner_context
         self._shared_state = shared_state
@@ -404,6 +348,37 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
             return
         await self._runner_context.add_event(event)
 
+    async def request_info(self, request_data: object, response_type: type) -> None:
+        """Request information from outside of the workflow.
+
+        Calling this method will cause the workflow to emit a RequestInfoEvent, carrying the
+        provided request_data and request_type. External systems listening for such events
+        can then process the request and respond accordingly.
+
+        Executors must have the corresponding response handlers defined using the
+        @response_handler decorator to handle the incoming responses.
+
+        Args:
+            request_data: The data associated with the information request.
+            response_type: The expected type of the response, used for validation.
+        """
+        request_type: type = type(request_data)
+        if not self._executor.is_request_supported(request_type, response_type):
+            logger.warning(
+                f"Executor '{self._executor_id}' requested info of type {request_type.__name__} "
+                f"with expected response type {response_type.__name__}, but no matching "
+                "response handler is defined. The request will not be ignored but responses will "
+                "not be processed. Please define a response handler using the @response_handler decorator."
+            )
+
+        request_info_event = RequestInfoEvent(
+            request_id=str(uuid.uuid4()),
+            source_executor_id=self._executor_id,
+            request_data=request_data,
+            response_type=response_type,
+        )
+        await self._runner_context.add_request_info_event(request_info_event)
+
     async def get_shared_state(self, key: str) -> Any:
         """Get a value from the shared state."""
         return await self._shared_state.get(key)
@@ -435,17 +410,35 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
         """Get the shared state."""
         return self._shared_state
 
-    async def set_state(self, state: dict[str, Any]) -> None:
-        """Persist this executor's state into the checkpointable context.
+    async def set_executor_state(self, state: dict[str, Any]) -> None:
+        """Store executor state in shared state under a reserved key.
 
         Executors call this with a JSON-serializable dict capturing the minimal
         state needed to resume. It replaces any previously stored state.
         """
-        await self._runner_context.set_state(self._executor_id, state)
+        has_existing_states = await self._shared_state.has(EXECUTOR_STATE_KEY)
+        if has_existing_states:
+            existing_states = await self._shared_state.get(EXECUTOR_STATE_KEY)
+        else:
+            existing_states = {}
 
-    async def get_state(self) -> dict[str, Any] | None:
+        if not isinstance(existing_states, dict):
+            raise ValueError("Existing executor states in shared state is not a dictionary.")
+
+        existing_states[self._executor_id] = state
+        await self._shared_state.set(EXECUTOR_STATE_KEY, existing_states)
+
+    async def get_executor_state(self) -> dict[str, Any] | None:
         """Retrieve previously persisted state for this executor, if any."""
-        return await self._runner_context.get_state(self._executor_id)
+        has_existing_states = await self._shared_state.has(EXECUTOR_STATE_KEY)
+        if not has_existing_states:
+            return None
+
+        existing_states = await self._shared_state.get(EXECUTOR_STATE_KEY)
+        if not isinstance(existing_states, dict):
+            raise ValueError("Existing executor states in shared state is not a dictionary.")
+
+        return existing_states.get(self._executor_id)
 
     def is_streaming(self) -> bool:
         """Check if the workflow is running in streaming mode.

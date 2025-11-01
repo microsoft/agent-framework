@@ -21,6 +21,10 @@
   <Folder Name="/Samples/GettingStarted/">
     <File Path="samples/GettingStarted/README.md" />
   </Folder>
+  <Folder Name="/Samples/GettingStarted/A2A/">
+    <File Path="samples/GettingStarted/A2A/README.md" />
+    <Project Path="samples/GettingStarted/A2A/A2AAgent_AsFunctionTools/A2AAgent_AsFunctionTools.csproj" />
+  </Folder>
   <Folder Name="/Samples/GettingStarted/AgentProviders/">
     <File Path="samples/GettingStarted/AgentProviders/README.md" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_A2A/Agent_With_A2A.csproj" />
@@ -53,6 +57,10 @@
     <Project Path="samples/GettingStarted/Agents/Agent_Step14_Middleware/Agent_Step14_Middleware.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step15_Plugins/Agent_Step15_Plugins.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step16_ChatReduction/Agent_Step16_ChatReduction.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agent_Step17_BackgroundResponses/Agent_Step17_BackgroundResponses.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agent_Step18_TextSearchRag/Agent_Step18_TextSearchRag.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agent_Step19_Mem0Provider/Agent_Step19_Mem0Provider.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agent_Step20_BackgroundResponsesWithToolsAndPersistence/Agent_Step20_BackgroundResponsesWithToolsAndPersistence.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/AgentWithOpenAI/">
     <File Path="samples/GettingStarted/AgentWithOpenAI/README.md" />
@@ -128,58 +136,11 @@
     <Project Path="samples/GettingStarted/Workflows/_Foundational/03_AgentsInWorkflows/03_AgentsInWorkflows.csproj" />
     <Project Path="samples/GettingStarted/Workflows/_Foundational/04_AgentWorkflowPatterns/04_AgentWorkflowPatterns.csproj" />
     <Project Path="samples/GettingStarted/Workflows/_Foundational/05_MultiModelService/05_MultiModelService.csproj" />
+    <Project Path="samples/GettingStarted/Workflows/_Foundational/06_SubWorkflows/06_SubWorkflows.csproj" />
+    <Project Path="samples/GettingStarted/Workflows/_Foundational/07_MixedWorkflowAgentsAndExecutors/07_MixedWorkflowAgentsAndExecutors.csproj" />
   </Folder>
-  <Folder Name="/Samples/SemanticKernelMigration/">
-    <File Path="samples/SemanticKernelMigration/README.md" />
-  </Folder>
-  <Folder Name="/Samples/SemanticKernelMigration/AzureAIFoundry/">
-    <Project Path="samples/SemanticKernelMigration/AzureAIFoundry/Step01_Basics/AzureAIFoundry_Step01_Basics.csproj" />
-    <Project Path="samples/SemanticKernelMigration/AzureAIFoundry/Step02_ToolCall/AzureAIFoundry_Step02_ToolCall.csproj" />
-    <Project Path="samples/SemanticKernelMigration/AzureAIFoundry/Step03_DependencyInjection/AzureAIFoundry_Step03_DependencyInjection.csproj" />
-    <Project Path="samples/SemanticKernelMigration/AzureAIFoundry/Step04_CodeInterpreter/AzureAIFoundry_Step04_CodeInterpreter.csproj" />
-  </Folder>
-  <Folder Name="/Samples/SemanticKernelMigration/Playground/">
-    <File Path="samples/SemanticKernelMigration/Playground/README.md" />
-    <Project Path="samples/SemanticKernelMigration/Playground/SemanticKernelBasic/SemanticKernelBasic.csproj" />
-  </Folder>
-  <Folder Name="/Samples/SemanticKernelMigration/OpenAI/">
-    <Project Path="samples/SemanticKernelMigration/OpenAI/Step01_Basics/OpenAI_Step01_Basics.csproj" />
-    <Project Path="samples/SemanticKernelMigration/OpenAI/Step02_ToolCall/OpenAI_Step02_ToolCall.csproj" />
-    <Project Path="samples/SemanticKernelMigration/OpenAI/Step03_DependencyInjection/OpenAI_Step03_DependencyInjection.csproj" />
-  </Folder>
-  <Folder Name="/Samples/SemanticKernelMigration/OpenAIAssistants/">
-    <Project Path="samples/SemanticKernelMigration/OpenAIAssistants/Step01_Basics/OpenAIAssistants_Step01_Basics.csproj" />
-    <Project Path="samples/SemanticKernelMigration/OpenAIAssistants/Step02_ToolCall/OpenAIAssistants_Step02_ToolCall.csproj" />
-    <Project Path="samples/SemanticKernelMigration/OpenAIAssistants/Step03_DependencyInjection/OpenAIAssistants_Step03_DependencyInjection.csproj" />
-    <Project Path="samples/SemanticKernelMigration/OpenAIAssistants/Step04_CodeInterpreter/OpenAIAssistants_Step04_CodeInterpreter.csproj" />
-  </Folder>
-  <Folder Name="/Samples/SemanticKernelMigration/OpenAIResponses/">
-    <Project Path="samples/SemanticKernelMigration/OpenAIResponses/Step01_Basics/OpenAIResponses_Step01_Basics.csproj" />
-    <Project Path="samples/SemanticKernelMigration/OpenAIResponses/Step02_ReasoningModel/OpenAIResponses_Step02_ReasoningModel.csproj" />
-    <Project Path="samples/SemanticKernelMigration/OpenAIResponses/Step03_ToolCall/OpenAIResponses_Step03_ToolCall.csproj" />
-    <Project Path="samples/SemanticKernelMigration/OpenAIResponses/Step04_DependencyInjection/OpenAIResponses_Step04_DependencyInjection.csproj" />
-  </Folder>
-  <Folder Name="/Samples/SemanticKernelMigration/AzureOpenAI/">
-    <Project Path="samples/SemanticKernelMigration/AzureOpenAI/Step01_Basics/AzureOpenAI_Step01_Basics.csproj" />
-    <Project Path="samples/SemanticKernelMigration/AzureOpenAI/Step02_ToolCall/AzureOpenAI_Step02_ToolCall.csproj" />
-    <Project Path="samples/SemanticKernelMigration/AzureOpenAI/Step03_DependencyInjection/AzureOpenAI_Step03_DependencyInjection.csproj" />
-  </Folder>
-  <Folder Name="/Samples/SemanticKernelMigration/AzureOpenAIAssistants/">
-    <Project Path="samples/SemanticKernelMigration/AzureOpenAIAssistants/Step01_Basics/AzureOpenAIAssistants_Step01_Basics.csproj" />
-    <Project Path="samples/SemanticKernelMigration/AzureOpenAIAssistants/Step02_ToolCall/AzureOpenAIAssistants_Step02_ToolCall.csproj" />
-    <Project Path="samples/SemanticKernelMigration/AzureOpenAIAssistants/Step03_DependencyInjection/AzureOpenAIAssistants_Step03_DependencyInjection.csproj" />
-    <Project Path="samples/SemanticKernelMigration/AzureOpenAIAssistants/Step04_CodeInterpreter/AzureOpenAIAssistants_Step04_CodeInterpreter.csproj" />
-  </Folder>
-  <Folder Name="/Samples/SemanticKernelMigration/AzureOpenAIResponses/">
-    <Project Path="samples/SemanticKernelMigration/AzureOpenAIResponses/Step01_Basics/AzureOpenAIResponses_Step01_Basics.csproj" />
-    <Project Path="samples/SemanticKernelMigration/AzureOpenAIResponses/Step02_ReasoningModel/AzureOpenAIResponses_Step02_ReasoningModel.csproj" />
-    <Project Path="samples/SemanticKernelMigration/AzureOpenAIResponses/Step03_ToolCall/AzureOpenAIResponses_Step03_ToolCall.csproj" />
-    <Project Path="samples/SemanticKernelMigration/AzureOpenAIResponses/Step04_DependencyInjection/AzureOpenAIResponses_Step04_DependencyInjection.csproj" />
-  </Folder>
-  <Folder Name="/Samples/SemanticKernelMigration/AgentOrchestrations/">
-    <Project Path="samples/SemanticKernelMigration/AgentOrchestrations/Step01_Concurrent/AgentOrchestrations_Step01_Concurrent.csproj" />
-    <Project Path="samples/SemanticKernelMigration/AgentOrchestrations/Step02_Sequential/AgentOrchestrations_Step02_Sequential.csproj" />
-    <Project Path="samples/SemanticKernelMigration/AgentOrchestrations/Step03_Handoff/AgentOrchestrations_Step03_Handoff.csproj" />
+  <Folder Name="/Samples/Catalog/">
+    <Project Path="samples/Catalog/DeepResearchAgent/DeepResearchAgent.csproj" />
   </Folder>
   <Folder Name="/Solution Items/">
     <File Path=".editorconfig" />
@@ -207,8 +168,14 @@
   <Folder Name="/Solution Items/docs/" />
   <Folder Name="/Solution Items/docs/decisions/">
     <File Path="../docs/decisions/0001-agent-run-response.md" />
-    <File Path="../docs/decisions/0001-agent-tools.md" />
-    <File Path="../docs/decisions/0002-agent-opentelemetry-instrumentation.md" />
+    <File Path="../docs/decisions/0002-agent-tools.md" />
+    <File Path="../docs/decisions/0003-agent-opentelemetry-instrumentation.md" />
+    <File Path="../docs/decisions/0004-foundry-sdk-extensions.md" />
+    <File Path="../docs/decisions/0005-python-naming-conventions.md" />
+    <File Path="../docs/decisions/0006-userapproval.md" />
+    <File Path="../docs/decisions/0007-agent-filtering-middleware.md" />
+    <File Path="../docs/decisions/0008-python-subpackages.md" />
+    <File Path="../docs/decisions/0009-support-long-running-operations.md" />
     <File Path="../docs/decisions/adr-short-template.md" />
     <File Path="../docs/decisions/adr-template.md" />
     <File Path="../docs/decisions/README.md" />
@@ -275,6 +242,7 @@
   </Folder>
   <Folder Name="/Solution Items/src/Shared/IntegrationTests/">
     <File Path="src/Shared/IntegrationTests/AzureAIConfiguration.cs" />
+    <File Path="src/Shared/IntegrationTests/Mem0Configuration.cs" />
     <File Path="src/Shared/IntegrationTests/OpenAIConfiguration.cs" />
     <File Path="src/Shared/IntegrationTests/README.md" />
   </Folder>
@@ -302,6 +270,7 @@
     <Project Path="src/Microsoft.Agents.AI.Hosting.A2A/Microsoft.Agents.AI.Hosting.A2A.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hosting.OpenAI/Microsoft.Agents.AI.Hosting.OpenAI.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hosting/Microsoft.Agents.AI.Hosting.csproj" />
+    <Project Path="src/Microsoft.Agents.AI.Mem0/Microsoft.Agents.AI.Mem0.csproj" />
     <Project Path="src/Microsoft.Agents.AI.OpenAI/Microsoft.Agents.AI.OpenAI.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Purview/Microsoft.Agents.AI.Purview.csproj" Id="e2fa3f42-2062-44cc-9329-0d7899ce8578" />
     <Project Path="src/Microsoft.Agents.AI.Workflows.Declarative/Microsoft.Agents.AI.Workflows.Declarative.csproj" />
@@ -313,6 +282,7 @@
     <Project Path="tests/AgentConformance.IntegrationTests/AgentConformance.IntegrationTests.csproj" />
     <Project Path="tests/AzureAIAgentsPersistent.IntegrationTests/AzureAIAgentsPersistent.IntegrationTests.csproj" />
     <Project Path="tests/CopilotStudio.IntegrationTests/CopilotStudio.IntegrationTests.csproj" />
+    <Project Path="tests/Microsoft.Agents.AI.Mem0.IntegrationTests/Microsoft.Agents.AI.Mem0.IntegrationTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests/Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.csproj" />
     <Project Path="tests/OpenAIAssistant.IntegrationTests/OpenAIAssistant.IntegrationTests.csproj" />
     <Project Path="tests/OpenAIChatCompletion.IntegrationTests/OpenAIChatCompletion.IntegrationTests.csproj" />
@@ -323,7 +293,9 @@
     <Project Path="tests/Microsoft.Agents.AI.Abstractions.UnitTests/Microsoft.Agents.AI.Abstractions.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.AzureAI.UnitTests/Microsoft.Agents.AI.AzureAI.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Hosting.A2A.Tests/Microsoft.Agents.AI.Hosting.A2A.Tests.csproj" Id="2a1c544d-237d-4436-8732-ba0c447ac06b" />
+    <Project Path="tests/Microsoft.Agents.AI.Hosting.OpenAI.UnitTests/Microsoft.Agents.AI.Hosting.OpenAI.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Hosting.UnitTests/Microsoft.Agents.AI.Hosting.UnitTests.csproj" />
+    <Project Path="tests/Microsoft.Agents.AI.Mem0.UnitTests/Microsoft.Agents.AI.Mem0.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.OpenAI.UnitTests/Microsoft.Agents.AI.OpenAI.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Purview.UnitTests/Microsoft.Agents.AI.Purview.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.UnitTests/Microsoft.Agents.AI.UnitTests.csproj" />

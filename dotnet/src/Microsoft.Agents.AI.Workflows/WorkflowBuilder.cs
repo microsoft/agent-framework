@@ -6,7 +6,6 @@ using System.Diagnostics;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
-using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Observability;
 using Microsoft.Shared.Diagnostics;
@@ -440,35 +439,5 @@ public class WorkflowBuilder
         activity?.AddEvent(new ActivityEvent(EventNames.BuildCompleted));
 
         return workflow;
-    }
-
-    /// <summary>
-    /// Attempts to build a workflow instance configured to process messages of the specified input type.
-    /// </summary>
-    /// <typeparam name="TInput">The desired input type for the workflow.</typeparam>
-    /// <exception cref="InvalidOperationException">Thrown if the built workflow cannot process messages of the specified input type,</exception>
-    public async ValueTask<Workflow<TInput>> BuildAsync<TInput>() where TInput : notnull
-    {
-        using Activity? activity = s_activitySource.StartActivity(ActivityNames.WorkflowBuild);
-
-        Workflow<TInput>? maybeWorkflow = await this.BuildInternal(activity)
-                                                    .TryPromoteAsync<TInput>()
-                                                    .ConfigureAwait(false);
-
-        if (maybeWorkflow is null)
-        {
-            var exception = new InvalidOperationException(
-                $"The built workflow cannot process input of type '{typeof(TInput).FullName}'.");
-            activity?.AddEvent(new ActivityEvent(EventNames.BuildError, tags: new() {
-                { Tags.BuildErrorMessage, exception.Message },
-                { Tags.BuildErrorType, exception.GetType().FullName }
-            }));
-            activity?.CaptureException(exception);
-            throw exception;
-        }
-
-        activity?.AddEvent(new ActivityEvent(EventNames.BuildCompleted));
-
-        return maybeWorkflow;
     }
 }

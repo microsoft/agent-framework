@@ -5,8 +5,6 @@ using AgentWebChat.AgentHost;
 using AgentWebChat.AgentHost.Utilities;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hosting;
-using Microsoft.Agents.AI.Hosting.A2A.AspNetCore;
-using Microsoft.Agents.AI.Hosting.OpenAI;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 
@@ -26,7 +24,8 @@ builder.AddAIAgent(
     "pirate",
     instructions: "You are a pirate. Speak like a pirate",
     description: "An agent that speaks like a pirate.",
-    chatClientServiceKey: "chat-model");
+    chatClientServiceKey: "chat-model")
+    .WithInMemoryThreadStore();
 
 builder.AddAIAgent("knights-and-knaves", (sp, key) =>
 {
@@ -60,11 +59,28 @@ builder.AddAIAgent("knights-and-knaves", (sp, key) =>
         If the user asks a general question about their surrounding, make something up which is consistent with the scenario.
         """, "Narrator");
 
-    // TODO: How to avoid sync-over-async here?
-#pragma warning disable VSTHRD002 // Avoid problematic synchronous waits
-    return AgentWorkflowBuilder.BuildConcurrent([knight, knave, narrator]).AsAgentAsync(name: key).AsTask().GetAwaiter().GetResult();
-#pragma warning restore VSTHRD002
+    return AgentWorkflowBuilder.BuildConcurrent([knight, knave, narrator]).AsAgent(name: key);
 });
+
+// Workflow consisting of multiple specialized agents
+var chemistryAgent = builder.AddAIAgent("chemist",
+    instructions: "You are a chemistry expert. Answer thinking from the chemistry perspective",
+    description: "An agent that helps with chemistry.",
+    chatClientServiceKey: "chat-model");
+
+var mathsAgent = builder.AddAIAgent("mathematician",
+    instructions: "You are a mathematics expert. Answer thinking from the maths perspective",
+    description: "An agent that helps with mathematics.",
+    chatClientServiceKey: "chat-model");
+
+var literatureAgent = builder.AddAIAgent("literator",
+    instructions: "You are a literature expert. Answer thinking from the literature perspective",
+    description: "An agent that helps with literature.",
+    chatClientServiceKey: "chat-model");
+
+builder.AddSequentialWorkflow("science-sequential-workflow", [chemistryAgent, mathsAgent, literatureAgent]).AddAsAIAgent();
+builder.AddConcurrentWorkflow("science-concurrent-workflow", [chemistryAgent, mathsAgent, literatureAgent]).AddAsAIAgent();
+builder.AddOpenAIResponses();
 
 var app = builder.Build();
 
@@ -86,8 +102,10 @@ app.MapA2A(agentName: "knights-and-knaves", path: "/a2a/knights-and-knaves", age
     // Url = "http://localhost:5390/a2a/knights-and-knaves"
 });
 
-app.MapOpenAIResponses("pirate");
-app.MapOpenAIResponses("knights-and-knaves");
+app.MapOpenAIResponses();
+
+app.MapOpenAIChatCompletions("pirate");
+app.MapOpenAIChatCompletions("knights-and-knaves");
 
 // Map the agents HTTP endpoints
 app.MapAgentDiscovery("/agents");

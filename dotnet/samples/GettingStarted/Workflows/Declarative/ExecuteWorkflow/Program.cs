@@ -1,16 +1,20 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 // Uncomment this to enable JSON checkpointing to the local file system.
-#define CHECKPOINT_JSON
+//#define CHECKPOINT_JSON
 
 using System.Diagnostics;
 using System.Reflection;
+using System.Text.Json;
 using Azure.AI.Agents.Persistent;
 using Azure.Identity;
 using Microsoft.Agents.AI.Workflows;
+#if CHECKPOINT_JSON
 using Microsoft.Agents.AI.Workflows.Checkpointing;
+#endif
 using Microsoft.Agents.AI.Workflows.Declarative;
 using Microsoft.Agents.AI.Workflows.Declarative.Events;
+using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 
@@ -63,20 +67,21 @@ internal sealed class Program
 
 #if CHECKPOINT_JSON
         // Use a file-system based JSON checkpoint store to persist checkpoints to disk.
-        DirectoryInfo checkpointFolder = Directory.CreateDirectory(Path.Combine(".", $"chk-{DateTime.Now:YYmmdd-hhMMss-ff}"));
+        DirectoryInfo checkpointFolder = Directory.CreateDirectory(Path.Combine(".", $"chk-{DateTime.Now:yyMMdd-hhmmss-ff}"));
         CheckpointManager checkpointManager = CheckpointManager.CreateJson(new FileSystemJsonCheckpointStore(checkpointFolder));
-        Checkpointed<StreamingRun> run = await InProcessExecution.StreamAsync(workflow, input, checkpointManager);
 #else
         // Use an in-memory checkpoint store that will not persist checkpoints beyond the lifetime of the process.
         CheckpointManager checkpointManager = CheckpointManager.CreateInMemory();
 #endif
 
+        Checkpointed<StreamingRun> run = await InProcessExecution.StreamAsync(workflow, input, checkpointManager);
+
         bool isComplete = false;
-        InputResponse? response = null;
+        object? response = null;
         do
         {
-            ExternalRequest? inputRequest = await this.MonitorAndDisposeWorkflowRunAsync(run, response);
-            if (inputRequest is not null)
+            ExternalRequest? externalRequest = await this.MonitorAndDisposeWorkflowRunAsync(run, response);
+            if (externalRequest is not null)
             {
                 Notify("\nWORKFLOW: Yield");
 
@@ -86,7 +91,7 @@ internal sealed class Program
                 }
 
                 // Process the external request.
-                response = HandleExternalRequest(inputRequest);
+                response = await this.HandleExternalRequestAsync(externalRequest);
 
                 // Let's resume on an entirely new workflow instance to demonstrate checkpoint portability.
                 workflow = this.CreateWorkflow();
@@ -107,11 +112,25 @@ internal sealed class Program
         Notify("\nWORKFLOW: Done!\n");
     }
 
+    /// <summary>
+    /// Create the workflow from the declarative YAML.  Includes definition of the
+    /// <see cref="DeclarativeWorkflowOptions" /> and the associated <see cref="WorkflowAgentProvider"/>.
+    /// </summary>
+    /// <remarks>
+    /// The value assigned to <see cref="IncludeFunctions" /> controls on whether the function
+    /// tools (<see cref="AIFunction"/>) initialized in the constructor are included for auto-invocation.
+    /// </remarks>
     private Workflow CreateWorkflow()
     {
         // Use DeclarativeWorkflowBuilder to build a workflow based on a YAML file.
+        AzureAgentProvider agentProvider = new(this.FoundryEndpoint, new AzureCliCredential())
+        {
+            // Functions included here will be auto-executed by the framework.
+            Functions = IncludeFunctions ? this.FunctionMap.Values : null,
+        };
+
         DeclarativeWorkflowOptions options =
-            new(new AzureAgentProvider(this.FoundryEndpoint, new AzureCliCredential()))
+            new(agentProvider)
             {
                 Configuration = this.Configuration,
                 //ConversationId = null, // Assign to continue a conversation
@@ -121,7 +140,17 @@ internal sealed class Program
         return DeclarativeWorkflowBuilder.Build<string>(this.WorkflowFile, options);
     }
 
+    /// <summary>
+    /// Configuration key used to identify the Foundry project endpoint.
+    /// </summary>
     private const string ConfigKeyFoundryEndpoint = "FOUNDRY_PROJECT_ENDPOINT";
+
+    /// <summary>
+    /// Controls on whether the function tools (<see cref="AIFunction"/>) initialized
+    /// in the constructor are included for auto-invocation.
+    /// NOTE: By default, no functions exist as part of this sample.
+    /// </summary>
+    private const bool IncludeFunctions = true;
 
     private static Dictionary<string, string> NameCache { get; } = [];
     private static HashSet<string> FileCache { get; } = [];
@@ -132,6 +161,7 @@ internal sealed class Program
     private PersistentAgentsClient FoundryClient { get; }
     private IConfiguration Configuration { get; }
     private CheckpointInfo? LastCheckpoint { get; set; }
+    private Dictionary<string, AIFunction> FunctionMap { get; }
 
     private Program(string workflowFile, string? workflowInput)
     {
@@ -142,15 +172,25 @@ internal sealed class Program
 
         this.FoundryEndpoint = this.Configuration[ConfigKeyFoundryEndpoint] ?? throw new InvalidOperationException($"Undefined configuration setting: {ConfigKeyFoundryEndpoint}");
         this.FoundryClient = new PersistentAgentsClient(this.FoundryEndpoint, new AzureCliCredential());
+
+        List<AIFunction> functions =
+            [
+                // Manually define any custom functions that may be required by agents within the workflow.
+                // By default, this sample does not include any functions.
+                //AIFunctionFactory.Create(),
+            ];
+        this.FunctionMap = functions.ToDictionary(f => f.Name);
     }
 
-    private async Task<ExternalRequest?> MonitorAndDisposeWorkflowRunAsync(Checkpointed<StreamingRun> run, InputResponse? response = null)
+    private async Task<ExternalRequest?> MonitorAndDisposeWorkflowRunAsync(Checkpointed<StreamingRun> run, object? response = null)
     {
+        // Always dispose the run when done.
         await using IAsyncDisposable disposeRun = run;
 
+        bool hasStreamed = false;
         string? messageId = null;
 
-        await foreach (WorkflowEvent workflowEvent in run.Run.WatchStreamAsync().ConfigureAwait(false))
+        await foreach (WorkflowEvent workflowEvent in run.Run.WatchStreamAsync())
         {
             switch (workflowEvent)
             {
@@ -187,12 +227,12 @@ internal sealed class Program
                     if (response is not null)
                     {
                         ExternalResponse requestResponse = requestInfo.Request.CreateResponse(response);
-                        await run.Run.SendResponseAsync(requestResponse).ConfigureAwait(false);
+                        await run.Run.SendResponseAsync(requestResponse);
                         response = null;
                     }
                     else
                     {
-                        await run.Run.DisposeAsync().ConfigureAwait(false);
+                        // Yield to handle the external request
                         return requestInfo.Request;
                     }
                     break;
@@ -211,11 +251,12 @@ internal sealed class Program
                 case AgentRunUpdateEvent streamEvent:
                     if (!string.Equals(messageId, streamEvent.Update.MessageId, StringComparison.Ordinal))
                     {
+                        hasStreamed = false;
                         messageId = streamEvent.Update.MessageId;
 
                         if (messageId is not null)
                         {
-                            string? agentId = streamEvent.Update.AuthorName;
+                            string? agentId = streamEvent.Update.AgentId;
                             if (agentId is not null)
                             {
                                 if (!NameCache.TryGetValue(agentId, out string? realName))
@@ -245,11 +286,18 @@ internal sealed class Program
                                 await DownloadFileContentAsync(Path.GetFileName(messageUpdate.TextAnnotation?.TextToReplace ?? "response.png"), content);
                             }
                             break;
+                        case RequiredActionUpdate actionUpdate:
+                            Console.ForegroundColor = ConsoleColor.White;
+                            Console.Write($"Calling tool: {actionUpdate.FunctionName}");
+                            Console.ForegroundColor = ConsoleColor.DarkGray;
+                            Console.WriteLine($" [{actionUpdate.ToolCallId}]");
+                            break;
                     }
                     try
                     {
                         Console.ResetColor();
-                        Console.Write(streamEvent.Data);
+                        Console.Write(streamEvent.Update.Text);
+                        hasStreamed |= !string.IsNullOrEmpty(streamEvent.Update.Text);
                     }
                     finally
                     {
@@ -260,7 +308,11 @@ internal sealed class Program
                 case AgentRunResponseEvent messageEvent:
                     try
                     {
-                        Console.WriteLine();
+                        if (hasStreamed)
+                        {
+                            Console.WriteLine();
+                        }
+
                         if (messageEvent.Response.Usage is not null)
                         {
                             Console.ForegroundColor = ConsoleColor.DarkGray;
@@ -275,22 +327,89 @@ internal sealed class Program
             }
         }
 
-        return default;
+        return null; // No request to handle
     }
-    private static InputResponse HandleExternalRequest(ExternalRequest request)
+
+    /// <summary>
+    /// Handle request for external input, either from a human or a function tool invocation.
+    /// </summary>
+    private async ValueTask<object> HandleExternalRequestAsync(ExternalRequest request) =>
+        request.Data.TypeId.TypeName switch
+        {
+            // Request for human input
+            _ when request.Data.TypeId.IsMatch<AnswerRequest>() => HandleUserMessageRequest(request.DataAs<AnswerRequest>()!),
+            // Request for function tool invocation.  (Only active when functions are defined and IncludeFunctions is true.)
+            _ when request.Data.TypeId.IsMatch<AgentFunctionToolRequest>() => await this.HandleToolRequestAsync(request.DataAs<AgentFunctionToolRequest>()!),
+            // Request for user input, such as function or mcp tool approval
+            _ when request.Data.TypeId.IsMatch<UserInputRequest>() => HandleUserInputRequest(request.DataAs<UserInputRequest>()!),
+            // Unknown request type.
+            _ => throw new InvalidOperationException($"Unsupported external request type: {request.GetType().Name}."),
+        };
+
+    /// <summary>
+    /// Handle request for human input.
+    /// </summary>
+    private static AnswerResponse HandleUserMessageRequest(AnswerRequest request)
     {
-        InputRequest? message = request.Data.As<InputRequest>();
         string? userInput;
         do
         {
             Console.ForegroundColor = ConsoleColor.DarkGreen;
-            Console.Write($"\n{message?.Prompt ?? "INPUT:"} ");
+            Console.Write($"\n{request.Prompt ?? "INPUT:"} ");
             Console.ForegroundColor = ConsoleColor.White;
             userInput = Console.ReadLine();
         }
         while (string.IsNullOrWhiteSpace(userInput));
 
-        return new InputResponse(userInput);
+        return new AnswerResponse(userInput);
+    }
+
+    /// <summary>
+    /// Handle a function tool request by invoking the specified tools and returning the results.
+    /// </summary>
+    /// <remarks>
+    /// This handler is only active when <see cref="IncludeFunctions"/> is set to true and
+    /// one or more <see cref="AIFunction"/> instances are defined in the constructor.
+    /// </remarks>
+    private async ValueTask<AgentFunctionToolResponse> HandleToolRequestAsync(AgentFunctionToolRequest request)
+    {
+        Task<FunctionResultContent>[] functionTasks = request.FunctionCalls.Select(functionCall => InvokesToolAsync(functionCall)).ToArray();
+
+        await Task.WhenAll(functionTasks);
+
+        return AgentFunctionToolResponse.Create(request, functionTasks.Select(task => task.Result));
+
+        async Task<FunctionResultContent> InvokesToolAsync(FunctionCallContent functionCall)
+        {
+            AIFunction functionTool = this.FunctionMap[functionCall.Name];
+            AIFunctionArguments? functionArguments = functionCall.Arguments is null ? null : new(functionCall.Arguments.NormalizePortableValues());
+            object? result = await functionTool.InvokeAsync(functionArguments);
+            return new FunctionResultContent(functionCall.CallId, JsonSerializer.Serialize(result));
+        }
+    }
+
+    /// <summary>
+    /// Handle request for user input for mcp and function tool approval.
+    /// </summary>
+    private static UserInputResponse HandleUserInputRequest(UserInputRequest request)
+    {
+        return UserInputResponse.Create(request, ProcessRequests());
+
+        IEnumerable<UserInputResponseContent> ProcessRequests()
+        {
+            foreach (UserInputRequestContent approvalRequest in request.InputRequests)
+            {
+                // Here we are explicitly approving all requests.
+                // In a real-world scenario, you would replace this logic to either solicit user approval or implement a more complex approval process.
+                yield return
+                    approvalRequest switch
+                    {
+                        McpServerToolApprovalRequestContent mcpApprovalRequest => mcpApprovalRequest.CreateResponse(approved: true),
+                        FunctionApprovalRequestContent functionApprovalRequest => functionApprovalRequest.CreateResponse(approved: true),
+                        _ => throw new NotSupportedException($"Unsupported request of type {approvalRequest.GetType().Name}"),
+                    };
+            }
+        }
     }
 
     private static string? ParseWorkflowFile(string[] args)

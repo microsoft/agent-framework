@@ -50,34 +50,29 @@ from ._executor import (
     handler,
 )
 from ._function_executor import FunctionExecutor, executor
+from ._group_chat import (
+    DEFAULT_MANAGER_INSTRUCTIONS,
+    DEFAULT_MANAGER_STRUCTURED_OUTPUT_PROMPT,
+    GroupChatBuilder,
+    GroupChatDirective,
+    GroupChatStateSnapshot,
+)
+from ._handoff import HandoffBuilder, HandoffUserInputRequest
 from ._magentic import (
     MagenticAgentDeltaEvent,
-    MagenticAgentExecutor,
     MagenticAgentMessageEvent,
     MagenticBuilder,
-    MagenticCallbackEvent,
-    MagenticCallbackMode,
     MagenticContext,
     MagenticFinalResultEvent,
     MagenticManagerBase,
-    MagenticOrchestratorExecutor,
     MagenticOrchestratorMessageEvent,
     MagenticPlanReviewDecision,
     MagenticPlanReviewReply,
     MagenticPlanReviewRequest,
-    MagenticProgressLedger,
-    MagenticProgressLedgerItem,
-    MagenticRequestMessage,
-    MagenticResponseMessage,
-    MagenticStartMessage,
     StandardMagenticManager,
 )
-from ._request_info_executor import (
-    PendingRequestDetails,
-    RequestInfoExecutor,
-    RequestInfoMessage,
-    RequestResponse,
-)
+from ._orchestration_state import OrchestrationState
+from ._request_info_mixin import response_handler
 from ._runner import Runner
 from ._runner_context import (
     InProcRunnerContext,
@@ -88,7 +83,6 @@ from ._sequential import SequentialBuilder
 from ._shared_state import SharedState
 from ._validation import (
     EdgeDuplicationError,
-    ExecutorDuplicationError,
     GraphConnectivityError,
     TypeCompatibilityError,
     ValidationTypeEnum,
@@ -96,11 +90,14 @@ from ._validation import (
     validate_workflow_graph,
 )
 from ._viz import WorkflowViz
-from ._workflow import Workflow, WorkflowBuilder, WorkflowRunResult
+from ._workflow import Workflow, WorkflowRunResult
+from ._workflow_builder import WorkflowBuilder
 from ._workflow_context import WorkflowContext
-from ._workflow_executor import WorkflowExecutor
+from ._workflow_executor import SubWorkflowRequestMessage, SubWorkflowResponseMessage, WorkflowExecutor
 
 __all__ = [
+    "DEFAULT_MANAGER_INSTRUCTIONS",
+    "DEFAULT_MANAGER_STRUCTURED_OUTPUT_PROMPT",
     "DEFAULT_MAX_ITERATIONS",
     "AgentExecutor",
     "AgentExecutorRequest",
@@ -115,7 +112,6 @@ __all__ = [
     "EdgeDuplicationError",
     "Executor",
     "ExecutorCompletedEvent",
-    "ExecutorDuplicationError",
     "ExecutorEvent",
     "ExecutorFailedEvent",
     "ExecutorInvokedEvent",
@@ -124,39 +120,34 @@ __all__ = [
     "FileCheckpointStorage",
     "FunctionExecutor",
     "GraphConnectivityError",
+    "GroupChatBuilder",
+    "GroupChatDirective",
+    "GroupChatStateSnapshot",
+    "HandoffBuilder",
+    "HandoffUserInputRequest",
     "InMemoryCheckpointStorage",
     "InProcRunnerContext",
     "MagenticAgentDeltaEvent",
-    "MagenticAgentExecutor",
     "MagenticAgentMessageEvent",
     "MagenticBuilder",
-    "MagenticCallbackEvent",
-    "MagenticCallbackMode",
     "MagenticContext",
     "MagenticFinalResultEvent",
     "MagenticManagerBase",
-    "MagenticOrchestratorExecutor",
     "MagenticOrchestratorMessageEvent",
     "MagenticPlanReviewDecision",
     "MagenticPlanReviewReply",
     "MagenticPlanReviewRequest",
-    "MagenticProgressLedger",
-    "MagenticProgressLedgerItem",
-    "MagenticRequestMessage",
-    "MagenticResponseMessage",
-    "MagenticStartMessage",
     "Message",
-    "PendingRequestDetails",
+    "OrchestrationState",
     "RequestInfoEvent",
-    "RequestInfoExecutor",
-    "RequestInfoMessage",
-    "RequestResponse",
     "Runner",
     "RunnerContext",
     "SequentialBuilder",
     "SharedState",
     "SingleEdgeGroup",
     "StandardMagenticManager",
+    "SubWorkflowRequestMessage",
+    "SubWorkflowResponseMessage",
     "SwitchCaseEdgeGroup",
     "SwitchCaseEdgeGroupCase",
     "SwitchCaseEdgeGroupDefault",
@@ -185,5 +176,6 @@ __all__ = [
     "executor",
     "get_checkpoint_summary",
     "handler",
+    "response_handler",
     "validate_workflow_graph",
 ]
