@@ -55,7 +55,9 @@ public static class Program
             id: "agui-client",
             description: "AG-UI Client Agent",
             httpClient: httpClient,
-            endpoint: serverUrl);
+            endpoint: serverUrl,
+            jsonSerializerOptions: null,
+            tools: []);
 
         AgentThread thread = agent.GetNewThread();
         List<ChatMessage> messages = [new(ChatRole.System, "You are a helpful assistant.")];

@@ -39,17 +39,20 @@ internal sealed class AGUIChatClient : IChatClient
             throw new ArgumentNullException(nameof(httpClient));
         }
 
-        if (string.IsNullOrEmpty(endpoint))
+        if (endpoint is null)
         {
-            throw new ArgumentException("Endpoint cannot be null or empty.", nameof(endpoint));
+            throw new ArgumentNullException(nameof(endpoint));
         }
 
         this._httpService = new AGUIHttpService(httpClient, endpoint);
         this._jsonSerializerOptions = jsonSerializerOptions ?? AGUIJsonSerializerContext.Default.Options;
-        this.Metadata = new ChatClientMetadata("AGUI", new Uri(endpoint, UriKind.RelativeOrAbsolute), modelId);
-    }
 
-    /// <inheritdoc/>
+        // Use BaseAddress if endpoint is empty, otherwise parse as relative or absolute
+        Uri metadataUri = string.IsNullOrEmpty(endpoint) && httpClient.BaseAddress is not null
+            ? httpClient.BaseAddress
+            : new Uri(endpoint, UriKind.RelativeOrAbsolute);
+        this.Metadata = new ChatClientMetadata("AGUI", metadataUri, modelId);
+    }    /// <inheritdoc/>
     public ChatClientMetadata Metadata { get; }
 
     /// <inheritdoc/>

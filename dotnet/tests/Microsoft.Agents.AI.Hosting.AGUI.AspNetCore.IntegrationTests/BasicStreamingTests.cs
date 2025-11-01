@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -29,7 +29,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
     {
         // Arrange
         await this.SetupTestServerAsync();
-        AGUIAgent agent = new("assistant", "Sample assistant", this._client!, "");
+        AGUIAgent agent = new("assistant", "Sample assistant", this._client!, "", null, []);
         AgentThread thread = agent.GetNewThread();
         ChatMessage userMessage = new(ChatRole.User, "hello");
 
@@ -59,7 +59,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
     {
         // Arrange
         await this.SetupTestServerAsync();
-        AGUIAgent agent = new("assistant", "Sample assistant", this._client!, "");
+        AGUIAgent agent = new("assistant", "Sample assistant", this._client!, "", null, []);
         AgentThread thread = agent.GetNewThread();
         ChatMessage userMessage = new(ChatRole.User, "test");
 
@@ -102,7 +102,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
     {
         // Arrange
         await this.SetupTestServerAsync();
-        AGUIAgent agent = new("assistant", "Sample assistant", this._client!, "");
+        AGUIAgent agent = new("assistant", "Sample assistant", this._client!, "", null, []);
         AgentThread thread = agent.GetNewThread();
         ChatMessage userMessage = new(ChatRole.User, "hello");
 
@@ -120,7 +120,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
     {
         // Arrange
         await this.SetupTestServerAsync();
-        AGUIAgent agent = new("assistant", "Sample assistant", this._client!, "");
+        AGUIAgent agent = new("assistant", "Sample assistant", this._client!, "", null, []);
         AgentThread thread = agent.GetNewThread();
         ChatMessage firstUserMessage = new(ChatRole.User, "First question");
 
@@ -169,7 +169,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
     {
         // Arrange
         await this.SetupTestServerAsync(useMultiMessageAgent: true);
-        AGUIAgent agent = new("assistant", "Sample assistant", this._client!, "");
+        AGUIAgent agent = new("assistant", "Sample assistant", this._client!, "", null, []);
         AgentThread thread = agent.GetNewThread();
         ChatMessage userMessage = new(ChatRole.User, "Tell me a story");
 
@@ -202,7 +202,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
     {
         // Arrange
         await this.SetupTestServerAsync();
-        AGUIAgent agent = new("assistant", "Sample assistant", this._client!, "");
+        AGUIAgent agent = new("assistant", "Sample assistant", this._client!, "", null, []);
         AgentThread thread = agent.GetNewThread();
 
         // Multiple user messages sent in one turn
