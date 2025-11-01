@@ -87,6 +87,7 @@ members = [ "packages/*" ]
 agent-framework = { workspace = true }
 agent-framework-core = { workspace = true }
 agent-framework-a2a = { workspace = true }
+agent-framework-ag-ui = { workspace = true }
 agent-framework-azure-ai = { workspace = true }
 agent-framework-copilotstudio = { workspace = true }
 agent-framework-lab = { workspace = true }
@@ -237,6 +238,7 @@ cmd = """
 pytest --import-mode=importlib
 --cov=agent_framework
 --cov=agent_framework_a2a
+--cov=agent_framework_ag_ui
 --cov=agent_framework_azure_ai
 --cov=agent_framework_copilotstudio
 --cov=agent_framework_mem0

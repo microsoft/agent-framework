@@ -1,0 +1,40 @@
+[project]
+name = "agent-framework-ag-ui-examples"
+description = "Example agents and server for AG-UI integration."
+authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
+readme = "README.md"
+requires-python = ">=3.10"
+version = "0.1.0"
+license-files = ["../LICENSE"]
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Typing :: Typed",
+]
+dependencies = [
+    "agent-framework-core",
+    "agent-framework-ag-ui",
+    "agent-framework-azure-ai",
+    "fastapi",
+    "uvicorn",
+]
+
+[tool.uv]
+prerelease = "if-necessary-or-explicit"
+
+[tool.pyright]
+include = ["agents", "server"]
+extraPaths = ["."]
+
+[tool.ruff]
+extend = "../../../pyproject.toml"
+
+[build-system]
+requires = ["flit-core >= 3.11,<4.0"]
+build-backend = "flit_core.buildapi"
