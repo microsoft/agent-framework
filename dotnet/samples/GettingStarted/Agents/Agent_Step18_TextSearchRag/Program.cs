@@ -28,7 +28,9 @@ AIAgent agent = new AzureOpenAIClient(
     .CreateAIAgent(new ChatClientAgentOptions
     {
         Instructions = "You are a helpful support specialist for Contoso Outdoors. Answer questions using the provided context and cite the source document when available.",
-        AIContextProviderFactory = _ => new TextSearchProvider(MockSearchAsync, textSearchOptions)
+        AIContextProviderFactory = ctx => ctx.SerializedState.ValueKind is not System.Text.Json.JsonValueKind.Null and not System.Text.Json.JsonValueKind.Undefined
+            ? new TextSearchProvider(MockSearchAsync, ctx.SerializedState, ctx.JsonSerializerOptions, textSearchOptions)
+            : new TextSearchProvider(MockSearchAsync, textSearchOptions)
     });
 
 AgentThread thread = agent.GetNewThread();
@@ -52,9 +54,9 @@ static Task<IEnumerable<TextSearchProvider.TextSearchResult>> MockSearchAsync(st
     {
         results.Add(new()
         {
-            Name = "Contoso Outdoors Return Policy",
-            Link = "https://contoso.com/policies/returns",
-            Value = "Customers may return any item within 30 days of delivery. Items should be unused and include original packaging. Refunds are issued to the original payment method within 5 business days of inspection."
+            SourceName = "Contoso Outdoors Return Policy",
+            SourceLink = "https://contoso.com/policies/returns",
+            Text = "Customers may return any item within 30 days of delivery. Items should be unused and include original packaging. Refunds are issued to the original payment method within 5 business days of inspection."
         });
     }
 
@@ -62,9 +64,9 @@ static Task<IEnumerable<TextSearchProvider.TextSearchResult>> MockSearchAsync(st
     {
         results.Add(new()
         {
-            Name = "Contoso Outdoors Shipping Guide",
-            Link = "https://contoso.com/help/shipping",
-            Value = "Standard shipping is free on orders over $50 and typically arrives in 3-5 business days within the continental United States. Expedited options are available at checkout."
+            SourceName = "Contoso Outdoors Shipping Guide",
+            SourceLink = "https://contoso.com/help/shipping",
+            Text = "Standard shipping is free on orders over $50 and typically arrives in 3-5 business days within the continental United States. Expedited options are available at checkout."
         });
     }
 
@@ -72,9 +74,9 @@ static Task<IEnumerable<TextSearchProvider.TextSearchResult>> MockSearchAsync(st
     {
         results.Add(new()
         {
-            Name = "TrailRunner Tent Care Instructions",
-            Link = "https://contoso.com/manuals/trailrunner-tent",
-            Value = "Clean the tent fabric with lukewarm water and a non-detergent soap. Allow it to air dry completely before storage and avoid prolonged UV exposure to extend the lifespan of the waterproof coating."
+            SourceName = "TrailRunner Tent Care Instructions",
+            SourceLink = "https://contoso.com/manuals/trailrunner-tent",
+            Text = "Clean the tent fabric with lukewarm water and a non-detergent soap. Allow it to air dry completely before storage and avoid prolonged UV exposure to extend the lifespan of the waterproof coating."
         });
     }
 

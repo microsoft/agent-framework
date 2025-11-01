@@ -60,6 +60,15 @@ public sealed class TextSearchProviderOptions
     public int RecentMessageMemoryLimit { get; set; }
 
     /// <summary>
+    /// Gets or sets the list of <see cref="ChatRole"/> types to filter recent messages to
+    /// when deciding which recent messages to include when constructing the search input.
+    /// </summary>
+    /// <value>
+    /// When not specified, defaults to only <see cref="ChatRole.User"/>.
+    /// </value>
+    public List<ChatRole>? RecentMessageRolesIncluded { get; set; }
+
+    /// <summary>
     /// Behavior choices for the provider.
     /// </summary>
     public enum TextSearchBehavior
