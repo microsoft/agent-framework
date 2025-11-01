@@ -6,6 +6,10 @@ using System.Threading.Tasks;
 using Microsoft.Agents.AI.Purview.Models.Jobs;
 
 namespace Microsoft.Agents.AI.Purview;
+
+/// <summary>
+/// Interface for a class that controlls background job processing.
+/// </summary>
 internal interface IChannelHandler
 {
     /// <summary>

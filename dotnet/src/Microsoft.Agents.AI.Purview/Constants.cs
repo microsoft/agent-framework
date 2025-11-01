@@ -1,6 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 namespace Microsoft.Agents.AI.Purview;
+
+/// <summary>
+/// Shared constants for the Purview service.
+/// </summary>
 internal static class Constants
 {
     /// <summary>

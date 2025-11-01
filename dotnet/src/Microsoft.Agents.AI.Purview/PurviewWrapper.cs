@@ -171,6 +171,7 @@ internal sealed class PurviewWrapper : IDisposable
         return response;
     }
 
+    /// <inheritdoc/>
     public void Dispose()
     {
 #pragma warning disable VSTHRD002 // Need to wait for pending jobs to complete.

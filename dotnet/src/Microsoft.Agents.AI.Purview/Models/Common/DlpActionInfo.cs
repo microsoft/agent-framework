@@ -7,7 +7,6 @@ namespace Microsoft.Agents.AI.Purview.Models.Common;
 /// <summary>
 /// Base class to define DLP Actions.
 /// </summary>
-/// TODO: Add custom parsing logic for the different types of DLP actions.
 internal sealed class DlpActionInfo
 {
     /// <summary>

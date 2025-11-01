@@ -8,6 +8,9 @@ using Microsoft.Agents.AI.Purview.Models.Responses;
 
 namespace Microsoft.Agents.AI.Purview.Serialization;
 
+/// <summary>
+/// Source generation context for Purview serialization.
+/// </summary>
 [JsonSerializable(typeof(ProtectionScopesRequest))]
 [JsonSerializable(typeof(ProtectionScopesResponse))]
 [JsonSerializable(typeof(ProcessContentRequest))]

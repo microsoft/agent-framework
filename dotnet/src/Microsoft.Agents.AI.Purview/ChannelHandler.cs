@@ -9,6 +9,7 @@ using Microsoft.Agents.AI.Purview.Models.Jobs;
 using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.AI.Purview;
+
 /// <summary>
 /// Handler class for background job management.
 /// </summary>

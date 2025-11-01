@@ -31,6 +31,11 @@ public class PurviewAppLocation
     /// </summary>
     public string LocationValue { get; set; }
 
+    /// <summary>
+    /// Returns the <see cref="PolicyLocation"/> model for this <see cref="PurviewAppLocation"/>.
+    /// </summary>
+    /// <returns>PolicyLocation request model.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when an invalid location type is provided.</exception>
     internal PolicyLocation GetPolicyLocation()
     {
         switch (this.LocationType)

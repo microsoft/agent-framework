@@ -9,6 +9,14 @@ using Microsoft.Agents.AI.Purview.Models.Requests;
 using Microsoft.Agents.AI.Purview.Models.Responses;
 
 namespace Microsoft.Agents.AI.Purview;
+
+/// <summary>
+/// Defines methods for interacting with the Purview service, including content processing,
+/// protection scope management, and activity tracking.
+/// </summary>
+/// <remarks>This interface provides methods to interact with various Purview APIs.  It includes processing content, managing protection
+/// scopes, and sending content activity data.  Implementations of this interface are expected to handle communication
+/// with the Purview service  and manage any necessary authentication or error handling.</remarks>
 internal interface IPurviewClient
 {
     /// <summary>

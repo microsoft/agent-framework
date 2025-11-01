@@ -7,6 +7,10 @@ using Microsoft.Agents.AI.Purview.Models.Common;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Purview;
+
+/// <summary>
+/// Orchestrates the processing of scoped content by combining protection scope, process content, and content activities operations.
+/// </summary>
 internal interface IScopedContentProcessor
 {
     /// <summary>

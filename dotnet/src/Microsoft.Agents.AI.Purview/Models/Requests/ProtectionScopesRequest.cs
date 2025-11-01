@@ -8,6 +8,9 @@ using Microsoft.Agents.AI.Purview.Models.Common;
 
 namespace Microsoft.Agents.AI.Purview.Models.Requests;
 
+/// <summary>
+/// Request model for user protection scopes requests.
+/// </summary>
 [DataContract]
 internal sealed class ProtectionScopesRequest
 {

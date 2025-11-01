@@ -4,6 +4,9 @@ using System.Text.Json.Serialization;
 
 namespace Microsoft.Agents.AI.Purview.Models.Common;
 
+/// <summary>
+/// Type of error that occurred during content processing.
+/// </summary>
 [JsonConverter(typeof(JsonStringEnumConverter<ContentProcessingErrorType>))]
 internal enum ContentProcessingErrorType
 {

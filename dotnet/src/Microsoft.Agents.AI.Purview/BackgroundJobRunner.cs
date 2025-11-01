@@ -8,12 +8,23 @@ using Microsoft.Agents.AI.Purview.Models.Jobs;
 using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.AI.Purview;
+
+/// <summary>
+/// Service that runs jobs in background threads.
+/// </summary>
 internal sealed class BackgroundJobRunner
 {
     private readonly IChannelHandler _channelHandler;
     private readonly IPurviewClient _purviewClient;
     private readonly ILogger _logger;
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="BackgroundJobRunner"/> class.
+    /// </summary>
+    /// <param name="channelHandler"></param>
+    /// <param name="purviewClient"></param>
+    /// <param name="logger"></param>
+    /// <param name="purviewSettings"></param>
     public BackgroundJobRunner(IChannelHandler channelHandler, IPurviewClient purviewClient, ILogger logger, PurviewSettings purviewSettings)
     {
         this._channelHandler = channelHandler;
@@ -39,6 +50,11 @@ internal sealed class BackgroundJobRunner
         }
     }
 
+    /// <summary>
+    /// Runs a job.
+    /// </summary>
+    /// <param name="job"></param>
+    /// <returns></returns>
     private async Task RunJobAsync(BackgroundJobBase job)
     {
         switch (job)
