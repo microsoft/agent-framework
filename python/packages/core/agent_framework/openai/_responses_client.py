@@ -80,6 +80,48 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
 
     FILE_SEARCH_MAX_RESULTS: int = 50
 
+    # region Helper Methods
+
+    def _detect_image_format_from_base64(self, image_base64: str) -> str:
+        """Detect image format from base64 data by examining the binary header.
+
+        Args:
+            image_base64: Base64 encoded image data
+
+        Returns:
+            Image format as string (png, jpeg, webp, gif) with png as fallback
+        """
+        try:
+            import base64
+
+            # Decode a small portion to detect format
+            decoded_data = base64.b64decode(image_base64[:100])  # First ~75 bytes should be enough
+            if decoded_data.startswith(b"\x89PNG"):
+                return "png"
+            if decoded_data.startswith(b"\xff\xd8\xff"):
+                return "jpeg"
+            if decoded_data.startswith(b"RIFF") and b"WEBP" in decoded_data[:12]:
+                return "webp"
+            if decoded_data.startswith(b"GIF87a") or decoded_data.startswith(b"GIF89a"):
+                return "gif"
+            return "png"  # Default fallback
+        except Exception:
+            return "png"  # Fallback if decoding fails
+
+    def _create_data_uri_from_base64(self, image_base64: str) -> tuple[str, str]:
+        """Create a data URI and media type from base64 image data.
+
+        Args:
+            image_base64: Base64 encoded image data
+
+        Returns:
+            Tuple of (data_uri, media_type)
+        """
+        format_type = self._detect_image_format_from_base64(image_base64)
+        uri = f"data:image/{format_type};base64,{image_base64}"
+        media_type = f"image/{format_type}"
+        return uri, media_type
+
     # region Inner Methods
 
     async def _inner_get_response(
@@ -292,6 +334,12 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                         if user_param in mapped_tool:
                             # Map the parameter name and remove the old one
                             mapped_tool[api_param] = mapped_tool.pop(user_param)
+
+                    # Validate partial_images parameter for streaming
+                    if "partial_images" in mapped_tool:
+                        partial_images = mapped_tool["partial_images"]
+                        if not isinstance(partial_images, int) or partial_images < 1 or partial_images > 3:
+                            raise ValueError("partial_images must be an integer between 1 and 3")
 
                     response_tools.append(mapped_tool)
                 else:
@@ -695,29 +743,8 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                         uri = item.result
                         media_type = None
                         if not uri.startswith("data:"):
-                            # Raw base64 string - convert to proper data URI format
-                            # Detect format from base64 data
-                            import base64
-
-                            try:
-                                # Decode a small portion to detect format
-                                decoded_data = base64.b64decode(uri[:100])  # First ~75 bytes should be enough
-                                if decoded_data.startswith(b"\x89PNG"):
-                                    format_type = "png"
-                                elif decoded_data.startswith(b"\xff\xd8\xff"):
-                                    format_type = "jpeg"
-                                elif decoded_data.startswith(b"RIFF") and b"WEBP" in decoded_data[:12]:
-                                    format_type = "webp"
-                                elif decoded_data.startswith(b"GIF87a") or decoded_data.startswith(b"GIF89a"):
-                                    format_type = "gif"
-                                else:
-                                    # Default to png if format cannot be detected
-                                    format_type = "png"
-                            except Exception:
-                                # Fallback to png if decoding fails
-                                format_type = "png"
-                            uri = f"data:image/{format_type};base64,{uri}"
-                            media_type = f"image/{format_type}"
+                            # Raw base64 string - convert to proper data URI format using helper
+                            uri, media_type = self._create_data_uri_from_base64(uri)
                         else:
                             # Parse media type from existing data URI
                             try:
@@ -933,6 +960,25 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                             raw_representation=event,
                         )
                     )
+            case "response.image_generation_call.partial_image":
+                # Handle streaming partial image generation
+                image_base64 = event.partial_image_b64
+                partial_index = event.partial_image_index
+
+                # Use helper function to create data URI from base64
+                uri, media_type = self._create_data_uri_from_base64(image_base64)
+
+                contents.append(
+                    DataContent(
+                        uri=uri,
+                        media_type=media_type,
+                        additional_properties={
+                            "partial_image_index": partial_index,
+                            "is_partial_image": True,
+                        },
+                        raw_representation=event,
+                    )
+                )
             case _:
                 logger.debug("Unparsed event of type: %s: %s", event.type, event)
 
