@@ -261,7 +261,7 @@ class WorkflowExecutor(Executor):
                 await ctx.send_message(response, target_id=request.source_executor_id)
             else:
                 # Forward to external handler
-                await ctx.request_info(request.source_event)
+                await ctx.request_info(request.source_event, response_type=request.source_event.response_type)
     ```
 
     ## Implementation Notes

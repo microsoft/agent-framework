@@ -145,7 +145,7 @@ class DraftReviewRouter(Executor):
                 "Confirm CTA is action-oriented",
             ],
         )
-        await ctx.request_info(request, ReviewRequest, str)
+        await ctx.request_info(request_data=request, response_type=str)
 
     @response_handler
     async def forward_decision(
@@ -251,7 +251,7 @@ class LaunchCoordinator(Executor):
         await ctx.set_executor_state(executor_state)
 
         # Send the request without modification
-        await ctx.request_info(review_request, ReviewRequest, str)
+        await ctx.request_info(request_data=review_request, response_type=str)
 
     @response_handler
     async def handle_request_response(

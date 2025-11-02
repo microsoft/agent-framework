@@ -1612,7 +1612,7 @@ class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
             plan_text=plan_text,
             round_index=self._plan_review_round,
         )
-        await context.request_info(req, _MagenticPlanReviewRequest, _MagenticPlanReviewReply)
+        await context.request_info(req, _MagenticPlanReviewReply)
 
 
 # region Magentic Executors
