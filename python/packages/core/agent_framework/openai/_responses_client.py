@@ -172,11 +172,8 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                 inner_exception=ex,
             ) from ex
 
-    def get_conversation_id(
-        self, response: OpenAIResponse | ParsedResponse[BaseModel], run_options: dict[str, Any]
-    ) -> str | None:
+    def get_conversation_id(self, response: OpenAIResponse | ParsedResponse[BaseModel], store: bool) -> str | None:
         """Gets conversation ID from response."""
-        store = run_options.get("store", False)
         return response.id if store else None
 
     # region Prep methods
@@ -758,7 +755,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
             "raw_representation": response,
         }
         if chat_options.store:
-            args["conversation_id"] = response.id
+            args["conversation_id"] = self.get_conversation_id(response, chat_options.store)
         if response.usage and (usage_details := self._usage_details_from_openai(response.usage)):
             args["usage_details"] = usage_details
         if structured_response:

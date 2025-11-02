@@ -285,17 +285,16 @@ class AzureAIAgentClientV2(OpenAIBaseResponsesClient):
 
         return {"name": self.agent_name, "version": self.agent_version, "type": "agent_reference"}
 
-    async def _add_messages_to_conversation(self, run_options: dict[str, Any]) -> str:
-        conversation_id = run_options.get("conversation_id", self.conversation_id)
-        messages = run_options["input"]
+    async def _get_conversation_id_or_create(self, run_options: dict[str, Any]) -> str:
+        # Since "conversation" property is used, remove "previous_response_id" from options
+        # Use global conversation_id as fallback
+        conversation_id = run_options.pop("previous_response_id", self.conversation_id)
 
-        # Add messages to existing conversation
         if conversation_id:
-            await self.client.conversations.items.create(conversation_id=conversation_id, items=messages)
             return conversation_id
 
         # Create a new conversation with messages
-        created_conversation = await self.client.conversations.create(items=messages)
+        created_conversation = await self.client.conversations.create()
         return created_conversation.id
 
     async def _close_client_if_needed(self) -> None:
@@ -332,9 +331,8 @@ class AzureAIAgentClientV2(OpenAIBaseResponsesClient):
         store = run_options.get("store", False)
 
         if store:
-            conversation_id = await self._add_messages_to_conversation(run_options)
+            conversation_id = await self._get_conversation_id_or_create(run_options)
             run_options["conversation"] = conversation_id
-            run_options["input"] = ""  # TODO (dmytrostruk): Remove 'input' once service is fixed
 
         run_options["extra_body"] = {"agent": agent_reference}
 
