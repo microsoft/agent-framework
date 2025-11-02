@@ -1,12 +1,14 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.ComponentModel;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
-using System.Text;
-using System.Text.Json;
 
 namespace WriterCriticWorkflow;
 
@@ -15,7 +17,7 @@ namespace WriterCriticWorkflow;
 ///
 /// The workflow implements a content creation and review loop that:
 /// 1. Writer creates initial content based on the user's request
-/// 2. Critic reviews the content and provides feedback
+/// 2. Critic reviews the content and provides feedback using structured output
 /// 3. If approved: Summary executor presents the final content
 /// 4. If rejected: Writer revises based on feedback (loops back)
 /// 5. Continues until approval or max iterations (3) is reached
@@ -25,9 +27,10 @@ namespace WriterCriticWorkflow;
 /// - Quality gates with reviewer approval
 /// - Maximum iteration limits to prevent infinite loops
 /// - Conditional workflow routing based on agent decisions
+/// - Structured output for reliable decision-making
 ///
-/// Key Learning: Workflows can implement loops with conditional edges and shared state
-/// to track iteration progress across multiple executor invocations.
+/// Key Learning: Workflows can implement loops with conditional edges, shared state,
+/// and structured output for robust agent decision-making.
 /// </summary>
 /// <remarks>
 /// Pre-requisites:
@@ -44,9 +47,9 @@ public static class Program
         Console.WriteLine($"Writer and Critic will iterate up to {MaxIterations} times until approval.\n");
 
         // Set up the Azure OpenAI client
-        var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-        var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
-        var chatClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName).AsIChatClient();
+        string endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+        string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+        IChatClient chatClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName).AsIChatClient();
 
         // Create executors for content creation and review
         WriterExecutor writer = new(chatClient);
@@ -80,7 +83,7 @@ public static class Program
         Console.WriteLine("  ✓ Shared workflow state for iteration tracking");
         Console.WriteLine($"  ✓ Max iteration cap ({MaxIterations}) for safety");
         Console.WriteLine("  ✓ Multiple message handlers in a single executor");
-        Console.WriteLine("  ✓ Streaming support for real-time feedback\n");
+        Console.WriteLine("  ✓ Streaming support with structured output\n");
     }
 
     private static async Task ExecuteWorkflowAsync(Workflow workflow, string input)
@@ -94,7 +97,7 @@ public static class Program
             switch (evt)
             {
                 case AgentRunUpdateEvent agentUpdate:
-                    // Stream agent output in real-time (optional, controlled by ShowAgentThinking)
+                    // Stream agent output in real-time
                     if (!string.IsNullOrEmpty(agentUpdate.Update.Text))
                     {
                         Console.Write(agentUpdate.Update.Text);
@@ -159,13 +162,25 @@ internal static class FlowStateHelpers
 // ====================================
 
 /// <summary>
-/// Represents the critic's decision and feedback on the content.
+/// Structured output schema for the Critic's decision.
+/// Uses JsonPropertyName and Description attributes for OpenAI's JSON schema.
 /// </summary>
+[Description("Critic's review decision including approval status and feedback")]
 internal sealed class CriticDecision
 {
+    [JsonPropertyName("approved")]
+    [Description("Whether the content is approved (true) or needs revision (false)")]
     public bool Approved { get; set; }
+
+    [JsonPropertyName("feedback")]
+    [Description("Specific feedback for improvements if not approved, empty if approved")]
     public string Feedback { get; set; } = "";
+
+    // Non-JSON properties for workflow use
+    [JsonIgnore]
     public string Content { get; set; } = "";
+
+    [JsonIgnore]
     public int Iteration { get; set; }
 }
 
@@ -258,7 +273,7 @@ internal sealed class WriterExecutor : Executor
 
 /// <summary>
 /// Executor that reviews content and decides whether to approve or request revisions.
-/// Uses JSON output for structured decision-making.
+/// Uses structured output with streaming for reliable decision-making.
 /// </summary>
 internal sealed class CriticExecutor : Executor<ChatMessage, CriticDecision>
 {
@@ -266,21 +281,25 @@ internal sealed class CriticExecutor : Executor<ChatMessage, CriticDecision>
 
     public CriticExecutor(IChatClient chatClient) : base("Critic")
     {
-        this._agent = new ChatClientAgent(
-            chatClient,
-            name: "Critic",
-            instructions: """
+        this._agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions
+        {
+            Name = "Critic",
+            Instructions = """
                 You are a constructive critic. Review the content and provide specific feedback.
                 Always try to provide actionable suggestions for improvement and strive to identify improvement points.
                 Only approve if the content is high quality, clear, and meets the original requirements and you see no improvement points.
-
-                At the end, output EXACTLY one JSON line:
-                {"approved":true,"feedback":""} if the content is good
-                {"approved":false,"feedback":"<specific improvements needed>"} if revisions are needed
+                
+                Provide your decision as structured output with:
+                - approved: true if content is good, false if revisions needed
+                - feedback: specific improvements needed (empty if approved)
                 
                 Be concise but specific in your feedback.
-                """
-        );
+                """,
+            ChatOptions = new()
+            {
+                ResponseFormat = ChatResponseFormat.ForJsonSchema<CriticDecision>()
+            }
+        });
     }
 
     public override async ValueTask<CriticDecision> HandleAsync(
@@ -292,101 +311,56 @@ internal sealed class CriticExecutor : Executor<ChatMessage, CriticDecision>
 
         Console.WriteLine($"=== Critic (Iteration {state.Iteration}) ===\n");
 
-        StringBuilder sb = new();
-        await foreach (AgentRunResponseUpdate update in this._agent.RunStreamingAsync(message, cancellationToken: cancellationToken))
+        // Use RunStreamingAsync to get streaming updates, then deserialize at the end
+        IAsyncEnumerable<AgentRunResponseUpdate> updates = this._agent.RunStreamingAsync(message, cancellationToken: cancellationToken);
+
+        // Stream the output in real-time (for any rationale/explanation)
+        await foreach (AgentRunResponseUpdate update in updates)
         {
             if (!string.IsNullOrEmpty(update.Text))
             {
-                sb.Append(update.Text);
                 Console.Write(update.Text);
             }
         }
         Console.WriteLine("\n");
 
-        string fullResponse = sb.ToString();
-        (bool approved, string feedback) = ParseDecision(fullResponse);
+        // Convert the stream to a response and deserialize the structured output
+        AgentRunResponse response = await updates.ToAgentRunResponseAsync(cancellationToken);
+        CriticDecision decision = response.Deserialize<CriticDecision>(JsonSerializerOptions.Web);
+
+        Console.WriteLine($"Decision: {(decision.Approved ? "✅ APPROVED" : "❌ NEEDS REVISION")}");
+        if (!string.IsNullOrEmpty(decision.Feedback))
+        {
+            Console.WriteLine($"Feedback: {decision.Feedback}");
+        }
+        Console.WriteLine();
 
         // Safety: approve if max iterations reached
-        if (!approved && state.Iteration >= Program.MaxIterations)
+        if (!decision.Approved && state.Iteration >= Program.MaxIterations)
         {
             Console.ForegroundColor = ConsoleColor.Yellow;
             Console.WriteLine($"⚠️ Max iterations ({Program.MaxIterations}) reached - auto-approving");
             Console.ResetColor();
-            approved = true;
-            feedback = "";
+            decision.Approved = true;
+            decision.Feedback = "";
         }
 
         // Increment iteration ONLY if rejecting (will loop back to Writer)
-        if (!approved)
+        if (!decision.Approved)
         {
             state.Iteration++;
         }
 
-        state.History.Add(new ChatMessage(ChatRole.Assistant, StripTrailingJson(fullResponse)));
+        // Store the decision in history
+        state.History.Add(new ChatMessage(ChatRole.Assistant,
+            $"[Decision: {(decision.Approved ? "Approved" : "Needs Revision")}] {decision.Feedback}"));
         await FlowStateHelpers.SaveFlowStateAsync(context, state);
 
-        return new CriticDecision
-        {
-            Approved = approved,
-            Feedback = feedback,
-            Content = message.Text ?? "",
-            Iteration = state.Iteration
-        };
-    }
+        // Populate workflow-specific fields
+        decision.Content = message.Text ?? "";
+        decision.Iteration = state.Iteration;
 
-    /// <summary>
-    /// Parses the critic's response to extract the approval decision and feedback.
-    /// Looks for a JSON line in the format: {"approved":true/false,"feedback":"..."}
-    /// </summary>
-    private static (bool approved, string feedback) ParseDecision(string fullResponse)
-    {
-        string? lastJson = fullResponse
-            .Replace("\r\n", "\n")
-            .Split('\n')
-            .Reverse()
-            .Select(line => line.Trim())
-            .FirstOrDefault(trimmedLine => trimmedLine.StartsWith('{') && trimmedLine.EndsWith('}'));
-
-        if (lastJson is null)
-        {
-            // Fallback: check for explicit approval text
-            if (fullResponse.Contains("APPROVE", StringComparison.OrdinalIgnoreCase))
-            {
-                return (true, "");
-            }
-            return (false, "Missing approval decision.");
-        }
-
-        try
-        {
-            using JsonDocument doc = JsonDocument.Parse(lastJson);
-            bool ok = doc.RootElement.GetProperty("approved").GetBoolean();
-            string fb = doc.RootElement.TryGetProperty("feedback", out JsonElement el) ? el.GetString() ?? "" : "";
-            return (ok, fb);
-        }
-        catch (JsonException)
-        {
-            return (false, "Malformed approval JSON.");
-        }
-    }
-
-    /// <summary>
-    /// Removes the trailing JSON decision line from the response for cleaner history.
-    /// </summary>
-    private static string StripTrailingJson(string text)
-    {
-        string[] lines = text.Replace("\r\n", "\n").Split('\n');
-        if (lines.Length == 0)
-        {
-            return text;
-        }
-
-        string lastLine = lines[^1].Trim();
-        if (lastLine.StartsWith('{') && lastLine.EndsWith('}'))
-        {
-            return string.Join("\n", lines[..^1]);
-        }
-        return text;
+        return decision;
     }
 }
 
