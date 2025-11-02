@@ -43,6 +43,7 @@ from agent_framework import (
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceInitializationError, ServiceResponseException
 from agent_framework.observability import use_observability
+from azure.ai.agents.aio import AgentsClient
 from azure.ai.agents.models import (
     Agent,
     AgentsNamedToolChoice,
@@ -87,7 +88,7 @@ from azure.ai.agents.models import (
 )
 from azure.ai.projects.aio import AIProjectClient
 from azure.core.credentials_async import AsyncTokenCredential
-from azure.core.exceptions import HttpResponseError, ResourceNotFoundError
+from azure.core.exceptions import ResourceNotFoundError
 from pydantic import ValidationError
 
 if sys.version_info >= (3, 11):
@@ -154,7 +155,7 @@ class AzureAIAgentClient(BaseChatClient):
     def __init__(
         self,
         *,
-        project_client: AIProjectClient | None = None,
+        agents_client: AgentsClient | None = None,
         agent_id: str | None = None,
         agent_name: str | None = None,
         thread_id: str | None = None,
@@ -168,16 +169,16 @@ class AzureAIAgentClient(BaseChatClient):
         """Initialize an Azure AI Agent client.
 
         Keyword Args:
-            project_client: An existing AIProjectClient to use. If not provided, one will be created.
-            agent_id: The ID of an existing agent to use. If not provided and project_client is provided,
-                a new agent will be created (and deleted after the request). If neither project_client
+            agents_client: An existing AgentsClient to use. If not provided, one will be created.
+            agent_id: The ID of an existing agent to use. If not provided and agents_client is provided,
+                a new agent will be created (and deleted after the request). If neither agents_client
                 nor agent_id is provided, both will be created and managed automatically.
             agent_name: The name to use when creating new agents.
             thread_id: Default thread ID to use for conversations. Can be overridden by
                 conversation_id property when making a request.
             project_endpoint: The Azure AI Project endpoint URL.
                 Can also be set via environment variable AZURE_AI_PROJECT_ENDPOINT.
-                Ignored when a project_client is passed.
+                Ignored when a agents_client is passed.
             model_deployment_name: The model deployment name to use for agent creation.
                 Can also be set via environment variable AZURE_AI_MODEL_DEPLOYMENT_NAME.
             async_credential: Azure async credential to use for authentication.
@@ -217,9 +218,9 @@ class AzureAIAgentClient(BaseChatClient):
         except ValidationError as ex:
             raise ServiceInitializationError("Failed to create Azure AI settings.", ex) from ex
 
-        # If no project_client is provided, create one
+        # If no agents_client is provided, create one
         should_close_client = False
-        if project_client is None:
+        if agents_client is None:
             if not azure_ai_settings.project_endpoint:
                 raise ServiceInitializationError(
                     "Azure AI project endpoint is required. Set via 'project_endpoint' parameter "
@@ -234,10 +235,11 @@ class AzureAIAgentClient(BaseChatClient):
 
             # Use provided credential
             if not async_credential:
-                raise ServiceInitializationError("Azure credential is required when project_client is not provided.")
-            project_client = AIProjectClient(
+                raise ServiceInitializationError("Azure credential is required when agents_client is not provided.")
+            agents_client = AgentsClient(
                 endpoint=azure_ai_settings.project_endpoint,
                 credential=async_credential,
+                # TODO (dmytrostruk): Verify if user_agent works with AgentsClient
                 user_agent=AGENT_FRAMEWORK_USER_AGENT,
             )
             should_close_client = True
@@ -246,7 +248,7 @@ class AzureAIAgentClient(BaseChatClient):
         super().__init__(**kwargs)
 
         # Initialize instance variables
-        self.project_client = project_client
+        self.agents_client = agents_client
         self.credential = async_credential
         self.agent_id = agent_id
         self.agent_name = agent_name
@@ -256,7 +258,9 @@ class AzureAIAgentClient(BaseChatClient):
         self._should_close_client = should_close_client  # Track whether we should close client connection
         self._agent_definition: Agent | None = None  # Cached definition for existing agent
 
-    async def setup_azure_ai_observability(self, enable_sensitive_data: bool | None = None) -> None:
+    async def setup_azure_ai_observability(
+        self, project_client: AIProjectClient, enable_sensitive_data: bool | None = None
+    ) -> None:
         """Use this method to setup tracing in your Azure AI Project.
 
         This will take the connection string from the project project_client.
@@ -264,7 +268,7 @@ class AzureAIAgentClient(BaseChatClient):
         It will disable any OTLP endpoint that might have been set.
         """
         try:
-            conn_string = await self.project_client.telemetry.get_application_insights_connection_string()
+            conn_string = await project_client.telemetry.get_application_insights_connection_string()
         except ResourceNotFoundError:
             logger.warning(
                 "No Application Insights connection string found for the Azure AI Project, "
@@ -286,7 +290,7 @@ class AzureAIAgentClient(BaseChatClient):
         await self.close()
 
     async def close(self) -> None:
-        """Close the project_client and clean up any agents we created."""
+        """Close the agents_client and clean up any agents we created."""
         await self._cleanup_agent_if_needed()
         await self._close_client_if_needed()
 
@@ -298,7 +302,7 @@ class AzureAIAgentClient(BaseChatClient):
             settings: A dictionary of settings for the service.
         """
         return cls(
-            project_client=settings.get("project_client"),
+            agents_client=settings.get("agents_client"),
             agent_id=settings.get("agent_id"),
             thread_id=settings.get("thread_id"),
             project_endpoint=settings.get("project_endpoint"),
@@ -374,7 +378,7 @@ class AzureAIAgentClient(BaseChatClient):
                 args["instructions"] = run_options["instructions"]
             if "response_format" in run_options:
                 args["response_format"] = run_options["response_format"]
-            created_agent = await self.project_client.agents.create_agent(**args)
+            created_agent = await self.agents_client.create_agent(**args)
             self.agent_id = str(created_agent.id)
             self._agent_definition = created_agent
             self._should_delete_agent = True
@@ -418,7 +422,7 @@ class AzureAIAgentClient(BaseChatClient):
                 args["tool_outputs"] = tool_outputs
             if tool_approvals:
                 args["tool_approvals"] = tool_approvals
-            await self.project_client.agents.runs.submit_tool_outputs_stream(**args)  # type: ignore[reportUnknownMemberType]
+            await self.agents_client.runs.submit_tool_outputs_stream(**args)  # type: ignore[reportUnknownMemberType]
             # Pass the handler to the stream to continue processing
             stream = handler  # type: ignore
             final_thread_id = thread_run.thread_id
@@ -428,7 +432,7 @@ class AzureAIAgentClient(BaseChatClient):
 
             # Now create a new run and stream the results.
             run_options.pop("conversation_id", None)
-            stream = await self.project_client.agents.runs.stream(  # type: ignore[reportUnknownMemberType]
+            stream = await self.agents_client.runs.stream(  # type: ignore[reportUnknownMemberType]
                 final_thread_id, agent_id=agent_id, **run_options
             )
 
@@ -439,9 +443,7 @@ class AzureAIAgentClient(BaseChatClient):
         if thread_id is None:
             return None
 
-        async for run in self.project_client.agents.runs.list(
-            thread_id=thread_id, limit=1, order=ListSortOrder.DESCENDING
-        ):  # type: ignore[reportUnknownMemberType]
+        async for run in self.agents_client.runs.list(thread_id=thread_id, limit=1, order=ListSortOrder.DESCENDING):  # type: ignore[reportUnknownMemberType]
             if run.status not in [
                 RunStatus.COMPLETED,
                 RunStatus.CANCELLED,
@@ -458,12 +460,12 @@ class AzureAIAgentClient(BaseChatClient):
         if thread_id is not None:
             if thread_run is not None:
                 # There was an active run; we need to cancel it before starting a new run.
-                await self.project_client.agents.runs.cancel(thread_id, thread_run.id)
+                await self.agents_client.runs.cancel(thread_id, thread_run.id)
 
             return thread_id
 
         # No thread ID was provided, so create a new thread.
-        thread = await self.project_client.agents.threads.create(
+        thread = await self.agents_client.threads.create(
             tool_resources=run_options.get("tool_resources"), metadata=run_options.get("metadata")
         )
         thread_id = thread.id
@@ -472,7 +474,7 @@ class AzureAIAgentClient(BaseChatClient):
         # once fixed, in the function above, readd:
         # `messages=run_options.pop("additional_messages")`
         for msg in run_options.pop("additional_messages", []):
-            await self.project_client.agents.messages.create(
+            await self.agents_client.messages.create(
                 thread_id=thread_id, role=msg.role, content=msg.content, metadata=msg.metadata
             )
         # and remove until here.
@@ -705,21 +707,21 @@ class AzureAIAgentClient(BaseChatClient):
         return []
 
     async def _close_client_if_needed(self) -> None:
-        """Close project_client session if we created it."""
+        """Close agents_client session if we created it."""
         if self._should_close_client:
-            await self.project_client.close()
+            await self.agents_client.close()
 
     async def _cleanup_agent_if_needed(self) -> None:
         """Clean up the agent if we created it."""
         if self._should_delete_agent and self.agent_id is not None:
-            await self.project_client.agents.delete_agent(self.agent_id)
+            await self.agents_client.delete_agent(self.agent_id)
             self.agent_id = None
             self._should_delete_agent = False
 
     async def _load_agent_definition_if_needed(self) -> Agent | None:
         """Load and cache agent details if not already loaded."""
         if self._agent_definition is None and self.agent_id is not None:
-            self._agent_definition = await self.project_client.agents.get_agent(self.agent_id)
+            self._agent_definition = await self.agents_client.get_agent(self.agent_id)
         return self._agent_definition
 
     def _prepare_tool_choice(self, chat_options: ChatOptions) -> None:
@@ -911,57 +913,32 @@ class AzureAIAgentClient(BaseChatClient):
                         config_args["set_lang"] = set_lang
                     # Bing Grounding (support both connection_id and connection_name)
                     connection_id = additional_props.get("connection_id") or os.getenv("BING_CONNECTION_ID")
-                    connection_name = additional_props.get("connection_name") or os.getenv("BING_CONNECTION_NAME")
                     # Custom Bing Search
-                    custom_connection_name = additional_props.get("custom_connection_name") or os.getenv(
-                        "BING_CUSTOM_CONNECTION_NAME"
+                    custom_connection_id = additional_props.get("custom_connection_id") or os.getenv(
+                        "BING_CUSTOM_CONNECTION_ID"
                     )
-                    custom_configuration_name = additional_props.get("custom_instance_name") or os.getenv(
+                    custom_instance_name = additional_props.get("custom_instance_name") or os.getenv(
                         "BING_CUSTOM_INSTANCE_NAME"
                     )
                     bing_search: BingGroundingTool | BingCustomSearchTool | None = None
-                    if (
-                        (connection_id or connection_name)
-                        and not custom_connection_name
-                        and not custom_configuration_name
-                    ):
+                    if (connection_id) and not custom_connection_id and not custom_instance_name:
                         if connection_id:
                             conn_id = connection_id
-                        elif connection_name:
-                            try:
-                                bing_connection = await self.project_client.connections.get(name=connection_name)
-                            except HttpResponseError as err:
-                                raise ServiceInitializationError(
-                                    f"Bing connection '{connection_name}' not found in the Azure AI Project.",
-                                    err,
-                                ) from err
-                            else:
-                                conn_id = bing_connection.id
                         else:
                             raise ServiceInitializationError("Neither connection_id nor connection_name provided.")
                         bing_search = BingGroundingTool(connection_id=conn_id, **config_args)
-                    if custom_connection_name and custom_configuration_name:
-                        try:
-                            bing_custom_connection = await self.project_client.connections.get(
-                                name=custom_connection_name
-                            )
-                        except HttpResponseError as err:
-                            raise ServiceInitializationError(
-                                f"Bing custom connection '{custom_connection_name}' not found in the Azure AI Project.",
-                                err,
-                            ) from err
-                        else:
-                            bing_search = BingCustomSearchTool(
-                                connection_id=bing_custom_connection.id,
-                                instance_name=custom_configuration_name,
-                                **config_args,
-                            )
+                    if custom_connection_id and custom_instance_name:
+                        bing_search = BingCustomSearchTool(
+                            connection_id=custom_connection_id,
+                            instance_name=custom_instance_name,
+                            **config_args,
+                        )
                     if not bing_search:
                         raise ServiceInitializationError(
-                            "Bing search tool requires either 'connection_id' or 'connection_name' for Bing Grounding "
-                            "or both 'custom_connection_name' and 'custom_instance_name' for Custom Bing Search. "
+                            "Bing search tool requires either 'connection_id' for Bing Grounding "
+                            "or both 'custom_connection_id' and 'custom_instance_name' for Custom Bing Search. "
                             "These can be provided via additional_properties or environment variables: "
-                            "'BING_CONNECTION_ID', 'BING_CONNECTION_NAME', 'BING_CUSTOM_CONNECTION_NAME', "
+                            "'BING_CONNECTION_ID', 'BING_CUSTOM_CONNECTION_NAME', "
                             "'BING_CUSTOM_INSTANCE_NAME'"
                         )
                     tool_definitions.extend(bing_search.definitions)
@@ -1052,4 +1029,4 @@ class AzureAIAgentClient(BaseChatClient):
         Returns:
             The service URL for the chat client, or None if not set.
         """
-        return self.project_client._config.endpoint
+        return self.agents_client._config.endpoint  # type: ignore
