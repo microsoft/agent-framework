@@ -374,6 +374,10 @@ class AzureAIAgentClient(BaseChatClient):
                 args["instructions"] = run_options["instructions"]
             if "response_format" in run_options:
                 args["response_format"] = run_options["response_format"]
+            if "temperature" in run_options:
+                args["temperature"] = run_options["temperature"]
+            if "top_p" in run_options:
+                args["top_p"] = run_options["top_p"]
             created_agent = await self.project_client.agents.create_agent(**args)
             self.agent_id = str(created_agent.id)
             self._agent_definition = created_agent
