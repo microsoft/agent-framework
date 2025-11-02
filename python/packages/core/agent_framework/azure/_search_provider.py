@@ -12,7 +12,7 @@ reasoning across documents with Knowledge Bases.
 
 import sys
 from collections.abc import MutableSequence
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal
 
 from azure.core.credentials import AzureKeyCredential
 from azure.core.credentials_async import AsyncTokenCredential
@@ -125,11 +125,14 @@ class AzureAISearchContextProvider(ContextProvider):
             )
     """
 
+    DEFAULT_CONTEXT_PROMPT = "Use the following context to answer the question:"
+
     def __init__(
         self,
         endpoint: str,
         index_name: str,
         credential: AzureKeyCredential | AsyncTokenCredential,
+        *,
         mode: Literal["semantic", "agentic"] = "semantic",
         top_k: int = 5,
         semantic_configuration_name: str | None = None,
@@ -208,6 +211,13 @@ class AzureAISearchContextProvider(ContextProvider):
         self.azure_openai_api_key = azure_openai_api_key
         self.azure_ai_project_endpoint = azure_ai_project_endpoint
 
+        # Auto-discover vector field if not specified
+        self._auto_discovered_vector_field = False
+        if not vector_field_name and mode == "semantic":
+            # Attempt to auto-discover vector field from index schema
+            # This will be done lazily on first search to avoid blocking initialization
+            pass
+
         # Validation
         if vector_field_name and not embedding_function:
             raise ValueError("embedding_function is required when vector_field_name is specified")
@@ -237,14 +247,15 @@ class AzureAISearchContextProvider(ContextProvider):
             credential=credential,
         )
 
-        # Create index client for agentic mode (Knowledge Base)
-        # Note: Retrieval client is created fresh for each query to avoid transport issues
+        # Create index client and retrieval client for agentic mode (Knowledge Base)
         self._index_client: SearchIndexClient | None = None
+        self._retrieval_client: KnowledgeAgentRetrievalClient | None = None
         if mode == "agentic":
             self._index_client = SearchIndexClient(
                 endpoint=endpoint,
                 credential=credential,
             )
+            # Retrieval client will be created after Knowledge Base initialization
 
         self._knowledge_base_initialized = False
 
@@ -258,20 +269,17 @@ class AzureAISearchContextProvider(ContextProvider):
         exc_val: BaseException | None,
         exc_tb: Any,
     ) -> None:
-        """Async context manager exit - cleanup handled by client destructors.
+        """Async context manager exit - cleanup clients.
 
         Args:
             exc_type: Exception type if an error occurred.
             exc_val: Exception value if an error occurred.
             exc_tb: Exception traceback if an error occurred.
-
-        Note:
-            We don't explicitly close the Azure SDK clients here because doing so
-            can cause "transport already closed" errors on subsequent uses within
-            the same context. The clients will clean up their resources when they
-            are garbage collected.
         """
-        pass
+        # Close retrieval client if it was created
+        if self._retrieval_client is not None:
+            await self._retrieval_client.close()
+            self._retrieval_client = None
 
     @override
     async def invoking(
@@ -288,18 +296,28 @@ class AzureAISearchContextProvider(ContextProvider):
         Returns:
             Context object with retrieved documents as messages.
         """
-        # Extract query from messages
+        # Convert to list and filter to USER/ASSISTANT messages with text only
         messages_list = [messages] if isinstance(messages, ChatMessage) else list(messages)
-        query = "\n".join(msg.text for msg in messages_list if msg and msg.text and msg.text.strip())
+        from agent_framework import Role
 
-        if not query:
+        filtered_messages = [
+            msg
+            for msg in messages_list
+            if msg and msg.text and msg.text.strip() and msg.role in [Role.USER, Role.ASSISTANT]
+        ]
+
+        if not filtered_messages:
             return Context()
 
         # Perform search based on mode
         if self.mode == "semantic":
+            # Semantic mode: flatten messages to single query
+            query = "\n".join(msg.text for msg in filtered_messages)
             search_results = await self._semantic_search(query)
         else:  # agentic
-            search_results = await self._agentic_search(query)
+            # Agentic mode: pass last 10 messages as conversation history
+            recent_messages = filtered_messages[-10:]
+            search_results = await self._agentic_search(recent_messages)
 
         # Format results as context
         if not search_results:
@@ -308,6 +326,72 @@ class AzureAISearchContextProvider(ContextProvider):
         context_text = f"{self.context_prompt}\n\n{search_results}"
 
         return Context(messages=[ChatMessage(role="system", text=context_text)])
+
+    async def _auto_discover_vector_field(self) -> None:
+        """Auto-discover vector field from index schema.
+
+        Attempts to find vector fields in the index and use the vectorizer configuration.
+        If successful, sets self.vector_field_name. If embedding function is not provided,
+        logs a warning that vector search is recommended for RAG.
+        """
+        if self._auto_discovered_vector_field or self.vector_field_name:
+            return  # Already discovered or manually specified
+
+        try:
+            # Need index client to get schema
+            if not self._index_client:
+                from azure.search.documents.indexes.aio import SearchIndexClient
+
+                index_client = SearchIndexClient(endpoint=self.endpoint, credential=self.credential)
+            else:
+                index_client = self._index_client
+
+            # Get index schema
+            index = await index_client.get_index(self.index_name)
+
+            # Find vector fields - must have vector_search_dimensions set (not None)
+            vector_fields = [
+                field
+                for field in index.fields
+                if field.vector_search_dimensions is not None and field.vector_search_dimensions > 0
+            ]
+
+            if len(vector_fields) == 1:
+                # Exactly one vector field found - auto-select it
+                self.vector_field_name = vector_fields[0].name
+                self._auto_discovered_vector_field = True
+
+                # Warn if no embedding function provided
+                if not self.embedding_function:
+                    import logging
+
+                    logging.warning(
+                        f"Auto-discovered vector field '{self.vector_field_name}' but no embedding_function provided. "
+                        "Vector search is recommended for RAG use cases. Falling back to keyword-only search."
+                    )
+                    self.vector_field_name = None  # Clear it since we can't use it
+            elif len(vector_fields) > 1:
+                # Multiple vector fields - warn and continue with keyword search
+                import logging
+
+                logging.warning(
+                    f"Multiple vector fields found in index '{self.index_name}': "
+                    f"{[f.name for f in vector_fields]}. "
+                    "Please specify vector_field_name explicitly. Using keyword-only search."
+                )
+            # If no vector fields found, silently continue with keyword search
+
+            # Close index client if we created it
+            if not self._index_client:
+                await index_client.close()
+
+        except Exception as e:
+            # Log warning but continue with keyword search
+            import logging
+
+            logging.warning(f"Failed to auto-discover vector field: {e}. Using keyword-only search.")
+
+        self._auto_discovered_vector_field = True  # Mark as attempted
 
     async def _semantic_search(self, query: str) -> str:
         """Perform semantic hybrid search with semantic ranking.
@@ -323,15 +407,20 @@ class AzureAISearchContextProvider(ContextProvider):
         Returns:
             Formatted search results as string.
         """
+        # Auto-discover vector field if not already done
+        await self._auto_discover_vector_field()
+
         vector_queries = []
 
         # Generate vector query if embedding function provided
         if self.embedding_function and self.vector_field_name:
             query_vector = await self.embedding_function(query)
+            # Use larger k for vector query when semantic reranker is enabled for better ranking quality
+            vector_k = max(self.top_k, 50) if self.semantic_configuration_name else self.top_k
             vector_queries = [
                 VectorizedQuery(
                     vector=query_vector,
-                    k_nearest_neighbors=self.top_k,
+                    k_nearest_neighbors=vector_k,
                     fields=self.vector_field_name,
                 )
             ]
@@ -354,18 +443,14 @@ class AzureAISearchContextProvider(ContextProvider):
         # Execute search
         results = await self._search_client.search(**search_params)  # type: ignore[reportUnknownVariableType]
 
-        # Format results
+        # Format results with citations
         formatted_results: list[str] = []
         async for doc in results:  # type: ignore[reportUnknownVariableType]
-            # Extract semantic captions if available
-            caption: str | None = None
-            if hasattr(doc, "@search.captions"):  # type: ignore[reportUnknownArgumentType]
-                captions: Any = doc.get("@search.captions", [])  # type: ignore[reportUnknownVariableType]
-                if captions:
-                    caption = captions[0].text if hasattr(captions[0], "text") else str(captions[0])  # type: ignore[reportUnknownArgumentType, reportUnknownMemberType]
+            # Extract document ID for citation
+            doc_id = doc.get("id") or doc.get("@search.id")  # type: ignore[reportUnknownVariableType]
 
-            # Build document text
-            doc_text: str = caption if caption else self._extract_document_text(doc)  # type: ignore[reportUnknownArgumentType]
+            # Use full document chunks with citation
+            doc_text: str = self._extract_document_text(doc, doc_id=doc_id)  # type: ignore[reportUnknownArgumentType]
             if doc_text:
                 formatted_results.append(doc_text)  # type: ignore[reportUnknownArgumentType]
 
@@ -382,11 +467,17 @@ class AzureAISearchContextProvider(ContextProvider):
         if self._knowledge_base_initialized or not self._index_client:
             return
 
-        # Type narrowing: these are validated as non-None in __init__ for agentic mode
-        # Using cast() for type checker - actual validation happens in __init__
-        knowledge_base_name = cast(str, self.knowledge_base_name)
-        azure_openai_resource_url = cast(str, self.azure_openai_resource_url)
-        azure_openai_deployment_name = cast(str, self.azure_openai_deployment_name)
+        # Runtime validation for agentic mode parameters
+        if not self.knowledge_base_name:
+            raise ValueError("knowledge_base_name is required for agentic mode")
+        if not self.azure_openai_resource_url:
+            raise ValueError("azure_openai_resource_url is required for agentic mode")
+        if not self.azure_openai_deployment_name:
+            raise ValueError("model_deployment_name is required for agentic mode")
+
+        knowledge_base_name = self.knowledge_base_name
+        azure_openai_resource_url = self.azure_openai_resource_url
+        azure_openai_deployment_name = self.azure_openai_deployment_name
 
         # Step 1: Create or get knowledge source
         knowledge_source_name = f"{self.index_name}-source"
@@ -444,7 +535,15 @@ class AzureAISearchContextProvider(ContextProvider):
 
         self._knowledge_base_initialized = True
 
-    async def _agentic_search(self, query: str) -> str:
+        # Create retrieval client now that Knowledge Base is initialized
+        if _agentic_retrieval_available and self._retrieval_client is None:
+            self._retrieval_client = KnowledgeAgentRetrievalClient(
+                endpoint=self.endpoint,
+                agent_name=knowledge_base_name,
+                credential=self.credential,
+            )
+
+    async def _agentic_search(self, messages: list[ChatMessage]) -> str:
         """Perform agentic retrieval with multi-hop reasoning using Knowledge Bases.
 
         NOTE: This mode is significantly slower than semantic search and should
@@ -457,7 +556,7 @@ class AzureAISearchContextProvider(ContextProvider):
         4. Synthesize a comprehensive answer with references
 
         Args:
-            query: Search query text.
+            messages: Conversation history (last 10 messages) to use for retrieval context.
 
         Returns:
             Synthesized answer from the Knowledge Base.
@@ -465,37 +564,25 @@ class AzureAISearchContextProvider(ContextProvider):
         # Ensure Knowledge Base is initialized
         await self._ensure_knowledge_base()
 
-        # Type narrowing: knowledge_base_name is validated in __init__ for agentic mode
-        # Using cast() for type checker - actual validation happens in __init__
-        knowledge_base_name = cast(str, self.knowledge_base_name)
-
-        # Create retrieval request with query as a conversation message
+        # Convert ChatMessage list to KnowledgeAgent message format
         # Note: SDK uses KnowledgeAgent class names, but represents Knowledge Base operations
-        retrieval_request = KnowledgeAgentRetrievalRequest(
-            messages=[
-                KnowledgeAgentMessage(
-                    role="user",
-                    content=[KnowledgeAgentMessageTextContent(text=query)],
-                )
-            ]
-        )
+        kb_messages = [
+            KnowledgeAgentMessage(
+                role=msg.role.value if hasattr(msg.role, "value") else str(msg.role),
+                content=[KnowledgeAgentMessageTextContent(text=msg.text)],
+            )
+            for msg in messages
+            if msg.text
+        ]
 
-        # Create a fresh retrieval client for each query to avoid transport closure issues
-        if not _agentic_retrieval_available:
-            raise ImportError("KnowledgeAgentRetrievalClient not available")
+        retrieval_request = KnowledgeAgentRetrievalRequest(messages=kb_messages)
 
-        retrieval_client = KnowledgeAgentRetrievalClient(
-            endpoint=self.endpoint,
-            agent_name=knowledge_base_name,
-            credential=self.credential,
-        )
+        # Use reusable retrieval client
+        if not self._retrieval_client:
+            raise RuntimeError("Retrieval client not initialized. Ensure Knowledge Base is set up correctly.")
 
-        try:
-            # Perform retrieval via Knowledge Base
-            retrieval_result = await retrieval_client.retrieve(retrieval_request=retrieval_request)
-        finally:
-            # Ensure client is closed after use
-            await retrieval_client.close()
+        # Perform retrieval via Knowledge Base
+        retrieval_result = await self._retrieval_client.retrieve(retrieval_request=retrieval_request)
 
         # Extract synthesized answer from response
         if retrieval_result.response and len(retrieval_result.response) > 0:
@@ -515,24 +602,32 @@ class AzureAISearchContextProvider(ContextProvider):
         # Fallback if no answer generated
         return "No results found from Knowledge Base."
 
-    def _extract_document_text(self, doc: dict[str, Any]) -> str:
-        """Extract readable text from a search document.
+    def _extract_document_text(self, doc: dict[str, Any], doc_id: str | None = None) -> str:
+        """Extract readable text from a search document with optional citation.
 
         Args:
             doc: Search result document.
+            doc_id: Optional document ID for citation.
 
         Returns:
-            Formatted document text.
+            Formatted document text with citation if doc_id provided.
         """
         # Try common text field names
+        text = ""
         for field in ["content", "text", "description", "body", "chunk"]:
             if doc.get(field):
-                return str(doc[field])[:500]  # Limit to 500 chars
+                text = str(doc[field])
+                break
 
         # Fallback: concatenate all string fields
-        text_parts: list[str] = []
-        for key, value in doc.items():
-            if isinstance(value, str) and not key.startswith("@") and key != "id":
-                text_parts.append(f"{key}: {value}")
+        if not text:
+            text_parts: list[str] = []
+            for key, value in doc.items():
+                if isinstance(value, str) and not key.startswith("@") and key != "id":
+                    text_parts.append(f"{key}: {value}")
+            text = " | ".join(text_parts) if text_parts else ""
 
-        return " | ".join(text_parts)[:500] if text_parts else ""
+        # Add citation if document ID provided
+        if doc_id and text:
+            return f"[Source: {doc_id}] {text}"
+        return text

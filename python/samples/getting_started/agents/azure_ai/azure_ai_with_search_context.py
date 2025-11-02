@@ -36,7 +36,7 @@ Prerequisites:
 
    For both modes:
    - AZURE_SEARCH_ENDPOINT: Your Azure AI Search endpoint
-   - AZURE_SEARCH_API_KEY: Your search API key (or use Azure AD)
+   - AZURE_SEARCH_API_KEY: (Optional) Your search API key - if not provided, uses DefaultAzureCredential for Entra ID authentication
    - AZURE_SEARCH_INDEX_NAME: Your search index name
    - AZURE_AI_PROJECT_ENDPOINT: Your Azure AI Foundry project endpoint
    - AZURE_AI_MODEL_DEPLOYMENT_NAME: Your model deployment name (e.g., "gpt-4o")
