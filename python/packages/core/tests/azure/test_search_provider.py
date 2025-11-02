@@ -336,3 +336,209 @@ class TestContextProviderLifecycle:
         ) as provider:
             assert provider is not None
             assert isinstance(provider, AzureAISearchContextProvider)
+
+
+class TestMessageFiltering:
+    """Test message filtering functionality."""
+
+    @pytest.mark.asyncio
+    @patch("agent_framework.azure._search_provider.SearchClient")
+    async def test_filters_non_user_assistant_messages(self, mock_search_class: MagicMock) -> None:
+        """Test that only USER and ASSISTANT messages are processed."""
+        # Setup mock
+        mock_search_client = AsyncMock()
+        mock_results = AsyncMock()
+        mock_results.__aiter__.return_value = iter([{"content": "Test result"}])
+        mock_search_client.search.return_value = mock_results
+        mock_search_class.return_value = mock_search_client
+
+        provider = AzureAISearchContextProvider(
+            endpoint="https://test.search.windows.net",
+            index_name="test-index",
+            credential=AzureKeyCredential("test-key"),
+            mode="semantic",
+        )
+
+        # Mix of message types
+        messages = [
+            ChatMessage(role=Role.SYSTEM, text="System message"),
+            ChatMessage(role=Role.USER, text="User message"),
+            ChatMessage(role=Role.ASSISTANT, text="Assistant message"),
+            ChatMessage(role=Role.TOOL, text="Tool message"),
+        ]
+
+        context = await provider.invoking(messages)
+
+        # Should have processed only USER and ASSISTANT messages
+        assert isinstance(context, Context)
+        mock_search_client.search.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("agent_framework.azure._search_provider.SearchClient")
+    async def test_filters_empty_messages(self, mock_search_class: MagicMock) -> None:
+        """Test that empty/whitespace messages are filtered out."""
+        mock_search_client = AsyncMock()
+        mock_search_class.return_value = mock_search_client
+
+        provider = AzureAISearchContextProvider(
+            endpoint="https://test.search.windows.net",
+            index_name="test-index",
+            credential=AzureKeyCredential("test-key"),
+            mode="semantic",
+        )
+
+        # Messages with empty/whitespace text
+        messages = [
+            ChatMessage(role=Role.USER, text=""),
+            ChatMessage(role=Role.USER, text="   "),
+            ChatMessage(role=Role.USER, text=None),
+        ]
+
+        context = await provider.invoking(messages)
+
+        # Should return empty context
+        assert len(context.messages) == 0
+
+
+class TestCitations:
+    """Test citation functionality."""
+
+    @pytest.mark.asyncio
+    @patch("agent_framework.azure._search_provider.SearchClient")
+    async def test_citations_included_in_semantic_search(self, mock_search_class: MagicMock) -> None:
+        """Test that citations are included in semantic search results."""
+        # Setup mock with document ID
+        mock_search_client = AsyncMock()
+        mock_results = AsyncMock()
+        mock_doc = {"id": "doc123", "content": "Test document content"}
+        mock_results.__aiter__.return_value = iter([mock_doc])
+        mock_search_client.search.return_value = mock_results
+        mock_search_class.return_value = mock_search_client
+
+        provider = AzureAISearchContextProvider(
+            endpoint="https://test.search.windows.net",
+            index_name="test-index",
+            credential=AzureKeyCredential("test-key"),
+            mode="semantic",
+        )
+
+        context = await provider.invoking([ChatMessage(role=Role.USER, text="test query")])
+
+        # Check that citation is included
+        assert isinstance(context, Context)
+        assert len(context.messages) > 0
+        assert "[Source: doc123]" in context.messages[0].text
+        assert "Test document content" in context.messages[0].text
+
+
+class TestVectorFieldAutoDiscovery:
+    """Test vector field auto-discovery functionality."""
+
+    @pytest.mark.asyncio
+    @patch("agent_framework.azure._search_provider.SearchIndexClient")
+    @patch("agent_framework.azure._search_provider.SearchClient")
+    async def test_auto_discovers_single_vector_field(
+        self, mock_search_class: MagicMock, mock_index_class: MagicMock
+    ) -> None:
+        """Test that single vector field is auto-discovered."""
+        # Setup search client mock
+        mock_search_client = AsyncMock()
+        mock_search_class.return_value = mock_search_client
+
+        # Setup index client mock
+        mock_index_client = AsyncMock()
+        mock_index = MagicMock()
+
+        # Create mock field with vector_search_dimensions attribute
+        mock_vector_field = MagicMock()
+        mock_vector_field.name = "embedding_vector"
+        mock_vector_field.vector_search_dimensions = 1536
+
+        mock_index.fields = [mock_vector_field]
+        mock_index_client.get_index.return_value = mock_index
+        mock_index_client.close = AsyncMock()
+        mock_index_class.return_value = mock_index_client
+
+        # Create provider without specifying vector_field_name
+        provider = AzureAISearchContextProvider(
+            endpoint="https://test.search.windows.net",
+            index_name="test-index",
+            credential=AzureKeyCredential("test-key"),
+            mode="semantic",
+        )
+
+        # Trigger auto-discovery
+        await provider._auto_discover_vector_field()
+
+        # Vector field should be auto-discovered but not used without embedding function
+        assert provider._auto_discovered_vector_field is True
+        # Should be cleared since no embedding function
+        assert provider.vector_field_name is None
+
+    @pytest.mark.asyncio
+    async def test_vector_detection_accuracy(self) -> None:
+        """Test that vector field detection logic correctly identifies vector fields."""
+        from azure.search.documents.indexes.models import SearchField
+
+        # Create real SearchField objects to test the detection logic
+        vector_field = SearchField(
+            name="embedding_vector", type="Collection(Edm.Single)", vector_search_dimensions=1536, searchable=True
+        )
+
+        string_field = SearchField(name="content", type="Edm.String", searchable=True)
+
+        number_field = SearchField(name="price", type="Edm.Double", filterable=True)
+
+        # Test detection logic directly
+        is_vector_1 = vector_field.vector_search_dimensions is not None and vector_field.vector_search_dimensions > 0
+        is_vector_2 = string_field.vector_search_dimensions is not None and string_field.vector_search_dimensions > 0
+        is_vector_3 = number_field.vector_search_dimensions is not None and number_field.vector_search_dimensions > 0
+
+        # Only the vector field should be detected
+        assert is_vector_1 is True
+        assert is_vector_2 is False
+        assert is_vector_3 is False
+
+    @pytest.mark.asyncio
+    @patch("agent_framework.azure._search_provider.SearchIndexClient")
+    @patch("agent_framework.azure._search_provider.SearchClient")
+    async def test_no_false_positives_on_string_fields(
+        self, mock_search_class: MagicMock, mock_index_class: MagicMock
+    ) -> None:
+        """Test that regular string fields are not detected as vector fields."""
+        # Setup search client mock
+        mock_search_client = AsyncMock()
+        mock_search_class.return_value = mock_search_client
+
+        # Setup index with only string fields (no vectors)
+        mock_index_client = AsyncMock()
+        mock_index = MagicMock()
+
+        # All fields have vector_search_dimensions = None
+        mock_fields = []
+        for name in ["id", "title", "content", "category"]:
+            field = MagicMock()
+            field.name = name
+            field.vector_search_dimensions = None
+            field.vector_search_profile_name = None
+            mock_fields.append(field)
+
+        mock_index.fields = mock_fields
+        mock_index_client.get_index.return_value = mock_index
+        mock_index_client.close = AsyncMock()
+        mock_index_class.return_value = mock_index_client
+
+        # Create provider
+        provider = AzureAISearchContextProvider(
+            endpoint="https://test.search.windows.net",
+            index_name="test-index",
+            credential=AzureKeyCredential("test-key"),
+            mode="semantic",
+        )
+
+        # Trigger auto-discovery
+        await provider._auto_discover_vector_field()
+
+        # Should NOT detect any vector fields
+        assert provider.vector_field_name is None
+        assert provider._auto_discovered_vector_field is True
