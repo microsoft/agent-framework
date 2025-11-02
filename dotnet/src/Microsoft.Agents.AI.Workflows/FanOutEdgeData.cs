@@ -13,13 +13,12 @@ namespace Microsoft.Agents.AI.Workflows;
 /// </summary>
 internal sealed class FanOutEdgeData : EdgeData
 {
-    internal FanOutEdgeData(string sourceId, List<string> sinkIds, EdgeId edgeId, AssignerF? assigner = null, string? label = null) : base(edgeId)
+    internal FanOutEdgeData(string sourceId, List<string> sinkIds, EdgeId edgeId, AssignerF? assigner = null, string? label = null) : base(edgeId, label)
     {
         this.SourceId = sourceId;
         this.SinkIds = sinkIds;
         this.EdgeAssigner = assigner;
         this.Connection = new([sourceId], sinkIds);
-        this.Label = label;
     }
 
     /// <summary>
@@ -37,11 +36,6 @@ internal sealed class FanOutEdgeData : EdgeData
     /// If <see langword="null"/>, all destination nodes are selected.
     /// </summary>
     public AssignerF? EdgeAssigner { get; }
-
-    /// <summary>
-    /// An optional label for the edge.
-    /// </summary>
-    public string? Label { get; }
 
     /// <inheritdoc />
     internal override EdgeConnection Connection { get; }
