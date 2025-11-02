@@ -153,12 +153,7 @@ public static class WorkflowVisualizer
 
     private static void EmitWorkflowMermaid(Workflow workflow, List<string> lines, string indent, string? ns = null)
     {
-        string sanitize(string input)
-        {
-            return input;
-        }
-
-        string MapId(string id) => ns != null ? $"{sanitize(ns)}/{sanitize(id)}" : id;
+        string MapId(string id) => ns != null ? $"{ns}/{id}" : id;
 
         // Add start node
         var startExecutorId = workflow.StartExecutorId;
