@@ -19,7 +19,7 @@ public class Workflow
     /// <summary>
     /// A dictionary of executor providers, keyed by executor ID.
     /// </summary>
-    internal Dictionary<string, ExecutorRegistration> Registrations { get; init; } = [];
+    internal Dictionary<string, ExecutorBinding> ExecutorBindings { get; init; } = [];
 
     internal Dictionary<string, HashSet<Edge>> Edges { get; init; } = [];
     internal HashSet<string> OutputExecutors { get; init; } = [];
@@ -41,7 +41,7 @@ public class Workflow
     /// Gets the collection of external request ports, keyed by their ID.
     /// </summary>
     /// <remarks>
-    /// Each port has a corresponding entry in the <see cref="Registrations"/> dictionary.
+    /// Each port has a corresponding entry in the <see cref="ExecutorBindings"/> dictionary.
     /// </remarks>
     public Dictionary<string, RequestPortInfo> ReflectPorts()
     {
@@ -66,10 +66,10 @@ public class Workflow
     /// </summary>
     public string? Description { get; internal init; }
 
-    internal bool AllowConcurrent => this.Registrations.Values.All(registration => registration.SupportsConcurrent);
+    internal bool AllowConcurrent => this.ExecutorBindings.Values.All(registration => registration.SupportsConcurrentSharedExecution);
 
     internal IEnumerable<string> NonConcurrentExecutorIds =>
-        this.Registrations.Values.Where(r => !r.SupportsConcurrent).Select(r => r.Id);
+        this.ExecutorBindings.Values.Where(r => !r.SupportsConcurrentSharedExecution).Select(r => r.Id);
 
     /// <summary>
     /// Initializes a new instance of the <see cref="Workflow"/> class with the specified starting executor identifier
@@ -86,12 +86,14 @@ public class Workflow
     }
 
     private bool _needsReset;
-    private bool HasResettable => this.Registrations.Values.Any(registration => registration.SupportsResetting);
+    private bool HasResettableExecutors =>
+        this.ExecutorBindings.Values.Any(registration => registration.SupportsResetting);
+
     private async ValueTask<bool> TryResetExecutorRegistrationsAsync()
     {
-        if (this.HasResettable)
+        if (this.HasResettableExecutors)
         {
-            foreach (ExecutorRegistration registration in this.Registrations.Values)
+            foreach (ExecutorBinding registration in this.ExecutorBindings.Values)
             {
                 // TryResetAsync returns true if the executor does not need resetting
                 if (!await registration.TryResetAsync().ConfigureAwait(false))
@@ -158,7 +160,7 @@ public class Workflow
                 });
         }
 
-        this._needsReset = this.HasResettable;
+        this._needsReset = this.HasResettableExecutors;
         this._ownedAsSubworkflow = subworkflow;
     }
 
@@ -188,7 +190,7 @@ public class Workflow
     /// a <see cref="ProtocolDescriptor"/> the protocol this <see cref="Workflow"/> follows.</returns>
     public async ValueTask<ProtocolDescriptor> DescribeProtocolAsync(CancellationToken cancellationToken = default)
     {
-        ExecutorRegistration startExecutorRegistration = this.Registrations[this.StartExecutorId];
+        ExecutorBinding startExecutorRegistration = this.ExecutorBindings[this.StartExecutorId];
         Executor startExecutor = await startExecutorRegistration.CreateInstanceAsync(string.Empty)
                                                                 .ConfigureAwait(false);
         return startExecutor.DescribeProtocol();

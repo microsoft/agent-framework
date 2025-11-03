@@ -2,10 +2,22 @@
 
 from collections.abc import AsyncIterator
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
-from a2a.types import Artifact, DataPart, FilePart, FileWithUri, Message, Part, Task, TaskState, TaskStatus, TextPart
+from a2a.types import (
+    AgentCard,
+    Artifact,
+    DataPart,
+    FilePart,
+    FileWithUri,
+    Message,
+    Part,
+    Task,
+    TaskState,
+    TaskStatus,
+    TextPart,
+)
 from a2a.types import Role as A2ARole
 from agent_framework import (
     AgentRunResponse,
@@ -515,3 +527,30 @@ def test_auth_interceptor_parameter() -> None:
     # Verify the agent was created successfully
     assert agent.name == "test-agent"
     assert agent.client is not None
+
+
+def test_transport_negotiation_both_fail() -> None:
+    """Test that RuntimeError is raised when both primary and fallback transport negotiation fail."""
+    # Create a mock agent card
+    mock_agent_card = MagicMock(spec=AgentCard)
+    mock_agent_card.url = "http://test-agent.example.com"
+
+    # Mock the factory to simulate both primary and fallback failures
+    mock_factory = MagicMock()
+
+    # Both calls to factory.create() fail
+    primary_error = Exception("no compatible transports found")
+    fallback_error = Exception("fallback also failed")
+    mock_factory.create.side_effect = [primary_error, fallback_error]
+
+    with (
+        patch("agent_framework_a2a._agent.ClientFactory", return_value=mock_factory),
+        patch("agent_framework_a2a._agent.minimal_agent_card"),
+        patch("agent_framework_a2a._agent.httpx.AsyncClient"),
+        raises(RuntimeError, match="A2A transport negotiation failed"),
+    ):
+        # Attempt to create A2AAgent - should raise RuntimeError
+        A2AAgent(
+            name="test-agent",
+            agent_card=mock_agent_card,
+        )

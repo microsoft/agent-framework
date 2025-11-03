@@ -127,7 +127,21 @@ class A2AAgent(BaseAgent):
         )
         factory = ClientFactory(config)
         interceptors = [auth_interceptor] if auth_interceptor is not None else None
-        self.client = factory.create(agent_card, interceptors=interceptors)  # type: ignore
+
+        # Attempt transport negotiation with the provided agent card
+        try:
+            self.client = factory.create(agent_card, interceptors=interceptors)  # type: ignore
+        except Exception as transport_error:
+            # Transport negotiation failed - fall back to minimal agent card with JSONRPC
+            fallback_card = minimal_agent_card(agent_card.url, [TransportProtocol.jsonrpc])
+            try:
+                self.client = factory.create(fallback_card, interceptors=interceptors)  # type: ignore
+            except Exception as fallback_error:
+                raise RuntimeError(
+                    f"A2A transport negotiation failed. "
+                    f"Primary error: {transport_error}. "
+                    f"Fallback error: {fallback_error}"
+                ) from transport_error
 
     async def __aenter__(self) -> "A2AAgent":
         """Async context manager entry."""

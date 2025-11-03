@@ -191,6 +191,8 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
             for key, value in additional_properties.items():
                 if value is not None:
                     options_dict[key] = value
+        if (tool_choice := options_dict.get("tool_choice")) and len(tool_choice.keys()) == 1:
+            options_dict["tool_choice"] = tool_choice["mode"]
         return options_dict
 
     def _create_chat_response(self, response: ChatCompletion, chat_options: ChatOptions) -> "ChatResponse":

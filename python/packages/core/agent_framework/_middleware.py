@@ -8,7 +8,7 @@ from functools import update_wrapper
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeAlias, TypeVar
 
 from ._serialization import SerializationMixin
-from ._types import AgentRunResponse, AgentRunResponseUpdate, ChatMessage
+from ._types import AgentRunResponse, AgentRunResponseUpdate, ChatMessage, prepare_messages
 from .exceptions import MiddlewareException
 
 if TYPE_CHECKING:
@@ -1375,7 +1375,7 @@ def use_chat_middleware(chat_client_class: type[TChatClient]) -> type[TChatClien
         pipeline = ChatMiddlewarePipeline(chat_middleware_list)  # type: ignore[arg-type]
         context = ChatContext(
             chat_client=self,
-            messages=self.prepare_messages(messages, chat_options),
+            messages=prepare_messages(messages),
             chat_options=chat_options,
             is_streaming=False,
             kwargs=kwargs,
@@ -1425,7 +1425,7 @@ def use_chat_middleware(chat_client_class: type[TChatClient]) -> type[TChatClien
             pipeline = ChatMiddlewarePipeline(all_middleware)  # type: ignore[arg-type]
             context = ChatContext(
                 chat_client=self,
-                messages=self.prepare_messages(messages, chat_options),
+                messages=prepare_messages(messages),
                 chat_options=chat_options,
                 is_streaming=True,
                 kwargs=kwargs,
