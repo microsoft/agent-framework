@@ -612,7 +612,6 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
             **kwargs,
         )
         self.func = func
-        self.declaration_only = not func
         self.input_model = self._resolve_input_model(input_model)
         self.approval_mode = approval_mode or "never_require"
         if max_invocations is not None and max_invocations < 1:
@@ -625,6 +624,11 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
         self.invocation_exception_count = 0
         self._invocation_duration_histogram = _default_histogram()
         self.type: Literal["ai_function"] = "ai_function"
+
+    @property
+    def declaration_only(self) -> bool:
+        """Indicate whether the function is declaration only (i.e., has no implementation)."""
+        return self.func is None
 
     def _resolve_input_model(self, input_model: type[ArgsT] | Mapping[str, Any] | None) -> type[ArgsT]:
         """Resolve the input model for the function."""
@@ -640,6 +644,8 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
 
     def __call__(self, *args: Any, **kwargs: Any) -> ReturnT | Awaitable[ReturnT]:
         """Call the wrapped function with the provided arguments."""
+        if self.func is None:
+            raise ToolException(f"Function '{self.name}' is declaration only and cannot be invoked.")
         if self.max_invocations is not None and self.invocation_count >= self.max_invocations:
             raise ToolException(
                 f"Function '{self.name}' has reached its maximum invocation limit, you can no longer use this tool."
@@ -962,8 +968,8 @@ def ai_function(
         func: The function to decorate.
 
     Keyword Args:
-        name: The name of the function. If not provided, the function's ``__name
-            `` attribute will be used.
+        name: The name of the function. If not provided, the function's ``__name__``
+            attribute will be used.
         description: A description of the function. If not provided, the function's
             docstring will be used.
         approval_mode: Whether or not approval is required to run this tool.
