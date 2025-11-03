@@ -11,7 +11,7 @@ from typing import Annotated
 from io import BytesIO
 
 import dotenv
-from agent_framework import ChatMessage, DataContent, Role, TextContent, ChatAgent
+from agent_framework import ChatMessage, DataContent, Role, TextContent
 from agent_framework.observability import get_tracer
 from agent_framework.azure import AzureAIAgentClient
 from azure.ai.projects.aio import AIProjectClient
