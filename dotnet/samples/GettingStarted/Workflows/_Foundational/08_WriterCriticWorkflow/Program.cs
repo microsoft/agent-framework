@@ -57,8 +57,6 @@ public static class Program
         SummaryExecutor summary = new(chatClient);
 
         // Build the workflow with conditional routing based on critic's decision
-        // Key Point: The workflow loops back to Writer if content is rejected,
-        // or proceeds to Summary if approved. State tracking ensures we don't loop forever.
         WorkflowBuilder workflowBuilder = new WorkflowBuilder(writer)
             .AddEdge(writer, critic)
             .AddSwitch(critic, sw => sw
@@ -67,13 +65,14 @@ public static class Program
             .WithOutputFrom(summary);
 
         // Execute the workflow with a sample task
+        // The workflow loops back to Writer if content is rejected,
+        // or proceeds to Summary if approved. State tracking ensures we don't loop forever.
         Console.WriteLine(new string('=', 80));
         Console.WriteLine("TASK: Write a short blog post about AI ethics (200 words)");
         Console.WriteLine(new string('=', 80) + "\n");
 
         const string InitialTask = "Write a 200-word blog post about AI ethics. Make it thoughtful and engaging.";
 
-        // Build a fresh workflow for execution
         Workflow workflow = workflowBuilder.Build();
         await ExecuteWorkflowAsync(workflow, InitialTask);
 
