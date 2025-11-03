@@ -755,3 +755,23 @@ async def test_anthropic_client_integration_temperature_control() -> None:
 
     assert response is not None
     assert response.messages[0].text is not None
+
+
+@pytest.mark.flaky
+@skip_if_anthropic_integration_tests_disabled
+async def test_anthropic_client_integration_ordering() -> None:
+    """Integration test with ordering."""
+    client = AnthropicClient()
+
+    messages = [
+        ChatMessage(role=Role.USER, text="Say hello."),
+        ChatMessage(role=Role.USER, text="Then say goodbye."),
+        ChatMessage(role=Role.ASSISTANT, text="Thank you for chatting!"),
+        ChatMessage(role=Role.ASSISTANT, text="Let me know if I can help."),
+        ChatMessage(role=Role.USER, text="Just testing things."),
+    ]
+
+    response = await client.get_response(messages=messages)
+
+    assert response is not None
+    assert response.messages[0].text is not None
