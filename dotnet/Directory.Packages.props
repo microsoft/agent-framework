@@ -48,10 +48,10 @@
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="9.0.10" />
     <PackageVersion Include="Swashbuckle.AspNetCore.SwaggerUI" Version="9.0.4" />
     <!-- Microsoft.Extensions.* -->
-    <PackageVersion Include="Microsoft.Extensions.AI" Version="9.10.1" />
-    <PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="9.10.1" />
+    <PackageVersion Include="Microsoft.Extensions.AI" Version="9.10.2" />
+    <PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="9.10.2" />
     <PackageVersion Include="Microsoft.Extensions.AI.AzureAIInference" Version="9.10.0-preview.1.25513.3" />
-    <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="9.10.1-preview.1.25521.4" />
+    <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="9.10.2-preview.1.25552.1" />
     <PackageVersion Include="Microsoft.Extensions.Configuration" Version="9.0.10" />
     <PackageVersion Include="Microsoft.Extensions.Configuration.Binder" Version="9.0.10" />
     <PackageVersion Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="9.0.10" />
@@ -83,7 +83,7 @@
     <PackageVersion Include="AWSSDK.Extensions.Bedrock.MEAI" Version="4.0.4.1" />
     <PackageVersion Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.10.0" />
     <PackageVersion Include="OllamaSharp" Version="5.4.8" />
-    <PackageVersion Include="OpenAI" Version="2.5.0" />
+    <PackageVersion Include="OpenAI" Version="2.6.0" />
     <!-- Identity -->
     <PackageVersion Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.78.0" />
     <!-- Workflows -->
