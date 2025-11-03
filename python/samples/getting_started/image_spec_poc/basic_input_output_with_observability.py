@@ -23,7 +23,7 @@ from opentelemetry.trace.span import format_trace_id
 from db_setup import SQLiteImageStore
 
 """
-This sample, shows you can leverage the built-in telemetry in Azure AI.
+This sample shows you can leverage the built-in telemetry in Azure AI.
 It uses the Azure AI client to setup the telemetry, this calls out to
 Azure AI for the connection string of the attached Application Insights
 instance.
