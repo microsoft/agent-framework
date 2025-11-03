@@ -47,14 +47,15 @@ public static class Program
             name: "Chemist",
             instructions: "You are an expert in chemistry. You answer questions from a chemistry perspective."
         );
+
         var startExecutor = new ConcurrentStartExecutor();
-        var aggregationExecutor = new ConcurrentAggregationExecutor();
+        var outputExecutor = new ConcurrentEndExecutor();
 
         // Build the workflow by adding executors and connecting them
         var workflow = new WorkflowBuilder(startExecutor)
             .AddFanOutEdge(startExecutor, targets: [physicist, chemist])
-            .AddFanInEdge(aggregationExecutor, sources: [physicist, chemist])
-            .WithOutputFrom(aggregationExecutor)
+            .AddFanInEdge(outputExecutor, sources: [physicist, chemist])
+            .WithOutputFrom(outputExecutor)
             .Build();
 
         // Execute the workflow in streaming mode
@@ -96,8 +97,8 @@ internal sealed class ConcurrentStartExecutor() :
 /// <summary>
 /// Executor that aggregates the results from the concurrent agents.
 /// </summary>
-internal sealed class ConcurrentAggregationExecutor() :
-    Executor<ChatMessage>("ConcurrentAggregationExecutor")
+internal sealed class ConcurrentEndExecutor() :
+    Executor<List<ChatMessage>>("ConcurrentEndExecutor")
 {
     private readonly List<ChatMessage> _messages = [];
 
@@ -109,9 +110,9 @@ internal sealed class ConcurrentAggregationExecutor() :
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
     /// The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A task representing the asynchronous operation</returns>
-    public override async ValueTask HandleAsync(ChatMessage message, IWorkflowContext context, CancellationToken cancellationToken = default)
+    public override async ValueTask HandleAsync(List<ChatMessage> message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        this._messages.Add(message);
+        this._messages.AddRange(message);
 
         if (this._messages.Count == 2)
         {
