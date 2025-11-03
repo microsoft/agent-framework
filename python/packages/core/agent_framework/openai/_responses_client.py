@@ -79,8 +79,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
     """Base class for all OpenAI Responses based API's."""
 
     FILE_SEARCH_MAX_RESULTS: int = 50
-
-    # region Helper Methods
+    FORMAT_DETECTION_BASE64_CHARS: int = 100
 
     def _detect_image_format_from_base64(self, image_base64: str) -> str:
         """Detect image format from base64 data by examining the binary header.
@@ -95,7 +94,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
             import base64
 
             # Decode a small portion to detect format
-            decoded_data = base64.b64decode(image_base64[:100])  # First ~75 bytes should be enough
+            decoded_data = base64.b64decode(image_base64[: self.FORMAT_DETECTION_BASE64_CHARS])
             if decoded_data.startswith(b"\x89PNG"):
                 return "png"
             if decoded_data.startswith(b"\xff\xd8\xff"):
@@ -339,7 +338,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                     if "partial_images" in mapped_tool:
                         partial_images = mapped_tool["partial_images"]
                         if not isinstance(partial_images, int) or partial_images < 1 or partial_images > 3:
-                            raise ValueError("partial_images must be an integer between 1 and 3")
+                            raise ValueError("partial_images must be an integer between 1 and 3 (inclusive)")
 
                     response_tools.append(mapped_tool)
                 else:

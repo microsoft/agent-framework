@@ -69,8 +69,14 @@ async def main():
             if isinstance(content, DataContent) and content.additional_properties.get("is_partial_image"):
                 print(f"     Image {image_count} received")
 
-                # Save images
-                filename = output_dir / f"image{image_count}.png"
+                # Extract file extension from media_type (e.g., "image/png" -> "png")
+                media_type = getattr(content, "media_type", None)
+                extension = "png"  # Default fallback
+                if media_type and "/" in media_type:
+                    extension = media_type.split("/")[-1]
+
+                # Save images with correct extension
+                filename = output_dir / f"image{image_count}.{extension}"
                 await save_image_from_data_uri(content.uri, str(filename))
 
                 image_count += 1
