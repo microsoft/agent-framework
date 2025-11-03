@@ -13,7 +13,6 @@ from io import BytesIO
 import dotenv
 from agent_framework import ChatMessage, DataContent, Role, TextContent, ChatAgent
 from agent_framework.observability import get_tracer
-from pydantic import Field
 from agent_framework.azure import AzureAIAgentClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
