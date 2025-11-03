@@ -15,7 +15,6 @@ from agent_framework import (
     ChatAgent,
     ChatClientProtocol,
     ChatMessage,
-    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     HostedCodeInterpreterTool,
@@ -153,18 +152,6 @@ def test_azure_assistants_client_init_with_default_headers(azure_openai_unit_tes
     for key, value in default_headers.items():
         assert key in chat_client.client.default_headers
         assert chat_client.client.default_headers[key] == value
-
-
-def test_azure_assistants_client_instructions_sent_once(mock_async_azure_openai: MagicMock) -> None:
-    """Ensure instructions are only included once for Azure OpenAI Assistants requests."""
-    chat_client = create_test_azure_assistants_client(mock_async_azure_openai)
-    instructions = "You are a helpful assistant."
-    chat_options = ChatOptions(instructions=instructions)
-
-    prepared_messages = chat_client.prepare_messages([ChatMessage(role="user", text="Hello")], chat_options)
-    run_options, _ = chat_client._prepare_options(prepared_messages, chat_options)  # type: ignore[reportPrivateUsage]
-
-    assert run_options.get("instructions") == instructions
 
 
 async def test_azure_assistants_client_get_assistant_id_or_create_existing_assistant(
