@@ -261,7 +261,7 @@ class AnthropicClient(BaseChatClient):
             run_options["top_p"] = chat_options.top_p
         if chat_options.stop is not None:
             run_options["stop_sequences"] = chat_options.stop
-        if messages[0].role == Role.SYSTEM:
+        if messages and isinstance(messages[0], ChatMessage) and messages[0].role == Role.SYSTEM:
             # first system message is passed as instructions
             run_options["system"] = messages[0].text
         if chat_options.tool_choice is not None:
@@ -308,7 +308,7 @@ class AnthropicClient(BaseChatClient):
         as Anthropic expects system instructions as a separate parameter.
         """
         # first system message is passed as instructions
-        if messages[0].role == Role.SYSTEM:
+        if messages and isinstance(messages[0], ChatMessage) and messages[0].role == Role.SYSTEM:
             return [self._convert_message_to_anthropic_format(msg) for msg in messages[1:]]
         return [self._convert_message_to_anthropic_format(msg) for msg in messages]
 
@@ -495,14 +495,10 @@ class AnthropicClient(BaseChatClient):
         usage_details = UsageDetails(output_token_count=usage.output_tokens)
         if usage.input_tokens is not None:
             usage_details.input_token_count = usage.input_tokens
-        if usage_details and usage:
-            if usage.cache_creation_input_tokens:
-                usage_details.additional_counts["anthropic.cache_creation_input_tokens"] = (
-                    usage.cache_creation_input_tokens
-                )
-            if usage.cache_read_input_tokens:
-                usage_details.additional_counts["anthropic.cache_read_input_tokens"] = usage.cache_read_input_tokens
-
+        if usage.cache_creation_input_tokens is not None:
+            usage_details.additional_counts["anthropic.cache_creation_input_tokens"] = usage.cache_creation_input_tokens
+        if usage.cache_read_input_tokens is not None:
+            usage_details.additional_counts["anthropic.cache_read_input_tokens"] = usage.cache_read_input_tokens
         return usage_details
 
     def _parse_message_contents(
