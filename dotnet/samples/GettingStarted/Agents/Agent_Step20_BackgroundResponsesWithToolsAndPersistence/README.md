@@ -1,9 +1,10 @@
-﻿# What This Sample Shows
+# What This Sample Shows
 
 This sample demonstrates how to use background responses with ChatCompletionAgent and Azure OpenAI Responses for long-running operations. Background responses support:
 
 - **Polling for completion** - Non-streaming APIs can start a background operation and return a continuation token. Poll with the token until the response completes.
-- **Resuming after interruption** - Streaming APIs can be interrupted and resumed from the last update using the continuation token.
+- **Function calling** - Functions can be called during background operations.
+- **State persistence** - Thread and continuation token can be persisted and restored between polling cycles.
 
 > **Note:** Background responses are currently only supported by OpenAI Responses.
 
@@ -23,5 +24,5 @@ Set the following environment variables:
 
 ```powershell
 $env:AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/" # Replace with your Azure OpenAI resource endpoint
-$env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini"  # Optional, defaults to gpt-4o-mini
+$env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-5"  # Optional, defaults to gpt-5
 ```
