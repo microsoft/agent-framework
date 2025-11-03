@@ -187,6 +187,12 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
             and issubclass(chat_options.response_format, BaseModel)
         ):
             options_dict["response_format"] = type_to_response_format_param(chat_options.response_format)
+        
+        # Map max_tokens to max_completion_tokens for newer models (reasoning models, etc.)
+        # This follows the same pattern as the assistants client
+        if "max_tokens" in options_dict and options_dict["max_tokens"] is not None:
+            options_dict["max_completion_tokens"] = options_dict.pop("max_tokens")
+        
         if additional_properties := options_dict.pop("additional_properties", None):
             for key, value in additional_properties.items():
                 if value is not None:
