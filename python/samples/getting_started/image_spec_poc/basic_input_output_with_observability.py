@@ -20,7 +20,6 @@ from azure.identity.aio import AzureCliCredential
 from opentelemetry.trace import SpanKind
 from opentelemetry.trace.span import format_trace_id
 
-from db_setup import SQLiteImageStore
 
 """
 This sample shows you can leverage the built-in telemetry in Azure AI.
