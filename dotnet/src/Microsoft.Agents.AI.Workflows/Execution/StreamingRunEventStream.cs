@@ -139,11 +139,9 @@ internal sealed class StreamingRunEventStream : IRunEventStream
         // Get the current epoch - we'll only respond to completion signals from this epoch or later
         int myEpoch = Volatile.Read(ref this._completionEpoch) + 1;
 
-        // Simply read from channel - all coordination is handled by Channel infrastructure
-        // Note: When cancellation is requested, ReadAllAsync may throw OperationCanceledException
-        // or may complete the enumeration. We check IsCancellationRequested explicitly at superstep
-        // boundaries to ensure clean cancellation.
-        await foreach (WorkflowEvent evt in this._eventChannel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+        // Use custom async enumerable to avoid exceptions on cancellation.
+        NonThrowingChannelReaderAsyncEnumerable<WorkflowEvent> eventStream = new(this._eventChannel.Reader);
+        await foreach (WorkflowEvent evt in eventStream.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
             // Filter out internal signals used for run loop coordination
             if (evt is InternalHaltSignal completionSignal)
