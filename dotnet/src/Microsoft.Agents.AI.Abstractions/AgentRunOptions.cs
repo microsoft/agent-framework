@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -32,6 +33,7 @@ public class AgentRunOptions
         _ = Throw.IfNull(options);
         this.ContinuationToken = options.ContinuationToken;
         this.AllowBackgroundResponses = options.AllowBackgroundResponses;
+        this.AdditionalProperties = options.AdditionalProperties?.Clone();
     }
 
     /// <summary>
@@ -74,4 +76,7 @@ public class AgentRunOptions
     /// </para>
     /// </remarks>
     public bool? AllowBackgroundResponses { get; set; }
+
+    /// <summary>Gets or sets any additional properties associated with the options.</summary>
+    public AdditionalPropertiesDictionary? AdditionalProperties { get; set; }
 }
