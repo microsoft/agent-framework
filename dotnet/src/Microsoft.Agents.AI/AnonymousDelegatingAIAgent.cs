@@ -191,6 +191,16 @@ internal sealed class AnonymousDelegatingAIAgent : DelegatingAIAgent
         }
     }
 
+    public override Task<AgentRunResponse> RunBackgroundAsync(IEnumerable<ChatMessage> messages, AgentThread thread, object? continuationToken = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        throw new NotImplementedException("Background runs are not implemented in AnonymousDelegatingAIAgent.");
+    }
+
+    public override IAsyncEnumerable<AgentRunResponseUpdate> RunBackgroundStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread thread, object? continuationToken = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        throw new NotImplementedException("Background streaming runs are not implemented in AnonymousDelegatingAIAgent.");
+    }
+
     /// <summary>Throws an exception if both of the specified delegates are <see langword="null"/>.</summary>
     /// <exception cref="ArgumentNullException">Both <paramref name="runFunc"/> and <paramref name="runStreamingFunc"/> are <see langword="null"/>.</exception>
     internal static void ThrowIfBothDelegatesNull(object? runFunc, object? runStreamingFunc)

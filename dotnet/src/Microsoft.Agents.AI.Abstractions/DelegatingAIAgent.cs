@@ -95,4 +95,22 @@ public class DelegatingAIAgent : AIAgent
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
         => this.InnerAgent.RunStreamingAsync(messages, thread, options, cancellationToken);
+
+    /// <inheritdoc />
+    public override Task<AgentRunResponse> RunBackgroundAsync(
+        IEnumerable<ChatMessage> messages,
+        AgentThread thread,
+        object? continuationToken = null,
+        AgentRunOptions? options = null,
+        CancellationToken cancellationToken = default)
+   => this.InnerAgent.RunBackgroundAsync(messages, thread, continuationToken, options, cancellationToken);
+
+    /// <inheritdoc />
+    public override IAsyncEnumerable<AgentRunResponseUpdate> RunBackgroundStreamingAsync(
+        IEnumerable<ChatMessage> messages,
+        AgentThread thread,
+        object? continuationToken = null,
+        AgentRunOptions? options = null,
+        CancellationToken cancellationToken = default)
+        => this.InnerAgent.RunBackgroundStreamingAsync(messages, thread, continuationToken, options, cancellationToken);
 }

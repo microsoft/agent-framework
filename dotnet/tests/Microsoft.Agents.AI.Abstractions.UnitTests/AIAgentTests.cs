@@ -382,6 +382,22 @@ public class AIAgentTests
             AgentRunOptions? options = null,
             CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
+
+        public override Task<AgentRunResponse> RunBackgroundAsync(
+            IEnumerable<ChatMessage> messages,
+            AgentThread thread,
+            object? continuationToken = null,
+            AgentRunOptions? options = null,
+            CancellationToken cancellationToken = default) =>
+            throw new NotImplementedException();
+
+        public override IAsyncEnumerable<AgentRunResponseUpdate> RunBackgroundStreamingAsync(
+            IEnumerable<ChatMessage> messages,
+            AgentThread thread,
+            object? continuationToken = null,
+            AgentRunOptions? options = null,
+            CancellationToken cancellationToken = default) =>
+            throw new NotImplementedException();
     }
 
     private static async IAsyncEnumerable<T> ToAsyncEnumerableAsync<T>(IEnumerable<T> values)

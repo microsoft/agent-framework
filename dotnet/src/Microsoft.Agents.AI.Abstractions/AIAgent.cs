@@ -330,6 +330,224 @@ public abstract class AIAgent
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Runs the agent in background mode if supported; otherwise, runs synchronously with no message assuming that all required instructions are already provided to the agent or on the thread.
+    /// </summary>
+    /// <param name="thread">
+    /// The conversation thread to use for this invocation.
+    /// The thread will be updated with any response messages generated during invocation.
+    /// </param>
+    /// <param name="continuationToken">
+    /// The continuation token for getting the result of the agent response identified by this token.
+    /// The token can be obtained from the <see cref="AgentRunResponse.ContinuationToken"/> property of a previous call to
+    /// one of the RunBackgroundAsync method overloads and passed as an argument to this parameter on subsequent calls to this method.
+    /// </param>
+    /// <param name="options">Optional configuration parameters for controlling the agent's invocation behavior.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentRunResponse"/> with the agent's output.</returns>
+    /// <remarks>
+    /// This overload is useful when the agent has sufficient context from previous messages in the thread
+    /// or from its initial configuration to generate a meaningful response without additional input.
+    /// </remarks>
+    public Task<AgentRunResponse> RunBackgroundAsync(
+        AgentThread thread,
+        object? continuationToken = null,
+        AgentRunOptions? options = null,
+        CancellationToken cancellationToken = default) =>
+        this.RunBackgroundAsync([], thread, continuationToken, options, cancellationToken);
+
+    /// <summary>
+    /// Runs the agent in background mode if supported; otherwise, runs synchronously with a text message from the user.
+    /// </summary>
+    /// <param name="message">The user message to send to the agent.</param>
+    /// <param name="thread">
+    /// The conversation thread to use for this invocation.
+    /// The thread will be updated with the input message and any response messages generated during invocation.
+    /// </param>
+    /// <param name="options">Optional configuration parameters for controlling the agent's invocation behavior.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentRunResponse"/> with the agent's output.</returns>
+    /// <exception cref="ArgumentException"><paramref name="message"/> is <see langword="null"/>, empty, or contains only whitespace.</exception>
+    /// <remarks>
+    /// The provided text will be wrapped in a <see cref="ChatMessage"/> with the <see cref="ChatRole.User"/> role
+    /// before being sent to the agent in background mode. This is a convenience method for simple text-based interactions.
+    /// </remarks>
+    public Task<AgentRunResponse> RunBackgroundAsync(
+        string message,
+        AgentThread thread,
+        AgentRunOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        _ = Throw.IfNullOrWhitespace(message);
+
+        return this.RunBackgroundAsync(new ChatMessage(ChatRole.User, message), thread, options, cancellationToken);
+    }
+
+    /// <summary>
+    /// Runs the agent in background mode if supported; otherwise, runs synchronously with a single chat message.
+    /// </summary>
+    /// <param name="message">The chat message to send to the agent.</param>
+    /// <param name="thread">
+    /// The conversation thread to use for this invocation.
+    /// The thread will be updated with the input message and any response messages generated during invocation.
+    /// </param>
+    /// <param name="options">Optional configuration parameters for controlling the agent's invocation behavior.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentRunResponse"/> with the agent's output.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="message"/> is <see langword="null"/>.</exception>
+    public Task<AgentRunResponse> RunBackgroundAsync(
+        ChatMessage message,
+        AgentThread thread,
+        AgentRunOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        _ = Throw.IfNull(message);
+
+        return this.RunBackgroundAsync([message], thread, null, options, cancellationToken);
+    }
+
+    /// <summary>
+    /// Runs the agent in background mode if supported; otherwise, runs synchronously with a collection of chat messages, providing the core invocation logic that all other overloads delegate to.
+    /// </summary>
+    /// <param name="messages">The collection of messages to send to the agent for processing.</param>
+    /// <param name="thread">
+    /// The conversation thread to use for this invocation. If <see langword="null"/>, a new thread will be created.
+    /// The thread will be updated with the input messages and any response messages generated during invocation.
+    /// </param>
+    /// <param name="continuationToken">
+    /// The continuation token for getting the result of the agent response identified by this token.
+    /// The token can be obtained from the <see cref="AgentRunResponse.ContinuationToken"/> property of a previous call to
+    /// one of the RunBackgroundAsync method overloads and passed as an argument to this parameter on subsequent calls to this method.
+    /// </param>
+    /// <param name="options">Optional configuration parameters for controlling the agent's invocation behavior.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentRunResponse"/> with the agent's output.</returns>
+    /// <remarks>
+    /// <para>
+    /// This method provides background invocation support. The default implementation delegates to <see cref="RunAsync(IEnumerable{ChatMessage}, AgentThread?, AgentRunOptions?, CancellationToken)"/>.
+    /// Implementations that support true background processing should override this method to provide optimized background execution.
+    /// </para>
+    /// <para>
+    /// The messages are processed in the order provided and become part of the conversation history.
+    /// The agent's response will also be added to <paramref name="thread"/> if one is provided.
+    /// </para>
+    /// </remarks>
+    public virtual Task<AgentRunResponse> RunBackgroundAsync(
+        IEnumerable<ChatMessage> messages,
+        AgentThread thread,
+        object? continuationToken = null,
+        AgentRunOptions? options = null,
+        CancellationToken cancellationToken = default) =>
+        this.RunAsync(messages, thread, options, cancellationToken);
+
+    /// <summary>
+    /// Runs the agent in background streaming mode if supported; otherwise, streams synchronously without providing new input messages, relying on existing context and instructions.
+    /// </summary>
+    /// <param name="thread">
+    /// The conversation thread to use for this invocation.
+    /// The thread will be updated with any response messages generated during invocation.
+    /// </param>
+    /// <param name="continuationToken">
+    /// The continuation token for resuming an agent response stream if interrupted identified by this token.
+    /// The token can be obtained from the <see cref="AgentRunResponseUpdate.ContinuationToken"/> property of a previous call to
+    /// one of the RunBackgroundStreamingAsync method overloads and passed as an argument to this parameter on subsequent calls to this method
+    /// to resume the stream from the point of interruption.
+    /// </param>
+    /// <param name="options">Optional configuration parameters for controlling the agent's invocation behavior.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>An asynchronous enumerable of <see cref="AgentRunResponseUpdate"/> instances representing the streaming response.</returns>
+    public IAsyncEnumerable<AgentRunResponseUpdate> RunBackgroundStreamingAsync(
+        AgentThread thread,
+        object? continuationToken = null,
+        AgentRunOptions? options = null,
+        CancellationToken cancellationToken = default) =>
+        this.RunBackgroundStreamingAsync([], thread, continuationToken, options, cancellationToken);
+
+    /// <summary>
+    /// Runs the agent in background streaming mode if supported; otherwise, streams synchronously with a text message from the user.
+    /// </summary>
+    /// <param name="message">The user message to send to the agent.</param>
+    /// <param name="thread">
+    /// The conversation thread to use for this invocation.
+    /// The thread will be updated with the input message and any response messages generated during invocation.
+    /// </param>
+    /// <param name="options">Optional configuration parameters for controlling the agent's invocation behavior.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>An asynchronous enumerable of <see cref="AgentRunResponseUpdate"/> instances representing the streaming response.</returns>
+    /// <exception cref="ArgumentException"><paramref name="message"/> is <see langword="null"/>, empty, or contains only whitespace.</exception>
+    /// <remarks>
+    /// The provided text will be wrapped in a <see cref="ChatMessage"/> with the <see cref="ChatRole.User"/> role.
+    /// Streaming invocation in background mode provides real-time updates as the agent generates its response.
+    /// </remarks>
+    public IAsyncEnumerable<AgentRunResponseUpdate> RunBackgroundStreamingAsync(
+        string message,
+        AgentThread thread,
+        AgentRunOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        _ = Throw.IfNullOrWhitespace(message);
+
+        return this.RunBackgroundStreamingAsync(new ChatMessage(ChatRole.User, message), thread, options, cancellationToken);
+    }
+
+    /// <summary>
+    /// Runs the agent in background streaming mode if supported; otherwise, streams synchronously with a single chat message.
+    /// </summary>
+    /// <param name="message">The chat message to send to the agent.</param>
+    /// <param name="thread">
+    /// The conversation thread to use for this invocation.
+    /// The thread will be updated with the input message and any response messages generated during invocation.
+    /// </param>
+    /// <param name="options">Optional configuration parameters for controlling the agent's invocation behavior.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>An asynchronous enumerable of <see cref="AgentRunResponseUpdate"/> instances representing the streaming response.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="message"/> is <see langword="null"/>.</exception>
+    public IAsyncEnumerable<AgentRunResponseUpdate> RunBackgroundStreamingAsync(
+        ChatMessage message,
+        AgentThread thread,
+        AgentRunOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        _ = Throw.IfNull(message);
+
+        return this.RunBackgroundStreamingAsync([message], thread, continuationToken: null, options, cancellationToken);
+    }
+
+    /// <summary>
+    /// Runs the agent in background streaming mode if supported; otherwise, streams synchronously with a collection of chat messages, providing the core streaming invocation logic.
+    /// </summary>
+    /// <param name="messages">The collection of messages to send to the agent for processing.</param>
+    /// <param name="thread">
+    /// The conversation thread to use for this invocation.
+    /// The thread will be updated with the input messages and any response updates generated during invocation.
+    /// </param>
+    /// <param name="continuationToken">
+    /// The continuation token for resuming an agent response stream if interrupted identified by this token.
+    /// The token can be obtained from the <see cref="AgentRunResponseUpdate.ContinuationToken"/> property of a previous call to
+    /// one of the RunBackgroundStreamingAsync method overloads and passed as an argument to this parameter on subsequent calls to this method
+    /// to resume the stream from the point of interruption.
+    /// </param>
+    /// <param name="options">Optional configuration parameters for controlling the agent's invocation behavior.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>An asynchronous enumerable of <see cref="AgentRunResponseUpdate"/> instances representing the streaming response.</returns>
+    /// <remarks>
+    /// <para>
+    /// This method provides background streaming support. The default implementation delegates to <see cref="RunStreamingAsync(IEnumerable{ChatMessage}, AgentThread?, AgentRunOptions?, CancellationToken)"/>.
+    /// Implementations that support true background processing should override this method to provide optimized background streaming execution.
+    /// </para>
+    /// <para>
+    /// Each <see cref="AgentRunResponseUpdate"/> represents a portion of the complete response, allowing consumers
+    /// to display partial results, implement progressive loading, or provide immediate feedback to users.
+    /// </para>
+    /// </remarks>
+    public virtual IAsyncEnumerable<AgentRunResponseUpdate> RunBackgroundStreamingAsync(
+        IEnumerable<ChatMessage> messages,
+        AgentThread thread,
+        object? continuationToken = null,
+        AgentRunOptions? options = null,
+        CancellationToken cancellationToken = default) =>
+        this.RunStreamingAsync(messages, thread, options, cancellationToken);
+
+    /// <summary>
     /// Notifies the specified thread about new messages that have been added to the conversation.
     /// </summary>
     /// <param name="thread">The conversation thread to notify about the new messages.</param>

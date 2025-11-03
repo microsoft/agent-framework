@@ -157,6 +157,6 @@ public sealed partial class ChatClientAgent
             return new ChatClientAgentRunResponse<T>(chatResponse);
         }
 
-        return this.RunCoreAsync(GetResponseAsync, CreateResponse, messages, thread, options, cancellationToken);
+        return this.RunCoreAsync(GetResponseAsync, CreateResponse, messages, thread, options, cancellationToken: cancellationToken);
     }
 }
