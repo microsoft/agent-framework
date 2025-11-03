@@ -77,6 +77,17 @@ public class AgentRunOptions
     /// </remarks>
     public bool? AllowBackgroundResponses { get; set; }
 
-    /// <summary>Gets or sets any additional properties associated with the options.</summary>
+    /// <summary>
+    /// Gets or sets additional properties associated with these options.
+    /// </summary>
+    /// <value>
+    /// An <see cref="AdditionalPropertiesDictionary"/> containing custom properties,
+    /// or <see langword="null"/> if no additional properties are present.
+    /// </value>
+    /// <remarks>
+    /// Additional properties provide a way to include custom metadata or provider-specific
+    /// information that doesn't fit into the standard options schema. This is useful for
+    /// preserving implementation-specific details or extending the options with custom data.
+    /// </remarks>
     public AdditionalPropertiesDictionary? AdditionalProperties { get; set; }
 }
