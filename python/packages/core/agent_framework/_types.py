@@ -2052,6 +2052,27 @@ class ChatMessage(SerializationMixin):
         return " ".join(content.text for content in self.contents if isinstance(content, TextContent))
 
 
+def prepare_messages(messages: str | ChatMessage | list[str] | list[ChatMessage]) -> list[ChatMessage]:
+    """Convert various message input formats into a list of ChatMessage objects.
+
+    Args:
+        messages: The input messages in various supported formats.
+
+    Returns:
+        A list of ChatMessage objects.
+    """
+    if isinstance(messages, str):
+        return [ChatMessage(role="user", text=messages)]
+    if isinstance(messages, ChatMessage):
+        return [messages]
+    return_messages: list[ChatMessage] = []
+    for msg in messages:
+        if isinstance(msg, str):
+            msg = ChatMessage(role="user", text=msg)
+        return_messages.append(msg)
+    return return_messages
+
+
 # region ChatResponse
 
 
