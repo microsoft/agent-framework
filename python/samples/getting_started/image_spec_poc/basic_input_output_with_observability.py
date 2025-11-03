@@ -48,7 +48,6 @@ def create_sample_image() -> tuple[str, str]:
 
 async def main() -> None:
     """Run image analysis with Azure OpenAI and collect telemetry."""
-    #store = SQLiteImageStore()
     async with (
         AzureCliCredential() as credential,
         AIProjectClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as project,
