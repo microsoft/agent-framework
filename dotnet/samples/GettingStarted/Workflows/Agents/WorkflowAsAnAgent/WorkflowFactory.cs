@@ -41,7 +41,8 @@ internal static class WorkflowFactory
     /// <summary>
     /// Executor that aggregates the results from the concurrent agents.
     /// </summary>
-    private sealed class ConcurrentAggregationExecutor() : Executor<List<ChatMessage>>("ConcurrentAggregationExecutor")
+    private sealed class ConcurrentAggregationExecutor() :
+        Executor<List<ChatMessage>>("ConcurrentAggregationExecutor"), IResettableExecutor
     {
         private readonly List<ChatMessage> _messages = [];
 
