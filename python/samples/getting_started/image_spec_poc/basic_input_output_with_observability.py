@@ -34,7 +34,7 @@ for this sample to work.
 dotenv.load_dotenv()
 
 # Image analysis function replacing get_weather
-def create_sample_image() -> tuple[str, str]:
+def create_sample_image() -> str:
     """Load and encode the elephant image as base64."""
     with open("../multimodal_input/elephant.jpg", "rb") as f:
         image_data = f.read()
