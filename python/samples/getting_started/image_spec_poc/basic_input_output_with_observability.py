@@ -3,12 +3,7 @@
 
 import asyncio
 import base64
-import json
 import os
-from datetime import datetime, timezone
-from typing import Any
-from typing import Annotated
-from io import BytesIO
 
 import dotenv
 from agent_framework import ChatMessage, DataContent, Role, TextContent
