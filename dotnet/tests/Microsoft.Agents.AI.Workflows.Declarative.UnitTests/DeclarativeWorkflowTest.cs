@@ -225,6 +225,54 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         Assert.True(visitor.HasUnsupportedActions);
     }
 
+    [Theory]
+    [InlineData("CaseInsensitive.yaml", "end_when_match")]
+    [InlineData("ClearAllVariables.yaml", "clear_all")]
+    [InlineData("Condition.yaml", "setVariable_test")]
+    [InlineData("ConditionElse.yaml", "setVariable_test")]
+    [InlineData("EndConversation.yaml", "end_all")]
+    [InlineData("EndDialog.yaml", "end_all")]
+    [InlineData("EditTable.yaml", "edit_var")]
+    [InlineData("EditTableV2.yaml", "edit_var")]
+    [InlineData("Goto.yaml", "goto_end")]
+    [InlineData("LoopBreak.yaml", "break_loop_now")]
+    [InlineData("LoopContinue.yaml", "foreach_loop")]
+    [InlineData("LoopEach.yaml", "foreach_loop")]
+    [InlineData("MixedScopes.yaml", "activity_input")]
+    [InlineData("ParseValue.yaml", "parse_var")]
+    [InlineData("ParseValueList.yaml", "parse_var")]
+    [InlineData("ResetVariable.yaml", "clear_var")]
+    [InlineData("SendActivity.yaml", "activity_input")]
+    [InlineData("SetVariable.yaml", "set_var")]
+    [InlineData("SetTextVariable.yaml", "set_text")]
+    public async Task CancelRunAsync(string workflowPath, string expectedExecutedId)
+    {
+        // Arrange
+        const string WorkflowInput = "Test input message";
+        Workflow workflow = this.CreateWorkflow(workflowPath, WorkflowInput);
+        await using StreamingRun run = await InProcessExecution.StreamAsync(workflow: workflow, input: WorkflowInput);
+
+        // Act
+        await foreach (WorkflowEvent workflowEvent in run.WatchStreamAsync())
+        {
+            this.WorkflowEvents.Add(workflowEvent);
+
+            if (workflowEvent is DeclarativeActionInvokedEvent actionInvokedEvent && actionInvokedEvent.ActionId == expectedExecutedId)
+            {
+                // Cancel run after the specified declarative action is invoked.
+                await run.CancelRunAsync();
+            }
+        }
+        RunStatus currentRunStatus = await run.GetStatusAsync();
+        this.WorkflowEventCounts = this.WorkflowEvents.GroupBy(e => e.GetType()).ToDictionary(e => e.Key, e => e.Count());
+
+        // Assert
+        Assert.Equal(expected: RunStatus.Ended, actual: currentRunStatus);
+        Assert.NotEmpty(this.WorkflowEventCounts);
+        Assert.Contains(this.WorkflowEvents.OfType<DeclarativeActionInvokedEvent>(), e => e.ActionId == expectedExecutedId);
+        Assert.DoesNotContain(this.WorkflowEvents.OfType<DeclarativeActionCompletedEvent>(), e => e.ActionId == expectedExecutedId);
+    }
+
     private void AssertExecutionCount(int expectedCount)
     {
         Assert.Equal(expectedCount + 2, this.WorkflowEventCounts[typeof(ExecutorInvokedEvent)]);
@@ -256,12 +304,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
 
     private async Task RunWorkflowAsync<TInput>(string workflowPath, TInput workflowInput) where TInput : notnull
     {
-        using StreamReader yamlReader = File.OpenText(Path.Combine("Workflows", workflowPath));
-        Mock<WorkflowAgentProvider> mockAgentProvider = CreateMockProvider($"{workflowInput}");
-        DeclarativeWorkflowOptions workflowContext = new(mockAgentProvider.Object) { LoggerFactory = this.Output };
-
-        Workflow workflow = DeclarativeWorkflowBuilder.Build<TInput>(yamlReader, workflowContext);
-
+        Workflow workflow = this.CreateWorkflow(workflowPath, workflowInput);
         await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, workflowInput);
 
         await foreach (WorkflowEvent workflowEvent in run.WatchStreamAsync())
@@ -301,6 +344,14 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         }
 
         this.WorkflowEventCounts = this.WorkflowEvents.GroupBy(e => e.GetType()).ToDictionary(e => e.Key, e => e.Count());
+    }
+
+    private Workflow CreateWorkflow<TInput>(string workflowPath, TInput workflowInput) where TInput : notnull
+    {
+        using StreamReader yamlReader = File.OpenText(Path.Combine("Workflows", workflowPath));
+        Mock<WorkflowAgentProvider> mockAgentProvider = CreateMockProvider($"{workflowInput}");
+        DeclarativeWorkflowOptions workflowContext = new(mockAgentProvider.Object) { LoggerFactory = this.Output };
+        return DeclarativeWorkflowBuilder.Build<TInput>(yamlReader, workflowContext);
     }
 
     private static Mock<WorkflowAgentProvider> CreateMockProvider(string input)
