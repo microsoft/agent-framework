@@ -1,17 +1,15 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-import os
 from random import randint
 from typing import Annotated
 
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.anthropic import AnthropicClient
 
 """
-Anthropic with OpenAI Chat Client Example
+Anthropic Chat Agent Example
 
-This sample demonstrates using Anthropic models through OpenAI Chat Client by
-configuring the base URL to point to Anthropic's API for cross-provider compatibility.
+This sample demonstrates using Anthropic with an agent and a single custom tool.
 """
 
 
@@ -27,10 +25,7 @@ async def non_streaming_example() -> None:
     """Example of non-streaming response (get the complete result at once)."""
     print("=== Non-streaming Response Example ===")
 
-    agent = OpenAIChatClient(
-        api_key=os.getenv("ANTHROPIC_API_KEY"),
-        base_url="https://api.anthropic.com/v1/",
-        model_id=os.getenv("ANTHROPIC_MODEL"),
+    agent = AnthropicClient(
     ).create_agent(
         name="WeatherAgent",
         instructions="You are a helpful weather agent.",
@@ -47,17 +42,14 @@ async def streaming_example() -> None:
     """Example of streaming response (get results as they are generated)."""
     print("=== Streaming Response Example ===")
 
-    agent = OpenAIChatClient(
-        api_key=os.getenv("ANTHROPIC_API_KEY"),
-        base_url="https://api.anthropic.com/v1/",
-        model_id=os.getenv("ANTHROPIC_MODEL"),
+    agent = AnthropicClient(
     ).create_agent(
         name="WeatherAgent",
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
 
-    query = "What's the weather like in Portland?"
+    query = "What's the weather like in Portland and in Paris?"
     print(f"User: {query}")
     print("Agent: ", end="", flush=True)
     async for chunk in agent.run_stream(query):
@@ -67,10 +59,10 @@ async def streaming_example() -> None:
 
 
 async def main() -> None:
-    print("=== Anthropic with OpenAI Chat Client Agent Example ===")
+    print("=== Anthropic Example ===")
 
-    await non_streaming_example()
     await streaming_example()
+    await non_streaming_example()
 
 
 if __name__ == "__main__":
