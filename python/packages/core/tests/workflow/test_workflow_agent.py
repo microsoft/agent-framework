@@ -60,7 +60,7 @@ class RequestingExecutor(Executor):
     @handler
     async def handle_message(self, _: list[ChatMessage], ctx: WorkflowContext) -> None:
         # Send a RequestInfoMessage to trigger the request info process
-        await ctx.request_info("Mock request data", str, str)
+        await ctx.request_info("Mock request data", str)
 
     @response_handler
     async def handle_request_response(

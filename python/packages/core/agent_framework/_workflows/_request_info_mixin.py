@@ -129,7 +129,7 @@ def response_handler(
                 # Example of a handler that sends a request
                 ...
                 # Send a request with a `CustomRequest` payload and expect a `str` response.
-                await context.request_info(CustomRequest(...), CustomRequest, str)
+                await context.request_info(CustomRequest(...), str)
 
 
             @response_handler

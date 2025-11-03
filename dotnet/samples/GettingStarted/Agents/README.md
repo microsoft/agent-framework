@@ -45,6 +45,7 @@ Before you begin, ensure you have the following prerequisites:
 |[Background responses](./Agent_Step17_BackgroundResponses/)|This sample demonstrates how to use background responses for long-running operations with polling and resumption support|
 |[Adding RAG with text search](./Agent_Step18_TextSearchRag/)|This sample demonstrates how to enrich agent responses with retrieval augmented generation using the text search provider|
 |[Using Mem0-backed memory](./Agent_Step19_Mem0Provider/)|This sample demonstrates how to use the Mem0Provider to persist and recall memories across conversations|
+|[Background responses with tools and persistence](./Agent_Step20_BackgroundResponsesWithToolsAndPersistence/)|This sample demonstrates advanced background response scenarios including function calling during background operations and state persistence|
 
 ## Running the samples from the console
 

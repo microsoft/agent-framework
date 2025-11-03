@@ -125,13 +125,12 @@ class ReviewGateway(Executor):
         await ctx.set_executor_state({"iteration": iteration, "last_draft": draft})
         # Emit a human approval request.
         await ctx.request_info(
-            HumanApprovalRequest(
+            request_data=HumanApprovalRequest(
                 prompt="Review the draft. Reply 'approve' or provide edit instructions.",
                 draft=draft,
                 iteration=iteration,
             ),
-            HumanApprovalRequest,
-            str,
+            response_type=str,
         )
 
     @response_handler
