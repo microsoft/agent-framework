@@ -73,7 +73,7 @@ internal static class WorkflowHelper
     /// <summary>
     /// Executor that aggregates the results from the concurrent agents.
     /// </summary>
-    private sealed class ConcurrentAggregationExecutor() : Executor<ChatMessage>("ConcurrentAggregationExecutor")
+    private sealed class ConcurrentAggregationExecutor() : Executor<List<ChatMessage>>("ConcurrentAggregationExecutor")
     {
         private readonly List<ChatMessage> _messages = [];
 
@@ -84,9 +84,9 @@ internal static class WorkflowHelper
         /// <param name="context">Workflow context for accessing workflow services and adding events</param>
         /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
         /// The default is <see cref="CancellationToken.None"/>.</param>
-        public override async ValueTask HandleAsync(ChatMessage message, IWorkflowContext context, CancellationToken cancellationToken = default)
+        public override async ValueTask HandleAsync(List<ChatMessage> message, IWorkflowContext context, CancellationToken cancellationToken = default)
         {
-            this._messages.Add(message);
+            this._messages.AddRange(message);
 
             if (this._messages.Count == 2)
             {
