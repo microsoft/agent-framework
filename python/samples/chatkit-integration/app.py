@@ -210,8 +210,6 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
                     "You are a helpful weather assistant with image analysis capabilities. "
                     "You can provide weather information for any location, tell the current time, "
                     "and analyze images that users upload. Be friendly and informative in your responses.\n\n"
-                    "When you provide weather information, a beautiful interactive weather widget will be "
-                    "displayed to the user automatically.\n\n"
                     "If a user asks to see a list of cities or wants to choose from available cities, "
                     "use the show_city_selector tool to display an interactive city selector.\n\n"
                     "When users upload images, you will automatically receive them and can analyze their content. "
