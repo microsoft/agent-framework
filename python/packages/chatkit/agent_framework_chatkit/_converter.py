@@ -3,8 +3,13 @@
 """Converter utilities for converting ChatKit thread items to Agent Framework messages."""
 
 import logging
+import sys
 from collections.abc import Awaitable, Callable, Sequence
-from typing import assert_never
+
+if sys.version_info >= (3, 11):
+    from typing import assert_never
+else:
+    from typing_extensions import assert_never
 
 from agent_framework import (
     ChatMessage,
