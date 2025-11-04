@@ -220,7 +220,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "openai-chatkit", specifier = ">=1.0.2,<2.0.0" },
+    { name = "openai-chatkit", specifier = ">=1.1.0,<2.0.0" },
 ]
 
 [[package]]
