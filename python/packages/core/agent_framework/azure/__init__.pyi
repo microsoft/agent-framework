@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from agent_framework_azure_ai import AzureAIAgentClient, AzureAIAgentClientV2, AzureAISettings
+from agent_framework_azure_ai import AzureAIAgentClient, AzureAIClient, AzureAISettings
 
 from agent_framework.azure._assistants_client import AzureOpenAIAssistantsClient
 from agent_framework.azure._chat_client import AzureOpenAIChatClient
@@ -10,7 +10,7 @@ from agent_framework.azure._shared import AzureOpenAISettings
 
 __all__ = [
     "AzureAIAgentClient",
-    "AzureAIAgentClientV2",
+    "AzureAIClient",
     "AzureAISettings",
     "AzureOpenAIAssistantsClient",
     "AzureOpenAIChatClient",

@@ -37,14 +37,14 @@ else:
 logger = get_logger("agent_framework.azure")
 
 
-TAzureAIAgentClient = TypeVar("TAzureAIAgentClient", bound="AzureAIAgentClientV2")
+TAzureAIClient = TypeVar("TAzureAIClient", bound="AzureAIClient")
 
 
 @use_function_invocation
 @use_observability
 @use_chat_middleware
-class AzureAIAgentClientV2(OpenAIBaseResponsesClient):
-    """Azure AI Agent Chat client."""
+class AzureAIClient(OpenAIBaseResponsesClient):
+    """Azure AI Agent client."""
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai"  # type: ignore[reportIncompatibleVariableOverride, misc]
 
