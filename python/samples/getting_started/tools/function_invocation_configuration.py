@@ -23,8 +23,9 @@ def add(
 async def main():
     client = OpenAIResponsesClient()
     if client.function_invocation_configuration is not None:
-        client.function_invocation_configuration.max_iterations = 5
-        print(f"Function invocation configured with: {client.function_invocation_configuration.to_json(indent=2)}")
+        client.function_invocation_configuration.include_detailed_errors = True
+        client.function_invocation_configuration.max_iterations = 40
+        print(f"Function invocation configured as: \n{client.function_invocation_configuration.to_json(indent=2)}")
 
     agent = client.create_agent(name="ToolAgent", instructions="Use the provided tools.", tools=add)
 
@@ -38,17 +39,19 @@ async def main():
 """
 Expected Output:
 ============================================================
-Function invocation configured with: {
+Function invocation configured as:
+{
   "type": "function_invocation_configuration",
   "enabled": true,
-  "max_iterations": 5,
+  "max_iterations": 40,
   "max_consecutive_errors_per_request": 3,
   "terminate_on_unknown_calls": false,
-  "additional_tools": []
+  "additional_tools": [],
+  "include_detailed_errors": true
 }
 ============================================================
 Call add(239847293, 29834)
-Response: The sum is 239,877,127.
+Response: 239,877,127
 """
 
 if __name__ == "__main__":

@@ -1056,10 +1056,83 @@ def ai_function(
 # region Function Invoking Chat Client
 
 
+class FunctionInvocationConfiguration(SerializationMixin):
+    """Configuration for function invocation in chat clients.
+
+    Attributes:
+        enabled: Whether function invocation is enabled.
+            When this is set to False, the client will not attempt to invoke any functions,
+            because the tool mode will be set to None.
+        max_iterations: Maximum number of function invocation iterations.
+            Each request to this client might end up making multiple requests to the model. Each time the model responds
+            with a function call request, this client might perform that invocation and send the results back to the
+            model in a new request. This property limits the number of times such a roundtrip is performed. The value
+            must be at least one, as it includes the initial request.
+            If you want to fully disable function invocation, use the ``enabled`` property.
+            The default is 40.
+        max_consecutive_errors_per_request: Maximum consecutive errors allowed per request.
+            The maximum number of consecutive function call errors allowed before stopping
+            further function calls for the request.
+            The default is 3.
+        terminate_on_unknown_calls: Whether to terminate on unknown function calls.
+            When False, call requests to any tools that aren't available to the client
+            will result in a response message automatically being created and returned to the inner client stating that
+            the tool couldn't be found. This behavior can help in cases where a model hallucinates a function, but it's
+            problematic if the model has been made aware of the existence of tools outside of the normal mechanisms, and
+            requests one of those. ``additional_tools`` can be used to help with that. But if instead the consumer wants
+            to know about all function call requests that the client can't handle, this can be set to True. Upon
+            receiving a request to call a function that the client doesn't know about, it will terminate the function
+            calling loop and return the response, leaving the handling of the function call requests to the consumer of
+            the client.
+        additional_tools: Additional tools to include for function execution.
+            These will not impact the requests sent by the client, which will pass through the
+            ``tools`` unmodified. However, if the inner client requests the invocation of a tool
+            that was not in ``ChatOptions.tools``, this ``additional_tools`` collection will also be consulted to look
+            for a corresponding tool. This is useful when the service might have been pre-configured to be aware of
+            certain tools that aren't also sent on each individual request. These tools are treated the same as
+            ``declaration_only`` tools and will be returned to the user.
+        include_detailed_errors: Whether to include detailed error information in function results.
+            When set to True, detailed error information such as exception type and message
+            will be included in the function result content when a function invocation fails.
+            When False, only a generic error message will be included.
+    """
+
+    def __init__(
+        self,
+        enabled: bool = True,
+        max_iterations: int = DEFAULT_MAX_ITERATIONS,
+        max_consecutive_errors_per_request: int = DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST,
+        terminate_on_unknown_calls: bool = False,
+        additional_tools: Sequence[ToolProtocol] | None = None,
+        include_detailed_errors: bool = False,
+    ) -> None:
+        """Initialize FunctionInvocationConfiguration.
+
+        Args:
+            enabled: Whether function invocation is enabled.
+            max_iterations: Maximum number of function invocation iterations.
+            max_consecutive_errors_per_request: Maximum consecutive errors allowed per request.
+            terminate_on_unknown_calls: Whether to terminate on unknown function calls.
+            additional_tools: Additional tools to include for function execution.
+            include_detailed_errors: Whether to include detailed error information in function results.
+        """
+        self.enabled = enabled
+        if max_iterations < 1:
+            raise ValueError("max_iterations must be at least 1.")
+        self.max_iterations = max_iterations
+        if max_consecutive_errors_per_request < 0:
+            raise ValueError("max_consecutive_errors_per_request must be 0 or more.")
+        self.max_consecutive_errors_per_request = max_consecutive_errors_per_request
+        self.terminate_on_unknown_calls = terminate_on_unknown_calls
+        self.additional_tools = additional_tools or []
+        self.include_detailed_errors = include_detailed_errors
+
+
 async def _auto_invoke_function(
     function_call_content: "FunctionCallContent | FunctionApprovalResponseContent",
     custom_args: dict[str, Any] | None = None,
     *,
+    config: FunctionInvocationConfiguration,
     tool_map: dict[str, AIFunction[BaseModel, Any]],
     sequence_index: int | None = None,
     request_index: int | None = None,
@@ -1072,6 +1145,7 @@ async def _auto_invoke_function(
         custom_args: Additional custom arguments to merge with parsed arguments.
 
     Keyword Args:
+        config: The function invocation configuration.
         tool_map: A mapping of tool names to AIFunction instances.
         sequence_index: The index of the function call in the sequence.
         request_index: The index of the request iteration.
@@ -1094,7 +1168,12 @@ async def _auto_invoke_function(
     if isinstance(function_call_content, FunctionCallContent):
         tool = tool_map.get(function_call_content.name)
         if tool is None:
-            raise KeyError(f"No tool or function named '{function_call_content.name}'")
+            if config.terminate_on_unknown_calls:
+                raise KeyError(f'Requested function "{function_call_content.name}" not found.')
+            return FunctionResultContent(
+                call_id=function_call_content.call_id,
+                exception=f'Error: Requested function "{function_call_content.name}" not found.',
+            )
         if tool.approval_mode == "always_require":
             return FunctionApprovalRequestContent(id=function_call_content.call_id, function_call=function_call_content)
         if tool.declaration_only:
@@ -1117,10 +1196,10 @@ async def _auto_invoke_function(
     try:
         args = tool.input_model.model_validate(merged_args)
     except ValidationError as exc:
-        return FunctionResultContent(
-            call_id=function_call_content.call_id,
-            exception=exc,
-        )
+        message = "Error: Argument parsing failed."
+        if config.include_detailed_errors:
+            message = f"{message} Exception: {exc}"
+        return FunctionResultContent(call_id=function_call_content.call_id, exception=message)
     if not middleware_pipeline or (
         not hasattr(middleware_pipeline, "has_middlewares") and not middleware_pipeline.has_middlewares
     ):
@@ -1135,10 +1214,10 @@ async def _auto_invoke_function(
                 result=function_result,
             )
         except Exception as exc:
-            return FunctionResultContent(
-                call_id=function_call_content.call_id,
-                exception=exc,
-            )
+            message = "Error: Function failed."
+            if config.include_detailed_errors:
+                message = f"{message} Exception: {exc}"
+            return FunctionResultContent(call_id=function_call_content.call_id, exception=message)
     # Execute through middleware pipeline if available
     from ._middleware import FunctionInvocationContext
 
@@ -1166,10 +1245,10 @@ async def _auto_invoke_function(
             result=function_result,
         )
     except Exception as exc:
-        return FunctionResultContent(
-            call_id=function_call_content.call_id,
-            exception=exc,
-        )
+        message = "Error: Function failed."
+        if config.include_detailed_errors:
+            message = f"{message} Exception: {exc}"
+        return FunctionResultContent(call_id=function_call_content.call_id, exception=message)
 
 
 def _get_tool_map(
@@ -1198,9 +1277,8 @@ async def _try_execute_function_calls(
     | Callable[..., Any] \
     | MutableMapping[str, Any] \
     | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]",
+    config: FunctionInvocationConfiguration,
     middleware_pipeline: Any = None,  # Optional MiddlewarePipeline to avoid circular imports
-    terminate_on_unknown_calls: bool = False,
-    additional_tools: list[ToolProtocol] | None = None,
 ) -> Sequence["Contents"]:
     """Execute multiple function calls concurrently.
 
@@ -1209,9 +1287,8 @@ async def _try_execute_function_calls(
         attempt_idx: The index of the current attempt iteration.
         function_calls: A sequence of FunctionCallContent to execute.
         tools: The tools available for execution.
+        config: Configuration for function invocation.
         middleware_pipeline: Optional middleware pipeline to apply during execution.
-        terminate_on_unknown_calls: Whether to terminate execution if an unknown function is called.
-        additional_tools: Additional tools to include in the tool map.
 
     Returns:
         A list of Contents containing the results of each function call,
@@ -1223,7 +1300,7 @@ async def _try_execute_function_calls(
     tool_map = _get_tool_map(tools)
     approval_tools = [tool_name for tool_name, tool in tool_map.items() if tool.approval_mode == "always_require"]
     declaration_only = [tool_name for tool_name, tool in tool_map.items() if tool.declaration_only]
-    additional_tool_names = [tool.name for tool in additional_tools] if additional_tools else []
+    additional_tool_names = [tool.name for tool in config.additional_tools] if config.additional_tools else []
     # check if any are calling functions that need approval
     # if so, we return approval request for all
     approval_needed = False
@@ -1235,8 +1312,8 @@ async def _try_execute_function_calls(
         if isinstance(fcc, FunctionCallContent) and (fcc.name in declaration_only or fcc.name in additional_tool_names):
             declaration_only_flag = True
             break
-        if terminate_on_unknown_calls and isinstance(fcc, FunctionCallContent) and fcc.name not in tool_map:
-            raise KeyError(f"No tool or function named '{fcc.name}'")
+        if config.terminate_on_unknown_calls and isinstance(fcc, FunctionCallContent) and fcc.name not in tool_map:
+            raise KeyError(f'Error: Requested function "{fcc.name}" not found.')
     if approval_needed:
         # approval can only be needed for Function Call Contents, not Approval Responses.
         return [
@@ -1257,6 +1334,7 @@ async def _try_execute_function_calls(
             sequence_index=seq_idx,
             request_index=attempt_idx,
             middleware_pipeline=middleware_pipeline,
+            config=config,
         )
         for seq_idx, function_call in enumerate(function_calls)
     ])
@@ -1361,71 +1439,6 @@ def _replace_approval_contents_with_results(
             msg.contents.pop(idx)
 
 
-class FunctionInvocationConfiguration(SerializationMixin):
-    """Configuration for function invocation in chat clients.
-
-    Attributes:
-        enabled: Whether function invocation is enabled.
-            When this is set to False, the client will not attempt to invoke any functions,
-            because the tool mode will be set to None.
-        max_iterations: Maximum number of function invocation iterations.
-            Each request to this client might end up making multiple requests to the model. Each time the model responds
-            with a function call request, this client might perform that invocation and send the results back to the
-            model in a new request. This property limits the number of times such a roundtrip is performed. The value
-            must be at least one, as it includes the initial request.
-            If you want to fully disable function invocation, use the ``enabled`` property.
-            The default is 40.
-        max_consecutive_errors_per_request: Maximum consecutive errors allowed per request.
-            The maximum number of consecutive function call errors allowed before stopping
-            further function calls for the request.
-            The default is 3.
-        terminate_on_unknown_calls: Whether to terminate on unknown function calls.
-            When False, call requests to any tools that aren't available to the client
-            will result in a response message automatically being created and returned to the inner client stating that
-            the tool couldn't be found. This behavior can help in cases where a model hallucinates a function, but it's
-            problematic if the model has been made aware of the existence of tools outside of the normal mechanisms, and
-            requests one of those. ``additional_tools`` can be used to help with that. But if instead the consumer wants
-            to know about all function call requests that the client can't handle, this can be set to True. Upon
-            receiving a request to call a function that the client doesn't know about, it will terminate the function
-            calling loop and return the response, leaving the handling of the function call requests to the consumer of
-            the client.
-        additional_tools: Additional tools to include for function execution.
-            These will not impact the requests sent by the client, which will pass through the
-            ``tools`` unmodified. However, if the inner client requests the invocation of a tool
-            that was not in ``ChatOptions.tools``, this ``additional_tools`` collection will also be consulted to look
-            for a corresponding tool. This is useful when the service might have been pre-configured to be aware of
-            certain tools that aren't also sent on each individual request. These tools are treated the same as
-            ``declaration_only`` tools and will be returned to the user.
-    """
-
-    def __init__(
-        self,
-        enabled: bool = True,
-        max_iterations: int = DEFAULT_MAX_ITERATIONS,
-        max_consecutive_errors_per_request: int = DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST,
-        terminate_on_unknown_calls: bool = False,
-        additional_tools: Sequence[ToolProtocol] | None = None,
-    ) -> None:
-        """Initialize FunctionInvocationConfiguration.
-
-        Args:
-            enabled: Whether function invocation is enabled.
-            max_iterations: Maximum number of function invocation iterations.
-            max_consecutive_errors_per_request: Maximum consecutive errors allowed per request.
-            terminate_on_unknown_calls: Whether to terminate on unknown function calls.
-            additional_tools: Additional tools to include for function execution.
-        """
-        self.enabled = enabled
-        if max_iterations < 1:
-            raise ValueError("max_iterations must be at least 1.")
-        self.max_iterations = max_iterations
-        if max_consecutive_errors_per_request < 0:
-            raise ValueError("max_consecutive_errors_per_request must be 0 or more.")
-        self.max_consecutive_errors_per_request = max_consecutive_errors_per_request
-        self.terminate_on_unknown_calls = terminate_on_unknown_calls
-        self.additional_tools = additional_tools or []
-
-
 def _handle_function_calls_response(
     func: Callable[..., Awaitable["ChatResponse"]],
 ) -> Callable[..., Awaitable["ChatResponse"]]:
@@ -1486,8 +1499,7 @@ def _handle_function_calls_response(
                             function_calls=approved_responses,
                             tools=tools,  # type: ignore
                             middleware_pipeline=stored_middleware_pipeline,
-                            terminate_on_unknown_calls=config.terminate_on_unknown_calls,
-                            additional_tools=config.additional_tools,
+                            config=config,
                         )
                         if any(
                             fcr.exception is not None
@@ -1532,8 +1544,7 @@ def _handle_function_calls_response(
                         function_calls=function_calls,
                         tools=tools,  # type: ignore
                         middleware_pipeline=stored_middleware_pipeline,
-                        terminate_on_unknown_calls=config.terminate_on_unknown_calls,
-                        additional_tools=config.additional_tools,
+                        config=config,
                     )
                     # Check if we have approval requests or function calls (not results) in the results
                     if any(isinstance(fccr, FunctionApprovalRequestContent) for fccr in function_call_results):
@@ -1667,8 +1678,7 @@ def _handle_function_calls_streaming_response(
                             function_calls=approved_responses,
                             tools=tools,  # type: ignore
                             middleware_pipeline=stored_middleware_pipeline,
-                            terminate_on_unknown_calls=config.terminate_on_unknown_calls,
-                            additional_tools=config.additional_tools,
+                            config=config,
                         )
                     _replace_approval_contents_with_results(prepped_messages, fcc_todo, approved_function_results)
 
@@ -1721,8 +1731,7 @@ def _handle_function_calls_streaming_response(
                         function_calls=function_calls,
                         tools=tools,  # type: ignore
                         middleware_pipeline=stored_middleware_pipeline,
-                        terminate_on_unknown_calls=config.terminate_on_unknown_calls,
-                        additional_tools=config.additional_tools,
+                        config=config,
                     )
 
                     # Check if we have approval requests or function calls (not results) in the results
