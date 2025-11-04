@@ -3,6 +3,7 @@
 using A2A.AspNetCore;
 using AgentWebChat.AgentHost;
 using AgentWebChat.AgentHost.Utilities;
+using Azure.Storage.Blobs;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hosting;
 using Microsoft.Agents.AI.Workflows;
@@ -26,6 +27,13 @@ builder.AddAIAgent(
     description: "An agent that speaks like a pirate.",
     chatClientServiceKey: "chat-model")
     .WithInMemoryThreadStore();
+
+builder.AddAIAgent(
+    "gambler",
+    instructions: "You are a gambler. Talk like a gambler.",
+    description: "An agent which gambles",
+    chatClientServiceKey: "chat-model")
+    .WithAzureBlobThreadStore(sp => new BlobContainerClient(connectionString: "UseDevelopmentStorage=true", "agent-threads"));
 
 builder.AddAIAgent("knights-and-knaves", (sp, key) =>
 {
