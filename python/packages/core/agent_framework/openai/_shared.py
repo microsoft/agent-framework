@@ -127,7 +127,7 @@ class OpenAIBase(SerializationMixin):
 
     INJECTABLE: ClassVar[set[str]] = {"client"}
 
-    def __init__(self, *, client: AsyncOpenAI, model_id: str, **kwargs: Any) -> None:
+    def __init__(self, *, model_id: str, client: AsyncOpenAI | None = None, **kwargs: Any) -> None:
         """Initialize OpenAIBase.
 
         Keyword Args:
@@ -161,6 +161,21 @@ class OpenAIBase(SerializationMixin):
             self.instruction_role = instruction_role
         for key, value in kwargs.items():
             setattr(self, key, value)
+
+    async def initialize_client(self):
+        """Initialize OpenAI client asynchronously.
+
+        Override in subclasses to initialize the OpenAI client asynchronously.
+        """
+        pass
+
+    async def ensure_client(self) -> AsyncOpenAI:
+        """Ensure OpenAI client is initialized."""
+        await self.initialize_client()
+        if self.client is None:
+            raise ServiceInitializationError("OpenAI client is not initialized")
+
+        return self.client
 
     def _get_api_key(
         self, api_key: str | SecretStr | Callable[[], str | Awaitable[str]] | None
