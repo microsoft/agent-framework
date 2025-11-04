@@ -70,10 +70,9 @@ async def main():
                 print(f"     Image {image_count} received")
 
                 # Extract file extension from media_type (e.g., "image/png" -> "png")
-                media_type = getattr(content, "media_type", None)
                 extension = "png"  # Default fallback
-                if media_type and "/" in media_type:
-                    extension = media_type.split("/")[-1]
+                if content.media_type and "/" in content.media_type:
+                    extension = content.media_type.split("/")[-1]
 
                 # Save images with correct extension
                 filename = output_dir / f"image{image_count}.{extension}"

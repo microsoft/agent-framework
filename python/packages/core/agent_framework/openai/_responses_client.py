@@ -79,47 +79,6 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
     """Base class for all OpenAI Responses based API's."""
 
     FILE_SEARCH_MAX_RESULTS: int = 50
-    FORMAT_DETECTION_BASE64_CHARS: int = 100
-
-    def _detect_image_format_from_base64(self, image_base64: str) -> str:
-        """Detect image format from base64 data by examining the binary header.
-
-        Args:
-            image_base64: Base64 encoded image data
-
-        Returns:
-            Image format as string (png, jpeg, webp, gif) with png as fallback
-        """
-        try:
-            import base64
-
-            # Decode a small portion to detect format
-            decoded_data = base64.b64decode(image_base64[: self.FORMAT_DETECTION_BASE64_CHARS])
-            if decoded_data.startswith(b"\x89PNG"):
-                return "png"
-            if decoded_data.startswith(b"\xff\xd8\xff"):
-                return "jpeg"
-            if decoded_data.startswith(b"RIFF") and b"WEBP" in decoded_data[:12]:
-                return "webp"
-            if decoded_data.startswith(b"GIF87a") or decoded_data.startswith(b"GIF89a"):
-                return "gif"
-            return "png"  # Default fallback
-        except Exception:
-            return "png"  # Fallback if decoding fails
-
-    def _create_data_uri_from_base64(self, image_base64: str) -> tuple[str, str]:
-        """Create a data URI and media type from base64 image data.
-
-        Args:
-            image_base64: Base64 encoded image data
-
-        Returns:
-            Tuple of (data_uri, media_type)
-        """
-        format_type = self._detect_image_format_from_base64(image_base64)
-        uri = f"data:image/{format_type};base64,{image_base64}"
-        media_type = f"image/{format_type}"
-        return uri, media_type
 
     # region Inner Methods
 
@@ -745,7 +704,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                         media_type = None
                         if not uri.startswith("data:"):
                             # Raw base64 string - convert to proper data URI format using helper
-                            uri, media_type = self._create_data_uri_from_base64(uri)
+                            uri, media_type = DataContent.create_data_uri_from_base64(uri)
                         else:
                             # Parse media type from existing data URI
                             try:
@@ -967,7 +926,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                 partial_index = event.partial_image_index
 
                 # Use helper function to create data URI from base64
-                uri, media_type = self._create_data_uri_from_base64(image_base64)
+                uri, media_type = DataContent.create_data_uri_from_base64(image_base64)
 
                 contents.append(
                     DataContent(
