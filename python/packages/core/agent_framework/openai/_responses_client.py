@@ -345,6 +345,8 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                     options_dict[key] = value
         if "store" not in options_dict:
             options_dict["store"] = False
+        if (tool_choice := options_dict.get("tool_choice")) and len(tool_choice.keys()) == 1:
+            options_dict["tool_choice"] = tool_choice["mode"]
         return options_dict
 
     def _prepare_chat_messages_for_request(self, chat_messages: Sequence[ChatMessage]) -> list[dict[str, Any]]:
