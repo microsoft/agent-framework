@@ -45,6 +45,8 @@ all = [
     "agent-framework-mem0",
     "agent-framework-redis",
     "agent-framework-devui",
+    "agent-framework-purview",
+    "agent-framework-anthropic",
 ]
 
 [tool.uv]

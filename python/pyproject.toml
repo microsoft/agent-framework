@@ -24,13 +24,14 @@ classifiers = [
 dependencies = [
     "agent-framework-core",
     "agent-framework-a2a",
+    "agent-framework-anthropic",
     "agent-framework-azure-ai",
     "agent-framework-copilotstudio",
+    "agent-framework-devui",
     "agent-framework-lab",
     "agent-framework-mem0",
-    "agent-framework-redis",
-    "agent-framework-devui",
     "agent-framework-purview",
+    "agent-framework-redis",
 ]
 
 [dependency-groups]
@@ -94,6 +95,7 @@ agent-framework-mem0 = { workspace = true }
 agent-framework-redis = { workspace = true }
 agent-framework-devui = { workspace = true }
 agent-framework-purview = { workspace = true }
+agent-framework-anthropic = { workspace = true }
 
 [tool.ruff]
 line-length = 120
