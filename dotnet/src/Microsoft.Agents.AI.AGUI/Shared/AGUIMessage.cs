@@ -8,10 +8,6 @@ namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.Shared;
 namespace Microsoft.Agents.AI.AGUI.Shared;
 #endif
 
-/// <summary>
-/// Base class for AG-UI protocol messages.
-/// Uses the "role" property as a discriminator for polymorphic serialization.
-/// </summary>
 [JsonConverter(typeof(AGUIMessageJsonConverter))]
 internal abstract class AGUIMessage
 {
@@ -20,4 +16,7 @@ internal abstract class AGUIMessage
 
     [JsonPropertyName("role")]
     public string Role { get; set; } = string.Empty;
+
+    [JsonPropertyName("content")]
+    public string Content { get; set; } = string.Empty;
 }

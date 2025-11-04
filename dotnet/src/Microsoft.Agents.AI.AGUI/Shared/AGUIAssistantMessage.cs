@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Text.Json.Serialization;
 
@@ -8,9 +8,6 @@ namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.Shared;
 namespace Microsoft.Agents.AI.AGUI.Shared;
 #endif
 
-/// <summary>
-/// Represents an assistant message in the AG-UI protocol.
-/// </summary>
 internal sealed class AGUIAssistantMessage : AGUIMessage
 {
     public AGUIAssistantMessage()
@@ -18,8 +15,8 @@ internal sealed class AGUIAssistantMessage : AGUIMessage
         Role = AGUIRoles.Assistant;
     }
 
-    [JsonPropertyName("content")]
-    public string Content { get; set; } = string.Empty;
+    [JsonPropertyName("name")]
+    public string? Name { get; set; }
 
     [JsonPropertyName("toolCalls")]
     public AGUIToolCall[]? ToolCalls { get; set; }

@@ -328,10 +328,7 @@ internal static class AgentRunResponseUpdateAGUIExtensions
         };
     }
 
-    /// <summary>
-    /// Converts AgentRunResponseUpdate stream to AGUI BaseEvent stream (wrapper for backward compatibility).
-    /// </summary>
-    public static async IAsyncEnumerable<BaseEvent> AsAGUIEventStreamAsync(
+    internal static async IAsyncEnumerable<BaseEvent> AsAGUIEventStreamAsync(
         this IAsyncEnumerable<AgentRunResponseUpdate> updates,
         string threadId,
         string runId,

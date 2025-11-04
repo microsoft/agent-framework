@@ -28,18 +28,15 @@ public sealed class AGUIChatClient : IChatClient
     /// </summary>
     /// <param name="httpClient">The HTTP client to use for communication with the AG-UI server.</param>
     /// <param name="endpoint">The URL for the AG-UI server.</param>
-    /// <param name="modelId">Optional model identifier for the AG-UI service.</param>
     /// <param name="jsonSerializerOptions">JSON serializer options for tool call argument serialization. If null, AGUIJsonSerializerContext.Default.Options will be used.</param>
     /// <param name="serviceProvider">Optional service provider for resolving dependencies like ILogger.</param>
     public AGUIChatClient(
         HttpClient httpClient,
         string endpoint,
-        // TODO: Remove unnecessary modelID parameter
-        string? modelId = null,
         JsonSerializerOptions? jsonSerializerOptions = null,
         IServiceProvider? serviceProvider = null)
     {
-        var handler = new AGUIChatClientHandler(httpClient, endpoint, modelId, this._executedServerFunctionStream, jsonSerializerOptions, serviceProvider);
+        var handler = new AGUIChatClientHandler(httpClient, endpoint, this._executedServerFunctionStream, jsonSerializerOptions, serviceProvider);
         this._innerClient = new FunctionInvokingChatClient(handler, null, serviceProvider);
     }
 
@@ -121,7 +118,6 @@ public sealed class AGUIChatClient : IChatClient
         public AGUIChatClientHandler(
             HttpClient httpClient,
             string endpoint,
-            string? modelId,
             List<ChatResponseUpdate> serverFunctionUpdates,
             JsonSerializerOptions? jsonSerializerOptions,
             IServiceProvider? serviceProvider)
@@ -145,7 +141,7 @@ public sealed class AGUIChatClient : IChatClient
             Uri metadataUri = string.IsNullOrEmpty(endpoint) && httpClient.BaseAddress is not null
                 ? httpClient.BaseAddress
                 : new Uri(endpoint, UriKind.RelativeOrAbsolute);
-            this.Metadata = new ChatClientMetadata("AGUI", metadataUri, modelId);
+            this.Metadata = new ChatClientMetadata("AGUI", metadataUri, null);
         }
 
         public ChatClientMetadata Metadata { get; }

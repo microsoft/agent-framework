@@ -8,18 +8,12 @@ namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.Shared;
 namespace Microsoft.Agents.AI.AGUI.Shared;
 #endif
 
-/// <summary>
-/// Represents a user message in the AG-UI protocol.
-/// </summary>
 internal sealed class AGUIUserMessage : AGUIMessage
 {
     public AGUIUserMessage()
     {
         Role = AGUIRoles.User;
     }
-
-    [JsonPropertyName("content")]
-    public string Content { get; set; } = string.Empty;
 
     [JsonPropertyName("name")]
     public string? Name { get; set; }

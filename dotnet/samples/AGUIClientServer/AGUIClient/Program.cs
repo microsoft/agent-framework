@@ -60,7 +60,6 @@ public static class Program
         var chatClient = new AGUIChatClient(
             httpClient,
             serverUrl,
-            modelId: "agui-client",
             jsonSerializerOptions: null);
 
         AIAgent agent = chatClient.CreateAIAgent(

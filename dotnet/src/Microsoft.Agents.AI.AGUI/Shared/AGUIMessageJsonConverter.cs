@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Text.Json;
@@ -10,10 +10,6 @@ namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.Shared;
 namespace Microsoft.Agents.AI.AGUI.Shared;
 #endif
 
-/// <summary>
-/// Custom JSON converter for polymorphic deserialization of AGUIMessage and its derived types.
-/// Uses the "role" property as a discriminator to determine the concrete type to deserialize.
-/// </summary>
 internal sealed class AGUIMessageJsonConverter : JsonConverter<AGUIMessage>
 {
     private const string RoleDiscriminatorPropertyName = "role";
@@ -26,9 +22,8 @@ internal sealed class AGUIMessageJsonConverter : JsonConverter<AGUIMessage>
         Type typeToConvert,
         JsonSerializerOptions options)
     {
-        // Parse the JSON into a JsonDocument to inspect properties
-        using JsonDocument document = JsonDocument.ParseValue(ref reader);
-        JsonElement jsonElement = document.RootElement.Clone();
+        var jsonElementTypeInfo = options.GetTypeInfo(typeof(JsonElement));
+        JsonElement jsonElement = (JsonElement)JsonSerializer.Deserialize(ref reader, jsonElementTypeInfo)!;
 
         // Try to get the discriminator property
         if (!jsonElement.TryGetProperty(RoleDiscriminatorPropertyName, out JsonElement discriminatorElement))
@@ -38,20 +33,14 @@ internal sealed class AGUIMessageJsonConverter : JsonConverter<AGUIMessage>
 
         string? discriminator = discriminatorElement.GetString();
 
-#if ASPNETCORE
-        AGUIJsonSerializerContext context = (AGUIJsonSerializerContext)options.TypeInfoResolver!;
-#else
-        AGUIJsonSerializerContext context = AGUIJsonSerializerContext.Default;
-#endif
-
-        // Map discriminator to concrete type and deserialize using the serializer context
+        // Map discriminator to concrete type and deserialize using type info from options
         AGUIMessage? result = discriminator switch
         {
-            AGUIRoles.Developer => jsonElement.Deserialize(context.AGUIDeveloperMessage),
-            AGUIRoles.System => jsonElement.Deserialize(context.AGUISystemMessage),
-            AGUIRoles.User => jsonElement.Deserialize(context.AGUIUserMessage),
-            AGUIRoles.Assistant => jsonElement.Deserialize(context.AGUIAssistantMessage),
-            AGUIRoles.Tool => jsonElement.Deserialize(context.AGUIToolMessage),
+            AGUIRoles.Developer => jsonElement.Deserialize(options.GetTypeInfo(typeof(AGUIDeveloperMessage))) as AGUIDeveloperMessage,
+            AGUIRoles.System => jsonElement.Deserialize(options.GetTypeInfo(typeof(AGUISystemMessage))) as AGUISystemMessage,
+            AGUIRoles.User => jsonElement.Deserialize(options.GetTypeInfo(typeof(AGUIUserMessage))) as AGUIUserMessage,
+            AGUIRoles.Assistant => jsonElement.Deserialize(options.GetTypeInfo(typeof(AGUIAssistantMessage))) as AGUIAssistantMessage,
+            AGUIRoles.Tool => jsonElement.Deserialize(options.GetTypeInfo(typeof(AGUIToolMessage))) as AGUIToolMessage,
             _ => throw new JsonException($"Unknown AGUIMessage role discriminator: '{discriminator}'")
         };
 
@@ -68,29 +57,23 @@ internal sealed class AGUIMessageJsonConverter : JsonConverter<AGUIMessage>
         AGUIMessage value,
         JsonSerializerOptions options)
     {
-#if ASPNETCORE
-        AGUIJsonSerializerContext context = (AGUIJsonSerializerContext)options.TypeInfoResolver!;
-#else
-        AGUIJsonSerializerContext context = AGUIJsonSerializerContext.Default;
-#endif
-
-        // Serialize the concrete type directly using the serializer context
+        // Serialize the concrete type directly using type info from options
         switch (value)
         {
             case AGUIDeveloperMessage developer:
-                JsonSerializer.Serialize(writer, developer, context.AGUIDeveloperMessage);
+                JsonSerializer.Serialize(writer, developer, options.GetTypeInfo(typeof(AGUIDeveloperMessage)));
                 break;
             case AGUISystemMessage system:
-                JsonSerializer.Serialize(writer, system, context.AGUISystemMessage);
+                JsonSerializer.Serialize(writer, system, options.GetTypeInfo(typeof(AGUISystemMessage)));
                 break;
             case AGUIUserMessage user:
-                JsonSerializer.Serialize(writer, user, context.AGUIUserMessage);
+                JsonSerializer.Serialize(writer, user, options.GetTypeInfo(typeof(AGUIUserMessage)));
                 break;
             case AGUIAssistantMessage assistant:
-                JsonSerializer.Serialize(writer, assistant, context.AGUIAssistantMessage);
+                JsonSerializer.Serialize(writer, assistant, options.GetTypeInfo(typeof(AGUIAssistantMessage)));
                 break;
             case AGUIToolMessage tool:
-                JsonSerializer.Serialize(writer, tool, context.AGUIToolMessage);
+                JsonSerializer.Serialize(writer, tool, options.GetTypeInfo(typeof(AGUIToolMessage)));
                 break;
             default:
                 throw new JsonException($"Unknown AGUIMessage type: {value.GetType().Name}");

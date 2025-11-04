@@ -100,9 +100,6 @@ internal static class AGUIChatMessageExtensions
 
     public static IEnumerable<AGUIMessage> AsAGUIMessages(
         this IEnumerable<ChatMessage> chatMessages,
-        // TODO: This serializer needs to contain type infos for all the content result types
-        // We should check if the contents are a string or JsonElement as we don't have to
-        // run serialization in those cases.
         JsonSerializerOptions jsonSerializerOptions)
     {
         foreach (var message in chatMessages)
@@ -111,14 +108,16 @@ internal static class AGUIChatMessageExtensions
             // Check if this is a tool result message
             if (message.Role == ChatRole.Tool)
             {
-                // TODO: Don't we need to check if message.Contents contains more than one  functionResult?
                 FunctionResultContent? functionResult = null;
                 foreach (var content in message.Contents)
                 {
                     if (content is FunctionResultContent frc)
                     {
+                        if (functionResult is not null)
+                        {
+                            throw new InvalidOperationException("A tool message should contain only one FunctionResultContent.");
+                        }
                         functionResult = frc;
-                        break;
                     }
                 }
 
@@ -235,20 +234,14 @@ internal static class AGUIChatMessageExtensions
                     elementDict[kvp.Key] = ConvertToJsonElement(kvp.Value, jsonSerializerOptions);
                 }
             }
-            // Serialize the Dictionary<string, JsonElement> which is AOT-compatible
-            string json = JsonSerializer.Serialize(elementDict, AGUIJsonSerializerContext.Default.DictionaryStringJsonElement);
-            using JsonDocument doc = JsonDocument.Parse(json);
-            return doc.RootElement.Clone();
+
+            return JsonSerializer.SerializeToElement(elementDict, AGUIJsonSerializerContext.Default.DictionaryStringJsonElement);
         }
 
-        // For primitive types and other objects, serialize to a document and extract the root element
-        // This handles int, string, bool, arrays, etc.
-        JsonTypeInfo? typeInfo = jsonSerializerOptions.TypeInfoResolver?.GetTypeInfo(value.GetType(), jsonSerializerOptions);
+        var typeInfo = jsonSerializerOptions.GetTypeInfo(value.GetType());
         if (typeInfo is not null)
         {
-            string json = JsonSerializer.Serialize(value, typeInfo);
-            using JsonDocument doc = JsonDocument.Parse(json);
-            return doc.RootElement.Clone();
+            return JsonSerializer.SerializeToElement(value, typeInfo);
         }
 
         // Fallback: if no TypeInfoResolver, throw an exception
