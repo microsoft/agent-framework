@@ -42,7 +42,7 @@ async def main():
     response = await agent.run("Divide 10 by 0", thread=thread)
     print(f"Response: {response.text}")
     print("=" * 60)
-    print("Step 2: Call divide(100, 0) - will refuse to execute due to max_invocations")
+    print("Step 2: Call divide(100, 0) - will refuse to execute due to max_invocation_exceptions")
     response = await agent.run("Divide 100 by 0", thread=thread)
     print(f"Response: {response.text}")
     print("=" * 60)
