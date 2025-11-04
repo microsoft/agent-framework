@@ -28,16 +28,19 @@ public sealed class AGUIChatClient : IChatClient
     /// </summary>
     /// <param name="httpClient">The HTTP client to use for communication with the AG-UI server.</param>
     /// <param name="endpoint">The URL for the AG-UI server.</param>
+    /// <param name="loggerFactory">The <see cref="ILoggerFactory"/> to use for logging.</param>
     /// <param name="jsonSerializerOptions">JSON serializer options for tool call argument serialization. If null, AGUIJsonSerializerContext.Default.Options will be used.</param>
     /// <param name="serviceProvider">Optional service provider for resolving dependencies like ILogger.</param>
     public AGUIChatClient(
         HttpClient httpClient,
         string endpoint,
+        ILoggerFactory? loggerFactory = null,
         JsonSerializerOptions? jsonSerializerOptions = null,
         IServiceProvider? serviceProvider = null)
     {
-        var handler = new AGUIChatClientHandler(httpClient, endpoint, this._executedServerFunctionStream, jsonSerializerOptions, serviceProvider);
-        this._innerClient = new FunctionInvokingChatClient(handler, null, serviceProvider);
+        var finalOptions = jsonSerializerOptions ?? AGUIJsonSerializerContext.Default.Options;
+        var handler = new AGUIChatClientHandler(httpClient, endpoint, this._executedServerFunctionStream, finalOptions, serviceProvider);
+        this._innerClient = new FunctionInvokingChatClient(handler, loggerFactory, serviceProvider);
     }
 
     /// <inheritdoc />
