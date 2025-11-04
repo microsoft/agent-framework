@@ -32,7 +32,7 @@ Concepts highlighted here:
    must keep stable IDs so the checkpoint state aligns when we rebuild the graph.
 2. **Executor snapshotting** - checkpoints capture the pending plan-review request
    map, at superstep boundaries.
-3. **Resume with responses** - `Workflow.run_stream_from_checkpoint` accepts a
+3. **Resume with responses** - `Workflow.send_responses_streaming` accepts a
    `responses` mapping so we can inject the stored human reply during restoration.
 
 Prerequisites:
@@ -141,7 +141,7 @@ async def main() -> None:
 
     # Resume execution and capture the re-emitted plan review request.
     request_info_event: RequestInfoEvent | None = None
-    async for event in resumed_workflow.run_stream_from_checkpoint(resume_checkpoint.checkpoint_id):
+    async for event in resumed_workflow.run_stream(checkpoint_id=resume_checkpoint.checkpoint_id):
         if isinstance(event, RequestInfoEvent) and isinstance(event.data, MagenticPlanReviewRequest):
             request_info_event = event
 
@@ -212,7 +212,7 @@ async def main() -> None:
     final_event_post: WorkflowOutputEvent | None = None
     post_emitted_events = False
     post_plan_workflow = build_workflow(checkpoint_storage)
-    async for event in post_plan_workflow.run_stream_from_checkpoint(post_plan_checkpoint.checkpoint_id):
+    async for event in post_plan_workflow.run_stream(checkpoint_id=post_plan_checkpoint.checkpoint_id):
         post_emitted_events = True
         if isinstance(event, WorkflowOutputEvent):
             final_event_post = event

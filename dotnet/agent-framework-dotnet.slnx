@@ -123,6 +123,7 @@
   <Folder Name="/Samples/GettingStarted/Workflows/Observability/">
     <Project Path="samples/GettingStarted/Workflows/Observability/ApplicationInsights/ApplicationInsights.csproj" />
     <Project Path="samples/GettingStarted/Workflows/Observability/AspireDashboard/AspireDashboard.csproj" />
+    <Project Path="samples/GettingStarted/Workflows/Observability/WorkflowAsAnAgent/WorkflowAsAnAgentObservability.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflows/Visualization/">
     <Project Path="samples/GettingStarted/Workflows/Visualization/Visualization.csproj" Id="99bf0bc6-2440-428e-b3e7-d880e4b7a5fd" />
@@ -137,6 +138,8 @@
     <Project Path="samples/GettingStarted/Workflows/_Foundational/07_MixedWorkflowAgentsAndExecutors/07_MixedWorkflowAgentsAndExecutors.csproj" />
   </Folder>
   <Folder Name="/Samples/Catalog/">
+    <Project Path="samples/Catalog/AgentWithTextSearchRag/AgentWithTextSearchRag.csproj" />
+    <Project Path="samples/Catalog/AgentsInWorkflows/AgentsInWorkflows.csproj" />
     <Project Path="samples/Catalog/DeepResearchAgent/DeepResearchAgent.csproj" />
   </Folder>
   <Folder Name="/Solution Items/">
