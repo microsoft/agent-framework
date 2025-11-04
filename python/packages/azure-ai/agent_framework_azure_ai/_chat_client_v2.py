@@ -13,10 +13,9 @@ from agent_framework import (
     use_chat_middleware,
     use_function_invocation,
 )
-from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.observability import use_observability
-from agent_framework.openai import OpenAIBaseResponsesClient
+from agent_framework.openai._responses_client import OpenAIBaseResponsesClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import PromptAgentDefinition
 from azure.core.credentials_async import AsyncTokenCredential
@@ -27,6 +26,8 @@ from openai.types.responses.parsed_response import (
 from openai.types.responses.response import Response as OpenAIResponse
 from pydantic import BaseModel, ValidationError
 
+from ._shared import AzureAISettings
+
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
 else:
@@ -34,47 +35,6 @@ else:
 
 
 logger = get_logger("agent_framework.azure")
-
-
-class AzureAISettings(AFBaseSettings):
-    """Azure AI Project settings.
-
-    The settings are first loaded from environment variables with the prefix 'AZURE_AI_'.
-    If the environment variables are not found, the settings can be loaded from a .env file
-    with the encoding 'utf-8'. If the settings are not found in the .env file, the settings
-    are ignored; however, validation will fail alerting that the settings are missing.
-
-    Keyword Args:
-        project_endpoint: The Azure AI Project endpoint URL.
-            Can be set via environment variable AZURE_AI_PROJECT_ENDPOINT.
-        model_deployment_name: The name of the model deployment to use.
-            Can be set via environment variable AZURE_AI_MODEL_DEPLOYMENT_NAME.
-        env_file_path: If provided, the .env settings are read from this file path location.
-        env_file_encoding: The encoding of the .env file, defaults to 'utf-8'.
-
-    Examples:
-        .. code-block:: python
-
-            from agent_framework_azure_ai import AzureAISettings
-
-            # Using environment variables
-            # Set AZURE_AI_PROJECT_ENDPOINT=https://your-project.cognitiveservices.azure.com
-            # Set AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4
-            settings = AzureAISettings()
-
-            # Or passing parameters directly
-            settings = AzureAISettings(
-                project_endpoint="https://your-project.cognitiveservices.azure.com", model_deployment_name="gpt-4"
-            )
-
-            # Or loading from a .env file
-            settings = AzureAISettings(env_file_path="path/to/.env")
-    """
-
-    env_prefix: ClassVar[str] = "AZURE_AI_"
-
-    project_endpoint: str | None = None
-    model_deployment_name: str | None = None
 
 
 TAzureAIAgentClient = TypeVar("TAzureAIAgentClient", bound="AzureAIAgentClientV2")
@@ -123,7 +83,7 @@ class AzureAIAgentClientV2(OpenAIBaseResponsesClient):
         Examples:
             .. code-block:: python
 
-                from agent_framework_azure_ai import AzureAIAgentClient
+                from agent_framework.azure import AzureAIAgentClient
                 from azure.identity.aio import DefaultAzureCredential
 
                 # Using environment variables
@@ -225,24 +185,6 @@ class AzureAIAgentClientV2(OpenAIBaseResponsesClient):
         """Close the project_client."""
         await self._close_client_if_needed()
 
-    @classmethod
-    def from_settings(cls: type[TAzureAIAgentClient], settings: dict[str, Any]) -> TAzureAIAgentClient:
-        """Initialize a AzureAIAgentClient from a dictionary of settings.
-
-        Args:
-            settings: A dictionary of settings for the service.
-        """
-        return cls(
-            project_client=settings.get("project_client"),
-            agent_id=settings.get("agent_id"),
-            conversation_id=settings.get("conversation_id"),
-            project_endpoint=settings.get("project_endpoint"),
-            model_deployment_name=settings.get("model_deployment_name"),
-            agent_name=settings.get("agent_name"),
-            credential=settings.get("credential"),
-            env_file_path=settings.get("env_file_path"),
-        )
-
     async def _get_agent_reference_or_create(
         self, run_options: dict[str, Any], messages_instructions: str | None
     ) -> dict[str, str]:
@@ -251,6 +193,8 @@ class AzureAIAgentClientV2(OpenAIBaseResponsesClient):
         Returns:
             str: The agent_name to use
         """
+        agent_name = self.agent_name or "UnnamedAgent"
+
         # If no agent_version is provided, create a new agent
         if self.agent_version is None:
             if "model" not in run_options or not run_options["model"]:
@@ -277,13 +221,13 @@ class AzureAIAgentClientV2(OpenAIBaseResponsesClient):
             # TODO (dmytrostruk): Add response format
 
             created_agent = await self.project_client.agents.create_version(
-                agent_name=self.agent_name, definition=PromptAgentDefinition(**args)
+                agent_name=agent_name, definition=PromptAgentDefinition(**args)
             )
 
             self.agent_name = created_agent.name
             self.agent_version = created_agent.version
 
-        return {"name": self.agent_name, "version": self.agent_version, "type": "agent_reference"}
+        return {"name": agent_name, "version": self.agent_version, "type": "agent_reference"}
 
     async def _get_conversation_id_or_create(self, run_options: dict[str, Any]) -> str:
         # Since "conversation" property is used, remove "previous_response_id" from options
@@ -336,7 +280,8 @@ class AzureAIAgentClientV2(OpenAIBaseResponsesClient):
 
         run_options["extra_body"] = {"agent": agent_reference}
 
-        # Remove properties that are not supported:
+        # Remove properties that are not supported
+        # Model and tools captured in the agent setup
         if "model" in run_options:
             run_options.pop("model", None)
 

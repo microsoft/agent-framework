@@ -70,7 +70,7 @@ from ._shared import OpenAIBase, OpenAIConfigMixin, OpenAISettings
 
 logger = get_logger("agent_framework.openai")
 
-__all__ = ["OpenAIBaseResponsesClient", "OpenAIResponsesClient"]
+__all__ = ["OpenAIResponsesClient"]
 
 # region ResponsesClient
 

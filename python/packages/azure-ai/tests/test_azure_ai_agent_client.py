@@ -52,7 +52,6 @@ from azure.ai.agents.models import (
     VectorStore,
 )
 from azure.core.credentials_async import AsyncTokenCredential
-from azure.core.exceptions import ResourceNotFoundError
 from azure.identity.aio import AzureCliCredential
 from pydantic import BaseModel, Field, ValidationError
 
@@ -1003,29 +1002,6 @@ async def test_azure_ai_chat_client_prep_tools_file_search_with_vector_stores(
         mock_file_search.assert_called_once_with(vector_store_ids=["vs-123"])
 
 
-async def test_azure_ai_chat_client_setup_azure_ai_observability_success(
-    mock_agents_client: MagicMock,
-) -> None:
-    """Test setup_azure_ai_observability success case with connection string."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
-    mock_ai_project_client = MagicMock()
-
-    # Mock successful connection string retrieval
-    mock_ai_project_client.telemetry.get_application_insights_connection_string = AsyncMock(
-        return_value="InstrumentationKey=test-key;IngestionEndpoint=https://test.com"
-    )
-
-    # Mock setup_observability function (it's imported inside the method)
-    with patch("agent_framework.observability.setup_observability") as mock_setup:
-        await chat_client.setup_azure_ai_observability(mock_ai_project_client, enable_sensitive_data=True)
-
-        # Verify setup_observability was called with the correct parameters
-        mock_setup.assert_called_once_with(
-            applicationinsights_connection_string="InstrumentationKey=test-key;IngestionEndpoint=https://test.com",
-            enable_sensitive_data=True,
-        )
-
-
 async def test_azure_ai_chat_client_create_agent_stream_submit_tool_approvals(
     mock_agents_client: MagicMock,
 ) -> None:
@@ -1460,29 +1436,6 @@ def test_azure_ai_chat_client_extract_url_citations_with_citations(mock_agents_c
     assert len(citation.annotated_regions) == 1
     assert citation.annotated_regions[0].start_index == 10
     assert citation.annotated_regions[0].end_index == 20
-
-
-async def test_azure_ai_chat_client_setup_azure_ai_observability_resource_not_found(
-    mock_agents_client: MagicMock,
-) -> None:
-    """Test setup_azure_ai_observability when Application Insights connection string is not found."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
-    mock_ai_project_client = MagicMock()
-
-    # Mock telemetry.get_application_insights_connection_string to raise ResourceNotFoundError
-    mock_ai_project_client.telemetry.get_application_insights_connection_string = AsyncMock(
-        side_effect=ResourceNotFoundError("No Application Insights found")
-    )
-
-    # Mock logger.warning to capture the warning message
-    with patch("agent_framework_azure_ai._chat_client.logger") as mock_logger:
-        await chat_client.setup_azure_ai_observability(mock_ai_project_client)
-
-        # Verify warning was logged
-        mock_logger.warning.assert_called_once_with(
-            "No Application Insights connection string found for the Azure AI Project, "
-            "please call setup_observability() manually."
-        )
 
 
 def get_weather(

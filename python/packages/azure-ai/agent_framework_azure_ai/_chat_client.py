@@ -40,7 +40,6 @@ from agent_framework import (
     use_chat_middleware,
     use_function_invocation,
 )
-from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceInitializationError, ServiceResponseException
 from agent_framework.observability import use_observability
 from azure.ai.agents.aio import AgentsClient
@@ -86,10 +85,10 @@ from azure.ai.agents.models import (
     ToolDefinition,
     ToolOutput,
 )
-from azure.ai.projects.aio import AIProjectClient
 from azure.core.credentials_async import AsyncTokenCredential
-from azure.core.exceptions import ResourceNotFoundError
 from pydantic import ValidationError
+
+from ._shared import AzureAISettings
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -98,47 +97,6 @@ else:
 
 
 logger = get_logger("agent_framework.azure")
-
-
-class AzureAISettings(AFBaseSettings):
-    """Azure AI Project settings.
-
-    The settings are first loaded from environment variables with the prefix 'AZURE_AI_'.
-    If the environment variables are not found, the settings can be loaded from a .env file
-    with the encoding 'utf-8'. If the settings are not found in the .env file, the settings
-    are ignored; however, validation will fail alerting that the settings are missing.
-
-    Keyword Args:
-        project_endpoint: The Azure AI Project endpoint URL.
-            Can be set via environment variable AZURE_AI_PROJECT_ENDPOINT.
-        model_deployment_name: The name of the model deployment to use.
-            Can be set via environment variable AZURE_AI_MODEL_DEPLOYMENT_NAME.
-        env_file_path: If provided, the .env settings are read from this file path location.
-        env_file_encoding: The encoding of the .env file, defaults to 'utf-8'.
-
-    Examples:
-        .. code-block:: python
-
-            from agent_framework_azure_ai import AzureAISettings
-
-            # Using environment variables
-            # Set AZURE_AI_PROJECT_ENDPOINT=https://your-project.cognitiveservices.azure.com
-            # Set AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4
-            settings = AzureAISettings()
-
-            # Or passing parameters directly
-            settings = AzureAISettings(
-                project_endpoint="https://your-project.cognitiveservices.azure.com", model_deployment_name="gpt-4"
-            )
-
-            # Or loading from a .env file
-            settings = AzureAISettings(env_file_path="path/to/.env")
-    """
-
-    env_prefix: ClassVar[str] = "AZURE_AI_"
-
-    project_endpoint: str | None = None
-    model_deployment_name: str | None = None
 
 
 TAzureAIAgentClient = TypeVar("TAzureAIAgentClient", bound="AzureAIAgentClient")
@@ -257,29 +215,6 @@ class AzureAIAgentClient(BaseChatClient):
         self._should_delete_agent = False  # Track whether we should delete the agent
         self._should_close_client = should_close_client  # Track whether we should close client connection
         self._agent_definition: Agent | None = None  # Cached definition for existing agent
-
-    async def setup_azure_ai_observability(
-        self, project_client: AIProjectClient, enable_sensitive_data: bool | None = None
-    ) -> None:
-        """Use this method to setup tracing in your Azure AI Project.
-
-        This will take the connection string from the project project_client.
-        It will override any connection string that is set in the environment variables.
-        It will disable any OTLP endpoint that might have been set.
-        """
-        try:
-            conn_string = await project_client.telemetry.get_application_insights_connection_string()
-        except ResourceNotFoundError:
-            logger.warning(
-                "No Application Insights connection string found for the Azure AI Project, "
-                "please call setup_observability() manually."
-            )
-            return
-        from agent_framework.observability import setup_observability
-
-        setup_observability(
-            applicationinsights_connection_string=conn_string, enable_sensitive_data=enable_sensitive_data
-        )
 
     async def __aenter__(self) -> "Self":
         """Async context manager entry."""
@@ -945,7 +880,7 @@ class AzureAIAgentClient(BaseChatClient):
                             "Bing search tool requires either 'connection_id' for Bing Grounding "
                             "or both 'custom_connection_id' and 'custom_instance_name' for Custom Bing Search. "
                             "These can be provided via additional_properties or environment variables: "
-                            "'BING_CONNECTION_ID', 'BING_CUSTOM_CONNECTION_NAME', "
+                            "'BING_CONNECTION_ID', 'BING_CUSTOM_CONNECTION_ID', "
                             "'BING_CUSTOM_INSTANCE_NAME'"
                         )
                     tool_definitions.extend(bing_search.definitions)
