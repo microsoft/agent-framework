@@ -8,9 +8,7 @@ using Hosting.AgentThreadStore.IntegrationTests.Mock;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hosting;
 using Microsoft.Extensions.AI;
-using Microsoft.VisualStudio.TestPlatform.Utilities;
 using Xunit.Abstractions;
-using Xunit.Sdk;
 using ThreadStore = Microsoft.Agents.AI.Hosting.AgentThreadStore;
 
 namespace Hosting.AgentThreadStore.IntegrationTests;
