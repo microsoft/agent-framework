@@ -13,28 +13,27 @@ namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
 /// <summary>
 /// These tests ensure that OpenTelemetry Activity traces are properly created for workflow monitoring.
+/// Tests are run in a collection to avoid parallel execution since ActivityListener is global.
+/// Each test creates a new instance of ObservabilityTests and runs in serial within the collection.
+/// This prevents interference between tests due to the global nature of ActivityListener.
 /// </summary>
+[Collection("ObservabilityTests")]
 public sealed class ObservabilityTests : IDisposable
 {
     private readonly ActivityListener _activityListener;
     private readonly List<Activity> _capturedActivities = [];
-    private readonly List<Activity> _startedActivities = [];
-    private readonly List<Activity> _stoppedActivities = [];
+
     private bool _isDisposed;
 
     public ObservabilityTests()
     {
         // Set up activity listener to capture activities from workflow
+        // This is global and captures ALL workflow activities from ANY test in the same process!
         this._activityListener = new ActivityListener
         {
             ShouldListenTo = source => source.Name.Contains(typeof(Workflow).Namespace!),
             Sample = (ref ActivityCreationOptions<ActivityContext> options) => ActivitySamplingResult.AllData,
-            ActivityStarted = activity =>
-            {
-                this._capturedActivities.Add(activity);
-                this._startedActivities.Add(activity);
-            },
-            ActivityStopped = activity => this._stoppedActivities.Add(activity)
+            ActivityStarted = activity => this._capturedActivities.Add(activity),
         };
         ActivitySource.AddActivityListener(this._activityListener);
     }
@@ -101,55 +100,82 @@ public sealed class ObservabilityTests : IDisposable
         }
     }
 
-    [Theory]
-    [InlineData("Default")]
-    [InlineData("OffThread")]
-    [InlineData("Concurrent")]
-    [InlineData("Lockstep")]
-    public async Task CreatesWorkflowEndToEndActivities_WithCorrectNameAsync(string executionEnvironmentName)
+    private async Task TestWorkflowEndToEndActivitiesAsync(string executionEnvironmentName)
     {
         // Arrange
-        var workflow = CreateWorkflow();
+        // Create a test activity to correlate captured activities
+        using var testActivity = new Activity("ObservabilityTest").Start();
 
-        // Act - consume the async enumerable to trigger activity creation
+        // Act
+        var workflow = CreateWorkflow();
         var executionEnvironment = GetExecutionEnvironment(executionEnvironmentName);
         Run run = await executionEnvironment.RunAsync(workflow, "Hello, World!");
         await run.DisposeAsync();
 
         // Assert
-        this._capturedActivities.Should().HaveCount(8, "Exactly 8 activities should be created.");
+        var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
+        capturedActivities.Should().HaveCount(8, "Exactly 8 activities should be created.");
 
         var expectedActivityNames = GetExpectedOrderedActivityNames();
         for (int i = 0; i < expectedActivityNames.Count; i++)
         {
-            this._capturedActivities[i].OperationName.Should().Be(expectedActivityNames[i],
+            capturedActivities[i].OperationName.Should().Be(expectedActivityNames[i],
                 $"Activity at index {i} should have the correct operation name.");
         }
 
         // Verify WorkflowRun activity events include workflow lifecycle events
-        var workflowRunActivity = this._capturedActivities.First(a => a.OperationName == ActivityNames.WorkflowRun);
+        var workflowRunActivity = capturedActivities.First(a => a.OperationName == ActivityNames.WorkflowRun);
         var activityEvents = workflowRunActivity.Events.ToList();
         activityEvents.Should().Contain(e => e.Name == EventNames.WorkflowStarted, "activity should have workflow started event");
         activityEvents.Should().Contain(e => e.Name == EventNames.WorkflowCompleted, "activity should have workflow completed event");
     }
 
     [Fact]
+    public async Task CreatesWorkflowEndToEndActivities_WithCorrectName_DefaultAsync()
+    {
+        await this.TestWorkflowEndToEndActivitiesAsync("Default");
+    }
+
+    [Fact]
+    public async Task CreatesWorkflowEndToEndActivities_WithCorrectName_OffThreadAsync()
+    {
+        await this.TestWorkflowEndToEndActivitiesAsync("OffThread");
+    }
+
+    [Fact]
+    public async Task CreatesWorkflowEndToEndActivities_WithCorrectName_ConcurrentAsync()
+    {
+        await this.TestWorkflowEndToEndActivitiesAsync("Concurrent");
+    }
+
+    [Fact]
+    public async Task CreatesWorkflowEndToEndActivities_WithCorrectName_LockstepAsync()
+    {
+        await this.TestWorkflowEndToEndActivitiesAsync("Lockstep");
+    }
+
+    [Fact]
     public void CreatesWorkflowActivities_WithCorrectName()
     {
-        // Arrange & Act
+        // Arrange
+        // Create a test activity to correlate captured activities
+        using var testActivity = new Activity("ObservabilityTest").Start();
+
+        // Act
         CreateWorkflow();
 
         // Assert
-        this._capturedActivities.Should().HaveCount(1, "Exactly 1 activity should be created.");
-        this._capturedActivities[0].OperationName.Should().Be(ActivityNames.WorkflowBuild,
+        var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
+        capturedActivities.Should().HaveCount(1, "Exactly 1 activity should be created.");
+        capturedActivities[0].OperationName.Should().Be(ActivityNames.WorkflowBuild,
             "The activity should have the correct operation name for workflow build.");
 
-        var events = this._capturedActivities[0].Events.ToList();
+        var events = capturedActivities[0].Events.ToList();
         events.Should().Contain(e => e.Name == EventNames.BuildStarted, "activity should have build started event");
         events.Should().Contain(e => e.Name == EventNames.BuildValidationCompleted, "activity should have build validation completed event");
         events.Should().Contain(e => e.Name == EventNames.BuildCompleted, "activity should have build completed event");
 
-        var tags = this._capturedActivities[0].Tags.ToDictionary(t => t.Key, t => t.Value);
+        var tags = capturedActivities[0].Tags.ToDictionary(t => t.Key, t => t.Value);
         tags.Should().ContainKey(Tags.WorkflowId);
         tags.Should().ContainKey(Tags.WorkflowDefinition);
     }
