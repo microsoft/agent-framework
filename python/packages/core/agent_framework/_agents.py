@@ -593,6 +593,7 @@ class ChatAgent(BaseAgent):
         frequency_penalty: float | None = None,
         logit_bias: dict[str | int, float] | None = None,
         max_tokens: int | None = None,
+        maximum_consecutive_errors_per_request: int | None = None,
         metadata: dict[str, Any] | None = None,
         model_id: str | None = None,
         presence_penalty: float | None = None,
@@ -637,6 +638,9 @@ class ChatAgent(BaseAgent):
             frequency_penalty: The frequency penalty to use.
             logit_bias: The logit bias to use.
             max_tokens: The maximum number of tokens to generate.
+            maximum_consecutive_errors_per_request: Maximum number of consecutive tool errors allowed.
+                If set to 0, exceptions from tool calls will be raised immediately instead of
+                being converted to conversational responses. If None, uses framework default (3).
             metadata: Additional metadata to include in the request.
             model_id: The model_id to use for the agent.
             presence_penalty: The presence penalty to use.
@@ -693,6 +697,7 @@ class ChatAgent(BaseAgent):
             instructions=instructions,
             logit_bias=logit_bias,
             max_tokens=max_tokens,
+            maximum_consecutive_errors_per_request=maximum_consecutive_errors_per_request,
             metadata=metadata,
             presence_penalty=presence_penalty,
             response_format=response_format,

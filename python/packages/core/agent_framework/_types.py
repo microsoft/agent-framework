@@ -3019,6 +3019,7 @@ class ChatOptions(SerializationMixin):
         instructions: str | None = None,
         logit_bias: MutableMapping[str | int, float] | None = None,
         max_tokens: int | None = None,
+        maximum_consecutive_errors_per_request: int | None = None,
         metadata: MutableMapping[str, str] | None = None,
         presence_penalty: float | None = None,
         response_format: type[BaseModel] | None = None,
@@ -3047,6 +3048,9 @@ class ChatOptions(SerializationMixin):
             instructions: the instructions, will be turned into a system or equivalent message.
             logit_bias: The logit bias mapping.
             max_tokens: The maximum number of tokens (must be > 0).
+            maximum_consecutive_errors_per_request: Maximum number of consecutive tool errors allowed.
+                If set to 0, exceptions from tool calls will be raised immediately instead of
+                being converted to conversational responses. If None, uses framework default (3).
             metadata: Metadata mapping.
             presence_penalty: The presence penalty (must be between -2.0 and 2.0).
             response_format: Structured output response format schema. Must be a valid Pydantic model.
@@ -3080,6 +3084,8 @@ class ChatOptions(SerializationMixin):
             top_p = float(top_p)
         if max_tokens is not None and max_tokens <= 0:
             raise ValueError("max_tokens must be greater than 0")
+        if maximum_consecutive_errors_per_request is not None and maximum_consecutive_errors_per_request < 0:
+            raise ValueError("maximum_consecutive_errors_per_request must be >= 0")
 
         if additional_properties is None:
             additional_properties = {}
@@ -3094,6 +3100,7 @@ class ChatOptions(SerializationMixin):
         self.instructions = instructions
         self.logit_bias = logit_bias
         self.max_tokens = max_tokens
+        self.maximum_consecutive_errors_per_request = maximum_consecutive_errors_per_request
         self.metadata = metadata
         self.presence_penalty = presence_penalty
         self.response_format = response_format

@@ -1017,6 +1017,7 @@ async def _auto_invoke_function(
     sequence_index: int | None = None,
     request_index: int | None = None,
     middleware_pipeline: Any = None,  # Optional MiddlewarePipeline
+    maximum_consecutive_errors_per_request: int | None = None,
 ) -> "Contents":
     """Invoke a function call requested by the agent, applying middleware that is defined.
 
@@ -1029,6 +1030,8 @@ async def _auto_invoke_function(
         sequence_index: The index of the function call in the sequence.
         request_index: The index of the request iteration.
         middleware_pipeline: Optional middleware pipeline to apply during execution.
+        maximum_consecutive_errors_per_request: Maximum consecutive errors allowed.
+            If 0, raise exceptions immediately.
 
     Returns:
         A FunctionResultContent containing the result or exception.
@@ -1086,6 +1089,9 @@ async def _auto_invoke_function(
                 result=function_result,
             )
         except Exception as exc:
+            # If maximum_consecutive_errors_per_request is 0, raise immediately
+            if maximum_consecutive_errors_per_request == 0:
+                raise exc
             return FunctionResultContent(
                 call_id=function_call_content.call_id,
                 exception=exc,
@@ -1117,6 +1123,9 @@ async def _auto_invoke_function(
             result=function_result,
         )
     except Exception as exc:
+        # If maximum_consecutive_errors_per_request is 0, raise immediately
+        if maximum_consecutive_errors_per_request == 0:
+            raise exc
         return FunctionResultContent(
             call_id=function_call_content.call_id,
             exception=exc,
@@ -1150,6 +1159,7 @@ async def _execute_function_calls(
     | MutableMapping[str, Any] \
     | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]",
     middleware_pipeline: Any = None,  # Optional MiddlewarePipeline to avoid circular imports
+    maximum_consecutive_errors_per_request: int | None = None,
 ) -> Sequence["Contents"]:
     """Execute multiple function calls concurrently.
 
@@ -1159,6 +1169,7 @@ async def _execute_function_calls(
         function_calls: A sequence of FunctionCallContent to execute.
         tools: The tools available for execution.
         middleware_pipeline: Optional middleware pipeline to apply during execution.
+        maximum_consecutive_errors_per_request: Maximum consecutive errors allowed. If 0, raise immediately.
 
     Returns:
         A list of Contents containing the results of each function call.
@@ -1191,9 +1202,25 @@ async def _execute_function_calls(
             sequence_index=seq_idx,
             request_index=attempt_idx,
             middleware_pipeline=middleware_pipeline,
+            maximum_consecutive_errors_per_request=maximum_consecutive_errors_per_request,
         )
         for seq_idx, function_call in enumerate(function_calls)
     ])
+
+
+def _extract_maximum_consecutive_errors_per_request(kwargs: dict[str, Any]) -> int | None:
+    """Extract maximum_consecutive_errors_per_request from kwargs.
+
+    Args:
+        kwargs: The keyword arguments dictionary containing chat_options.
+
+    Returns:
+        The maximum_consecutive_errors_per_request value, or None if not set.
+    """
+    chat_options = kwargs.get("chat_options")
+    if chat_options and hasattr(chat_options, "maximum_consecutive_errors_per_request"):
+        return chat_options.maximum_consecutive_errors_per_request
+    return None
 
 
 def _update_conversation_id(kwargs: dict[str, Any], conversation_id: str | None) -> None:
@@ -1334,6 +1361,9 @@ def _handle_function_calls_response(
             # because the underlying function may not preserve it in kwargs
             stored_middleware_pipeline = kwargs.get("_function_middleware_pipeline")
 
+            # Extract maximum_consecutive_errors_per_request setting
+            max_consecutive_errors = _extract_maximum_consecutive_errors_per_request(kwargs)
+
             # Get max_iterations from instance additional_properties or class attribute
             instance_max_iterations: int = DEFAULT_MAX_ITERATIONS
             if hasattr(self, "additional_properties") and self.additional_properties:
@@ -1358,6 +1388,7 @@ def _handle_function_calls_response(
                             function_calls=approved_responses,
                             tools=tools,  # type: ignore
                             middleware_pipeline=stored_middleware_pipeline,
+                            maximum_consecutive_errors_per_request=max_consecutive_errors,
                         )
                     _replace_approval_contents_with_results(prepped_messages, fcc_todo, approved_function_results)
 
@@ -1387,6 +1418,7 @@ def _handle_function_calls_response(
                         function_calls=function_calls,
                         tools=tools,  # type: ignore
                         middleware_pipeline=stored_middleware_pipeline,
+                        maximum_consecutive_errors_per_request=max_consecutive_errors,
                     )
 
                     # Check if we have approval requests in the results
@@ -1482,6 +1514,9 @@ def _handle_function_calls_streaming_response(
             # because the underlying function may not preserve it in kwargs
             stored_middleware_pipeline = kwargs.get("_function_middleware_pipeline")
 
+            # Extract maximum_consecutive_errors_per_request setting
+            max_consecutive_errors = _extract_maximum_consecutive_errors_per_request(kwargs)
+
             # Get max_iterations from instance additional_properties or class attribute
             instance_max_iterations: int = DEFAULT_MAX_ITERATIONS
             if hasattr(self, "additional_properties") and self.additional_properties:
@@ -1505,6 +1540,7 @@ def _handle_function_calls_streaming_response(
                             function_calls=approved_responses,
                             tools=tools,  # type: ignore
                             middleware_pipeline=stored_middleware_pipeline,
+                            maximum_consecutive_errors_per_request=max_consecutive_errors,
                         )
                     _replace_approval_contents_with_results(prepped_messages, fcc_todo, approved_function_results)
 
@@ -1557,6 +1593,7 @@ def _handle_function_calls_streaming_response(
                         function_calls=function_calls,
                         tools=tools,  # type: ignore
                         middleware_pipeline=stored_middleware_pipeline,
+                        maximum_consecutive_errors_per_request=max_consecutive_errors,
                     )
 
                     # Check if we have approval requests in the results

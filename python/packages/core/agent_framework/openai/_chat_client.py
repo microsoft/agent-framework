@@ -160,6 +160,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
             exclude={
                 "type",
                 "instructions",  # included as system message
+                "maximum_consecutive_errors_per_request",  # internal parameter for tool execution
             }
         )
 
