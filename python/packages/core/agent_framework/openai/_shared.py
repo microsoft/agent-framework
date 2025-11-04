@@ -170,7 +170,7 @@ class OpenAIBase(SerializationMixin):
         pass
 
     async def ensure_client(self) -> AsyncOpenAI:
-        """Ensures OpenAI client is initialized."""
+        """Ensure OpenAI client is initialized."""
         await self.initialize_client()
         if self.client is None:
             raise ServiceInitializationError("OpenAI client is not initialized")
