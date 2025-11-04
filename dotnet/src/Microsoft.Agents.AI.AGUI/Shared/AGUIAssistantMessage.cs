@@ -12,7 +12,7 @@ internal sealed class AGUIAssistantMessage : AGUIMessage
 {
     public AGUIAssistantMessage()
     {
-        Role = AGUIRoles.Assistant;
+        this.Role = AGUIRoles.Assistant;
     }
 
     [JsonPropertyName("name")]

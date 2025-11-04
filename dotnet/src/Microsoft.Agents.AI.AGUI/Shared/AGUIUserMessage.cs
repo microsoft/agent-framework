@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Text.Json.Serialization;
 
@@ -12,7 +12,7 @@ internal sealed class AGUIUserMessage : AGUIMessage
 {
     public AGUIUserMessage()
     {
-        Role = AGUIRoles.User;
+        this.Role = AGUIRoles.User;
     }
 
     [JsonPropertyName("name")]

@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Text.Json.Serialization;
 
@@ -12,7 +12,7 @@ internal sealed class AGUIToolMessage : AGUIMessage
 {
     public AGUIToolMessage()
     {
-        Role = AGUIRoles.Tool;
+        this.Role = AGUIRoles.Tool;
     }
 
     [JsonPropertyName("toolCallId")]

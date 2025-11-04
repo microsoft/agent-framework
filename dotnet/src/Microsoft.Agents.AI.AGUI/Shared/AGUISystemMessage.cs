@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 #if ASPNETCORE
 namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.Shared;
@@ -10,6 +10,6 @@ internal sealed class AGUISystemMessage : AGUIMessage
 {
     public AGUISystemMessage()
     {
-        Role = AGUIRoles.System;
+        this.Role = AGUIRoles.System;
     }
 }
