@@ -515,26 +515,26 @@ public sealed class AGUIAgentTests
 
 internal sealed class TestDelegatingHandler : DelegatingHandler
 {
-    private readonly Queue<Func<HttpRequestMessage, HttpResponseMessage>> _responseFactories = new();
+    private readonly Queue<Func<HttpRequestMessage, Task<HttpResponseMessage>>> _responseFactories = new();
     private readonly List<string> _capturedRunIds = new();
 
     public IReadOnlyList<string> CapturedRunIds => this._capturedRunIds;
 
     public void AddResponse(BaseEvent[] events)
     {
-        this._responseFactories.Enqueue(_ => CreateResponse(events));
+        this._responseFactories.Enqueue(_ => Task.FromResult(CreateResponse(events)));
     }
 
     public void AddResponseWithCapture(BaseEvent[] events)
     {
-        this._responseFactories.Enqueue(request =>
+        this._responseFactories.Enqueue(async request =>
         {
-            this.CaptureRunId(request);
+            await this.CaptureRunIdAsync(request);
             return CreateResponse(events);
         });
     }
 
-    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         if (this._responseFactories.Count == 0)
         {
@@ -543,7 +543,7 @@ internal sealed class TestDelegatingHandler : DelegatingHandler
         }
 
         var factory = this._responseFactories.Dequeue();
-        return Task.FromResult(factory(request));
+        return await factory(request);
     }
 
     private static HttpResponseMessage CreateResponse(BaseEvent[] events)
@@ -558,12 +558,9 @@ internal sealed class TestDelegatingHandler : DelegatingHandler
         };
     }
 
-    private void CaptureRunId(HttpRequestMessage request)
+    private async Task CaptureRunIdAsync(HttpRequestMessage request)
     {
-        // Suppress VSTHRD002: This is test code and synchronous read is acceptable
-#pragma warning disable VSTHRD002
-        string requestBody = request.Content!.ReadAsStringAsync().ConfigureAwait(false).GetAwaiter().GetResult();
-#pragma warning restore VSTHRD002
+        string requestBody = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
         RunAgentInput? input = JsonSerializer.Deserialize(requestBody, AGUIJsonSerializerContext.Default.RunAgentInput);
         if (input != null)
         {
