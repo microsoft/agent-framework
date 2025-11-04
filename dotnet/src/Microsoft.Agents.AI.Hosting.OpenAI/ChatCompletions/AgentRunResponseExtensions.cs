@@ -91,7 +91,8 @@ internal static class AgentRunResponseExtensions
                     // function result. ChatCompletions dont provide the results of function result per API reference
                     FunctionResultContent functionResultContent => null,
 
-                    _ => throw new InvalidOperationException($"Got unsupported content: {content.GetType()}")
+                    // ignore
+                    _ => null
                 };
 
                 if (choiceMessage is null)

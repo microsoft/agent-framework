@@ -102,8 +102,7 @@ internal static class AIAgentChatCompletionsProcessor
                         DataContent audioContent when audioContent.HasTopLevelMediaType("audio") => new() { Content = audioContent.Base64Data.ToString() },
 
                         // file
-                        DataContent fileContent when !fileContent.HasTopLevelMediaType("image") && !fileContent.HasTopLevelMediaType("audio")
-                            => new() { Content = fileContent.Base64Data.ToString() },
+                        DataContent fileContent => new() { Content = fileContent.Base64Data.ToString() },
                         HostedFileContent fileContent => new() { Content = fileContent.FileId },
 
                         // function call
@@ -115,7 +114,8 @@ internal static class AIAgentChatCompletionsProcessor
                         // function result. ChatCompletions dont provide the results of function result per API reference
                         FunctionResultContent functionResultContent => null,
 
-                        _ => throw new InvalidOperationException($"Got unsupported content: {content.GetType()}")
+                        // ignore
+                        _ => null
                     };
 
                     if (delta is null)
