@@ -291,7 +291,7 @@ class AzureAIAgentClientV2(OpenAIBaseResponsesClient):
         return run_options
 
     async def initialize_client(self):
-        """Initializes OpenAI client asynchronously."""
+        """Initialize OpenAI client asynchronously."""
         self.client = await self.project_client.get_openai_client()  # type: ignore
 
     def get_conversation_id(self, response: OpenAIResponse | ParsedResponse[BaseModel], store: bool) -> str | None:
