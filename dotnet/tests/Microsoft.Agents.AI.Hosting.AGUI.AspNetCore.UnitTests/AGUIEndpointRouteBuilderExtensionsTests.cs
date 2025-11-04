@@ -225,6 +225,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
             IAsyncEnumerable<BaseEvent> events = agent.RunStreamingAsync(
                 messages,
                 cancellationToken: cancellationToken)
+                .AsChatResponseUpdatesAsync()
                 .AsAGUIEventStreamAsync(
                     input.ThreadId,
                     input.RunId,

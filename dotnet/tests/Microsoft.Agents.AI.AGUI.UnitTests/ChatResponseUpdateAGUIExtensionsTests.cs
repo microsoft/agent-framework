@@ -10,10 +10,10 @@ using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.AGUI.UnitTests;
 
-public sealed class AgentRunResponseUpdateAGUIExtensionsTests
+public sealed class ChatResponseUpdateAGUIExtensionsTests
 {
     [Fact]
-    public async Task AsAgentRunResponseUpdatesAsync_ConvertsRunStartedEvent_ToResponseUpdateWithMetadataAsync()
+    public async Task AsChatResponseUpdatesAsync_ConvertsRunStartedEvent_ToResponseUpdateWithMetadataAsync()
     {
         // Arrange
         List<BaseEvent> events =
@@ -22,8 +22,8 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         ];
 
         // Act
-        List<AgentRunResponseUpdate> updates = [];
-        await foreach (AgentRunResponseUpdate update in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+        List<ChatResponseUpdate> updates = [];
+        await foreach (ChatResponseUpdate update in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
         {
             updates.Add(update);
         }
@@ -33,13 +33,11 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         Assert.Equal(ChatRole.Assistant, updates[0].Role);
         Assert.Equal("run1", updates[0].ResponseId);
         Assert.NotNull(updates[0].CreatedAt);
-        // ConversationId is stored in the underlying ChatResponseUpdate
-        ChatResponseUpdate chatUpdate = Assert.IsType<ChatResponseUpdate>(updates[0].RawRepresentation);
-        Assert.Equal("thread1", chatUpdate.ConversationId);
+        Assert.Equal("thread1", updates[0].ConversationId);
     }
 
     [Fact]
-    public async Task AsAgentRunResponseUpdatesAsync_ConvertsRunFinishedEvent_ToResponseUpdateWithMetadataAsync()
+    public async Task AsChatResponseUpdatesAsync_ConvertsRunFinishedEvent_ToResponseUpdateWithMetadataAsync()
     {
         // Arrange
         List<BaseEvent> events =
@@ -49,8 +47,8 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         ];
 
         // Act
-        List<AgentRunResponseUpdate> updates = [];
-        await foreach (AgentRunResponseUpdate update in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+        List<ChatResponseUpdate> updates = [];
+        await foreach (ChatResponseUpdate update in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
         {
             updates.Add(update);
         }
@@ -66,13 +64,12 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         Assert.NotNull(updates[1].CreatedAt);
         TextContent content = Assert.IsType<TextContent>(updates[1].Contents[0]);
         Assert.Equal("\"Success\"", content.Text); // JSON string representation includes quotes
-        // ConversationId is stored in the underlying ChatResponseUpdate
-        ChatResponseUpdate chatUpdate = Assert.IsType<ChatResponseUpdate>(updates[1].RawRepresentation);
-        Assert.Equal("thread1", chatUpdate.ConversationId);
+        // ConversationId is stored in the ChatResponseUpdate
+        Assert.Equal("thread1", updates[1].ConversationId);
     }
 
     [Fact]
-    public async Task AsAgentRunResponseUpdatesAsync_ConvertsRunErrorEvent_ToErrorContentAsync()
+    public async Task AsChatResponseUpdatesAsync_ConvertsRunErrorEvent_ToErrorContentAsync()
     {
         // Arrange
         List<BaseEvent> events =
@@ -81,8 +78,8 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         ];
 
         // Act
-        List<AgentRunResponseUpdate> updates = [];
-        await foreach (AgentRunResponseUpdate update in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+        List<ChatResponseUpdate> updates = [];
+        await foreach (ChatResponseUpdate update in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
         {
             updates.Add(update);
         }
@@ -97,7 +94,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
     }
 
     [Fact]
-    public async Task AsAgentRunResponseUpdatesAsync_ConvertsTextMessageSequence_ToTextUpdatesWithCorrectRoleAsync()
+    public async Task AsChatResponseUpdatesAsync_ConvertsTextMessageSequence_ToTextUpdatesWithCorrectRoleAsync()
     {
         // Arrange
         List<BaseEvent> events =
@@ -109,8 +106,8 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         ];
 
         // Act
-        List<AgentRunResponseUpdate> updates = [];
-        await foreach (AgentRunResponseUpdate update in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+        List<ChatResponseUpdate> updates = [];
+        await foreach (ChatResponseUpdate update in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
         {
             updates.Add(update);
         }
@@ -123,7 +120,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
     }
 
     [Fact]
-    public async Task AsAgentRunResponseUpdatesAsync_WithTextMessageStartWhileMessageInProgress_ThrowsInvalidOperationExceptionAsync()
+    public async Task AsChatResponseUpdatesAsync_WithTextMessageStartWhileMessageInProgress_ThrowsInvalidOperationExceptionAsync()
     {
         // Arrange
         List<BaseEvent> events =
@@ -136,7 +133,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         // Act & Assert
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
         {
-            await foreach (var _ in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+            await foreach (var _ in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
             {
                 // Intentionally empty - consuming stream to trigger exception
             }
@@ -144,7 +141,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
     }
 
     [Fact]
-    public async Task AsAgentRunResponseUpdatesAsync_WithTextMessageEndForWrongMessageId_ThrowsInvalidOperationExceptionAsync()
+    public async Task AsChatResponseUpdatesAsync_WithTextMessageEndForWrongMessageId_ThrowsInvalidOperationExceptionAsync()
     {
         // Arrange
         List<BaseEvent> events =
@@ -157,7 +154,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         // Act & Assert
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
         {
-            await foreach (var _ in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+            await foreach (var _ in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
             {
                 // Intentionally empty - consuming stream to trigger exception
             }
@@ -165,7 +162,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
     }
 
     [Fact]
-    public async Task AsAgentRunResponseUpdatesAsync_MaintainsMessageContext_AcrossMultipleContentEventsAsync()
+    public async Task AsChatResponseUpdatesAsync_MaintainsMessageContext_AcrossMultipleContentEventsAsync()
     {
         // Arrange
         List<BaseEvent> events =
@@ -178,8 +175,8 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         ];
 
         // Act
-        List<AgentRunResponseUpdate> updates = [];
-        await foreach (AgentRunResponseUpdate update in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+        List<ChatResponseUpdate> updates = [];
+        await foreach (ChatResponseUpdate update in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
         {
             updates.Add(update);
         }
@@ -191,7 +188,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
     }
 
     [Fact]
-    public async Task AsAgentRunResponseUpdatesAsync_ConvertsToolCallEvents_ToFunctionCallContentAsync()
+    public async Task AsChatResponseUpdatesAsync_ConvertsToolCallEvents_ToFunctionCallContentAsync()
     {
         // Arrange
         List<BaseEvent> events =
@@ -205,14 +202,14 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         ];
 
         // Act
-        List<AgentRunResponseUpdate> updates = [];
-        await foreach (AgentRunResponseUpdate update in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+        List<ChatResponseUpdate> updates = [];
+        await foreach (ChatResponseUpdate update in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
         {
             updates.Add(update);
         }
 
         // Assert
-        AgentRunResponseUpdate toolCallUpdate = updates.First(u => u.Contents.Any(c => c is FunctionCallContent));
+        ChatResponseUpdate toolCallUpdate = updates.First(u => u.Contents.Any(c => c is FunctionCallContent));
         FunctionCallContent functionCall = Assert.IsType<FunctionCallContent>(toolCallUpdate.Contents[0]);
         Assert.Equal("call_1", functionCall.CallId);
         Assert.Equal("GetWeather", functionCall.Name);
@@ -221,7 +218,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
     }
 
     [Fact]
-    public async Task AsAgentRunResponseUpdatesAsync_WithMultipleToolCallArgsEvents_AccumulatesArgsCorrectlyAsync()
+    public async Task AsChatResponseUpdatesAsync_WithMultipleToolCallArgsEvents_AccumulatesArgsCorrectlyAsync()
     {
         // Arrange
         List<BaseEvent> events =
@@ -235,8 +232,8 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         ];
 
         // Act
-        List<AgentRunResponseUpdate> updates = [];
-        await foreach (AgentRunResponseUpdate update in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+        List<ChatResponseUpdate> updates = [];
+        await foreach (ChatResponseUpdate update in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
         {
             updates.Add(update);
         }
@@ -251,7 +248,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
     }
 
     [Fact]
-    public async Task AsAgentRunResponseUpdatesAsync_WithEmptyToolCallArgs_HandlesGracefullyAsync()
+    public async Task AsChatResponseUpdatesAsync_WithEmptyToolCallArgs_HandlesGracefullyAsync()
     {
         // Arrange
         List<BaseEvent> events =
@@ -262,8 +259,8 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         ];
 
         // Act
-        List<AgentRunResponseUpdate> updates = [];
-        await foreach (AgentRunResponseUpdate update in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+        List<ChatResponseUpdate> updates = [];
+        await foreach (ChatResponseUpdate update in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
         {
             updates.Add(update);
         }
@@ -279,7 +276,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
     }
 
     [Fact]
-    public async Task AsAgentRunResponseUpdatesAsync_WithOverlappingToolCalls_ThrowsInvalidOperationExceptionAsync()
+    public async Task AsChatResponseUpdatesAsync_WithOverlappingToolCalls_ThrowsInvalidOperationExceptionAsync()
     {
         // Arrange
         List<BaseEvent> events =
@@ -292,14 +289,14 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         // Act & Assert
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
         {
-            await foreach (var _ in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+            await foreach (var _ in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
             {
             }
         });
     }
 
     [Fact]
-    public async Task AsAgentRunResponseUpdatesAsync_WithMismatchedToolCallId_ThrowsInvalidOperationExceptionAsync()
+    public async Task AsChatResponseUpdatesAsync_WithMismatchedToolCallId_ThrowsInvalidOperationExceptionAsync()
     {
         // Arrange
         List<BaseEvent> events =
@@ -311,14 +308,14 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         // Act & Assert
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
         {
-            await foreach (var _ in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+            await foreach (var _ in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
             {
             }
         });
     }
 
     [Fact]
-    public async Task AsAgentRunResponseUpdatesAsync_WithMismatchedToolCallEndId_ThrowsInvalidOperationExceptionAsync()
+    public async Task AsChatResponseUpdatesAsync_WithMismatchedToolCallEndId_ThrowsInvalidOperationExceptionAsync()
     {
         // Arrange
         List<BaseEvent> events =
@@ -331,14 +328,14 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         // Act & Assert
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
         {
-            await foreach (var _ in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+            await foreach (var _ in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
             {
             }
         });
     }
 
     [Fact]
-    public async Task AsAgentRunResponseUpdatesAsync_WithMultipleSequentialToolCalls_ProcessesAllCorrectlyAsync()
+    public async Task AsChatResponseUpdatesAsync_WithMultipleSequentialToolCalls_ProcessesAllCorrectlyAsync()
     {
         // Arrange
         List<BaseEvent> events =
@@ -352,8 +349,8 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         ];
 
         // Act
-        List<AgentRunResponseUpdate> updates = [];
-        await foreach (AgentRunResponseUpdate update in events.ToAsyncEnumerableAsync().AsAgentRunResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+        List<ChatResponseUpdate> updates = [];
+        await foreach (ChatResponseUpdate update in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
         {
             updates.Add(update);
         }

@@ -9,7 +9,7 @@ using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.UnitTests;
 
-public sealed class AgentRunResponseUpdateAGUIExtensionsTests
+public sealed class ChatResponseUpdateAGUIExtensionsTests
 {
     [Fact]
     public async Task AsAGUIEventStreamAsync_YieldsRunStartedEvent_AtBeginningWithCorrectIdsAsync()
@@ -17,7 +17,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         // Arrange
         const string ThreadId = "thread1";
         const string RunId = "run1";
-        List<AgentRunResponseUpdate> updates = [];
+        List<ChatResponseUpdate> updates = [];
 
         // Act
         List<BaseEvent> events = [];
@@ -40,7 +40,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         // Arrange
         const string ThreadId = "thread1";
         const string RunId = "run1";
-        List<AgentRunResponseUpdate> updates = [];
+        List<ChatResponseUpdate> updates = [];
 
         // Act
         List<BaseEvent> events = [];
@@ -63,10 +63,10 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         // Arrange
         const string ThreadId = "thread1";
         const string RunId = "run1";
-        List<AgentRunResponseUpdate> updates =
+        List<ChatResponseUpdate> updates =
         [
-            new AgentRunResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, "Hello") { MessageId = "msg1" }),
-            new AgentRunResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, " World") { MessageId = "msg1" })
+            new ChatResponseUpdate(ChatRole.Assistant, "Hello") { MessageId = "msg1" },
+            new ChatResponseUpdate(ChatRole.Assistant, " World") { MessageId = "msg1" }
         ];
 
         // Act
@@ -89,11 +89,11 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         const string ThreadId = "thread1";
         const string RunId = "run1";
         const string MessageId = "msg1";
-        List<AgentRunResponseUpdate> updates =
+        List<ChatResponseUpdate> updates =
         [
-            new AgentRunResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, "Hello") { MessageId = MessageId }),
-            new AgentRunResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, " ") { MessageId = MessageId }),
-            new AgentRunResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, "World") { MessageId = MessageId })
+            new ChatResponseUpdate(ChatRole.Assistant, "Hello") { MessageId = MessageId },
+            new ChatResponseUpdate(ChatRole.Assistant, " ") { MessageId = MessageId },
+            new ChatResponseUpdate(ChatRole.Assistant, "World") { MessageId = MessageId }
         ];
 
         // Act
@@ -118,10 +118,10 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         // Arrange
         const string ThreadId = "thread1";
         const string RunId = "run1";
-        List<AgentRunResponseUpdate> updates =
+        List<ChatResponseUpdate> updates =
         [
-            new AgentRunResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, "Hello") { MessageId = "msg1" }),
-            new AgentRunResponseUpdate(new ChatResponseUpdate(ChatRole.User, "Hi") { MessageId = "msg2" })
+            new ChatResponseUpdate(ChatRole.Assistant, "Hello") { MessageId = "msg1" },
+            new ChatResponseUpdate(ChatRole.User, "Hi") { MessageId = "msg2" }
         ];
 
         // Act
@@ -144,10 +144,10 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         // Arrange
         const string ThreadId = "thread1";
         const string RunId = "run1";
-        List<AgentRunResponseUpdate> updates =
+        List<ChatResponseUpdate> updates =
         [
-            new AgentRunResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, "First") { MessageId = "msg1" }),
-            new AgentRunResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, "Second") { MessageId = "msg2" })
+            new ChatResponseUpdate(ChatRole.Assistant, "First") { MessageId = "msg1" },
+            new ChatResponseUpdate(ChatRole.Assistant, "Second") { MessageId = "msg2" }
         ];
 
         // Act
@@ -171,9 +171,9 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         const string RunId = "run1";
         Dictionary<string, object?> arguments = new() { ["location"] = "Seattle", ["units"] = "fahrenheit" };
         FunctionCallContent functionCall = new("call_123", "GetWeather", arguments);
-        List<AgentRunResponseUpdate> updates =
+        List<ChatResponseUpdate> updates =
         [
-            new AgentRunResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, [functionCall]) { MessageId = "msg1" })
+            new ChatResponseUpdate(ChatRole.Assistant, [functionCall]) { MessageId = "msg1" }
         ];
 
         // Act
@@ -210,7 +210,7 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         FunctionCallContent call1 = new("call_1", "Tool1", new Dictionary<string, object?>());
         FunctionCallContent call2 = new("call_2", "Tool2", new Dictionary<string, object?>());
         ChatResponseUpdate response = new(ChatRole.Assistant, [call1, call2]) { MessageId = "msg1" };
-        List<AgentRunResponseUpdate> updates = [new AgentRunResponseUpdate(response)];
+        List<ChatResponseUpdate> updates = [response];
 
         // Act
         List<BaseEvent> events = [];
@@ -236,9 +236,9 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         const string ThreadId = "thread1";
         const string RunId = "run1";
         FunctionCallContent functionCall = new("call_456", "NoArgsTool", null);
-        List<AgentRunResponseUpdate> updates =
+        List<ChatResponseUpdate> updates =
         [
-            new AgentRunResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, [functionCall]) { MessageId = "msg1" })
+            new ChatResponseUpdate(ChatRole.Assistant, [functionCall]) { MessageId = "msg1" }
         ];
 
         // Act
@@ -260,10 +260,10 @@ public sealed class AgentRunResponseUpdateAGUIExtensionsTests
         // Arrange
         const string ThreadId = "thread1";
         const string RunId = "run1";
-        List<AgentRunResponseUpdate> updates =
+        List<ChatResponseUpdate> updates =
         [
-            new AgentRunResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, "Text message") { MessageId = "msg1" }),
-            new AgentRunResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, [new FunctionCallContent("call_1", "Tool1", null)]) { MessageId = "msg2" })
+            new ChatResponseUpdate(ChatRole.Assistant, "Text message") { MessageId = "msg1" },
+            new ChatResponseUpdate(ChatRole.Assistant, [new FunctionCallContent("call_1", "Tool1", null)]) { MessageId = "msg2" }
         ];
 
         // Act

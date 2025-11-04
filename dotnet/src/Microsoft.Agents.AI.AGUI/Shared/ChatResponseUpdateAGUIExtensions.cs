@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
@@ -16,9 +17,8 @@ namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.Shared;
 namespace Microsoft.Agents.AI.AGUI.Shared;
 #endif
 
-internal static class AgentRunResponseUpdateAGUIExtensions
+internal static class ChatResponseUpdateAGUIExtensions
 {
-#if !ASPNETCORE
     public static async IAsyncEnumerable<ChatResponseUpdate> AsChatResponseUpdatesAsync(
         this IAsyncEnumerable<BaseEvent> events,
         JsonSerializerOptions jsonSerializerOptions,
@@ -36,6 +36,7 @@ internal static class AgentRunResponseUpdateAGUIExtensions
         {
             switch (evt)
             {
+                // Lifecycle events
                 case RunStartedEvent runStarted:
                     conversationId = runStarted.ThreadId;
                     responseId = runStarted.RunId;
@@ -70,6 +71,8 @@ internal static class AgentRunResponseUpdateAGUIExtensions
                         ChatRole.Assistant,
                         [(new ErrorContent(runError.Message) { ErrorCode = runError.Code })]);
                     break;
+
+                // Text events
                 case TextMessageStartEvent textStart:
                     if (currentRole != default || currentMessageId != null)
                     {
@@ -98,6 +101,8 @@ internal static class AgentRunResponseUpdateAGUIExtensions
                     currentRole = default!;
                     currentMessageId = null;
                     break;
+
+                // Tool call events
                 case ToolCallStartEvent toolCallStart:
                     if (currentToolCallId != null)
                     {
@@ -106,37 +111,41 @@ internal static class AgentRunResponseUpdateAGUIExtensions
                     currentToolCallId = toolCallStart.ToolCallId;
                     currentToolCallName = toolCallStart.ToolCallName;
                     currentToolCallParentMessageId = toolCallStart.ParentMessageId;
-                    accumulatedArgs = new StringBuilder();
+                    accumulatedArgs ??= new StringBuilder();
                     break;
                 case ToolCallArgsEvent toolCallArgs:
-                    if (currentToolCallId != toolCallArgs.ToolCallId)
+                    if (string.IsNullOrEmpty(currentToolCallId))
+                    {
+                        throw new InvalidOperationException("Received ToolCallArgsEvent without a current tool call.");
+                    }
+
+                    if (!string.Equals(currentToolCallId, toolCallArgs.ToolCallId, StringComparison.Ordinal))
                     {
                         throw new InvalidOperationException("Received ToolCallArgsEvent for a different tool call than the current one.");
                     }
-                    accumulatedArgs!.Append(toolCallArgs.Delta);
+                    Debug.Assert(accumulatedArgs != null, "Accumulated args should have been initialized in ToolCallStartEvent.");
+                    accumulatedArgs.Append(toolCallArgs.Delta);
                     break;
                 case ToolCallEndEvent toolCallEnd:
+                    if (string.IsNullOrEmpty(currentToolCallId))
+                    {
+                        throw new InvalidOperationException("Received ToolCallEndEvent without a current tool call.");
+                    }
                     if (currentToolCallId != toolCallEnd.ToolCallId)
                     {
                         throw new InvalidOperationException("Received ToolCallEndEvent for a different tool call than the current one.");
                     }
-
-                    string argsJson = accumulatedArgs!.ToString();
-                    IDictionary<string, object?>? arguments = null;
-                    if (!string.IsNullOrEmpty(argsJson))
-                    {
-                        var typeInfo = jsonSerializerOptions.GetTypeInfo(typeof(IDictionary<string, object?>)) as JsonTypeInfo<IDictionary<string, object?>>;
-                        arguments = JsonSerializer.Deserialize(argsJson, typeInfo!);
-                    }
-
-                    var functionCallContent = new FunctionCallContent(
-                        currentToolCallId!,
-                        currentToolCallName!,
-                        arguments);
-
+                    Debug.Assert(accumulatedArgs != null, "Accumulated args should have been initialized in ToolCallStartEvent.");
+                    var arguments = DeserializeArgumentsIfAvailable(accumulatedArgs.ToString(), jsonSerializerOptions);
+                    accumulatedArgs.Clear();
                     yield return new ChatResponseUpdate(
                         ChatRole.Assistant,
-                        [functionCallContent])
+                        [
+                            new FunctionCallContent(
+                                currentToolCallId!,
+                                currentToolCallName!,
+                                arguments)
+                        ])
                     {
                         ConversationId = conversationId,
                         ResponseId = responseId,
@@ -150,29 +159,13 @@ internal static class AgentRunResponseUpdateAGUIExtensions
                     currentToolCallParentMessageId = null;
                     break;
                 case ToolCallResultEvent toolCallResult:
-                    // Convert tool result event back to FunctionResultContent
-                    object? resultContent = null;
-                    if (!string.IsNullOrEmpty(toolCallResult.Content))
-                    {
-                        // Try to deserialize as JsonElement first
-                        try
-                        {
-                            resultContent = JsonSerializer.Deserialize(toolCallResult.Content, AGUIJsonSerializerContext.Default.JsonElement);
-                        }
-                        catch
-                        {
-                            // If deserialization fails, use the string content as-is
-                            resultContent = toolCallResult.Content;
-                        }
-                    }
-
-                    var functionResultContent = new FunctionResultContent(
-                        toolCallResult.ToolCallId,
-                        resultContent);
-
                     yield return new ChatResponseUpdate(
                         ChatRole.Tool,
-                        [functionResultContent])
+                        [
+                            new FunctionResultContent(
+                                toolCallResult.ToolCallId,
+                                DeserializeResultIfAvailable(toolCallResult, jsonSerializerOptions))
+                        ])
                     {
                         ConversationId = conversationId,
                         ResponseId = responseId,
@@ -184,20 +177,27 @@ internal static class AgentRunResponseUpdateAGUIExtensions
         }
     }
 
-    /// <summary>
-    /// Converts AGUI BaseEvent stream to AgentRunResponseUpdate stream (wrapper for backward compatibility).
-    /// </summary>
-    public static async IAsyncEnumerable<AgentRunResponseUpdate> AsAgentRunResponseUpdatesAsync(
-        this IAsyncEnumerable<BaseEvent> events,
-        JsonSerializerOptions jsonSerializerOptions,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    private static IDictionary<string, object?>? DeserializeArgumentsIfAvailable(string argsJson, JsonSerializerOptions options)
     {
-        await foreach (var chatResponseUpdate in events.AsChatResponseUpdatesAsync(jsonSerializerOptions, cancellationToken).ConfigureAwait(false))
+        if (!string.IsNullOrEmpty(argsJson))
         {
-            yield return new AgentRunResponseUpdate(chatResponseUpdate);
+            return JsonSerializer.Deserialize(
+                argsJson,
+                (JsonTypeInfo<IDictionary<string, object?>>)options.GetTypeInfo(typeof(IDictionary<string, object?>)));
         }
+
+        return null;
     }
-#endif
+
+    private static object? DeserializeResultIfAvailable(ToolCallResultEvent toolCallResult, JsonSerializerOptions options)
+    {
+        if (!string.IsNullOrEmpty(toolCallResult.Content))
+        {
+            return JsonSerializer.Deserialize(toolCallResult.Content, options.GetTypeInfo(typeof(JsonElement)));
+        }
+
+        return null;
+    }
 
     public static async IAsyncEnumerable<BaseEvent> AsAGUIEventStreamAsync(
         this IAsyncEnumerable<ChatResponseUpdate> updates,
@@ -215,7 +215,9 @@ internal static class AgentRunResponseUpdateAGUIExtensions
         string? currentMessageId = null;
         await foreach (var chatResponse in updates.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
-            if (chatResponse is { Contents.Count: > 0 } && chatResponse.Contents[0] is TextContent && !string.Equals(currentMessageId, chatResponse.MessageId, StringComparison.Ordinal))
+            if (chatResponse is { Contents.Count: > 0 } &&
+                chatResponse.Contents[0] is TextContent &&
+                !string.Equals(currentMessageId, chatResponse.MessageId, StringComparison.Ordinal))
             {
                 // End the previous message if there was one
                 if (currentMessageId is not null)
@@ -260,14 +262,12 @@ internal static class AgentRunResponseUpdateAGUIExtensions
                             ParentMessageId = chatResponse.MessageId
                         };
 
-                        string argumentsJson = JsonSerializer.Serialize(
-                            functionCallContent.Arguments,
-                            jsonSerializerOptions.GetTypeInfo(typeof(IDictionary<string, object?>)));
-
                         yield return new ToolCallArgsEvent
                         {
                             ToolCallId = functionCallContent.CallId,
-                            Delta = argumentsJson
+                            Delta = JsonSerializer.Serialize(
+                            functionCallContent.Arguments,
+                            jsonSerializerOptions.GetTypeInfo(typeof(IDictionary<string, object?>)))
                         };
 
                         yield return new ToolCallEndEvent
@@ -277,35 +277,12 @@ internal static class AgentRunResponseUpdateAGUIExtensions
                     }
                     else if (content is FunctionResultContent functionResultContent)
                     {
-                        // Emit tool result event for function execution results
-                        string resultContent = string.Empty;
-                        if (functionResultContent.Result is not null)
-                        {
-                            // Convert result to JSON string
-                            if (functionResultContent.Result is string str)
-                            {
-                                resultContent = str;
-                            }
-                            else
-                            {
-                                var typeInfo = jsonSerializerOptions.TypeInfoResolver?.GetTypeInfo(functionResultContent.Result.GetType(), jsonSerializerOptions);
-                                if (typeInfo is not null)
-                                {
-                                    resultContent = JsonSerializer.Serialize(functionResultContent.Result, typeInfo);
-                                }
-                                else
-                                {
-                                    resultContent = functionResultContent.Result.ToString() ?? string.Empty;
-                                }
-                            }
-                        }
-
                         yield return new ToolCallResultEvent
                         {
                             MessageId = chatResponse.MessageId,
                             ToolCallId = functionResultContent.CallId,
-                            Content = resultContent,
-                            Role = "tool"
+                            Content = SerializeResultContent(functionResultContent, jsonSerializerOptions) ?? "",
+                            Role = AGUIRoles.Tool
                         };
                     }
                 }
@@ -328,24 +305,14 @@ internal static class AgentRunResponseUpdateAGUIExtensions
         };
     }
 
-    internal static async IAsyncEnumerable<BaseEvent> AsAGUIEventStreamAsync(
-        this IAsyncEnumerable<AgentRunResponseUpdate> updates,
-        string threadId,
-        string runId,
-        JsonSerializerOptions jsonSerializerOptions,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    private static string? SerializeResultContent(FunctionResultContent functionResultContent, JsonSerializerOptions options)
     {
-        async IAsyncEnumerable<ChatResponseUpdate> ConvertToChatAsync([EnumeratorCancellation] CancellationToken ct = default)
+        return functionResultContent.Result switch
         {
-            await foreach (var update in updates.WithCancellation(ct).ConfigureAwait(false))
-            {
-                yield return update.AsChatResponseUpdate();
-            }
-        }
-
-        await foreach (var evt in ConvertToChatAsync(cancellationToken).AsAGUIEventStreamAsync(threadId, runId, jsonSerializerOptions, cancellationToken).ConfigureAwait(false))
-        {
-            yield return evt;
-        }
+            null => null,
+            string str => str,
+            JsonElement jsonElement => jsonElement.GetRawText(),
+            _ => JsonSerializer.Serialize(functionResultContent.Result, options.GetTypeInfo(functionResultContent.Result.GetType())),
+        };
     }
 }
