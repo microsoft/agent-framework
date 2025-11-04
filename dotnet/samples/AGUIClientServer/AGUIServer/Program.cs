@@ -13,12 +13,20 @@ WebApplication app = builder.Build();
 string endpoint = builder.Configuration["AZURE_OPENAI_ENDPOINT"] ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 string deploymentName = builder.Configuration["AZURE_OPENAI_DEPLOYMENT_NAME"] ?? throw new InvalidOperationException("AZURE_OPENAI_DEPLOYMENT_NAME is not set.");
 
-// Create the AI agent
+// Create the AI agent with tools
 var agent = new AzureOpenAIClient(
         new Uri(endpoint),
         new DefaultAzureCredential())
     .GetChatClient(deploymentName)
-    .CreateAIAgent(name: "AGUIAssistant");
+    .CreateAIAgent(
+        name: "AGUIAssistant",
+        tools: [
+            AIFunctionFactory.Create(
+                () => DateTimeOffset.UtcNow,
+                name: "get_current_time",
+                description: "Get the current UTC time."
+            )
+        ]);
 
 // Map the AG-UI agent endpoint
 app.MapAGUI("/", agent);

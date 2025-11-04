@@ -25,4 +25,6 @@ internal static class AGUIEventTypes
     public const string ToolCallArgs = "TOOL_CALL_ARGS";
 
     public const string ToolCallEnd = "TOOL_CALL_END";
+
+    public const string ToolCallResult = "TOOL_CALL_RESULT";
 }

@@ -149,6 +149,37 @@ internal static class AgentRunResponseUpdateAGUIExtensions
                     accumulatedArgs = null;
                     currentToolCallParentMessageId = null;
                     break;
+                case ToolCallResultEvent toolCallResult:
+                    // Convert tool result event back to FunctionResultContent
+                    object? resultContent = null;
+                    if (!string.IsNullOrEmpty(toolCallResult.Content))
+                    {
+                        // Try to deserialize as JsonElement first
+                        try
+                        {
+                            resultContent = JsonSerializer.Deserialize(toolCallResult.Content, AGUIJsonSerializerContext.Default.JsonElement);
+                        }
+                        catch
+                        {
+                            // If deserialization fails, use the string content as-is
+                            resultContent = toolCallResult.Content;
+                        }
+                    }
+
+                    var functionResultContent = new FunctionResultContent(
+                        toolCallResult.ToolCallId,
+                        resultContent);
+
+                    yield return new ChatResponseUpdate(
+                        ChatRole.Tool,
+                        [functionResultContent])
+                    {
+                        ConversationId = conversationId,
+                        ResponseId = responseId,
+                        MessageId = toolCallResult.MessageId,
+                        CreatedAt = DateTimeOffset.UtcNow
+                    };
+                    break;
             }
         }
     }
@@ -215,7 +246,7 @@ internal static class AgentRunResponseUpdateAGUIExtensions
                 };
             }
 
-            // Emit tool call events
+            // Emit tool call events and tool result events
             if (chatResponse is { Contents.Count: > 0 })
             {
                 foreach (var content in chatResponse.Contents)
@@ -242,6 +273,39 @@ internal static class AgentRunResponseUpdateAGUIExtensions
                         yield return new ToolCallEndEvent
                         {
                             ToolCallId = functionCallContent.CallId
+                        };
+                    }
+                    else if (content is FunctionResultContent functionResultContent)
+                    {
+                        // Emit tool result event for function execution results
+                        string resultContent = string.Empty;
+                        if (functionResultContent.Result is not null)
+                        {
+                            // Convert result to JSON string
+                            if (functionResultContent.Result is string str)
+                            {
+                                resultContent = str;
+                            }
+                            else
+                            {
+                                var typeInfo = jsonSerializerOptions.TypeInfoResolver?.GetTypeInfo(functionResultContent.Result.GetType(), jsonSerializerOptions);
+                                if (typeInfo is not null)
+                                {
+                                    resultContent = JsonSerializer.Serialize(functionResultContent.Result, typeInfo);
+                                }
+                                else
+                                {
+                                    resultContent = functionResultContent.Result.ToString() ?? string.Empty;
+                                }
+                            }
+                        }
+
+                        yield return new ToolCallResultEvent
+                        {
+                            MessageId = chatResponse.MessageId,
+                            ToolCallId = functionResultContent.CallId,
+                            Content = resultContent,
+                            Role = "tool"
                         };
                     }
                 }

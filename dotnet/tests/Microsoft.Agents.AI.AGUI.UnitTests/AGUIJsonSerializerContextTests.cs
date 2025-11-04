@@ -20,7 +20,7 @@ public sealed class AGUIJsonSerializerContextTests
         {
             ThreadId = "thread1",
             RunId = "run1",
-            Messages = [new AGUIMessage { Id = "m1", Role = AGUIRoles.User, Content = "Test" }]
+            Messages = [new AGUIUserMessage { Id = "m1", Content = "Test" }]
         };
 
         // Act
@@ -72,7 +72,7 @@ public sealed class AGUIJsonSerializerContextTests
         {
             ThreadId = "thread1",
             RunId = "run1",
-            Messages = [new AGUIMessage { Id = "m1", Role = AGUIRoles.User, Content = "Test" }],
+            Messages = [new AGUIUserMessage { Id = "m1", Content = "Test" }],
             State = JsonSerializer.SerializeToElement(new { key = "value" }),
             Context = new Dictionary<string, string> { ["ctx1"] = "value1" },
             ForwardedProperties = JsonSerializer.SerializeToElement(new { prop1 = "val1" })
@@ -119,8 +119,8 @@ public sealed class AGUIJsonSerializerContextTests
             RunId = "run1",
             Messages =
             [
-                new AGUIMessage { Id = "m1", Role = AGUIRoles.User, Content = "First" },
-                new AGUIMessage { Id = "m2", Role = AGUIRoles.Assistant, Content = "Second" }
+                new AGUIUserMessage { Id = "m1", Content = "First" },
+                new AGUIAssistantMessage { Id = "m2", Content = "Second" }
             ],
             Context = new Dictionary<string, string> { ["key1"] = "value1", ["key2"] = "value2" }
         };
@@ -544,7 +544,7 @@ public sealed class AGUIJsonSerializerContextTests
     public void AGUIMessage_Serializes_WithIdRoleAndContent()
     {
         // Arrange
-        AGUIMessage message = new() { Id = "m1", Role = AGUIRoles.User, Content = "Hello" };
+        AGUIMessage message = new AGUIUserMessage() { Id = "m1", Content = "Hello" };
 
         // Act
         string json = JsonSerializer.Serialize(message, AGUIJsonSerializerContext.Default.AGUIMessage);
@@ -578,14 +578,14 @@ public sealed class AGUIJsonSerializerContextTests
         Assert.NotNull(message);
         Assert.Equal("m1", message.Id);
         Assert.Equal(AGUIRoles.User, message.Role);
-        Assert.Equal("Test message", message.Content);
+        Assert.Equal("Test message", ((AGUIUserMessage)message).Content);
     }
 
     [Fact]
     public void AGUIMessage_RoundTrip_PreservesData()
     {
         // Arrange
-        AGUIMessage original = new() { Id = "msg123", Role = AGUIRoles.Assistant, Content = "Response text" };
+        AGUIMessage original = new AGUIAssistantMessage() { Id = "msg123", Content = "Response text" };
 
         // Act
         string json = JsonSerializer.Serialize(original, AGUIJsonSerializerContext.Default.AGUIMessage);
@@ -595,7 +595,7 @@ public sealed class AGUIJsonSerializerContextTests
         Assert.NotNull(deserialized);
         Assert.Equal(original.Id, deserialized.Id);
         Assert.Equal(original.Role, deserialized.Role);
-        Assert.Equal(original.Content, deserialized.Content);
+        Assert.Equal(((AGUIAssistantMessage)original).Content, ((AGUIAssistantMessage)deserialized).Content);
     }
 
     [Fact]
@@ -617,7 +617,7 @@ public sealed class AGUIJsonSerializerContextTests
         Assert.NotNull(message);
         Assert.NotNull(message.Id);
         Assert.NotNull(message.Role);
-        Assert.NotNull(message.Content);
+        Assert.NotNull(((AGUIUserMessage)message).Content);
     }
 
     [Fact]

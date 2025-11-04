@@ -1,0 +1,23 @@
+Test run for D:\work\agent-framework\dotnet\tests\Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.IntegrationTests\bin\Debug\net9.0\Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.IntegrationTests.dll (.NETCoreApp,Version=v9.0)
+VSTest version 17.14.1 (x64)
+
+Starting test execution, please wait...
+A total of 1 test files matched the specified pattern.
+[xUnit.net 00:00:00.51]     Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.IntegrationTests.ToolCallingTests.ServerTriggersSingleFunctionCallAsync [FAIL]
+  Failed Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.IntegrationTests.ToolCallingTests.ServerTriggersSingleFunctionCallAsync [316 ms]
+  Error Message:
+   Expected callCount to be 1 because server function should be called once, but found 2.
+  Stack Trace:
+     at FluentAssertions.Execution.LateBoundTestFramework.Throw(String message)
+   at FluentAssertions.Execution.DefaultAssertionStrategy.HandleFailure(String message)
+   at FluentAssertions.Execution.AssertionScope.AddPreFormattedFailure(String formattedFailureMessage)
+   at FluentAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+   at FluentAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+   at FluentAssertions.Execution.AssertionChain.FailWith(String message, Object[] args)
+   at FluentAssertions.Numeric.NumericAssertionsBase`3.Be(T expected, String because, Object[] becauseArgs)
+   at Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.IntegrationTests.ToolCallingTests.ServerTriggersSingleFunctionCallAsync() in D:\work\agent-framework\dotnet\tests\Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.IntegrationTests\ToolCallingTests.cs:line 51
+--- End of stack trace from previous location ---
+
+Failed!  - Failed:     1, Passed:     0, Skipped:     0, Total:     1, Duration: 334 ms - Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.IntegrationTests.dll (net9.0)
+
+Workload updates are available. Run `dotnet workload list` for more information.

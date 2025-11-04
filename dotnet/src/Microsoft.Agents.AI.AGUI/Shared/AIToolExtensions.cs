@@ -20,6 +20,9 @@ internal static class AIToolExtensions
 
         foreach (var tool in tools)
         {
+            // Convert both AIFunctionDeclaration and AIFunction (which extends it) to AGUITool
+            // For AIFunction, we send only the metadata (Name, Description, JsonSchema)
+            // The actual executable implementation stays on the client side
             if (tool is AIFunctionDeclaration function)
             {
                 yield return new AGUITool

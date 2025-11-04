@@ -13,9 +13,21 @@ using Microsoft.Agents.AI.AGUI.Shared;
 namespace Microsoft.Agents.AI.AGUI;
 #endif
 
+// TODO: See if we can get rid of all the JsonSerializable attributes for types that are not
+// related to AG-UI
 [JsonSourceGenerationOptions(WriteIndented = false, DefaultIgnoreCondition = JsonIgnoreCondition.Never)]
 [JsonSerializable(typeof(RunAgentInput))]
+[JsonSerializable(typeof(AGUIMessage))]
+[JsonSerializable(typeof(AGUIMessage[]))]
+[JsonSerializable(typeof(AGUIDeveloperMessage))]
+[JsonSerializable(typeof(AGUISystemMessage))]
+[JsonSerializable(typeof(AGUIUserMessage))]
+[JsonSerializable(typeof(AGUIAssistantMessage))]
+[JsonSerializable(typeof(AGUIToolMessage))]
 [JsonSerializable(typeof(AGUITool))]
+[JsonSerializable(typeof(AGUIToolCall))]
+[JsonSerializable(typeof(AGUIToolCall[]))]
+[JsonSerializable(typeof(AGUIFunctionCall))]
 [JsonSerializable(typeof(BaseEvent))]
 [JsonSerializable(typeof(RunStartedEvent))]
 [JsonSerializable(typeof(RunFinishedEvent))]
@@ -26,8 +38,11 @@ namespace Microsoft.Agents.AI.AGUI;
 [JsonSerializable(typeof(ToolCallStartEvent))]
 [JsonSerializable(typeof(ToolCallArgsEvent))]
 [JsonSerializable(typeof(ToolCallEndEvent))]
+[JsonSerializable(typeof(ToolCallResultEvent))]
 [JsonSerializable(typeof(IDictionary<string, object?>))]
 [JsonSerializable(typeof(Dictionary<string, object?>))]
+[JsonSerializable(typeof(IDictionary<string, System.Text.Json.JsonElement?>))]
+[JsonSerializable(typeof(Dictionary<string, System.Text.Json.JsonElement?>))]
 [JsonSerializable(typeof(System.Text.Json.JsonElement))]
 [JsonSerializable(typeof(Dictionary<string, System.Text.Json.JsonElement>))]
 [JsonSerializable(typeof(string))]

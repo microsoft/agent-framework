@@ -51,6 +51,12 @@ public static class Program
             Timeout = TimeSpan.FromSeconds(60)
         };
 
+        var changeBackground = AIFunctionFactory.Create(
+            () => Console.WriteLine("Changing color to blue"),
+            name: "change_background_color",
+            description: "Change the console background color to dark blue."
+        );
+
         var chatClient = new AGUIChatClient(
             httpClient,
             serverUrl,
@@ -60,7 +66,7 @@ public static class Program
         AIAgent agent = chatClient.CreateAIAgent(
             name: "agui-client",
             description: "AG-UI Client Agent",
-            tools: []);
+            tools: [changeBackground]);
 
         AgentThread thread = agent.GetNewThread();
         List<ChatMessage> messages = [new(ChatRole.System, "You are a helpful assistant.")];
@@ -87,10 +93,12 @@ public static class Program
                 // Call RunStreamingAsync to get streaming updates
                 bool isFirstUpdate = true;
                 string? threadId = null;
+                var updates = new List<ChatResponseUpdate>();
                 await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(messages, thread, cancellationToken: cancellationToken))
                 {
                     // Use AsChatResponseUpdate to access ChatResponseUpdate properties
                     ChatResponseUpdate chatUpdate = update.AsChatResponseUpdate();
+                    updates.Add(chatUpdate);
                     if (chatUpdate.ConversationId != null)
                     {
                         threadId = chatUpdate.ConversationId;
@@ -124,6 +132,14 @@ public static class Program
                                 break;
                         }
                     }
+                }
+                if (updates.Count > 0 && !updates[^1].Contents.Any(c => c is TextContent))
+                {
+                    var lastUpdate = updates[^1];
+                    Console.ForegroundColor = ConsoleColor.Yellow;
+                    Console.WriteLine();
+                    Console.WriteLine($"[Run Ended - Thread: {threadId}, Run: {lastUpdate.ResponseId}]");
+                    Console.ResetColor();
                 }
                 messages.Clear();
                 Console.WriteLine();

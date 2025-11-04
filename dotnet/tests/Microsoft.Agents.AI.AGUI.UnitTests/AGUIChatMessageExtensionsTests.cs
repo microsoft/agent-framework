@@ -33,10 +33,9 @@ public sealed class AGUIChatMessageExtensionsTests
         // Arrange
         List<AGUIMessage> aguiMessages =
         [
-            new AGUIMessage
+            new AGUIUserMessage
             {
                 Id = "msg1",
-                Role = AGUIRoles.User,
                 Content = "Hello"
             }
         ];
@@ -56,9 +55,9 @@ public sealed class AGUIChatMessageExtensionsTests
         // Arrange
         List<AGUIMessage> aguiMessages =
         [
-            new AGUIMessage { Id = "msg1", Role = AGUIRoles.User, Content = "First" },
-            new AGUIMessage { Id = "msg2", Role = AGUIRoles.Assistant, Content = "Second" },
-            new AGUIMessage { Id = "msg3", Role = AGUIRoles.User, Content = "Third" }
+            new AGUIUserMessage { Id = "msg1", Content = "First" },
+            new AGUIAssistantMessage { Id = "msg2", Content = "Second" },
+            new AGUIUserMessage { Id = "msg3", Content = "Third" }
         ];
 
         // Act
@@ -77,10 +76,10 @@ public sealed class AGUIChatMessageExtensionsTests
         // Arrange
         List<AGUIMessage> aguiMessages =
         [
-            new AGUIMessage { Id = "msg1", Role = AGUIRoles.System, Content = "System message" },
-            new AGUIMessage { Id = "msg2", Role = AGUIRoles.User, Content = "User message" },
-            new AGUIMessage { Id = "msg3", Role = AGUIRoles.Assistant, Content = "Assistant message" },
-            new AGUIMessage { Id = "msg4", Role = AGUIRoles.Developer, Content = "Developer message" }
+            new AGUISystemMessage { Id = "msg1", Content = "System message" },
+            new AGUIUserMessage { Id = "msg2", Content = "User message" },
+            new AGUIAssistantMessage { Id = "msg3", Content = "Assistant message" },
+            new AGUIDeveloperMessage { Id = "msg4", Content = "Developer message" }
         ];
 
         // Act
@@ -124,7 +123,7 @@ public sealed class AGUIChatMessageExtensionsTests
         AGUIMessage message = Assert.Single(aguiMessages);
         Assert.Equal("msg1", message.Id);
         Assert.Equal(AGUIRoles.User, message.Role);
-        Assert.Equal("Hello", message.Content);
+        Assert.Equal("Hello", ((AGUIUserMessage)message).Content);
     }
 
     [Fact]
@@ -143,9 +142,9 @@ public sealed class AGUIChatMessageExtensionsTests
 
         // Assert
         Assert.Equal(3, aguiMessages.Count);
-        Assert.Equal("First", aguiMessages[0].Content);
-        Assert.Equal("Second", aguiMessages[1].Content);
-        Assert.Equal("Third", aguiMessages[2].Content);
+        Assert.Equal("First", ((AGUIUserMessage)aguiMessages[0]).Content);
+        Assert.Equal("Second", ((AGUIAssistantMessage)aguiMessages[1]).Content);
+        Assert.Equal("Third", ((AGUIUserMessage)aguiMessages[2]).Content);
     }
 
     [Fact]
@@ -201,11 +200,11 @@ public sealed class AGUIChatMessageExtensionsTests
         // Assert
         AGUIMessage aguiMessage = Assert.Single(aguiMessages);
         Assert.Equal(AGUIRoles.Tool, aguiMessage.Role);
-        Assert.Equal("call_123", aguiMessage.CallId);
-        Assert.NotEmpty(aguiMessage.Content);
+        Assert.Equal("call_123", ((AGUIToolMessage)aguiMessage).ToolCallId);
+        Assert.NotEmpty(((AGUIToolMessage)aguiMessage).Content);
         // Content should be serialized JSON
-        Assert.Contains("temperature", aguiMessage.Content);
-        Assert.Contains("72", aguiMessage.Content);
+        Assert.Contains("temperature", ((AGUIToolMessage)aguiMessage).Content);
+        Assert.Contains("72", ((AGUIToolMessage)aguiMessage).Content);
     }
 
     [Fact]
@@ -222,8 +221,8 @@ public sealed class AGUIChatMessageExtensionsTests
         // Assert
         AGUIMessage aguiMessage = Assert.Single(aguiMessages);
         Assert.Equal(AGUIRoles.Tool, aguiMessage.Role);
-        Assert.Equal("call_456", aguiMessage.CallId);
-        Assert.Equal(string.Empty, aguiMessage.Content);
+        Assert.Equal("call_456", ((AGUIToolMessage)aguiMessage).ToolCallId);
+        Assert.Equal(string.Empty, ((AGUIToolMessage)aguiMessage).Content);
     }
 
     [Fact]
@@ -248,12 +247,11 @@ public sealed class AGUIChatMessageExtensionsTests
         const string JsonContent = "{\"status\":\"success\",\"value\":42}";
         List<AGUIMessage> aguiMessages =
         [
-            new AGUIMessage
+            new AGUIToolMessage
             {
                 Id = "msg1",
-                Role = AGUIRoles.Tool,
                 Content = JsonContent,
-                CallId = "call_abc"
+                ToolCallId = "call_abc"
             }
         ];
 
@@ -274,12 +272,11 @@ public sealed class AGUIChatMessageExtensionsTests
         // Arrange
         List<AGUIMessage> aguiMessages =
         [
-            new AGUIMessage
+            new AGUIToolMessage
             {
                 Id = "msg1",
-                Role = AGUIRoles.Tool,
                 Content = string.Empty,
-                CallId = "call_def"
+                ToolCallId = "call_def"
             }
         ];
 
@@ -299,12 +296,11 @@ public sealed class AGUIChatMessageExtensionsTests
         // Arrange
         List<AGUIMessage> aguiMessages =
         [
-            new AGUIMessage
+            new AGUIToolMessage
             {
                 Id = "msg1",
-                Role = AGUIRoles.Tool,
                 Content = "Some content",
-                CallId = null
+                ToolCallId = string.Empty
             }
         ];
 

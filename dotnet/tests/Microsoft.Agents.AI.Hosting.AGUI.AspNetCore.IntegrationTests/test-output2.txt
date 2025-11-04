@@ -1,0 +1,80 @@
+Test run for D:\work\agent-framework\dotnet\tests\Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.IntegrationTests\bin\Debug\net9.0\Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.IntegrationTests.dll (.NETCoreApp,Version=v9.0)
+VSTest version 17.14.1 (x64)
+
+Starting test execution, please wait...
+A total of 1 test files matched the specified pattern.
+[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.3+b1b99bdeb3 (64-bit .NET 9.0.10)
+[xUnit.net 00:00:00.09]   Discovering: Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.IntegrationTests
+[xUnit.net 00:00:00.12]   Discovered:  Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.IntegrationTests
+[xUnit.net 00:00:00.14]   Starting:    Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.IntegrationTests
+info: Microsoft.AspNetCore.Hosting.Diagnostics[1]
+      Request starting HTTP/1.1 POST http://localhost/agent - application/json;+charset=utf-8 -
+info: Microsoft.AspNetCore.Routing.EndpointMiddleware[0]
+      Executing endpoint 'HTTP: POST /agent'
+[FakeToolCallingChatClient] GetStreamingResponseAsync called. Message count: 1
+  - Role: user, Contents: 1 (TextContent)
+[FakeToolCallingChatClient] Generating function calls for 2 tools
+[FakeToolCallingChatClient] Generating call for tool: ServerFunction
+[FakeToolCallingChatClient] Generating call for tool: ServerFunction
+[FakeToolCallingChatClient] GetStreamingResponseAsync called. Message count: 3
+  - Role: user, Contents: 1 (TextContent)
+  - Role: assistant, Contents: 2 (FunctionCallContent, FunctionCallContent)
+  - Role: tool, Contents: 2 (FunctionResultContent, FunctionResultContent)
+[FakeToolCallingChatClient] Found function results, returning final response
+info: Microsoft.AspNetCore.Routing.EndpointMiddleware[1]
+      Executed endpoint 'HTTP: POST /agent'
+info: Microsoft.AspNetCore.Hosting.Diagnostics[1]
+      Request starting HTTP/1.1 POST http://localhost/agent - application/json;+charset=utf-8 -
+info: Microsoft.AspNetCore.Routing.EndpointMiddleware[0]
+      Executing endpoint 'HTTP: POST /agent'
+[FakeToolCallingChatClient] GetStreamingResponseAsync called. Message count: 1
+  - Role: tool, Contents: 1 (FunctionResultContent)
+[FakeToolCallingChatClient] Found function results, returning final response
+info: Microsoft.AspNetCore.Routing.EndpointMiddleware[1]
+      Executed endpoint 'HTTP: POST /agent'
+info: Microsoft.AspNetCore.Hosting.Diagnostics[2]
+      Request finished HTTP/1.1 POST http://localhost/agent - 200 - text/event-stream 90.5388ms
+info: Microsoft.AspNetCore.Hosting.Diagnostics[2]
+      Request finished HTTP/1.1 POST http://localhost/agent - 200 - text/event-stream 2.2496ms
+     Warning:
+     The component "Fluent Assertions" is governed by the rules defined in the Xceed License Agreement and
+     the Xceed Fluent Assertions Community License. You may use Fluent Assertions free of charge for
+     non-commercial use only. An active subscription is required to use Fluent Assertions for commercial use.
+     Please contact Xceed Sales mailto:sales@xceed.com to acquire a subscription at a very low cost.
+     A paid commercial license supports the development and continued increasing support of
+     Fluent Assertions users under both commercial and community licenses. Help us
+     keep Fluent Assertions at the forefront of unit testing.
+     For more information, visit https://xceed.com/products/unit-testing/fluent-assertions/
+[xUnit.net 00:00:00.48]     Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.IntegrationTests.ToolCallingTests.ServerTriggersSingleFunctionCallAsync [FAIL]
+[xUnit.net 00:00:00.48]       Expected callCount to be 1 because server function should be called once, but found 2.
+[xUnit.net 00:00:00.48]       Stack Trace:
+[xUnit.net 00:00:00.48]            at FluentAssertions.Execution.LateBoundTestFramework.Throw(String message)
+[xUnit.net 00:00:00.48]            at FluentAssertions.Execution.DefaultAssertionStrategy.HandleFailure(String message)
+[xUnit.net 00:00:00.48]            at FluentAssertions.Execution.AssertionScope.AddPreFormattedFailure(String formattedFailureMessage)
+[xUnit.net 00:00:00.48]            at FluentAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+[xUnit.net 00:00:00.48]            at FluentAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+[xUnit.net 00:00:00.48]            at FluentAssertions.Execution.AssertionChain.FailWith(String message, Object[] args)
+[xUnit.net 00:00:00.48]            at FluentAssertions.Numeric.NumericAssertionsBase`3.Be(T expected, String because, Object[] becauseArgs)
+[xUnit.net 00:00:00.48]         D:\work\agent-framework\dotnet\tests\Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.IntegrationTests\ToolCallingTests.cs(51,0): at Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.IntegrationTests.ToolCallingTests.ServerTriggersSingleFunctionCallAsync()
+[xUnit.net 00:00:00.48]         --- End of stack trace from previous location ---
+[xUnit.net 00:00:00.49]   Finished:    Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.IntegrationTests
+  Failed Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.IntegrationTests.ToolCallingTests.ServerTriggersSingleFunctionCallAsync [303 ms]
+  Error Message:
+   Expected callCount to be 1 because server function should be called once, but found 2.
+  Stack Trace:
+     at FluentAssertions.Execution.LateBoundTestFramework.Throw(String message)
+   at FluentAssertions.Execution.DefaultAssertionStrategy.HandleFailure(String message)
+   at FluentAssertions.Execution.AssertionScope.AddPreFormattedFailure(String formattedFailureMessage)
+   at FluentAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+   at FluentAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+   at FluentAssertions.Execution.AssertionChain.FailWith(String message, Object[] args)
+   at FluentAssertions.Numeric.NumericAssertionsBase`3.Be(T expected, String because, Object[] becauseArgs)
+   at Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.IntegrationTests.ToolCallingTests.ServerTriggersSingleFunctionCallAsync() in D:\work\agent-framework\dotnet\tests\Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.IntegrationTests\ToolCallingTests.cs:line 51
+--- End of stack trace from previous location ---
+
+Test Run Failed.
+Total tests: 1
+     Failed: 1
+ Total time: 1.0883 Seconds
+
+Workload updates are available. Run `dotnet workload list` for more information.

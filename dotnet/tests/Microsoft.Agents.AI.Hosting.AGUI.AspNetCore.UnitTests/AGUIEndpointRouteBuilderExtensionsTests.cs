@@ -80,7 +80,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         {
             ThreadId = "thread1",
             RunId = "run1",
-            Messages = [new AGUIMessage { Id = "m1", Role = AGUIRoles.User, Content = "Test" }],
+            Messages = [new AGUIUserMessage { Id = "m1", Content = "Test" }],
             Context = new Dictionary<string, string> { ["key1"] = "value1" }
         };
         string json = JsonSerializer.Serialize(input, AGUIJsonSerializerContext.Default.RunAgentInput);
@@ -109,7 +109,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         {
             ThreadId = "thread1",
             RunId = "run1",
-            Messages = [new AGUIMessage { Id = "m1", Role = AGUIRoles.User, Content = "Test" }]
+            Messages = [new AGUIUserMessage { Id = "m1", Content = "Test" }]
         };
         string json = JsonSerializer.Serialize(input, AGUIJsonSerializerContext.Default.RunAgentInput);
         httpContext.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(json));
@@ -136,7 +136,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         {
             ThreadId = "thread1",
             RunId = "run1",
-            Messages = [new AGUIMessage { Id = "m1", Role = AGUIRoles.User, Content = "Test" }]
+            Messages = [new AGUIUserMessage { Id = "m1", Content = "Test" }]
         };
         string json = JsonSerializer.Serialize(input, AGUIJsonSerializerContext.Default.RunAgentInput);
         httpContext.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(json));
@@ -168,8 +168,8 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
             RunId = "run1",
             Messages =
             [
-                new AGUIMessage { Id = "m1", Role = AGUIRoles.User, Content = "First" },
-                new AGUIMessage { Id = "m2", Role = AGUIRoles.Assistant, Content = "Second" }
+                new AGUIUserMessage { Id = "m1", Content = "First" },
+                new AGUIAssistantMessage { Id = "m2", Content = "Second" }
             ]
         };
         string json = JsonSerializer.Serialize(input, AGUIJsonSerializerContext.Default.RunAgentInput);
