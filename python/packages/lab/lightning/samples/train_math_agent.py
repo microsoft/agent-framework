@@ -18,11 +18,9 @@ import string
 from typing import TypedDict, cast
 
 import sympy  # type: ignore[import-untyped,reportMissingImports]
-from agent_framework._agents import ChatAgent
-from agent_framework._mcp import MCPStdioTool
-from agent_framework._types import AgentRunResponse
-from agent_framework.openai._chat_client import OpenAIChatClient
-from agent_framework_lab_lightning import init as lightning_init
+from agent_framework import AgentRunResponse, ChatAgent, MCPStdioTool
+from agent_framework.lab.lightning import AgentFrameworkTracer
+from agent_framework.openai import OpenAIChatClient
 from agentlightning import LLM, Dataset, Trainer, rollout
 from agentlightning.algorithm.verl import VERL
 
@@ -192,10 +190,6 @@ def main():
     # This configuration controls all aspects of the RL training process.
     # Key sections: algorithm, data, rollout, actor, trainer
     rl_training_config = {
-        "agentlightning": {
-            # The port to communicate between the rollout workers and the RL training process
-            "port": 9999,
-        },
         "algorithm": {
             # Advantage estimator type: "gae", "grpo", "reinforce_plus_plus", etc.
             "adv_estimator": "grpo"
@@ -280,10 +274,6 @@ def main():
         },
     }
 
-    # Initialize and run training
-    # lightning_init() enables observability integration with agent-framework
-    lightning_init()
-
     # Load your datasets
     train_dataset = _load_jsonl("data/math/train.jsonl")
     val_dataset = _load_jsonl("data/math/test.jsonl")
@@ -298,13 +288,13 @@ def main():
 
     # Create trainer with VERL algorithm and start training
     # n_workers: Number of rollout workers (processes) for parallel data collection
-    trainer = Trainer(algorithm=VERL(rl_training_config), n_workers=2)
+    trainer = Trainer(algorithm=VERL(rl_training_config), tracer=AgentFrameworkTracer(), n_workers=2)
 
     # This starts the actual RL training loop:
     # 1. Collect rollouts using current model
     # 2. Compute advantages and train the model
     # 3. Repeat for specified number of epochs
-    trainer.fit(math_agent, train_dataset, val_data=val_dataset)
+    trainer.fit(math_agent, train_dataset, val_dataset=val_dataset)
 
 
 def debug():

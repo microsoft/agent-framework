@@ -1,8 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using A2A;
 using A2A.AspNetCore;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Hosting;
 using Microsoft.Agents.AI.Hosting.A2A;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Routing;
@@ -23,10 +25,21 @@ public static class MicrosoftAgentAIHostingA2AEndpointRouteBuilderExtensions
     /// <param name="agentName">The name of the agent to use for A2A protocol integration.</param>
     /// <param name="path">The route group to use for A2A endpoints.</param>
     /// <returns>Configured <see cref="ITaskManager"/> for A2A integration.</returns>
-    public static ITaskManager MapA2A(this IEndpointRouteBuilder endpoints, string agentName, string path)
+    public static IEndpointConventionBuilder MapA2A(this IEndpointRouteBuilder endpoints, string agentName, string path)
+        => endpoints.MapA2A(agentName, path, _ => { });
+
+    /// <summary>
+    /// Attaches A2A (Agent2Agent) communication capabilities via Message processing to the specified web application.
+    /// </summary>
+    /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the A2A endpoints to.</param>
+    /// <param name="agentName">The name of the agent to use for A2A protocol integration.</param>
+    /// <param name="path">The route group to use for A2A endpoints.</param>
+    /// <param name="configureTaskManager">The callback to configure <see cref="ITaskManager"/>.</param>
+    /// <returns>Configured <see cref="ITaskManager"/> for A2A integration.</returns>
+    public static IEndpointConventionBuilder MapA2A(this IEndpointRouteBuilder endpoints, string agentName, string path, Action<ITaskManager> configureTaskManager)
     {
         var agent = endpoints.ServiceProvider.GetRequiredKeyedService<AIAgent>(agentName);
-        return endpoints.MapA2A(agent, path);
+        return endpoints.MapA2A(agent, path, configureTaskManager);
     }
 
     /// <summary>
@@ -42,10 +55,27 @@ public static class MicrosoftAgentAIHostingA2AEndpointRouteBuilderExtensions
     /// <see href="https://github.com/a2aproject/A2A/blob/main/docs/topics/agent-discovery.md#2-curated-registries-catalog-based-discovery">Curated Registries (Catalog-Based Discovery)</see>
     /// discovery mechanism.
     /// </remarks>
-    public static ITaskManager MapA2A(this IEndpointRouteBuilder endpoints, string agentName, string path, AgentCard agentCard)
+    public static IEndpointConventionBuilder MapA2A(this IEndpointRouteBuilder endpoints, string agentName, string path, AgentCard agentCard)
+        => endpoints.MapA2A(agentName, path, agentCard, _ => { });
+
+    /// <summary>
+    /// Attaches A2A (Agent2Agent) communication capabilities via Message processing to the specified web application.
+    /// </summary>
+    /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the A2A endpoints to.</param>
+    /// <param name="agentName">The name of the agent to use for A2A protocol integration.</param>
+    /// <param name="path">The route group to use for A2A endpoints.</param>
+    /// <param name="agentCard">Agent card info to return on query.</param>
+    /// <param name="configureTaskManager">The callback to configure <see cref="ITaskManager"/>.</param>
+    /// <returns>Configured <see cref="ITaskManager"/> for A2A integration.</returns>
+    /// <remarks>
+    /// This method can be used to access A2A agents that support the
+    /// <see href="https://github.com/a2aproject/A2A/blob/main/docs/topics/agent-discovery.md#2-curated-registries-catalog-based-discovery">Curated Registries (Catalog-Based Discovery)</see>
+    /// discovery mechanism.
+    /// </remarks>
+    public static IEndpointConventionBuilder MapA2A(this IEndpointRouteBuilder endpoints, string agentName, string path, AgentCard agentCard, Action<ITaskManager> configureTaskManager)
     {
         var agent = endpoints.ServiceProvider.GetRequiredKeyedService<AIAgent>(agentName);
-        return endpoints.MapA2A(agent, path, agentCard);
+        return endpoints.MapA2A(agent, path, agentCard, configureTaskManager);
     }
 
     /// <summary>
@@ -55,11 +85,26 @@ public static class MicrosoftAgentAIHostingA2AEndpointRouteBuilderExtensions
     /// <param name="agent">The agent to use for A2A protocol integration.</param>
     /// <param name="path">The route group to use for A2A endpoints.</param>
     /// <returns>Configured <see cref="ITaskManager"/> for A2A integration.</returns>
-    public static ITaskManager MapA2A(this IEndpointRouteBuilder endpoints, AIAgent agent, string path)
+    public static IEndpointConventionBuilder MapA2A(this IEndpointRouteBuilder endpoints, AIAgent agent, string path)
+        => endpoints.MapA2A(agent, path, _ => { });
+
+    /// <summary>
+    /// Attaches A2A (Agent2Agent) communication capabilities via Message processing to the specified web application.
+    /// </summary>
+    /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the A2A endpoints to.</param>
+    /// <param name="agent">The agent to use for A2A protocol integration.</param>
+    /// <param name="path">The route group to use for A2A endpoints.</param>
+    /// <param name="configureTaskManager">The callback to configure <see cref="ITaskManager"/>.</param>
+    /// <returns>Configured <see cref="ITaskManager"/> for A2A integration.</returns>
+    public static IEndpointConventionBuilder MapA2A(this IEndpointRouteBuilder endpoints, AIAgent agent, string path, Action<ITaskManager> configureTaskManager)
     {
         var loggerFactory = endpoints.ServiceProvider.GetRequiredService<ILoggerFactory>();
-        var taskManager = agent.MapA2A(loggerFactory: loggerFactory);
-        return endpoints.MapA2A(taskManager, path);
+        var agentThreadStore = endpoints.ServiceProvider.GetKeyedService<AgentThreadStore>(agent.Name);
+        var taskManager = agent.MapA2A(loggerFactory: loggerFactory, agentThreadStore: agentThreadStore);
+        var endpointConventionBuilder = endpoints.MapA2A(taskManager, path);
+
+        configureTaskManager(taskManager);
+        return endpointConventionBuilder;
     }
 
     /// <summary>
@@ -75,11 +120,33 @@ public static class MicrosoftAgentAIHostingA2AEndpointRouteBuilderExtensions
     /// <see href="https://github.com/a2aproject/A2A/blob/main/docs/topics/agent-discovery.md#2-curated-registries-catalog-based-discovery">Curated Registries (Catalog-Based Discovery)</see>
     /// discovery mechanism.
     /// </remarks>
-    public static ITaskManager MapA2A(this IEndpointRouteBuilder endpoints, AIAgent agent, string path, AgentCard agentCard)
+    public static IEndpointConventionBuilder MapA2A(this IEndpointRouteBuilder endpoints, AIAgent agent, string path, AgentCard agentCard)
+        => endpoints.MapA2A(agent, path, agentCard, _ => { });
+
+    /// <summary>
+    /// Attaches A2A (Agent2Agent) communication capabilities via Message processing to the specified web application.
+    /// </summary>
+    /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the A2A endpoints to.</param>
+    /// <param name="agent">The agent to use for A2A protocol integration.</param>
+    /// <param name="path">The route group to use for A2A endpoints.</param>
+    /// <param name="agentCard">Agent card info to return on query.</param>
+    /// <param name="configureTaskManager">The callback to configure <see cref="ITaskManager"/>.</param>
+    /// <returns>Configured <see cref="ITaskManager"/> for A2A integration.</returns>
+    /// <remarks>
+    /// This method can be used to access A2A agents that support the
+    /// <see href="https://github.com/a2aproject/A2A/blob/main/docs/topics/agent-discovery.md#2-curated-registries-catalog-based-discovery">Curated Registries (Catalog-Based Discovery)</see>
+    /// discovery mechanism.
+    /// </remarks>
+    public static IEndpointConventionBuilder MapA2A(this IEndpointRouteBuilder endpoints, AIAgent agent, string path, AgentCard agentCard, Action<ITaskManager> configureTaskManager)
     {
         var loggerFactory = endpoints.ServiceProvider.GetRequiredService<ILoggerFactory>();
-        var taskManager = agent.MapA2A(agentCard: agentCard, loggerFactory: loggerFactory);
-        return endpoints.MapA2A(taskManager, path);
+        var agentThreadStore = endpoints.ServiceProvider.GetKeyedService<AgentThreadStore>(agent.Name);
+        var taskManager = agent.MapA2A(agentCard: agentCard, agentThreadStore: agentThreadStore, loggerFactory: loggerFactory);
+        var endpointConventionBuilder = endpoints.MapA2A(taskManager, path);
+
+        configureTaskManager(taskManager);
+
+        return endpointConventionBuilder;
     }
 
     /// <summary>
@@ -90,14 +157,12 @@ public static class MicrosoftAgentAIHostingA2AEndpointRouteBuilderExtensions
     /// <param name="taskManager">Pre-configured A2A TaskManager to use for A2A endpoints handling.</param>
     /// <param name="path">The route group to use for A2A endpoints.</param>
     /// <returns>Configured <see cref="ITaskManager"/> for A2A integration.</returns>
-    public static ITaskManager MapA2A(this IEndpointRouteBuilder endpoints, TaskManager taskManager, string path)
+    public static IEndpointConventionBuilder MapA2A(this IEndpointRouteBuilder endpoints, ITaskManager taskManager, string path)
     {
         // note: current SDK version registers multiple `.well-known/agent.json` handlers here.
         // it makes app return HTTP 500, but will be fixed once new A2A SDK is released.
         // see https://github.com/microsoft/agent-framework/issues/476 for details
         A2ARouteBuilderExtensions.MapA2A(endpoints, taskManager, path);
-        endpoints.MapHttpA2A(taskManager, path);
-
-        return taskManager;
+        return endpoints.MapHttpA2A(taskManager, path);
     }
 }

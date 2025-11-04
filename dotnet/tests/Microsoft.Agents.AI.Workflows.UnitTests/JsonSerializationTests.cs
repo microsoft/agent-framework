@@ -167,7 +167,7 @@ public class JsonSerializationTests
         builder.AddEdge(forwardString, stringToInt)
                .AddEdge(stringToInt, forwardInt)
                .AddEdge(forwardInt, intToString)
-               .AddEdge(intToString, StreamingAggregators.Last<int>().AsExecutor("Aggregate"));
+               .AddEdge(intToString, StreamingAggregators.Last<int>().BindAsExecutor("Aggregate"));
 
         return builder.Build();
     }

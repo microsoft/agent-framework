@@ -4,7 +4,7 @@ using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 
-namespace WorkflowAsAnAgentsSample;
+namespace WorkflowAsAnAgentSample;
 
 internal static class WorkflowFactory
 {
@@ -41,44 +41,43 @@ internal static class WorkflowFactory
     /// <summary>
     /// Executor that starts the concurrent processing by sending messages to the agents.
     /// </summary>
-    private sealed class ConcurrentStartExecutor() :
-        Executor<List<ChatMessage>>("ConcurrentStartExecutor")
+    private sealed class ConcurrentStartExecutor() : Executor("ConcurrentStartExecutor")
     {
-        /// <summary>
-        /// Starts the concurrent processing by sending messages to the agents.
-        /// </summary>
-        /// <param name="message">The user message to process</param>
-        /// <param name="context">Workflow context for accessing workflow services and adding events</param>
-        /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
-        /// The default is <see cref="CancellationToken.None"/>.</param>
-        public override async ValueTask HandleAsync(List<ChatMessage> message, IWorkflowContext context, CancellationToken cancellationToken = default)
+        protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
         {
-            // Broadcast the message to all connected agents. Receiving agents will queue
-            // the message but will not start processing until they receive a turn token.
-            await context.SendMessageAsync(message, cancellationToken: cancellationToken);
-            // Broadcast the turn token to kick off the agents.
-            await context.SendMessageAsync(new TurnToken(emitEvents: true), cancellationToken: cancellationToken);
+            return routeBuilder
+                .AddHandler<List<ChatMessage>>(this.RouteMessages)
+                .AddHandler<TurnToken>(this.RouteTurnTokenAsync);
+        }
+
+        private ValueTask RouteMessages(List<ChatMessage> messages, IWorkflowContext context, CancellationToken cancellationToken)
+        {
+            return context.SendMessageAsync(messages, cancellationToken: cancellationToken);
+        }
+
+        private ValueTask RouteTurnTokenAsync(TurnToken token, IWorkflowContext context, CancellationToken cancellationToken)
+        {
+            return context.SendMessageAsync(token, cancellationToken: cancellationToken);
         }
     }
 
     /// <summary>
     /// Executor that aggregates the results from the concurrent agents.
     /// </summary>
-    private sealed class ConcurrentAggregationExecutor() :
-        Executor<ChatMessage>("ConcurrentAggregationExecutor")
+    private sealed class ConcurrentAggregationExecutor() : Executor<List<ChatMessage>>("ConcurrentAggregationExecutor")
     {
         private readonly List<ChatMessage> _messages = [];
 
         /// <summary>
         /// Handles incoming messages from the agents and aggregates their responses.
         /// </summary>
-        /// <param name="message">The message from the agent</param>
+        /// <param name="message">The messages from the agent</param>
         /// <param name="context">Workflow context for accessing workflow services and adding events</param>
         /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
         /// The default is <see cref="CancellationToken.None"/>.</param>
-        public override async ValueTask HandleAsync(ChatMessage message, IWorkflowContext context, CancellationToken cancellationToken = default)
+        public override async ValueTask HandleAsync(List<ChatMessage> message, IWorkflowContext context, CancellationToken cancellationToken = default)
         {
-            this._messages.Add(message);
+            this._messages.AddRange(message);
 
             if (this._messages.Count == 2)
             {

@@ -1318,13 +1318,13 @@ def _handle_function_calls_response(
             messages: "str | ChatMessage | list[str] | list[ChatMessage]",
             **kwargs: Any,
         ) -> "ChatResponse":
-            from ._clients import prepare_messages
             from ._middleware import extract_and_merge_function_middleware
             from ._types import (
                 ChatMessage,
                 FunctionApprovalRequestContent,
                 FunctionCallContent,
                 FunctionResultContent,
+                prepare_messages,
             )
 
             # Extract and merge function middleware from chat client with kwargs pipeline
@@ -1465,7 +1465,6 @@ def _handle_function_calls_streaming_response(
             **kwargs: Any,
         ) -> AsyncIterable["ChatResponseUpdate"]:
             """Wrap the inner get streaming response method to handle tool calls."""
-            from ._clients import prepare_messages
             from ._middleware import extract_and_merge_function_middleware
             from ._types import (
                 ChatMessage,
@@ -1473,6 +1472,7 @@ def _handle_function_calls_streaming_response(
                 ChatResponseUpdate,
                 FunctionCallContent,
                 FunctionResultContent,
+                prepare_messages,
             )
 
             # Extract and merge function middleware from chat client with kwargs pipeline

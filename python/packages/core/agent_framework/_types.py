@@ -561,7 +561,7 @@ class BaseContent(SerializationMixin):
     def __init__(
         self,
         *,
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -651,7 +651,7 @@ class TextContent(BaseContent):
         *,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         **kwargs: Any,
     ):
         """Initializes a TextContent instance.
@@ -793,7 +793,7 @@ class TextReasoningContent(BaseContent):
         *,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         **kwargs: Any,
     ):
         """Initializes a TextReasoningContent instance.
@@ -936,7 +936,7 @@ class DataContent(BaseContent):
         self,
         *,
         uri: str,
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -962,7 +962,7 @@ class DataContent(BaseContent):
         *,
         data: bytes,
         media_type: str,
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -989,7 +989,7 @@ class DataContent(BaseContent):
         uri: str | None = None,
         data: bytes | None = None,
         media_type: str | None = None,
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -1093,7 +1093,7 @@ class UriContent(BaseContent):
         uri: str,
         media_type: str,
         *,
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -1187,7 +1187,7 @@ class ErrorContent(BaseContent):
         message: str | None = None,
         error_code: str | None = None,
         details: str | None = None,
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -1271,7 +1271,7 @@ class FunctionCallContent(BaseContent):
         name: str,
         arguments: str | dict[str, Any | None] | None = None,
         exception: Exception | None = None,
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -1380,7 +1380,7 @@ class FunctionResultContent(BaseContent):
         call_id: str,
         result: Any | None = None,
         exception: Exception | None = None,
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -1438,7 +1438,7 @@ class UsageContent(BaseContent):
         self,
         details: UsageDetails | MutableMapping[str, Any],
         *,
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -1556,7 +1556,7 @@ class BaseUserInputRequest(BaseContent):
         self,
         *,
         id: str,
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -1610,7 +1610,7 @@ class FunctionApprovalResponseContent(BaseContent):
         *,
         id: str,
         function_call: FunctionCallContent | MutableMapping[str, Any],
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -1674,7 +1674,7 @@ class FunctionApprovalRequestContent(BaseContent):
         *,
         id: str,
         function_call: FunctionCallContent | MutableMapping[str, Any],
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -2050,6 +2050,27 @@ class ChatMessage(SerializationMixin):
             This property concatenates the text of all TextContent objects in Contents.
         """
         return " ".join(content.text for content in self.contents if isinstance(content, TextContent))
+
+
+def prepare_messages(messages: str | ChatMessage | list[str] | list[ChatMessage]) -> list[ChatMessage]:
+    """Convert various message input formats into a list of ChatMessage objects.
+
+    Args:
+        messages: The input messages in various supported formats.
+
+    Returns:
+        A list of ChatMessage objects.
+    """
+    if isinstance(messages, str):
+        return [ChatMessage(role="user", text=messages)]
+    if isinstance(messages, ChatMessage):
+        return [messages]
+    return_messages: list[ChatMessage] = []
+    for msg in messages:
+        if isinstance(msg, str):
+            msg = ChatMessage(role="user", text=msg)
+        return_messages.append(msg)
+    return return_messages
 
 
 # region ChatResponse
@@ -3125,7 +3146,7 @@ class ChatOptions(SerializationMixin):
     @classmethod
     def _validate_tool_mode(
         cls, tool_choice: ToolMode | Literal["auto", "required", "none"] | Mapping[str, Any] | None
-    ) -> ToolMode | str | None:
+    ) -> ToolMode | None:
         """Validates the tool_choice field to ensure it is a valid ToolMode."""
         if not tool_choice:
             return None
