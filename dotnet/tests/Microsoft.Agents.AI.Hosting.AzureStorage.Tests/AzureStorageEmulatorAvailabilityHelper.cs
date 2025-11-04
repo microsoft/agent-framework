@@ -7,7 +7,7 @@ using Azure;
 using Azure.Storage.Blobs;
 using Skip = Xunit.Skip;
 
-namespace Hosting.AgentThreadStore.IntegrationTests;
+namespace Microsoft.Agents.AI.Hosting.AzureStorage.Tests;
 
 /// <summary>
 /// Helper class to check if Azurite (Azure Storage Emulator) is available and running.
