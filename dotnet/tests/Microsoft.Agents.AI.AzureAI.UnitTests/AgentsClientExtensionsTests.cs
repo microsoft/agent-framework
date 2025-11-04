@@ -11,6 +11,7 @@ using Azure.AI.Agents;
 using Microsoft.Extensions.AI;
 using Moq;
 using OpenAI;
+using OpenAI.Responses;
 
 namespace Microsoft.Agents.AI.AzureAI.UnitTests;
 
@@ -19,7 +20,7 @@ namespace Microsoft.Agents.AI.AzureAI.UnitTests;
 /// </summary>
 public sealed class AgentsClientExtensionsTests
 {
-    #region GetAIAgent(AgentsClient, string, AgentRecord) Tests
+    #region GetAIAgent(AgentsClient, AgentRecord) Tests
 
     /// <summary>
     /// Verify that GetAIAgent throws ArgumentNullException when agentsClient is null.
@@ -33,7 +34,7 @@ public sealed class AgentsClientExtensionsTests
 
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            client!.GetAIAgent(agentRecord, chatOptions: null));
+            client!.GetAIAgent(agentRecord));
 
         Assert.Equal("agentsClient", exception.ParamName);
     }
@@ -49,7 +50,7 @@ public sealed class AgentsClientExtensionsTests
 
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            mockClient.Object.GetAIAgent((AgentRecord)null!, chatOptions: null));
+            mockClient.Object.GetAIAgent((AgentRecord)null!));
 
         Assert.Equal("agentRecord", exception.ParamName);
     }
@@ -65,7 +66,7 @@ public sealed class AgentsClientExtensionsTests
         AgentRecord agentRecord = this.CreateTestAgentRecord();
 
         // Act
-        var agent = client.GetAIAgent(agentRecord, chatOptions: null);
+        var agent = client.GetAIAgent(agentRecord);
 
         // Assert
         Assert.NotNull(agent);
@@ -86,7 +87,6 @@ public sealed class AgentsClientExtensionsTests
         // Act
         var agent = client.GetAIAgent(
             agentRecord,
-            chatOptions: null,
             clientFactory: (innerClient) => testChatClient = new TestChatClient(innerClient));
 
         // Assert
@@ -98,7 +98,7 @@ public sealed class AgentsClientExtensionsTests
 
     #endregion
 
-    #region GetAIAgent(AgentsClient, string, AgentVersion) Tests
+    #region GetAIAgent(AgentsClient, AgentVersion) Tests
 
     /// <summary>
     /// Verify that GetAIAgent throws ArgumentNullException when agentsClient is null.
@@ -112,7 +112,7 @@ public sealed class AgentsClientExtensionsTests
 
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            client!.GetAIAgent(agentVersion, chatOptions: null));
+            client!.GetAIAgent(agentVersion));
 
         Assert.Equal("agentsClient", exception.ParamName);
     }
@@ -128,7 +128,7 @@ public sealed class AgentsClientExtensionsTests
 
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            mockClient.Object.GetAIAgent((AgentVersion)null!, chatOptions: null));
+            mockClient.Object.GetAIAgent((AgentVersion)null!));
 
         Assert.Equal("agentVersion", exception.ParamName);
     }
@@ -144,7 +144,7 @@ public sealed class AgentsClientExtensionsTests
         AgentVersion agentVersion = this.CreateTestAgentVersion();
 
         // Act
-        var agent = client.GetAIAgent(agentVersion, chatOptions: null);
+        var agent = client.GetAIAgent(agentVersion);
 
         // Assert
         Assert.NotNull(agent);
@@ -165,7 +165,6 @@ public sealed class AgentsClientExtensionsTests
         // Act
         var agent = client.GetAIAgent(
             agentVersion,
-            chatOptions: null,
             clientFactory: (innerClient) => testChatClient = new TestChatClient(innerClient));
 
         // Assert
@@ -190,7 +189,7 @@ public sealed class AgentsClientExtensionsTests
 
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            client!.GetAIAgent("test-agent", chatOptions: null));
+            client!.GetAIAgent("test-agent"));
 
         Assert.Equal("agentsClient", exception.ParamName);
     }
@@ -206,7 +205,7 @@ public sealed class AgentsClientExtensionsTests
 
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            mockClient.Object.GetAIAgent((string)null!, chatOptions: null));
+            mockClient.Object.GetAIAgent((string)null!));
 
         Assert.Equal("name", exception.ParamName);
     }
@@ -222,7 +221,7 @@ public sealed class AgentsClientExtensionsTests
 
         // Act & Assert
         var exception = Assert.Throws<ArgumentException>(() =>
-            mockClient.Object.GetAIAgent(string.Empty, chatOptions: null));
+            mockClient.Object.GetAIAgent(string.Empty));
 
         Assert.Equal("name", exception.ParamName);
     }
@@ -240,7 +239,7 @@ public sealed class AgentsClientExtensionsTests
 
         // Act & Assert
         var exception = Assert.Throws<InvalidOperationException>(() =>
-            mockClient.Object.GetAIAgent("non-existent-agent", chatOptions: null));
+            mockClient.Object.GetAIAgent("non-existent-agent"));
 
         Assert.Contains("not found", exception.Message);
     }
@@ -276,7 +275,7 @@ public sealed class AgentsClientExtensionsTests
 
         // Act & Assert
         var exception = await Assert.ThrowsAsync<ArgumentNullException>(() =>
-            mockClient.Object.GetAIAgentAsync(null!));
+            mockClient.Object.GetAIAgentAsync(name: null!));
 
         Assert.Equal("name", exception.ParamName);
     }
@@ -301,46 +300,46 @@ public sealed class AgentsClientExtensionsTests
 
     #endregion
 
-    #region GetAIAgent(AgentsClient, AgentRecord, ChatClientAgentOptions) Tests
+    #region GetAIAgent(AgentsClient, AgentRecord) with tools Tests
 
     /// <summary>
-    /// Verify that GetAIAgent with options uses provided options correctly.
+    /// Verify that GetAIAgent with tools parameter passes tools to the agent.
     /// </summary>
     [Fact]
-    public void GetAIAgent_WithAgentRecordAndOptions_UsesProvidedOptions()
+    public void GetAIAgent_WithAgentRecordAndTools_PassesToolsToAgent()
     {
         // Arrange
         AgentsClient client = this.CreateTestAgentsClient();
         AgentRecord agentRecord = this.CreateTestAgentRecord();
-        var options = new ChatClientAgentOptions
+        var tools = new List<AITool>
         {
-            Name = "Override Name",
-            Description = "Override Description",
-            Instructions = "Override Instructions"
+            AIFunctionFactory.Create(() => "test", "test_function", "A test function")
         };
 
         // Act
-        var agent = client.GetAIAgent(agentRecord, options);
+        var agent = client.GetAIAgent(agentRecord, tools: tools);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.Equal("Override Name", agent.Name);
-        Assert.Equal("Override Description", agent.Description);
-        Assert.Equal("Override Instructions", agent.Instructions);
+        Assert.IsType<ChatClientAgent>(agent);
+        var chatClient = agent.GetService<IChatClient>();
+        Assert.NotNull(chatClient);
+        var agentVersion = chatClient.GetService<AgentVersion>();
+        Assert.NotNull(agentVersion);
     }
 
     /// <summary>
-    /// Verify that GetAIAgent with null options falls back to agent definition.
+    /// Verify that GetAIAgent with null tools works correctly.
     /// </summary>
     [Fact]
-    public void GetAIAgent_WithAgentRecordAndNullOptions_UsesAgentDefinition()
+    public void GetAIAgent_WithAgentRecordAndNullTools_WorksCorrectly()
     {
         // Arrange
         AgentsClient client = this.CreateTestAgentsClient();
         AgentRecord agentRecord = this.CreateTestAgentRecord();
 
         // Act
-        var agent = client.GetAIAgent(agentRecord, options: null);
+        var agent = client.GetAIAgent(agentRecord, tools: null);
 
         // Assert
         Assert.NotNull(agent);
@@ -349,22 +348,27 @@ public sealed class AgentsClientExtensionsTests
 
     #endregion
 
-    #region GetAIAgentAsync(AgentsClient, string, ChatClientAgentOptions) Tests
+    #region GetAIAgentAsync(AgentsClient, string) with tools Tests
 
     /// <summary>
-    /// Verify that GetAIAgentAsync throws ArgumentNullException when options is null.
+    /// Verify that GetAIAgentAsync with tools parameter creates an agent.
     /// </summary>
     [Fact]
-    public async Task GetAIAgentAsync_WithOptions_WithNullOptions_ThrowsArgumentNullExceptionAsync()
+    public async Task GetAIAgentAsync_WithNameAndTools_CreatesAgentAsync()
     {
         // Arrange
-        var mockClient = new Mock<AgentsClient>();
+        AgentsClient client = this.CreateTestAgentsClient();
+        var tools = new List<AITool>
+        {
+            AIFunctionFactory.Create(() => "test", "test_function", "A test function")
+        };
 
-        // Act & Assert
-        var exception = await Assert.ThrowsAsync<ArgumentNullException>(() =>
-            mockClient.Object.GetAIAgentAsync("test-agent", (ChatClientAgentOptions)null!));
+        // Act
+        var agent = await client.GetAIAgentAsync("test-agent", tools: tools);
 
-        Assert.Equal("options", exception.ParamName);
+        // Assert
+        Assert.NotNull(agent);
+        Assert.IsType<ChatClientAgent>(agent);
     }
 
     #endregion
@@ -382,7 +386,7 @@ public sealed class AgentsClientExtensionsTests
 
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            client!.CreateAIAgent("test-agent", "model"));
+            client!.CreateAIAgent("test-agent", "model", "instructions"));
 
         Assert.Equal("agentsClient", exception.ParamName);
     }
@@ -398,7 +402,7 @@ public sealed class AgentsClientExtensionsTests
 
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            mockClient.Object.CreateAIAgent((string)null!, "model"));
+            mockClient.Object.CreateAIAgent(null!, "model", "instructions"));
 
         Assert.Equal("name", exception.ParamName);
     }
@@ -473,7 +477,7 @@ public sealed class AgentsClientExtensionsTests
 
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            client!.CreateAIAgent(options, "model"));
+            client!.CreateAIAgent("model", options));
 
         Assert.Equal("agentsClient", exception.ParamName);
     }
@@ -489,7 +493,7 @@ public sealed class AgentsClientExtensionsTests
 
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            mockClient.Object.CreateAIAgent((ChatClientAgentOptions)null!, "model"));
+            mockClient.Object.CreateAIAgent("model", (ChatClientAgentOptions)null!));
 
         Assert.Equal("options", exception.ParamName);
     }
@@ -506,7 +510,7 @@ public sealed class AgentsClientExtensionsTests
 
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            mockClient.Object.CreateAIAgent(options, null!));
+            mockClient.Object.CreateAIAgent(null!, options));
 
         Assert.Equal("model", exception.ParamName);
     }
@@ -523,7 +527,7 @@ public sealed class AgentsClientExtensionsTests
 
         // Act & Assert
         var exception = Assert.Throws<ArgumentException>(() =>
-            client.CreateAIAgent(options, "test-model"));
+            client.CreateAIAgent("test-model", options));
 
         Assert.Contains("Agent name must be provided", exception.Message);
     }
@@ -544,7 +548,7 @@ public sealed class AgentsClientExtensionsTests
 
         // Act & Assert
         var exception = await Assert.ThrowsAsync<ArgumentNullException>(() =>
-            client!.CreateAIAgentAsync(definition));
+            client!.CreateAIAgentAsync("agent-name", definition));
 
         Assert.Equal("agentsClient", exception.ParamName);
     }
@@ -560,9 +564,477 @@ public sealed class AgentsClientExtensionsTests
 
         // Act & Assert
         var exception = await Assert.ThrowsAsync<ArgumentNullException>(() =>
-            mockClient.Object.CreateAIAgentAsync(null!));
+            mockClient.Object.CreateAIAgentAsync(name: "agent-name", null!));
 
         Assert.Equal("agentDefinition", exception.ParamName);
+    }
+
+    #endregion
+
+    #region Tool Validation Tests
+
+    /// <summary>
+    /// Verify that CreateAIAgent throws ArgumentException when agent definition contains inline tools.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithInlineToolsInDefinition_ThrowsArgumentException()
+    {
+        // Arrange
+        AgentsClient client = this.CreateTestAgentsClient();
+        var definition = new PromptAgentDefinition("test-model");
+        definition.Tools.Add(ResponseTool.CreateFunctionTool("inline_tool", BinaryData.FromString("{}"), strictModeEnabled: false));
+
+        // Act & Assert
+        var exception = Assert.Throws<ArgumentException>(() =>
+            client.CreateAIAgent("test-agent", definition));
+
+        Assert.Contains("dedicated tools parameter", exception.Message);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgent with tools parameter applies tools to the agent definition.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithToolsParameter_AppliesToolsToDefinition()
+    {
+        // Arrange
+        var definition = new PromptAgentDefinition("test-model");
+        var tools = new List<AITool>
+        {
+            AIFunctionFactory.Create(() => "test", "test_function", "A test function")
+        };
+
+        var agentDefinitionResponse = GeneratePromptDefinitionResponse(definition, tools);
+        AgentsClient client = this.CreateTestAgentsClient(agentName: "test-agent", agentDefinitionResponse: agentDefinitionResponse);
+
+        // Act
+        var agent = client.CreateAIAgent("test-agent", definition, tools: tools);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.IsType<ChatClientAgent>(agent);
+        var agentVersion = agent.GetService<AgentVersion>();
+        Assert.NotNull(agentVersion);
+        if (agentVersion.Definition is PromptAgentDefinition promptDef)
+        {
+            Assert.NotEmpty(promptDef.Tools);
+            Assert.Single(promptDef.Tools);
+        }
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgent with inline tools in agent definition throws ArgumentException.
+    /// </summary>
+    [Fact]
+    public void GetAIAgent_WithInlineToolsInDefinition_ThrowsArgumentException()
+    {
+        // Arrange
+        AgentsClient client = this.CreateTestAgentsClient();
+        var agentVersion = this.CreateTestAgentVersion();
+
+        // Manually add tools to the definition to simulate inline tools
+        if (agentVersion.Definition is PromptAgentDefinition promptDef)
+        {
+            promptDef.Tools.Add(ResponseTool.CreateFunctionTool("inline_tool", BinaryData.FromString("{}"), strictModeEnabled: false));
+        }
+
+        // Act & Assert
+        var exception = Assert.Throws<ArgumentException>(() =>
+            client.GetAIAgent(agentVersion));
+
+        Assert.Contains("tools parameter", exception.Message);
+    }
+
+    #endregion
+
+    #region Inline Tools vs Parameter Tools Tests
+
+    /// <summary>
+    /// Verify that tools passed as parameters are accepted by GetAIAgent.
+    /// </summary>
+    [Fact]
+    public void GetAIAgent_WithParameterTools_AcceptsTools()
+    {
+        // Arrange
+        AgentsClient client = this.CreateTestAgentsClient();
+        AgentRecord agentRecord = this.CreateTestAgentRecord();
+        var tools = new List<AITool>
+        {
+            AIFunctionFactory.Create(() => "tool1", "param_tool_1", "First parameter tool"),
+            AIFunctionFactory.Create(() => "tool2", "param_tool_2", "Second parameter tool")
+        };
+
+        // Act
+        var agent = client.GetAIAgent(agentRecord, tools: tools);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.IsType<ChatClientAgent>(agent);
+        var chatClient = agent.GetService<IChatClient>();
+        Assert.NotNull(chatClient);
+        var agentVersion = chatClient.GetService<AgentVersion>();
+        Assert.NotNull(agentVersion);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgent with parameter tools creates an agent successfully.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithParameterTools_CreatesAgentSuccessfully()
+    {
+        // Arrange
+        var definition = new PromptAgentDefinition("test-model") { Instructions = "Test instructions" };
+        var tools = new List<AITool>
+        {
+            AIFunctionFactory.Create(() => "result", "create_tool", "A tool for creation")
+        };
+
+        // Simulate agent definition response with the tools
+        var definitionResponse = GeneratePromptDefinitionResponse(definition, tools);
+
+        AgentsClient client = this.CreateTestAgentsClient(agentDefinitionResponse: definitionResponse);
+
+        // Act
+        var agent = client.CreateAIAgent("test-agent", definition, tools: tools);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.IsType<ChatClientAgent>(agent);
+        var agentVersion = agent.GetService<AgentVersion>();
+        Assert.NotNull(agentVersion);
+        if (agentVersion.Definition is PromptAgentDefinition promptDef)
+        {
+            Assert.NotEmpty(promptDef.Tools);
+            Assert.Single(promptDef.Tools);
+        }
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgent creates an agent successfully when provided with a mix of custom and hosted tools.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithMixedTools_CreatesAgentSuccessfully()
+    {
+        // Arrange
+        var definition = new PromptAgentDefinition("test-model") { Instructions = "Test instructions" };
+        var tools = new List<AITool>
+        {
+            AIFunctionFactory.Create(() => "result", "create_tool", "A tool for creation"),
+            new HostedWebSearchTool(),
+            new HostedFileSearchTool(),
+        };
+
+        // Simulate agent definition response with the tools
+        var definitionResponse = new PromptAgentDefinition("test-model") { Instructions = "Test instructions" };
+        foreach (var tool in tools)
+        {
+            definitionResponse.Tools.Add(tool.GetService<ResponseTool>() ?? tool.AsOpenAIResponseTool());
+        }
+
+        AgentsClient client = this.CreateTestAgentsClient(agentDefinitionResponse: definitionResponse);
+
+        // Act
+        var agent = client.CreateAIAgent("test-agent", definition, tools: tools);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.IsType<ChatClientAgent>(agent);
+        var agentVersion = agent.GetService<AgentVersion>();
+        Assert.NotNull(agentVersion);
+        if (agentVersion.Definition is PromptAgentDefinition promptDef)
+        {
+            Assert.NotEmpty(promptDef.Tools);
+            Assert.Equal(3, promptDef.Tools.Count);
+        }
+    }
+
+    /// <summary>
+    /// Verifies that CreateAIAgent accepts tools provided as ResponseTool instances and correctly converts them to AITool instances, resulting in successful agent creation.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithResponseToolsAsAITools_CreatesAgentSuccessfully()
+    {
+        // Arrange
+        var definition = new PromptAgentDefinition("test-model") { Instructions = "Test instructions" };
+
+        var fabricParameters = new FabricDataAgentToolParameters();
+        fabricParameters.ProjectConnections.Add(new ToolProjectConnection("connection-id"));
+
+        var sharepointParameters = new SharepointGroundingToolParameters();
+        sharepointParameters.ProjectConnections.Add(new ToolProjectConnection("connection-id"));
+
+        var structuredOutputs = new StructuredOutputDefinition("name", "description", new Dictionary<string, BinaryData>()
+        {
+            ["structured-1"] = BinaryData.FromString(AIJsonUtilities.CreateJsonSchema(new { id = "test" }.GetType()).ToString())
+        }, false);
+
+        ResponseTool openAIResponseTool = (ResponseTool)new AzureAISearchAgentTool(new());
+
+        var tools = new List<AITool>
+        {
+            AIFunctionFactory.Create(() => "result", "create_tool", "A tool for creation"),
+            ((ResponseTool)AgentTool.CreateBingCustomSearchTool(new BingCustomSearchToolParameters([new BingCustomSearchConfiguration("connection-id", "instance-name")]))).AsAITool(),
+            ((ResponseTool)AgentTool.CreateBrowserAutomationTool(new BrowserAutomationToolParameters(new BrowserAutomationToolConnectionParameters("id")))).AsAITool(),
+            AgentTool.CreateA2ATool(new Uri("https://test-uri.microsoft.com")).AsAITool(),
+            ((ResponseTool)AgentTool.CreateBingGroundingTool(new BingGroundingSearchToolParameters([new BingGroundingSearchConfiguration("connection-id")]))).AsAITool(),
+            ((ResponseTool)AgentTool.CreateMicrosoftFabricTool(fabricParameters)).AsAITool(),
+            ((ResponseTool)AgentTool.CreateOpenApiTool(new OpenApiFunctionDefinition("name", BinaryData.FromString(OpenAPISpec), new OpenApiAnonymousAuthDetails()))).AsAITool(),
+            ((ResponseTool)AgentTool.CreateSharepointTool(sharepointParameters)).AsAITool(),
+            ((ResponseTool)AgentTool.CreateStructuredOutputsTool(structuredOutputs)).AsAITool(),
+
+            // Workaround the bug with the AgentTool.CreateAzureAISearchTool() extension
+            // Using the extension method AgentTool.CreateAzureAISearchTool() fails serialization, 
+            // TODO: Revert back once bug fix is applied: https://github.com/Azure/azure-sdk-for-net/pull/53656
+            ((ResponseTool)new AzureAISearchAgentTool(new())).AsAITool()
+        };
+
+        // Generate agent definition response with the tools
+        var definitionResponse = GeneratePromptDefinitionResponse(definition, tools);
+
+        AgentsClient client = this.CreateTestAgentsClient(agentDefinitionResponse: definitionResponse);
+
+        // Act
+        var agent = client.CreateAIAgent("test-agent", definition, tools: tools);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.IsType<ChatClientAgent>(agent);
+        var agentVersion = agent.GetService<AgentVersion>();
+        Assert.NotNull(agentVersion);
+        if (agentVersion.Definition is PromptAgentDefinition promptDef)
+        {
+            Assert.NotEmpty(promptDef.Tools);
+            Assert.Equal(10, promptDef.Tools.Count);
+        }
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgent with string parameters and tools creates an agent.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithStringParamsAndTools_CreatesAgent()
+    {
+        // Arrange
+        var tools = new List<AITool>
+        {
+            AIFunctionFactory.Create(() => "weather", "string_param_tool", "Tool from string params")
+        };
+
+        var definitionResponse = GeneratePromptDefinitionResponse(new PromptAgentDefinition("test-model") { Instructions = "Test instructions" }, tools);
+
+        AgentsClient client = this.CreateTestAgentsClient(agentName: "test-agent", agentDefinitionResponse: definitionResponse);
+
+        // Act
+        var agent = client.CreateAIAgent(
+            "test-agent",
+            "test-model",
+            "Test instructions",
+            tools: tools);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.IsType<ChatClientAgent>(agent);
+        var agentVersion = agent.GetService<AgentVersion>();
+        Assert.NotNull(agentVersion);
+        if (agentVersion.Definition is PromptAgentDefinition promptDef)
+        {
+            Assert.NotEmpty(promptDef.Tools);
+            Assert.Single(promptDef.Tools);
+        }
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgentAsync with tools parameter creates an agent.
+    /// </summary>
+    [Fact]
+    public async Task CreateAIAgentAsync_WithToolsParameter_CreatesAgentAsync()
+    {
+        // Arrange
+        AgentsClient client = this.CreateTestAgentsClient();
+        var definition = new PromptAgentDefinition("test-model") { Instructions = "Test instructions" };
+        var tools = new List<AITool>
+        {
+            AIFunctionFactory.Create(() => "async_result", "async_tool", "An async tool")
+        };
+
+        // Act
+        var agent = await client.CreateAIAgentAsync("test-agent", definition, tools: tools);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.IsType<ChatClientAgent>(agent);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgentAsync with tools parameter creates an agent.
+    /// </summary>
+    [Fact]
+    public async Task GetAIAgentAsync_WithToolsParameter_CreatesAgentAsync()
+    {
+        // Arrange
+        AgentsClient client = this.CreateTestAgentsClient();
+        var tools = new List<AITool>
+        {
+            AIFunctionFactory.Create(() => "async_get_result", "async_get_tool", "An async get tool")
+        };
+
+        // Act
+        var agent = await client.GetAIAgentAsync("test-agent", tools: tools);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.IsType<ChatClientAgent>(agent);
+    }
+
+    #endregion
+
+    #region AzureAIChatClient Behavior Tests
+
+    /// <summary>
+    /// Verify that the underlying chat client created by extension methods can be wrapped with clientFactory.
+    /// </summary>
+    [Fact]
+    public void GetAIAgent_WithClientFactory_WrapsUnderlyingChatClient()
+    {
+        // Arrange
+        AgentsClient client = this.CreateTestAgentsClient();
+        AgentRecord agentRecord = this.CreateTestAgentRecord();
+        int factoryCallCount = 0;
+
+        // Act
+        var agent = client.GetAIAgent(
+            agentRecord,
+            clientFactory: (innerClient) =>
+            {
+                factoryCallCount++;
+                return new TestChatClient(innerClient);
+            });
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal(1, factoryCallCount);
+        var wrappedClient = agent.GetService<TestChatClient>();
+        Assert.NotNull(wrappedClient);
+    }
+
+    /// <summary>
+    /// Verify that clientFactory is called with the correct underlying chat client.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithClientFactory_ReceivesCorrectUnderlyingClient()
+    {
+        // Arrange
+        AgentsClient client = this.CreateTestAgentsClient();
+        var definition = new PromptAgentDefinition("test-model") { Instructions = "Test" };
+        IChatClient? receivedClient = null;
+
+        // Act
+        var agent = client.CreateAIAgent(
+            "test-agent",
+            definition,
+            clientFactory: (innerClient) =>
+            {
+                receivedClient = innerClient;
+                return new TestChatClient(innerClient);
+            });
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.NotNull(receivedClient);
+        var wrappedClient = agent.GetService<TestChatClient>();
+        Assert.NotNull(wrappedClient);
+    }
+
+    /// <summary>
+    /// Verify that multiple clientFactory calls create independent wrapped clients.
+    /// </summary>
+    [Fact]
+    public void GetAIAgent_MultipleCallsWithClientFactory_CreatesIndependentClients()
+    {
+        // Arrange
+        AgentsClient client = this.CreateTestAgentsClient();
+        AgentRecord agentRecord = this.CreateTestAgentRecord();
+
+        // Act
+        var agent1 = client.GetAIAgent(
+            agentRecord,
+            clientFactory: (innerClient) => new TestChatClient(innerClient));
+
+        var agent2 = client.GetAIAgent(
+            agentRecord,
+            clientFactory: (innerClient) => new TestChatClient(innerClient));
+
+        // Assert
+        Assert.NotNull(agent1);
+        Assert.NotNull(agent2);
+        var client1 = agent1.GetService<TestChatClient>();
+        var client2 = agent2.GetService<TestChatClient>();
+        Assert.NotNull(client1);
+        Assert.NotNull(client2);
+        Assert.NotSame(client1, client2);
+    }
+
+    /// <summary>
+    /// Verify that agent created with clientFactory maintains agent properties.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithClientFactory_PreservesAgentProperties()
+    {
+        // Arrange
+        const string AgentName = "test-agent";
+        const string Model = "test-model";
+        const string Instructions = "Test instructions";
+        AgentsClient client = this.CreateTestAgentsClient(AgentName, Instructions);
+
+        // Act
+        var agent = client.CreateAIAgent(
+            AgentName,
+            Model,
+            Instructions,
+            clientFactory: (innerClient) => new TestChatClient(innerClient));
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal(AgentName, agent.Name);
+        Assert.Equal(Instructions, agent.Instructions);
+        var wrappedClient = agent.GetService<TestChatClient>();
+        Assert.NotNull(wrappedClient);
+    }
+
+    /// <summary>
+    /// Verify that agent created with tools and clientFactory is created successfully.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithToolsAndClientFactory_CreatesAgentSuccessfully()
+    {
+        // Arrange
+        var definition = new PromptAgentDefinition("test-model") { Instructions = "Test" };
+        var tools = new List<AITool>
+        {
+            AIFunctionFactory.Create(() => "test", "test_tool", "A test tool")
+        };
+
+        var agentDefinitionResponse = GeneratePromptDefinitionResponse(definition, tools);
+        AgentsClient client = this.CreateTestAgentsClient(agentName: "test-agent", agentDefinitionResponse: agentDefinitionResponse);
+
+        // Act
+        var agent = client.CreateAIAgent(
+            "test-agent",
+            definition,
+            tools: tools,
+            clientFactory: (innerClient) => new TestChatClient(innerClient));
+
+        // Assert
+        Assert.NotNull(agent);
+        var wrappedClient = agent.GetService<TestChatClient>();
+        Assert.NotNull(wrappedClient);
+        var agentVersion = agent.GetService<AgentVersion>();
+        Assert.NotNull(agentVersion);
+        if (agentVersion.Definition is PromptAgentDefinition promptDef)
+        {
+            Assert.NotEmpty(promptDef.Tools);
+            Assert.Single(promptDef.Tools);
+        }
     }
 
     #endregion
@@ -572,9 +1044,9 @@ public sealed class AgentsClientExtensionsTests
     /// <summary>
     /// Creates a test AgentsClient with fake behavior.
     /// </summary>
-    private FakeAgentsClient CreateTestAgentsClient()
+    private FakeAgentsClient CreateTestAgentsClient(string? agentName = null, string? instructions = null, string? description = null, AgentDefinition? agentDefinitionResponse = null)
     {
-        return new FakeAgentsClient();
+        return new FakeAgentsClient(agentName, instructions, description, agentDefinitionResponse);
     }
 
     /// <summary>
@@ -585,7 +1057,16 @@ public sealed class AgentsClientExtensionsTests
         return ModelReaderWriter.Read<AgentRecord>(BinaryData.FromString(AgentTestJsonObject))!;
     }
 
-    private const string AgentTestJsonObject = """
+    private const string AgentDefinitionPlaceholder = """
+        {
+            "kind": "prompt",
+            "model": "gpt-5-mini",
+            "instructions": "You are a storytelling agent. You craft engaging one-line stories based on user prompts and context.",
+            "tools": []
+        }
+        """;
+
+    private const string AgentTestJsonObject = $$"""
             {
               "object": "agent",
               "id": "agent_abc123",
@@ -599,17 +1080,13 @@ public sealed class AgentsClientExtensionsTests
                   "version": "1",
                   "description": "",
                   "created_at": 1761771936,
-                  "definition": {
-                    "kind": "prompt",
-                    "model": "gpt-5-mini",
-                    "instructions": "You are a storytelling agent. You craft engaging one-line stories based on user prompts and context."
-                  }
+                  "definition": {{AgentDefinitionPlaceholder}}
                 }
               }
             }
             """;
 
-    private const string AgentVersionTestJsonObject = """
+    private const string AgentVersionTestJsonObject = $$"""
             {
               "object": "agent.version",
               "id": "agent_abc123:1",
@@ -617,13 +1094,39 @@ public sealed class AgentsClientExtensionsTests
               "version": "1",
               "description": "",
               "created_at": 1761771936,
-              "definition": {
-                "kind": "prompt",
-                "model": "gpt-5-mini",
-                "instructions": "You are a storytelling agent. You craft engaging one-line stories based on user prompts and context."
-              }
+              "definition": {{AgentDefinitionPlaceholder}}
             }
             """;
+
+    private const string OpenAPISpec = """
+        {
+          "openapi": "3.0.3",
+          "info": { "title": "Tiny Test API", "version": "1.0.0" },
+          "paths": {
+            "/ping": {
+              "get": {
+                "summary": "Health check",
+                "operationId": "getPing",
+                "responses": {
+                  "200": {
+                    "description": "OK",
+                    "content": {
+                      "application/json": {
+                        "schema": {
+                          "type": "object",
+                          "properties": { "message": { "type": "string" } },
+                          "required": ["message"]
+                        },
+                        "example": { "message": "pong" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        """;
 
     /// <summary>
     /// Creates a test AgentVersion for testing.
@@ -638,8 +1141,17 @@ public sealed class AgentsClientExtensionsTests
     /// </summary>
     private sealed class FakeAgentsClient : AgentsClient
     {
-        public FakeAgentsClient()
+        private readonly string? _agentName;
+        private readonly string? _instructions;
+        private readonly string? _description;
+        private readonly AgentDefinition? _agentDefinition;
+
+        public FakeAgentsClient(string? agentName = null, string? instructions = null, string? description = null, AgentDefinition? agentDefinitionResponse = null)
         {
+            this._agentName = agentName;
+            this._instructions = instructions;
+            this._description = description;
+            this._agentDefinition = agentDefinitionResponse;
         }
 
         public override OpenAIClient GetOpenAIClient(OpenAIClientOptions? options = null)
@@ -649,33 +1161,120 @@ public sealed class AgentsClientExtensionsTests
 
         public override ClientResult<AgentRecord> GetAgent(string agentName, CancellationToken cancellationToken = default)
         {
-            return ClientResult.FromValue(ModelReaderWriter.Read<AgentRecord>(BinaryData.FromString(AgentTestJsonObject))!, new MockPipelineResponse(200));
+            return ClientResult.FromValue(ModelReaderWriter.Read<AgentRecord>(BinaryData.FromString(this.ApplyResponseChanges(AgentTestJsonObject)))!, new MockPipelineResponse(200));
         }
 
         public override Task<ClientResult<AgentRecord>> GetAgentAsync(string agentName, CancellationToken cancellationToken = default)
         {
-            return Task.FromResult(ClientResult.FromValue(ModelReaderWriter.Read<AgentRecord>(BinaryData.FromString(AgentTestJsonObject))!, new MockPipelineResponse(200)));
+            return Task.FromResult(ClientResult.FromValue(ModelReaderWriter.Read<AgentRecord>(BinaryData.FromString(this.ApplyResponseChanges(AgentTestJsonObject)))!, new MockPipelineResponse(200)));
         }
 
         public override ClientResult<AgentVersion> CreateAgentVersion(string agentName, AgentDefinition definition, AgentVersionCreationOptions? options = null, CancellationToken cancellationToken = default)
         {
-            return ClientResult.FromValue(ModelReaderWriter.Read<AgentVersion>(BinaryData.FromString(AgentVersionTestJsonObject))!, new MockPipelineResponse(200));
+            return ClientResult.FromValue(ModelReaderWriter.Read<AgentVersion>(BinaryData.FromString(this.ApplyResponseChanges(AgentVersionTestJsonObject)))!, new MockPipelineResponse(200));
         }
 
         public override Task<ClientResult<AgentVersion>> CreateAgentVersionAsync(string agentName, AgentDefinition definition, AgentVersionCreationOptions? options = null, CancellationToken cancellationToken = default)
         {
-            return Task.FromResult(ClientResult.FromValue(ModelReaderWriter.Read<AgentVersion>(BinaryData.FromString(AgentVersionTestJsonObject))!, new MockPipelineResponse(200)));
+            return Task.FromResult(ClientResult.FromValue(ModelReaderWriter.Read<AgentVersion>(BinaryData.FromString(this.ApplyResponseChanges(AgentVersionTestJsonObject)))!, new MockPipelineResponse(200)));
+        }
+
+        private static string TryApplyAgentDefinition(string json, AgentDefinition? definition)
+        {
+            if (definition is not null)
+            {
+                json = json.Replace(AgentDefinitionPlaceholder, ModelReaderWriter.Write(definition).ToString());
+            }
+            return json;
+        }
+
+        private static string TryApplyAgentName(string json, string? agentName)
+        {
+            if (!string.IsNullOrEmpty(agentName))
+            {
+                return json.Replace("\"agent_abc123\"", $"\"{agentName}\"");
+            }
+            return json;
+        }
+
+        private static string TryApplyInstructions(string json, string? instructions)
+        {
+            if (!string.IsNullOrEmpty(instructions))
+            {
+                return json.Replace("You are a storytelling agent. You craft engaging one-line stories based on user prompts and context.", instructions);
+            }
+            return json;
+        }
+
+        private static string TryApplyDescription(string json, string? description)
+        {
+            if (!string.IsNullOrEmpty(description))
+            {
+                return json.Replace("\"description\": \"\"", $"\"description\": \"{description}\"");
+            }
+            return json;
+        }
+
+        private string ApplyResponseChanges(string json)
+        {
+            var modifiedJson = TryApplyAgentName(json, this._agentName);
+            modifiedJson = TryApplyAgentDefinition(modifiedJson, this._agentDefinition);
+            modifiedJson = TryApplyInstructions(modifiedJson, this._instructions);
+            modifiedJson = TryApplyDescription(modifiedJson, this._description);
+
+            return modifiedJson;
         }
 
         public override ClientResult<AgentRecord> CreateAgent(string name, AgentDefinition definition, AgentCreationOptions? options = null, CancellationToken cancellationToken = default)
         {
-            return ClientResult.FromValue(ModelReaderWriter.Read<AgentRecord>(BinaryData.FromString(AgentTestJsonObject))!, new MockPipelineResponse(200));
+            string agentJson = AgentTestJsonObject.Replace("\"agent_abc123\"", $"\"{name}\"");
+            var agentRecord = ModelReaderWriter.Read<AgentRecord>(BinaryData.FromString(agentJson))!;
+
+            // Update the agent version's definition to match the provided definition
+            if (agentRecord.Versions.Latest is AgentVersion agentVersion &&
+                definition is PromptAgentDefinition promptDef &&
+                agentVersion.Definition is PromptAgentDefinition versionPromptDef)
+            {
+                // Copy tools from the provided definition to the version's definition
+                foreach (var tool in promptDef.Tools)
+                {
+                    versionPromptDef.Tools.Add(tool);
+                }
+            }
+
+            return ClientResult.FromValue(agentRecord, new MockPipelineResponse(200));
         }
 
         public override Task<ClientResult<AgentRecord>> CreateAgentAsync(string name, AgentDefinition definition, AgentCreationOptions? options = null, CancellationToken cancellationToken = default)
         {
-            return Task.FromResult(ClientResult.FromValue(ModelReaderWriter.Read<AgentRecord>(BinaryData.FromString(AgentTestJsonObject))!, new MockPipelineResponse(200)));
+            string agentJson = AgentTestJsonObject.Replace("\"agent_abc123\"", $"\"{name}\"");
+            var agentRecord = ModelReaderWriter.Read<AgentRecord>(BinaryData.FromString(agentJson))!;
+
+            // Update the agent version's definition to match the provided definition
+            if (agentRecord.Versions.Latest is AgentVersion agentVersion &&
+                definition is PromptAgentDefinition promptDef &&
+                agentVersion.Definition is PromptAgentDefinition versionPromptDef)
+            {
+                // Copy tools from the provided definition to the version's definition
+                foreach (var tool in promptDef.Tools)
+                {
+                    versionPromptDef.Tools.Add(tool);
+                }
+            }
+
+            return Task.FromResult(ClientResult.FromValue(agentRecord, new MockPipelineResponse(200)));
         }
+    }
+
+    private static PromptAgentDefinition GeneratePromptDefinitionResponse(PromptAgentDefinition inputDefinition, List<AITool> tools)
+    {
+        var definitionResponse = new PromptAgentDefinition(inputDefinition.Model) { Instructions = inputDefinition.Instructions };
+        foreach (var tool in tools)
+        {
+            definitionResponse.Tools.Add(tool.GetService<ResponseTool>() ?? tool.AsOpenAIResponseTool());
+        }
+
+        return definitionResponse;
     }
 
     /// <summary>

@@ -17,7 +17,7 @@
     <PackageVersion Include="Aspire.Microsoft.Azure.Cosmos" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="9.8.0" />
     <!-- Azure.* -->
-    <PackageVersion Include="Azure.AI.Agents" Version="2.0.0-alpha.20251024.3" />
+    <PackageVersion Include="Azure.AI.Agents" Version="2.0.0-alpha.20251031.4" />
     <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.7" />
     <PackageVersion Include="Azure.AI.OpenAI" Version="2.5.0-beta.1" />
     <PackageVersion Include="Azure.Identity" Version="1.17.0" />
@@ -66,9 +66,11 @@
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.10" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="9.0.10" />
     <PackageVersion Include="Microsoft.Extensions.ServiceDiscovery" Version="$(AspireAppHostSdkVersion)" />
+    <PackageVersion Include="Microsoft.Extensions.VectorData.Abstractions" Version="9.7.0" />
     <!-- Vector Stores -->
     <PackageVersion Include="Microsoft.SemanticKernel" Version="1.66.0" />
     <PackageVersion Include="Microsoft.SemanticKernel.Connectors.InMemory" Version="1.66.0-preview" />
+    <PackageVersion Include="Microsoft.SemanticKernel.Connectors.Qdrant" Version="1.66.0-preview" />
     <PackageVersion Include="Microsoft.SemanticKernel.Agents.Core" Version="1.66.0" />
     <PackageVersion Include="Microsoft.SemanticKernel.Agents.OpenAI" Version="1.66.0-preview" />
     <PackageVersion Include="Microsoft.SemanticKernel.Agents.AzureAI" Version="1.66.0-preview" />
