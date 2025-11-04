@@ -7,6 +7,8 @@
     <VersionSuffix>preview</VersionSuffix>
     <DefineConstants>$(DefineConstants);ASPNETCORE</DefineConstants>
     <IsPackable>false</IsPackable>
+    <InterceptorsNamespaces>$(InterceptorsNamespaces);Microsoft.AspNetCore.Http.Generated</InterceptorsNamespaces>
+    <EnableRequestDelegateGenerator>true</EnableRequestDelegateGenerator>
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />

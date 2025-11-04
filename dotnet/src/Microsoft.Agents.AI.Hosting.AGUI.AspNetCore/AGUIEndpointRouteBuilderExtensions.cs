@@ -2,10 +2,11 @@
 
 using System;
 using System.Collections.Generic;
-using System.Text.Json;
+using System.Threading;
 using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.Shared;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
@@ -30,30 +31,14 @@ public static class AGUIEndpointRouteBuilderExtensions
         string pattern,
         Func<IEnumerable<ChatMessage>, AIAgent> agentFactory)
     {
-        return endpoints.MapPost(pattern, async context =>
+        return endpoints.MapPost(pattern, async ([FromBody] RunAgentInput? input, HttpContext context, CancellationToken cancellationToken) =>
         {
-            var cancellationToken = context.RequestAborted;
-
-            RunAgentInput? input;
-            try
-            {
-                input = await JsonSerializer.DeserializeAsync(context.Request.Body, AGUIJsonSerializerContext.Default.RunAgentInput, cancellationToken).ConfigureAwait(false);
-            }
-            catch (JsonException)
-            {
-                await TypedResults.BadRequest().ExecuteAsync(context).ConfigureAwait(false);
-                return;
-            }
-
             if (input is null)
             {
-                await TypedResults.BadRequest().ExecuteAsync(context).ConfigureAwait(false);
-                return;
+                return Results.BadRequest();
             }
 
             var messages = input.Messages.AsChatMessages();
-            var contextValues = input.Context;
-            var forwardedProps = input.ForwardedProperties;
             var agent = agentFactory(messages);
 
             var events = agent.RunStreamingAsync(
@@ -65,7 +50,7 @@ public static class AGUIEndpointRouteBuilderExtensions
                     cancellationToken);
 
             var logger = context.RequestServices.GetRequiredService<ILogger<AGUIServerSentEventsResult>>();
-            await new AGUIServerSentEventsResult(events, logger).ExecuteAsync(context).ConfigureAwait(false);
+            return new AGUIServerSentEventsResult(events, logger);
         });
     }
 }

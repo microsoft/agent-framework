@@ -78,7 +78,7 @@ public sealed class AGUIAgent : AIAgent
             throw new InvalidOperationException("The provided thread is not compatible with the agent. Only threads created by the agent can be used.");
         }
 
-        string runId = Guid.NewGuid().ToString();
+        string runId = $"run_{Guid.NewGuid()}";
 
         var llmMessages = typedThread.MessageStore.Concat(messages);
 
