@@ -295,7 +295,7 @@ class AzureAIAgentClientV2(OpenAIBaseResponsesClient):
         self.client = await self.project_client.get_openai_client()  # type: ignore
 
     def get_conversation_id(self, response: OpenAIResponse | ParsedResponse[BaseModel], store: bool) -> str | None:
-        """Gets conversation ID from response."""
+        """Get the conversation ID from the response if store is True."""
         return response.conversation.id if response.conversation and store else None
 
     def _update_agent_name(self, agent_name: str | None) -> None:
