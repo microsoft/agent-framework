@@ -45,7 +45,7 @@ internal static class AzureStorageEmulatorAvailabilityHelper
 
     public static async Task SkipIfNotAvailableAsync()
     {
-        var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
         bool isAvailable = await IsAvailableAsync(cts.Token);
         Skip.IfNot(isAvailable, "Azurite / Azure Storage Emulator is not running. Start Azurite to run these tests.");
     }

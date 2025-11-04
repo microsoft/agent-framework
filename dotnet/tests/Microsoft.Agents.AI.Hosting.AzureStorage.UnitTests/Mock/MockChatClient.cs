@@ -23,12 +23,7 @@ internal sealed class MockChatClient : IChatClient
     {
         await Task.Yield();
 
-        List<ChatMessage> messageList = messages.ToList();
-        ChatMessage lastUserMessage = messageList.LastOrDefault(m => m.Role == ChatRole.User)
-            ?? new ChatMessage(ChatRole.User, "No user message");
-
         ChatMessage responseMessage = new(ChatRole.Assistant, $"Response #{this._responsesCounter++}");
-
         return new ChatResponse([responseMessage]);
     }
 
@@ -39,11 +34,7 @@ internal sealed class MockChatClient : IChatClient
     {
         await Task.Yield();
 
-        List<ChatMessage> messageList = messages.ToList();
-        ChatMessage lastUserMessage = messageList.LastOrDefault(m => m.Role == ChatRole.User)
-            ?? new ChatMessage(ChatRole.User, "No user message");
-
-        string responseText = $"Mock response to: {lastUserMessage.Text}";
+        var responseText = $"Response #{this._responsesCounter++}";
 
         yield return new ChatResponseUpdate(ChatRole.Assistant, responseText);
     }
