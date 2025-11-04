@@ -210,7 +210,12 @@ public sealed class AGUIChatClient : IChatClient
                             // If this is a client function, FunctionInvokingChatClient will only send the result back
                             // so we need to keep the current messages as expected by AG-UI.
                             this._currentMessages ??= [.. messages];
-                            this._currentMessages.Add(new ChatMessage(ChatRole.Assistant, [update.Contents[0]]));
+                            this._currentMessages.Add(new ChatMessage(ChatRole.Assistant, [update.Contents[0]])
+                            {
+                                MessageId = update.MessageId,
+                                AuthorName = update.AuthorName,
+                                CreatedAt = update.CreatedAt,
+                            });
                         }
                         else
                         {
