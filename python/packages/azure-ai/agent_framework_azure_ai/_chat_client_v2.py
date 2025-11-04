@@ -247,7 +247,7 @@ class AzureAIAgentClientV2(OpenAIBaseResponsesClient):
             await self.project_client.close()
 
     def _prepare_input(self, messages: MutableSequence[ChatMessage]) -> tuple[list[ChatMessage], str | None]:
-        """Prepares input from messages and converts system/developer messages to instructions."""
+        """Prepare input from messages and convert system/developer messages to instructions."""
         result: list[ChatMessage] = []
         instructions_list: list[str] = []
         instructions: str | None = None
