@@ -3,7 +3,6 @@
 using System;
 using Azure.Storage.Blobs;
 using Microsoft.Agents.AI.Hosting.AzureStorage.Blob;
-using Microsoft.Extensions.DependencyInjection;
 
 namespace Microsoft.Agents.AI.Hosting;
 
@@ -12,20 +11,6 @@ namespace Microsoft.Agents.AI.Hosting;
 /// </summary>
 public static partial class HostedAgentBuilderExtensions
 {
-    /// <summary>
-    /// Configures the host agent builder to use an Azure Blob thread store with dependency injection.
-    /// Resolves <see cref="BlobContainerClient"/> from the service provider.
-    /// </summary>
-    /// <param name="builder">The host agent builder to configure with the Azure blob thread store.</param>
-    /// <param name="options">Optional configuration options for the blob thread store.</param>
-    /// <returns>The same <paramref name="builder"/> instance, configured to use Azure blob thread store.</returns>
-    /// <remarks>
-    /// This overload requires a <see cref="BlobContainerClient"/> to be registered in the service collection.
-    /// Use Azure.Extensions.AspNetCore.Configuration.Secrets or similar to register the client.
-    /// </remarks>
-    public static IHostedAgentBuilder WithAzureBlobThreadStore(this IHostedAgentBuilder builder, AzureBlobAgentThreadStoreOptions? options = null)
-        => WithAzureBlobThreadStore(builder, sp => sp.GetRequiredKeyedService<BlobContainerClient>(builder.Name), options);
-
     /// <summary>
     /// Configures the host agent builder to use an Azure Blob thread store for agent thread management.
     /// </summary>

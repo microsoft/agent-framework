@@ -56,10 +56,8 @@ internal sealed class AzureBlobAgentThreadStore : AgentThreadStore
         var blobClient = this._containerClient.GetBlobClient(blobName);
 
         JsonElement serializedThread = thread.Serialize();
-#pragma warning disable CA2007 // Consider calling ConfigureAwait on the awaited task
-        await using Stream stream = await blobClient.OpenWriteAsync(overwrite: true, s_uploadJsonOptions, cancellationToken).ConfigureAwait(false);
-        await using Utf8JsonWriter writer = new(stream);
-#pragma warning restore CA2007 // Consider calling ConfigureAwait on the awaited task
+        using Stream stream = await blobClient.OpenWriteAsync(overwrite: true, s_uploadJsonOptions, cancellationToken).ConfigureAwait(false);
+        using Utf8JsonWriter writer = new(stream);
 
         serializedThread.WriteTo(writer);
         await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
@@ -118,7 +116,8 @@ internal sealed class AzureBlobAgentThreadStore : AgentThreadStore
     /// <summary>
     /// Generates the blob name for a given agent and conversation.
     /// </summary>
-    private string GetBlobName(string agentId, string conversationId)
+    // internal for testing
+    internal string GetBlobName(string agentId, string conversationId)
     {
         string sanitizedAgentId = this.SanitizeBlobNameSegment(agentId);
         string sanitizedConversationId = this.SanitizeBlobNameSegment(conversationId);
