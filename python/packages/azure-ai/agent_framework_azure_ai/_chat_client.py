@@ -170,7 +170,7 @@ class AzureAIAgentClient(BaseChatClient):
         Keyword Args:
             project_client: An existing AIProjectClient to use. If not provided, one will be created.
             agent_id: The ID of an existing agent to use. If not provided and project_client is provided,
-                a new agent will be created (and deleted after the request). If neither project_client
+                a new agent will be created. If neither project_client
                 nor agent_id is provided, both will be created and managed automatically.
             agent_name: The name to use when creating new agents.
             thread_id: Default thread ID to use for conversations. Can be overridden by
@@ -252,7 +252,6 @@ class AzureAIAgentClient(BaseChatClient):
         self.agent_name = agent_name
         self.model_id = azure_ai_settings.model_deployment_name
         self.thread_id = thread_id
-        self._should_delete_agent = False  # Track whether we should delete the agent
         self._should_close_client = should_close_client  # Track whether we should close client connection
         self._agent_definition: Agent | None = None  # Cached definition for existing agent
 
@@ -287,7 +286,6 @@ class AzureAIAgentClient(BaseChatClient):
 
     async def close(self) -> None:
         """Close the project_client and clean up any agents we created."""
-        await self._cleanup_agent_if_needed()
         await self._close_client_if_needed()
 
     @classmethod
@@ -381,7 +379,6 @@ class AzureAIAgentClient(BaseChatClient):
             created_agent = await self.project_client.agents.create_agent(**args)
             self.agent_id = str(created_agent.id)
             self._agent_definition = created_agent
-            self._should_delete_agent = True
 
         return self.agent_id
 
@@ -712,13 +709,6 @@ class AzureAIAgentClient(BaseChatClient):
         """Close project_client session if we created it."""
         if self._should_close_client:
             await self.project_client.close()
-
-    async def _cleanup_agent_if_needed(self) -> None:
-        """Clean up the agent if we created it."""
-        if self._should_delete_agent and self.agent_id is not None:
-            await self.project_client.agents.delete_agent(self.agent_id)
-            self.agent_id = None
-            self._should_delete_agent = False
 
     async def _load_agent_definition_if_needed(self) -> Agent | None:
         """Load and cache agent details if not already loaded."""
