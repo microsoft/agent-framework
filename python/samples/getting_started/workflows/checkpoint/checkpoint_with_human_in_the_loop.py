@@ -250,7 +250,7 @@ async def run_interactive_session(
                 event_stream = workflow.run_stream(initial_message)
             elif checkpoint_id:
                 print("\nStarting workflow from checkpoint...\n")
-                event_stream = workflow.run_stream_from_checkpoint(checkpoint_id)
+                event_stream = workflow.run_stream(checkpoint_id)
             else:
                 raise ValueError("Either initial_message or checkpoint_id must be provided")
 

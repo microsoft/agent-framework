@@ -145,7 +145,7 @@ async def test_sequential_checkpoint_resume_round_trip() -> None:
     wf_resume = SequentialBuilder().participants(list(resumed_agents)).with_checkpointing(storage).build()
 
     resumed_output: list[ChatMessage] | None = None
-    async for ev in wf_resume.run_stream_from_checkpoint(resume_checkpoint.checkpoint_id):
+    async for ev in wf_resume.run_stream(checkpoint_id=resume_checkpoint.checkpoint_id):
         if isinstance(ev, WorkflowOutputEvent):
             resumed_output = ev.data  # type: ignore[assignment]
         if isinstance(ev, WorkflowStatusEvent) and ev.state in (
@@ -157,3 +157,75 @@ async def test_sequential_checkpoint_resume_round_trip() -> None:
     assert resumed_output is not None
     assert [m.role for m in resumed_output] == [m.role for m in baseline_output]
     assert [m.text for m in resumed_output] == [m.text for m in baseline_output]
+
+
+async def test_sequential_checkpoint_runtime_only() -> None:
+    """Test checkpointing configured ONLY at runtime, not at build time."""
+    storage = InMemoryCheckpointStorage()
+
+    agents = (_EchoAgent(id="agent1", name="A1"), _EchoAgent(id="agent2", name="A2"))
+    wf = SequentialBuilder().participants(list(agents)).build()
+
+    baseline_output: list[ChatMessage] | None = None
+    async for ev in wf.run_stream("runtime checkpoint test", checkpoint_storage=storage):
+        if isinstance(ev, WorkflowOutputEvent):
+            baseline_output = ev.data  # type: ignore[assignment]
+        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+            break
+
+    assert baseline_output is not None
+
+    checkpoints = await storage.list_checkpoints()
+    assert checkpoints
+    checkpoints.sort(key=lambda cp: cp.timestamp)
+
+    resume_checkpoint = next(
+        (cp for cp in checkpoints if (cp.metadata or {}).get("checkpoint_type") == "superstep"),
+        checkpoints[-1],
+    )
+
+    resumed_agents = (_EchoAgent(id="agent1", name="A1"), _EchoAgent(id="agent2", name="A2"))
+    wf_resume = SequentialBuilder().participants(list(resumed_agents)).build()
+
+    resumed_output: list[ChatMessage] | None = None
+    async for ev in wf_resume.run_stream(checkpoint_id=resume_checkpoint.checkpoint_id, checkpoint_storage=storage):
+        if isinstance(ev, WorkflowOutputEvent):
+            resumed_output = ev.data  # type: ignore[assignment]
+        if isinstance(ev, WorkflowStatusEvent) and ev.state in (
+            WorkflowRunState.IDLE,
+            WorkflowRunState.IDLE_WITH_PENDING_REQUESTS,
+        ):
+            break
+
+    assert resumed_output is not None
+    assert [m.role for m in resumed_output] == [m.role for m in baseline_output]
+    assert [m.text for m in resumed_output] == [m.text for m in baseline_output]
+
+
+async def test_sequential_checkpoint_runtime_overrides_buildtime() -> None:
+    """Test that runtime checkpoint storage overrides build-time configuration."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as temp_dir1, tempfile.TemporaryDirectory() as temp_dir2:
+        from agent_framework._workflows._checkpoint import FileCheckpointStorage
+
+        buildtime_storage = FileCheckpointStorage(temp_dir1)
+        runtime_storage = FileCheckpointStorage(temp_dir2)
+
+        agents = (_EchoAgent(id="agent1", name="A1"), _EchoAgent(id="agent2", name="A2"))
+        wf = SequentialBuilder().participants(list(agents)).with_checkpointing(buildtime_storage).build()
+
+        baseline_output: list[ChatMessage] | None = None
+        async for ev in wf.run_stream("override test", checkpoint_storage=runtime_storage):
+            if isinstance(ev, WorkflowOutputEvent):
+                baseline_output = ev.data  # type: ignore[assignment]
+            if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+                break
+
+        assert baseline_output is not None
+
+        buildtime_checkpoints = await buildtime_storage.list_checkpoints()
+        runtime_checkpoints = await runtime_storage.list_checkpoints()
+
+        assert len(runtime_checkpoints) > 0, "Runtime storage should have checkpoints"
+        assert len(buildtime_checkpoints) == 0, "Build-time storage should have no checkpoints when overridden"
