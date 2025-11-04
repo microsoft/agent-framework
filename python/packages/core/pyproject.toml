@@ -33,7 +33,7 @@ dependencies = [
     "opentelemetry-exporter-otlp-proto-grpc>=1.36.0",
     "opentelemetry-semantic-conventions-ai>=0.4.13",
     # connectors and functions
-    "openai>=1.99.0,<2",
+    "openai>=1.99.0",
     "azure-identity>=1,<2",
     "mcp[ws]>=1.13",
 ]
