@@ -4,17 +4,16 @@
 ChatKit Integration Sample with Weather Agent and Image Analysis
 
 This sample demonstrates how to integrate Microsoft Agent Framework with OpenAI ChatKit
-using a weather tool with widget visualization, image analysis, and Azure OpenAI. It shows 
-a complete ChatKit server implementation using Agent Framework agents with proper FastAPI 
+using a weather tool with widget visualization, image analysis, and Azure OpenAI. It shows
+a complete ChatKit server implementation using Agent Framework agents with proper FastAPI
 setup, interactive weather widgets, and vision capabilities for analyzing uploaded images.
 """
 
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from datetime import datetime, timezone
 from random import randint
 from typing import Annotated, Any
-from collections.abc import Callable
 
 import uvicorn
 from azure.identity import AzureCliCredential
@@ -58,11 +57,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Agent Framework imports
-from agent_framework import ChatAgent, ChatMessage, Role
+from agent_framework import AgentRunResponseUpdate, ChatAgent, ChatMessage, FunctionResultContent, Role
 from agent_framework.azure import AzureOpenAIChatClient
 
 # Agent Framework ChatKit integration
 from agent_framework_chatkit import ThreadItemConverter, stream_agent_response
+
+# Local imports
+from attachment_store import FileBasedAttachmentStore
 
 # ChatKit imports
 from chatkit.actions import Action
@@ -76,9 +78,6 @@ from chatkit.types import (
     WidgetItem,
 )
 from chatkit.widgets import WidgetRoot
-
-# Local imports
-from attachment_store import FileBasedAttachmentStore
 from store import SQLiteStore
 from weather_widget import (
     WeatherData,
@@ -89,10 +88,13 @@ from weather_widget import (
 )
 
 
-# Global variable to store weather data for widget creation
-_last_weather_data: WeatherData | None = None
-# Global flag to show city selector
-_show_city_selector: bool = False
+class WeatherResponse(str):
+    """A string response that also carries WeatherData for widget creation."""
+
+    def __new__(cls, text: str, weather_data: WeatherData):
+        instance = super().__new__(cls, text)
+        instance.weather_data = weather_data  # type: ignore
+        return instance
 
 
 async def stream_widget(
@@ -133,10 +135,8 @@ def get_weather(
 ) -> str:
     """Get the weather for a given location.
 
-    Returns a text description and stores data for widget creation.
+    Returns a string description with embedded WeatherData for widget creation.
     """
-    global _last_weather_data
-
     logger.info(f"Fetching weather for location: {location}")
 
     conditions = ["sunny", "cloudy", "rainy", "stormy", "snowy", "foggy"]
@@ -147,8 +147,7 @@ def get_weather(
     humidity = randint(30, 90)
     wind_speed = randint(5, 25)
 
-    # Store data for widget creation
-    _last_weather_data = WeatherData(
+    weather_data = WeatherData(
         location=location,
         condition=condition,
         temperature=temperature,
@@ -156,18 +155,17 @@ def get_weather(
         wind_speed=wind_speed,
     )
 
-    logger.debug(
-        f"Weather data generated: {condition}, {temperature}°C, {humidity}% humidity, {wind_speed} km/h wind"
-    )
+    logger.debug(f"Weather data generated: {condition}, {temperature}°C, {humidity}% humidity, {wind_speed} km/h wind")
 
-    # Return text description
-    return (
+    # Return a WeatherResponse that is both a string (for the LLM) and carries structured data
+    text = (
         f"Weather in {location}:\n"
         f"• Condition: {condition.title()}\n"
         f"• Temperature: {temperature}°C\n"
         f"• Humidity: {humidity}%\n"
         f"• Wind: {wind_speed} km/h"
     )
+    return WeatherResponse(text, weather_data)
 
 
 def get_time() -> str:
@@ -182,11 +180,11 @@ def show_city_selector() -> str:
 
     This function triggers the display of a widget that allows users
     to select from popular cities to get weather information.
+
+    Returns a special marker string that will be detected to show the widget.
     """
-    global _show_city_selector
     logger.info("Activating city selector widget")
-    _show_city_selector = True
-    return "I'll show you a list of cities to choose from."
+    return "__SHOW_CITY_SELECTOR__"
 
 
 class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
@@ -252,7 +250,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
         runs the agent, converts the response back to ChatKit events using stream_agent_response,
         and creates interactive weather widgets when weather data is queried.
         """
-        global _last_weather_data, _show_city_selector
+        from agent_framework import FunctionResultContent
 
         if input_user_message is None:
             logger.debug("Received None user message, skipping")
@@ -261,42 +259,65 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
         logger.info(f"Processing message for thread: {thread.id}")
 
         try:
-            # Reset weather data and city selector flag
-            _last_weather_data = None
-            _show_city_selector = False
+            # Track weather data and city selector flag for this request
+            weather_data: WeatherData | None = None
+            show_city_selector = False
 
             # Convert ChatKit user message to Agent Framework ChatMessage using ThreadItemConverter
             agent_messages = await self.converter.to_agent_input(input_user_message)
-            
+
             if not agent_messages:
                 logger.warning("No messages after conversion")
                 return
 
             logger.info(f"Running agent with {len(agent_messages)} message(s)")
 
-            # Run the Agent Framework agent with streaming and convert to ChatKit events
+            # Run the Agent Framework agent with streaming
+            agent_stream = self.weather_agent.run_stream(agent_messages)
+
+            # Create an intercepting stream that extracts function results while passing through updates
+            async def intercept_stream() -> AsyncIterator[AgentRunResponseUpdate]:
+                nonlocal weather_data, show_city_selector
+                async for update in agent_stream:
+                    # Check for function results in the update
+                    if update.contents:
+                        for content in update.contents:
+                            if isinstance(content, FunctionResultContent):
+                                result = content.result
+
+                                # Check if it's a WeatherResponse (string subclass with weather_data attribute)
+                                if isinstance(result, str) and hasattr(result, "weather_data"):
+                                    extracted_data = result.weather_data
+                                    if isinstance(extracted_data, WeatherData):
+                                        weather_data = extracted_data
+                                        logger.info(f"Weather data extracted: {weather_data.location}")
+                                # Check if it's the city selector marker
+                                elif isinstance(result, str) and result == "__SHOW_CITY_SELECTOR__":
+                                    show_city_selector = True
+                                    logger.info("City selector flag detected")
+                    yield update
+
+            # Stream updates as ChatKit events with interception
             async for event in stream_agent_response(
-                self.weather_agent.run_stream(agent_messages),
+                intercept_stream(),
                 thread_id=thread.id,
             ):
                 yield event
 
             # If weather data was collected during the tool call, create a widget
-            if _last_weather_data is not None:
-                logger.info(f"Creating weather widget for location: {_last_weather_data.location}")
+            if weather_data is not None and isinstance(weather_data, WeatherData):
+                logger.info(f"Creating weather widget for location: {weather_data.location}")
                 # Create weather widget
-                widget = render_weather_widget(_last_weather_data)
-                copy_text = weather_widget_copy_text(_last_weather_data)
+                widget = render_weather_widget(weather_data)
+                copy_text = weather_widget_copy_text(weather_data)
 
                 # Stream the widget
-                async for widget_event in stream_widget(
-                    thread_id=thread.id, widget=widget, copy_text=copy_text
-                ):
+                async for widget_event in stream_widget(thread_id=thread.id, widget=widget, copy_text=copy_text):
                     yield widget_event
                 logger.debug("Weather widget streamed successfully")
 
             # If city selector should be shown, create and stream that widget
-            if _show_city_selector:
+            if show_city_selector:
                 logger.info("Creating city selector widget")
                 # Create city selector widget
                 selector_widget = render_city_selector_widget()
@@ -326,7 +347,6 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
         This method processes actions triggered by interactive widgets,
         such as city selection from the city selector widget.
         """
-        global _last_weather_data
 
         logger.info(f"Received action: {action.type} for thread: {thread.id}")
 
@@ -337,32 +357,51 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
             logger.info(f"City selected: {city_label}")
             logger.debug(f"Action payload: {action.payload}")
 
-            # Reset weather data
-            _last_weather_data = None
+            # Track weather data for this request
+            weather_data: WeatherData | None = None
 
             # Create an agent message asking about the weather
             agent_messages = [ChatMessage(role=Role.USER, text=f"What's the weather in {city_label}?")]
 
             logger.debug(f"Processing weather query: {agent_messages[0].text}")
 
-            # Run the Agent Framework agent with streaming and convert to ChatKit events
+            # Run the Agent Framework agent with streaming
+            agent_stream = self.weather_agent.run_stream(agent_messages)
+
+            # Create an intercepting stream that extracts function results while passing through updates
+            async def intercept_stream() -> AsyncIterator[AgentRunResponseUpdate]:
+                nonlocal weather_data
+                async for update in agent_stream:
+                    # Check for function results in the update
+                    if update.contents:
+                        for content in update.contents:
+                            if isinstance(content, FunctionResultContent):
+                                result = content.result
+
+                                # Check if it's a WeatherResponse (string subclass with weather_data attribute)
+                                if isinstance(result, str) and hasattr(result, "weather_data"):
+                                    extracted_data = result.weather_data
+                                    if isinstance(extracted_data, WeatherData):
+                                        weather_data = extracted_data
+                                        logger.info(f"Weather data extracted: {weather_data.location}")
+                    yield update
+
+            # Stream updates as ChatKit events with interception
             async for event in stream_agent_response(
-                self.weather_agent.run_stream(agent_messages),
+                intercept_stream(),
                 thread_id=thread.id,
             ):
                 yield event
 
             # If weather data was collected during the tool call, create a widget
-            if _last_weather_data is not None:
-                logger.info(f"Creating weather widget for: {_last_weather_data.location}")
+            if weather_data is not None and isinstance(weather_data, WeatherData):
+                logger.info(f"Creating weather widget for: {weather_data.location}")
                 # Create weather widget
-                widget = render_weather_widget(_last_weather_data)
-                copy_text = weather_widget_copy_text(_last_weather_data)
+                widget = render_weather_widget(weather_data)
+                copy_text = weather_widget_copy_text(weather_data)
 
                 # Stream the widget
-                async for widget_event in stream_widget(
-                    thread_id=thread.id, widget=widget, copy_text=copy_text
-                ):
+                async for widget_event in stream_widget(thread_id=thread.id, widget=widget, copy_text=copy_text):
                     yield widget_event
                 logger.debug("Weather widget created successfully from action")
             else:
@@ -373,7 +412,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
 app = FastAPI(
     title="ChatKit Weather & Vision Agent",
     description="Weather and image analysis assistant powered by Agent Framework and Azure OpenAI",
-    version="1.0.0"
+    version="1.0.0",
 )
 
 # Add CORS middleware to allow frontend connections
@@ -415,12 +454,12 @@ async def chatkit_endpoint(request: Request):
         result = await chatkit_server.process(request_body, context)
 
         # Return appropriate response type
-        if hasattr(result, '__aiter__'):  # StreamingResult
+        if hasattr(result, "__aiter__"):  # StreamingResult
             logger.debug("Returning streaming response")
             return StreamingResponse(result, media_type="text/event-stream")  # type: ignore[arg-type]
-        else:  # NonStreamingResult
-            logger.debug("Returning non-streaming response")
-            return Response(content=result.json, media_type="application/json")  # type: ignore[union-attr]
+        # NonStreamingResult
+        logger.debug("Returning non-streaming response")
+        return Response(content=result.json, media_type="application/json")  # type: ignore[union-attr]
     except Exception as e:
         logger.error(f"Error processing ChatKit request: {e}", exc_info=True)
         raise
@@ -434,35 +473,32 @@ async def upload_file(attachment_id: str, file: UploadFile = File(...)):
     via the ChatKit attachments.create endpoint.
     """
     logger.info(f"Receiving file upload for attachment: {attachment_id}")
-    
+
     try:
         # Read file contents
         contents = await file.read()
-        
+
         # Save to disk
         file_path = attachment_store.get_file_path(attachment_id)
         file_path.write_bytes(contents)
-        
+
         logger.info(f"Saved {len(contents)} bytes to {file_path}")
-        
+
         # Load the attachment metadata from the data store
         attachment = await data_store.load_attachment(attachment_id, {"user_id": DEFAULT_USER_ID})
-        
+
         # Clear the upload_url since upload is complete
         attachment.upload_url = None
-        
+
         # Save the updated attachment back to the store
         await data_store.save_attachment(attachment, {"user_id": DEFAULT_USER_ID})
-        
+
         # Return the attachment metadata as JSON
         return JSONResponse(content=attachment.model_dump(mode="json"))
-        
+
     except Exception as e:
         logger.error(f"Error uploading file for attachment {attachment_id}: {e}", exc_info=True)
-        return JSONResponse(
-            status_code=500,
-            content={"error": f"Failed to upload file: {str(e)}"}
-        )
+        return JSONResponse(status_code=500, content={"error": f"Failed to upload file: {str(e)}"})
 
 
 @app.get("/preview/{attachment_id}")
@@ -473,13 +509,13 @@ async def preview_image(attachment_id: str):
     generate and cache thumbnails.
     """
     logger.debug(f"Serving preview for attachment: {attachment_id}")
-    
+
     try:
         file_path = attachment_store.get_file_path(attachment_id)
-        
+
         if not file_path.exists():
             return JSONResponse(status_code=404, content={"error": "File not found"})
-        
+
         # Determine media type from file extension or attachment metadata
         # For simplicity, we'll try to load from the store
         try:
@@ -488,9 +524,9 @@ async def preview_image(attachment_id: str):
         except Exception:
             # Default to binary if we can't determine
             media_type = "application/octet-stream"
-        
+
         return FileResponse(file_path, media_type=media_type)
-        
+
     except Exception as e:
         logger.error(f"Error serving preview for attachment {attachment_id}: {e}", exc_info=True)
         return JSONResponse(status_code=500, content={"error": str(e)})
