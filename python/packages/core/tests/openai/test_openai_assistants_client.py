@@ -193,18 +193,6 @@ def test_openai_assistants_client_init_with_default_headers(openai_unit_test_env
         assert chat_client.client.default_headers[key] == value
 
 
-def test_openai_assistants_client_instructions_sent_once(mock_async_openai: MagicMock) -> None:
-    """Ensure instructions are only included once for OpenAI Assistants requests."""
-    chat_client = create_test_openai_assistants_client(mock_async_openai)
-    instructions = "You are a helpful assistant."
-    chat_options = ChatOptions(instructions=instructions)
-
-    prepared_messages = chat_client.prepare_messages([ChatMessage(role=Role.USER, text="Hello")], chat_options)
-    run_options, _ = chat_client._prepare_options(prepared_messages, chat_options)  # type: ignore[reportPrivateUsage]
-
-    assert run_options.get("instructions") == instructions
-
-
 async def test_openai_assistants_client_get_assistant_id_or_create_existing_assistant(
     mock_async_openai: MagicMock,
 ) -> None:

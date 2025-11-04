@@ -525,7 +525,8 @@ class WorkflowExecutor(Executor):
             for request_info_event in execution_context.pending_requests.values()
         ]
         await asyncio.gather(*[
-            self.workflow._runner_context.add_request_info_event(event) for event in request_info_events
+            self.workflow._runner_context.add_request_info_event(event)  # pyright: ignore[reportPrivateUsage]
+            for event in request_info_events
         ])
 
         self._state_loaded = True

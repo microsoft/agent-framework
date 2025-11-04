@@ -185,65 +185,6 @@ async def test_workflow_run_not_completed():
         await workflow.run(NumberMessage(data=0))
 
 
-async def test_workflow_send_responses_streaming():
-    """Test the workflow run with approval."""
-    executor_a = IncrementExecutor(id="executor_a")
-    executor_b = MockExecutorRequestApproval(id="executor_b")
-
-    workflow = (
-        WorkflowBuilder()
-        .set_start_executor(executor_a)
-        .add_edge(executor_a, executor_b)
-        .add_edge(executor_b, executor_a)
-        .build()
-    )
-
-    request_info_event: RequestInfoEvent | None = None
-    async for event in workflow.run_stream(NumberMessage(data=0)):
-        if isinstance(event, RequestInfoEvent):
-            request_info_event = event
-
-    assert request_info_event is not None
-    result: int | None = None
-    completed = False
-    async for event in workflow.send_responses_streaming({
-        request_info_event.request_id: ApprovalMessage(approved=True)
-    }):
-        if isinstance(event, WorkflowOutputEvent):
-            result = event.data
-        elif isinstance(event, WorkflowStatusEvent) and event.state == WorkflowRunState.IDLE:
-            completed = True
-
-    assert (
-        completed and result is not None and result == 1
-    )  # The data should be incremented by 1 from the initial message
-
-
-async def test_workflow_send_responses():
-    """Test the workflow run with approval."""
-    executor_a = IncrementExecutor(id="executor_a")
-    executor_b = MockExecutorRequestApproval(id="executor_b")
-
-    workflow = (
-        WorkflowBuilder()
-        .set_start_executor(executor_a)
-        .add_edge(executor_a, executor_b)
-        .add_edge(executor_b, executor_a)
-        .build()
-    )
-
-    events = await workflow.run(NumberMessage(data=0))
-    request_info_events = events.get_request_info_events()
-
-    assert len(request_info_events) == 1
-
-    result = await workflow.send_responses({request_info_events[0].request_id: ApprovalMessage(approved=True)})
-
-    assert result.get_final_state() == WorkflowRunState.IDLE
-    outputs = result.get_outputs()
-    assert outputs[0] == 1  # The data should be incremented by 1 from the initial message
-
-
 async def test_fan_out():
     """Test a fan-out workflow."""
     executor_a = IncrementExecutor(id="executor_a")
@@ -354,7 +295,7 @@ async def test_workflow_checkpointing_not_enabled_for_external_restore(simple_ex
 
     # Attempt to restore from checkpoint without providing external storage should fail
     try:
-        [event async for event in workflow.run_stream_from_checkpoint("fake-checkpoint-id")]
+        [event async for event in workflow.run_stream(checkpoint_id="fake-checkpoint-id")]
         raise AssertionError("Expected ValueError to be raised")
     except ValueError as e:
         assert "Cannot restore from checkpoint" in str(e)
@@ -372,7 +313,7 @@ async def test_workflow_run_stream_from_checkpoint_no_checkpointing_enabled(simp
 
     # Attempt to run from checkpoint should fail
     try:
-        async for _ in workflow.run_stream_from_checkpoint("fake_checkpoint_id"):
+        async for _ in workflow.run_stream(checkpoint_id="fake_checkpoint_id"):
             pass
         raise AssertionError("Expected ValueError to be raised")
     except ValueError as e:
@@ -396,7 +337,7 @@ async def test_workflow_run_stream_from_checkpoint_invalid_checkpoint(simple_exe
 
         # Attempt to run from non-existent checkpoint should fail
         try:
-            async for _ in workflow.run_stream_from_checkpoint("nonexistent_checkpoint_id"):
+            async for _ in workflow.run_stream(checkpoint_id="nonexistent_checkpoint_id"):
                 pass
             raise AssertionError("Expected RuntimeError to be raised")
         except RuntimeError as e:
@@ -427,8 +368,8 @@ async def test_workflow_run_stream_from_checkpoint_with_external_storage(simple_
         # Resume from checkpoint using external storage parameter
         try:
             events: list[WorkflowEvent] = []
-            async for event in workflow_without_checkpointing.run_stream_from_checkpoint(
-                checkpoint_id, checkpoint_storage=storage
+            async for event in workflow_without_checkpointing.run_stream(
+                checkpoint_id=checkpoint_id, checkpoint_storage=storage
             ):
                 events.append(event)
                 if len(events) >= 2:  # Limit to avoid infinite loops
@@ -463,14 +404,14 @@ async def test_workflow_run_from_checkpoint_non_streaming(simple_executor: Execu
             .build()
         )
 
-        # Test non-streaming run_from_checkpoint method
-        result = await workflow.run_from_checkpoint(checkpoint_id)
+        # Test non-streaming run method with checkpoint_id
+        result = await workflow.run(checkpoint_id=checkpoint_id)
         assert isinstance(result, list)  # Should return WorkflowRunResult which extends list
         assert hasattr(result, "get_outputs")  # Should have WorkflowRunResult methods
 
 
 async def test_workflow_run_stream_from_checkpoint_with_responses(simple_executor: Executor):
-    """Test that run_stream_from_checkpoint accepts responses parameter."""
+    """Test that workflow can be resumed from checkpoint with pending RequestInfoEvents."""
     with tempfile.TemporaryDirectory() as temp_dir:
         storage = FileCheckpointStorage(temp_dir)
 
@@ -502,19 +443,15 @@ async def test_workflow_run_stream_from_checkpoint_with_responses(simple_executo
             .build()
         )
 
-        # Test that run_stream_from_checkpoint accepts responses parameter
-        responses = {"request_123": "test_response"}
-
+        # Resume from checkpoint - pending request events should be emitted
         events: list[WorkflowEvent] = []
-        async for event in workflow.run_stream_from_checkpoint(checkpoint_id):
+        async for event in workflow.run_stream(checkpoint_id=checkpoint_id):
             events.append(event)
 
+        # Verify that the pending request event was emitted
         assert next(
             event for event in events if isinstance(event, RequestInfoEvent) and event.request_id == "request_123"
         )
-
-        async for event in workflow.send_responses_streaming(responses):
-            events.append(event)
 
         assert len(events) > 0  # Just ensure we processed some events
 
@@ -592,6 +529,74 @@ async def test_workflow_multiple_runs_no_state_collision():
         assert outputs1[0] != outputs2[0]
         assert outputs2[0] != outputs3[0]
         assert outputs1[0] != outputs3[0]
+
+
+async def test_workflow_checkpoint_runtime_only_configuration(simple_executor: Executor):
+    """Test that checkpointing can be configured ONLY at runtime, not at build time."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+
+        # Build workflow WITHOUT checkpointing at build time
+        workflow = (
+            WorkflowBuilder().add_edge(simple_executor, simple_executor).set_start_executor(simple_executor).build()
+        )
+
+        # Run with runtime checkpoint storage - should create checkpoints
+        test_message = Message(data="runtime checkpoint test", source_id="test", target_id=None)
+        result = await workflow.run(test_message, checkpoint_storage=storage)
+        assert result is not None
+        assert result.get_final_state() == WorkflowRunState.IDLE
+
+        # Verify checkpoints were created
+        checkpoints = await storage.list_checkpoints()
+        assert len(checkpoints) > 0
+
+        # Find a superstep checkpoint to resume from
+        checkpoints.sort(key=lambda cp: cp.timestamp)
+        resume_checkpoint = next(
+            (cp for cp in checkpoints if (cp.metadata or {}).get("checkpoint_type") == "superstep"),
+            checkpoints[-1],
+        )
+
+        # Create new workflow instance (still without build-time checkpointing)
+        workflow_resume = (
+            WorkflowBuilder().add_edge(simple_executor, simple_executor).set_start_executor(simple_executor).build()
+        )
+
+        # Resume from checkpoint using runtime checkpoint storage
+        result_resumed = await workflow_resume.run(
+            checkpoint_id=resume_checkpoint.checkpoint_id, checkpoint_storage=storage
+        )
+        assert result_resumed is not None
+        assert result_resumed.get_final_state() in (WorkflowRunState.IDLE, WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)
+
+
+async def test_workflow_checkpoint_runtime_overrides_buildtime(simple_executor: Executor):
+    """Test that runtime checkpoint storage overrides build-time configuration."""
+    with tempfile.TemporaryDirectory() as temp_dir1, tempfile.TemporaryDirectory() as temp_dir2:
+        buildtime_storage = FileCheckpointStorage(temp_dir1)
+        runtime_storage = FileCheckpointStorage(temp_dir2)
+
+        # Build workflow with build-time checkpointing
+        workflow = (
+            WorkflowBuilder()
+            .add_edge(simple_executor, simple_executor)
+            .set_start_executor(simple_executor)
+            .with_checkpointing(buildtime_storage)
+            .build()
+        )
+
+        # Run with runtime checkpoint storage override
+        test_message = Message(data="override test", source_id="test", target_id=None)
+        result = await workflow.run(test_message, checkpoint_storage=runtime_storage)
+        assert result is not None
+
+        # Verify checkpoints were created in runtime storage, not build-time storage
+        buildtime_checkpoints = await buildtime_storage.list_checkpoints()
+        runtime_checkpoints = await runtime_storage.list_checkpoints()
+
+        assert len(runtime_checkpoints) > 0, "Runtime storage should have checkpoints"
+        assert len(buildtime_checkpoints) == 0, "Build-time storage should have no checkpoints when overridden"
 
 
 async def test_comprehensive_edge_groups_workflow():
@@ -799,9 +804,6 @@ async def test_workflow_concurrent_execution_prevention_mixed_methods():
         async for _ in workflow.run_stream(NumberMessage(data=0)):
             break
 
-    with pytest.raises(RuntimeError, match="Workflow is already running. Concurrent executions are not allowed."):
-        await workflow.send_responses({"test": "data"})
-
     # Wait for the original task to complete
     await task1
 
@@ -884,3 +886,48 @@ async def test_agent_streaming_vs_non_streaming() -> None:
         if e.data and e.data.contents and e.data.contents[0].text
     )
     assert accumulated_text == "Hello World", f"Expected 'Hello World', got '{accumulated_text}'"
+
+
+async def test_workflow_run_parameter_validation(simple_executor: Executor) -> None:
+    """Test that run() and run_stream() properly validate parameter combinations."""
+    workflow = WorkflowBuilder().add_edge(simple_executor, simple_executor).set_start_executor(simple_executor).build()
+
+    test_message = Message(data="test", source_id="test", target_id=None)
+
+    # Valid: message only (new run)
+    result = await workflow.run(test_message)
+    assert result.get_final_state() == WorkflowRunState.IDLE
+
+    # Invalid: both message and checkpoint_id
+    with pytest.raises(ValueError, match="Cannot provide both 'message' and 'checkpoint_id'"):
+        await workflow.run(test_message, checkpoint_id="fake_id")
+
+    # Invalid: both message and checkpoint_id (streaming)
+    with pytest.raises(ValueError, match="Cannot provide both 'message' and 'checkpoint_id'"):
+        async for _ in workflow.run_stream(test_message, checkpoint_id="fake_id"):
+            pass
+
+    # Invalid: none of message or checkpoint_id
+    with pytest.raises(ValueError, match="Must provide either"):
+        await workflow.run()
+
+    # Invalid: none of message or checkpoint_id (streaming)
+    with pytest.raises(ValueError, match="Must provide either"):
+        async for _ in workflow.run_stream():
+            pass
+
+
+async def test_workflow_run_stream_parameter_validation(simple_executor: Executor) -> None:
+    """Test run_stream() specific parameter validation scenarios."""
+    workflow = WorkflowBuilder().add_edge(simple_executor, simple_executor).set_start_executor(simple_executor).build()
+
+    test_message = Message(data="test", source_id="test", target_id=None)
+
+    # Valid: message only (new run)
+    events: list[WorkflowEvent] = []
+    async for event in workflow.run_stream(test_message):
+        events.append(event)
+    assert any(isinstance(e, WorkflowStatusEvent) and e.state == WorkflowRunState.IDLE for e in events)
+
+    # Invalid combinations already tested in test_workflow_run_parameter_validation
+    # This test ensures streaming works correctly for valid parameters

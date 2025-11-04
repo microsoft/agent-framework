@@ -155,31 +155,6 @@ async def _drain(stream: AsyncIterable[WorkflowEvent]) -> list[WorkflowEvent]:
     return [event async for event in stream]
 
 
-async def test_handoff_routes_to_specialist_and_requests_user_input():
-    triage = _RecordingAgent(name="triage", handoff_to="specialist")
-    specialist = _RecordingAgent(name="specialist")
-
-    workflow = HandoffBuilder(participants=[triage, specialist]).set_coordinator("triage").build()
-
-    events = await _drain(workflow.run_stream("Need help with a refund"))
-
-    assert triage.calls, "Starting agent should receive initial conversation"
-    assert specialist.calls, "Specialist should be invoked after handoff"
-    assert len(specialist.calls[0]) == 2  # user + triage reply
-
-    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
-    assert requests, "Workflow should request additional user input"
-    request_payload = requests[-1].data
-    assert isinstance(request_payload, HandoffUserInputRequest)
-    assert len(request_payload.conversation) == 4  # user, triage tool call, tool ack, specialist
-    assert request_payload.conversation[2].role == Role.TOOL
-    assert request_payload.conversation[3].role == Role.ASSISTANT
-    assert "specialist reply" in request_payload.conversation[3].text
-
-    follow_up = await _drain(workflow.send_responses_streaming({requests[-1].request_id: "Thanks"}))
-    assert any(isinstance(ev, RequestInfoEvent) for ev in follow_up)
-
-
 async def test_specialist_to_specialist_handoff():
     """Test that specialists can hand off to other specialists via .add_handoff() configuration."""
     triage = _RecordingAgent(name="triage", handoff_to="specialist")

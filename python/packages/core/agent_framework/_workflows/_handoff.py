@@ -336,10 +336,15 @@ class _HandoffCoordinator(BaseGroupChatOrchestrator):
 
         if await self._check_termination():
             logger.info("Handoff workflow termination condition met. Ending conversation.")
-            await ctx.yield_output(list(conversation))
+            # Clean the output conversation for display
+            cleaned_output = clean_conversation_for_handoff(conversation)
+            await ctx.yield_output(cleaned_output)
             return
 
-        await ctx.send_message(list(conversation), target_id=self._input_gateway_id)
+        # Clean conversation before sending to gateway for user input request
+        # This removes tool messages that shouldn't be shown to users
+        cleaned_for_display = clean_conversation_for_handoff(conversation)
+        await ctx.send_message(cleaned_for_display, target_id=self._input_gateway_id)
 
     @handler
     async def handle_user_input(
@@ -1274,12 +1279,12 @@ class HandoffBuilder:
                         updated_executor, tool_targets = self._prepare_agent_with_handoffs(executor, targets_map)
                         self._executors[source_exec_id] = updated_executor
                         handoff_tool_targets.update(tool_targets)
-        else:
-            # Default behavior: only coordinator gets handoff tools to all specialists
-            if isinstance(starting_executor, AgentExecutor) and specialists:
-                starting_executor, tool_targets = self._prepare_agent_with_handoffs(starting_executor, specialists)
-                self._executors[self._starting_agent_id] = starting_executor
-                handoff_tool_targets.update(tool_targets)  # Update references after potential agent modifications
+            else:
+                # Default behavior: only coordinator gets handoff tools to all specialists
+                if isinstance(starting_executor, AgentExecutor) and specialists:
+                    starting_executor, tool_targets = self._prepare_agent_with_handoffs(starting_executor, specialists)
+                    self._executors[self._starting_agent_id] = starting_executor
+                    handoff_tool_targets.update(tool_targets)  # Update references after potential agent modifications
         starting_executor = self._executors[self._starting_agent_id]
         specialists = {
             exec_id: executor for exec_id, executor in self._executors.items() if exec_id != self._starting_agent_id

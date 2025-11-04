@@ -11,21 +11,23 @@ internal static class Step7EntryPoint
     public static string EchoAgentId => Step6EntryPoint.EchoAgentId;
     public static string EchoPrefix => Step6EntryPoint.EchoPrefix;
 
-    public static async ValueTask RunAsync(TextWriter writer, IWorkflowExecutionEnvironment environment, int maxSteps = 2)
+    public static async ValueTask RunAsync(TextWriter writer, IWorkflowExecutionEnvironment environment, int maxSteps = 2, int numIterations = 2)
     {
         Workflow workflow = Step6EntryPoint.CreateWorkflow(maxSteps);
 
         AIAgent agent = workflow.AsAgent("group-chat-agent", "Group Chat Agent");
 
-        AgentThread thread = agent.GetNewThread();
-
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(thread).ConfigureAwait(false))
+        for (int i = 0; i < numIterations; i++)
         {
-            string updateText = $"{update.AuthorName
-                                   ?? update.AgentId
-                                   ?? update.Role.ToString()
-                                   ?? ChatRole.Assistant.ToString()}: {update.Text}";
-            writer.WriteLine(updateText);
+            AgentThread thread = agent.GetNewThread();
+            await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(thread).ConfigureAwait(false))
+            {
+                string updateText = $"{update.AuthorName
+                                       ?? update.AgentId
+                                       ?? update.Role.ToString()
+                                       ?? ChatRole.Assistant.ToString()}: {update.Text}";
+                writer.WriteLine(updateText);
+            }
         }
     }
 }

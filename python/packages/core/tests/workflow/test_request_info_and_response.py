@@ -378,7 +378,7 @@ class TestRequestInfoAndResponse:
             # Step 5: Resume from checkpoint and verify the request can be continued
             completed = False
             restored_request_event: RequestInfoEvent | None = None
-            async for event in restored_workflow.run_stream_from_checkpoint(checkpoint_with_request.checkpoint_id):
+            async for event in restored_workflow.run_stream(checkpoint_id=checkpoint_with_request.checkpoint_id):
                 # Should re-emit the pending request info event
                 if isinstance(event, RequestInfoEvent) and event.request_id == request_info_event.request_id:
                     restored_request_event = event

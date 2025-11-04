@@ -69,7 +69,7 @@ public static class WorkflowVisualizer
         lines.Add($"{indent}\"{MapId(startExecutorId)}\" [fillcolor=lightgreen, label=\"{startExecutorId}\\n(Start)\"];");
 
         // Add other executor nodes
-        foreach (var executorId in workflow.Registrations.Keys)
+        foreach (var executorId in workflow.ExecutorBindings.Keys)
         {
             if (executorId != startExecutorId)
             {
@@ -108,7 +108,7 @@ public static class WorkflowVisualizer
 
     private static void EmitSubWorkflowsDigraph(Workflow workflow, List<string> lines, string indent)
     {
-        foreach (var kvp in workflow.Registrations)
+        foreach (var kvp in workflow.ExecutorBindings)
         {
             var execId = kvp.Key;
             var registration = kvp.Value;
@@ -145,7 +145,7 @@ public static class WorkflowVisualizer
         lines.Add($"{indent}{MapId(startExecutorId)}[\"{startExecutorId} (Start)\"];");
 
         // Add other executor nodes
-        foreach (var executorId in workflow.Registrations.Keys)
+        foreach (var executorId in workflow.ExecutorBindings.Keys)
         {
             if (executorId != startExecutorId)
             {
@@ -264,9 +264,9 @@ public static class WorkflowVisualizer
 #endif
     }
 
-    private static bool TryGetNestedWorkflow(ExecutorRegistration registration, [NotNullWhen(true)] out Workflow? workflow)
+    private static bool TryGetNestedWorkflow(ExecutorBinding binding, [NotNullWhen(true)] out Workflow? workflow)
     {
-        if (registration.RawExecutorishData is Workflow subWorkflow)
+        if (binding.RawValue is Workflow subWorkflow)
         {
             workflow = subWorkflow;
             return true;

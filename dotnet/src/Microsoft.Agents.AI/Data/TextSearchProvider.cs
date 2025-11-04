@@ -22,7 +22,7 @@ namespace Microsoft.Agents.AI.Data;
 /// <para>
 /// The provider supports two behaviors controlled via <see cref="TextSearchProviderOptions.SearchTime"/>:
 /// <list type="bullet">
-/// <item><description><see cref="TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke"/> – Automatically performs a search prior to every AI invocation and injects results as additional instructions.</description></item>
+/// <item><description><see cref="TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke"/> – Automatically performs a search prior to every AI invocation and injects results as additional messages.</description></item>
 /// <item><description><see cref="TextSearchProviderOptions.TextSearchBehavior.OnDemandFunctionCalling"/> – Exposes a function tool that the model may invoke to retrieve contextual information when needed.</description></item>
 /// </list>
 /// </para>
@@ -45,6 +45,7 @@ public sealed class TextSearchProvider : AIContextProvider
     private readonly AITool[] _tools;
     private readonly Queue<string> _recentMessagesText;
     private readonly TextSearchProviderOptions _options;
+    private readonly List<ChatRole> _recentMessageRolesIncluded;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="TextSearchProvider"/> class.
@@ -60,6 +61,7 @@ public sealed class TextSearchProvider : AIContextProvider
         Throw.IfLessThan(this._options.RecentMessageMemoryLimit, 0);
         this._logger = loggerFactory?.CreateLogger<TextSearchProvider>();
         this._recentMessagesText = new();
+        this._recentMessageRolesIncluded = this._options.RecentMessageRolesIncluded ?? [ChatRole.User];
 
         // Create the on-demand search tool (only used if behavior is OnDemandFunctionCalling)
         this._tools =
@@ -91,6 +93,7 @@ public sealed class TextSearchProvider : AIContextProvider
         this._options = options ?? new();
         Throw.IfLessThan(this._options.RecentMessageMemoryLimit, 0);
         this._logger = loggerFactory?.CreateLogger<TextSearchProvider>();
+        this._recentMessageRolesIncluded = this._options.RecentMessageRolesIncluded ?? [ChatRole.User];
 
         List<string>? restoredMessages = null;
 
@@ -119,12 +122,13 @@ public sealed class TextSearchProvider : AIContextProvider
         if (this._options.SearchTime != TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke)
         {
             // Expose the search tool for on-demand invocation.
-            return new AIContext { Tools = this._tools }; // No automatic instructions injection.
+            return new AIContext { Tools = this._tools }; // No automatic message injection.
         }
 
         // Aggregate text from memory + current request messages.
         var sbInput = new StringBuilder();
-        foreach (var messageText in this._recentMessagesText)
+        var requestMessagesText = context.RequestMessages.Where(x => !string.IsNullOrWhiteSpace(x?.Text)).Select(x => x.Text);
+        foreach (var messageText in this._recentMessagesText.Concat(requestMessagesText))
         {
             if (sbInput.Length > 0)
             {
@@ -133,38 +137,35 @@ public sealed class TextSearchProvider : AIContextProvider
             sbInput.Append(messageText);
         }
 
-        foreach (var message in context.RequestMessages)
-        {
-            if (!string.IsNullOrWhiteSpace(message?.Text))
-            {
-                if (sbInput.Length > 0)
-                {
-                    sbInput.Append('\n');
-                }
-                sbInput.Append(message.Text);
-            }
-        }
         string input = sbInput.ToString();
 
-        // Search
-        var results = await this._searchAsync(input, cancellationToken).ConfigureAwait(false);
-        IList<TextSearchResult> materialized = results as IList<TextSearchResult> ?? results.ToList();
-        if (materialized.Count == 0)
+        try
         {
-            this._logger?.LogWarning("TextSearchProvider: No search results found.");
+            // Search
+            var results = await this._searchAsync(input, cancellationToken).ConfigureAwait(false);
+            IList<TextSearchResult> materialized = results as IList<TextSearchResult> ?? results.ToList();
+            this._logger?.LogInformation("TextSearchProvider: Retrieved {Count} search results.", materialized.Count);
+
+            if (materialized.Count == 0)
+            {
+                return new AIContext();
+            }
+
+            // Format search results
+            string formatted = this.FormatResults(materialized);
+
+            this._logger?.LogTrace("TextSearchProvider: Search Results\nInput:{Input}\nOutput:{MessageText}", input, formatted);
+
+            return new AIContext
+            {
+                Messages = [new ChatMessage(ChatRole.User, formatted) { AdditionalProperties = new AdditionalPropertiesDictionary() { ["IsTextSearchProviderOutput"] = true } }]
+            };
+        }
+        catch (Exception ex)
+        {
+            this._logger?.LogError(ex, "TextSearchProvider: Failed to search for data due to error");
             return new AIContext();
         }
-
-        // Format search results
-        string formatted = this.FormatResults(materialized);
-
-        this._logger?.LogInformation("TextSearchProvider: Retrieved {Count} search results.", materialized.Count);
-        this._logger?.LogTrace("TextSearchProvider Input:{Input}\nContext Instructions:{Instructions}", input, formatted);
-
-        return new AIContext
-        {
-            Messages = [new ChatMessage(ChatRole.User, formatted)]
-        };
     }
 
     /// <inheritdoc />
@@ -183,7 +184,12 @@ public sealed class TextSearchProvider : AIContextProvider
 
         var messagesText = context.RequestMessages
             .Concat(context.ResponseMessages ?? [])
-            .Where(m => (m.Role == ChatRole.User || m.Role == ChatRole.Assistant) && !string.IsNullOrWhiteSpace(m.Text))
+            .Where(m =>
+                this._recentMessageRolesIncluded.Contains(m.Role) &&
+                !string.IsNullOrWhiteSpace(m.Text) &&
+                // Filter out any messages that were added by this class in InvokingAsync, since we don't want
+                // a feedback loop where previous search results are used to find new search results.
+                (m.AdditionalProperties == null || m.AdditionalProperties.TryGetValue("IsTextSearchProviderOutput", out bool isTextSearchProviderOutput) == false || !isTextSearchProviderOutput))
             .Select(m => m.Text)
             .ToList();
         if (messagesText.Count > limit)
@@ -232,16 +238,16 @@ public sealed class TextSearchProvider : AIContextProvider
     {
         var results = await this._searchAsync(userQuestion, cancellationToken).ConfigureAwait(false);
         IList<TextSearchResult> materialized = results as IList<TextSearchResult> ?? results.ToList();
-        string formatted = this.FormatResults(materialized);
+        string outputText = this.FormatResults(materialized);
 
         this._logger?.LogInformation("TextSearchProvider: Retrieved {Count} search results.", materialized.Count);
-        this._logger?.LogTrace("TextSearchProvider Input:{UserQuestion}\nContext Instructions:{Instructions}", userQuestion, formatted);
+        this._logger?.LogTrace("TextSearchProvider Input:{UserQuestion}\nOutput:{MessageText}", userQuestion, outputText);
 
-        return formatted;
+        return outputText;
     }
 
     /// <summary>
-    /// Formats search results into an instructions string for model consumption.
+    /// Formats search results into an output string for model consumption.
     /// </summary>
     /// <param name="results">The results.</param>
     /// <returns>Formatted string (may be empty).</returns>
@@ -262,15 +268,15 @@ public sealed class TextSearchProvider : AIContextProvider
         for (int i = 0; i < results.Count; i++)
         {
             var result = results[i];
-            if (!string.IsNullOrWhiteSpace(result.Name))
+            if (!string.IsNullOrWhiteSpace(result.SourceName))
             {
-                sb.AppendLine($"SourceDocName: {result.Name}");
+                sb.AppendLine($"SourceDocName: {result.SourceName}");
             }
-            if (!string.IsNullOrWhiteSpace(result.Link))
+            if (!string.IsNullOrWhiteSpace(result.SourceLink))
             {
-                sb.AppendLine($"SourceDocLink: {result.Link}");
+                sb.AppendLine($"SourceDocLink: {result.SourceLink}");
             }
-            sb.AppendLine($"Contents: {result.Value}");
+            sb.AppendLine($"Contents: {result.Text}");
             sb.AppendLine("----");
         }
         sb.AppendLine(this._options.CitationsPrompt ?? DefaultCitationsPrompt);
@@ -286,17 +292,17 @@ public sealed class TextSearchProvider : AIContextProvider
         /// <summary>
         /// Gets or sets the display name of the source document (optional).
         /// </summary>
-        public string? Name { get; set; }
+        public string? SourceName { get; set; }
 
         /// <summary>
         /// Gets or sets a link/URL to the source document (optional).
         /// </summary>
-        public string? Link { get; set; }
+        public string? SourceLink { get; set; }
 
         /// <summary>
         /// Gets or sets the textual content of the retrieved chunk.
         /// </summary>
-        public string Value { get; set; } = string.Empty;
+        public string Text { get; set; } = string.Empty;
 
         /// <summary>
         /// Gets or sets the raw representation of the search result from the data source.
