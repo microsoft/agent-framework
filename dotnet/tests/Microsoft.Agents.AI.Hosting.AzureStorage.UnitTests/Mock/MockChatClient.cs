@@ -8,7 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 
-namespace Microsoft.Agents.AI.Hosting.AzureStorage.Tests.Mock;
+namespace Microsoft.Agents.AI.Hosting.AzureStorage.UnitTests.Mock;
 
 internal sealed class MockChatClient : IChatClient
 {
