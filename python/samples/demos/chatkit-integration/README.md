@@ -143,7 +143,7 @@ async for event in stream_widget(thread_id=thread.id, widget=widget):
 1. **Install Python packages:**
 
 ```bash
-cd python/samples/chatkit-integration
+cd python/samples/demos/chatkit-integration
 pip install agent-framework-chatkit fastapi uvicorn azure-identity
 ```
 
