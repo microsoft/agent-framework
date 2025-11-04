@@ -112,6 +112,8 @@ public sealed class ObservabilityTests : IDisposable
         Run run = await executionEnvironment.RunAsync(workflow, "Hello, World!");
         await run.DisposeAsync();
 
+        await Task.Delay(100); // Allow time for activities to be captured
+
         // Assert
         var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
         capturedActivities.Should().HaveCount(8, "Exactly 8 activities should be created.");
@@ -155,7 +157,7 @@ public sealed class ObservabilityTests : IDisposable
     }
 
     [Fact]
-    public void CreatesWorkflowActivities_WithCorrectName()
+    public async Task CreatesWorkflowActivities_WithCorrectNameAsync()
     {
         // Arrange
         // Create a test activity to correlate captured activities
@@ -163,6 +165,7 @@ public sealed class ObservabilityTests : IDisposable
 
         // Act
         CreateWorkflow();
+        await Task.Delay(100); // Allow time for activities to be captured
 
         // Assert
         var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
