@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.ComponentModel;
+using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -165,6 +166,7 @@ internal static class FlowStateHelpers
 /// Uses JsonPropertyName and Description attributes for OpenAI's JSON schema.
 /// </summary>
 [Description("Critic's review decision including approval status and feedback")]
+[SuppressMessage("Performance", "CA1812:Avoid uninstantiated internal classes", Justification = "Instantiated via JSON deserialization")]
 internal sealed class CriticDecision
 {
     [JsonPropertyName("approved")]
