@@ -239,6 +239,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         // Entry point for question
         QuestionExecutor action = new(item, this._workflowOptions.AgentProvider, this._workflowState);
         this.ContinueWith(action);
+
         // Transition to post action if complete
         string postId = Steps.Post(action.Id);
         this._workflowModel.AddLink(action.Id, postId, QuestionExecutor.IsComplete);
@@ -267,7 +268,18 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     {
         this.Trace(item);
 
-        // %%% IMPLEMENT
+        RequestExternalInputExecutor action = new(item, this._workflowState);
+        this.ContinueWith(action);
+
+        // Define input action
+        string inputId = RequestExternalInputExecutor.Steps.Input(action.Id);
+        RequestPortAction inputPort = new(RequestPort.Create<ExternalInputRequest, ExternalInputResponse>(inputId));
+        this._workflowModel.AddNode(inputPort, action.ParentId);
+        this._workflowModel.AddLinkFromPeer(action.ParentId, inputId);
+
+        // Capture input response
+        string captureId = RequestExternalInputExecutor.Steps.Capture(action.Id);
+        this.ContinueWith(new DelegateActionExecutor<ExternalInputResponse>(captureId, this._workflowState, action.CaptureResponseAsync), action.ParentId);
     }
 
     protected override void Visit(EndDialog item)

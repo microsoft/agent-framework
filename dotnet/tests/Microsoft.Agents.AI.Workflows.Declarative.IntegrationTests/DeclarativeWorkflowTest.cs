@@ -22,7 +22,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     [InlineData("ConversationMessages.yaml", "ConversationMessages.json")]
     [InlineData("ConversationMessages.yaml", "ConversationMessages.json", true)]
     public Task ValidateCaseAsync(string workflowFileName, string testcaseFileName, bool externalConveration = false) =>
-        this.RunWorkflowAsync(Path.Combine(Environment.CurrentDirectory, "Workflows", workflowFileName), testcaseFileName, externalConveration);
+        this.RunWorkflowAsync(GetWorkflowPath(workflowFileName, isSample: false), testcaseFileName, externalConveration);
 
     [Theory]
     [InlineData("Marketing.yaml", "Marketing.json")]
@@ -30,11 +30,18 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     [InlineData("MathChat.yaml", "MathChat.json", true)]
     [InlineData("DeepResearch.yaml", "DeepResearch.json", Skip = "Long running")]
     public Task ValidateScenarioAsync(string workflowFileName, string testcaseFileName, bool externalConveration = false) =>
-        this.RunWorkflowAsync(Path.Combine(GetRepoFolder(), "workflow-samples", workflowFileName), testcaseFileName, externalConveration);
+        this.RunWorkflowAsync(GetWorkflowPath(workflowFileName, isSample: true), testcaseFileName, externalConveration);
 
-    [Fact]
-    public Task ValidateMultiTurnAsync() =>
-        this.RunWorkflowAsync(Path.Combine(GetRepoFolder(), "workflow-samples", "HumanInLoop.yaml"), "HumanInLoop.json", useJsonCheckpoint: true);
+    [Theory]
+    [InlineData("HumanInLoop.yaml", "HumanInLoop.json", true)]
+    [InlineData("RequestExternalInput.yaml", "RequestExternalInput.json", false)]
+    public Task ValidateMultiTurnAsync(string workflowFileName, string testcaseFileName, bool isSample) =>
+        this.RunWorkflowAsync(GetWorkflowPath(workflowFileName, isSample), testcaseFileName, useJsonCheckpoint: true);
+
+    private static string GetWorkflowPath(string workflowFileName, bool isSample) =>
+        isSample
+            ? Path.Combine(GetRepoFolder(), "workflow-samples", workflowFileName)
+            : Path.Combine(Environment.CurrentDirectory, "Workflows", workflowFileName);
 
     protected override async Task RunAndVerifyAsync<TInput>(Testcase testcase, string workflowPath, DeclarativeWorkflowOptions workflowOptions, TInput input, bool useJsonCheckpoint)
     {

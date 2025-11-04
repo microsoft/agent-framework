@@ -230,7 +230,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     [InlineData("Condition.yaml", "setVariable_test")]
     [InlineData("ConditionElse.yaml", "setVariable_test")]
     [InlineData("EndConversation.yaml", "end_all")]
-    [InlineData("EndDialog.yaml", "end_all")]
+    [InlineData("EndWorkflow.yaml", "end_all")]
     [InlineData("EditTable.yaml", "edit_var")]
     [InlineData("EditTableV2.yaml", "edit_var")]
     [InlineData("Goto.yaml", "goto_end")]

@@ -123,7 +123,13 @@ internal sealed class Program
     private Workflow CreateWorkflow()
     {
         // Use DeclarativeWorkflowBuilder to build a workflow based on a YAML file.
-        AzurePersistentAgentProvider agentProvider = new(this.FoundryEndpoint, new AzureCliCredential())
+        //AzurePersistentAgentProvider agentProvider = new(new Uri(this.FoundryEndpoint), new AzureCliCredential())
+        //{
+        //    // Functions included here will be auto-executed by the framework.
+        //    Functions = IncludeFunctions ? this.FunctionMap.Values : null,
+        //};
+
+        AzureAgentProvider agentProvider = new(new Uri(this.FoundryEndpoint), new AzureCliCredential())
         {
             // Functions included here will be auto-executed by the framework.
             Functions = IncludeFunctions ? this.FunctionMap.Values : null,

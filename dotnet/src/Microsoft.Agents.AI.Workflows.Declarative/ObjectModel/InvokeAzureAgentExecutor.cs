@@ -2,6 +2,7 @@
 
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Events;
@@ -85,12 +86,34 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
             }
         }
 
+        await this.AssignAsync(this.AgentOutput?.Messages?.Path, agentResponse.Messages.ToTable(), context).ConfigureAwait(false);
+
+        try
+        {
+            JsonDocument jsonDocument = JsonDocument.Parse(agentResponse.Messages.Last().Text); // %%% TODO
+            Dictionary<string, object?> objectProperties = jsonDocument.ParseRecord(VariableType.RecordType);
+            await this.AssignAsync(this.AgentOutput?.ResponseObject?.Path, objectProperties.ToFormula(), context).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Not valid json, skip assignment.
+        }
+
+        if (this.Model.ExternalLoop?.When is not null)
+        {
+            bool requestInput = this.Evaluator.GetValue(this.Model.ExternalLoop.When).Value;
+            if (requestInput)
+            {
+                isComplete = false;
+                ExternalInputRequest inputRequest = new();
+                await context.SendMessageAsync(inputRequest, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
         if (isComplete)
         {
             await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
         }
-
-        await this.AssignAsync(this.AgentOutput?.Messages?.Path, agentResponse.Messages.ToTable(), context).ConfigureAwait(false);
     }
 
     private IEnumerable<ChatMessage>? GetInputMessages()
