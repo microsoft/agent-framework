@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Linq;
 using System.Net.Http;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
@@ -212,9 +211,9 @@ public sealed class AGUIChatClient : DelegatingChatClient
             this._logger.LogInformation("[AGUIChatClient] Request completed - ThreadId: {ThreadId}, RunId: {RunId}", "", runId);
         }
 
-        public TService? GetService<TService>(object? key = null) where TService : class
+        public void Dispose()
         {
-            return this as TService;
+            // No resources to dispose
         }
 
         public object? GetService(Type serviceType, object? serviceKey = null)
@@ -224,17 +223,7 @@ public sealed class AGUIChatClient : DelegatingChatClient
                 return this.Metadata;
             }
 
-            if (serviceType?.IsInstanceOfType(this) == true)
-            {
-                return this;
-            }
-
             return null;
-        }
-
-        public void Dispose()
-        {
-            // No resources to dispose
         }
     }
 }
