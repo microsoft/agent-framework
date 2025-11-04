@@ -408,7 +408,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
                     run_options["tools"] = tool_definitions
 
                 if chat_options.tool_choice == "none" or chat_options.tool_choice == "auto":
-                    run_options["tool_choice"] = chat_options.tool_choice
+                    run_options["tool_choice"] = chat_options.tool_choice.mode
                 elif (
                     isinstance(chat_options.tool_choice, ToolMode)
                     and chat_options.tool_choice == "required"

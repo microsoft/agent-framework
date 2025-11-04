@@ -21,6 +21,7 @@ Before you begin, ensure you have the following prerequisites:
 |---|---|
 |[Agent with MCP server tools](./Agent_MCP_Server/)|This sample demonstrates how to use MCP server tools with a simple agent|
 |[Agent with MCP server tools and authorization](./Agent_MCP_Server_Auth/)|This sample demonstrates how to use MCP Server tools from a protected MCP server with a simple agent|
+|[Responses Agent with Hosted MCP tool](./ResponseAgent_Hosted_MCP/)|This sample demonstrates how to use the Hosted MCP tool with the Responses Service, where the service invokes any MCP tools directly|
 
 ## Running the samples from the console
 

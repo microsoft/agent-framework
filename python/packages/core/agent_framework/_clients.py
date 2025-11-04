@@ -20,13 +20,7 @@ from ._middleware import (
 from ._serialization import SerializationMixin
 from ._threads import ChatMessageStoreProtocol
 from ._tools import ToolProtocol
-from ._types import (
-    ChatMessage,
-    ChatOptions,
-    ChatResponse,
-    ChatResponseUpdate,
-    ToolMode,
-)
+from ._types import ChatMessage, ChatOptions, ChatResponse, ChatResponseUpdate, ToolMode, prepare_messages
 
 if TYPE_CHECKING:
     from ._agents import ChatAgent
@@ -216,28 +210,7 @@ class ChatClientProtocol(Protocol):
 # region ChatClientBase
 
 
-def prepare_messages(messages: str | ChatMessage | list[str] | list[ChatMessage]) -> list[ChatMessage]:
-    """Convert various message input formats into a list of ChatMessage objects.
-
-    Args:
-        messages: The input messages in various supported formats.
-
-    Returns:
-        A list of ChatMessage objects.
-    """
-    if isinstance(messages, str):
-        return [ChatMessage(role="user", text=messages)]
-    if isinstance(messages, ChatMessage):
-        return [messages]
-    return_messages: list[ChatMessage] = []
-    for msg in messages:
-        if isinstance(msg, str):
-            msg = ChatMessage(role="user", text=msg)
-        return_messages.append(msg)
-    return return_messages
-
-
-def merge_chat_options(
+def _merge_chat_options(
     *,
     base_chat_options: ChatOptions | Any | None,
     model_id: str | None = None,
@@ -405,25 +378,6 @@ class BaseChatClient(SerializationMixin, ABC):
 
         return result
 
-    def prepare_messages(
-        self, messages: str | ChatMessage | list[str] | list[ChatMessage], chat_options: ChatOptions
-    ) -> MutableSequence[ChatMessage]:
-        """Convert various message input formats into a list of ChatMessage objects.
-
-        Prepends system instructions if present in chat_options.
-
-        Args:
-            messages: The input messages in various supported formats.
-            chat_options: The chat options containing instructions and other settings.
-
-        Returns:
-            A mutable sequence of ChatMessage objects.
-        """
-        if chat_options.instructions:
-            system_msg = ChatMessage(role="system", text=chat_options.instructions)
-            return [system_msg, *prepare_messages(messages)]
-        return prepare_messages(messages)
-
     def _filter_internal_kwargs(self, kwargs: dict[str, Any]) -> dict[str, Any]:
         """Filter out internal framework parameters that shouldn't be passed to chat client implementations.
 
@@ -584,7 +538,7 @@ class BaseChatClient(SerializationMixin, ABC):
         """
         # Normalize tools and merge with base chat_options
         normalized_tools = await self._normalize_tools(tools)
-        chat_options = merge_chat_options(
+        chat_options = _merge_chat_options(
             base_chat_options=kwargs.pop("chat_options", None),
             model_id=model_id,
             frequency_penalty=frequency_penalty,
@@ -612,7 +566,11 @@ class BaseChatClient(SerializationMixin, ABC):
             )
             chat_options.store = True
 
-        prepped_messages = self.prepare_messages(messages, chat_options)
+        if chat_options.instructions:
+            system_msg = ChatMessage(role="system", text=chat_options.instructions)
+            prepped_messages = [system_msg, *prepare_messages(messages)]
+        else:
+            prepped_messages = prepare_messages(messages)
         self._prepare_tool_choice(chat_options=chat_options)
 
         filtered_kwargs = self._filter_internal_kwargs(kwargs)
@@ -679,7 +637,7 @@ class BaseChatClient(SerializationMixin, ABC):
         """
         # Normalize tools and merge with base chat_options
         normalized_tools = await self._normalize_tools(tools)
-        chat_options = merge_chat_options(
+        chat_options = _merge_chat_options(
             base_chat_options=kwargs.pop("chat_options", None),
             model_id=model_id,
             frequency_penalty=frequency_penalty,
@@ -707,7 +665,11 @@ class BaseChatClient(SerializationMixin, ABC):
             )
             chat_options.store = True
 
-        prepped_messages = self.prepare_messages(messages, chat_options)
+        if chat_options.instructions:
+            system_msg = ChatMessage(role="system", text=chat_options.instructions)
+            prepped_messages = [system_msg, *prepare_messages(messages)]
+        else:
+            prepped_messages = prepare_messages(messages)
         self._prepare_tool_choice(chat_options=chat_options)
 
         filtered_kwargs = self._filter_internal_kwargs(kwargs)
@@ -728,12 +690,12 @@ class BaseChatClient(SerializationMixin, ABC):
         chat_tool_mode = chat_options.tool_choice
         if chat_tool_mode is None or chat_tool_mode == ToolMode.NONE or chat_tool_mode == "none":
             chat_options.tools = None
-            chat_options.tool_choice = ToolMode.NONE.mode
+            chat_options.tool_choice = ToolMode.NONE
             return
         if not chat_options.tools:
-            chat_options.tool_choice = ToolMode.NONE.mode
+            chat_options.tool_choice = ToolMode.NONE
         else:
-            chat_options.tool_choice = chat_tool_mode.mode if isinstance(chat_tool_mode, ToolMode) else chat_tool_mode
+            chat_options.tool_choice = chat_tool_mode
 
     def service_url(self) -> str:
         """Get the URL of the service.
