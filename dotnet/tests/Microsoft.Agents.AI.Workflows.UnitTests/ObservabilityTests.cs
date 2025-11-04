@@ -137,10 +137,10 @@ public sealed class ObservabilityTests : IDisposable
     public void CreatesWorkflowActivities_WithCorrectName()
     {
         // Arrange & Act
-        var workflow = CreateWorkflow();
+        CreateWorkflow();
 
         // Assert
-        this._capturedActivities.Should().HaveCount(1, "Exactly 1 activities should be created.");
+        this._capturedActivities.Should().HaveCount(1, "Exactly 1 activity should be created.");
         this._capturedActivities[0].OperationName.Should().Be(ActivityNames.WorkflowBuild,
             "The activity should have the correct operation name for workflow build.");
 
