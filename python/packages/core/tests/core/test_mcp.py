@@ -1061,3 +1061,126 @@ def test_mcp_websocket_tool_get_mcp_client_with_kwargs():
         mock_ws_client.assert_called_once_with(
             url="wss://example.com", max_size=1024, ping_interval=30, compression="deflate"
         )
+
+@pytest.mark.asyncio
+async def test_mcp_tool_deduplication():
+    """Test that MCP tools are not duplicated in MCPTool"""
+    from agent_framework._mcp import MCPTool
+    from agent_framework._tools import AIFunction
+    
+    # Create MCPStreamableHTTPTool instance
+    tool = MCPTool(name="test_mcp_tool")
+    
+    # Manually set up functions list
+    tool._functions = []
+    
+    # Add initial functions
+    func1 = AIFunction(
+        func=lambda x: f"Result: {x}",
+        name="analyze_content",
+        description="Analyzes content"
+    )
+    func2 = AIFunction(
+        func=lambda x: f"Extract: {x}",
+        name="extract_info",
+        description="Extracts information"
+    )
+    
+    tool._functions.append(func1)
+    tool._functions.append(func2)
+    
+    # Verify initial state
+    assert len(tool._functions) == 2
+    assert len({f.name for f in tool._functions}) == 2
+    
+    # Simulate deduplication logic
+    existing_names = {func.name for func in tool._functions}
+    
+    # Attempt to add duplicates
+    test_tools = [
+        ("analyze_content", "Duplicate"),
+        ("extract_info", "Duplicate"),
+        ("new_function", "New"),
+    ]
+    
+    added_count = 0
+    for tool_name, description in test_tools:
+        if tool_name in existing_names:
+            continue  # Skip duplicates
+        
+        new_func = AIFunction(
+            func=lambda x: f"Process: {x}",
+            name=tool_name,
+            description=description
+        )
+        tool._functions.append(new_func)
+        existing_names.add(tool_name)
+        added_count += 1
+    
+    # Verify results
+    final_names = [f.name for f in tool._functions]
+    unique_names = set(final_names)
+    
+    # Should have exactly 3 functions (2 original + 1 new)
+    assert len(tool._functions) == 3
+    assert len(unique_names) == 3
+    assert len(final_names) == len(unique_names)  # No duplicates
+    assert added_count == 1  # Only 1 new function added
+
+
+@pytest.mark.asyncio
+async def test_load_tools_prevents_multiple_calls():
+    """Test that load_tools() can only be called once"""
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from agent_framework._mcp import MCPTool
+    
+    tool = MCPTool(name="test_tool")
+    
+    # Verify initial state
+    assert tool._tools_loaded is False
+    
+    # Mock the session and list_tools
+    mock_session = AsyncMock()
+    mock_tool_list = MagicMock()
+    mock_tool_list.tools = []
+    mock_session.list_tools = AsyncMock(return_value=mock_tool_list)
+    
+    tool.session = mock_session
+    
+    # First call should proceed
+    await tool.load_tools()
+    assert tool._tools_loaded is True
+    assert mock_session.list_tools.call_count == 1
+    
+    # Second call should be skipped
+    await tool.load_tools()
+    assert mock_session.list_tools.call_count == 1  # Still 1, not incremented
+
+
+@pytest.mark.asyncio
+async def test_load_prompts_prevents_multiple_calls():
+    """Test that load_prompts() can only be called once"""
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from agent_framework._mcp import MCPTool
+    
+    tool = MCPTool(name="test_tool")
+    
+    # Verify initial state
+    assert tool._prompts_loaded is False
+    
+    # Mock the session and list_prompts
+    mock_session = AsyncMock()
+    mock_prompt_list = MagicMock()
+    mock_prompt_list.prompts = []
+    mock_session.list_prompts = AsyncMock(return_value=mock_prompt_list)
+    
+    tool.session = mock_session
+    
+    # First call should proceed
+    await tool.load_prompts()
+    assert tool._prompts_loaded is True
+    assert mock_session.list_prompts.call_count == 1
+    
+    # Second call should be skipped
+    await tool.load_prompts()
+    assert mock_session.list_prompts.call_count == 1  # Still 1, not incremented

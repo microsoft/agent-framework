@@ -293,6 +293,9 @@ class MCPTool:
         self.chat_client = chat_client
         self._functions: list[AIFunction[Any, Any]] = []
         self.is_connected: bool = False
+        # ADD THESE TWO FLAGS TO PREVENT MULTIPLE CALLS
+        self._tools_loaded: bool = False
+        self._prompts_loaded: bool = False
 
     def __str__(self) -> str:
         return f"MCPTool(name={self.name}, description={self.description})"
@@ -500,6 +503,11 @@ class MCPTool:
         Raises:
             ToolExecutionException: If the MCP server is not connected.
         """
+        # PREVENT MULTIPLE CALLS - ADD THIS CHECK
+        if self._prompts_loaded:
+            logger.debug("Prompts already loaded, skipping load_prompts() call")
+            return
+        
         if not self.session:
             raise ToolExecutionException("MCP server not connected, please call connect() before using this method.")
         try:
@@ -532,6 +540,10 @@ class MCPTool:
             )
             self._functions.append(func)
             existing_names.add(local_name)
+        
+        # MARK AS LOADED - ADD THIS LINE AT THE END
+        self._prompts_loaded = True
+
 
 
     async def load_tools(self) -> None:
@@ -543,6 +555,11 @@ class MCPTool:
         Raises:
             ToolExecutionException: If the MCP server is not connected.
         """
+        # PREVENT MULTIPLE CALLS - ADD THIS CHECK
+        if self._tools_loaded:
+            logger.debug("Tools already loaded, skipping load_tools() call")
+            return
+        
         if not self.session:
             raise ToolExecutionException("MCP server not connected, please call connect() before using this method.")
         try:
@@ -576,6 +593,10 @@ class MCPTool:
             )
             self._functions.append(func)
             existing_names.add(local_name)
+        
+        # MARK AS LOADED - ADD THIS LINE AT THE END
+        self._tools_loaded = True
+
 
 
     async def close(self) -> None:
