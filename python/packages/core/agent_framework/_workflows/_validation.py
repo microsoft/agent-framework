@@ -12,10 +12,6 @@ from ._typing_utils import is_type_compatible
 
 logger = logging.getLogger(__name__)
 
-# Track cycle signatures we've already reported to avoid spamming logs when workflows
-# with intentional feedback loops are constructed multiple times in the same process.
-_LOGGED_CYCLE_SIGNATURES: set[tuple[str, ...]] = set()
-
 
 # region Enums and Base Classes
 class ValidationTypeEnum(Enum):
@@ -168,7 +164,6 @@ class WorkflowGraphValidator:
         self._validate_graph_connectivity(start_executor_id)
         self._validate_self_loops()
         self._validate_dead_ends()
-        self._validate_cycles()
 
     def _validate_handler_output_annotations(self) -> None:
         """Validate that each handler's ctx parameter is annotated with WorkflowContext[T].
@@ -393,96 +388,6 @@ class WorkflowGraphValidator:
                 f"Dead-end executors detected (no outgoing edges): {sorted(dead_ends)}. "
                 f"Verify these are intended as final nodes in the workflow."
             )
-
-    def _validate_cycles(self) -> None:
-        """Detect cycles in the workflow graph.
-
-        Cycles might be intentional for iterative processing but should be flagged
-        for review to ensure proper termination conditions exist. We surface each
-        distinct cycle group only once per process to avoid noisy, repeated warnings
-        when rebuilding the same workflow.
-        """
-        # Build adjacency list (ensure every executor appears even if it has no outgoing edges)
-        graph: dict[str, list[str]] = defaultdict(list)
-        for edge in self._edges:
-            graph[edge.source_id].append(edge.target_id)
-            graph.setdefault(edge.target_id, [])
-        for executor_id in self._executors:
-            graph.setdefault(executor_id, [])
-
-        # Tarjan's algorithm to locate strongly-connected components that form cycles
-        index: dict[str, int] = {}
-        lowlink: dict[str, int] = {}
-        on_stack: set[str] = set()
-        stack: list[str] = []
-        current_index = 0
-        cycle_components: list[list[str]] = []
-
-        def strongconnect(node: str) -> None:
-            nonlocal current_index
-
-            index[node] = current_index
-            lowlink[node] = current_index
-            current_index += 1
-            stack.append(node)
-            on_stack.add(node)
-
-            for neighbor in graph[node]:
-                if neighbor not in index:
-                    strongconnect(neighbor)
-                    lowlink[node] = min(lowlink[node], lowlink[neighbor])
-                elif neighbor in on_stack:
-                    lowlink[node] = min(lowlink[node], index[neighbor])
-
-            if lowlink[node] == index[node]:
-                component: list[str] = []
-                while True:
-                    member = stack.pop()
-                    on_stack.discard(member)
-                    component.append(member)
-                    if member == node:
-                        break
-
-                # A strongly connected component represents a cycle if it has more than one
-                # node or if a single node references itself directly.
-                if len(component) > 1 or any(member in graph[member] for member in component):
-                    cycle_components.append(component)
-
-        for executor_id in graph:
-            if executor_id not in index:
-                strongconnect(executor_id)
-
-        if not cycle_components:
-            return
-
-        unseen_components: list[list[str]] = []
-        for component in cycle_components:
-            signature = tuple(sorted(component))
-            if signature in _LOGGED_CYCLE_SIGNATURES:
-                continue
-            _LOGGED_CYCLE_SIGNATURES.add(signature)
-            unseen_components.append(component)
-
-        if not unseen_components:
-            # All cycles already reported in this process; keep noise low but retain traceability.
-            logger.debug(
-                "Cycle detected in workflow graph but previously reported. Components: %s",
-                [sorted(component) for component in cycle_components],
-            )
-            return
-
-        def _format_cycle(component: list[str]) -> str:
-            if not component:
-                return ""
-            ordered = list(component)
-            ordered.append(component[0])
-            return " -> ".join(ordered)
-
-        formatted_cycles = ", ".join(_format_cycle(component) for component in unseen_components)
-        logger.warning(
-            "Cycle detected in the workflow graph involving: %s. Ensure termination or iteration limits exist.",
-            formatted_cycles,
-        )
 
     # endregion
 

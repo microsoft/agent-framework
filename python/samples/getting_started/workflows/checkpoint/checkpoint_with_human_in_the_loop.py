@@ -125,13 +125,12 @@ class ReviewGateway(Executor):
         await ctx.set_executor_state({"iteration": iteration, "last_draft": draft})
         # Emit a human approval request.
         await ctx.request_info(
-            HumanApprovalRequest(
+            request_data=HumanApprovalRequest(
                 prompt="Review the draft. Reply 'approve' or provide edit instructions.",
                 draft=draft,
                 iteration=iteration,
             ),
-            HumanApprovalRequest,
-            str,
+            response_type=str,
         )
 
     @response_handler
@@ -251,7 +250,7 @@ async def run_interactive_session(
                 event_stream = workflow.run_stream(initial_message)
             elif checkpoint_id:
                 print("\nStarting workflow from checkpoint...\n")
-                event_stream = workflow.run_stream_from_checkpoint(checkpoint_id)
+                event_stream = workflow.run_stream(checkpoint_id)
             else:
                 raise ValueError("Either initial_message or checkpoint_id must be provided")
 

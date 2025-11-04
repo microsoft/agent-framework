@@ -16,8 +16,34 @@ env:
   UV_CACHE_DIR: /tmp/.uv-cache
 
 jobs:
+  paths-filter:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      pythonChanges: ${{ steps.filter.outputs.python}}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            python:
+              - 'python/**'
+      # run only if 'python' files were changed
+      - name: python tests
+        if: steps.filter.outputs.python == 'true'
+        run: echo "Python file"
+      # run only if not 'python' files were changed
+      - name: not python tests
+        if: steps.filter.outputs.python != 'true'
+        run: echo "NOT python file"
+
   python-lab-tests:
     name: Python Lab Tests
+    needs: paths-filter
+    if: needs.paths-filter.outputs.pythonChanges == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: true
