@@ -690,12 +690,12 @@ class BaseChatClient(SerializationMixin, ABC):
         chat_tool_mode = chat_options.tool_choice
         if chat_tool_mode is None or chat_tool_mode == ToolMode.NONE or chat_tool_mode == "none":
             chat_options.tools = None
-            chat_options.tool_choice = ToolMode.NONE.mode
+            chat_options.tool_choice = ToolMode.NONE
             return
         if not chat_options.tools:
-            chat_options.tool_choice = ToolMode.NONE.mode
+            chat_options.tool_choice = ToolMode.NONE
         else:
-            chat_options.tool_choice = chat_tool_mode.mode if isinstance(chat_tool_mode, ToolMode) else chat_tool_mode
+            chat_options.tool_choice = chat_tool_mode
 
     def service_url(self) -> str:
         """Get the URL of the service.

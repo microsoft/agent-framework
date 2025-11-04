@@ -14,7 +14,8 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 
 | File | Description |
 |------|-------------|
-| [`getting_started/agents/anthropic/anthropic_with_openai_chat_client.py`](./getting_started/agents/anthropic/anthropic_with_openai_chat_client.py) | Anthropic with OpenAI Chat Client Example |
+| [`getting_started/agents/anthropic/anthropic_basic.py`](./getting_started/agents/anthropic/anthropic_basic.py) | Agent with Anthropic Client |
+| [`getting_started/agents/anthropic/anthropic_advanced.py`](./getting_started/agents/anthropic/anthropic_advanced.py) | Advanced sample with `thinking` and hosted tools. |
 
 ### Azure AI
 
