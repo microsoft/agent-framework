@@ -9,9 +9,11 @@ from datetime import datetime
 from agent_framework import AgentRunResponseUpdate, TextContent
 from chatkit.types import (
     AssistantMessageContent,
+    AssistantMessageContentPartTextDelta,
     AssistantMessageItem,
     ThreadItemAddedEvent,
     ThreadItemDoneEvent,
+    ThreadItemUpdated,
     ThreadStreamEvent,
 )
 
@@ -27,6 +29,10 @@ async def stream_agent_response(
     a Microsoft Agent Framework agent and converts them to ChatKit ThreadStreamEvent
     objects that can be consumed by the ChatKit UI.
 
+    The function supports real-time token-by-token streaming by emitting
+    ThreadItemUpdated events with AssistantMessageContentPartTextDelta for each
+    text chunk as it arrives from the agent.
+
     Args:
         response_stream: An async iterable of AgentRunResponseUpdate objects
                         from an Agent Framework agent.
@@ -35,7 +41,8 @@ async def stream_agent_response(
                     If not provided, simple incremental IDs will be used.
 
     Yields:
-        ThreadStreamEvent: ChatKit events representing the agent's response.
+        ThreadStreamEvent: ChatKit events representing the agent's response,
+                          including incremental text deltas for streaming display.
     """
     # Use provided ID generator or create default one
     if generate_id is None:
@@ -50,6 +57,7 @@ async def stream_agent_response(
     # Track if we've started the message
     message_started = False
     accumulated_text = ""
+    content_index = 0
 
     async for update in response_stream:
         # Start the assistant message if not already started
@@ -70,6 +78,15 @@ async def stream_agent_response(
             for content in update.contents:
                 # Handle text content - only TextContent has a text attribute
                 if isinstance(content, TextContent) and content.text is not None:
+                    # Yield incremental text delta for streaming display
+                    yield ThreadItemUpdated(
+                        type="thread.item.updated",
+                        item_id=message_id,
+                        update=AssistantMessageContentPartTextDelta(
+                            content_index=content_index,
+                            delta=content.text,
+                        ),
+                    )
                     accumulated_text += content.text
 
     # Finalize the message

@@ -287,7 +287,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
 
                                 # Check if it's a WeatherResponse (string subclass with weather_data attribute)
                                 if isinstance(result, str) and hasattr(result, "weather_data"):
-                                    extracted_data = result.weather_data
+                                    extracted_data = getattr(result, "weather_data", None)
                                     if isinstance(extracted_data, WeatherData):
                                         weather_data = extracted_data
                                         logger.info(f"Weather data extracted: {weather_data.location}")
@@ -380,7 +380,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
 
                                 # Check if it's a WeatherResponse (string subclass with weather_data attribute)
                                 if isinstance(result, str) and hasattr(result, "weather_data"):
-                                    extracted_data = result.weather_data
+                                    extracted_data = getattr(result, "weather_data", None)
                                     if isinstance(extracted_data, WeatherData):
                                         weather_data = extracted_data
                                         logger.info(f"Weather data extracted: {weather_data.location}")
