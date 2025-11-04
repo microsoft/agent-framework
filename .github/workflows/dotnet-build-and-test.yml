@@ -80,6 +80,29 @@ jobs:
         uses: actions/setup-dotnet@v5.0.0
         with:
           global-json-file: ${{ github.workspace }}/dotnet/global.json
+          
+      - name: Setup Azurite (Azure Storage Emulator)
+        if: matrix.integration-tests
+        shell: bash
+        run: |
+          # Install Azurite globally using npm (available on all GitHub runners)
+          npm install -g azurite
+          
+          # Start Azurite in the background
+          if [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
+            # On Linux, use nohup to run in background
+            nohup azurite --silent --location /tmp/azurite --debug /tmp/azurite/debug.log &
+            # Wait for Azurite to be ready
+            timeout 30 bash -c 'until curl -f http://localhost:10000 2>/dev/null; do sleep 1; done'
+          else
+            # On Windows, use PowerShell to start in background
+            powershell -Command "Start-Process azurite -ArgumentList '--silent', '--location', '$env:TEMP\azurite', '--debug', '$env:TEMP\azurite\debug.log' -WindowStyle Hidden"
+            # Wait for Azurite to be ready (simple sleep since curl might not be available)
+            sleep 10
+          fi
+          
+          echo "Azurite started successfully"
+
       - name: Build dotnet solutions
         shell: bash
         run: |
