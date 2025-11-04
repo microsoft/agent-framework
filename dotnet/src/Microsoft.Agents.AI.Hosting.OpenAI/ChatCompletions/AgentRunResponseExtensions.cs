@@ -23,7 +23,7 @@ internal static class AgentRunResponseExtensions
             Id = IdGeneratorHelpers.NewId(prefix: "chatcmpl", delimiter: "-", stringLength: 13),
             Choices = choices,
             Created = (agentRunResponse.CreatedAt ?? DateTimeOffset.UtcNow).ToUnixTimeSeconds(),
-            Model = /* request.Agent?.Name ?? */ request.Model,
+            Model = request.Model,
             Usage = agentRunResponse.Usage.ToCompletionUsage(),
             ServiceTier = request.ServiceTier ?? "default"
         };
