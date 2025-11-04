@@ -1478,8 +1478,11 @@ def _handle_function_calls_response(
             # because the underlying function may not preserve it in kwargs
             stored_middleware_pipeline = kwargs.get("_function_middleware_pipeline")
 
-            # Get the config for function invocation
-            config: FunctionInvocationConfiguration = getattr(self, "function_invocation_configuration", None)
+            # Get the config for function invocation (not part of ChatClientProtocol, hence getattr)
+            config: FunctionInvocationConfiguration | None = getattr(self, "function_invocation_configuration", None)
+            if not config:
+                # Default config if not set
+                config = FunctionInvocationConfiguration()
 
             errors_in_a_row: int = 0
             prepped_messages = prepare_messages(messages)
@@ -1659,8 +1662,11 @@ def _handle_function_calls_streaming_response(
             # because the underlying function may not preserve it in kwargs
             stored_middleware_pipeline = kwargs.get("_function_middleware_pipeline")
 
-            # Get the config for function invocation
-            config: FunctionInvocationConfiguration = getattr(self, "function_invocation_configuration", None)
+            # Get the config for function invocation (not part of ChatClientProtocol, hence getattr)
+            config: FunctionInvocationConfiguration | None = getattr(self, "function_invocation_configuration", None)
+            if not config:
+                # Default config if not set
+                config = FunctionInvocationConfiguration()
 
             prepped_messages = prepare_messages(messages)
             fcc_messages: "list[ChatMessage]" = []
@@ -1825,10 +1831,6 @@ def use_function_invocation(
     """
     if getattr(chat_client, FUNCTION_INVOKING_CHAT_CLIENT_MARKER, False):
         return chat_client
-
-    # Set MAX_ITERATIONS as a class variable if not already set
-    if not hasattr(chat_client, "FUNCTION_INVOCATION_CONFIGURATION"):
-        chat_client.FUNCTION_INVOCATION_CONFIGURATION = FunctionInvocationConfiguration()
 
     try:
         chat_client.get_response = _handle_function_calls_response(  # type: ignore

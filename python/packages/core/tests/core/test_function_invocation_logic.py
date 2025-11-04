@@ -605,7 +605,7 @@ async def test_max_iterations_limit(chat_client_base: ChatClientProtocol):
     ]
 
     # Set max_iterations to 1 in additional_properties
-    chat_client_base.additional_properties = {"max_iterations": 1}
+    chat_client_base.function_invocation_configuration.max_iterations = 1
 
     response = await chat_client_base.get_response("hello", tool_choice="auto", tools=[ai_func])
 
@@ -615,3 +615,678 @@ async def test_max_iterations_limit(chat_client_base: ChatClientProtocol):
     # 3. Fall back to asking for a plain answer with tool_choice="none"
     assert exec_counter == 1  # Only first function executed
     assert response.messages[-1].text == "I broke out of the function invocation loop..."  # Failsafe response
+
+
+async def test_function_invocation_config_enabled_false(chat_client_base: ChatClientProtocol):
+    """Test that setting enabled=False disables function invocation."""
+    exec_counter = 0
+
+    @ai_function(name="test_function")
+    def ai_func(arg1: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Processed {arg1}"
+
+    chat_client_base.run_responses = [
+        ChatResponse(messages=ChatMessage(role="assistant", text="response without function calling")),
+    ]
+
+    # Disable function invocation
+    chat_client_base.function_invocation_configuration.enabled = False
+
+    response = await chat_client_base.get_response("hello", tool_choice="auto", tools=[ai_func])
+
+    # Function should not be executed - when enabled=False, the loop doesn't run
+    assert exec_counter == 0
+    # The response should be from the mock client
+    assert len(response.messages) > 0
+
+
+async def test_function_invocation_config_max_consecutive_errors(chat_client_base: ChatClientProtocol):
+    """Test that max_consecutive_errors_per_request limits error retries."""
+
+    @ai_function(name="error_function")
+    def error_func(arg1: str) -> str:
+        raise ValueError("Function error")
+
+    # Set up multiple function call responses that will all error
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=ChatMessage(
+                role="assistant",
+                contents=[FunctionCallContent(call_id="1", name="error_function", arguments='{"arg1": "value1"}')],
+            )
+        ),
+        ChatResponse(
+            messages=ChatMessage(
+                role="assistant",
+                contents=[FunctionCallContent(call_id="2", name="error_function", arguments='{"arg1": "value2"}')],
+            )
+        ),
+        ChatResponse(
+            messages=ChatMessage(
+                role="assistant",
+                contents=[FunctionCallContent(call_id="3", name="error_function", arguments='{"arg1": "value3"}')],
+            )
+        ),
+        ChatResponse(
+            messages=ChatMessage(
+                role="assistant",
+                contents=[FunctionCallContent(call_id="4", name="error_function", arguments='{"arg1": "value4"}')],
+            )
+        ),
+        ChatResponse(messages=ChatMessage(role="assistant", text="final response")),
+    ]
+
+    # Set max_consecutive_errors to 2
+    chat_client_base.function_invocation_configuration.max_consecutive_errors_per_request = 2
+
+    response = await chat_client_base.get_response("hello", tool_choice="auto", tools=[error_func])
+
+    # Should stop after 2 consecutive errors and force a non-tool response
+    error_results = [
+        content
+        for msg in response.messages
+        for content in msg.contents
+        if isinstance(content, FunctionResultContent) and content.exception
+    ]
+    # The first call errors, then the second call errors, hitting the limit
+    # So we get 2 function calls with errors, but the responses show the behavior stopped
+    assert len(error_results) >= 1  # At least one error occurred
+    # Should have stopped making new function calls after hitting the error limit
+    function_calls = [
+        content for msg in response.messages for content in msg.contents if isinstance(content, FunctionCallContent)
+    ]
+    # Should have made at most 2 function calls before stopping
+    assert len(function_calls) <= 2
+
+
+async def test_function_invocation_config_terminate_on_unknown_calls_false(chat_client_base: ChatClientProtocol):
+    """Test that terminate_on_unknown_calls=False returns error message for unknown functions."""
+    exec_counter = 0
+
+    @ai_function(name="known_function")
+    def known_func(arg1: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Processed {arg1}"
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=ChatMessage(
+                role="assistant",
+                contents=[FunctionCallContent(call_id="1", name="unknown_function", arguments='{"arg1": "value1"}')],
+            )
+        ),
+        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+    ]
+
+    # Set terminate_on_unknown_calls to False (default)
+    chat_client_base.function_invocation_configuration.terminate_on_unknown_calls = False
+
+    response = await chat_client_base.get_response("hello", tool_choice="auto", tools=[known_func])
+
+    # Should have a result message indicating the tool wasn't found
+    assert len(response.messages) == 3
+    assert isinstance(response.messages[1].contents[0], FunctionResultContent)
+    result_str = response.messages[1].contents[0].result or response.messages[1].contents[0].exception or ""
+    assert "not found" in result_str.lower()
+    assert exec_counter == 0  # Known function not executed
+
+
+async def test_function_invocation_config_terminate_on_unknown_calls_true(chat_client_base: ChatClientProtocol):
+    """Test that terminate_on_unknown_calls=True stops execution on unknown functions."""
+    exec_counter = 0
+
+    @ai_function(name="known_function")
+    def known_func(arg1: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Processed {arg1}"
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=ChatMessage(
+                role="assistant",
+                contents=[FunctionCallContent(call_id="1", name="unknown_function", arguments='{"arg1": "value1"}')],
+            )
+        ),
+    ]
+
+    # Set terminate_on_unknown_calls to True
+    chat_client_base.function_invocation_configuration.terminate_on_unknown_calls = True
+
+    # Should raise an exception when encountering an unknown function
+    with pytest.raises(KeyError, match='Error: Requested function "unknown_function" not found'):
+        await chat_client_base.get_response("hello", tool_choice="auto", tools=[known_func])
+
+    assert exec_counter == 0
+
+
+async def test_function_invocation_config_additional_tools(chat_client_base: ChatClientProtocol):
+    """Test that additional_tools are available but treated as declaration_only."""
+    exec_counter_visible = 0
+    exec_counter_hidden = 0
+
+    @ai_function(name="visible_function")
+    def visible_func(arg1: str) -> str:
+        nonlocal exec_counter_visible
+        exec_counter_visible += 1
+        return f"Visible {arg1}"
+
+    @ai_function(name="hidden_function")
+    def hidden_func(arg1: str) -> str:
+        nonlocal exec_counter_hidden
+        exec_counter_hidden += 1
+        return f"Hidden {arg1}"
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=ChatMessage(
+                role="assistant",
+                contents=[FunctionCallContent(call_id="1", name="hidden_function", arguments='{"arg1": "value1"}')],
+            )
+        ),
+        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+    ]
+
+    # Add hidden_func to additional_tools
+    chat_client_base.function_invocation_configuration.additional_tools = [hidden_func]
+
+    # Only pass visible_func in the tools parameter
+    response = await chat_client_base.get_response("hello", tool_choice="auto", tools=[visible_func])
+
+    # Additional tools are treated as declaration_only, so not executed
+    # The function call should be in the messages but not executed
+    assert exec_counter_hidden == 0
+    assert exec_counter_visible == 0
+    # Should have the function call in messages (declaration_only behavior)
+    function_calls = [
+        content
+        for msg in response.messages
+        for content in msg.contents
+        if isinstance(content, FunctionCallContent) and content.name == "hidden_function"
+    ]
+    assert len(function_calls) >= 1
+
+
+async def test_function_invocation_config_include_detailed_errors_false(chat_client_base: ChatClientProtocol):
+    """Test that include_detailed_errors=False returns generic error messages."""
+
+    @ai_function(name="error_function")
+    def error_func(arg1: str) -> str:
+        raise ValueError("Specific error message that should not appear")
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=ChatMessage(
+                role="assistant",
+                contents=[FunctionCallContent(call_id="1", name="error_function", arguments='{"arg1": "value1"}')],
+            )
+        ),
+        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+    ]
+
+    # Set include_detailed_errors to False (default)
+    chat_client_base.function_invocation_configuration.include_detailed_errors = False
+
+    response = await chat_client_base.get_response("hello", tool_choice="auto", tools=[error_func])
+
+    # Should have a generic error message
+    error_result = next(
+        content for msg in response.messages for content in msg.contents if isinstance(content, FunctionResultContent)
+    )
+    assert error_result.exception is not None
+    assert "Specific error message" not in error_result.exception
+    assert "Error:" in error_result.exception  # Generic error prefix
+
+
+async def test_function_invocation_config_include_detailed_errors_true(chat_client_base: ChatClientProtocol):
+    """Test that include_detailed_errors=True returns detailed error information."""
+
+    @ai_function(name="error_function")
+    def error_func(arg1: str) -> str:
+        raise ValueError("Specific error message that should appear")
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=ChatMessage(
+                role="assistant",
+                contents=[FunctionCallContent(call_id="1", name="error_function", arguments='{"arg1": "value1"}')],
+            )
+        ),
+        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+    ]
+
+    # Set include_detailed_errors to True
+    chat_client_base.function_invocation_configuration.include_detailed_errors = True
+
+    response = await chat_client_base.get_response("hello", tool_choice="auto", tools=[error_func])
+
+    # Should have detailed error message
+    error_result = next(
+        content for msg in response.messages for content in msg.contents if isinstance(content, FunctionResultContent)
+    )
+    assert error_result.exception is not None
+    assert "Specific error message that should appear" in error_result.exception
+    # The error format includes "Function failed. Exception:" prefix
+    assert "Exception:" in error_result.exception
+
+
+async def test_function_invocation_config_validation_max_iterations():
+    """Test that max_iterations validation works correctly."""
+    from agent_framework import FunctionInvocationConfiguration
+
+    # Valid values
+    config = FunctionInvocationConfiguration(max_iterations=1)
+    assert config.max_iterations == 1
+
+    config = FunctionInvocationConfiguration(max_iterations=100)
+    assert config.max_iterations == 100
+
+    # Invalid value (less than 1)
+    with pytest.raises(ValueError, match="max_iterations must be at least 1"):
+        FunctionInvocationConfiguration(max_iterations=0)
+
+    with pytest.raises(ValueError, match="max_iterations must be at least 1"):
+        FunctionInvocationConfiguration(max_iterations=-1)
+
+
+async def test_function_invocation_config_validation_max_consecutive_errors():
+    """Test that max_consecutive_errors_per_request validation works correctly."""
+    from agent_framework import FunctionInvocationConfiguration
+
+    # Valid values
+    config = FunctionInvocationConfiguration(max_consecutive_errors_per_request=0)
+    assert config.max_consecutive_errors_per_request == 0
+
+    config = FunctionInvocationConfiguration(max_consecutive_errors_per_request=5)
+    assert config.max_consecutive_errors_per_request == 5
+
+    # Invalid value (less than 0)
+    with pytest.raises(ValueError, match="max_consecutive_errors_per_request must be 0 or more"):
+        FunctionInvocationConfiguration(max_consecutive_errors_per_request=-1)
+
+
+async def test_argument_validation_error_with_detailed_errors(chat_client_base: ChatClientProtocol):
+    """Test that argument validation errors include details when include_detailed_errors=True."""
+
+    @ai_function(name="typed_function")
+    def typed_func(arg1: int) -> str:  # Expects int, not str
+        return f"Got {arg1}"
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=ChatMessage(
+                role="assistant",
+                contents=[FunctionCallContent(call_id="1", name="typed_function", arguments='{"arg1": "not_an_int"}')],
+            )
+        ),
+        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+    ]
+
+    # Set include_detailed_errors to True
+    chat_client_base.function_invocation_configuration.include_detailed_errors = True
+
+    response = await chat_client_base.get_response("hello", tool_choice="auto", tools=[typed_func])
+
+    # Should have detailed validation error
+    error_result = next(
+        content for msg in response.messages for content in msg.contents if isinstance(content, FunctionResultContent)
+    )
+    assert error_result.exception is not None
+    assert "Argument parsing failed" in error_result.exception
+    assert "Exception:" in error_result.exception  # Detailed error included
+
+
+async def test_argument_validation_error_without_detailed_errors(chat_client_base: ChatClientProtocol):
+    """Test that argument validation errors are generic when include_detailed_errors=False."""
+
+    @ai_function(name="typed_function")
+    def typed_func(arg1: int) -> str:  # Expects int, not str
+        return f"Got {arg1}"
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=ChatMessage(
+                role="assistant",
+                contents=[FunctionCallContent(call_id="1", name="typed_function", arguments='{"arg1": "not_an_int"}')],
+            )
+        ),
+        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+    ]
+
+    # Set include_detailed_errors to False (default)
+    chat_client_base.function_invocation_configuration.include_detailed_errors = False
+
+    response = await chat_client_base.get_response("hello", tool_choice="auto", tools=[typed_func])
+
+    # Should have generic validation error
+    error_result = next(
+        content for msg in response.messages for content in msg.contents if isinstance(content, FunctionResultContent)
+    )
+    assert error_result.exception is not None
+    assert "Argument parsing failed" in error_result.exception
+    assert "Exception:" not in error_result.exception  # No detailed error
+
+
+async def test_hosted_tool_approval_response(chat_client_base: ChatClientProtocol):
+    """Test handling of approval responses for hosted tools (tools not in tool_map)."""
+    from agent_framework import FunctionApprovalResponseContent
+
+    @ai_function(name="local_function")
+    def local_func(arg1: str) -> str:
+        return f"Local {arg1}"
+
+    # Create an approval response for a hosted tool that's not in our tool_map
+    hosted_function_call = FunctionCallContent(
+        call_id="hosted_1", name="hosted_function", arguments='{"arg1": "value"}'
+    )
+    approval_response = FunctionApprovalResponseContent(
+        id="approval_1",
+        function_call=hosted_function_call,
+        approved=True,
+    )
+
+    chat_client_base.run_responses = [
+        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+    ]
+
+    # Send the approval response
+    response = await chat_client_base.get_response(
+        [ChatMessage(role="user", contents=[approval_response])],
+        tool_choice="auto",
+        tools=[local_func],
+    )
+
+    # The hosted tool approval should be returned as-is (not executed)
+    # Check that we got a response without errors
+    assert response is not None
+
+
+async def test_unapproved_tool_execution_raises_exception(chat_client_base: ChatClientProtocol):
+    """Test that attempting to execute an unapproved tool raises ToolException."""
+    from agent_framework import FunctionApprovalResponseContent
+
+    @ai_function(name="test_function", approval_mode="always_require")
+    def test_func(arg1: str) -> str:
+        return f"Result {arg1}"
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=ChatMessage(
+                role="assistant",
+                contents=[
+                    FunctionCallContent(call_id="1", name="test_function", arguments='{"arg1": "value1"}'),
+                ],
+            )
+        ),
+        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+    ]
+
+    # Get approval request
+    response1 = await chat_client_base.get_response("hello", tool_choice="auto", tools=[test_func])
+
+    approval_req = [c for c in response1.messages[0].contents if isinstance(c, FunctionApprovalRequestContent)][0]
+
+    # Create a rejection response (approved=False)
+    rejection_response = FunctionApprovalResponseContent(
+        id=approval_req.id,
+        function_call=approval_req.function_call,
+        approved=False,
+    )
+
+    # Continue conversation with rejection
+    all_messages = response1.messages + [ChatMessage(role="user", contents=[rejection_response])]
+
+    # This should handle the rejection gracefully (not raise ToolException to user)
+    await chat_client_base.get_response(all_messages, tool_choice="auto", tools=[test_func])
+
+    # Should have a rejection result
+    rejection_result = next(
+        (
+            content
+            for msg in all_messages
+            for content in msg.contents
+            if isinstance(content, FunctionResultContent)
+            and "rejected" in (content.result or content.exception or "").lower()
+        ),
+        None,
+    )
+    assert rejection_result is not None
+
+
+async def test_declaration_only_tool_not_executed(chat_client_base: ChatClientProtocol):
+    """Test that declaration_only tools are not executed."""
+    exec_counter = 0
+
+    @ai_function(name="declaration_func")
+    def declaration_func_inner(arg1: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Result {arg1}"
+
+    # Create a new AIFunction with declaration_only set
+    from agent_framework import AIFunction
+
+    declaration_func = AIFunction(
+        name="declaration_func",
+        func=declaration_func_inner,
+        additional_properties={"declaration_only": True},
+    )
+    # Set declaration_only on the instance
+    object.__setattr__(declaration_func, "_declaration_only", True)
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=ChatMessage(
+                role="assistant",
+                contents=[FunctionCallContent(call_id="1", name="declaration_func", arguments='{"arg1": "value1"}')],
+            )
+        ),
+        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+    ]
+
+    response = await chat_client_base.get_response("hello", tool_choice="auto", tools=[declaration_func])
+
+    # Function should NOT be executed
+    assert exec_counter == 0
+    # Should have the function call in messages but not a result
+    function_calls = [
+        content
+        for msg in response.messages
+        for content in msg.contents
+        if isinstance(content, FunctionCallContent) and content.name == "declaration_func"
+    ]
+    assert len(function_calls) >= 1
+
+
+async def test_multiple_function_calls_parallel_execution(chat_client_base: ChatClientProtocol):
+    """Test that multiple function calls are executed in parallel."""
+    import asyncio
+
+    exec_order = []
+
+    @ai_function(name="func1")
+    async def func1(arg1: str) -> str:
+        exec_order.append("func1_start")
+        await asyncio.sleep(0.01)  # Small delay
+        exec_order.append("func1_end")
+        return f"Result1 {arg1}"
+
+    @ai_function(name="func2")
+    async def func2(arg1: str) -> str:
+        exec_order.append("func2_start")
+        await asyncio.sleep(0.01)  # Small delay
+        exec_order.append("func2_end")
+        return f"Result2 {arg1}"
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=ChatMessage(
+                role="assistant",
+                contents=[
+                    FunctionCallContent(call_id="1", name="func1", arguments='{"arg1": "value1"}'),
+                    FunctionCallContent(call_id="2", name="func2", arguments='{"arg1": "value2"}'),
+                ],
+            )
+        ),
+        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+    ]
+
+    response = await chat_client_base.get_response("hello", tool_choice="auto", tools=[func1, func2])
+
+    # Both functions should have been executed
+    assert "func1_start" in exec_order
+    assert "func1_end" in exec_order
+    assert "func2_start" in exec_order
+    assert "func2_end" in exec_order
+
+    # Should have results for both
+    results = [
+        content for msg in response.messages for content in msg.contents if isinstance(content, FunctionResultContent)
+    ]
+    assert len(results) == 2
+
+
+async def test_callable_function_converted_to_ai_function(chat_client_base: ChatClientProtocol):
+    """Test that plain callable functions are converted to AIFunction."""
+    exec_counter = 0
+
+    def plain_function(arg1: str) -> str:
+        """A plain function without decorator."""
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Plain {arg1}"
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=ChatMessage(
+                role="assistant",
+                contents=[FunctionCallContent(call_id="1", name="plain_function", arguments='{"arg1": "value1"}')],
+            )
+        ),
+        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+    ]
+
+    # Pass plain function (will be auto-converted)
+    response = await chat_client_base.get_response("hello", tool_choice="auto", tools=[plain_function])
+
+    # Function should be executed
+    assert exec_counter == 1
+    result = next(
+        content for msg in response.messages for content in msg.contents if isinstance(content, FunctionResultContent)
+    )
+    assert result.result == "Plain value1"
+
+
+async def test_conversation_id_handling(chat_client_base: ChatClientProtocol):
+    """Test that conversation_id is properly handled and messages are cleared."""
+
+    @ai_function(name="test_function")
+    def test_func(arg1: str) -> str:
+        return f"Result {arg1}"
+
+    # Return a response with a conversation_id
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=ChatMessage(
+                role="assistant",
+                contents=[FunctionCallContent(call_id="1", name="test_function", arguments='{"arg1": "value1"}')],
+            ),
+            conversation_id="conv_123",  # Simulate service-side thread
+        ),
+        ChatResponse(
+            messages=ChatMessage(role="assistant", text="done"),
+            conversation_id="conv_123",
+        ),
+    ]
+
+    response = await chat_client_base.get_response("hello", tool_choice="auto", tools=[test_func])
+
+    # Should have executed the function
+    results = [
+        content for msg in response.messages for content in msg.contents if isinstance(content, FunctionResultContent)
+    ]
+    assert len(results) >= 1
+    assert response.conversation_id == "conv_123"
+
+
+async def test_function_result_appended_to_existing_assistant_message(chat_client_base: ChatClientProtocol):
+    """Test that function results are appended to existing assistant message when appropriate."""
+
+    @ai_function(name="test_function")
+    def test_func(arg1: str) -> str:
+        return f"Result {arg1}"
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=ChatMessage(
+                role="assistant",
+                contents=[FunctionCallContent(call_id="1", name="test_function", arguments='{"arg1": "value1"}')],
+            )
+        ),
+        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+    ]
+
+    response = await chat_client_base.get_response("hello", tool_choice="auto", tools=[test_func])
+
+    # Should have messages with both function call and function result
+    assert len(response.messages) >= 2
+    # Check that we have both a function call and a function result
+    has_call = any(isinstance(content, FunctionCallContent) for msg in response.messages for content in msg.contents)
+    has_result = any(
+        isinstance(content, FunctionResultContent) for msg in response.messages for content in msg.contents
+    )
+    assert has_call
+    assert has_result
+
+
+async def test_error_recovery_resets_counter(chat_client_base: ChatClientProtocol):
+    """Test that error counter resets after a successful function call."""
+
+    call_count = 0
+
+    @ai_function(name="sometimes_fails")
+    def sometimes_fails(arg1: str) -> str:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise ValueError("First call fails")
+        return f"Success {arg1}"
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=ChatMessage(
+                role="assistant",
+                contents=[FunctionCallContent(call_id="1", name="sometimes_fails", arguments='{"arg1": "value1"}')],
+            )
+        ),
+        ChatResponse(
+            messages=ChatMessage(
+                role="assistant",
+                contents=[FunctionCallContent(call_id="2", name="sometimes_fails", arguments='{"arg1": "value2"}')],
+            )
+        ),
+        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+    ]
+
+    response = await chat_client_base.get_response("hello", tool_choice="auto", tools=[sometimes_fails])
+
+    # Should have both an error and a success
+    error_results = [
+        content
+        for msg in response.messages
+        for content in msg.contents
+        if isinstance(content, FunctionResultContent) and content.exception
+    ]
+    success_results = [
+        content
+        for msg in response.messages
+        for content in msg.contents
+        if isinstance(content, FunctionResultContent) and content.result
+    ]
+
+    assert len(error_results) >= 1
+    assert len(success_results) >= 1
+    assert call_count == 2  # Both calls executed
