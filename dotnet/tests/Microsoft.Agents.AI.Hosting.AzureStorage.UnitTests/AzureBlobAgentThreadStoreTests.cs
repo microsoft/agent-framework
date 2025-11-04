@@ -8,7 +8,7 @@ using Microsoft.Agents.AI.Hosting.AzureStorage.Blob;
 using Microsoft.Extensions.AI;
 using Xunit.Abstractions;
 
-namespace Microsoft.Agents.AI.Hosting.AzureStorage.Tests;
+namespace Microsoft.Agents.AI.Hosting.AzureStorage.UnitTests;
 
 /// <summary>
 /// Tests for <see cref="AzureBlobAgentThreadStore"/>.

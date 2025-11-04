@@ -4,12 +4,12 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using Microsoft.Agents.AI.Hosting.AzureStorage.Tests.Mock;
+using Microsoft.Agents.AI.Hosting.AzureStorage.UnitTests.Mock;
 using Microsoft.Extensions.AI;
 using Xunit.Abstractions;
 using ThreadStore = Microsoft.Agents.AI.Hosting.AgentThreadStore;
 
-namespace Microsoft.Agents.AI.Hosting.AzureStorage.Tests;
+namespace Microsoft.Agents.AI.Hosting.AzureStorage.UnitTests;
 
 internal sealed class TestRunner
 {

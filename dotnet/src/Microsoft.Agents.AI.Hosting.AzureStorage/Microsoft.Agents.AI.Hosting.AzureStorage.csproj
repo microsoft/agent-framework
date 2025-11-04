@@ -22,6 +22,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <InternalsVisibleTo Include="Microsoft.Agents.AI.Hosting.AzureStorage.Tests" />
+    <InternalsVisibleTo Include="Microsoft.Agents.AI.Hosting.AzureStorage.UnitTests" />
   </ItemGroup>
 </Project>
