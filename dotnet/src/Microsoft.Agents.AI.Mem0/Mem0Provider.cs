@@ -131,31 +131,62 @@ public sealed class Mem0Provider : AIContextProvider
             Environment.NewLine,
             context.RequestMessages.Where(m => !string.IsNullOrWhiteSpace(m.Text)).Select(m => m.Text));
 
-        var memories = (await this._client.SearchAsync(
-            this.ApplicationId,
-            this.AgentId,
-            this.ThreadId,
-            this.UserId,
-            queryText,
-            cancellationToken).ConfigureAwait(false)).ToList();
-
-        var contextInstructions = memories.Count == 0
-            ? null
-            : $"{this._contextPrompt}\n{string.Join(Environment.NewLine, memories)}";
-
-        if (this._logger is not null)
+        try
         {
-            this._logger.LogInformation("Mem0AIContextProvider retrieved {Count} memories.", memories.Count);
-            if (contextInstructions is not null)
+            var memories = (await this._client.SearchAsync(
+                this.ApplicationId,
+                this.AgentId,
+                this.ThreadId,
+                this.UserId,
+                queryText,
+                cancellationToken).ConfigureAwait(false)).ToList();
+
+            var outputMessageText = memories.Count == 0
+                ? null
+                : $"{this._contextPrompt}\n{string.Join(Environment.NewLine, memories)}";
+
+            if (this._logger is not null)
             {
-                this._logger.LogTrace("Mem0AIContextProvider instructions: {Instructions}", contextInstructions);
+                this._logger.LogInformation(
+                    "Mem0AIContextProvider: Retrieved {Count} memories. ApplicationId: '{ApplicationId}', AgentId: '{AgentId}', ThreadId: '{ThreadId}', UserId: '{UserId}'",
+                    memories.Count,
+                    this.ApplicationId,
+                    this.AgentId,
+                    this.ThreadId,
+                    this.UserId);
+                if (outputMessageText is not null)
+                {
+                    this._logger.LogTrace(
+                        "Mem0AIContextProvider: Search Results\nInput:{Input}\nOutput:{MessageText}\nApplicationId: '{ApplicationId}', AgentId: '{AgentId}', ThreadId: '{ThreadId}', UserId: '{UserId}'",
+                        queryText,
+                        outputMessageText,
+                        this.ApplicationId,
+                        this.AgentId,
+                        this.ThreadId,
+                        this.UserId);
+                }
             }
-        }
 
-        return new AIContext
+            return new AIContext
+            {
+                Messages = [new ChatMessage(ChatRole.User, outputMessageText)]
+            };
+        }
+        catch (ArgumentException)
         {
-            Messages = [new ChatMessage(ChatRole.User, contextInstructions)]
-        };
+            throw;
+        }
+        catch (Exception ex)
+        {
+            this._logger?.LogError(
+                ex,
+                "Mem0AIContextProvider: Failed to search Mem0 for memories due to error. ApplicationId: '{ApplicationId}', AgentId: '{AgentId}', ThreadId: '{ThreadId}', UserId: '{UserId}'",
+                this.ApplicationId,
+                this.AgentId,
+                this.ThreadId,
+                this.UserId);
+            return new AIContext();
+        }
     }
 
     /// <inheritdoc />
@@ -166,12 +197,20 @@ public sealed class Mem0Provider : AIContextProvider
             return; // Do not update memory on failed invocations.
         }
 
-        // Persist request and response messages after invocation.
-        await this.PersistMessagesAsync(context.RequestMessages, cancellationToken).ConfigureAwait(false);
-
-        if (context.ResponseMessages is not null)
+        try
         {
-            await this.PersistMessagesAsync(context.ResponseMessages, cancellationToken).ConfigureAwait(false);
+            // Persist request and response messages after invocation.
+            await this.PersistMessagesAsync(context.RequestMessages.Concat(context.ResponseMessages ?? []), cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            this._logger?.LogError(
+                ex,
+                "Mem0AIContextProvider: Failed to send messages to Mem0 due to error. ApplicationId: '{ApplicationId}', AgentId: '{AgentId}', ThreadId: '{ThreadId}', UserId: '{UserId}'",
+                this.ApplicationId,
+                this.AgentId,
+                this.ThreadId,
+                this.UserId);
         }
     }
 

@@ -30,12 +30,12 @@ public sealed class TextSearchProviderOptions
     public string? FunctionToolDescription { get; set; }
 
     /// <summary>
-    /// Gets or sets the context prompt prefixed to automatically injected results.
+    /// Gets or sets the context prompt prefixed to results.
     /// </summary>
     public string? ContextPrompt { get; set; }
 
     /// <summary>
-    /// Gets or sets the instruction appended after automatically injected results to request citations.
+    /// Gets or sets the instruction appended after results to request citations.
     /// </summary>
     public string? CitationsPrompt { get; set; }
 
@@ -85,7 +85,7 @@ public sealed class TextSearchProviderOptions
     public enum TextSearchBehavior
     {
         /// <summary>
-        /// Execute search prior to each invocation and inject results as instructions.
+        /// Execute search prior to each invocation and inject results as a message.
         /// </summary>
         BeforeAIInvoke,
 
