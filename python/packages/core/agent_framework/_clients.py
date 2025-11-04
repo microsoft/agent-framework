@@ -19,7 +19,7 @@ from ._middleware import (
 )
 from ._serialization import SerializationMixin
 from ._threads import ChatMessageStoreProtocol
-from ._tools import ToolProtocol
+from ._tools import FunctionInvocationConfiguration, ToolProtocol
 from ._types import ChatMessage, ChatOptions, ChatResponse, ChatResponseUpdate, ToolMode, prepare_messages
 
 if TYPE_CHECKING:
@@ -356,6 +356,27 @@ class BaseChatClient(SerializationMixin, ABC):
         self.additional_properties.update(kwargs)
 
         self.middleware = middleware
+
+    @property
+    def function_invocation_configuration(self) -> FunctionInvocationConfiguration | None:
+        """Get the function invocation configuration the client if available.
+
+        Returns:
+            The FunctionInvocationConfiguration if present in the client, else None.
+        """
+        return getattr(self, "FUNCTION_INVOCATION_CONFIGURATION", None)
+
+    @function_invocation_configuration.setter
+    def function_invocation_configuration(self, value: FunctionInvocationConfiguration | None) -> None:
+        """Set the function invocation configuration for the client.
+
+        Args:
+            value: The FunctionInvocationConfiguration to set, or None to remove it.
+        """
+        if value is not None:
+            self.FUNCTION_INVOCATION_CONFIGURATION = value
+        elif hasattr(self, "FUNCTION_INVOCATION_CONFIGURATION"):
+            delattr(self, "FUNCTION_INVOCATION_CONFIGURATION")
 
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
         """Convert the instance to a dictionary.
