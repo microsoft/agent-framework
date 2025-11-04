@@ -8,6 +8,7 @@ from agent_framework import AgentRunResponseUpdate, Role, TextContent
 from chatkit.types import (
     ThreadItemAddedEvent,
     ThreadItemDoneEvent,
+    ThreadItemUpdated,
 )
 
 from agent_framework_chatkit import stream_agent_response
@@ -39,16 +40,20 @@ class TestStreamAgentResponse:
         async for event in stream_agent_response(single_update_stream(), thread_id="test_thread"):
             events.append(event)
 
-        # Should have: item_added, item_done
-        assert len(events) == 2
+        # Should have: item_added, item_updated (delta), item_done
+        assert len(events) == 3
 
         # Check event types
         assert isinstance(events[0], ThreadItemAddedEvent)
-        assert isinstance(events[1], ThreadItemDoneEvent)
+        assert isinstance(events[1], ThreadItemUpdated)
+        assert isinstance(events[2], ThreadItemDoneEvent)
+
+        # Check delta event
+        assert events[1].update.delta == "Hello world"
 
         # Check final message content
-        assert len(events[1].item.content) == 1
-        assert events[1].item.content[0].text == "Hello world"
+        assert len(events[2].item.content) == 1
+        assert events[2].item.content[0].text == "Hello world"
 
     async def test_stream_multiple_text_updates(self):
         """Test streaming multiple text updates."""
@@ -61,8 +66,18 @@ class TestStreamAgentResponse:
         async for event in stream_agent_response(multiple_updates_stream(), thread_id="test_thread"):
             events.append(event)
 
-        # Should have: item_added, item_done
-        assert len(events) == 2
+        # Should have: item_added, item_updated (delta 1), item_updated (delta 2), item_done
+        assert len(events) == 4
+
+        # Check event types
+        assert isinstance(events[0], ThreadItemAddedEvent)
+        assert isinstance(events[1], ThreadItemUpdated)
+        assert isinstance(events[2], ThreadItemUpdated)
+        assert isinstance(events[3], ThreadItemDoneEvent)
+
+        # Check delta events
+        assert events[1].update.delta == "Hello "
+        assert events[2].update.delta == "world!"
 
         # Check final accumulated text
         final_message_event = events[-1]
