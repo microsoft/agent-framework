@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -409,7 +409,7 @@ public sealed class ToolCallingTests : IAsyncDisposable
         });
         var clientServiceProvider = clientServices.BuildServiceProvider();
 
-        var chatClient = new AGUIChatClient(this._client!, "", null, clientServiceProvider);
+        var chatClient = new AGUIChatClient(this._client!, "", null, null, clientServiceProvider);
         AIAgent agent = chatClient.CreateAIAgent(
             instructions: null,
             name: "assistant",
@@ -473,7 +473,7 @@ public sealed class ToolCallingTests : IAsyncDisposable
         });
         var clientServiceProvider = clientServices.BuildServiceProvider();
 
-        var chatClient = new AGUIChatClient(this._client!, "", null, clientServiceProvider);
+        var chatClient = new AGUIChatClient(this._client!, "", null, null, clientServiceProvider);
         AIAgent agent = chatClient.CreateAIAgent(
             instructions: null,
             name: "assistant",
