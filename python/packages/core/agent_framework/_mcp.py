@@ -510,8 +510,17 @@ class MCPTool:
                 exc_info=exc,
             )
             prompt_list = None
+        
+        # Track existing function names to prevent duplicates
+        existing_names = {func.name for func in self._functions}
+        
         for prompt in prompt_list.prompts if prompt_list else []:
             local_name = _normalize_mcp_name(prompt.name)
+            
+            # Skip if already loaded
+            if local_name in existing_names:
+                continue
+                
             input_model = _get_input_model_from_mcp_prompt(prompt)
             approval_mode = self._determine_approval_mode(local_name)
             func: AIFunction[BaseModel, list[ChatMessage]] = AIFunction(
@@ -522,6 +531,8 @@ class MCPTool:
                 input_model=input_model,
             )
             self._functions.append(func)
+            existing_names.add(local_name)
+
 
     async def load_tools(self) -> None:
         """Load tools from the MCP server.
@@ -542,8 +553,17 @@ class MCPTool:
                 exc_info=exc,
             )
             tool_list = None
+        
+        # Track existing function names to prevent duplicates
+        existing_names = {func.name for func in self._functions}
+        
         for tool in tool_list.tools if tool_list else []:
             local_name = _normalize_mcp_name(tool.name)
+            
+            # Skip if already loaded
+            if local_name in existing_names:
+                continue
+                
             input_model = _get_input_model_from_mcp_tool(tool)
             approval_mode = self._determine_approval_mode(local_name)
             # Create AIFunctions out of each tool
@@ -555,6 +575,8 @@ class MCPTool:
                 input_model=input_model,
             )
             self._functions.append(func)
+            existing_names.add(local_name)
+
 
     async def close(self) -> None:
         """Disconnect from the MCP server.
