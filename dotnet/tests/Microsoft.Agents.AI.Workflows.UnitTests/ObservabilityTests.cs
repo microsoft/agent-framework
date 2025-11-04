@@ -12,8 +12,7 @@ using Microsoft.Agents.AI.Workflows.Observability;
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
 /// <summary>
-/// Unit tests for verifying that LockstepRunEventStream and StreamingRunEventStream create proper workflow run activities.
-/// These tests ensure that OpenTelemetry Activity traces are properly created for workflow execution monitoring.
+/// These tests ensure that OpenTelemetry Activity traces are properly created for workflow monitoring.
 /// </summary>
 public sealed class ObservabilityTests : IDisposable
 {
@@ -25,7 +24,7 @@ public sealed class ObservabilityTests : IDisposable
 
     public ObservabilityTests()
     {
-        // Set up activity listener to capture activities from workflow execution
+        // Set up activity listener to capture activities from workflow
         this._activityListener = new ActivityListener
         {
             ShouldListenTo = source => source.Name.Contains(typeof(Workflow).Namespace!),
