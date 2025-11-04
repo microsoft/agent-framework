@@ -52,7 +52,11 @@ public static class Program
         };
 
         var changeBackground = AIFunctionFactory.Create(
-            () => Console.WriteLine("Changing color to blue"),
+            () =>
+            {
+                Console.ForegroundColor = ConsoleColor.DarkBlue;
+                Console.WriteLine("Changing color to blue");
+            },
             name: "change_background_color",
             description: "Change the console background color to dark blue."
         );
