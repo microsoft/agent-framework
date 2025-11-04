@@ -1168,11 +1168,13 @@ async def _auto_invoke_function(
     if isinstance(function_call_content, FunctionCallContent):
         tool = tool_map.get(function_call_content.name)
         if tool is None:
+            exc = KeyError(f'Function "{function_call_content.name}" not found.')
             if config.terminate_on_unknown_calls:
-                raise KeyError(f'Requested function "{function_call_content.name}" not found.')
+                raise exc
             return FunctionResultContent(
                 call_id=function_call_content.call_id,
-                exception=f'Error: Requested function "{function_call_content.name}" not found.',
+                result=f'Error: Requested function "{function_call_content.name}" not found.',
+                exception=exc,
             )
         if tool.approval_mode == "always_require":
             return FunctionApprovalRequestContent(id=function_call_content.call_id, function_call=function_call_content)
@@ -1199,7 +1201,7 @@ async def _auto_invoke_function(
         message = "Error: Argument parsing failed."
         if config.include_detailed_errors:
             message = f"{message} Exception: {exc}"
-        return FunctionResultContent(call_id=function_call_content.call_id, exception=message)
+        return FunctionResultContent(call_id=function_call_content.call_id, result=message, exception=exc)
     if not middleware_pipeline or (
         not hasattr(middleware_pipeline, "has_middlewares") and not middleware_pipeline.has_middlewares
     ):
@@ -1217,7 +1219,7 @@ async def _auto_invoke_function(
             message = "Error: Function failed."
             if config.include_detailed_errors:
                 message = f"{message} Exception: {exc}"
-            return FunctionResultContent(call_id=function_call_content.call_id, exception=message)
+            return FunctionResultContent(call_id=function_call_content.call_id, result=message, exception=exc)
     # Execute through middleware pipeline if available
     from ._middleware import FunctionInvocationContext
 
@@ -1248,7 +1250,7 @@ async def _auto_invoke_function(
         message = "Error: Function failed."
         if config.include_detailed_errors:
             message = f"{message} Exception: {exc}"
-        return FunctionResultContent(call_id=function_call_content.call_id, exception=message)
+        return FunctionResultContent(call_id=function_call_content.call_id, result=message, exception=exc)
 
 
 def _get_tool_map(
