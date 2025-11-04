@@ -173,7 +173,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
             ) from ex
 
     def get_conversation_id(self, response: OpenAIResponse | ParsedResponse[BaseModel], store: bool) -> str | None:
-        """Gets conversation ID from response."""
+        """Get the conversation ID from the response if store is True."""
         return response.id if store else None
 
     # region Prep methods
