@@ -5,16 +5,15 @@
 This module provides support for using agents inside Durable Function orchestrations.
 """
 
-import logging
 import uuid
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any, TypeAlias
 
-from agent_framework import AgentProtocol, AgentRunResponseUpdate, AgentThread, ChatMessage
+from agent_framework import AgentProtocol, AgentRunResponseUpdate, AgentThread, ChatMessage, get_logger
 
 from ._models import AgentSessionId, DurableAgentThread, RunRequest
 
-logger = logging.getLogger(__name__)
+logger = get_logger("agent_framework.azurefunctions.orchestration")
 
 if TYPE_CHECKING:
     from azure.durable_functions import DurableOrchestrationContext as _DurableOrchestrationContext
