@@ -836,9 +836,10 @@ async def test_function_invocation_config_include_detailed_errors_false(chat_cli
     error_result = next(
         content for msg in response.messages for content in msg.contents if isinstance(content, FunctionResultContent)
     )
+    assert error_result.result is not None
     assert error_result.exception is not None
-    assert "Specific error message" not in error_result.exception
-    assert "Error:" in error_result.exception  # Generic error prefix
+    assert "Specific error message" not in error_result.result
+    assert "Error:" in error_result.result  # Generic error prefix
 
 
 async def test_function_invocation_config_include_detailed_errors_true(chat_client_base: ChatClientProtocol):
@@ -867,10 +868,11 @@ async def test_function_invocation_config_include_detailed_errors_true(chat_clie
     error_result = next(
         content for msg in response.messages for content in msg.contents if isinstance(content, FunctionResultContent)
     )
+    assert error_result.result is not None
     assert error_result.exception is not None
-    assert "Specific error message that should appear" in error_result.exception
+    assert "Specific error message that should appear" in error_result.result
     # The error format includes "Function failed. Exception:" prefix
-    assert "Exception:" in error_result.exception
+    assert "Exception:" in error_result.result
 
 
 async def test_function_invocation_config_validation_max_iterations():
@@ -934,9 +936,10 @@ async def test_argument_validation_error_with_detailed_errors(chat_client_base: 
     error_result = next(
         content for msg in response.messages for content in msg.contents if isinstance(content, FunctionResultContent)
     )
+    assert error_result.result is not None
     assert error_result.exception is not None
-    assert "Argument parsing failed" in error_result.exception
-    assert "Exception:" in error_result.exception  # Detailed error included
+    assert "Argument parsing failed" in error_result.result
+    assert "Exception:" in error_result.result  # Detailed error included
 
 
 async def test_argument_validation_error_without_detailed_errors(chat_client_base: ChatClientProtocol):
@@ -965,9 +968,10 @@ async def test_argument_validation_error_without_detailed_errors(chat_client_bas
     error_result = next(
         content for msg in response.messages for content in msg.contents if isinstance(content, FunctionResultContent)
     )
+    assert error_result.result is not None
     assert error_result.exception is not None
-    assert "Argument parsing failed" in error_result.exception
-    assert "Exception:" not in error_result.exception  # No detailed error
+    assert "Argument parsing failed" in error_result.result
+    assert "Exception:" not in error_result.result  # No detailed error
 
 
 async def test_hosted_tool_approval_response(chat_client_base: ChatClientProtocol):
