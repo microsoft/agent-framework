@@ -31,6 +31,7 @@ dependencies = [
     "agent-framework-azurefunctions",
     "agent-framework-chatkit",
     "agent-framework-copilotstudio",
+    "agent-framework-declarative",
     "agent-framework-devui",
     "agent-framework-lab",
     "agent-framework-mem0",
@@ -93,16 +94,17 @@ agent-framework = { workspace = true }
 agent-framework-core = { workspace = true }
 agent-framework-a2a = { workspace = true }
 agent-framework-ag-ui = { workspace = true }
+agent-framework-anthropic = { workspace = true }
 agent-framework-azure-ai = { workspace = true }
 agent-framework-azurefunctions = { workspace = true }
 agent-framework-chatkit = { workspace = true }
 agent-framework-copilotstudio = { workspace = true }
+agent-framework-declarative = { workspace = true }
+agent-framework-devui = { workspace = true }
 agent-framework-lab = { workspace = true }
 agent-framework-mem0 = { workspace = true }
-agent-framework-redis = { workspace = true }
-agent-framework-devui = { workspace = true }
 agent-framework-purview = { workspace = true }
-agent-framework-anthropic = { workspace = true }
+agent-framework-redis = { workspace = true }
 
 [tool.ruff]
 line-length = 120
