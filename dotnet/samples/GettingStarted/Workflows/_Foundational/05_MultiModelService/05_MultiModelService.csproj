@@ -16,7 +16,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\..\..\..\src\Microsoft.Agents.AI.Workflows\Microsoft.Agents.AI.Workflows.csproj" />
-    <ProjectReference Include="..\..\..\..\..\src\Microsoft.Agents.AI.AzureAI\Microsoft.Agents.AI.AzureAI.csproj" />
+    <ProjectReference Include="..\..\..\..\..\src\Microsoft.Agents.AI.AzureAI.Persistent\Microsoft.Agents.AI.AzureAI.Persistent.csproj" />
     <ProjectReference Include="..\..\..\..\..\src\Microsoft.Agents.AI\Microsoft.Agents.AI.csproj" />
   </ItemGroup>
 

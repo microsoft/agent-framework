@@ -171,6 +171,18 @@ class RunnerContext(Protocol):
         """
         ...
 
+    def set_runtime_checkpoint_storage(self, storage: CheckpointStorage) -> None:
+        """Set runtime checkpoint storage to override build-time configuration.
+
+        Args:
+            storage: The checkpoint storage to use for this run.
+        """
+        ...
+
+    def clear_runtime_checkpoint_storage(self) -> None:
+        """Clear runtime checkpoint storage override."""
+        ...
+
     # Checkpointing APIs (optional, enabled by storage)
     def set_workflow_id(self, workflow_id: str) -> None:
         """Set the workflow ID for the context."""
@@ -279,6 +291,7 @@ class InProcRunnerContext:
 
         # Checkpointing configuration/state
         self._checkpoint_storage = checkpoint_storage
+        self._runtime_checkpoint_storage: CheckpointStorage | None = None
         self._workflow_id: str | None = None
 
         # Streaming flag - set by workflow's run_stream() vs run()
@@ -329,8 +342,28 @@ class InProcRunnerContext:
 
     # region Checkpointing
 
+    def _get_effective_checkpoint_storage(self) -> CheckpointStorage | None:
+        """Get the effective checkpoint storage (runtime override or build-time)."""
+        return self._runtime_checkpoint_storage or self._checkpoint_storage
+
+    def set_runtime_checkpoint_storage(self, storage: CheckpointStorage) -> None:
+        """Set runtime checkpoint storage to override build-time configuration.
+
+        Args:
+            storage: The checkpoint storage to use for this run.
+        """
+        self._runtime_checkpoint_storage = storage
+
+    def clear_runtime_checkpoint_storage(self) -> None:
+        """Clear runtime checkpoint storage override.
+
+        This is called automatically by workflow execution methods after a run completes,
+        ensuring runtime storage doesn't leak across runs.
+        """
+        self._runtime_checkpoint_storage = None
+
     def has_checkpointing(self) -> bool:
-        return self._checkpoint_storage is not None
+        return self._get_effective_checkpoint_storage() is not None
 
     async def create_checkpoint(
         self,
@@ -338,7 +371,8 @@ class InProcRunnerContext:
         iteration_count: int,
         metadata: dict[str, Any] | None = None,
     ) -> str:
-        if not self._checkpoint_storage:
+        storage = self._get_effective_checkpoint_storage()
+        if not storage:
             raise ValueError("Checkpoint storage not configured")
 
         self._workflow_id = self._workflow_id or str(uuid.uuid4())
@@ -352,19 +386,21 @@ class InProcRunnerContext:
             iteration_count=state["iteration_count"],
             metadata=metadata or {},
         )
-        checkpoint_id = await self._checkpoint_storage.save_checkpoint(checkpoint)
+        checkpoint_id = await storage.save_checkpoint(checkpoint)
         logger.info(f"Created checkpoint {checkpoint_id} for workflow {self._workflow_id}")
         return checkpoint_id
 
     async def load_checkpoint(self, checkpoint_id: str) -> WorkflowCheckpoint | None:
-        if not self._checkpoint_storage:
+        storage = self._get_effective_checkpoint_storage()
+        if not storage:
             raise ValueError("Checkpoint storage not configured")
-        return await self._checkpoint_storage.load_checkpoint(checkpoint_id)
+        return await storage.load_checkpoint(checkpoint_id)
 
     def reset_for_new_run(self) -> None:
         """Reset the context for a new workflow run.
 
         This clears messages, events, and resets streaming flag.
+        Runtime checkpoint storage is NOT cleared here as it's managed at the workflow level.
         """
         self._messages.clear()
         # Clear any pending events (best-effort) by recreating the queue

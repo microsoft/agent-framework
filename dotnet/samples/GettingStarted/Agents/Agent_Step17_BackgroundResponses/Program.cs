@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to use background responses with ChatClientAgent and OpenAI Responses.
+// This sample shows how to use background responses with ChatClientAgent and Azure OpenAI Responses.
 
 using Azure.AI.OpenAI;
 using Azure.Identity;

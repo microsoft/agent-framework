@@ -30,11 +30,14 @@ from agent_framework import (
     HostedWebSearchTool,
     Role,
     TextContent,
+    ToolMode,
     UriContent,
 )
 from agent_framework._serialization import SerializationMixin
 from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.agents.models import (
+    AgentsNamedToolChoice,
+    AgentsNamedToolChoiceType,
     CodeInterpreterToolDefinition,
     FileInfo,
     MessageDeltaChunk,
@@ -266,6 +269,29 @@ def test_azure_ai_chat_client_from_settings() -> None:
     assert client.agent_id == "test-agent"
     assert client.thread_id == "test-thread"
     assert client.agent_name == "TestAgent"
+
+
+async def test_azure_ai_chat_client_get_agent_id_or_create_with_temperature_and_top_p(
+    mock_agents_client: MagicMock, azure_ai_unit_test_env: dict[str, str]
+) -> None:
+    """Test _get_agent_id_or_create with temperature and top_p in run_options."""
+    azure_ai_settings = AzureAISettings(model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"])
+    chat_client = create_test_azure_ai_chat_client(mock_agents_client, azure_ai_settings=azure_ai_settings)
+
+    run_options = {
+        "model": azure_ai_settings.model_deployment_name,
+        "temperature": 0.7,
+        "top_p": 0.9,
+    }
+
+    agent_id = await chat_client._get_agent_id_or_create(run_options)  # type: ignore
+
+    assert agent_id == "test-agent-id"
+    # Verify create_agent was called with temperature and top_p parameters
+    mock_agents_client.create_agent.assert_called_once()
+    call_kwargs = mock_agents_client.create_agent.call_args[1]
+    assert call_kwargs["temperature"] == 0.7
+    assert call_kwargs["top_p"] == 0.9
 
 
 async def test_azure_ai_chat_client_get_agent_id_or_create_existing_agent(
@@ -533,19 +559,6 @@ async def test_azure_ai_chat_client_create_run_options_with_messages(mock_agents
     assert len(run_options["additional_messages"]) == 1  # Only user message
 
 
-async def test_azure_ai_chat_client_instructions_sent_once(mock_agents_client: MagicMock) -> None:
-    """Ensure instructions are only sent once for AzureAIAgentClient."""
-    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
-
-    instructions = "You are a helpful assistant."
-    chat_options = ChatOptions(instructions=instructions)
-    messages = chat_client.prepare_messages([ChatMessage(role=Role.USER, text="Hello")], chat_options)
-
-    run_options, _ = await chat_client._create_run_options(messages, chat_options)  # type: ignore
-
-    assert run_options.get("instructions") == instructions
-
-
 async def test_azure_ai_chat_client_inner_get_response(mock_agents_client: MagicMock) -> None:
     """Test _inner_get_response method."""
     chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
@@ -695,6 +708,47 @@ async def test_azure_ai_chat_client_create_run_options_with_auto_tool_choice(
     assert run_options["tool_choice"] == AgentsToolChoiceOptionMode.AUTO
 
 
+async def test_azure_ai_chat_client_prepare_tool_choice_none_string(
+    mock_agents_client: MagicMock,
+) -> None:
+    """Test _prepare_tool_choice when tool_choice is string 'none'."""
+    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
+
+    # Create a mock tool for testing
+    mock_tool = MagicMock()
+    chat_options = ChatOptions(tools=[mock_tool], tool_choice="none")
+
+    # Call the method
+    chat_client._prepare_tool_choice(chat_options)  # type: ignore
+
+    # Verify tools are cleared and tool_choice is set to NONE mode
+    assert chat_options.tools is None
+    assert chat_options.tool_choice == ToolMode.NONE.mode
+
+
+async def test_azure_ai_chat_client_create_run_options_tool_choice_required_specific_function(
+    mock_agents_client: MagicMock,
+) -> None:
+    """Test _create_run_options with ToolMode.REQUIRED specifying a specific function name."""
+    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
+
+    required_tool_mode = ToolMode.REQUIRED("specific_function_name")
+
+    dict_tool = {"type": "function", "function": {"name": "test_function"}}
+
+    chat_options = ChatOptions(tools=[dict_tool], tool_choice=required_tool_mode)
+    messages = [ChatMessage(role=Role.USER, text="Hello")]
+
+    run_options, _ = await chat_client._create_run_options(messages, chat_options)  # type: ignore
+
+    # Verify tool_choice is set to the specific named function
+    assert "tool_choice" in run_options
+    tool_choice = run_options["tool_choice"]
+    assert isinstance(tool_choice, AgentsNamedToolChoice)
+    assert tool_choice.type == AgentsNamedToolChoiceType.FUNCTION
+    assert tool_choice.function.name == "specific_function_name"  # type: ignore
+
+
 async def test_azure_ai_chat_client_create_run_options_with_response_format(
     mock_agents_client: MagicMock,
 ) -> None:
@@ -838,6 +892,39 @@ async def test_azure_ai_chat_client_create_run_options_mcp_with_headers(mock_age
         assert mcp_resource["headers"] == headers
 
 
+async def test_azure_ai_chat_client_prep_tools_web_search_bing_grounding(mock_agents_client: MagicMock) -> None:
+    """Test _prep_tools with HostedWebSearchTool using Bing Grounding."""
+
+    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+
+    web_search_tool = HostedWebSearchTool(
+        additional_properties={
+            "connection_id": "test-connection-id",
+            "count": 5,
+            "freshness": "Day",
+            "market": "en-US",
+            "set_lang": "en",
+        }
+    )
+
+    # Mock BingGroundingTool
+    with patch("agent_framework_azure_ai._chat_client.BingGroundingTool") as mock_bing_grounding:
+        mock_bing_tool = MagicMock()
+        mock_bing_tool.definitions = [{"type": "bing_grounding"}]
+        mock_bing_grounding.return_value = mock_bing_tool
+
+        result = await chat_client._prep_tools([web_search_tool])  # type: ignore
+
+        assert len(result) == 1
+        assert result[0] == {"type": "bing_grounding"}
+        call_args = mock_bing_grounding.call_args[1]
+        assert call_args["count"] == 5
+        assert call_args["freshness"] == "Day"
+        assert call_args["market"] == "en-US"
+        assert call_args["set_lang"] == "en"
+        assert "connection_id" in call_args
+
+
 async def test_azure_ai_chat_client_prep_tools_web_search_bing_grounding_with_connection_id(
     mock_agents_client: MagicMock,
 ) -> None:
@@ -863,6 +950,31 @@ async def test_azure_ai_chat_client_prep_tools_web_search_bing_grounding_with_co
         assert len(result) == 1
         assert result[0] == {"type": "bing_grounding"}
         mock_bing_grounding.assert_called_once_with(connection_id="direct-connection-id", count=3)
+
+
+async def test_azure_ai_chat_client_prep_tools_web_search_custom_bing(mock_agents_client: MagicMock) -> None:
+    """Test _prep_tools with HostedWebSearchTool using Custom Bing Search."""
+
+    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+
+    web_search_tool = HostedWebSearchTool(
+        additional_properties={
+            "custom_connection_id": "custom-connection-id",
+            "custom_instance_name": "custom-instance",
+            "count": 10,
+        }
+    )
+
+    # Mock BingCustomSearchTool
+    with patch("agent_framework_azure_ai._chat_client.BingCustomSearchTool") as mock_custom_bing:
+        mock_custom_tool = MagicMock()
+        mock_custom_tool.definitions = [{"type": "bing_custom_search"}]
+        mock_custom_bing.return_value = mock_custom_tool
+
+        result = await chat_client._prep_tools([web_search_tool])  # type: ignore
+
+        assert len(result) == 1
+        assert result[0] == {"type": "bing_custom_search"}
 
 
 async def test_azure_ai_chat_client_prep_tools_file_search_with_vector_stores(

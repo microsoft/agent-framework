@@ -353,6 +353,8 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                     run_options[key] = value
         if "store" not in run_options:
             run_options["store"] = False
+        if (tool_choice := run_options.get("tool_choice")) and len(tool_choice.keys()) == 1:
+            run_options["tool_choice"] = tool_choice["mode"]
         return run_options
 
     def _prepare_chat_messages_for_request(self, chat_messages: Sequence[ChatMessage]) -> list[dict[str, Any]]:

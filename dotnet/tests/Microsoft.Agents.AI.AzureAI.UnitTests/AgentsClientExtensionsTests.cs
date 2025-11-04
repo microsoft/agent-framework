@@ -12,7 +12,7 @@ using Microsoft.Extensions.AI;
 using Moq;
 using OpenAI;
 
-namespace Microsoft.Agents.AI.AzureAIAgents.UnitTests;
+namespace Microsoft.Agents.AI.AzureAI.UnitTests;
 
 /// <summary>
 /// Unit tests for the <see cref="AgentsClientExtensions"/> class.

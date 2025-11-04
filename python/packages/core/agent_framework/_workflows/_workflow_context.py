@@ -348,7 +348,7 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
             return
         await self._runner_context.add_event(event)
 
-    async def request_info(self, request_data: Any, request_type: type, response_type: type) -> None:
+    async def request_info(self, request_data: object, response_type: type) -> None:
         """Request information from outside of the workflow.
 
         Calling this method will cause the workflow to emit a RequestInfoEvent, carrying the
@@ -360,9 +360,9 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
 
         Args:
             request_data: The data associated with the information request.
-            request_type: The type of the request, used to match with response handlers.
             response_type: The expected type of the response, used for validation.
         """
+        request_type: type = type(request_data)
         if not self._executor.is_request_supported(request_type, response_type):
             logger.warning(
                 f"Executor '{self._executor_id}' requested info of type {request_type.__name__} "
@@ -374,7 +374,6 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
         request_info_event = RequestInfoEvent(
             request_id=str(uuid.uuid4()),
             source_executor_id=self._executor_id,
-            request_type=request_type,
             request_data=request_data,
             response_type=response_type,
         )

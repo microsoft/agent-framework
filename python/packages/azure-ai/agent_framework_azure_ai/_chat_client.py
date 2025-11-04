@@ -378,7 +378,14 @@ class AzureAIAgentClient(BaseChatClient):
                 args["instructions"] = run_options["instructions"]
             if "response_format" in run_options:
                 args["response_format"] = run_options["response_format"]
+
+            if "temperature" in run_options:
+                args["temperature"] = run_options["temperature"]
+            if "top_p" in run_options:
+                args["top_p"] = run_options["top_p"]
+
             created_agent = await self.agents_client.create_agent(**args)
+
             self.agent_id = str(created_agent.id)
             self._agent_definition = created_agent
             self._should_delete_agent = True
@@ -733,10 +740,10 @@ class AzureAIAgentClient(BaseChatClient):
         chat_tool_mode = chat_options.tool_choice
         if chat_tool_mode is None or chat_tool_mode == ToolMode.NONE or chat_tool_mode == "none":
             chat_options.tools = None
-            chat_options.tool_choice = ToolMode.NONE.mode
+            chat_options.tool_choice = ToolMode.NONE
             return
 
-        chat_options.tool_choice = chat_tool_mode.mode if isinstance(chat_tool_mode, ToolMode) else chat_tool_mode
+        chat_options.tool_choice = chat_tool_mode
 
     async def _create_run_options(
         self,

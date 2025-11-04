@@ -5,7 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.AzureAIAgents;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 using OpenAI;
