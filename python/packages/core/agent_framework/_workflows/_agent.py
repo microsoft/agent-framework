@@ -60,10 +60,13 @@ class WorkflowAgent(BaseAgent):
 
         @classmethod
         def from_json(cls, raw: str) -> "WorkflowAgent.RequestInfoFunctionArgs":
-            data = json.loads(raw)
-            if not isinstance(data, dict):
+            try:
+                parsed: Any = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"RequestInfoFunctionArgs JSON payload is malformed: {exc}") from exc
+            if not isinstance(parsed, dict):
                 raise ValueError("RequestInfoFunctionArgs JSON payload must decode to a mapping")
-            return cls.from_dict(data)
+            return cls.from_dict(cast(dict[str, Any], parsed))
 
     def __init__(
         self,
