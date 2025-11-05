@@ -26,22 +26,20 @@ internal static class AGUIChatMessageExtensions
 
             if (message is AGUIToolMessage toolMessage)
             {
-                object? content = toolMessage.Content;
-                if (!string.IsNullOrEmpty(toolMessage.Content))
-                {
-                    content = JsonSerializer.Deserialize(toolMessage.Content, AGUIJsonSerializerContext.Default.JsonElement);
-                }
-
                 yield return new ChatMessage(
                     role,
-                    [new FunctionResultContent(toolMessage.ToolCallId, content)]);
+                    [
+                        new FunctionResultContent(
+                            toolMessage.ToolCallId,
+                             string.IsNullOrEmpty(toolMessage.Content) ?
+                                toolMessage.Content :
+                                JsonSerializer.Deserialize(toolMessage.Content, AGUIJsonSerializerContext.Default.JsonElement))
+                    ]);
             }
             else if (message is AGUIAssistantMessage assistantMessage && assistantMessage.ToolCalls is { Length: > 0 })
             {
-                // Assistant message with tool calls
                 var contents = new List<AIContent>();
 
-                // Add text content if present
                 if (!string.IsNullOrEmpty(assistantMessage.Content))
                 {
                     contents.Add(new TextContent(assistantMessage.Content));
@@ -53,19 +51,9 @@ internal static class AGUIChatMessageExtensions
                     Dictionary<string, object?>? arguments = null;
                     if (!string.IsNullOrEmpty(toolCall.Function.Arguments))
                     {
-                        // Parse arguments as Dictionary<string, JsonElement?>
-                        var typeInfo = jsonSerializerOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement?>)) as JsonTypeInfo<Dictionary<string, JsonElement?>>;
-                        var jsonArgs = JsonSerializer.Deserialize(toolCall.Function.Arguments, typeInfo!);
-
-                        if (jsonArgs is not null)
-                        {
-                            // Convert to Dictionary<string, object?>
-                            arguments = new Dictionary<string, object?>(jsonArgs.Count);
-                            foreach (var kvp in jsonArgs)
-                            {
-                                arguments[kvp.Key] = kvp.Value;
-                            }
-                        }
+                        arguments = (Dictionary<string, object?>?)JsonSerializer.Deserialize(
+                            toolCall.Function.Arguments,
+                            jsonSerializerOptions.GetTypeInfo(typeof(Dictionary<string, object?>)));
                     }
 
                     contents.Add(new FunctionCallContent(
@@ -105,7 +93,6 @@ internal static class AGUIChatMessageExtensions
         foreach (var message in chatMessages)
         {
             message.MessageId ??= Guid.NewGuid().ToString();
-            // Check if this is a tool result message
             if (message.Role == ChatRole.Tool)
             {
                 FunctionResultContent? functionResult = null;
@@ -123,43 +110,30 @@ internal static class AGUIChatMessageExtensions
 
                 if (functionResult is not null)
                 {
-                    string contentJson = string.Empty;
-                    if (functionResult.Result is not null)
-                    {
-                        // Convert the result to JsonElement for AOT-compatible serialization
-                        JsonElement resultElement = ConvertToJsonElement(functionResult.Result, jsonSerializerOptions);
-                        // JsonElement has a built-in GetRawText() method that returns the JSON string representation
-                        contentJson = resultElement.GetRawText();
-                    }
-
                     yield return new AGUIToolMessage
                     {
                         Id = message.MessageId,
                         ToolCallId = functionResult.CallId,
-                        Content = contentJson,
+                        Content = functionResult.Result is null ?
+                            string.Empty :
+                            JsonSerializer.Serialize(functionResult.Result, jsonSerializerOptions.GetTypeInfo(functionResult.Result.GetType()))
                     };
                     continue;
                 }
             }
 
-            // Check if this is an assistant message with tool calls
             if (message.Role == ChatRole.Assistant)
             {
                 var toolCalls = new List<AGUIToolCall>();
                 string? textContent = null;
 
-                // Extract tool calls and text content
                 foreach (var content in message.Contents)
                 {
                     if (content is FunctionCallContent functionCall)
                     {
-                        // Serialize arguments to JSON string
-                        string argumentsJson = "{}";
-                        if (functionCall.Arguments is not null)
-                        {
-                            var typeInfo = jsonSerializerOptions.GetTypeInfo(typeof(IDictionary<string, object?>)) as JsonTypeInfo<IDictionary<string, object?>>;
-                            argumentsJson = JsonSerializer.Serialize(functionCall.Arguments, typeInfo!);
-                        }
+                        var argumentsJson = functionCall.Arguments is null ?
+                            "{}" :
+                            JsonSerializer.Serialize(functionCall.Arguments, jsonSerializerOptions.GetTypeInfo(typeof(IDictionary<string, object?>)));
 
                         toolCalls.Add(new AGUIToolCall
                         {
@@ -209,42 +183,4 @@ internal static class AGUIChatMessageExtensions
         string.Equals(role, AGUIRoles.Developer, StringComparison.OrdinalIgnoreCase) ? s_developerChatRole :
         string.Equals(role, AGUIRoles.Tool, StringComparison.OrdinalIgnoreCase) ? ChatRole.Tool :
         throw new InvalidOperationException($"Unknown chat role: {role}");
-
-    private static JsonElement ConvertToJsonElement(object value, JsonSerializerOptions jsonSerializerOptions)
-    {
-        // If already a JsonElement, return it directly
-        if (value is JsonElement element)
-        {
-            return element;
-        }
-
-        // If it's a dictionary with object values, convert to Dictionary<string, JsonElement>
-        if (value is IDictionary<string, object?> dict)
-        {
-            var elementDict = new Dictionary<string, JsonElement>(dict.Count);
-            foreach (var kvp in dict)
-            {
-                if (kvp.Value is null)
-                {
-                    elementDict[kvp.Key] = default;
-                }
-                else
-                {
-                    // Recursively convert each value to JsonElement
-                    elementDict[kvp.Key] = ConvertToJsonElement(kvp.Value, jsonSerializerOptions);
-                }
-            }
-
-            return JsonSerializer.SerializeToElement(elementDict, AGUIJsonSerializerContext.Default.DictionaryStringJsonElement);
-        }
-
-        var typeInfo = jsonSerializerOptions.GetTypeInfo(value.GetType());
-        if (typeInfo is not null)
-        {
-            return JsonSerializer.SerializeToElement(value, typeInfo);
-        }
-
-        // Fallback: if no TypeInfoResolver, throw an exception
-        throw new InvalidOperationException("TypeInfoResolver must be configured for AOT-compatible serialization of tool results.");
-    }
 }

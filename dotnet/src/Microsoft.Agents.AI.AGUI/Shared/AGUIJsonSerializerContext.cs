@@ -13,8 +13,12 @@ using Microsoft.Agents.AI.AGUI.Shared;
 namespace Microsoft.Agents.AI.AGUI;
 #endif
 
-// TODO: See if we can get rid of all the JsonSerializable attributes for types that are not
-// related to AG-UI
+// All JsonSerializable attributes below are required for AG-UI functionality:
+// - AG-UI message types (AGUIMessage, AGUIUserMessage, etc.) for protocol communication
+// - Event types (BaseEvent, RunStartedEvent, etc.) for server-sent events streaming
+// - Tool-related types (AGUITool, AGUIToolCall, AGUIFunctionCall) for tool calling support
+// - Primitive and dictionary types (string, int, Dictionary, JsonElement) are required for
+//   serializing tool call parameters and results which can contain arbitrary data types
 [JsonSourceGenerationOptions(WriteIndented = false, DefaultIgnoreCondition = JsonIgnoreCondition.Never)]
 [JsonSerializable(typeof(RunAgentInput))]
 [JsonSerializable(typeof(AGUIMessage))]
@@ -29,6 +33,7 @@ namespace Microsoft.Agents.AI.AGUI;
 [JsonSerializable(typeof(AGUIToolCall[]))]
 [JsonSerializable(typeof(AGUIFunctionCall))]
 [JsonSerializable(typeof(BaseEvent))]
+[JsonSerializable(typeof(BaseEvent[]))]
 [JsonSerializable(typeof(RunStartedEvent))]
 [JsonSerializable(typeof(RunFinishedEvent))]
 [JsonSerializable(typeof(RunErrorEvent))]

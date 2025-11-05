@@ -181,9 +181,9 @@ internal static class ChatResponseUpdateAGUIExtensions
     {
         if (!string.IsNullOrEmpty(argsJson))
         {
-            return JsonSerializer.Deserialize(
+            return (IDictionary<string, object?>?)JsonSerializer.Deserialize(
                 argsJson,
-                (JsonTypeInfo<IDictionary<string, object?>>)options.GetTypeInfo(typeof(IDictionary<string, object?>)));
+                options.GetTypeInfo(typeof(IDictionary<string, object?>)));
         }
 
         return null;
@@ -266,8 +266,8 @@ internal static class ChatResponseUpdateAGUIExtensions
                         {
                             ToolCallId = functionCallContent.CallId,
                             Delta = JsonSerializer.Serialize(
-                            functionCallContent.Arguments,
-                            jsonSerializerOptions.GetTypeInfo(typeof(IDictionary<string, object?>)))
+                                functionCallContent.Arguments,
+                                jsonSerializerOptions.GetTypeInfo(typeof(IDictionary<string, object?>)))
                         };
 
                         yield return new ToolCallEndEvent

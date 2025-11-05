@@ -772,4 +772,334 @@ public sealed class AGUIJsonSerializerContextTests
         Assert.IsType<TextMessageContentEvent>(events[4]);
         Assert.IsType<TextMessageEndEvent>(events[5]);
     }
+
+    #region Comprehensive Message Serialization Tests
+
+    [Fact]
+    public void AGUIUserMessage_SerializesAndDeserializes_Correctly()
+    {
+        // Arrange
+        var originalMessage = new AGUIUserMessage
+        {
+            Id = "user1",
+            Content = "Hello, assistant!"
+        };
+
+        // Act
+        string json = JsonSerializer.Serialize(originalMessage, AGUIJsonSerializerContext.Default.AGUIUserMessage);
+        var deserialized = JsonSerializer.Deserialize(json, AGUIJsonSerializerContext.Default.AGUIUserMessage);
+
+        // Assert
+        Assert.NotNull(deserialized);
+        Assert.Equal("user1", deserialized.Id);
+        Assert.Equal("Hello, assistant!", deserialized.Content);
+    }
+
+    [Fact]
+    public void AGUISystemMessage_SerializesAndDeserializes_Correctly()
+    {
+        // Arrange
+        var originalMessage = new AGUISystemMessage
+        {
+            Id = "sys1",
+            Content = "You are a helpful assistant."
+        };
+
+        // Act
+        string json = JsonSerializer.Serialize(originalMessage, AGUIJsonSerializerContext.Default.AGUISystemMessage);
+        var deserialized = JsonSerializer.Deserialize(json, AGUIJsonSerializerContext.Default.AGUISystemMessage);
+
+        // Assert
+        Assert.NotNull(deserialized);
+        Assert.Equal("sys1", deserialized.Id);
+        Assert.Equal("You are a helpful assistant.", deserialized.Content);
+    }
+
+    [Fact]
+    public void AGUIDeveloperMessage_SerializesAndDeserializes_Correctly()
+    {
+        // Arrange
+        var originalMessage = new AGUIDeveloperMessage
+        {
+            Id = "dev1",
+            Content = "Developer instructions here."
+        };
+
+        // Act
+        string json = JsonSerializer.Serialize(originalMessage, AGUIJsonSerializerContext.Default.AGUIDeveloperMessage);
+        var deserialized = JsonSerializer.Deserialize(json, AGUIJsonSerializerContext.Default.AGUIDeveloperMessage);
+
+        // Assert
+        Assert.NotNull(deserialized);
+        Assert.Equal("dev1", deserialized.Id);
+        Assert.Equal("Developer instructions here.", deserialized.Content);
+    }
+
+    [Fact]
+    public void AGUIAssistantMessage_WithTextOnly_SerializesAndDeserializes_Correctly()
+    {
+        // Arrange
+        var originalMessage = new AGUIAssistantMessage
+        {
+            Id = "asst1",
+            Content = "I can help you with that."
+        };
+
+        // Act
+        string json = JsonSerializer.Serialize(originalMessage, AGUIJsonSerializerContext.Default.AGUIAssistantMessage);
+        var deserialized = JsonSerializer.Deserialize(json, AGUIJsonSerializerContext.Default.AGUIAssistantMessage);
+
+        // Assert
+        Assert.NotNull(deserialized);
+        Assert.Equal("asst1", deserialized.Id);
+        Assert.Equal("I can help you with that.", deserialized.Content);
+        Assert.Null(deserialized.ToolCalls);
+    }
+
+    [Fact]
+    public void AGUIAssistantMessage_WithToolCallsAndParameters_SerializesAndDeserializes_Correctly()
+    {
+        // Arrange
+        var parameters = new Dictionary<string, object?>
+        {
+            ["location"] = "Seattle",
+            ["units"] = "fahrenheit",
+            ["days"] = 5
+        };
+        string argumentsJson = JsonSerializer.Serialize(parameters, AGUIJsonSerializerContext.Default.Options);
+
+        var originalMessage = new AGUIAssistantMessage
+        {
+            Id = "asst2",
+            Content = "Let me check the weather for you.",
+            ToolCalls =
+            [
+                new AGUIToolCall
+                {
+                    Id = "call_123",
+                    Type = "function",
+                    Function = new AGUIFunctionCall
+                    {
+                        Name = "GetWeather",
+                        Arguments = argumentsJson
+                    }
+                }
+            ]
+        };
+
+        // Act
+        string json = JsonSerializer.Serialize(originalMessage, AGUIJsonSerializerContext.Default.AGUIAssistantMessage);
+        var deserialized = JsonSerializer.Deserialize(json, AGUIJsonSerializerContext.Default.AGUIAssistantMessage);
+
+        // Assert
+        Assert.NotNull(deserialized);
+        Assert.Equal("asst2", deserialized.Id);
+        Assert.Equal("Let me check the weather for you.", deserialized.Content);
+        Assert.NotNull(deserialized.ToolCalls);
+        Assert.Single(deserialized.ToolCalls);
+
+        var toolCall = deserialized.ToolCalls[0];
+        Assert.Equal("call_123", toolCall.Id);
+        Assert.Equal("function", toolCall.Type);
+        Assert.NotNull(toolCall.Function);
+        Assert.Equal("GetWeather", toolCall.Function.Name);
+
+        // Verify parameters can be deserialized
+        var deserializedParams = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
+            toolCall.Function.Arguments,
+            AGUIJsonSerializerContext.Default.Options);
+        Assert.NotNull(deserializedParams);
+        Assert.Equal("Seattle", deserializedParams["location"].GetString());
+        Assert.Equal("fahrenheit", deserializedParams["units"].GetString());
+        Assert.Equal(5, deserializedParams["days"].GetInt32());
+    }
+
+    [Fact]
+    public void AGUIToolMessage_WithResults_SerializesAndDeserializes_Correctly()
+    {
+        // Arrange
+        var result = new Dictionary<string, object?>
+        {
+            ["temperature"] = 72.5,
+            ["conditions"] = "Sunny",
+            ["humidity"] = 45
+        };
+        string contentJson = JsonSerializer.Serialize(result, AGUIJsonSerializerContext.Default.Options);
+
+        var originalMessage = new AGUIToolMessage
+        {
+            Id = "tool1",
+            ToolCallId = "call_123",
+            Content = contentJson
+        };
+
+        // Act
+        string json = JsonSerializer.Serialize(originalMessage, AGUIJsonSerializerContext.Default.AGUIToolMessage);
+        var deserialized = JsonSerializer.Deserialize(json, AGUIJsonSerializerContext.Default.AGUIToolMessage);
+
+        // Assert
+        Assert.NotNull(deserialized);
+        Assert.Equal("tool1", deserialized.Id);
+        Assert.Equal("call_123", deserialized.ToolCallId);
+        Assert.NotNull(deserialized.Content);
+
+        // Verify result content can be deserialized
+        var deserializedResult = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
+            deserialized.Content,
+            AGUIJsonSerializerContext.Default.Options);
+        Assert.NotNull(deserializedResult);
+        Assert.Equal(72.5, deserializedResult["temperature"].GetDouble());
+        Assert.Equal("Sunny", deserializedResult["conditions"].GetString());
+        Assert.Equal(45, deserializedResult["humidity"].GetInt32());
+    }
+
+    [Fact]
+    public void AllFiveMessageTypes_SerializeAsPolymorphicArray_Correctly()
+    {
+        // Arrange
+        AGUIMessage[] messages =
+        [
+            new AGUISystemMessage { Id = "1", Content = "System message" },
+            new AGUIDeveloperMessage { Id = "2", Content = "Developer message" },
+            new AGUIUserMessage { Id = "3", Content = "User message" },
+            new AGUIAssistantMessage { Id = "4", Content = "Assistant message" },
+            new AGUIToolMessage { Id = "5", ToolCallId = "call_1", Content = "{\"result\":\"success\"}" }
+        ];
+
+        // Act
+        string json = JsonSerializer.Serialize(messages, AGUIJsonSerializerContext.Default.AGUIMessageArray);
+        var deserialized = JsonSerializer.Deserialize(json, AGUIJsonSerializerContext.Default.AGUIMessageArray);
+
+        // Assert
+        Assert.NotNull(deserialized);
+        Assert.Equal(5, deserialized.Length);
+        Assert.IsType<AGUISystemMessage>(deserialized[0]);
+        Assert.IsType<AGUIDeveloperMessage>(deserialized[1]);
+        Assert.IsType<AGUIUserMessage>(deserialized[2]);
+        Assert.IsType<AGUIAssistantMessage>(deserialized[3]);
+        Assert.IsType<AGUIToolMessage>(deserialized[4]);
+    }
+
+    #endregion
+
+    #region Tool-Related Event Type Tests
+
+    [Fact]
+    public void ToolCallStartEvent_SerializesAndDeserializes_Correctly()
+    {
+        // Arrange
+        var originalEvent = new ToolCallStartEvent
+        {
+            ParentMessageId = "msg1",
+            ToolCallId = "call_123",
+            ToolCallName = "GetWeather"
+        };
+
+        // Act
+        string json = JsonSerializer.Serialize(originalEvent, AGUIJsonSerializerContext.Default.ToolCallStartEvent);
+        var deserialized = JsonSerializer.Deserialize(json, AGUIJsonSerializerContext.Default.ToolCallStartEvent);
+
+        // Assert
+        Assert.NotNull(deserialized);
+        Assert.Equal("msg1", deserialized.ParentMessageId);
+        Assert.Equal("call_123", deserialized.ToolCallId);
+        Assert.Equal("GetWeather", deserialized.ToolCallName);
+        Assert.Equal(AGUIEventTypes.ToolCallStart, deserialized.Type);
+    }
+
+    [Fact]
+    public void ToolCallArgsEvent_SerializesAndDeserializes_Correctly()
+    {
+        // Arrange
+        var originalEvent = new ToolCallArgsEvent
+        {
+            ToolCallId = "call_123",
+            Delta = "{\"location\":\"Seattle\",\"units\":\"fahrenheit\"}"
+        };
+
+        // Act
+        string json = JsonSerializer.Serialize(originalEvent, AGUIJsonSerializerContext.Default.ToolCallArgsEvent);
+        var deserialized = JsonSerializer.Deserialize(json, AGUIJsonSerializerContext.Default.ToolCallArgsEvent);
+
+        // Assert
+        Assert.NotNull(deserialized);
+        Assert.Equal("call_123", deserialized.ToolCallId);
+        Assert.Equal("{\"location\":\"Seattle\",\"units\":\"fahrenheit\"}", deserialized.Delta);
+        Assert.Equal(AGUIEventTypes.ToolCallArgs, deserialized.Type);
+    }
+
+    [Fact]
+    public void ToolCallEndEvent_SerializesAndDeserializes_Correctly()
+    {
+        // Arrange
+        var originalEvent = new ToolCallEndEvent
+        {
+            ToolCallId = "call_123"
+        };
+
+        // Act
+        string json = JsonSerializer.Serialize(originalEvent, AGUIJsonSerializerContext.Default.ToolCallEndEvent);
+        var deserialized = JsonSerializer.Deserialize(json, AGUIJsonSerializerContext.Default.ToolCallEndEvent);
+
+        // Assert
+        Assert.NotNull(deserialized);
+        Assert.Equal("call_123", deserialized.ToolCallId);
+        Assert.Equal(AGUIEventTypes.ToolCallEnd, deserialized.Type);
+    }
+
+    [Fact]
+    public void ToolCallResultEvent_SerializesAndDeserializes_Correctly()
+    {
+        // Arrange
+        var originalEvent = new ToolCallResultEvent
+        {
+            MessageId = "msg1",
+            ToolCallId = "call_123",
+            Content = "{\"temperature\":72.5,\"conditions\":\"Sunny\"}",
+            Role = "tool"
+        };
+
+        // Act
+        string json = JsonSerializer.Serialize(originalEvent, AGUIJsonSerializerContext.Default.ToolCallResultEvent);
+        var deserialized = JsonSerializer.Deserialize(json, AGUIJsonSerializerContext.Default.ToolCallResultEvent);
+
+        // Assert
+        Assert.NotNull(deserialized);
+        Assert.Equal("msg1", deserialized.MessageId);
+        Assert.Equal("call_123", deserialized.ToolCallId);
+        Assert.Equal("{\"temperature\":72.5,\"conditions\":\"Sunny\"}", deserialized.Content);
+        Assert.Equal("tool", deserialized.Role);
+        Assert.Equal(AGUIEventTypes.ToolCallResult, deserialized.Type);
+    }
+
+    [Fact]
+    public void AllToolEventTypes_SerializeAsPolymorphicBaseEvent_Correctly()
+    {
+        // Arrange
+        BaseEvent[] events =
+        [
+            new RunStartedEvent { ThreadId = "t1", RunId = "r1" },
+            new ToolCallStartEvent { ParentMessageId = "m1", ToolCallId = "c1", ToolCallName = "Tool1" },
+            new ToolCallArgsEvent { ToolCallId = "c1", Delta = "{}" },
+            new ToolCallEndEvent { ToolCallId = "c1" },
+            new ToolCallResultEvent { MessageId = "m2", ToolCallId = "c1", Content = "{}", Role = "tool" },
+            new RunFinishedEvent { ThreadId = "t1", RunId = "r1" }
+        ];
+
+        // Act
+        string json = JsonSerializer.Serialize(events, AGUIJsonSerializerContext.Default.Options);
+        var deserialized = JsonSerializer.Deserialize<BaseEvent[]>(json, AGUIJsonSerializerContext.Default.Options);
+
+        // Assert
+        Assert.NotNull(deserialized);
+        Assert.Equal(6, deserialized.Length);
+        Assert.IsType<RunStartedEvent>(deserialized[0]);
+        Assert.IsType<ToolCallStartEvent>(deserialized[1]);
+        Assert.IsType<ToolCallArgsEvent>(deserialized[2]);
+        Assert.IsType<ToolCallEndEvent>(deserialized[3]);
+        Assert.IsType<ToolCallResultEvent>(deserialized[4]);
+        Assert.IsType<RunFinishedEvent>(deserialized[5]);
+    }
+
+    #endregion
 }

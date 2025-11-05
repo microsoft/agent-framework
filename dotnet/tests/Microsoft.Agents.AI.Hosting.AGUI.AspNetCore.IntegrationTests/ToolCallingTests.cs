@@ -384,8 +384,10 @@ public sealed class ToolCallingTests : IAsyncDisposable
     [Fact]
     public async Task AzureOpenAI_ClientToolCallExecutesSuccessfullyAsync()
     {
-        // This test reproduces the issue where tool messages are sent without preceding assistant tool_calls
-        // TODO: Remove this test after fixing the issue - it's only for reproduction
+        // This test verifies that client tool calls execute correctly and that tool messages
+        // are properly preceded by assistant tool_calls in the AG-UI protocol.
+        // It ensures the fix for the issue where tool messages were sent without
+        // preceding assistant tool_calls continues to work correctly.
         // Arrange
         const string Endpoint = "https://ag-ui-agent-framework.openai.azure.com/";
         const string DeploymentName = "gpt-4.1-mini";

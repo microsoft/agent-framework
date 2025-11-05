@@ -58,6 +58,11 @@ public sealed class AGUIChatClient : DelegatingChatClient
     }
 
     /// <inheritdoc />
+    public override Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>
+        base.GetStreamingResponseAsync(messages, options, cancellationToken)
+            .ToChatResponseAsync(cancellationToken);
+
+    /// <inheritdoc />
     public async override IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
         IEnumerable<ChatMessage> messages,
         ChatOptions? options = null,
@@ -157,8 +162,8 @@ public sealed class AGUIChatClient : DelegatingChatClient
             ChatOptions? options = null,
             CancellationToken cancellationToken = default)
         {
-            Debug.Fail("Use GetStreamingResponseAsync instead.");
-            throw new NotSupportedException("AGUIChatClientHandler only supports streaming responses. Use GetStreamingResponseAsync instead.");
+            return this.GetStreamingResponseAsync(messages, options, cancellationToken)
+                .ToChatResponseAsync(cancellationToken);
         }
 
         public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(

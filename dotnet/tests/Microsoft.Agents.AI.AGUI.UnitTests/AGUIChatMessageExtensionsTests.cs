@@ -3,10 +3,35 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json.Serialization;
 using Microsoft.Agents.AI.AGUI.Shared;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.AGUI.UnitTests;
+
+// Custom complex type for testing tool call parameters
+public sealed class WeatherRequest
+{
+    public string Location { get; set; } = string.Empty;
+    public string Units { get; set; } = "celsius";
+    public bool IncludeForecast { get; set; }
+}
+
+// Custom complex type for testing tool call results
+public sealed class WeatherResponse
+{
+    public double Temperature { get; set; }
+    public string Conditions { get; set; } = string.Empty;
+    public DateTime Timestamp { get; set; }
+}
+
+// Custom JsonSerializerContext for the custom types
+[JsonSerializable(typeof(WeatherRequest))]
+[JsonSerializable(typeof(WeatherResponse))]
+[JsonSerializable(typeof(Dictionary<string, object?>))]
+internal sealed partial class CustomTypesContext : JsonSerializerContext
+{
+}
 
 /// <summary>
 /// Unit tests for the <see cref="AGUIChatMessageExtensions"/> class.
@@ -235,9 +260,8 @@ public sealed class AGUIChatMessageExtensionsTests
         System.Text.Json.JsonSerializerOptions optionsWithoutResolver = new();
 
         // Act & Assert
-        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => messages.AsAGUIMessages(optionsWithoutResolver).ToList());
-        Assert.Contains("TypeInfoResolver", ex.Message);
-        Assert.Contains("AOT-compatible", ex.Message);
+        NotSupportedException ex = Assert.Throws<NotSupportedException>(() => messages.AsAGUIMessages(optionsWithoutResolver).ToList());
+        Assert.Contains("JsonTypeInfo", ex.Message);
     }
 
     [Fact]
@@ -293,13 +317,13 @@ public sealed class AGUIChatMessageExtensionsTests
     [Fact]
     public void AsChatMessages_WithToolMessageWithoutCallId_TreatsAsRegularMessage()
     {
-        // Arrange
+        // Arrange - use valid JSON for Content
         List<AGUIMessage> aguiMessages =
         [
             new AGUIToolMessage
             {
                 Id = "msg1",
-                Content = "Some content",
+                Content = "{\"result\":\"Some content\"}",
                 ToolCallId = string.Empty
             }
         ];
@@ -310,7 +334,8 @@ public sealed class AGUIChatMessageExtensionsTests
         // Assert
         ChatMessage message = Assert.Single(chatMessages);
         Assert.Equal(ChatRole.Tool, message.Role);
-        Assert.Equal("Some content", message.Text);
+        var resultContent = Assert.IsType<FunctionResultContent>(message.Contents.First());
+        Assert.Equal(string.Empty, resultContent.CallId);
     }
 
     [Fact]
@@ -343,4 +368,279 @@ public sealed class AGUIChatMessageExtensionsTests
         // Assert
         Assert.Equal(ChatRole.Tool, role);
     }
+
+    #region Custom Type Serialization Tests
+
+    [Fact]
+    public void AsChatMessages_WithFunctionCallContainingCustomType_SerializesCorrectly()
+    {
+        // Arrange
+        var customRequest = new WeatherRequest { Location = "Seattle", Units = "fahrenheit", IncludeForecast = true };
+        var parameters = new Dictionary<string, object?>
+        {
+            ["location"] = customRequest.Location,
+            ["units"] = customRequest.Units,
+            ["includeForecast"] = customRequest.IncludeForecast
+        };
+
+        List<AGUIMessage> aguiMessages =
+        [
+            new AGUIAssistantMessage
+            {
+                Id = "msg1",
+                ToolCalls =
+                [
+                    new AGUIToolCall
+                    {
+                        Id = "call_1",
+                        Function = new AGUIFunctionCall
+                        {
+                            Name = "GetWeather",
+                            Arguments = System.Text.Json.JsonSerializer.Serialize(parameters, AGUIJsonSerializerContext.Default.Options)
+                        }
+                    }
+                ]
+            }
+        ];
+
+        // Combine contexts for serialization
+        var combinedOptions = new System.Text.Json.JsonSerializerOptions
+        {
+            TypeInfoResolver = System.Text.Json.Serialization.Metadata.JsonTypeInfoResolver.Combine(
+                AGUIJsonSerializerContext.Default,
+                CustomTypesContext.Default)
+        };
+
+        // Act
+        IEnumerable<ChatMessage> chatMessages = aguiMessages.AsChatMessages(combinedOptions);
+
+        // Assert
+        ChatMessage message = Assert.Single(chatMessages);
+        Assert.Equal(ChatRole.Assistant, message.Role);
+        var toolCallContent = Assert.IsType<FunctionCallContent>(message.Contents.First());
+        Assert.Equal("call_1", toolCallContent.CallId);
+        Assert.Equal("GetWeather", toolCallContent.Name);
+        Assert.NotNull(toolCallContent.Arguments);
+        // Compare as strings since deserialization produces JsonElement objects
+        Assert.Equal("Seattle", ((System.Text.Json.JsonElement)toolCallContent.Arguments["location"]!).GetString());
+        Assert.Equal("fahrenheit", ((System.Text.Json.JsonElement)toolCallContent.Arguments["units"]!).GetString());
+        Assert.True(toolCallContent.Arguments["includeForecast"] is System.Text.Json.JsonElement j && j.GetBoolean());
+    }
+
+    [Fact]
+    public void AsAGUIMessages_WithFunctionResultContainingCustomType_SerializesCorrectly()
+    {
+        // Arrange
+        var customResponse = new WeatherResponse { Temperature = 72.5, Conditions = "Sunny", Timestamp = DateTime.UtcNow };
+        var resultObject = new Dictionary<string, object?>
+        {
+            ["temperature"] = customResponse.Temperature,
+            ["conditions"] = customResponse.Conditions,
+            ["timestamp"] = customResponse.Timestamp.ToString("O")
+        };
+
+        var resultJson = System.Text.Json.JsonSerializer.Serialize(resultObject, AGUIJsonSerializerContext.Default.Options);
+        var functionResult = new FunctionResultContent("call_1", System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(resultJson, AGUIJsonSerializerContext.Default.Options));
+        List<ChatMessage> chatMessages =
+        [
+            new ChatMessage(ChatRole.Tool, [functionResult])
+        ];
+
+        // Combine contexts for serialization
+        var combinedOptions = new System.Text.Json.JsonSerializerOptions
+        {
+            TypeInfoResolver = System.Text.Json.Serialization.Metadata.JsonTypeInfoResolver.Combine(
+                AGUIJsonSerializerContext.Default,
+                CustomTypesContext.Default)
+        };
+
+        // Act
+        IEnumerable<AGUIMessage> aguiMessages = chatMessages.AsAGUIMessages(combinedOptions);
+
+        // Assert
+        AGUIMessage message = Assert.Single(aguiMessages);
+        var toolMessage = Assert.IsType<AGUIToolMessage>(message);
+        Assert.Equal("call_1", toolMessage.ToolCallId);
+        Assert.NotNull(toolMessage.Content);
+
+        // Verify the content can be deserialized back
+        var deserializedResult = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>(
+            toolMessage.Content,
+            combinedOptions);
+        Assert.NotNull(deserializedResult);
+        Assert.Equal(72.5, deserializedResult["temperature"].GetDouble());
+        Assert.Equal("Sunny", deserializedResult["conditions"].GetString());
+    }
+
+    [Fact]
+    public void RoundTrip_WithCustomTypesInFunctionCallAndResult_PreservesData()
+    {
+        // Arrange
+        var customRequest = new WeatherRequest { Location = "New York", Units = "celsius", IncludeForecast = false };
+        var parameters = new Dictionary<string, object?>
+        {
+            ["location"] = customRequest.Location,
+            ["units"] = customRequest.Units,
+            ["includeForecast"] = customRequest.IncludeForecast
+        };
+
+        var customResponse = new WeatherResponse { Temperature = 22.3, Conditions = "Cloudy", Timestamp = DateTime.UtcNow };
+        var resultObject = new Dictionary<string, object?>
+        {
+            ["temperature"] = customResponse.Temperature,
+            ["conditions"] = customResponse.Conditions,
+            ["timestamp"] = customResponse.Timestamp.ToString("O")
+        };
+
+        var resultJson = System.Text.Json.JsonSerializer.Serialize(resultObject, AGUIJsonSerializerContext.Default.Options);
+        var resultElement = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(resultJson, AGUIJsonSerializerContext.Default.Options);
+
+        List<ChatMessage> originalChatMessages =
+        [
+            new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call_1", "GetWeather", parameters)]),
+            new ChatMessage(ChatRole.Tool, [new FunctionResultContent("call_1", resultElement)])
+        ];
+
+        // Combine contexts for serialization
+        var combinedOptions = new System.Text.Json.JsonSerializerOptions
+        {
+            TypeInfoResolver = System.Text.Json.Serialization.Metadata.JsonTypeInfoResolver.Combine(
+                AGUIJsonSerializerContext.Default,
+                CustomTypesContext.Default)
+        };
+
+        // Act - Convert to AGUI messages and back
+        IEnumerable<AGUIMessage> aguiMessages = originalChatMessages.AsAGUIMessages(combinedOptions);
+        List<ChatMessage> roundTrippedChatMessages = aguiMessages.AsChatMessages(combinedOptions).ToList();
+
+        // Assert
+        Assert.Equal(2, roundTrippedChatMessages.Count);
+
+        // Verify function call
+        ChatMessage callMessage = roundTrippedChatMessages[0];
+        Assert.Equal(ChatRole.Assistant, callMessage.Role);
+        var functionCall = Assert.IsType<FunctionCallContent>(callMessage.Contents.First());
+        Assert.Equal("call_1", functionCall.CallId);
+        Assert.Equal("GetWeather", functionCall.Name);
+        Assert.NotNull(functionCall.Arguments);
+        // Compare string values from JsonElement
+        Assert.Equal(customRequest.Location, functionCall.Arguments["location"]?.ToString());
+        Assert.Equal(customRequest.Units, functionCall.Arguments["units"]?.ToString());
+
+        // Verify function result
+        ChatMessage resultMessage = roundTrippedChatMessages[1];
+        Assert.Equal(ChatRole.Tool, resultMessage.Role);
+        var functionResultContent = Assert.IsType<FunctionResultContent>(resultMessage.Contents.First());
+        Assert.Equal("call_1", functionResultContent.CallId);
+        Assert.NotNull(functionResultContent.Result);
+    }
+
+    [Fact]
+    public void AsAGUIMessages_WithNestedCustomObjects_HandlesComplexSerialization()
+    {
+        // Arrange - nested custom types
+        var nestedParameters = new Dictionary<string, object?>
+        {
+            ["request"] = new Dictionary<string, object?>
+            {
+                ["location"] = "Boston",
+                ["options"] = new Dictionary<string, object?>
+                {
+                    ["units"] = "fahrenheit",
+                    ["includeHumidity"] = true,
+                    ["daysAhead"] = 5
+                }
+            }
+        };
+
+        var functionCall = new FunctionCallContent("call_nested", "GetDetailedWeather", nestedParameters);
+        List<ChatMessage> chatMessages =
+        [
+            new ChatMessage(ChatRole.Assistant, [functionCall])
+        ];
+
+        // Combine contexts for serialization
+        var combinedOptions = new System.Text.Json.JsonSerializerOptions
+        {
+            TypeInfoResolver = System.Text.Json.Serialization.Metadata.JsonTypeInfoResolver.Combine(
+                AGUIJsonSerializerContext.Default,
+                CustomTypesContext.Default)
+        };
+
+        // Act
+        IEnumerable<AGUIMessage> aguiMessages = chatMessages.AsAGUIMessages(combinedOptions);
+
+        // Assert
+        AGUIMessage message = Assert.Single(aguiMessages);
+        var assistantMessage = Assert.IsType<AGUIAssistantMessage>(message);
+        Assert.NotNull(assistantMessage.ToolCalls);
+        var toolCall = Assert.Single(assistantMessage.ToolCalls);
+        Assert.Equal("call_nested", toolCall.Id);
+        Assert.Equal("GetDetailedWeather", toolCall.Function?.Name);
+
+        // Verify nested structure is preserved
+        var deserializedArgs = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>(
+            toolCall.Function?.Arguments ?? "{}",
+            combinedOptions);
+        Assert.NotNull(deserializedArgs);
+        Assert.True(deserializedArgs.ContainsKey("request"));
+    }
+
+    [Fact]
+    public void AsAGUIMessages_WithDictionaryContainingCustomTypes_SerializesDirectly()
+    {
+        // Arrange - Create a dictionary with custom type values (not flattened)
+        var customRequest = new WeatherRequest { Location = "Tokyo", Units = "celsius", IncludeForecast = true };
+        var parameters = new Dictionary<string, object?>
+        {
+            ["customRequest"] = customRequest, // Custom type as value
+            ["simpleString"] = "test",
+            ["simpleNumber"] = 42
+        };
+
+        List<ChatMessage> chatMessages =
+        [
+            new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call_custom", "ProcessWeather", parameters)])
+        ];
+
+        // Combine contexts for serialization
+        var combinedOptions = new System.Text.Json.JsonSerializerOptions
+        {
+            TypeInfoResolver = System.Text.Json.Serialization.Metadata.JsonTypeInfoResolver.Combine(
+                AGUIJsonSerializerContext.Default,
+                CustomTypesContext.Default)
+        };
+
+        // Act
+        IEnumerable<AGUIMessage> aguiMessages = chatMessages.AsAGUIMessages(combinedOptions);
+
+        // Assert
+        AGUIMessage message = Assert.Single(aguiMessages);
+        var assistantMessage = Assert.IsType<AGUIAssistantMessage>(message);
+        Assert.NotNull(assistantMessage.ToolCalls);
+        var toolCall = Assert.Single(assistantMessage.ToolCalls);
+        Assert.Equal("call_custom", toolCall.Id);
+        Assert.Equal("ProcessWeather", toolCall.Function?.Name);
+
+        // Verify custom type was serialized correctly without flattening
+        var deserializedArgs = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>(
+            toolCall.Function?.Arguments ?? "{}",
+            combinedOptions);
+        Assert.NotNull(deserializedArgs);
+        Assert.True(deserializedArgs.ContainsKey("customRequest"));
+        Assert.True(deserializedArgs.ContainsKey("simpleString"));
+        Assert.True(deserializedArgs.ContainsKey("simpleNumber"));
+
+        // Verify the custom type properties are accessible
+        var customRequestElement = deserializedArgs["customRequest"];
+        Assert.Equal("Tokyo", customRequestElement.GetProperty("Location").GetString());
+        Assert.Equal("celsius", customRequestElement.GetProperty("Units").GetString());
+        Assert.True(customRequestElement.GetProperty("IncludeForecast").GetBoolean());
+
+        // Verify simple types
+        Assert.Equal("test", deserializedArgs["simpleString"].GetString());
+        Assert.Equal(42, deserializedArgs["simpleNumber"].GetInt32());
+    }
+
+    #endregion
 }
