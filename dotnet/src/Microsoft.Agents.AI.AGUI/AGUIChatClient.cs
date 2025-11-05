@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Net.Http;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
@@ -12,6 +13,7 @@ using Microsoft.Agents.AI.AGUI.Shared;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.AGUI;
 
@@ -20,8 +22,6 @@ namespace Microsoft.Agents.AI.AGUI;
 /// </summary>
 public sealed class AGUIChatClient : DelegatingChatClient
 {
-    private readonly List<ChatResponseUpdate> _executedServerFunctionStream = [];
-
     /// <summary>
     /// Initializes a new instance of the <see cref="AGUIChatClient"/> class.
     /// </summary>
@@ -38,24 +38,22 @@ public sealed class AGUIChatClient : DelegatingChatClient
         IServiceProvider? serviceProvider = null) : base(CreateInnerClient(
             httpClient,
             endpoint,
-            out var executedServerFunctionStream,
             jsonSerializerOptions ?? AGUIJsonSerializerContext.Default.Options,
             loggerFactory,
             serviceProvider))
     {
-        this._executedServerFunctionStream = executedServerFunctionStream;
     }
 
     private static IChatClient CreateInnerClient(
         HttpClient httpClient,
         string endpoint,
-        out List<ChatResponseUpdate> executedServerFunctionStream,
         JsonSerializerOptions jsonSerializerOptions,
         ILoggerFactory? loggerFactory,
         IServiceProvider? serviceProvider)
     {
-        executedServerFunctionStream = [];
-        var handler = new AGUIChatClientHandler(httpClient, endpoint, executedServerFunctionStream, jsonSerializerOptions, serviceProvider);
+        Throw.IfNull(httpClient);
+        Throw.IfNull(endpoint);
+        var handler = new AGUIChatClientHandler(httpClient, endpoint, jsonSerializerOptions, serviceProvider);
         return new FunctionInvokingChatClient(handler, loggerFactory, serviceProvider);
     }
 
@@ -65,64 +63,84 @@ public sealed class AGUIChatClient : DelegatingChatClient
         ChatOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        await foreach (var update in base.GetStreamingResponseAsync(messages, options, cancellationToken).ConfigureAwait(false))
+        ChatResponseUpdate? firstUpdate = null;
+        string? conversationId = null;
+        // AG-UI requires the full message history on every turn, so we clear the conversation id here
+        // and restore it for the caller.
+        var innerOptions = options;
+        if (options?.ConversationId != null)
         {
-            // We bypass the underlying FunctionInvokingChatClient for any server executed function.
-            // This is because it will try to invoke it and fail because it can't find the function.
-            // There are ways in which we could make it work and return the existing result (with a FunctionInvoker) but we would need to very
-            // carefully manage the buffering to preserve the order of updates.
-            // This is because FunctionInvokingChatClient will process all updates in a turn and then trigger the function invocation process,
-            // meaning that any text update after a server function call would jump out of order on the stream.
-            // Instead, we buffer any server function updates internally, and after each update we check if we have something buffered to yield.
-            // This way we preserve the order and don't have to manage it inside function invoking client.
-            if (this._executedServerFunctionStream.Count > 0)
+            conversationId = options.ConversationId;
+
+            // Clone the options and set the conversation ID to null so the FunctionInvokingChatClient doesn't see it.
+            innerOptions = options.Clone();
+            innerOptions.AdditionalProperties ??= [];
+            innerOptions.AdditionalProperties["agui_thread_id"] = options.ConversationId;
+            innerOptions.ConversationId = null;
+        }
+
+        await foreach (var update in base.GetStreamingResponseAsync(messages, innerOptions, cancellationToken).ConfigureAwait(false))
+        {
+            if (conversationId == null && firstUpdate == null)
             {
-                foreach (var executedFunctionUpdate in this._executedServerFunctionStream)
+                firstUpdate = update;
+                if (firstUpdate.AdditionalProperties != null && firstUpdate.AdditionalProperties.TryGetValue("agui_thread_id", out var threadIdObj) && threadIdObj is string threadId)
                 {
-                    yield return executedFunctionUpdate;
+                    // Capture the thread id from the first update to use as conversation id if none was provided
+                    conversationId = threadId;
                 }
-                this._executedServerFunctionStream.Clear();
             }
 
-            yield return update;
-        }
+            // Cleanup any temporary approach we used by the handler to avoid issues with FunctionInvokingChatClient
+            for (var i = 0; i < update.Contents.Count; i++)
+            {
+                var content = update.Contents[i];
+                if (content is FunctionCallContent functionCallContent)
+                {
+                    functionCallContent.AdditionalProperties?.Remove("agui_thread_id");
+                }
+                if (content is ServerFunctionCallContent serverFunctionCallContent)
+                {
+                    update.Contents[i] = serverFunctionCallContent.FunctionCallContent;
+                }
+            }
 
-        // In case the functions happened at the end of the stream, yield them now
-        foreach (var executedFunctionUpdate in this._executedServerFunctionStream)
-        {
-            yield return executedFunctionUpdate;
+            var finalUpdate = CopyResponseUpdate(update);
+
+            finalUpdate.ConversationId = conversationId;
+            yield return finalUpdate;
         }
-        this._executedServerFunctionStream.Clear();
+    }
+
+    private static ChatResponseUpdate CopyResponseUpdate(ChatResponseUpdate source)
+    {
+        return new ChatResponseUpdate
+        {
+            AuthorName = source.AuthorName,
+            Role = source.Role,
+            Contents = source.Contents,
+            RawRepresentation = source.RawRepresentation,
+            AdditionalProperties = source.AdditionalProperties,
+            ResponseId = source.ResponseId,
+            MessageId = source.MessageId,
+            CreatedAt = source.CreatedAt,
+        };
     }
 
     private sealed class AGUIChatClientHandler : IChatClient
     {
         private readonly AGUIHttpService _httpService;
         private readonly JsonSerializerOptions _jsonSerializerOptions;
-
-        private readonly List<ChatResponseUpdate> _serverFunctionUpdates = [];
         private readonly ILogger _logger;
 
         public AGUIChatClientHandler(
             HttpClient httpClient,
             string endpoint,
-            List<ChatResponseUpdate> serverFunctionUpdates,
             JsonSerializerOptions? jsonSerializerOptions,
             IServiceProvider? serviceProvider)
         {
-            if (httpClient is null)
-            {
-                throw new ArgumentNullException(nameof(httpClient));
-            }
-
-            if (endpoint is null)
-            {
-                throw new ArgumentNullException(nameof(endpoint));
-            }
-
             this._httpService = new AGUIHttpService(httpClient, endpoint);
             this._jsonSerializerOptions = jsonSerializerOptions ?? AGUIJsonSerializerContext.Default.Options;
-            this._serverFunctionUpdates = serverFunctionUpdates;
             this._logger = serviceProvider?.GetService(typeof(ILogger<AGUIChatClient>)) as ILogger ?? NullLogger.Instance;
 
             // Use BaseAddress if endpoint is empty, otherwise parse as relative or absolute
@@ -154,8 +172,9 @@ public sealed class AGUIChatClient : DelegatingChatClient
             }
 
             var runId = $"run_{Guid.NewGuid()}";
-            var manufacturedThreadId = $"thread_{Guid.NewGuid()}";
-            var threadId = options?.ConversationId ?? manufacturedThreadId;
+            var messagesList = messages.ToList(); // Avoid triggering the enumerator multiple times.
+            var threadId = ExtractTemporaryThreadId(messagesList) ??
+                ExtractThreadIdFromOptions(options) ?? $"thread_{Guid.NewGuid()}";
 
             // Create the input for the AGUI service
             var input = new RunAgentInput
@@ -164,7 +183,7 @@ public sealed class AGUIChatClient : DelegatingChatClient
                 // implies the underlying client is managing the history.
                 ThreadId = threadId,
                 RunId = runId,
-                Messages = messages.AsAGUIMessages(this._jsonSerializerOptions),
+                Messages = messagesList.AsAGUIMessages(this._jsonSerializerOptions),
             };
 
             // Add tools if provided
@@ -180,35 +199,86 @@ public sealed class AGUIChatClient : DelegatingChatClient
                 clientToolSet.Add(tool.Name);
             }
 
+            ChatResponseUpdate? firstUpdate = null;
             await foreach (var update in this._httpService.PostRunAsync(input, cancellationToken)
                 .AsChatResponseUpdatesAsync(this._jsonSerializerOptions, cancellationToken).ConfigureAwait(false))
             {
-                if (string.Equals(update.ConversationId, manufacturedThreadId, StringComparison.Ordinal))
+                if (firstUpdate == null)
                 {
-                    // If we manufactured a conversation ID for the sake of being AG-UI compliant, hide it from the function invoking chat client.
-                    update.ConversationId = null;
-                }
-                else if (!string.IsNullOrEmpty(update.ConversationId))
-                {
-                    threadId = update.ConversationId;
+                    firstUpdate = update;
+                    if (!string.IsNullOrEmpty(firstUpdate.ConversationId) && !string.Equals(firstUpdate.ConversationId, threadId, StringComparison.Ordinal))
+                    {
+                        threadId = firstUpdate.ConversationId;
+                    }
+                    firstUpdate.AdditionalProperties ??= [];
+                    firstUpdate.AdditionalProperties["agui_thread_id"] = threadId;
                 }
 
-                if (update.Contents is { Count: 1 })
+                if (update.Contents is { Count: 1 } && update.Contents[0] is FunctionCallContent fcc)
                 {
-                    if ((update.Contents[0] is FunctionCallContent fcc &&
-                        !clientToolSet.Contains(fcc.Name)) || update.Contents[0] is FunctionResultContent)
+                    if (clientToolSet.Contains(fcc.Name))
                     {
-                        // Store server executed function updates, we will yield them before we yield the next update
-                        // to the agent but we will bypass the FunctionInvokingChatClient processing.
-                        this._serverFunctionUpdates.Add(update);
-                        continue;
+                        // Prepare to let the wrapping FunctionInvokingChatClient handle this function call.
+                        // We want to retain the original thread id that either the server sent us or that we set
+                        // in this turn on the next turn, but we can't make it visible to FunctionInvokeingChatClient
+                        // because it would then not send the full history on the next turn as required by AG-UI.
+                        // We store it on additional properties of the function call content, which will be passed down
+                        // in the next turn.
+                        fcc.AdditionalProperties ??= [];
+                        fcc.AdditionalProperties["agui_thread_id"] = threadId;
+                    }
+                    else
+                    {
+                        // Hide the server result call from the FunctionInvokingChatClient.
+                        // The wrapping client will unwrap it and present it as a normal function result.
+                        update.Contents[0] = new ServerFunctionCallContent(fcc);
                     }
                 }
 
+                // Remove the conversation id before yielding so that the wrapping FunctionInvokingChatClient
+                // sends the whole message history on every turn as per AG-UI requirements.
+                update.ConversationId = null;
                 yield return update;
             }
 
             this._logger.LogInformation("[AGUIChatClient] Request completed - ThreadId: {ThreadId}, RunId: {RunId}", "", runId);
+        }
+
+        // Extract the thread id from the options additional properties
+        private static string? ExtractThreadIdFromOptions(ChatOptions? options)
+        {
+            if (options?.AdditionalProperties == null ||
+              !options.AdditionalProperties.TryGetValue("agui_thread_id", out var threadIdObj) ||
+              threadIdObj is not string threadId ||
+              string.IsNullOrEmpty(threadId))
+            {
+                return null;
+            }
+            return threadId;
+        }
+
+        // Extract the thread id from the second last message's function call content additional properties
+        private static string? ExtractTemporaryThreadId(List<ChatMessage> messagesList)
+        {
+            if (messagesList.Count < 2)
+            {
+                return null;
+            }
+            var functionCall = messagesList[messagesList.Count - 2];
+            if (functionCall.Contents.Count < 1 || functionCall.Contents[0] is not FunctionCallContent content)
+            {
+                return null;
+            }
+
+            if (content.AdditionalProperties == null ||
+              !content.AdditionalProperties.TryGetValue("agui_thread_id", out var threadIdObj) ||
+              threadIdObj is not string threadId ||
+              string.IsNullOrEmpty(threadId))
+            {
+                return null;
+            }
+
+            return threadId;
         }
 
         public void Dispose()
@@ -225,5 +295,10 @@ public sealed class AGUIChatClient : DelegatingChatClient
 
             return null;
         }
+    }
+
+    private class ServerFunctionCallContent(FunctionCallContent functionCall) : AIContent
+    {
+        public FunctionCallContent FunctionCallContent { get; } = functionCall;
     }
 }
