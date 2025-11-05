@@ -211,8 +211,10 @@ public class SpecializedExecutorSmokeTests
         // Verify that the agent host executor registration IDs in the workflow definition
         // match the agent names when agent names are provided.
         // The property DisplayName falls back to using the agent ID when Name is not set.
-        definition.Executors[agentA.DisplayName].ExecutorId.Should().Be(AgentAName);
-        definition.Executors[agentB.DisplayName].ExecutorId.Should().Be(AgentBName);
+        agentA.GetDescriptiveId().Should().Contain(AgentAName);
+        agentB.GetDescriptiveId().Should().Contain(AgentBName);
+        definition.Executors[agentA.GetDescriptiveId()].ExecutorId.Should().Be(agentA.GetDescriptiveId());
+        definition.Executors[agentB.GetDescriptiveId()].ExecutorId.Should().Be(agentB.GetDescriptiveId());
 
         // This will create an instance of the start agent and verify that the ID
         // of the executor instance matches the ID of the registration.
@@ -231,8 +233,10 @@ public class SpecializedExecutorSmokeTests
         // Verify that the agent host executor registration IDs in the workflow definition
         // match the agent IDs when agent names are not provided.
         // The property DisplayName falls back to using the agent ID when Name is not set.
-        definition.Executors[agentA.DisplayName].ExecutorId.Should().Be(agentA.Id);
-        definition.Executors[agentB.DisplayName].ExecutorId.Should().Be(agentB.Id);
+        agentA.GetDescriptiveId().Should().Contain(agentA.Id);
+        agentB.GetDescriptiveId().Should().Contain(agentB.Id);
+        definition.Executors[agentA.GetDescriptiveId()].ExecutorId.Should().Be(agentA.GetDescriptiveId());
+        definition.Executors[agentB.GetDescriptiveId()].ExecutorId.Should().Be(agentB.GetDescriptiveId());
 
         // This will create an instance of the start agent and verify that the ID
         // of the executor instance matches the ID of the registration.
