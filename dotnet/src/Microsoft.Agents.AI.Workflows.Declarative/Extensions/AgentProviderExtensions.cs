@@ -54,9 +54,11 @@ internal static class AgentProviderExtensions
             await context.AddEventAsync(new AgentRunResponseEvent(executorId, response), cancellationToken).ConfigureAwait(false);
         }
 
+        // If autoSend is enabled and this is not the workflow conversation, copy messages to the workflow conversation.
         if (autoSend && !isWorkflowConversation && workflowConversationId is not null)
         {
             // Copy messages with content that aren't function calls or results.
+            // %%% SELECT FOR MESSAGE / DON'T EXCLUDE
             IEnumerable<ChatMessage> messages =
                 response.Messages.Where(
                     message =>
@@ -65,7 +67,6 @@ internal static class AgentProviderExtensions
                         !message.Contents.OfType<FunctionResultContent>().Any());
             foreach (ChatMessage message in messages)
             {
-                // %%% NOTE: Copy message by ID - Agent Provider
                 await agentProvider.CreateMessageAsync(workflowConversationId, message, cancellationToken).ConfigureAwait(false);
             }
         }

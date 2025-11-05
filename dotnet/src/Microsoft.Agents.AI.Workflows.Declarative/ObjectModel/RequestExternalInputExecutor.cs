@@ -7,6 +7,7 @@ using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
+using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 
@@ -24,7 +25,7 @@ internal sealed class RequestExternalInputExecutor(RequestExternalInput model, W
 
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        AnswerRequest inputRequest = new();
+        ExternalInputRequest inputRequest = new(new ChatMessage(ChatRole.System, "HAXX")); // %%% EXTERNAL INPUT - HAXX
 
         await context.SendMessageAsync(inputRequest, cancellationToken).ConfigureAwait(false);
 
@@ -33,6 +34,6 @@ internal sealed class RequestExternalInputExecutor(RequestExternalInput model, W
 
     public async ValueTask CaptureResponseAsync(IWorkflowContext context, ExternalInputResponse message, CancellationToken cancellationToken)
     {
-        await this.AssignAsync(this.Model.Variable?.Path, message.Input.ToFormula(), context).ConfigureAwait(false);
+        await this.AssignAsync(this.Model.Variable?.Path, message.Message.ToFormula(), context).ConfigureAwait(false);
     }
 }

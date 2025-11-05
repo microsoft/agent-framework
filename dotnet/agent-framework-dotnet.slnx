@@ -102,15 +102,17 @@
     <Project Path="samples/GettingStarted/Workflows/Declarative/ExecuteWorkflow/ExecuteWorkflow.csproj" />
     <Project Path="samples/GettingStarted/Workflows/Declarative/GenerateCode/GenerateCode.csproj" />
     <Project Path="samples/GettingStarted/Workflows/Declarative/Marketing/Marketing.csproj" />
-    <Project Path="samples/GettingStarted/Workflows/Declarative/MCPToolApproval/MCPToolApproval.csproj" />
+    <Project Path="samples/GettingStarted/Workflows/Declarative/MCPToolApproval/ToolApproval.csproj" />
     <Project Path="samples/GettingStarted/Workflows/Declarative/StudentTeacher/StudentTeacher.csproj" />
+    <Project Path="samples/GettingStarted/Workflows/Declarative/UserInput/UserInput.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflows/Declarative/Examples/">
     <File Path="../workflow-samples/DeepResearch.yaml" />
-    <File Path="../workflow-samples/HumanInLoop.yaml" />
     <File Path="../workflow-samples/Marketing.yaml" />
     <File Path="../workflow-samples/MathChat.yaml" />
+    <File Path="../workflow-samples/Question.yaml" />
     <File Path="../workflow-samples/README.md" />
+    <File Path="../workflow-samples/UserInput.yaml" />
     <File Path="../workflow-samples/wttr.json" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflows/SharedStates/">

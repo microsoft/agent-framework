@@ -219,7 +219,7 @@ internal sealed class WorkflowTemplateVisitor : DialogActionVisitor
     {
         this.Trace(item);
 
-        // %%% IMPLEMENT
+        // %%% EXTERNAL INPUT - IMPLEMENT
     }
 
     protected override void Visit(EndDialog item)
@@ -294,7 +294,7 @@ internal sealed class WorkflowTemplateVisitor : DialogActionVisitor
     {
         this.Trace(item);
 
-        // %%% IMPLEMENT
+        // %%% INLINE AGENT - IMPLEMENT
     }
 
     protected override void Visit(RetrieveConversationMessage item)

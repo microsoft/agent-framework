@@ -1,9 +1,6 @@
 #
 # This workflow demonstrates a single agent interaction based on user input.
 #
-# Any Foundry Agent may be used to provide the response.
-# See: ./setup/QuestionAgent.yaml
-#
 kind: Workflow
 trigger:
 

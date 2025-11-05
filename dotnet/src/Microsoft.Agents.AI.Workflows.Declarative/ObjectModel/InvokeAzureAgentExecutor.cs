@@ -88,9 +88,10 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
 
         await this.AssignAsync(this.AgentOutput?.Messages?.Path, agentResponse.Messages.ToTable(), context).ConfigureAwait(false);
 
+        // Attempt to parse the last message as JSON and assign to the response object variable.
         try
         {
-            JsonDocument jsonDocument = JsonDocument.Parse(agentResponse.Messages.Last().Text); // %%% TODO
+            JsonDocument jsonDocument = JsonDocument.Parse(agentResponse.Messages.Last().Text);
             Dictionary<string, object?> objectProperties = jsonDocument.ParseRecord(VariableType.RecordType);
             await this.AssignAsync(this.AgentOutput?.ResponseObject?.Path, objectProperties.ToFormula(), context).ConfigureAwait(false);
         }
@@ -105,7 +106,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
             if (requestInput)
             {
                 isComplete = false;
-                ExternalInputRequest inputRequest = new();
+                ExternalInputRequest inputRequest = new(agentResponse.Messages.Last()); // %%% EXTERNAL INPUT - REVIEW
                 await context.SendMessageAsync(inputRequest, cancellationToken).ConfigureAwait(false);
             }
         }

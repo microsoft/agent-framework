@@ -6,18 +6,22 @@ using Microsoft.Extensions.AI;
 namespace Microsoft.Agents.AI.Workflows.Declarative.Events;
 
 /// <summary>
-/// Represents one or more user-input responses.
+/// Represents the response to a <see cref="ExternalInputRequest"/>.
 /// </summary>
 public sealed class ExternalInputResponse
 {
     /// <summary>
-    /// The external input message.
+    /// The message being provided as external input to the workflow.
     /// </summary>
-    public ChatMessage Input { get; }
+    public ChatMessage Message { get; }
 
+    /// <summary>
+    /// Initializes a new instance of <see cref="ExternalInputResponse"/>.
+    /// </summary>
+    /// <param name="message">The external input message being provided to the workflow.</param>
     [JsonConstructor]
-    internal ExternalInputResponse(ChatMessage input)
+    public ExternalInputResponse(ChatMessage message)
     {
-        this.Input = input;
+        this.Message = message;
     }
 }

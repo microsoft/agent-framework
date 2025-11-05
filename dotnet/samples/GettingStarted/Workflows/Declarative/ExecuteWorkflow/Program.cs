@@ -324,10 +324,12 @@ internal sealed class Program
     private async ValueTask<object> HandleExternalRequestAsync(ExternalRequest request) =>
         request.Data.TypeId.TypeName switch
         {
-            // Request for human input
-            _ when request.Data.TypeId.IsMatch<AnswerRequest>() => HandleUserMessageRequest(request.DataAs<AnswerRequest>()!),
+            // Request for answer to a question
+            _ when request.Data.TypeId.IsMatch<AnswerRequest>() => HandleAnswerRequest(request.DataAs<AnswerRequest>()!),
             // Request for function tool invocation.  (Only active when functions are defined and IncludeFunctions is true.)
             _ when request.Data.TypeId.IsMatch<AgentFunctionToolRequest>() => await this.HandleToolRequestAsync(request.DataAs<AgentFunctionToolRequest>()!),
+            // Request for external
+            _ when request.Data.TypeId.IsMatch<ExternalInputRequest>() => HandleInputRequest(),
             // Request for user input, such as function or mcp tool approval
             _ when request.Data.TypeId.IsMatch<UserInputRequest>() => HandleUserInputRequest(request.DataAs<UserInputRequest>()!),
             // Unknown request type.
@@ -335,9 +337,9 @@ internal sealed class Program
         };
 
     /// <summary>
-    /// Handle request for human input.
+    /// Handle request for answer.
     /// </summary>
-    private static AnswerResponse HandleUserMessageRequest(AnswerRequest request)
+    private static AnswerResponse HandleAnswerRequest(AnswerRequest request)
     {
         string? userInput;
         do
@@ -350,6 +352,24 @@ internal sealed class Program
         while (string.IsNullOrWhiteSpace(userInput));
 
         return new AnswerResponse(userInput);
+    }
+
+    /// <summary>
+    /// Handle request for input.
+    /// </summary>
+    private static ExternalInputResponse HandleInputRequest()
+    {
+        string? userInput;
+        do
+        {
+            Console.ForegroundColor = ConsoleColor.DarkGreen;
+            Console.Write("\nINPUT: ");
+            Console.ForegroundColor = ConsoleColor.White;
+            userInput = Console.ReadLine();
+        }
+        while (string.IsNullOrWhiteSpace(userInput));
+
+        return new ExternalInputResponse(new ChatMessage(ChatRole.User, userInput));
     }
 
     /// <summary>

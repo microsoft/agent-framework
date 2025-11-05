@@ -13,7 +13,7 @@ using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 
-#pragma warning disable CS9113 // %%% REMOVE
+#pragma warning disable CS9113 // %%% INLINE AGENT - REMOVE
 internal sealed class InvokeAzureResponseExecutor(InvokeAzureResponse model, WorkflowAgentProvider agentProvider, WorkflowFormulaState state) :
     DeclarativeActionExecutor<InvokeAzureResponse>(model, state)
 {

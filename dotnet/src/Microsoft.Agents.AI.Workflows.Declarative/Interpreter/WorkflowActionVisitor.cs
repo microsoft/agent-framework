@@ -390,7 +390,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     {
         this.Trace(item);
 
-        // %%% IMPLEMENT
+        // %%% INLINE AGENT - IMPLEMENT
     }
 
     protected override void Visit(RetrieveConversationMessage item)

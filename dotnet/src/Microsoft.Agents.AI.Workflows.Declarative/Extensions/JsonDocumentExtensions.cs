@@ -45,11 +45,6 @@ internal static class JsonDocumentExtensions
 
     private static Dictionary<string, object?> ParseRecord(this JsonElement currentElement, VariableType targetType)
     {
-        //if (targetType.Schema is null) // %%% SCHEMA
-        //{
-        //    throw new DeclarativeActionException($"Object schema not defined for. {targetType.Type.Name}.");
-        //}
-
         IEnumerable<KeyValuePair<string, object?>> keyValuePairs =
             targetType.Schema is null ?
             ParseValues() :
@@ -71,7 +66,7 @@ internal static class JsonDocumentExtensions
 
         IEnumerable<KeyValuePair<string, object?>> ParseSchema(FrozenDictionary<string, VariableType> schema)
         {
-            foreach (KeyValuePair<string, VariableType> property in schema) // %%% SCHEMA
+            foreach (KeyValuePair<string, VariableType> property in schema)
             {
                 object? parsedValue = null;
                 if (!currentElement.TryGetProperty(property.Key, out JsonElement propertyElement))
@@ -117,7 +112,7 @@ internal static class JsonDocumentExtensions
                     VariableType? currentType =
                         element.ValueKind switch
                         {
-                            JsonValueKind.Object => VariableType.Record(targetType.Schema?.Select(kvp => (kvp.Key, kvp.Value)) ?? []), // %%% SCHEMA
+                            JsonValueKind.Object => VariableType.Record(targetType.Schema?.Select(kvp => (kvp.Key, kvp.Value)) ?? []),
                             JsonValueKind.String => typeof(string),
                             JsonValueKind.True => typeof(bool),
                             JsonValueKind.False => typeof(bool),
@@ -283,12 +278,6 @@ internal static class JsonDocumentExtensions
 
     private static bool TryParseObject(JsonElement propertyElement, VariableType? targetType, out object? value)
     {
-        //if (!targetType.HasSchema) // %%% SCHEMA
-        //{
-        //    value = null;
-        //    return false;
-        //}
-
         value = propertyElement.ParseRecord(targetType ?? VariableType.RecordType);
         return true;
     }
