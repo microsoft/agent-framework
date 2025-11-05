@@ -37,14 +37,14 @@ else:
 logger = get_logger("agent_framework.azure")
 
 
-TAzureAIAgentClient = TypeVar("TAzureAIAgentClient", bound="AzureAIAgentClientV2")
+TAzureAIClient = TypeVar("TAzureAIClient", bound="AzureAIClient")
 
 
 @use_function_invocation
 @use_observability
 @use_chat_middleware
-class AzureAIAgentClientV2(OpenAIBaseResponsesClient):
-    """Azure AI Agent Chat client."""
+class AzureAIClient(OpenAIBaseResponsesClient):
+    """Azure AI Agent client."""
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai"  # type: ignore[reportIncompatibleVariableOverride, misc]
 
@@ -121,12 +121,6 @@ class AzureAIAgentClientV2(OpenAIBaseResponsesClient):
                     "or 'AZURE_AI_PROJECT_ENDPOINT' environment variable."
                 )
 
-            if not azure_ai_settings.model_deployment_name:
-                raise ServiceInitializationError(
-                    "Azure AI model deployment name is required. Set via 'model_deployment_name' parameter "
-                    "or 'AZURE_AI_MODEL_DEPLOYMENT_NAME' environment variable."
-                )
-
             # Use provided credential
             if not async_credential:
                 raise ServiceInitializationError("Azure credential is required when project_client is not provided.")
@@ -139,7 +133,6 @@ class AzureAIAgentClientV2(OpenAIBaseResponsesClient):
 
         # Initialize parent
         super().__init__(
-            model_id=azure_ai_settings.model_deployment_name,  # type: ignore
             **kwargs,
         )
 

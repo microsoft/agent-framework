@@ -346,6 +346,8 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
 
         # model id
         if not run_options.get("model"):
+            if not self.model_id:
+                raise ValueError("model_id must be a non-empty string")
             run_options["model"] = self.model_id
 
         # messages

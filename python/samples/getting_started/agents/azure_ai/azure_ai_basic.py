@@ -4,15 +4,15 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework.azure import AzureAIAgentClient
+from agent_framework.azure import AzureAIClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 
 """
 Azure AI Agent Basic Example
 
-This sample demonstrates basic usage of AzureAIAgentClient to create agents with automatic
-lifecycle management. Shows both streaming and non-streaming responses with function tools.
+This sample demonstrates basic usage of AzureAIAgentClient.
+Shows both streaming and non-streaming responses with function tools.
 """
 
 
@@ -28,14 +28,13 @@ async def non_streaming_example() -> None:
     """Example of non-streaming response (get the complete result at once)."""
     print("=== Non-streaming Response Example ===")
 
-    # Since no Agent ID is provided, the agent will be automatically created
-    # and deleted after getting a response
+    # Since no Agent ID is provided, the agent will be automatically created.
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(async_credential=credential).create_agent(
-            name="WeatherAgent",
+        AzureAIClient(async_credential=credential).create_agent(
+            name="BasicWeatherAgent",
             instructions="You are a helpful weather agent.",
             tools=get_weather,
         ) as agent,
@@ -50,14 +49,13 @@ async def streaming_example() -> None:
     """Example of streaming response (get results as they are generated)."""
     print("=== Streaming Response Example ===")
 
-    # Since no Agent ID is provided, the agent will be automatically created
-    # and deleted after getting a response
+    # Since no Agent ID is provided, the agent will be automatically created.
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(async_credential=credential).create_agent(
-            name="WeatherAgent",
+        AzureAIClient(async_credential=credential).create_agent(
+            name="BasicWeatherAgent",
             instructions="You are a helpful weather agent.",
             tools=get_weather,
         ) as agent,
