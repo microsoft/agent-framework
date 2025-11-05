@@ -25,7 +25,7 @@ Or directly in your project file:
 
 ## Usage Examples
 
-For a comprehensive tour of all the functionality, concepts, and APIs, check out the [Azure Functions samples](https://github.com/Azure/durable-agent-framework/tree/main/dotnet/samples/AzureFunctions) in the [Durable extensions for Agent Framework repository](https://github.com/Azure/durable-agent-framework).
+For a comprehensive tour of all the functionality, concepts, and APIs, check out the [Azure Functions samples](https://github.com/microsoft/agent-framework/tree/main/dotnet/samples/AzureFunctions) in the [Durable extensions for Agent Framework repository](https://github.com/microsoft/agent-framework).
 
 ### Hosting single agents
 
@@ -174,4 +174,4 @@ app.Run();
 
 ## Feedback & Contributing
 
-We welcome feedback and contributions in [our GitHub repo](https://github.com/Azure/durable-agent-framework).
+We welcome feedback and contributions in [our GitHub repo](https://github.com/microsoft/agent-framework).
