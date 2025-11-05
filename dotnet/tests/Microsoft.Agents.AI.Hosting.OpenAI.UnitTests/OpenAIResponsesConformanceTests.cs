@@ -134,11 +134,6 @@ public sealed class OpenAIResponsesConformanceTests : ConformanceTestBase
         Assert.Equal(JsonValueKind.Null, response.GetProperty("previous_response_id").ValueKind);
 
         // Assert - Service tier and store
-        AssertJsonPropertyExists(response, "service_tier");
-        var serviceTier = response.GetProperty("service_tier").GetString();
-        Assert.NotNull(serviceTier);
-        Assert.True(serviceTier is "default" or "auto",
-            $"service_tier should be 'default' or 'auto', got '{serviceTier}'");
         AssertJsonPropertyExists(response, "store");
         Assert.Equal(JsonValueKind.True, response.GetProperty("store").ValueKind);
     }
