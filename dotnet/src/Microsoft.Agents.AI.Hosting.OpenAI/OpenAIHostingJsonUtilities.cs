@@ -4,9 +4,9 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Agents.AI.Hosting.OpenAI.Conversations.Models;
 using Microsoft.Agents.AI.Hosting.OpenAI.Models;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
-using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI;
 
@@ -23,15 +23,8 @@ internal static class OpenAIHostingJsonUtilities
 
     private static JsonSerializerOptions CreateDefaultOptions()
     {
-        // Start with our source-generated context
         JsonSerializerOptions options = new(OpenAIHostingJsonContext.Default.Options);
-
-        // Chain with agent abstraction types
         options.TypeInfoResolverChain.Add(AgentAbstractionsJsonUtilities.DefaultOptions.TypeInfoResolver!);
-
-        // Chain with AIContent types from Microsoft.Extensions.AI
-        options.TypeInfoResolverChain.Add(AIJsonUtilities.DefaultOptions.TypeInfoResolver!);
-
         options.MakeReadOnly();
         return options;
     }

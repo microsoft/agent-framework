@@ -62,7 +62,7 @@ internal sealed class InMemoryAgentConversationIndex : IAgentConversationIndex, 
 
     private async Task<ConversationSet> GetOrCreateConversationSetAsync(string agentId, CancellationToken cancellationToken)
     {
-        (ConversationSet? conversationSet, _) = await this._cache.GetOrCreateAtomicAsync(
+        var conversationSet = await this._cache.GetOrCreateAtomicAsync(
             agentId,
             entry =>
             {

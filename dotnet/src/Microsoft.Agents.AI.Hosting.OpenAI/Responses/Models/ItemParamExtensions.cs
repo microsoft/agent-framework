@@ -13,12 +13,14 @@ internal static class ItemParamExtensions
     /// Converts an ItemParam (input model) to an ItemResource (output model) by adding server-generated fields.
     /// </summary>
     /// <param name="param">The input item parameter.</param>
+    /// <param name="idGenerator">The ID generator to use for creating item IDs.</param>
     /// <returns>An ItemResource with a generated ID.</returns>
-    public static ItemResource ToItemResource(this ItemParam param)
+    public static ItemResource ToItemResource(this ItemParam param, IdGenerator idGenerator)
     {
         ArgumentNullException.ThrowIfNull(param);
+        ArgumentNullException.ThrowIfNull(idGenerator);
 
-        string generatedId = $"msg_{Guid.NewGuid():N}";
+        string generatedId = idGenerator.GenerateMessageId();
 
         return param switch
         {

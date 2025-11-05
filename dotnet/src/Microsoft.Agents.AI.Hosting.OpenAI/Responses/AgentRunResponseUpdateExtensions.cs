@@ -155,38 +155,38 @@ internal static class AgentRunResponseUpdateExtensions
         {
             return new Response
             {
-                Id = context.ResponseId,
-                CreatedAt = createdAt.ToUnixTimeSeconds(),
-                Model = request.Agent?.Name ?? request.Model,
-                Status = status,
                 Agent = request.Agent?.ToAgentId(),
+                Background = request.Background,
                 Conversation = request.Conversation ?? new ConversationReference { Id = context.ConversationId },
-                Metadata = request.Metadata != null ? new Dictionary<string, string>(request.Metadata) : [],
+                CreatedAt = createdAt.ToUnixTimeSeconds(),
+                Error = null,
+                Id = context.ResponseId,
                 Instructions = request.Instructions,
-                Temperature = request.Temperature ?? 1.0,
-                TopP = request.TopP ?? 1.0,
-                Output = outputs?.ToList() ?? [],
-                Usage = latestUsage,
-                ParallelToolCalls = request.ParallelToolCalls ?? true,
-                Tools = [.. request.Tools ?? []],
-                ToolChoice = request.ToolChoice,
-                ServiceTier = request.ServiceTier ?? "default",
-                Store = request.Store ?? true,
-                PreviousResponseId = request.PreviousResponseId,
-                Reasoning = request.Reasoning,
-                Text = request.Text,
                 MaxOutputTokens = request.MaxOutputTokens,
+                MaxToolCalls = request.MaxToolCalls,
+                Metadata = request.Metadata != null ? new Dictionary<string, string>(request.Metadata) : [],
+                Model = request.Agent?.Name ?? request.Model,
+                Output = outputs?.ToList() ?? [],
+                ParallelToolCalls = request.ParallelToolCalls ?? true,
+                PreviousResponseId = request.PreviousResponseId,
+                Prompt = request.Prompt,
+                PromptCacheKey = request.PromptCacheKey,
+                Reasoning = request.Reasoning,
+                SafetyIdentifier = request.SafetyIdentifier,
+                ServiceTier = request.ServiceTier,
+                Status = status,
+                Store = request.Store ?? true,
+                Temperature = request.Temperature ?? 1.0,
+                Text = request.Text,
+                ToolChoice = request.ToolChoice,
+                Tools = [.. request.Tools ?? []],
+                TopLogprobs = request.TopLogprobs,
+                TopP = request.TopP ?? 1.0,
                 Truncation = request.Truncation,
+                Usage = latestUsage,
 #pragma warning disable CS0618 // Type or member is obsolete
                 User = request.User,
-                PromptCacheKey = request.PromptCacheKey,
 #pragma warning restore CS0618 // Type or member is obsolete
-                SafetyIdentifier = request.SafetyIdentifier,
-                TopLogprobs = request.TopLogprobs,
-                MaxToolCalls = request.MaxToolCalls,
-                Background = request.Background,
-                Prompt = request.Prompt,
-                Error = null
             };
         }
     }
@@ -245,7 +245,7 @@ internal static class AgentRunResponseUpdateExtensions
             OutputIndex = outputIndex,
             Data = eventData,
             ExecutorId = executorId,
-            ItemId = $"wf_{Guid.NewGuid().ToString("N")[..8]}"
+            ItemId = IdGenerator.NewId(prefix: "wf", stringLength: 8, delimiter: "")
         };
     }
 }

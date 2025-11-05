@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Hosting.OpenAI.Conversations.Models;
 using Microsoft.Agents.AI.Hosting.OpenAI.Models;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
 using Microsoft.AspNetCore.Http;
@@ -101,7 +102,7 @@ internal sealed class ConversationsHttpHandler
         // Add initial items if provided
         if (request.Items is { Count: > 0 })
         {
-            List<ItemResource> itemsToAdd = [.. request.Items.Select(itemParam => itemParam.ToItemResource())];
+            List<ItemResource> itemsToAdd = [.. request.Items.Select(itemParam => itemParam.ToItemResource(idGenerator))];
             await this._storage.AddItemsAsync(created.Id, itemsToAdd, cancellationToken).ConfigureAwait(false);
         }
 
@@ -223,7 +224,8 @@ internal sealed class ConversationsHttpHandler
             });
         }
 
-        List<ItemResource> createdItems = [.. request.Items.Select(itemParam => itemParam.ToItemResource())];
+        var idGenerator = new IdGenerator(responseId: null, conversationId: conversationId);
+        List<ItemResource> createdItems = [.. request.Items.Select(itemParam => itemParam.ToItemResource(idGenerator))];
         await this._storage.AddItemsAsync(conversationId, createdItems, cancellationToken).ConfigureAwait(false);
 
         return Results.Ok(new ListResponse<ItemResource>

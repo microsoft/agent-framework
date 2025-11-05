@@ -7,6 +7,7 @@ using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Hosting.OpenAI.Models;
+using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Converters;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
 using Microsoft.Extensions.Caching.Memory;
 
@@ -163,7 +164,8 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
             throw new InvalidOperationException("Cannot create a streaming response using CreateResponseAsync. Use CreateResponseStreamingAsync instead.");
         }
 
-        var responseId = $"resp_{Guid.NewGuid():N}";
+        var idGenerator = new IdGenerator(responseId: null, conversationId: request.Conversation?.Id);
+        var responseId = idGenerator.ResponseId;
         var state = this.InitializeResponse(responseId, request);
         var ct = request.Background switch
         {
@@ -194,7 +196,8 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
             throw new InvalidOperationException("Cannot create a non-streaming response using CreateResponseStreamingAsync. Use CreateResponseAsync instead.");
         }
 
-        var responseId = $"resp_{Guid.NewGuid():N}";
+        var idGenerator = new IdGenerator(responseId: null, conversationId: request.Conversation?.Id);
+        var responseId = idGenerator.ResponseId;
         var state = this.InitializeResponse(responseId, request);
 
         // Start execution
@@ -357,22 +360,39 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
         var initialStatus = request.Background is true ? ResponseStatus.Queued : ResponseStatus.InProgress;
         var response = new Response
         {
-            Id = responseId,
-            CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-            Model = request.Model ?? "default",
-            Status = initialStatus,
-            Error = null,
-            IncompleteDetails = null,
-            Output = [],
-            Instructions = request.Instructions,
-            Usage = ResponseUsage.Zero,
-            ParallelToolCalls = request.ParallelToolCalls ?? true,
-            Tools = [],
-            ToolChoice = default,
-            Temperature = request.Temperature,
-            TopP = request.TopP,
-            Metadata = metadata,
+            Agent = request.Agent?.ToAgentId(),
+            Background = request.Background,
             Conversation = request.Conversation,
+            CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            Error = null,
+            Id = responseId,
+            IncompleteDetails = null,
+            Instructions = request.Instructions,
+            MaxOutputTokens = request.MaxOutputTokens,
+            MaxToolCalls = request.MaxToolCalls,
+            Metadata = metadata,
+            Model = request.Model ?? "default",
+            Output = [],
+            ParallelToolCalls = request.ParallelToolCalls ?? true,
+            PreviousResponseId = request.PreviousResponseId,
+            Prompt = request.Prompt,
+            PromptCacheKey = request.PromptCacheKey,
+            Reasoning = request.Reasoning,
+            SafetyIdentifier = request.SafetyIdentifier,
+            ServiceTier = request.ServiceTier,
+            Status = initialStatus,
+            Store = request.Store,
+            Temperature = request.Temperature,
+            Text = request.Text,
+            ToolChoice = request.ToolChoice,
+            Tools = [.. request.Tools ?? []],
+            TopLogprobs = request.TopLogprobs,
+            TopP = request.TopP,
+            Truncation = request.Truncation,
+            Usage = ResponseUsage.Zero,
+#pragma warning disable CS0618 // Type or member is obsolete
+            User = request.User
+#pragma warning restore CS0618 // Type or member is obsolete
         };
 
         var state = new ResponseState
@@ -472,7 +492,7 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
 
             state.AddStreamingEvent(cancelledEvent);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex)
         {
             // Update response status to failed
             state.Response = state.Response! with
