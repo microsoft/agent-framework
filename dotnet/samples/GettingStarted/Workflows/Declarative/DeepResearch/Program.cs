@@ -195,10 +195,10 @@ internal sealed class Program
                 """
                 We have completed the task.
                 Based only on the conversation and without adding any new information, synthesize the result of the conversation as a complete response to the user task.
-                The user will only every see this last response and not the entire conversation, so please ensure it is complete and self-contained.
+                The user will only ever see this last response and not the entire conversation, so please ensure it is complete and self-contained.
                 We have completed the task.
                 Based only on the conversation and without adding any new information, synthesize the result of the conversation as a complete response to the user task.
-                The user will only every see this last response and not the entire conversation, so please ensure it is complete and self-contained.
+                The user will only ever see this last response and not the entire conversation, so please ensure it is complete and self-contained.
                 """
         };
 
