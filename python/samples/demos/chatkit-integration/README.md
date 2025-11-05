@@ -183,7 +183,7 @@ python app.py
 Or with auto-reload for development:
 
 ```bash
-uvicorn app:app --host 0.0.0.0 --port 8001 --reload
+uvicorn app:app --host 127.0.0.1 --port 8001 --reload
 ```
 
 The backend will start on `http://localhost:8001`
@@ -238,7 +238,7 @@ You can customize the application by editing constants at the top of `app.py`:
 
 ```python
 # Server configuration
-SERVER_HOST = "0.0.0.0"
+SERVER_HOST = "127.0.0.1"  # Bind to localhost only for security (local dev)
 SERVER_PORT = 8001
 SERVER_BASE_URL = f"http://localhost:{SERVER_PORT}"
 

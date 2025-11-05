@@ -27,7 +27,7 @@ from pydantic import Field
 # ============================================================================
 
 # Server configuration
-SERVER_HOST = "0.0.0.0"
+SERVER_HOST = "127.0.0.1"  # Bind to localhost only for security (local dev)
 SERVER_PORT = 8001
 SERVER_BASE_URL = f"http://localhost:{SERVER_PORT}"
 
