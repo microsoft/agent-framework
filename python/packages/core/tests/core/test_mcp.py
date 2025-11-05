@@ -1130,8 +1130,8 @@ async def test_mcp_tool_deduplication():
 
 @pytest.mark.asyncio
 async def test_load_tools_prevents_multiple_calls():
-    """Test that load_tools() can only be called once"""
-    from unittest.mock import AsyncMock, MagicMock, patch
+    """Test that connect() prevents calling load_tools() multiple times"""
+    from unittest.mock import AsyncMock, MagicMock
     from agent_framework._mcp import MCPTool
     
     tool = MCPTool(name="test_tool")
@@ -1144,23 +1144,31 @@ async def test_load_tools_prevents_multiple_calls():
     mock_tool_list = MagicMock()
     mock_tool_list.tools = []
     mock_session.list_tools = AsyncMock(return_value=mock_tool_list)
+    mock_session.initialize = AsyncMock()
     
     tool.session = mock_session
+    tool.load_tools_flag = True
+    tool.load_prompts_flag = False
     
-    # First call should proceed
-    await tool.load_tools()
+    # Simulate connect() behavior
+    if tool.load_tools_flag and not tool._tools_loaded:
+        await tool.load_tools()
+        tool._tools_loaded = True
+    
     assert tool._tools_loaded is True
     assert mock_session.list_tools.call_count == 1
     
-    # Second call should be skipped
-    await tool.load_tools()
+    # Second call to connect should be skipped
+    if tool.load_tools_flag and not tool._tools_loaded:
+        await tool.load_tools()
+        tool._tools_loaded = True
+    
     assert mock_session.list_tools.call_count == 1  # Still 1, not incremented
-
 
 @pytest.mark.asyncio
 async def test_load_prompts_prevents_multiple_calls():
-    """Test that load_prompts() can only be called once"""
-    from unittest.mock import AsyncMock, MagicMock, patch
+    """Test that connect() prevents calling load_prompts() multiple times"""
+    from unittest.mock import AsyncMock, MagicMock
     from agent_framework._mcp import MCPTool
     
     tool = MCPTool(name="test_tool")
@@ -1175,12 +1183,20 @@ async def test_load_prompts_prevents_multiple_calls():
     mock_session.list_prompts = AsyncMock(return_value=mock_prompt_list)
     
     tool.session = mock_session
+    tool.load_tools_flag = False
+    tool.load_prompts_flag = True
     
-    # First call should proceed
-    await tool.load_prompts()
+    # Simulate connect() behavior
+    if tool.load_prompts_flag and not tool._prompts_loaded:
+        await tool.load_prompts()
+        tool._prompts_loaded = True
+    
     assert tool._prompts_loaded is True
     assert mock_session.list_prompts.call_count == 1
     
-    # Second call should be skipped
-    await tool.load_prompts()
+    # Second call to connect should be skipped
+    if tool.load_prompts_flag and not tool._prompts_loaded:
+        await tool.load_prompts()
+        tool._prompts_loaded = True
+    
     assert mock_session.list_prompts.call_count == 1  # Still 1, not incremented

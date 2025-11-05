@@ -293,7 +293,6 @@ class MCPTool:
         self.chat_client = chat_client
         self._functions: list[AIFunction[Any, Any]] = []
         self.is_connected: bool = False
-        # ADD THESE TWO FLAGS TO PREVENT MULTIPLE CALLS
         self._tools_loaded: bool = False
         self._prompts_loaded: bool = False
 
@@ -364,8 +363,10 @@ class MCPTool:
         self.is_connected = True
         if self.load_tools_flag:
             await self.load_tools()
+            self._tools_loaded = True
         if self.load_prompts_flag:
             await self.load_prompts()
+            self._prompts_loaded = True
 
         if logger.level != logging.NOTSET:
             try:
@@ -503,10 +504,6 @@ class MCPTool:
         Raises:
             ToolExecutionException: If the MCP server is not connected.
         """
-        # PREVENT MULTIPLE CALLS - ADD THIS CHECK
-        if self._prompts_loaded:
-            logger.debug("Prompts already loaded, skipping load_prompts() call")
-            return
         
         if not self.session:
             raise ToolExecutionException("MCP server not connected, please call connect() before using this method.")
@@ -539,12 +536,7 @@ class MCPTool:
                 input_model=input_model,
             )
             self._functions.append(func)
-            existing_names.add(local_name)
-        
-        # MARK AS LOADED - ADD THIS LINE AT THE END
-        self._prompts_loaded = True
-
-
+            existing_names.add(local_name)        
 
     async def load_tools(self) -> None:
         """Load tools from the MCP server.
@@ -555,10 +547,6 @@ class MCPTool:
         Raises:
             ToolExecutionException: If the MCP server is not connected.
         """
-        # PREVENT MULTIPLE CALLS - ADD THIS CHECK
-        if self._tools_loaded:
-            logger.debug("Tools already loaded, skipping load_tools() call")
-            return
         
         if not self.session:
             raise ToolExecutionException("MCP server not connected, please call connect() before using this method.")
@@ -593,11 +581,6 @@ class MCPTool:
             )
             self._functions.append(func)
             existing_names.add(local_name)
-        
-        # MARK AS LOADED - ADD THIS LINE AT THE END
-        self._tools_loaded = True
-
-
 
     async def close(self) -> None:
         """Disconnect from the MCP server.
