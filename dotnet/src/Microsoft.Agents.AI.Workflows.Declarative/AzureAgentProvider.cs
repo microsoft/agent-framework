@@ -132,7 +132,17 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
     {
         AgentsClient client = this.GetAgentsClient();
 
-        AIAgent agent = client.GetAIAgent(agentDefinition, tools: null, clientFactory: null, openAIClientOptions: null, requireInvocableTools: false, cancellationToken);
+        IList<AITool>? tools = null;
+        if (agentDefinition.Definition is PromptAgentDefinition promptAgent)
+        {
+            tools =
+                promptAgent.Tools
+                    .Where(tool => tool is not FunctionTool)
+                    .Select(tool => tool.AsAITool())
+                    .ToArray();
+        }
+
+        AIAgent agent = client.GetAIAgent(agentDefinition, tools, clientFactory: null, openAIClientOptions: null, requireInvocableTools: false, cancellationToken);
 
         FunctionInvokingChatClient? functionInvokingClient = agent.GetService<FunctionInvokingChatClient>();
         if (functionInvokingClient is not null)
