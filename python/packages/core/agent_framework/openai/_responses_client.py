@@ -293,11 +293,13 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                             # Map the parameter name and remove the old one
                             mapped_tool[api_param] = mapped_tool.pop(user_param)
 
-                    # Validate partial_images parameter for streaming
+                    # Validate partial_images parameter for streaming image generation
+                    # OpenAI API requires partial_images to be between 0-3 (inclusive) for image_generation tool
+                    # Reference: https://platform.openai.com/docs/api-reference/responses/create#responses_create-tools-image_generation_tool-partial_images
                     if "partial_images" in mapped_tool:
                         partial_images = mapped_tool["partial_images"]
-                        if not isinstance(partial_images, int) or partial_images < 1 or partial_images > 3:
-                            raise ValueError("partial_images must be an integer between 1 and 3 (inclusive)")
+                        if not isinstance(partial_images, int) or partial_images < 0 or partial_images > 3:
+                            raise ValueError("partial_images must be an integer between 0 and 3 (inclusive).")
 
                     response_tools.append(mapped_tool)
                 else:
