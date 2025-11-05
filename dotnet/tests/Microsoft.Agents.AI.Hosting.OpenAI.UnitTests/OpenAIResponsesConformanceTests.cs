@@ -1108,13 +1108,13 @@ public sealed class OpenAIResponsesConformanceTests : ConformanceTestBase
     public async Task MutualExclusiveErrorAsync()
     {
         // Arrange
-        string requestJson = LoadTraceFile("mutual_exclusive_error/request.json");
-        using var expectedResponseDoc = LoadTraceDocument("mutual_exclusive_error/response.json");
+        string requestJson = LoadResponsesTraceFile("mutual_exclusive_error/request.json");
+        using var expectedResponseDoc = LoadResponsesTraceDocument("mutual_exclusive_error/response.json");
 
         HttpClient client = await this.CreateTestServerAsync("mutual-exclusive-agent", "You are a helpful assistant.", "Test response");
 
         // Act - Send request with mutually exclusive parameters
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, "mutual-exclusive-agent", requestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, "mutual-exclusive-agent", requestJson);
         using var responseDoc = await ParseResponseAsync(httpResponse);
         var response = responseDoc.RootElement;
 

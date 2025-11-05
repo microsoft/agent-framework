@@ -41,7 +41,7 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
             [approvalRequest]);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, AgentName, StreamingRequestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, AgentName, StreamingRequestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
         List<JsonElement> events = ParseSseEvents(sseContent);
 
@@ -88,7 +88,7 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
             [approvalRequest]);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, AgentName, StreamingRequestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, AgentName, StreamingRequestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
         List<JsonElement> events = ParseSseEvents(sseContent);
 
@@ -121,7 +121,7 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
             [approvalRequest]);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, AgentName, StreamingRequestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, AgentName, StreamingRequestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
         List<JsonElement> events = ParseSseEvents(sseContent);
 
@@ -157,7 +157,7 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
             [approvalRequest]);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, AgentName, StreamingRequestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, AgentName, StreamingRequestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
         List<JsonElement> events = ParseSseEvents(sseContent);
 
@@ -194,7 +194,7 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
             [approvalResponse]);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, AgentName, StreamingRequestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, AgentName, StreamingRequestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
         List<JsonElement> events = ParseSseEvents(sseContent);
 
@@ -228,7 +228,7 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
             [approvalResponse]);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, AgentName, StreamingRequestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, AgentName, StreamingRequestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
         List<JsonElement> events = ParseSseEvents(sseContent);
 
@@ -256,7 +256,7 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
             [approvalResponse]);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, AgentName, StreamingRequestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, AgentName, StreamingRequestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
         List<JsonElement> events = ParseSseEvents(sseContent);
 
@@ -289,7 +289,7 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
         ]);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, AgentName, StreamingRequestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, AgentName, StreamingRequestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
         List<JsonElement> events = ParseSseEvents(sseContent);
 
@@ -321,7 +321,7 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
         ]);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, AgentName, StreamingRequestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, AgentName, StreamingRequestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
         List<JsonElement> events = ParseSseEvents(sseContent);
 

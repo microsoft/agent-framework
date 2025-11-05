@@ -1,8 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
+using System.Security.Cryptography;
+using System.Text.RegularExpressions;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
 
-namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses;
+namespace Microsoft.Agents.AI.Hosting.OpenAI;
 
 /// <summary>
 /// Generates IDs with partition keys.
@@ -29,8 +32,8 @@ internal sealed partial class IdGenerator
     public IdGenerator(string? responseId, string? conversationId, int? randomSeed = null)
     {
         this._random = randomSeed.HasValue ? new Random(randomSeed.Value) : null;
-        this.ResponseId = responseId ?? this.NewId("resp");
-        this.ConversationId = conversationId ?? this.NewId("conv");
+        this.ResponseId = responseId ?? NewId("resp", random: this._random);
+        this.ConversationId = conversationId ?? NewId("conv", random: this._random);
         this._partitionId = GetPartitionIdOrDefault(this.ConversationId) ?? string.Empty;
     }
 
@@ -64,7 +67,7 @@ internal sealed partial class IdGenerator
     public string Generate(string? category = null)
     {
         var prefix = string.IsNullOrEmpty(category) ? "id" : category;
-        return this.NewId(prefix, partitionKey: this._partitionId);
+        return NewId(prefix, partitionKey: this._partitionId, random: this._random);
     }
 
     /// <summary>
@@ -102,15 +105,17 @@ internal sealed partial class IdGenerator
     /// <param name="delimiter">The delimiter character used to separate parts of the ID.</param>
     /// <param name="partitionKey">An explicit partition key to use. When provided, this value will be used instead of generating a new one.</param>
     /// <param name="partitionKeyHint">An existing ID to extract the partition key from. When provided, the same partition key will be used instead of generating a new one.</param>
+    /// <param name="random">The random number generator.</param>
     /// <returns>A new ID with format "{prefix}{delimiter}{infix}{entropy}{delimiter}{partitionKey}".</returns>
     /// <exception cref="ArgumentException">Thrown when the watermark contains non-alphanumeric characters.</exception>
-    private string NewId(string prefix, int stringLength = 32, int partitionKeyLength = 16, string infix = "",
-        string watermark = "", string delimiter = "_", string? partitionKey = null, string partitionKeyHint = "")
+    public static string NewId(string prefix, int stringLength = 32, int partitionKeyLength = 16, string infix = "",
+        string watermark = "", string delimiter = "_", string? partitionKey = null, string partitionKeyHint = "",
+        Random? random = null)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(stringLength, 1);
-        var entropy = this.GetRandomString(stringLength);
+        var entropy = GetRandomString(stringLength, random);
 
-        string pKey = partitionKey ?? GetPartitionIdOrDefault(partitionKeyHint) ?? this.GetRandomString(partitionKeyLength);
+        string pKey = partitionKey ?? GetPartitionIdOrDefault(partitionKeyHint) ?? GetRandomString(partitionKeyLength, random);
 
         if (!string.IsNullOrEmpty(watermark))
         {
@@ -133,15 +138,16 @@ internal sealed partial class IdGenerator
     /// When a random seed was provided to the constructor, uses deterministic generation.
     /// </summary>
     /// <param name="stringLength">The desired length of the random string.</param>
+    /// <param name="random">The optional random number generator.</param>
     /// <returns>A random alphanumeric string.</returns>
     /// <exception cref="ArgumentException">Thrown when stringLength is less than 1.</exception>
-    private string GetRandomString(int stringLength)
+    private static string GetRandomString(int stringLength, Random? random)
     {
         const string Chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-        if (this._random is not null)
+        if (random is not null)
         {
             // Use deterministic random generation when seed is provided
-            return string.Create(stringLength, this._random, static (destination, random) =>
+            return string.Create(stringLength, random, static (destination, random) =>
             {
                 for (int i = 0; i < destination.Length; i++)
                 {

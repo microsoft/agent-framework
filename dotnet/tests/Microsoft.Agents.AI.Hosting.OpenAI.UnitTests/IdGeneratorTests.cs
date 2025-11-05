@@ -1,7 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Microsoft.Agents.AI.Hosting.OpenAI.Responses;
-
 namespace Microsoft.Agents.AI.Hosting.OpenAI.UnitTests;
 
 /// <summary>

@@ -14,6 +14,7 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.Tests;
 
@@ -192,7 +193,7 @@ public abstract class ConformanceTestBase : IAsyncDisposable
         IChatClient mockChatClient = new TestHelpers.SimpleMockChatClient(responseText);
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
         builder.AddAIAgent(agentName, instructions, chatClientServiceKey: "chat-client");
-        builder.Services.AddOpenAIResponses();
+        builder.AddOpenAIResponses();
         builder.AddOpenAIChatCompletions();
 
         this._app = builder.Build();
@@ -229,6 +230,7 @@ public abstract class ConformanceTestBase : IAsyncDisposable
         this._app = builder.Build();
         AIAgent agent = this._app.Services.GetRequiredKeyedService<AIAgent>(agentName);
         this._app.MapOpenAIResponses(agent);
+        this._app.MapOpenAIChatCompletions(agent);
 
         await this._app.StartAsync();
 
