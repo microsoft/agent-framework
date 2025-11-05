@@ -1413,7 +1413,7 @@ def _capture_messages(
     finish_reason: "FinishReason | None" = None,
 ) -> None:
     """Log messages with extra information."""
-    from ._clients import prepare_messages
+    from ._types import prepare_messages
 
     prepped = prepare_messages(messages)
     otel_messages: list[dict[str, Any]] = []

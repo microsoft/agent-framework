@@ -27,6 +27,8 @@ public abstract class Executor : IIdentified
     private static readonly string s_namespace = typeof(Executor).Namespace!;
     private static readonly ActivitySource s_activitySource = new(s_namespace);
 
+    // TODO: Add overloads for binding with a configuration/options object once the Configured<T> hierarchy goes away.
+
     /// <summary>
     /// Initialize the executor with a unique identifier
     /// </summary>
