@@ -39,7 +39,7 @@ internal sealed class ProtectionScopesRequest
     public ICollection<PolicyLocation> Locations { get; set; } = Array.Empty<PolicyLocation>();
 
     /// <summary>
-    /// Repsponse aggregation pivot
+    /// Response aggregation pivot
     /// </summary>
     [DataMember]
     [JsonPropertyName("pivotOn")]

@@ -39,7 +39,7 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
     /// Process a list of messages.
     /// The list of messages should be a prompt or response.
     /// </summary>
-    /// <param name="messages">A list of <see cref="ChatMessage"/> objects sent to the agent or received from the agent..</param>
+    /// <param name="messages">A list of <see cref="ChatMessage"/> objects sent to the agent or received from the agent.</param>
     /// <param name="threadId">The thread where the messages were sent.</param>
     /// <param name="activity">An activity to indicate prompt or response.</param>
     /// <param name="purviewSettings">Purview settings containing tenant id, app name, etc.</param>
@@ -123,14 +123,7 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
             settings.PurviewAppLocation == null ||
             needUserId)
         {
-            if (settings.TenantId != null)
-            {
-                tokenInfo = await this._purviewClient.GetUserInfoFromTokenAsync(cancellationToken, settings.TenantId).ConfigureAwait(false);
-            }
-            else
-            {
-                tokenInfo = await this._purviewClient.GetUserInfoFromTokenAsync(cancellationToken).ConfigureAwait(false);
-            }
+            tokenInfo = await this._purviewClient.GetUserInfoFromTokenAsync(cancellationToken, settings.TenantId).ConfigureAwait(false);
         }
 
         string tenantId = settings.TenantId ?? tokenInfo?.TenantId ?? throw new PurviewException("No tenant id provided or inferred for Purview request. Please provide a tenant id in PurviewSettings or configure the TokenCredential to authenticate to a tenant.");

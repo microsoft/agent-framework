@@ -11,7 +11,7 @@ namespace Microsoft.Agents.AI.Purview.Models.Common;
 internal sealed class ProtectionScopesCacheKey
 {
     /// <summary>
-    /// Creates a mew instance of <see cref="ProtectionScopesCacheKey"/>.
+    /// Creates a new instance of <see cref="ProtectionScopesCacheKey"/>.
     /// </summary>
     /// <param name="userId"></param>
     /// <param name="tenantId"></param>

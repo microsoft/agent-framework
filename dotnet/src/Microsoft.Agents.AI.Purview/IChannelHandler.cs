@@ -8,7 +8,7 @@ using Microsoft.Agents.AI.Purview.Models.Jobs;
 namespace Microsoft.Agents.AI.Purview;
 
 /// <summary>
-/// Interface for a class that controlls background job processing.
+/// Interface for a class that controls background job processing.
 /// </summary>
 internal interface IChannelHandler
 {
