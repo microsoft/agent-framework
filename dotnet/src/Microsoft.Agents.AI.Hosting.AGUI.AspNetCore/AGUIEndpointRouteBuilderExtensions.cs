@@ -43,51 +43,40 @@ public static class AGUIEndpointRouteBuilderExtensions
                 return Results.BadRequest();
             }
 
-            var messages = input.Messages.AsChatMessages(AGUIJsonSerializerContext.Default.Options);
-            logger.LogInformation("[MapAGUI] Received request - ThreadId: {ThreadId}, RunId: {RunId}, MessageCount: {MessageCount}",
-                input.ThreadId, input.RunId, messages.Count());
+            var jsonSerializerOptions = context.RequestServices.GetService<JsonSerializerOptions>() ??
+                AGUIJsonSerializerContext.Default.Options;
 
-            for (int i = 0; i < messages.Count(); i++)
-            {
-                var msg = messages.ElementAt(i);
-                logger.LogDebug("[MapAGUI]   Message[{Index}]: Role={Role}, ContentCount={ContentCount}",
-                    i, msg.Role.Value, msg.Contents.Count);
-
-                foreach (var content in msg.Contents)
-                {
-                    if (content is FunctionCallContent fcc)
-                    {
-                        logger.LogDebug("[MapAGUI]     - FunctionCallContent: Name={Name}, CallId={CallId}",
-                            fcc.Name, fcc.CallId);
-                    }
-                    else if (content is FunctionResultContent frc)
-                    {
-                        logger.LogDebug("[MapAGUI]     - FunctionResultContent: CallId={CallId}, Result={Result}",
-                            frc.CallId, frc.Result);
-                    }
-                    else
-                    {
-                        logger.LogDebug("[MapAGUI]     - {ContentType}", content.GetType().Name);
-                    }
-                }
-            }
-
+            var messages = input.Messages.AsChatMessages(jsonSerializerOptions);
             var agent = aiAgent;
+
+            ChatClientAgentRunOptions? runOptions = null;
+            if (input.Tools?.Any() == true)
+            {
+                runOptions = new ChatClientAgentRunOptions
+                {
+                    ChatOptions = new ChatOptions
+                    {
+                        Tools = input.Tools.AsAITools().ToList()
+                    }
+                };
+            }
 
             logger.LogInformation("[MapAGUI] Starting agent.RunStreamingAsync for ThreadId: {ThreadId}, RunId: {RunId}",
                 input.ThreadId, input.RunId);
 
             var events = agent.RunStreamingAsync(
                 messages,
+                options: runOptions,
                 cancellationToken: cancellationToken)
                 .AsChatResponseUpdatesAsync()
                 .AsAGUIEventStreamAsync(
                     input.ThreadId,
                     input.RunId,
+                    jsonSerializerOptions,
                     cancellationToken);
 
             var sseLogger = context.RequestServices.GetRequiredService<ILogger<AGUIServerSentEventsResult>>();
-            await new AGUIServerSentEventsResult(events, sseLogger).ExecuteAsync(context).ConfigureAwait(false);
+            return new AGUIServerSentEventsResult(events, sseLogger);
         });
     }
 }

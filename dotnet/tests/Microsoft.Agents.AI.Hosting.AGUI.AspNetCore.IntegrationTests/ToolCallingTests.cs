@@ -538,58 +538,24 @@ public sealed class ToolCallingTests : IAsyncDisposable
 
         this._app = builder.Build();
 
-        this._app.MapAGUIAgent("/agent", (IEnumerable<ChatMessage> messages, IEnumerable<AITool> tools) =>
-        {
-            var clientTools = tools?.ToList() ?? [];
-            var messagesList = messages?.ToList() ?? [];
-            var serverToolsList = serverTools?.ToList() ?? [];
+        var azureOpenAIClient = new AzureOpenAIClient(
+            new Uri(endpoint),
+            new DefaultAzureCredential());
 
-            this._output.WriteLine($"[Server Factory] Client tools count: {clientTools.Count}");
-            this._output.WriteLine($"[Server Factory] Server tools count: {serverToolsList.Count}");
-            this._output.WriteLine($"[Server Factory] Messages count: {messagesList.Count}");
-            for (int i = 0; i < messagesList.Count; i++)
-            {
-                var msg = messagesList[i];
-                this._output.WriteLine($"  Message[{i}]: Role={msg.Role}, ContentCount={msg.Contents.Count}");
-                foreach (var content in msg.Contents)
-                {
-                    if (content is FunctionCallContent fcc)
-                    {
-                        this._output.WriteLine($"    - FunctionCallContent: {fcc.Name} (CallId: {fcc.CallId})");
-                    }
-                    else if (content is FunctionResultContent frc)
-                    {
-                        this._output.WriteLine($"    - FunctionResultContent: CallId={frc.CallId}, Result={frc.Result}");
-                    }
-                    else if (content is TextContent tc)
-                    {
-                        this._output.WriteLine($"    - TextContent: {tc.Text}");
-                    }
-                    else
-                    {
-                        this._output.WriteLine($"    - {content.GetType().Name}");
-                    }
-                }
-            }
+        var chatClient = azureOpenAIClient
+            .GetChatClient(deploymentName)
+            .AsIChatClient();
 
-            var azureOpenAIClient = new AzureOpenAIClient(
-                new Uri(endpoint),
-                new DefaultAzureCredential());
+        // DO NOT pass client tools to Azure OpenAI
+        // Client tools should only be executed on the client side
+        // Pass only server-side tools to Azure OpenAI
+        var agent = chatClient.CreateAIAgent(
+            instructions: null,
+            name: "azure-openai-agent",
+            description: "An agent using Azure OpenAI",
+            tools: serverTools);
 
-            var chatClient = azureOpenAIClient
-                .GetChatClient(deploymentName)
-                .AsIChatClient();
-
-            // DO NOT pass client tools to Azure OpenAI
-            // Client tools should only be executed on the client side
-            // Pass only server-side tools to Azure OpenAI
-            return chatClient.CreateAIAgent(
-                instructions: null,
-                name: "azure-openai-agent",
-                description: "An agent using Azure OpenAI",
-                tools: serverToolsList);
-        });
-
+        this._app.MapAGUI("/agent", agent);
         await this._app.StartAsync();
 
         TestServer testServer = this._app.Services.GetRequiredService<IServer>() as TestServer
@@ -605,39 +571,9 @@ public sealed class ToolCallingTests : IAsyncDisposable
         builder.WebHost.UseTestServer();
 
         this._app = builder.Build();
-
-        this._app.MapAGUIAgent("/agent", (IEnumerable<ChatMessage> messages, IEnumerable<AITool> tools) =>
-        {
-            // tools = client tools from AG-UI request (sent as declarations, not executable)
-            // serverTools = actual executable server tools
-            var clientTools = tools?.ToList() ?? [];
-            var serverToolsList = serverTools?.ToList() ?? [];
-
-            this._output.WriteLine($"[Server Factory] Client tools count: {clientTools.Count}");
-            this._output.WriteLine($"[Server Factory] Server tools count: {serverToolsList.Count}");
-
-            foreach (var tool in serverToolsList)
-            {
-                var name = tool is AIFunctionDeclaration decl ? decl.Name : "Unknown";
-                this._output.WriteLine($"[Server Factory]   Server tool: {tool?.GetType().Name} - {name}");
-            }
-
-            foreach (var tool in clientTools)
-            {
-                var name = tool is AIFunctionDeclaration decl ? decl.Name : "Unknown";
-                this._output.WriteLine($"[Server Factory]   Client tool: {tool?.GetType().Name} - {name}");
-            }
-
-            // FunctionInvokingChatClient will terminate if it sees ANY non-invocable AIFunctionDeclaration
-            // So we must ONLY pass executable server tools to CreateAIAgent
-            // The FakeChatClient needs to know about ALL tools (server + client) to generate proper function calls
-            var allTools = serverToolsList.Concat(clientTools).ToList();
-
-            var fakeChatClient = new FakeToolCallingChatClient(triggerParallelCalls, this._output, allTools);
-            // Pass ONLY executable server tools - client tool declarations would cause FunctionInvokingChatClient to terminate
-            this._output.WriteLine($"[Server Factory] Passing {serverToolsList.Count} server tools to CreateAIAgent");
-            return fakeChatClient.CreateAIAgent(instructions: null, name: "fake-agent", description: "A fake agent for tool testing", tools: serverToolsList);
-        });
+        var fakeChatClient = new FakeToolCallingChatClient(triggerParallelCalls, this._output);
+        AIAgent baseAgent = fakeChatClient.CreateAIAgent(instructions: null, name: "base-agent", description: "A base agent for tool testing", tools: serverTools ?? []);
+        this._app.MapAGUI("/agent", baseAgent);
 
         await this._app.StartAsync();
 

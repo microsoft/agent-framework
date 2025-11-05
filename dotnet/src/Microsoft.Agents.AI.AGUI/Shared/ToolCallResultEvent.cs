@@ -15,10 +15,10 @@ internal sealed class ToolCallResultEvent : BaseEvent
         this.Type = AGUIEventTypes.ToolCallResult;
     }
 
-    [JsonPropertyName("message_id")]
+    [JsonPropertyName("messageId")]
     public string? MessageId { get; set; }
 
-    [JsonPropertyName("tool_call_id")]
+    [JsonPropertyName("toolCallId")]
     public string ToolCallId { get; set; } = string.Empty;
 
     [JsonPropertyName("content")]

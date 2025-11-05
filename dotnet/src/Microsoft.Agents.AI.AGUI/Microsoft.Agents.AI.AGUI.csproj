@@ -15,8 +15,6 @@
 
   <PropertyGroup>
     <InjectSharedThrow>true</InjectSharedThrow>
-    <!-- CA1859: We intentionally use IChatClient for flexibility in middleware composition -->
-    <NoWarn>$(NoWarn);CA1859</NoWarn>
   </PropertyGroup>
 
   <PropertyGroup>

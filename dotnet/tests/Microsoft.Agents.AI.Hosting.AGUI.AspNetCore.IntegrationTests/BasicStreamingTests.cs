@@ -29,12 +29,8 @@ public sealed class BasicStreamingTests : IAsyncDisposable
     {
         // Arrange
         await this.SetupTestServerAsync();
-<<<<<<< HEAD
-        AGUIAgent agent = new("assistant", "Sample assistant", this._client!, "", null, []);
-=======
         var chatClient = new AGUIChatClient(this._client!, "", null);
         AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
->>>>>>> 60969b4e (Cleanup)
         AgentThread thread = agent.GetNewThread();
         ChatMessage userMessage = new(ChatRole.User, "hello");
 
@@ -473,5 +469,5 @@ internal sealed class FakeMultiMessageAgent : AIAgent
         }
     }
 
-    public object? GetService(Type serviceType, object? serviceKey = null) => null;
+    public override object? GetService(Type serviceType, object? serviceKey = null) => null;
 }

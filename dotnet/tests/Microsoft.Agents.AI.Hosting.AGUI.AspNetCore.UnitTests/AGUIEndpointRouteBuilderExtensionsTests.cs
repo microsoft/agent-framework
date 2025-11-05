@@ -217,7 +217,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
                 return;
             }
 
-            IEnumerable<ChatMessage> messages = input.Messages.AsChatMessages();
+            IEnumerable<ChatMessage> messages = input.Messages.AsChatMessages(AGUIJsonSerializerContext.Default.Options);
             IEnumerable<KeyValuePair<string, string>> contextValues = input.Context;
             JsonElement forwardedProps = input.ForwardedProperties;
             AIAgent agent = factory(messages, [], contextValues, forwardedProps);
@@ -229,6 +229,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
                 .AsAGUIEventStreamAsync(
                     input.ThreadId,
                     input.RunId,
+                    AGUIJsonSerializerContext.Default.Options,
                     cancellationToken);
 
             ILogger<AGUIServerSentEventsResult> logger = NullLogger<AGUIServerSentEventsResult>.Instance;

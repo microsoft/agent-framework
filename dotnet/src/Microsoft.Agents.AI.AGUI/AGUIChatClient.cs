@@ -44,7 +44,7 @@ public sealed class AGUIChatClient : DelegatingChatClient
     {
     }
 
-    private static IChatClient CreateInnerClient(
+    private static FunctionInvokingChatClient CreateInnerClient(
         HttpClient httpClient,
         string endpoint,
         JsonSerializerOptions jsonSerializerOptions,
