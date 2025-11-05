@@ -1059,6 +1059,44 @@ def ai_function(
 class FunctionInvocationConfiguration(SerializationMixin):
     """Configuration for function invocation in chat clients.
 
+    This class is created automatically on every chat client that supports function invocation.
+    This means that for most cases you can just alter the attributes on the instance, rather then creating a new one.
+
+    Example:
+        .. code-block:: python
+            from agent_framework.openai import OpenAIChatClient
+
+            # Create an OpenAI chat client
+            client = OpenAIChatClient(api_key="your_api_key")
+
+            # Disable function invocation
+            client.function_invocation_config.enabled = False
+
+            # Set maximum iterations to 10
+            client.function_invocation_config.max_iterations = 10
+
+            # Enable termination on unknown function calls
+            client.function_invocation_config.terminate_on_unknown_calls = True
+
+            # Add additional tools for function execution
+            client.function_invocation_config.additional_tools = [my_custom_tool]
+
+            # Enable detailed error information in function results
+            client.function_invocation_config.include_detailed_errors = True
+
+            # You can also create a new configuration instance if needed
+            new_config = FunctionInvocationConfiguration(
+                enabled=True,
+                max_iterations=20,
+                terminate_on_unknown_calls=False,
+                additional_tools=[another_tool],
+                include_detailed_errors=False,
+            )
+
+            # and then assign it to the client
+            client.function_invocation_config = new_config
+
+
     Attributes:
         enabled: Whether function invocation is enabled.
             When this is set to False, the client will not attempt to invoke any functions,
@@ -1095,6 +1133,8 @@ class FunctionInvocationConfiguration(SerializationMixin):
             When set to True, detailed error information such as exception type and message
             will be included in the function result content when a function invocation fails.
             When False, only a generic error message will be included.
+
+
     """
 
     def __init__(
@@ -1158,38 +1198,33 @@ async def _auto_invoke_function(
         KeyError: If the requested function is not found in the tool map.
     """
     from ._types import (
-        FunctionApprovalRequestContent,
-        FunctionApprovalResponseContent,
-        FunctionCallContent,
         FunctionResultContent,
     )
 
+    # Note: The scenarios for approval_mode="always_require", declaration_only, and
+    # terminate_on_unknown_calls are all handled in _try_execute_function_calls before
+    # this function is called. This function only handles the actual execution of approved,
+    # non-declaration-only functions.
+
     tool: AIFunction[BaseModel, Any] | None = None
-    if isinstance(function_call_content, FunctionCallContent):
+    if function_call_content.type == "function_call":
         tool = tool_map.get(function_call_content.name)
+        # Tool should exist because _try_execute_function_calls validates this
         if tool is None:
             exc = KeyError(f'Function "{function_call_content.name}" not found.')
-            if config.terminate_on_unknown_calls:
-                raise exc
             return FunctionResultContent(
                 call_id=function_call_content.call_id,
                 result=f'Error: Requested function "{function_call_content.name}" not found.',
                 exception=exc,
             )
-        if tool.approval_mode == "always_require":
-            return FunctionApprovalRequestContent(id=function_call_content.call_id, function_call=function_call_content)
-        if tool.declaration_only:
-            return function_call_content
     else:
-        if isinstance(function_call_content, FunctionApprovalResponseContent):
-            if function_call_content.approved:
-                tool = tool_map.get(function_call_content.function_call.name)
-                if tool is None:
-                    # we assume it is a hosted tool
-                    return function_call_content
-                function_call_content = function_call_content.function_call
-            else:
-                raise ToolException("Unapproved tool cannot be executed.")
+        # Note: Unapproved tools (approved=False) are handled in _replace_approval_contents_with_results
+        # and never reach this function, so we only handle approved=True cases here.
+        tool = tool_map.get(function_call_content.function_call.name)
+        if tool is None:
+            # we assume it is a hosted tool
+            return function_call_content
+        function_call_content = function_call_content.function_call
 
     parsed_args: dict[str, Any] = dict(function_call_content.parse_arguments() or {})
 
@@ -1670,6 +1705,7 @@ def _handle_function_calls_streaming_response(
                 # Default config if not set
                 config = FunctionInvocationConfiguration()
 
+            errors_in_a_row: int = 0
             prepped_messages = prepare_messages(messages)
             fcc_messages: "list[ChatMessage]" = []
             for attempt_idx in range(config.max_iterations if config.enabled else 0):
@@ -1688,6 +1724,13 @@ def _handle_function_calls_streaming_response(
                             middleware_pipeline=stored_middleware_pipeline,
                             config=config,
                         )
+                        if any(
+                            fcr.exception is not None
+                            for fcr in approved_function_results
+                            if isinstance(fcr, FunctionResultContent)
+                        ):
+                            errors_in_a_row += 1
+                            # no need to reset the counter here, since this is the start of a new attempt.
                     _replace_approval_contents_with_results(prepped_messages, fcc_todo, approved_function_results)
 
                 all_updates: list["ChatResponseUpdate"] = []
@@ -1761,6 +1804,23 @@ def _handle_function_calls_streaming_response(
                     if any(isinstance(fccr, FunctionCallContent) for fccr in function_call_results):
                         # the function calls were already yielded.
                         return
+
+                    if any(
+                        fcr.exception is not None
+                        for fcr in function_call_results
+                        if isinstance(fcr, FunctionResultContent)
+                    ):
+                        errors_in_a_row += 1
+                        if errors_in_a_row >= config.max_consecutive_errors_per_request:
+                            logger.warning(
+                                "Maximum consecutive function call errors reached (%d). "
+                                "Stopping further function calls for this request.",
+                                config.max_consecutive_errors_per_request,
+                            )
+                            # break out of the loop and do the fallback response
+                            break
+                    else:
+                        errors_in_a_row = 0
 
                     # add a single ChatMessage to the response with the results
                     result_message = ChatMessage(role="tool", contents=function_call_results)
