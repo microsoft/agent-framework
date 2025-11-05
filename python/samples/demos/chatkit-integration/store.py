@@ -1,3 +1,5 @@
+# Copyright (c) Microsoft. All rights reserved.
+
 """SQLite-based store implementation for ChatKit data persistence.
 
 This module provides a complete Store implementation using SQLite for data persistence.
