@@ -7,7 +7,7 @@ This module provides support for using agents inside Durable Function orchestrat
 
 import uuid
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 from agent_framework import AgentProtocol, AgentRunResponseUpdate, AgentThread, ChatMessage, get_logger
 
@@ -81,9 +81,9 @@ class DurableAIAgent(AgentProtocol):
         """Get the description of the agent."""
         return self._description
 
-    def run(  # type: ignore[override]
+    def run(
         self,
-        messages: str | ChatMessage | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
@@ -108,17 +108,7 @@ class DurableAIAgent(AgentProtocol):
                 thread = agent.get_new_thread()
                 result = yield agent.run("Hello", thread=thread)
         """
-        # Convert messages to string format
-        if messages is None:
-            message_str = ""
-        elif isinstance(messages, str):
-            message_str = messages
-        elif isinstance(messages, ChatMessage):
-            message_str = messages.text or ""
-        elif isinstance(messages, list):
-            message_str = self._messages_to_string(messages)
-        else:
-            message_str = str(messages)
+        message_str = self._normalize_messages(messages)
 
         # Extract optional parameters from kwargs
         enable_tool_calls = kwargs.get("enable_tool_calls", True)
@@ -156,9 +146,9 @@ class DurableAIAgent(AgentProtocol):
         # The orchestration will yield this Task
         return self.context.call_entity(entity_id, "run_agent", run_request.to_dict())
 
-    def run_stream(  # type: ignore[override]
+    def run_stream(
         self,
-        messages: str | ChatMessage | list[ChatMessage] | None = None,
+        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
@@ -202,6 +192,23 @@ class DurableAIAgent(AgentProtocol):
             Concatenated string of message contents
         """
         return "\n".join([msg.text or "" for msg in messages])
+
+    def _normalize_messages(self, messages: str | ChatMessage | list[str] | list[ChatMessage] | None) -> str:
+        """Convert supported message inputs to a single string."""
+        if messages is None:
+            return ""
+        if isinstance(messages, str):
+            return messages
+        if isinstance(messages, ChatMessage):
+            return messages.text or ""
+        if isinstance(messages, list):
+            if not messages:
+                return ""
+            first_item = messages[0]
+            if isinstance(first_item, str):
+                return "\n".join(cast(list[str], messages))
+            return self._messages_to_string(cast(list[ChatMessage], messages))
+        return str(messages)
 
 
 def get_agent(context: AgentOrchestrationContextType, agent_name: str) -> DurableAIAgent:

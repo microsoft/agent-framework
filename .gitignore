@@ -213,3 +213,6 @@ WARP.md
 */__azurite_db_table__.json
 */__blobstorage__/
 */__queuestorage__/
+
+# Azure Functions local settings
+local.settings.json

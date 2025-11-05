@@ -6,7 +6,6 @@ This module defines the AgentState class for managing conversation state and
 serializing agent framework responses.
 """
 
-import json
 from collections.abc import MutableMapping
 from datetime import datetime, timezone
 from typing import Any, Literal, cast
@@ -54,9 +53,7 @@ class AgentState:
         additional_props: MutableMapping[str, Any] = {"timestamp": timestamp}
         if correlation_id is not None:
             additional_props["correlation_id"] = correlation_id
-        chat_message = ChatMessage(  # type: ignore[call-overload]
-            role=role, text=content, additional_properties=additional_props
-        )
+        chat_message = ChatMessage(role=role, text=content, additional_properties=additional_props)
         self.conversation_history.append(chat_message)
         logger.debug(f"Added {role} ChatMessage to history (message #{self.message_count})")
 
@@ -91,6 +88,10 @@ class AgentState:
             f"Added assistant ChatMessage to history with AgentRunResponse metadata (correlation_id: {correlation_id})"
         )
 
+    def get_chat_messages(self) -> list[ChatMessage]:
+        """Return a copy of the full conversation history."""
+        return list(self.conversation_history)
+
     def try_get_agent_response(self, correlation_id: str) -> dict[str, Any] | None:
         """Get an agent response by correlation ID.
 
@@ -107,77 +108,20 @@ class AgentState:
 
         return None
 
-    def serialize_response(self, response: Any) -> dict[str, Any]:
-        """Serialize any agent framework object to a dictionary.
-
-        This is a utility method for custom serialization. The primary serialization
-        path now uses ChatMessage.to_dict() and AgentRunResponse.to_dict().
+    def serialize_response(self, response: AgentRunResponse) -> dict[str, Any]:
+        """Serialize an ``AgentRunResponse`` to a dictionary.
 
         Args:
-            response: The response object from the agent framework
+            response: The agent framework response object
 
         Returns:
             Dictionary containing all response fields
         """
         try:
-            # Agent framework objects have to_dict method
-            if hasattr(response, "to_dict"):
-                return cast(dict[str, Any], response.to_dict())
-
-            # If response has a model_dump method (Pydantic v2), use it
-            if hasattr(response, "model_dump"):
-                return cast(dict[str, Any], response.model_dump())
-
-            # If response has __dict__, serialize it manually
-            if hasattr(response, "__dict__"):
-                return self._serialize_object_dict(response)
-
-            # Fallback: convert to string
-            return {"response": str(response)}
-
-        except Exception as e:
-            logger.warning(f"Error serializing response: {e}")
-            return {"response": str(response), "serialization_error": str(e)}
-
-    def _serialize_object_dict(self, obj: Any) -> dict[str, Any]:
-        """Serialize an object's __dict__ to a JSON-compatible dictionary.
-
-        Args:
-            obj: Object to serialize
-
-        Returns:
-            Dictionary with serialized fields
-        """
-        result: dict[str, Any] = {}
-        for key, value in obj.__dict__.items():
-            # Skip private attributes
-            if key.startswith("_"):
-                continue
-
-            # Recursively serialize nested objects
-            if hasattr(value, "__dict__") or hasattr(value, "dict") or hasattr(value, "model_dump"):
-                result[key] = self.serialize_response(value)
-            elif isinstance(value, list):
-                list_value = cast(list[Any], value)
-                serialized_list: list[Any] = []
-                for item in list_value:
-                    item_obj = cast(object, item)
-                    if hasattr(item_obj, "__dict__") or hasattr(item_obj, "dict") or hasattr(item_obj, "model_dump"):
-                        serialized_list.append(self.serialize_response(item))
-                    else:
-                        serialized_list.append(item)
-                result[key] = serialized_list
-            elif isinstance(value, dict):
-                result[key] = cast(dict[str, Any], value)
-            else:
-                # Convert to string for non-serializable types
-                try:
-                    json.dumps(value)
-                    result[key] = value
-                except (TypeError, ValueError):
-                    result[key] = str(value)
-
-        return result
+            return response.to_dict()
+        except Exception as exc:  # pragma: no cover - defensive logging path
+            logger.warning(f"Error serializing response: {exc}")
+            return {"response": str(response), "serialization_error": str(exc)}
 
     def to_dict(self) -> dict[str, Any]:
         """Get the current state as a dictionary for persistence.

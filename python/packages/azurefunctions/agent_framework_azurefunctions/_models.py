@@ -369,7 +369,7 @@ class AgentResponse:
 
         # Add response or structured_response based on what's available
         if self.structured_response is not None:
-            result["structured_response"] = self.structured_response  # type: ignore[assignment]
+            result["structured_response"] = self.structured_response
         elif self.response is not None:
             result["response"] = self.response
 

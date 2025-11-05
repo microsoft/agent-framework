@@ -79,7 +79,7 @@ class AgentEntity:
             The agent returns an AgentRunResponse object which is stored in state.
             This method extracts the text/structured response and returns an AgentResponse dict.
         """
-        # Handle backward compatibility - convert string or dict to RunRequest
+        # Convert string or dict to RunRequest
         if isinstance(request, str):
             run_request = RunRequest(message=request, role=ChatRole.USER)
         elif isinstance(request, dict):
@@ -114,13 +114,13 @@ class AgentEntity:
         try:
             logger.debug("[AgentEntity.run_agent] Starting agent invocation")
 
-            run_kwargs: dict[str, Any] = {"messages": message}
+            run_kwargs: dict[str, Any] = {"messages": self.state.get_chat_messages()}
             if not enable_tool_calls:
                 run_kwargs["tools"] = None
             if response_format:
                 run_kwargs["response_format"] = response_format
 
-            agent_run_response = await self._invoke_agent(
+            agent_run_response: AgentRunResponse = await self._invoke_agent(
                 run_kwargs=run_kwargs,
                 correlation_id=correlation_id,
                 conversation_id=conversation_id,
@@ -139,24 +139,17 @@ class AgentEntity:
             try:
                 if response_format:
                     try:
-                        if hasattr(agent_run_response, "text"):
-                            response_str = str(agent_run_response.text)
-                        else:
-                            response_str = str(agent_run_response)
+                        response_str = agent_run_response.text
                         structured_response = json.loads(response_str)
                         logger.debug("Parsed structured JSON response")
                     except json.JSONDecodeError as decode_error:
                         logger.warning(f"Failed to parse JSON response: {decode_error}")
                         response_text = response_str
                 else:
-                    if hasattr(agent_run_response, "text"):
-                        raw_text = getattr(agent_run_response, "text", None)
-                        response_text = "No response" if raw_text is None else str(raw_text)
-                        preview = response_text
-                        logger.debug(f"Response: {preview[:100]}..." if len(preview) > 100 else f"Response: {preview}")
-                    else:
-                        response_text = "Response received (no text attribute)"
-                        logger.warning("Response has no text attribute")
+                    raw_text = agent_run_response.text
+                    response_text = raw_text if raw_text else "No response"
+                    preview = response_text
+                    logger.debug(f"Response: {preview[:100]}..." if len(preview) > 100 else f"Response: {preview}")
             except Exception as extraction_error:
                 logger.error(
                     f"Error extracting response: {extraction_error}",

@@ -1,4 +1,8 @@
-"""Azure Functions single-agent sample."""
+"""Azure Functions single-agent sample showcasing how to host a single Azure OpenAI agent.
+
+The sample reads the required endpoint and deployment environment variables, configures the Azure OpenAI chat client (using either an API key or Azure CLI credentials), and registers a joke-telling agent with an Azure Functions app that can optionally expose a health check.
+
+Summary: Demonstrates configuring and deploying a single 'Joker' agent via Azure Functions."""
 
 import logging
 import os
