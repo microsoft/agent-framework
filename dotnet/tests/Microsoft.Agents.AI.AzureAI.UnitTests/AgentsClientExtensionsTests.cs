@@ -5,6 +5,7 @@ using System.ClientModel;
 using System.ClientModel.Primitives;
 using System.Collections.Generic;
 using System.IO;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.AI.Agents;
@@ -172,6 +173,196 @@ public sealed class AgentsClientExtensionsTests
         var retrievedTestClient = agent.GetService<TestChatClient>();
         Assert.NotNull(retrievedTestClient);
         Assert.Same(testChatClient, retrievedTestClient);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgent with requireInvocableTools=true enforces invocable tools.
+    /// </summary>
+    [Fact]
+    public void GetAIAgent_WithAgentVersion_WithRequireInvocableToolsTrue_EnforcesInvocableTools()
+    {
+        // Arrange
+        AgentsClient client = this.CreateTestAgentsClient();
+        AgentVersion agentVersion = this.CreateTestAgentVersion();
+        var tools = new List<AITool>
+        {
+            AIFunctionFactory.Create(() => "test", "test_function", "A test function")
+        };
+
+        // Act
+        var agent = client.GetAIAgent(agentVersion, tools: tools, requireInvocableTools: true);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.IsType<ChatClientAgent>(agent);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgent with requireInvocableTools=false allows declarative functions.
+    /// </summary>
+    [Fact]
+    public void GetAIAgent_WithAgentVersion_WithRequireInvocableToolsFalse_AllowsDeclarativeFunctions()
+    {
+        // Arrange
+        AgentsClient client = this.CreateTestAgentsClient();
+        AgentVersion agentVersion = this.CreateTestAgentVersion();
+
+        // Act - should not throw even without tools when requireInvocableTools is false
+        var agent = client.GetAIAgent(agentVersion, requireInvocableTools: false);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.IsType<ChatClientAgent>(agent);
+    }
+
+    #endregion
+
+    #region GetAIAgent(AgentsClient, ChatClientAgentOptions) Tests
+
+    /// <summary>
+    /// Verify that GetAIAgent with ChatClientAgentOptions throws ArgumentNullException when client is null.
+    /// </summary>
+    [Fact]
+    public void GetAIAgent_WithOptions_WithNullClient_ThrowsArgumentNullException()
+    {
+        // Arrange
+        AgentsClient? client = null;
+        var options = new ChatClientAgentOptions { Name = "test-agent" };
+
+        // Act & Assert
+        var exception = Assert.Throws<ArgumentNullException>(() =>
+            client!.GetAIAgent(options));
+
+        Assert.Equal("agentsClient", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgent with ChatClientAgentOptions throws ArgumentNullException when options is null.
+    /// </summary>
+    [Fact]
+    public void GetAIAgent_WithOptions_WithNullOptions_ThrowsArgumentNullException()
+    {
+        // Arrange
+        var mockClient = new Mock<AgentsClient>();
+
+        // Act & Assert
+        var exception = Assert.Throws<ArgumentNullException>(() =>
+            mockClient.Object.GetAIAgent((ChatClientAgentOptions)null!));
+
+        Assert.Equal("options", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgent with ChatClientAgentOptions throws ArgumentException when options.Name is null.
+    /// </summary>
+    [Fact]
+    public void GetAIAgent_WithOptions_WithoutName_ThrowsArgumentException()
+    {
+        // Arrange
+        AgentsClient client = this.CreateTestAgentsClient();
+        var options = new ChatClientAgentOptions();
+
+        // Act & Assert
+        var exception = Assert.Throws<ArgumentException>(() =>
+            client.GetAIAgent(options));
+
+        Assert.Contains("Agent name must be provided", exception.Message);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgent with ChatClientAgentOptions creates a valid agent.
+    /// </summary>
+    [Fact]
+    public void GetAIAgent_WithOptions_CreatesValidAgent()
+    {
+        // Arrange
+        AgentsClient client = this.CreateTestAgentsClient(agentName: "test-agent");
+        var options = new ChatClientAgentOptions { Name = "test-agent" };
+
+        // Act
+        var agent = client.GetAIAgent(options);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("test-agent", agent.Name);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgent with ChatClientAgentOptions and clientFactory applies the factory.
+    /// </summary>
+    [Fact]
+    public void GetAIAgent_WithOptions_WithClientFactory_AppliesFactoryCorrectly()
+    {
+        // Arrange
+        AgentsClient client = this.CreateTestAgentsClient(agentName: "test-agent");
+        var options = new ChatClientAgentOptions { Name = "test-agent" };
+        TestChatClient? testChatClient = null;
+
+        // Act
+        var agent = client.GetAIAgent(
+            options,
+            clientFactory: (innerClient) => testChatClient = new TestChatClient(innerClient));
+
+        // Assert
+        Assert.NotNull(agent);
+        var retrievedTestClient = agent.GetService<TestChatClient>();
+        Assert.NotNull(retrievedTestClient);
+        Assert.Same(testChatClient, retrievedTestClient);
+    }
+
+    #endregion
+
+    #region GetAIAgentAsync(AgentsClient, ChatClientAgentOptions) Tests
+
+    /// <summary>
+    /// Verify that GetAIAgentAsync with ChatClientAgentOptions throws ArgumentNullException when client is null.
+    /// </summary>
+    [Fact]
+    public async Task GetAIAgentAsync_WithOptions_WithNullClient_ThrowsArgumentNullExceptionAsync()
+    {
+        // Arrange
+        AgentsClient? client = null;
+        var options = new ChatClientAgentOptions { Name = "test-agent" };
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<ArgumentNullException>(() =>
+            client!.GetAIAgentAsync(options));
+
+        Assert.Equal("agentsClient", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgentAsync with ChatClientAgentOptions throws ArgumentNullException when options is null.
+    /// </summary>
+    [Fact]
+    public async Task GetAIAgentAsync_WithOptions_WithNullOptions_ThrowsArgumentNullExceptionAsync()
+    {
+        // Arrange
+        var mockClient = new Mock<AgentsClient>();
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<ArgumentNullException>(() =>
+            mockClient.Object.GetAIAgentAsync((ChatClientAgentOptions)null!));
+
+        Assert.Equal("options", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgentAsync with ChatClientAgentOptions creates a valid agent.
+    /// </summary>
+    [Fact]
+    public async Task GetAIAgentAsync_WithOptions_CreatesValidAgentAsync()
+    {
+        // Arrange
+        AgentsClient client = this.CreateTestAgentsClient(agentName: "test-agent");
+        var options = new ChatClientAgentOptions { Name = "test-agent" };
+
+        // Act
+        var agent = await client.GetAIAgentAsync(options);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("test-agent", agent.Name);
     }
 
     #endregion
@@ -532,9 +723,111 @@ public sealed class AgentsClientExtensionsTests
         Assert.Contains("Agent name must be provided", exception.Message);
     }
 
+    /// <summary>
+    /// Verify that CreateAIAgent with model and options creates a valid agent.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithModelAndOptions_CreatesValidAgent()
+    {
+        // Arrange
+        AgentsClient client = this.CreateTestAgentsClient(agentName: "test-agent", instructions: "Test instructions");
+        var options = new ChatClientAgentOptions
+        {
+            Name = "test-agent",
+            Instructions = "Test instructions"
+        };
+
+        // Act
+        var agent = client.CreateAIAgent("test-model", options);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("test-agent", agent.Name);
+        Assert.Equal("Test instructions", agent.Instructions);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgent with model and options and clientFactory applies the factory.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithModelAndOptions_WithClientFactory_AppliesFactoryCorrectly()
+    {
+        // Arrange
+        AgentsClient client = this.CreateTestAgentsClient(agentName: "test-agent", instructions: "Test instructions");
+        var options = new ChatClientAgentOptions
+        {
+            Name = "test-agent",
+            Instructions = "Test instructions"
+        };
+        TestChatClient? testChatClient = null;
+
+        // Act
+        var agent = client.CreateAIAgent(
+            "test-model",
+            options,
+            clientFactory: (innerClient) => testChatClient = new TestChatClient(innerClient));
+
+        // Assert
+        Assert.NotNull(agent);
+        var retrievedTestClient = agent.GetService<TestChatClient>();
+        Assert.NotNull(retrievedTestClient);
+        Assert.Same(testChatClient, retrievedTestClient);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgentAsync with model and options creates a valid agent.
+    /// </summary>
+    [Fact]
+    public async Task CreateAIAgentAsync_WithModelAndOptions_CreatesValidAgentAsync()
+    {
+        // Arrange
+        AgentsClient client = this.CreateTestAgentsClient(agentName: "test-agent", instructions: "Test instructions");
+        var options = new ChatClientAgentOptions
+        {
+            Name = "test-agent",
+            Instructions = "Test instructions"
+        };
+
+        // Act
+        var agent = await client.CreateAIAgentAsync("test-model", options);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("test-agent", agent.Name);
+        Assert.Equal("Test instructions", agent.Instructions);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgentAsync with model and options and clientFactory applies the factory.
+    /// </summary>
+    [Fact]
+    public async Task CreateAIAgentAsync_WithModelAndOptions_WithClientFactory_AppliesFactoryCorrectlyAsync()
+    {
+        // Arrange
+        AgentsClient client = this.CreateTestAgentsClient(agentName: "test-agent", instructions: "Test instructions");
+        var options = new ChatClientAgentOptions
+        {
+            Name = "test-agent",
+            Instructions = "Test instructions"
+        };
+        TestChatClient? testChatClient = null;
+
+        // Act
+        var agent = await client.CreateAIAgentAsync(
+            "test-model",
+            options,
+            clientFactory: (innerClient) => testChatClient = new TestChatClient(innerClient));
+
+        // Assert
+        Assert.NotNull(agent);
+        var retrievedTestClient = agent.GetService<TestChatClient>();
+        Assert.NotNull(retrievedTestClient);
+        Assert.Same(testChatClient, retrievedTestClient);
+    }
+
     #endregion
 
-    #region CreateAIAgentAsync Tests
+    #region CreateAIAgentAsync(AgentsClient, string, AgentDefinition) Tests
 
     /// <summary>
     /// Verify that CreateAIAgentAsync throws ArgumentNullException when agentsClient is null.
@@ -587,6 +880,68 @@ public sealed class AgentsClientExtensionsTests
         // Act & Assert
         var exception = Assert.Throws<ArgumentException>(() =>
             client.CreateAIAgent("test-agent", definition));
+
+        Assert.Contains("dedicated tools parameter", exception.Message);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgent with requireInvocableTools=true enforces invocable tools.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithRequireInvocableToolsTrue_EnforcesInvocableTools()
+    {
+        // Arrange
+        var definition = new PromptAgentDefinition("test-model") { Instructions = "Test" };
+        var tools = new List<AITool>
+        {
+            AIFunctionFactory.Create(() => "test", "test_function", "A test function")
+        };
+
+        var definitionResponse = GeneratePromptDefinitionResponse(definition, tools);
+        AgentsClient client = this.CreateTestAgentsClient(agentName: "test-agent", agentDefinitionResponse: definitionResponse);
+
+        // Act
+        var agent = client.CreateAIAgent("test-agent", definition, tools: tools, requireInvocableTools: true);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.IsType<ChatClientAgent>(agent);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgent with requireInvocableTools=false allows declarative functions.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithRequireInvocableToolsFalse_AllowsDeclarativeFunctions()
+    {
+        // Arrange
+        var definition = new PromptAgentDefinition("test-model") { Instructions = "Test" };
+        AgentsClient client = this.CreateTestAgentsClient(agentName: "test-agent", agentDefinitionResponse: definition);
+
+        // Act - should not throw even without tools when requireInvocableTools is false
+        var agent = client.CreateAIAgent("test-agent", definition, requireInvocableTools: false);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.IsType<ChatClientAgent>(agent);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgent throws ArgumentException when agent definition has tools but none provided as parameter.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithDefinitionToolsButNoToolsParameter_ThrowsArgumentException()
+    {
+        // Arrange
+        AgentsClient client = this.CreateTestAgentsClient();
+        var definition = new PromptAgentDefinition("test-model") { Instructions = "Test" };
+
+        // Add a function tool to the definition to simulate a tool requirement
+        definition.Tools.Add(ResponseTool.CreateFunctionTool("required_tool", BinaryData.FromString("{}"), strictModeEnabled: false));
+
+        // Act & Assert
+        var exception = Assert.Throws<ArgumentException>(() =>
+            client.CreateAIAgent("test-agent", definition, tools: null, requireInvocableTools: true));
 
         Assert.Contains("dedicated tools parameter", exception.Message);
     }
@@ -884,6 +1239,209 @@ public sealed class AgentsClientExtensionsTests
         // Assert
         Assert.NotNull(agent);
         Assert.IsType<ChatClientAgent>(agent);
+    }
+
+    #endregion
+
+    #region Declarative Function Handling Tests
+
+    /// <summary>
+    /// Verify that CreateAIAgent throws InvalidOperationException when provided with non-invocable AIFunctionDeclaration when requireInvocableTools=true.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithDeclarativeFunctionAndRequireInvocableTrue_ThrowsInvalidOperationException()
+    {
+        // Arrange
+        AgentsClient client = this.CreateTestAgentsClient();
+        var definition = new PromptAgentDefinition("test-model") { Instructions = "Test" };
+
+        // Create a declarative function (not invocable) using AIFunctionFactory.CreateDeclaration
+        using var doc = JsonDocument.Parse("{}");
+        var declarativeFunction = AIFunctionFactory.CreateDeclaration("test_function", "A test function", doc.RootElement);
+
+        var tools = new List<AITool> { declarativeFunction };
+
+        // Act & Assert
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            client.CreateAIAgent("test-agent", definition, tools: tools, requireInvocableTools: true));
+
+        Assert.Contains("invokable AIFunctions", exception.Message);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgent accepts declarative functions when requireInvocableTools=false.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithDeclarativeFunctionAndRequireInvocableFalse_AcceptsDeclarativeFunction()
+    {
+        // Arrange
+        var definition = new PromptAgentDefinition("test-model") { Instructions = "Test" };
+
+        // Create a declarative function (not invocable) using AIFunctionFactory.CreateDeclaration
+        using var doc = JsonDocument.Parse("{}");
+        var declarativeFunction = AIFunctionFactory.CreateDeclaration("test_function", "A test function", doc.RootElement);
+
+        var tools = new List<AITool> { declarativeFunction };
+
+        // Generate response with the declarative function
+        var definitionResponse = new PromptAgentDefinition("test-model") { Instructions = "Test" };
+        definitionResponse.Tools.Add(declarativeFunction.AsOpenAIResponseTool() ?? throw new InvalidOperationException());
+
+        AgentsClient client = this.CreateTestAgentsClient(agentName: "test-agent", agentDefinitionResponse: definitionResponse);
+
+        // Act
+        var agent = client.CreateAIAgent("test-agent", definition, tools: tools, requireInvocableTools: false);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.IsType<ChatClientAgent>(agent);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgentAsync throws InvalidOperationException when provided with non-invocable AIFunctionDeclaration when requireInvocableTools=true.
+    /// </summary>
+    [Fact]
+    public async Task CreateAIAgentAsync_WithDeclarativeFunctionAndRequireInvocableTrue_ThrowsInvalidOperationExceptionAsync()
+    {
+        // Arrange
+        AgentsClient client = this.CreateTestAgentsClient();
+        var definition = new PromptAgentDefinition("test-model") { Instructions = "Test" };
+
+        // Create a declarative function (not invocable) using AIFunctionFactory.CreateDeclaration
+        using var doc = JsonDocument.Parse("{}");
+        var declarativeFunction = AIFunctionFactory.CreateDeclaration("test_function", "A test function", doc.RootElement);
+
+        var tools = new List<AITool> { declarativeFunction };
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            client.CreateAIAgentAsync("test-agent", definition, tools: tools, requireInvocableTools: true));
+
+        Assert.Contains("invokable AIFunctions", exception.Message);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgentAsync accepts declarative functions when requireInvocableTools=false.
+    /// </summary>
+    [Fact]
+    public async Task CreateAIAgentAsync_WithDeclarativeFunctionAndRequireInvocableFalse_AcceptsDeclarativeFunctionAsync()
+    {
+        // Arrange
+        var definition = new PromptAgentDefinition("test-model") { Instructions = "Test" };
+
+        // Create a declarative function (not invocable) using AIFunctionFactory.CreateDeclaration
+        using var doc = JsonDocument.Parse("{}");
+        var declarativeFunction = AIFunctionFactory.CreateDeclaration("test_function", "A test function", doc.RootElement);
+
+        var tools = new List<AITool> { declarativeFunction };
+
+        // Generate response with the declarative function
+        var definitionResponse = new PromptAgentDefinition("test-model") { Instructions = "Test" };
+        definitionResponse.Tools.Add(declarativeFunction.AsOpenAIResponseTool() ?? throw new InvalidOperationException());
+
+        AgentsClient client = this.CreateTestAgentsClient(agentName: "test-agent", agentDefinitionResponse: definitionResponse);
+
+        // Act
+        var agent = await client.CreateAIAgentAsync("test-agent", definition, tools: tools, requireInvocableTools: false);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.IsType<ChatClientAgent>(agent);
+    }
+
+    #endregion
+
+    #region Options Generation Validation Tests
+
+    /// <summary>
+    /// Verify that ChatClientAgentOptions are generated correctly with proper tool matching.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_GeneratesCorrectChatClientAgentOptions()
+    {
+        // Arrange
+        var definition = new PromptAgentDefinition("test-model") { Instructions = "Test instructions" };
+        var tools = new List<AITool>
+        {
+            AIFunctionFactory.Create(() => "result", "test_tool", "A test tool")
+        };
+
+        var definitionResponse = GeneratePromptDefinitionResponse(definition, tools);
+        AgentsClient client = this.CreateTestAgentsClient(agentName: "test-agent", agentDefinitionResponse: definitionResponse);
+
+        // Act
+        var agent = client.CreateAIAgent("test-agent", definition, tools: tools);
+
+        // Assert
+        Assert.NotNull(agent);
+        var agentVersion = agent.GetService<AgentVersion>();
+        Assert.NotNull(agentVersion);
+        Assert.Equal("test-agent", agentVersion.Name);
+        Assert.Equal("Test instructions", (agentVersion.Definition as PromptAgentDefinition)?.Instructions);
+    }
+
+    /// <summary>
+    /// Verify that ChatClientAgentOptions preserve custom properties from input options.
+    /// </summary>
+    [Fact]
+    public void GetAIAgent_WithOptions_PreservesCustomProperties()
+    {
+        // Arrange
+        AgentsClient client = this.CreateTestAgentsClient(agentName: "test-agent", instructions: "Custom instructions", description: "Custom description");
+        var options = new ChatClientAgentOptions
+        {
+            Name = "test-agent",
+            Instructions = "Custom instructions",
+            Description = "Custom description"
+        };
+
+        // Act
+        var agent = client.GetAIAgent(options);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("test-agent", agent.Name);
+        Assert.Equal("Custom instructions", agent.Instructions);
+        Assert.Equal("Custom description", agent.Description);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgent with options generates correct ChatClientAgentOptions with tools.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithOptionsAndTools_GeneratesCorrectOptions()
+    {
+        // Arrange
+        var tools = new List<AITool>
+        {
+            AIFunctionFactory.Create(() => "result", "option_tool", "A tool from options")
+        };
+
+        var definitionResponse = GeneratePromptDefinitionResponse(
+            new PromptAgentDefinition("test-model") { Instructions = "Test" },
+            tools);
+
+        AgentsClient client = this.CreateTestAgentsClient(agentName: "test-agent", agentDefinitionResponse: definitionResponse);
+
+        var options = new ChatClientAgentOptions
+        {
+            Name = "test-agent",
+            Instructions = "Test",
+            ChatOptions = new ChatOptions { Tools = tools }
+        };
+
+        // Act
+        var agent = client.CreateAIAgent("test-model", options);
+
+        // Assert
+        Assert.NotNull(agent);
+        var agentVersion = agent.GetService<AgentVersion>();
+        Assert.NotNull(agentVersion);
+        if (agentVersion.Definition is PromptAgentDefinition promptDef)
+        {
+            Assert.NotEmpty(promptDef.Tools);
+            Assert.Single(promptDef.Tools);
+        }
     }
 
     #endregion

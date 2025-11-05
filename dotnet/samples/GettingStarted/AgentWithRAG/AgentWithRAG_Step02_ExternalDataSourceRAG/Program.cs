@@ -72,7 +72,9 @@ AIAgent agent = azureOpenAIClient
     .CreateAIAgent(new ChatClientAgentOptions
     {
         Instructions = "You are a helpful support specialist for the Microsoft Agent Framework. Answer questions using the provided context and cite the source document when available. Keep responses brief.",
-        AIContextProviderFactory = ctx => new TextSearchProvider(SearchAdapter, ctx.SerializedState, ctx.JsonSerializerOptions, textSearchOptions)
+        AIContextProviderFactory = ctx => ctx.SerializedState.ValueKind is not System.Text.Json.JsonValueKind.Null and not System.Text.Json.JsonValueKind.Undefined
+            ? new TextSearchProvider(SearchAdapter, ctx.SerializedState, ctx.JsonSerializerOptions, textSearchOptions)
+            : new TextSearchProvider(SearchAdapter, textSearchOptions)
     });
 
 AgentThread thread = agent.GetNewThread();
