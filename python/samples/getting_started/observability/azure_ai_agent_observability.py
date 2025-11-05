@@ -45,7 +45,7 @@ async def setup_azure_ai_observability(
 ) -> None:
     """Use this method to setup tracing in your Azure AI Project.
 
-    This will take the connection string from the project project_client.
+    This will take the connection string from the AIProjectClient.
     It will override any connection string that is set in the environment variables.
     It will disable any OTLP endpoint that might have been set.
     """
