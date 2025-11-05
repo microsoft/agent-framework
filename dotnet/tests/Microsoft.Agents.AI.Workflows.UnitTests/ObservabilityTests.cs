@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -21,7 +22,7 @@ namespace Microsoft.Agents.AI.Workflows.UnitTests;
 public sealed class ObservabilityTests : IDisposable
 {
     private readonly ActivityListener _activityListener;
-    private readonly List<Activity> _capturedActivities = [];
+    private readonly ConcurrentBag<Activity> _capturedActivities = [];
 
     private bool _isDisposed;
 
@@ -81,6 +82,16 @@ public sealed class ObservabilityTests : IDisposable
         ActivityNames.MessageSend
     ];
 
+    private static Dictionary<string, int> GetExpectedActivityNameCounts() =>
+        new()
+        {
+            { ActivityNames.WorkflowBuild, 1 },
+            { ActivityNames.WorkflowRun, 1 },
+            { ActivityNames.EdgeGroupProcess, 2 },
+            { ActivityNames.ExecutorProcess, 2 },
+            { ActivityNames.MessageSend, 2 }
+        };
+
     private static InProcessExecutionEnvironment GetExecutionEnvironment(string name) =>
         name switch
         {
@@ -118,11 +129,13 @@ public sealed class ObservabilityTests : IDisposable
         var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
         capturedActivities.Should().HaveCount(8, "Exactly 8 activities should be created.");
 
-        var expectedActivityNames = GetExpectedOrderedActivityNames();
-        for (int i = 0; i < expectedActivityNames.Count; i++)
+        // Make sure all expected activities exist and have the correct count
+        foreach (var kvp in GetExpectedActivityNameCounts())
         {
-            capturedActivities[i].OperationName.Should().Be(expectedActivityNames[i],
-                $"Activity at index {i} should have the correct operation name.");
+            var activityName = kvp.Key;
+            var expectedCount = kvp.Value;
+            var actualCount = capturedActivities.Count(a => a.OperationName == activityName);
+            actualCount.Should().Be(expectedCount, $"Activity '{activityName}' should occur {expectedCount} times.");
         }
 
         // Verify WorkflowRun activity events include workflow lifecycle events
