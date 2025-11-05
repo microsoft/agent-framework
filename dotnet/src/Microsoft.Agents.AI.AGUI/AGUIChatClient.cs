@@ -37,10 +37,29 @@ public sealed class AGUIChatClient : DelegatingChatClient
         IServiceProvider? serviceProvider = null) : base(CreateInnerClient(
             httpClient,
             endpoint,
-            jsonSerializerOptions ?? AGUIJsonSerializerContext.Default.Options,
+            CombineJsonSerializerOptions(jsonSerializerOptions),
             loggerFactory,
             serviceProvider))
     {
+    }
+
+    private static JsonSerializerOptions CombineJsonSerializerOptions(JsonSerializerOptions? jsonSerializerOptions)
+    {
+        if (jsonSerializerOptions == null)
+        {
+            return AGUIJsonSerializerContext.Default.Options;
+        }
+
+        // Create a new JsonSerializerOptions based on the provided one
+        var combinedOptions = new JsonSerializerOptions(jsonSerializerOptions);
+        
+        // Add the AGUI context to the type info resolver chain if not already present
+        if (!combinedOptions.TypeInfoResolverChain.Any(r => r == AGUIJsonSerializerContext.Default))
+        {
+            combinedOptions.TypeInfoResolverChain.Insert(0, AGUIJsonSerializerContext.Default);
+        }
+
+        return combinedOptions;
     }
 
     private static FunctionInvokingChatClient CreateInnerClient(
