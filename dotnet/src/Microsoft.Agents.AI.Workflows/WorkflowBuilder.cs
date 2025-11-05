@@ -302,9 +302,9 @@ public class WorkflowBuilder
     /// <param name="source">The source executor from which the fan-out edge originates. Cannot be null.</param>
     /// <param name="targets">One or more target executors that will receive the fan-out edge. Cannot be null or empty.</param>
     /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
-    /// <param name="targetAssigner">An optional function that determines how input is assigned among the target executors.
+    /// <param name="targetSelector">An optional function that determines how input is assigned among the target executors.
     /// If null, messages will route to all targets.</param>
-    public WorkflowBuilder AddFanOutEdge<T>(ExecutorBinding source, IEnumerable<ExecutorBinding> targets, Func<T?, int, IEnumerable<int>>? targetAssigner = null)
+    public WorkflowBuilder AddFanOutEdge<T>(ExecutorBinding source, IEnumerable<ExecutorBinding> targets, Func<T?, int, IEnumerable<int>>? targetSelector = null)
     {
         Throw.IfNull(source);
         Throw.IfNull(targets);
@@ -321,7 +321,7 @@ public class WorkflowBuilder
             this.Track(source).Id,
             sinkIds,
             this.TakeEdgeId(),
-            CreateTargetAssignerFunc(targetAssigner));
+            CreateTargetAssignerFunc(targetSelector));
 
         this.EnsureEdgesFor(source.Id).Add(new(fanOutEdge));
 
