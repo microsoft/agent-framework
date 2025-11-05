@@ -52,7 +52,7 @@ public sealed class AGUIChatClient : DelegatingChatClient
 
         // Create a new JsonSerializerOptions based on the provided one
         var combinedOptions = new JsonSerializerOptions(jsonSerializerOptions);
-        
+
         // Add the AGUI context to the type info resolver chain if not already present
         if (!combinedOptions.TypeInfoResolverChain.Any(r => r == AGUIJsonSerializerContext.Default))
         {
