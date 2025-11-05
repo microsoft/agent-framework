@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
 using System.Net.Http;
 using System.Runtime.CompilerServices;
@@ -59,7 +58,7 @@ public sealed class AGUIChatClient : DelegatingChatClient
 
     /// <inheritdoc />
     public override Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>
-        base.GetStreamingResponseAsync(messages, options, cancellationToken)
+        this.GetStreamingResponseAsync(messages, options, cancellationToken)
             .ToChatResponseAsync(cancellationToken);
 
     /// <inheritdoc />
