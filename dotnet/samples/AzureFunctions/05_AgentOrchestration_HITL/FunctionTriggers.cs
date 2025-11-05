@@ -2,12 +2,13 @@
 
 using System.Net;
 using System.Text.Json;
+using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.DurableTask;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.DurableTask.Client;
 using Microsoft.DurableTask;
-using Microsoft.Agents.AI.DurableTask;
-using Microsoft.Agents.AI;
+using Microsoft.DurableTask.Client;
+using Microsoft.Extensions.Logging;
 
 namespace AgentOrchestration_HITL;
 
@@ -182,22 +183,40 @@ public static class FunctionTriggers
     }
 
     [Function(nameof(NotifyUserForApproval))]
-    public static void NotifyUserForApproval([ActivityTrigger] GeneratedContent content)
+    public static void NotifyUserForApproval(
+        [ActivityTrigger] GeneratedContent content,
+        FunctionContext functionContext)
     {
+        ILogger logger = functionContext.GetLogger(nameof(NotifyUserForApproval));
+
         // In a real implementation, this would send notifications via email, SMS, etc.
-        Console.WriteLine("NOTIFICATION: Please review the following content for approval:");
-        Console.WriteLine($"Title: {content.Title}");
-        Console.WriteLine($"Content: {content.Content}");
-        Console.WriteLine("Use the approval endpoint to approve or reject this content.");
+        logger.LogInformation(
+            """
+            NOTIFICATION: Please review the following content for approval:
+            Title: {Title}
+            Content: {Content}
+            Use the approval endpoint to approve or reject this content.
+            """,
+            content.Title,
+            content.Content);
     }
 
     [Function(nameof(PublishContent))]
-    public static void PublishContent([ActivityTrigger] GeneratedContent content)
+    public static void PublishContent(
+        [ActivityTrigger] GeneratedContent content,
+        FunctionContext functionContext)
     {
+        ILogger logger = functionContext.GetLogger(nameof(PublishContent));
+
         // In a real implementation, this would publish to a CMS, website, etc.
-        Console.WriteLine("PUBLISHING: Content has been published successfully:");
-        Console.WriteLine($"Title: {content.Title}");
-        Console.WriteLine($"Content: {content.Content}");
+        logger.LogInformation(
+            """
+            PUBLISHING: Content has been published successfully.
+            Title: {Title}
+            Content: {Content}
+            """,
+            content.Title,
+            content.Content);
     }
 
     private static string GetStatusQueryGetUri(HttpRequestData req, string instanceId)

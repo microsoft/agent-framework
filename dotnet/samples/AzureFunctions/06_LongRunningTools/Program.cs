@@ -3,15 +3,15 @@
 using Azure;
 using Azure.AI.OpenAI;
 using Azure.Identity;
+using LongRunningTools;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hosting.AzureFunctions;
 using Microsoft.Azure.Functions.Worker.Builder;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.AI;
-using OpenAI;
-using LongRunningTools;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using OpenAI;
 
 // Get the Azure OpenAI endpoint and deployment name from environment variables.
 string endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
@@ -25,7 +25,7 @@ AzureOpenAIClient client = !string.IsNullOrEmpty(azureOpenAiKey)
     ? new AzureOpenAIClient(new Uri(endpoint), new AzureKeyCredential(azureOpenAiKey))
     : new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential());
 
-// Single agent used by the orchestration to demonstrate human-in-the-loop workflow.
+// Agent used by the orchestration to write content.
 const string WriterAgentName = "Writer";
 const string WriterAgentInstructions =
     """
@@ -35,7 +35,7 @@ const string WriterAgentInstructions =
 
 AIAgent writerAgent = client.GetChatClient(deploymentName).CreateAIAgent(WriterAgentInstructions, WriterAgentName);
 
-// Agent that can start orchestrations using tools
+// Agent that can start content generation workflows using tools
 const string PublisherAgentName = "Publisher";
 const string PublisherAgentInstructions =
     """

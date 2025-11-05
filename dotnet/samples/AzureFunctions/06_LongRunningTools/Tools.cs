@@ -1,9 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Microsoft.Extensions.Logging;
+using System.ComponentModel;
 using Microsoft.Agents.AI.DurableTask;
 using Microsoft.DurableTask.Client;
-using System.ComponentModel;
+using Microsoft.Extensions.Logging;
 
 namespace LongRunningTools;
 

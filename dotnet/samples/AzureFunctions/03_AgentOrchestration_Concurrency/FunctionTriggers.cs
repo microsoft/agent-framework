@@ -2,12 +2,12 @@
 
 using System.Net;
 using System.Text.Json;
+using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.DurableTask;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
-using Microsoft.DurableTask.Client;
 using Microsoft.DurableTask;
-using Microsoft.Agents.AI.DurableTask;
-using Microsoft.Agents.AI;
+using Microsoft.DurableTask.Client;
 
 namespace AgentOrchestration_Concurrency;
 

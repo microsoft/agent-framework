@@ -1,9 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.DurableTask;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.DurableTask;
-using Microsoft.Agents.AI.DurableTask;
 using Microsoft.Extensions.Logging;
 
 namespace LongRunningTools;
@@ -117,7 +117,7 @@ public static class FunctionTriggers
         [ActivityTrigger] GeneratedContent content,
         FunctionContext functionContext)
     {
-        ILogger logger = functionContext.GetLogger("NotifyUserForApproval");
+        ILogger logger = functionContext.GetLogger(nameof(NotifyUserForApproval));
 
         // In a real implementation, this would send notifications via email, SMS, etc.
         logger.LogInformation(
@@ -136,7 +136,7 @@ public static class FunctionTriggers
         [ActivityTrigger] GeneratedContent content,
         FunctionContext functionContext)
     {
-        ILogger logger = functionContext.GetLogger("PublishContent");
+        ILogger logger = functionContext.GetLogger(nameof(PublishContent));
 
         // In a real implementation, this would publish to a CMS, website, etc.
         logger.LogInformation(
