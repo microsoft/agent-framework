@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk.Web">
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
     <TargetFrameworks>$(ProjectsCoreTargetFrameworks)</TargetFrameworks>
@@ -8,8 +8,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" VersionOverride="8.0.21" Condition="'$(TargetFramework)' == 'net8.0'" />
-    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Condition="'$(TargetFramework)' != 'net8.0'" />
+    <PackageReference Include="Microsoft.AspNetCore.TestHost" VersionOverride="8.0.21" Condition="'$(TargetFramework)' == 'net8.0'" />
+    <PackageReference Include="Microsoft.AspNetCore.TestHost" Condition="'$(TargetFramework)' != 'net8.0'" />
     <PackageReference Include="OpenAI" />
     <PackageReference Include="System.Net.ServerSentEvents" VersionOverride="10.0.0-rc.2.25502.107" />
     <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" VersionOverride="10.0.0-rc.2.25502.107" />
@@ -25,6 +25,18 @@
     <None Include="ConformanceTraces\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Remove="ConformanceTraces\ChatCompletions\function_calling\request.json" />
+    <Content Remove="ConformanceTraces\ChatCompletions\function_calling\response.json" />
+    <Content Remove="ConformanceTraces\ChatCompletions\json_mode\request.json" />
+    <Content Remove="ConformanceTraces\ChatCompletions\json_mode\response.json" />
+    <Content Remove="ConformanceTraces\ChatCompletions\multi_turn\request.json" />
+    <Content Remove="ConformanceTraces\ChatCompletions\multi_turn\response.json" />
+    <Content Remove="ConformanceTraces\ChatCompletions\streaming\request.json" />
+    <Content Remove="ConformanceTraces\ChatCompletions\system_message\request.json" />
+    <Content Remove="ConformanceTraces\ChatCompletions\system_message\response.json" />
   </ItemGroup>
 
 </Project>
