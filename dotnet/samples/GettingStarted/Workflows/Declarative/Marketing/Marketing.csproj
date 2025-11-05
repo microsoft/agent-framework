@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -7,12 +7,11 @@
     <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugTargetFrameworks)</TargetFrameworks>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <NoWarn>$(NoWarn);CA1812</NoWarn>
   </PropertyGroup>
 
   <PropertyGroup>
-    <InjectSharedThrow>true</InjectSharedThrow>
-    <InjectSharedWorkflowsSample>true</InjectSharedWorkflowsSample>
+    <InjectSharedFoundryAgents>true</InjectSharedFoundryAgents>
+    <InjectSharedWorkflowsSettings>true</InjectSharedWorkflowsSettings>
   </PropertyGroup>
 
   <ItemGroup>

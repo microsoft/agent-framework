@@ -4,21 +4,12 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Azure.AI.Agents.Persistent;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 
 internal static class AgentProviderExtensions
 {
-    private static readonly HashSet<Azure.AI.Agents.Persistent.RunStatus> s_failureStatus =
-        [
-            Azure.AI.Agents.Persistent.RunStatus.Failed,
-            Azure.AI.Agents.Persistent.RunStatus.Cancelled,
-            Azure.AI.Agents.Persistent.RunStatus.Cancelling,
-            Azure.AI.Agents.Persistent.RunStatus.Expired,
-        ];
-
     public static async ValueTask<AgentRunResponse> InvokeAgentAsync(
         this WorkflowAgentProvider agentProvider,
         string executorId,
@@ -29,22 +20,7 @@ internal static class AgentProviderExtensions
         IEnumerable<ChatMessage>? inputMessages = null,
         CancellationToken cancellationToken = default)
     {
-        // Get the specified agent.
-        AIAgent agent = await agentProvider.GetAgentAsync(agentName, cancellationToken).ConfigureAwait(false);
-
-        // Prepare the run options.
-        ChatClientAgentRunOptions options =
-            new(
-                new ChatOptions()
-                {
-                    ConversationId = conversationId,
-                });
-
-        // Initialize the agent thread.
-        IAsyncEnumerable<AgentRunResponseUpdate> agentUpdates =
-            inputMessages is not null ?
-                agent.RunStreamingAsync([.. inputMessages], null, options, cancellationToken) :
-                agent.RunStreamingAsync(null, options, cancellationToken);
+        IAsyncEnumerable<AgentRunResponseUpdate> agentUpdates = agentProvider.InvokeAgentAsync(agentName, null, conversationId, inputMessages, cancellationToken);
 
         // Enable "autoSend" behavior if this is the workflow conversation.
         bool isWorkflowConversation = context.IsWorkflowConversation(conversationId, out string? workflowConversationId);
@@ -58,12 +34,12 @@ internal static class AgentProviderExtensions
 
             updates.Add(update);
 
-            if (update.RawRepresentation is ChatResponseUpdate chatUpdate &&
-                chatUpdate.RawRepresentation is RunUpdate runUpdate &&
-                s_failureStatus.Contains(runUpdate.Value.Status))
-            {
-                throw new DeclarativeActionException($"Unexpected failure invoking agent, run {runUpdate.Value.Status}: {agent.Name ?? agent.Id} [{runUpdate.Value.Id}/{conversationId}]");
-            }
+            //if (update.RawRepresentation is ChatResponseUpdate chatUpdate && // %%% VALIDATE
+            //    chatUpdate.RawRepresentation is RunUpdate runUpdate &&
+            //    s_failureStatus.Contains(runUpdate.Value.Status))
+            //{
+            //    throw new DeclarativeActionException($"Unexpected failure invoking agent, run {runUpdate.Value.Status}: {agent.Name ?? agent.Id} [{runUpdate.Value.Id}/{conversationId}]");
+            //}
 
             if (autoSend)
             {
@@ -89,6 +65,7 @@ internal static class AgentProviderExtensions
                         !message.Contents.OfType<FunctionResultContent>().Any());
             foreach (ChatMessage message in messages)
             {
+                // %%% NOTE: Copy message by ID - Agent Provider
                 await agentProvider.CreateMessageAsync(workflowConversationId, message, cancellationToken).ConfigureAwait(false);
             }
         }

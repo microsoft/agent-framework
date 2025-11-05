@@ -27,13 +27,13 @@ namespace Microsoft.Agents.AI.Workflows.Declarative;
 public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential projectCredentials, HttpClient? httpClient = null) : WorkflowAgentProvider
 {
     private AgentsClient? _agentsClient;
+    private ConversationClient? _conversationClient;
 
     /// <inheritdoc/>
     public override async Task<string> CreateConversationAsync(CancellationToken cancellationToken = default)
     {
         AgentConversation conversation =
-            await this.GetAgentsClient()
-                .GetConversationClient()
+            await this.GetConversationClient()
                 .CreateConversationAsync(options: null, cancellationToken).ConfigureAwait(false);
 
         return conversation.Id;
@@ -42,34 +42,97 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
     /// <inheritdoc/>
     public override async Task<ChatMessage> CreateMessageAsync(string conversationId, ChatMessage conversationMessage, CancellationToken cancellationToken = default)
     {
-        ChatMessage[] messages = [conversationMessage];
-
         ReadOnlyCollection<ResponseItem> newItems =
-            await this.GetAgentsClient().GetConversationClient().CreateConversationItemsAsync(
+            await this.GetConversationClient().CreateConversationItemsAsync(
                 conversationId,
-                items: messages.AsOpenAIResponseItems(),
+                items: GetResponseItems(),
                 include: null,
                 cancellationToken).ConfigureAwait(false);
 
-        return newItems.AsChatMessages().Single(); // %%% BROKE ASSUMPTION - CARDINALITY
+        return newItems.AsChatMessages().Single();
+
+        IEnumerable<ResponseItem> GetResponseItems()
+        {
+            IEnumerable<ChatMessage> messages = [conversationMessage];
+
+            foreach (ResponseItem item in messages.AsOpenAIResponseItems())
+            {
+                if (string.IsNullOrEmpty(item.Id))
+                {
+                    yield return item;
+                }
+                else
+                {
+                    yield return new ReferenceResponseItem(item.Id);
+                }
+            }
+        }
     }
 
     /// <inheritdoc/>
-    public override async Task<AIAgent> GetAgentAsync(string agentId, CancellationToken cancellationToken = default)
+    public override async IAsyncEnumerable<AgentRunResponseUpdate> InvokeAgentAsync(
+        string agentId,
+        string? agentVersion,
+        string? conversationId,
+        IEnumerable<ChatMessage>? messages,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        AgentsClient client = this.GetAgentsClient();
-        AgentRecord agentRecord =
-            await client.GetAgentAsync(
-                agentId,
-                cancellationToken).ConfigureAwait(false);
+        AgentVersion agentDefinition = await this.QueryAgentAsync(agentId, agentVersion, cancellationToken).ConfigureAwait(false);
+        AIAgent agent = await this.GetAgentAsync(agentDefinition, cancellationToken).ConfigureAwait(false);
 
-        ChatOptions options =
+        ChatOptions chatOptions =
             new()
             {
+                ConversationId = conversationId,
                 AllowMultipleToolCalls = this.AllowMultipleToolCalls,
             };
 
-        AIAgent agent = client.GetAIAgent(agentRecord, options, clientFactory: null, openAIClientOptions: null, cancellationToken);
+        ChatClientAgentRunOptions runOptions = new(chatOptions);
+
+        IAsyncEnumerable<AgentRunResponseUpdate> agentResponse =
+            messages is not null ?
+                agent.RunStreamingAsync([.. messages], null, runOptions, cancellationToken) :
+                agent.RunStreamingAsync([new ChatMessage(ChatRole.User, string.Empty)], null, runOptions, cancellationToken);
+
+        await foreach (AgentRunResponseUpdate update in agentResponse.ConfigureAwait(false))
+        {
+            update.AuthorName = agentDefinition.Name;
+            yield return update;
+        }
+    }
+
+    /// <inheritdoc/>
+    private async Task<AgentVersion> QueryAgentAsync(string agentName, string? agentVersion, CancellationToken cancellationToken = default)
+    {
+        AgentsClient client = this.GetAgentsClient();
+
+        AgentVersion targetAgent;
+        if (string.IsNullOrEmpty(agentVersion))
+        {
+            AgentRecord agentRecord =
+                await client.GetAgentAsync(
+                    agentName,
+                    cancellationToken).ConfigureAwait(false);
+
+            targetAgent = agentRecord.Versions.Latest;
+        }
+        else
+        {
+            targetAgent =
+                await client.GetAgentVersionAsync(
+                    agentName,
+                    agentVersion,
+                    cancellationToken).ConfigureAwait(false);
+        }
+
+        return targetAgent;
+    }
+
+    private async Task<AIAgent> GetAgentAsync(AgentVersion agentDefinition, CancellationToken cancellationToken = default)
+    {
+        AgentsClient client = this.GetAgentsClient();
+
+        AIAgent agent = client.GetAIAgent(agentDefinition, tools: null, clientFactory: null, openAIClientOptions: null, cancellationToken);
 
         FunctionInvokingChatClient? functionInvokingClient = agent.GetService<FunctionInvokingChatClient>();
         if (functionInvokingClient is not null)
@@ -98,9 +161,9 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
     /// <inheritdoc/>
     public override async Task<ChatMessage> GetMessageAsync(string conversationId, string messageId, CancellationToken cancellationToken = default)
     {
-        AgentResponseItem responseItem = await this.GetAgentsClient().GetConversationClient().GetConversationItemAsync(conversationId, messageId, cancellationToken).ConfigureAwait(false);
+        AgentResponseItem responseItem = await this.GetConversationClient().GetConversationItemAsync(conversationId, messageId, cancellationToken).ConfigureAwait(false);
         ResponseItem[] items = [responseItem.AsOpenAIResponseItem()];
-        return items.AsChatMessages().Single(); // %%% BROKE ASSUMPTION - CARDINALITY
+        return items.AsChatMessages().Single();
     }
 
     /// <inheritdoc/>
@@ -113,7 +176,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         AgentsListOrder order = newestFirst ? AgentsListOrder.Asc : AgentsListOrder.Desc;
-        await foreach (AgentResponseItem responseItem in this.GetAgentsClient().GetConversationClient().GetConversationItemsAsync(conversationId, limit, order, after, before, itemType: null, cancellationToken).ConfigureAwait(false))
+        await foreach (AgentResponseItem responseItem in this.GetConversationClient().GetConversationItemsAsync(conversationId, limit, order, after, before, itemType: null, cancellationToken).ConfigureAwait(false))
         {
             ResponseItem[] items = [responseItem.AsOpenAIResponseItem()];
             foreach (ChatMessage message in items.AsChatMessages())
@@ -140,5 +203,17 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
         }
 
         return this._agentsClient;
+    }
+
+    private ConversationClient GetConversationClient()
+    {
+        if (this._conversationClient is null)
+        {
+            ConversationClient conversationClient = this.GetAgentsClient().GetConversationClient();
+
+            Interlocked.CompareExchange(ref this._conversationClient, conversationClient, null);
+        }
+
+        return this._conversationClient;
     }
 }

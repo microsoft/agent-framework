@@ -6,6 +6,7 @@
 using System.Diagnostics;
 using System.Reflection;
 using System.Text.Json;
+using Azure.AI.Agents.Persistent;
 using Azure.Identity;
 using Microsoft.Agents.AI.Workflows;
 #if CHECKPOINT_JSON
@@ -16,7 +17,6 @@ using Microsoft.Agents.AI.Workflows.Declarative.Events;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
-using OpenAI.Responses;
 
 namespace Demo.DeclarativeWorkflow;
 
@@ -122,14 +122,19 @@ internal sealed class Program
     /// </remarks>
     private Workflow CreateWorkflow()
     {
-        // Create the agent provider that will service agent requests within the workflow.
-        AzureAgentProvider agentProvider = new(new Uri(this.FoundryEndpoint), new AzureCliCredential())
+        // Use DeclarativeWorkflowBuilder to build a workflow based on a YAML file.
+        //AzurePersistentAgentProvider agentProvider = new(new Uri(this.FoundryEndpoint), new AzureCliCredential())
+        //{
+        //    // Functions included here will be auto-executed by the framework.
+        //    Functions = IncludeFunctions ? this.FunctionMap.Values : null,
+        //};
+
+        AzurePersistentAgentProvider agentProvider = new(new Uri(this.FoundryEndpoint), new AzureCliCredential())
         {
             // Functions included here will be auto-executed by the framework.
             Functions = IncludeFunctions ? this.FunctionMap.Values : null,
         };
 
-        // Define the workflow options.
         DeclarativeWorkflowOptions options =
             new(agentProvider)
             {
@@ -138,7 +143,6 @@ internal sealed class Program
                 //LoggerFactory = null, // Assign to enable logging
             };
 
-        // Use DeclarativeWorkflowBuilder to build a workflow based on a YAML file.
         return DeclarativeWorkflowBuilder.Build<string>(this.WorkflowFile, options);
     }
 
@@ -154,9 +158,13 @@ internal sealed class Program
     /// </summary>
     private const bool IncludeFunctions = true;
 
+    private static Dictionary<string, string> NameCache { get; } = [];
+    private static HashSet<string> FileCache { get; } = [];
+
     private string WorkflowFile { get; }
     private string? WorkflowInput { get; }
     private string FoundryEndpoint { get; }
+    private PersistentAgentsClient FoundryClient { get; }
     private IConfiguration Configuration { get; }
     private CheckpointInfo? LastCheckpoint { get; set; }
     private Dictionary<string, AIFunction> FunctionMap { get; }
@@ -169,6 +177,7 @@ internal sealed class Program
         this.Configuration = InitializeConfig();
 
         this.FoundryEndpoint = this.Configuration[ConfigKeyFoundryEndpoint] ?? throw new InvalidOperationException($"Undefined configuration setting: {ConfigKeyFoundryEndpoint}");
+        this.FoundryClient = new PersistentAgentsClient(this.FoundryEndpoint, new AzureCliCredential());
 
         List<AIFunction> functions =
             [
@@ -252,9 +261,20 @@ internal sealed class Program
 
                         if (messageId is not null)
                         {
-                            string? agentName = streamEvent.Update.AuthorName ?? streamEvent.Update.AgentId ?? nameof(ChatRole.Assistant);
+                            string? agentId = streamEvent.Update.AgentId;
+                            if (agentId is not null)
+                            {
+                                if (!NameCache.TryGetValue(agentId, out string? realName))
+                                {
+                                    PersistentAgent agent = await this.FoundryClient.Administration.GetAgentAsync(agentId);
+                                    NameCache[agentId] = agent.Name;
+                                    realName = agent.Name;
+                                }
+                                agentId = realName;
+                            }
+                            agentId ??= nameof(ChatRole.Assistant);
                             Console.ForegroundColor = ConsoleColor.Cyan;
-                            Console.Write($"\n{agentName.ToUpperInvariant()}:");
+                            Console.Write($"\n{agentId.ToUpperInvariant()}:");
                             Console.ForegroundColor = ConsoleColor.DarkGray;
                             Console.WriteLine($" [{messageId}]");
                         }
@@ -263,22 +283,19 @@ internal sealed class Program
                     ChatResponseUpdate? chatUpdate = streamEvent.Update.RawRepresentation as ChatResponseUpdate;
                     switch (chatUpdate?.RawRepresentation)
                     {
-                        case ImageGenerationCallResponseItem messageUpdate:
-                            await DownloadFileContentAsync(Path.GetFileName("response.png"), messageUpdate.ImageResultBytes);
+                        case MessageContentUpdate messageUpdate:
+                            string? fileId = messageUpdate.ImageFileId ?? messageUpdate.TextAnnotation?.OutputFileId;
+                            if (fileId is not null && FileCache.Add(fileId))
+                            {
+                                BinaryData content = await this.FoundryClient.Files.GetFileContentAsync(fileId);
+                                await DownloadFileContentAsync(Path.GetFileName(messageUpdate.TextAnnotation?.TextToReplace ?? "response.png"), content);
+                            }
                             break;
-
-                        case FunctionCallResponseItem actionUpdate:
+                        case RequiredActionUpdate actionUpdate:
                             Console.ForegroundColor = ConsoleColor.White;
                             Console.Write($"Calling tool: {actionUpdate.FunctionName}");
                             Console.ForegroundColor = ConsoleColor.DarkGray;
-                            Console.WriteLine($" [{actionUpdate.CallId}]");
-                            break;
-
-                        case McpToolCallItem actionUpdate:
-                            Console.ForegroundColor = ConsoleColor.White;
-                            Console.Write($"Calling tool: {actionUpdate.ToolName}");
-                            Console.ForegroundColor = ConsoleColor.DarkGray;
-                            Console.WriteLine($" [{actionUpdate.Id}]");
+                            Console.WriteLine($" [{actionUpdate.ToolCallId}]");
                             break;
                     }
                     try
@@ -385,7 +402,7 @@ internal sealed class Program
 
         IEnumerable<UserInputResponseContent> ProcessRequests()
         {
-            foreach (UserInputRequestContent approvalRequest in request.InputRequests.OfType<UserInputRequestContent>())
+            foreach (UserInputRequestContent approvalRequest in request.InputRequests)
             {
                 // Here we are explicitly approving all requests.
                 // In a real-world scenario, you would replace this logic to either solicit user approval or implement a more complex approval process.
