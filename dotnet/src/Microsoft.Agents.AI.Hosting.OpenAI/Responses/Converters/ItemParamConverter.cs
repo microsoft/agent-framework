@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Text.Json;
@@ -23,28 +23,27 @@ internal sealed class ItemParamConverter : JsonConverter<ItemParam>
         }
 
         var type = typeElement.GetString();
-        var jsonText = root.GetRawText();
 
         // Use OpenAIJsonContext directly since it has all the ItemParam type metadata
         return type switch
         {
-            "message" => JsonSerializer.Deserialize(jsonText, OpenAIHostingJsonContext.Default.ResponsesMessageItemParam),
-            "function_call" => JsonSerializer.Deserialize(jsonText, OpenAIHostingJsonContext.Default.FunctionToolCallItemParam),
-            "function_call_output" => JsonSerializer.Deserialize(jsonText, OpenAIHostingJsonContext.Default.FunctionToolCallOutputItemParam),
-            "file_search_call" => JsonSerializer.Deserialize(jsonText, OpenAIHostingJsonContext.Default.FileSearchToolCallItemParam),
-            "computer_call" => JsonSerializer.Deserialize(jsonText, OpenAIHostingJsonContext.Default.ComputerToolCallItemParam),
-            "computer_call_output" => JsonSerializer.Deserialize(jsonText, OpenAIHostingJsonContext.Default.ComputerToolCallOutputItemParam),
-            "web_search_call" => JsonSerializer.Deserialize(jsonText, OpenAIHostingJsonContext.Default.WebSearchToolCallItemParam),
-            "reasoning" => JsonSerializer.Deserialize(jsonText, OpenAIHostingJsonContext.Default.ReasoningItemParam),
-            "item_reference" => JsonSerializer.Deserialize(jsonText, OpenAIHostingJsonContext.Default.ItemReferenceItemParam),
-            "image_generation_call" => JsonSerializer.Deserialize(jsonText, OpenAIHostingJsonContext.Default.ImageGenerationToolCallItemParam),
-            "code_interpreter_call" => JsonSerializer.Deserialize(jsonText, OpenAIHostingJsonContext.Default.CodeInterpreterToolCallItemParam),
-            "local_shell_call" => JsonSerializer.Deserialize(jsonText, OpenAIHostingJsonContext.Default.LocalShellToolCallItemParam),
-            "local_shell_call_output" => JsonSerializer.Deserialize(jsonText, OpenAIHostingJsonContext.Default.LocalShellToolCallOutputItemParam),
-            "mcp_list_tools" => JsonSerializer.Deserialize(jsonText, OpenAIHostingJsonContext.Default.MCPListToolsItemParam),
-            "mcp_approval_request" => JsonSerializer.Deserialize(jsonText, OpenAIHostingJsonContext.Default.MCPApprovalRequestItemParam),
-            "mcp_approval_response" => JsonSerializer.Deserialize(jsonText, OpenAIHostingJsonContext.Default.MCPApprovalResponseItemParam),
-            "mcp_call" => JsonSerializer.Deserialize(jsonText, OpenAIHostingJsonContext.Default.MCPCallItemParam),
+            "message" => doc.Deserialize(OpenAIHostingJsonContext.Default.ResponsesMessageItemParam),
+            "function_call" => doc.Deserialize(OpenAIHostingJsonContext.Default.FunctionToolCallItemParam),
+            "function_call_output" => doc.Deserialize(OpenAIHostingJsonContext.Default.FunctionToolCallOutputItemParam),
+            "file_search_call" => doc.Deserialize(OpenAIHostingJsonContext.Default.FileSearchToolCallItemParam),
+            "computer_call" => doc.Deserialize(OpenAIHostingJsonContext.Default.ComputerToolCallItemParam),
+            "computer_call_output" => doc.Deserialize(OpenAIHostingJsonContext.Default.ComputerToolCallOutputItemParam),
+            "web_search_call" => doc.Deserialize(OpenAIHostingJsonContext.Default.WebSearchToolCallItemParam),
+            "reasoning" => doc.Deserialize(OpenAIHostingJsonContext.Default.ReasoningItemParam),
+            "item_reference" => doc.Deserialize(OpenAIHostingJsonContext.Default.ItemReferenceItemParam),
+            "image_generation_call" => doc.Deserialize(OpenAIHostingJsonContext.Default.ImageGenerationToolCallItemParam),
+            "code_interpreter_call" => doc.Deserialize(OpenAIHostingJsonContext.Default.CodeInterpreterToolCallItemParam),
+            "local_shell_call" => doc.Deserialize(OpenAIHostingJsonContext.Default.LocalShellToolCallItemParam),
+            "local_shell_call_output" => doc.Deserialize(OpenAIHostingJsonContext.Default.LocalShellToolCallOutputItemParam),
+            "mcp_list_tools" => doc.Deserialize(OpenAIHostingJsonContext.Default.MCPListToolsItemParam),
+            "mcp_approval_request" => doc.Deserialize(OpenAIHostingJsonContext.Default.MCPApprovalRequestItemParam),
+            "mcp_approval_response" => doc.Deserialize(OpenAIHostingJsonContext.Default.MCPApprovalResponseItemParam),
+            "mcp_call" => doc.Deserialize(OpenAIHostingJsonContext.Default.MCPCallItemParam),
             _ => null // Ignore unknown types.
         };
     }

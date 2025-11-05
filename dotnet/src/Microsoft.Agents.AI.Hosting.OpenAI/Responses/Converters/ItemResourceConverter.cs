@@ -15,71 +15,36 @@ internal sealed class ItemResourceConverter : JsonConverter<ItemResource>
     /// <inheritdoc/>
     public override ItemResource? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
-        // Clone the reader to peek at the JSON
-        Utf8JsonReader readerClone = reader;
+        using var doc = JsonDocument.ParseValue(ref reader);
+        var root = doc.RootElement;
 
-        // Read through the JSON to find the type property
-        string? type = null;
-
-        if (readerClone.TokenType != JsonTokenType.StartObject)
+        if (!root.TryGetProperty("type", out var typeElement))
         {
-            throw new JsonException("Expected start of object");
+            throw new JsonException("ItemResource must have a 'type' property");
         }
 
-        while (readerClone.Read())
-        {
-            if (readerClone.TokenType == JsonTokenType.EndObject)
-            {
-                break;
-            }
-
-            if (readerClone.TokenType == JsonTokenType.PropertyName)
-            {
-                string propertyName = readerClone.GetString()!;
-                readerClone.Read(); // Move to the value
-
-                if (propertyName == "type")
-                {
-                    type = readerClone.GetString();
-                    break;
-                }
-
-                if (readerClone.TokenType is JsonTokenType.StartObject or JsonTokenType.StartArray)
-                {
-                    // The Utf8JsonReader.Skip() method will fail fast if it detects that we're reading
-                    // from a partially read buffer, regardless of whether the next value is available.
-                    // This can result in erroneous failures in cases where a custom converter is calling
-                    // into a built-in converter (cf. https://github.com/dotnet/runtime/issues/74108).
-                    // For this reason we need to call the TrySkip() method instead -- the serializer
-                    // should guarantee sufficient read-ahead has been performed for the current object.
-                    if (!readerClone.TrySkip())
-                    {
-                        throw new InvalidOperationException("Failed to skip nested JSON value. Serializer should guarantee sufficient read-ahead has been done.");
-                    }
-                }
-            }
-        }
+        var type = typeElement.GetString();
 
         // Determine the concrete type based on the type discriminator and deserialize using the source generation context
         return type switch
         {
-            ResponsesMessageItemResource.ItemType => JsonSerializer.Deserialize(ref reader, OpenAIHostingJsonContext.Default.ResponsesMessageItemResource),
-            FileSearchToolCallItemResource.ItemType => JsonSerializer.Deserialize(ref reader, OpenAIHostingJsonContext.Default.FileSearchToolCallItemResource),
-            FunctionToolCallItemResource.ItemType => JsonSerializer.Deserialize(ref reader, OpenAIHostingJsonContext.Default.FunctionToolCallItemResource),
-            FunctionToolCallOutputItemResource.ItemType => JsonSerializer.Deserialize(ref reader, OpenAIHostingJsonContext.Default.FunctionToolCallOutputItemResource),
-            ComputerToolCallItemResource.ItemType => JsonSerializer.Deserialize(ref reader, OpenAIHostingJsonContext.Default.ComputerToolCallItemResource),
-            ComputerToolCallOutputItemResource.ItemType => JsonSerializer.Deserialize(ref reader, OpenAIHostingJsonContext.Default.ComputerToolCallOutputItemResource),
-            WebSearchToolCallItemResource.ItemType => JsonSerializer.Deserialize(ref reader, OpenAIHostingJsonContext.Default.WebSearchToolCallItemResource),
-            ReasoningItemResource.ItemType => JsonSerializer.Deserialize(ref reader, OpenAIHostingJsonContext.Default.ReasoningItemResource),
-            ItemReferenceItemResource.ItemType => JsonSerializer.Deserialize(ref reader, OpenAIHostingJsonContext.Default.ItemReferenceItemResource),
-            ImageGenerationToolCallItemResource.ItemType => JsonSerializer.Deserialize(ref reader, OpenAIHostingJsonContext.Default.ImageGenerationToolCallItemResource),
-            CodeInterpreterToolCallItemResource.ItemType => JsonSerializer.Deserialize(ref reader, OpenAIHostingJsonContext.Default.CodeInterpreterToolCallItemResource),
-            LocalShellToolCallItemResource.ItemType => JsonSerializer.Deserialize(ref reader, OpenAIHostingJsonContext.Default.LocalShellToolCallItemResource),
-            LocalShellToolCallOutputItemResource.ItemType => JsonSerializer.Deserialize(ref reader, OpenAIHostingJsonContext.Default.LocalShellToolCallOutputItemResource),
-            MCPListToolsItemResource.ItemType => JsonSerializer.Deserialize(ref reader, OpenAIHostingJsonContext.Default.MCPListToolsItemResource),
-            MCPApprovalRequestItemResource.ItemType => JsonSerializer.Deserialize(ref reader, OpenAIHostingJsonContext.Default.MCPApprovalRequestItemResource),
-            MCPApprovalResponseItemResource.ItemType => JsonSerializer.Deserialize(ref reader, OpenAIHostingJsonContext.Default.MCPApprovalResponseItemResource),
-            MCPCallItemResource.ItemType => JsonSerializer.Deserialize(ref reader, OpenAIHostingJsonContext.Default.MCPCallItemResource),
+            ResponsesMessageItemResource.ItemType => doc.Deserialize(OpenAIHostingJsonContext.Default.ResponsesMessageItemResource),
+            FileSearchToolCallItemResource.ItemType => doc.Deserialize(OpenAIHostingJsonContext.Default.FileSearchToolCallItemResource),
+            FunctionToolCallItemResource.ItemType => doc.Deserialize(OpenAIHostingJsonContext.Default.FunctionToolCallItemResource),
+            FunctionToolCallOutputItemResource.ItemType => doc.Deserialize(OpenAIHostingJsonContext.Default.FunctionToolCallOutputItemResource),
+            ComputerToolCallItemResource.ItemType => doc.Deserialize(OpenAIHostingJsonContext.Default.ComputerToolCallItemResource),
+            ComputerToolCallOutputItemResource.ItemType => doc.Deserialize(OpenAIHostingJsonContext.Default.ComputerToolCallOutputItemResource),
+            WebSearchToolCallItemResource.ItemType => doc.Deserialize(OpenAIHostingJsonContext.Default.WebSearchToolCallItemResource),
+            ReasoningItemResource.ItemType => doc.Deserialize(OpenAIHostingJsonContext.Default.ReasoningItemResource),
+            ItemReferenceItemResource.ItemType => doc.Deserialize(OpenAIHostingJsonContext.Default.ItemReferenceItemResource),
+            ImageGenerationToolCallItemResource.ItemType => doc.Deserialize(OpenAIHostingJsonContext.Default.ImageGenerationToolCallItemResource),
+            CodeInterpreterToolCallItemResource.ItemType => doc.Deserialize(OpenAIHostingJsonContext.Default.CodeInterpreterToolCallItemResource),
+            LocalShellToolCallItemResource.ItemType => doc.Deserialize(OpenAIHostingJsonContext.Default.LocalShellToolCallItemResource),
+            LocalShellToolCallOutputItemResource.ItemType => doc.Deserialize(OpenAIHostingJsonContext.Default.LocalShellToolCallOutputItemResource),
+            MCPListToolsItemResource.ItemType => doc.Deserialize(OpenAIHostingJsonContext.Default.MCPListToolsItemResource),
+            MCPApprovalRequestItemResource.ItemType => doc.Deserialize(OpenAIHostingJsonContext.Default.MCPApprovalRequestItemResource),
+            MCPApprovalResponseItemResource.ItemType => doc.Deserialize(OpenAIHostingJsonContext.Default.MCPApprovalResponseItemResource),
+            MCPCallItemResource.ItemType => doc.Deserialize(OpenAIHostingJsonContext.Default.MCPCallItemResource),
             _ => null
         };
     }

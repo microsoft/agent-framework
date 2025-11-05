@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Text.Json;
@@ -27,10 +27,10 @@ internal sealed class ResponsesMessageItemParamConverter : JsonConverter<Respons
 
         return role switch
         {
-            "user" => JsonSerializer.Deserialize(root.GetRawText(), OpenAIHostingJsonContext.Default.ResponsesUserMessageItemParam),
-            "assistant" => JsonSerializer.Deserialize(root.GetRawText(), OpenAIHostingJsonContext.Default.ResponsesAssistantMessageItemParam),
-            "system" => JsonSerializer.Deserialize(root.GetRawText(), OpenAIHostingJsonContext.Default.ResponsesSystemMessageItemParam),
-            "developer" => JsonSerializer.Deserialize(root.GetRawText(), OpenAIHostingJsonContext.Default.ResponsesDeveloperMessageItemParam),
+            "user" => doc.Deserialize(OpenAIHostingJsonContext.Default.ResponsesUserMessageItemParam),
+            "assistant" => doc.Deserialize(OpenAIHostingJsonContext.Default.ResponsesAssistantMessageItemParam),
+            "system" => doc.Deserialize(OpenAIHostingJsonContext.Default.ResponsesSystemMessageItemParam),
+            "developer" => doc.Deserialize(OpenAIHostingJsonContext.Default.ResponsesDeveloperMessageItemParam),
             _ => throw new JsonException($"Unknown message role: {role}")
         };
     }
