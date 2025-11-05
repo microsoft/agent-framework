@@ -112,7 +112,7 @@ public readonly struct AgentSessionId : IEquatable<AgentSessionId>
             throw new ArgumentException($"'{sessionIdString}' is not a valid agent session ID.", nameof(sessionIdString));
         }
 
-        return new AgentSessionId(entityId.Name.Substring(EntityNamePrefix.Length), entityId.Key);
+        return new AgentSessionId(entityId.Name[EntityNamePrefix.Length..], entityId.Key);
     }
 
     /// <summary>
@@ -135,7 +135,7 @@ public readonly struct AgentSessionId : IEquatable<AgentSessionId>
         {
             throw new ArgumentException($"'{entityId}' is not a valid agent session ID.", nameof(entityId));
         }
-        return new AgentSessionId(entityId.Name.Substring(EntityNamePrefix.Length), entityId.Key);
+        return new AgentSessionId(entityId.Name[EntityNamePrefix.Length..], entityId.Key);
     }
 
     /// <summary>
