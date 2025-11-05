@@ -11,7 +11,7 @@ using Xunit.Abstractions;
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.ObjectModel;
 
 /// <summary>
-/// Tests for <see cref="CreateConversationExecutorTest"/>.
+/// Tests for <see cref="CreateConversationExecutor "/>.
 /// </summary>
 public sealed class CreateConversationExecutorTest(ITestOutputHelper output) : WorkflowActionExecutorTest(output)
 {
@@ -42,8 +42,8 @@ public sealed class CreateConversationExecutorTest(ITestOutputHelper output) : W
         // Initialize state to simulate workflow environment.
         this.State.InitializeSystem();
         CreateConversation model = this.CreateModel(
-                this.FormatDisplayName(displayName),
-                FormatVariablePath(variableName));
+            this.FormatDisplayName(displayName),
+            FormatVariablePath(variableName));
         MockAgentProvider mockAgentProvider = new();
         CreateConversationExecutor action = new(model, mockAgentProvider.Object, this.State);
 
