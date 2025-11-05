@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
-using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.Shared;
 using Microsoft.AspNetCore.Builder;
@@ -28,7 +27,7 @@ public static class AGUIEndpointRouteBuilderExtensions
     /// <returns>An <see cref="IEndpointConventionBuilder"/> for the mapped endpoint.</returns>
     public static IEndpointConventionBuilder MapAGUI(
         this IEndpointRouteBuilder endpoints,
-        string pattern,
+        [StringSyntax("route")] string pattern,
         AIAgent aiAgent)
     {
         return endpoints.MapPost(pattern, async ([FromBody] RunAgentInput? input, HttpContext context, CancellationToken cancellationToken) =>
