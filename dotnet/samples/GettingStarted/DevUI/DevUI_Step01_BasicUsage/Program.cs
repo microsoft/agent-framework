@@ -61,11 +61,17 @@ internal static class Program
             [assistantBuilder, reviewerBuilder])
             .AddAsAIAgent();
 
-        builder.AddDevUI();
+        if (builder.Environment.IsDevelopment())
+        {
+            builder.AddDevUI();
+        }
 
         var app = builder.Build();
 
-        app.MapDevUI();
+        if (builder.Environment.IsDevelopment())
+        {
+            app.MapDevUI();
+        }
 
         Console.WriteLine("DevUI is available at: https://localhost:50516/devui");
         Console.WriteLine("OpenAI Responses API is available at: https://localhost:50516/v1/responses");

@@ -24,30 +24,19 @@ var builder = WebApplication.CreateBuilder(args);
 // Register your agents
 builder.AddAIAgent("assistant", "You are a helpful assistant.");
 
-// Add DevUI services
-builder.AddDevUI();
+if (builder.Environment.IsDevelopment())
+{
+    // Add DevUI services
+    builder.AddDevUI();
+}
 
 var app = builder.Build();
 
-// Map DevUI endpoint
-app.MapDevUI(); // Available at /devui
-
-// Map required endpoints
-app.MapEntities();
-app.MapOpenAIResponses();
-app.MapOpenAIConversations();
+if (builder.Environment.IsDevelopment())
+{
+    // Map DevUI endpoint to /devui
+    app.MapDevUI();
+}
 
 app.Run();
-```
-
-### Custom Path
-
-```csharp
-app.MapDevUI("/agent-ui");
-```
-
-### With Authorization
-
-```csharp
-app.MapDevUI().RequireAuthorization("Developer");
 ```
