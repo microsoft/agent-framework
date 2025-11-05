@@ -10,11 +10,11 @@ namespace Microsoft.Agents.AI.Workflows.Specialized;
 internal sealed class GroupChatHost(
         string id,
         AIAgent[] agents,
-        Dictionary<AIAgent, ExecutorIsh> agentMap,
+        Dictionary<AIAgent, ExecutorBinding> agentMap,
         Func<IReadOnlyList<AIAgent>, GroupChatManager> managerFactory) : Executor(id), IResettableExecutor
 {
     private readonly AIAgent[] _agents = agents;
-    private readonly Dictionary<AIAgent, ExecutorIsh> _agentMap = agentMap;
+    private readonly Dictionary<AIAgent, ExecutorBinding> _agentMap = agentMap;
     private readonly Func<IReadOnlyList<AIAgent>, GroupChatManager> _managerFactory = managerFactory;
     private readonly List<ChatMessage> _pendingMessages = [];
 

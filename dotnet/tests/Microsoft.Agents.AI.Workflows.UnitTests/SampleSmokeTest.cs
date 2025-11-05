@@ -213,6 +213,8 @@ public class SampleSmokeTest
 
         Assert.Collection(lines,
             line => Assert.Contains($"{HelloAgent.DefaultId}: {HelloAgent.Greeting}", line),
+            line => Assert.Contains($"{Step7EntryPoint.EchoAgentId}: {Step7EntryPoint.EchoPrefix}{HelloAgent.Greeting}", line),
+            line => Assert.Contains($"{HelloAgent.DefaultId}: {HelloAgent.Greeting}", line),
             line => Assert.Contains($"{Step7EntryPoint.EchoAgentId}: {Step7EntryPoint.EchoPrefix}{HelloAgent.Greeting}", line)
         );
     }
