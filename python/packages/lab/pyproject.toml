@@ -19,6 +19,7 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
   "agent-framework-core",
@@ -118,7 +119,7 @@ ignore = [
     "INP001",  # Ignore missing __init__.py in namespace packages.
     "RUF029",  # Allow use of 'assert' statements; assertions are used for internal checks in experimental code.
     "ASYNC240",  # Allow 'async for' outside of async functions in test and experimental code.
-] 
+]
 
 [tool.coverage.run]
 omit = [

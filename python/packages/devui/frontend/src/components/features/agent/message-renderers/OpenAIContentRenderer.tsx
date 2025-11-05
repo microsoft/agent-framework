@@ -23,7 +23,7 @@ interface ContentRendererProps {
 
 // Text content renderer
 function TextContentRenderer({ content, className, isStreaming }: ContentRendererProps) {
-  if (content.type !== "text") return null;
+  if (content.type !== "text" && content.type !== "input_text" && content.type !== "output_text") return null;
 
   const text = content.text;
 
@@ -160,6 +160,8 @@ function FileContentRenderer({ content, className }: ContentRendererProps) {
 export function OpenAIContentRenderer({ content, className, isStreaming }: ContentRendererProps) {
   switch (content.type) {
     case "text":
+    case "input_text":
+    case "output_text":
       return <TextContentRenderer content={content} className={className} isStreaming={isStreaming} />;
     case "input_image":
       return <ImageContentRenderer content={content} className={className} />;

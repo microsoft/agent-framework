@@ -19,12 +19,14 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Typing :: Typed",
 ]
 dependencies = [
     "agent-framework-core",
     "azure-ai-projects >= 1.0.0b11",
     "azure-ai-agents == 1.2.0b5",
+    "aiohttp",
 ]
 
 [tool.uv]
