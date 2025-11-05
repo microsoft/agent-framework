@@ -253,6 +253,8 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
 
+        builder.Services.AddAGUI();
+
         if (useMultiMessageAgent)
         {
             builder.Services.AddSingleton<FakeMultiMessageAgent>();

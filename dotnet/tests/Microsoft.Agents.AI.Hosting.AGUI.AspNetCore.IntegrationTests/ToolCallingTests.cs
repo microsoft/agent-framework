@@ -572,6 +572,8 @@ public sealed class ToolCallingTests : IAsyncDisposable
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
 
+        builder.Services.AddAGUI();
+
         this._app = builder.Build();
         var fakeChatClient = new FakeToolCallingChatClient(triggerParallelCalls, this._output);
         AIAgent baseAgent = fakeChatClient.CreateAIAgent(instructions: null, name: "base-agent", description: "A base agent for tool testing", tools: serverTools ?? []);

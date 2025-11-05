@@ -1,10 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
-using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
-using System.Text.Json;
 using System.Threading;
 using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.Shared;
 using Microsoft.AspNetCore.Builder;
@@ -14,6 +11,7 @@ using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore;
 
@@ -43,8 +41,8 @@ public static class AGUIEndpointRouteBuilderExtensions
                 return Results.BadRequest();
             }
 
-            var jsonSerializerOptions = context.RequestServices.GetService<JsonSerializerOptions>() ??
-                AGUIJsonSerializerContext.Default.Options;
+            var jsonOptions = context.RequestServices.GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>();
+            var jsonSerializerOptions = jsonOptions.Value.SerializerOptions;
 
             var messages = input.Messages.AsChatMessages(jsonSerializerOptions);
             var agent = aiAgent;
