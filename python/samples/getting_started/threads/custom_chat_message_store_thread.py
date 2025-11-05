@@ -32,13 +32,22 @@ class CustomChatMessageStore(ChatMessageStoreProtocol):
     async def list_messages(self) -> list[ChatMessage]:
         return self._messages
 
-    async def deserialize_state(self, serialized_store_state: Any, **kwargs: Any) -> None:
+    @classmethod
+    async def deserialize(cls, serialized_store_state: Any, **kwargs: Any) -> "CustomChatMessageStore":
+        """Create a new instance from serialized state."""
+        store = cls()
+        await store.update_from_state(serialized_store_state, **kwargs)
+        return store
+
+    async def update_from_state(self, serialized_store_state: Any, **kwargs: Any) -> None:
+        """Update this instance from serialized state."""
         if serialized_store_state:
             state = ChatMessageStoreState.from_dict(serialized_store_state, **kwargs)
             if state.messages:
                 self._messages.extend(state.messages)
 
-    async def serialize_state(self, **kwargs: Any) -> Any:
+    async def serialize(self, **kwargs: Any) -> Any:
+        """Serialize this store's state."""
         state = ChatMessageStoreState(messages=self._messages)
         return state.to_dict(**kwargs)
 

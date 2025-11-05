@@ -20,8 +20,6 @@ async def suspend_resume_service_managed_thread() -> None:
     print("=== Suspend-Resume Service-Managed Thread ===")
 
     # AzureAIAgentClient supports service-managed threads.
-    # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
-    # authentication option.
     async with (
         AzureCliCredential() as credential,
         AzureAIAgentClient(async_credential=credential).create_agent(
