@@ -11,6 +11,7 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.UnitTests;
 
@@ -346,8 +347,8 @@ public sealed class OpenAIHttpApiIntegrationTests : IAsyncDisposable
         builder.AddAIAgent(agentName, instructions, chatClientServiceKey: "chat-client");
 
         // Add in-memory storage for conversations, responses, and agent index
-        builder.Services.AddOpenAIConversations();
-        builder.Services.AddOpenAIResponses();
+        builder.AddOpenAIConversations();
+        builder.AddOpenAIResponses();
 
         this._app = builder.Build();
 

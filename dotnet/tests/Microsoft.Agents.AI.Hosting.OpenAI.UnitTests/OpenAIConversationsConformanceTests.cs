@@ -13,6 +13,7 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.UnitTests;
 
@@ -101,8 +102,8 @@ public sealed class OpenAIConversationsConformanceTests : IAsyncDisposable
         IChatClient mockChatClient = new TestHelpers.SimpleMockChatClient(responseText);
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
         builder.AddAIAgent(agentName, instructions, chatClientServiceKey: "chat-client");
-        builder.Services.AddOpenAIConversations();
-        builder.Services.AddOpenAIResponses();
+        builder.AddOpenAIConversations();
+        builder.AddOpenAIResponses();
 
         this._app = builder.Build();
         AIAgent agent = this._app.Services.GetRequiredKeyedService<AIAgent>(agentName);
@@ -129,8 +130,8 @@ public sealed class OpenAIConversationsConformanceTests : IAsyncDisposable
         IChatClient mockChatClient = new TestHelpers.StatefulMockChatClient(responseTexts);
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
         builder.AddAIAgent(agentName, instructions, chatClientServiceKey: "chat-client");
-        builder.Services.AddOpenAIConversations();
-        builder.Services.AddOpenAIResponses();
+        builder.AddOpenAIConversations();
+        builder.AddOpenAIResponses();
 
         this._app = builder.Build();
 
@@ -158,8 +159,8 @@ public sealed class OpenAIConversationsConformanceTests : IAsyncDisposable
         IChatClient mockChatClient = new TestHelpers.ToolCallMockChatClient(functionName, arguments);
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
         builder.AddAIAgent(agentName, instructions, chatClientServiceKey: "chat-client");
-        builder.Services.AddOpenAIConversations();
-        builder.Services.AddOpenAIResponses();
+        builder.AddOpenAIConversations();
+        builder.AddOpenAIResponses();
 
         this._app = builder.Build();
 

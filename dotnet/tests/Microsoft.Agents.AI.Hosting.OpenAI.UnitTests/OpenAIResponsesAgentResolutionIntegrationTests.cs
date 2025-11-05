@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.UnitTests;
 
@@ -421,7 +422,7 @@ public sealed class OpenAIResponsesAgentResolutionIntegrationTests : IAsyncDispo
             builder.AddAIAgent(name, instructions, chatClientServiceKey: $"chat-client-{name}");
         }
 
-        builder.Services.AddOpenAIResponses();
+        builder.AddOpenAIResponses();
 
         this._app = builder.Build();
 

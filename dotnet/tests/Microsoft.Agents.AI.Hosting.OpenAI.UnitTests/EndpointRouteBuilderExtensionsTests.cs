@@ -4,6 +4,7 @@ using System;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.UnitTests;
 
@@ -37,7 +38,7 @@ public sealed class EndpointRouteBuilderExtensionsTests
     {
         // Arrange
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
-        builder.Services.AddOpenAIResponses();
+        builder.AddOpenAIResponses();
         using WebApplication app = builder.Build();
 
         // Act & Assert
@@ -64,7 +65,7 @@ public sealed class EndpointRouteBuilderExtensionsTests
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         IChatClient mockChatClient = new TestHelpers.SimpleMockChatClient();
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        builder.Services.AddOpenAIResponses();
+        builder.AddOpenAIResponses();
         builder.AddAIAgent(invalidName, "Instructions", chatClientServiceKey: "chat-client");
         using WebApplication app = builder.Build();
         AIAgent agent = app.Services.GetRequiredKeyedService<AIAgent>(invalidName);
@@ -94,7 +95,7 @@ public sealed class EndpointRouteBuilderExtensionsTests
         IChatClient mockChatClient = new TestHelpers.SimpleMockChatClient();
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
         builder.AddAIAgent(validName, "Instructions", chatClientServiceKey: "chat-client");
-        builder.Services.AddOpenAIResponses();
+        builder.AddOpenAIResponses();
         using WebApplication app = builder.Build();
         AIAgent agent = app.Services.GetRequiredKeyedService<AIAgent>(validName);
 
@@ -114,7 +115,7 @@ public sealed class EndpointRouteBuilderExtensionsTests
         IChatClient mockChatClient = new TestHelpers.SimpleMockChatClient();
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
         builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
-        builder.Services.AddOpenAIResponses();
+        builder.AddOpenAIResponses();
         using WebApplication app = builder.Build();
         AIAgent agent = app.Services.GetRequiredKeyedService<AIAgent>("agent");
 
@@ -135,7 +136,7 @@ public sealed class EndpointRouteBuilderExtensionsTests
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
         builder.AddAIAgent("agent1", "Instructions1", chatClientServiceKey: "chat-client");
         builder.AddAIAgent("agent2", "Instructions2", chatClientServiceKey: "chat-client");
-        builder.Services.AddOpenAIResponses();
+        builder.AddOpenAIResponses();
         using WebApplication app = builder.Build();
         AIAgent agent1 = app.Services.GetRequiredKeyedService<AIAgent>("agent1");
         AIAgent agent2 = app.Services.GetRequiredKeyedService<AIAgent>("agent2");
@@ -158,7 +159,7 @@ public sealed class EndpointRouteBuilderExtensionsTests
         IChatClient mockChatClient = new TestHelpers.SimpleMockChatClient();
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
         builder.AddAIAgent(longName, "Instructions", chatClientServiceKey: "chat-client");
-        builder.Services.AddOpenAIResponses();
+        builder.AddOpenAIResponses();
         using WebApplication app = builder.Build();
         AIAgent agent = app.Services.GetRequiredKeyedService<AIAgent>(longName);
 
@@ -178,7 +179,7 @@ public sealed class EndpointRouteBuilderExtensionsTests
         IChatClient mockChatClient = new TestHelpers.SimpleMockChatClient();
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
         builder.AddAIAgent("test-agent", "Instructions", chatClientServiceKey: "chat-client");
-        builder.Services.AddOpenAIResponses();
+        builder.AddOpenAIResponses();
         using WebApplication app = builder.Build();
 
         // Act & Assert - Should not throw
@@ -215,7 +216,7 @@ public sealed class EndpointRouteBuilderExtensionsTests
         IChatClient mockChatClient = new TestHelpers.SimpleMockChatClient();
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
         builder.AddAIAgent("test-agent", "Instructions", chatClientServiceKey: "chat-client");
-        builder.Services.AddOpenAIResponses();
+        builder.AddOpenAIResponses();
         using WebApplication app = builder.Build();
 
         // Act & Assert - Should not throw
