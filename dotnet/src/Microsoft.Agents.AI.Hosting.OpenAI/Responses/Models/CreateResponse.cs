@@ -10,7 +10,7 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
 /// <summary>
 /// Request to create a model response.
 /// </summary>
-internal sealed record CreateResponse
+internal sealed class CreateResponse
 {
     /// <summary>
     /// Text, image, or file inputs to the model, used to generate a response.
@@ -65,7 +65,10 @@ internal sealed record CreateResponse
 
     /// <summary>
     /// The unique ID of the previous response to the model. Use this to create multi-turn conversations.
-    /// Cannot be used in conjunction with conversation.
+    /// Cannot be used in conjunction with conversation (mutually exclusive).
+    /// The previous_response_id determines the conversation thread context - it follows the response chain,
+    /// not any explicit conversation. Context is maintained through the chain even if the previous response
+    /// was created with a conversation.id.
     /// </summary>
     [JsonPropertyName("previous_response_id")]
     public string? PreviousResponseId { get; init; }
@@ -98,13 +101,16 @@ internal sealed record CreateResponse
     /// Specify additional output data to include in the model response.
     /// </summary>
     [JsonPropertyName("include")]
-    public IReadOnlyList<string>? Include { get; init; }
+    public List<string>? Include { get; init; }
 
     /// <summary>
     /// The conversation that this response belongs to. Items from this conversation are prepended
     /// to input_items for this response request.
     /// Can be either a conversation ID (string) or a conversation object with ID and optional metadata.
     /// Input items and output items from this response are automatically added to this conversation after this response completes.
+    /// Cannot be used in conjunction with previous_response_id (mutually exclusive).
+    /// Use conversation.id for explicit conversation boundaries and starting new threads.
+    /// Use previous_response_id for simple linear conversation chaining.
     /// </summary>
     [JsonPropertyName("conversation")]
     public ConversationReference? Conversation { get; init; }
@@ -178,7 +184,7 @@ internal sealed record CreateResponse
     /// An array of tools the model may call while generating a response.
     /// </summary>
     [JsonPropertyName("tools")]
-    public IReadOnlyList<JsonElement>? Tools { get; init; }
+    public List<JsonElement>? Tools { get; init; }
 
     /// <summary>
     /// How the model should select which tool (or tools) to use when generating a response.

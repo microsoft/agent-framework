@@ -68,7 +68,7 @@ internal static class AIAgentChatCompletionsProcessor
         {
             // The Unix timestamp (in seconds) of when the chat completion was created. Each chunk has the same timestamp.
             DateTimeOffset? createdAt = null;
-            var chunkId = IdGeneratorHelpers.NewId(prefix: "chatcmpl", delimiter: "-", stringLength: 13);
+            var chunkId = IdGenerator.NewId(prefix: "chatcmpl", delimiter: "-", stringLength: 13);
 
             await foreach (var agentRunResponseUpdate in agent.RunStreamingAsync(chatMessages, options: options, cancellationToken: cancellationToken).WithCancellation(cancellationToken))
             {

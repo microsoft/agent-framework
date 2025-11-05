@@ -16,8 +16,6 @@ internal sealed class FileContentEventGenerator(
         SequenceNumber seq,
         int outputIndex) : StreamingEventGenerator
 {
-    private bool _isCompleted;
-
     public override bool IsSupported(AIContent content) =>
         content is DataContent dataContent &&
         !dataContent.HasTopLevelMediaType("image") &&
@@ -25,11 +23,6 @@ internal sealed class FileContentEventGenerator(
 
     public override IEnumerable<StreamingResponseEvent> ProcessContent(AIContent content)
     {
-        if (this._isCompleted)
-        {
-            throw new InvalidOperationException("Cannot process content after the generator has been completed.");
-        }
-
         if (content is not DataContent fileData ||
             fileData.HasTopLevelMediaType("image") ||
             fileData.HasTopLevelMediaType("audio"))
@@ -38,9 +31,7 @@ internal sealed class FileContentEventGenerator(
         }
 
         var itemId = idGenerator.GenerateMessageId();
-        var itemContent = ItemContentConverter.ToItemContent(content) as ItemContentInputFile;
-
-        if (itemContent == null)
+        if (ItemContentConverter.ToItemContent(content) is not ItemContentInputFile itemContent)
         {
             throw new InvalidOperationException("Failed to convert file content to ItemContentInputFile.");
         }
@@ -83,13 +74,7 @@ internal sealed class FileContentEventGenerator(
             OutputIndex = outputIndex,
             Item = item
         };
-
-        this._isCompleted = true;
     }
 
-    public override IEnumerable<StreamingResponseEvent> Complete()
-    {
-        this._isCompleted = true;
-        return [];
-    }
+    public override IEnumerable<StreamingResponseEvent> Complete() => [];
 }
