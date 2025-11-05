@@ -19,7 +19,7 @@ namespace Microsoft.Agents.AI.Workflows;
 /// <remarks>Use the WorkflowBuilder to incrementally add executors and edges, including fan-in and fan-out
 /// patterns, before building a strongly-typed workflow instance. Executors must be bound before building the workflow.
 /// All executors must be bound by calling into <see cref="BindExecutor"/> if they were intially specified as
-/// <see cref="ExecutorIsh.Type.Unbound"/>.</remarks>
+/// <see cref="ExecutorBinding.IsPlaceholder"/>.</remarks>
 public class WorkflowBuilder
 {
     private readonly record struct EdgeConnection(string SourceId, string TargetId)
@@ -28,11 +28,11 @@ public class WorkflowBuilder
     }
 
     private int _edgeCount;
-    private readonly Dictionary<string, ExecutorRegistration> _executors = [];
+    private readonly Dictionary<string, ExecutorBinding> _executors = [];
     private readonly Dictionary<string, HashSet<Edge>> _edges = [];
     private readonly HashSet<string> _unboundExecutors = [];
     private readonly HashSet<EdgeConnection> _conditionlessConnections = [];
-    private readonly Dictionary<string, RequestPort> _inputPorts = [];
+    private readonly Dictionary<string, RequestPort> _requestPorts = [];
     private readonly HashSet<string> _outputExecutors = [];
 
     private readonly string _startExecutorId;
@@ -46,57 +46,56 @@ public class WorkflowBuilder
     /// Initializes a new instance of the WorkflowBuilder class with the specified starting executor.
     /// </summary>
     /// <param name="start">The executor that defines the starting point of the workflow. Cannot be null.</param>
-    public WorkflowBuilder(ExecutorIsh start)
+    public WorkflowBuilder(ExecutorBinding start)
     {
         this._startExecutorId = this.Track(start).Id;
     }
 
-    private ExecutorIsh Track(ExecutorIsh executorish)
+    private ExecutorBinding Track(ExecutorBinding registration)
     {
         // If the executor is unbound, create an entry for it, unless it already exists.
         // Otherwise, update the entry for it, and remove the unbound tag
-        if (executorish.IsUnbound && !this._executors.ContainsKey(executorish.Id))
+        if (registration.IsPlaceholder && !this._executors.ContainsKey(registration.Id))
         {
             // If this is an unbound executor, we need to track it separately
-            this._unboundExecutors.Add(executorish.Id);
+            this._unboundExecutors.Add(registration.Id);
         }
-        else if (!executorish.IsUnbound)
+        else if (!registration.IsPlaceholder)
         {
-            ExecutorRegistration incoming = executorish.Registration;
             // If there is already a bound executor with this ID, we need to validate (to best efforts)
             // that the two are matching (at least based on type)
-            if (this._executors.TryGetValue(executorish.Id, out ExecutorRegistration? existing))
+            if (this._executors.TryGetValue(registration.Id, out ExecutorBinding? existing))
             {
-                if (existing.ExecutorType != incoming.ExecutorType)
+                if (existing.ExecutorType != registration.ExecutorType)
                 {
                     throw new InvalidOperationException(
-                        $"Cannot bind executor with ID '{executorish.Id}' because an executor with the same ID but a different type ({existing.ExecutorType.Name} vs {incoming.ExecutorType.Name}) is already bound.");
+                        $"Cannot bind executor with ID '{registration.Id}' because an executor with the same ID but a different type ({existing.ExecutorType.Name} vs {registration.ExecutorType.Name}) is already bound.");
                 }
 
-                if (existing.RawExecutorishData is not null &&
-                    !ReferenceEquals(existing.RawExecutorishData, incoming.RawExecutorishData))
+                if (existing.RawValue is not null &&
+                    !ReferenceEquals(existing.RawValue, registration.RawValue))
                 {
                     throw new InvalidOperationException(
-                        $"Cannot bind executor with ID '{executorish.Id}' because an executor with the same ID but different instance is already bound.");
+                        $"Cannot bind executor with ID '{registration.Id}' because an executor with the same ID but different instance is already bound.");
                 }
             }
             else
             {
-                this._executors[executorish.Id] = executorish.Registration;
-                if (this._unboundExecutors.Contains(executorish.Id))
+                this._executors[registration.Id] = registration;
+                if (this._unboundExecutors.Contains(registration.Id))
                 {
-                    this._unboundExecutors.Remove(executorish.Id);
+                    this._unboundExecutors.Remove(registration.Id);
                 }
             }
         }
 
-        if (executorish.ExecutorType == ExecutorIsh.Type.RequestPort)
+        if (registration is RequestPortBinding portRegistration)
         {
-            RequestPort port = executorish._requestPortValue!;
-            this._inputPorts[port.Id] = port;
+            RequestPort port = portRegistration.Port;
+            this._requestPorts[port.Id] = port;
         }
 
-        return executorish;
+        return registration;
     }
 
     /// <summary>
@@ -106,9 +105,9 @@ public class WorkflowBuilder
     /// </summary>
     /// <param name="executors"></param>
     /// <returns></returns>
-    public WorkflowBuilder WithOutputFrom(params ExecutorIsh[] executors)
+    public WorkflowBuilder WithOutputFrom(params ExecutorBinding[] executors)
     {
-        foreach (ExecutorIsh executor in executors)
+        foreach (ExecutorBinding executor in executors)
         {
             this._outputExecutors.Add(this.Track(executor).Id);
         }
@@ -139,21 +138,21 @@ public class WorkflowBuilder
     }
 
     /// <summary>
-    /// Binds the specified executor to the workflow, allowing it to participate in workflow execution.
+    /// Binds the specified executor (via registration) to the workflow, allowing it to participate in workflow execution.
     /// </summary>
-    /// <param name="executor">The executor instance to bind. The executor must exist in the workflow and not be already bound.</param>
+    /// <param name="registration">The executor instance to bind. The executor must exist in the workflow and not be already bound.</param>
     /// <returns>The current <see cref="WorkflowBuilder"/> instance, enabling fluent configuration.</returns>
     /// <exception cref="InvalidOperationException">Thrown if the specified executor is already bound or does not exist in the workflow.</exception>
-    public WorkflowBuilder BindExecutor(Executor executor)
+    public WorkflowBuilder BindExecutor(ExecutorBinding registration)
     {
-        if (!this._unboundExecutors.Contains(executor.Id))
+        if (Throw.IfNull(registration) is ExecutorPlaceholder)
         {
             throw new InvalidOperationException(
-                $"Executor with ID '{executor.Id}' is already bound or does not exist in the workflow.");
+                $"Cannot bind executor with ID '{registration.Id}' because it is a placeholder registration. " +
+                "You must provide a concrete executor instance or registration.");
         }
 
-        this._executors[executor.Id] = new ExecutorIsh(executor).Registration;
-        this._unboundExecutors.Remove(executor.Id);
+        this.Track(registration);
         return this;
     }
 
@@ -180,7 +179,7 @@ public class WorkflowBuilder
     /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
     /// <exception cref="InvalidOperationException">Thrown if an unconditional edge between the specified source and target
     /// executors already exists.</exception>
-    public WorkflowBuilder AddEdge(ExecutorIsh source, ExecutorIsh target, bool idempotent = false)
+    public WorkflowBuilder AddEdge(ExecutorBinding source, ExecutorBinding target, bool idempotent = false)
         => this.AddEdge<object>(source, target, null, idempotent);
 
     internal static Func<object?, bool>? CreateConditionFunc<T>(Func<T?, bool>? condition)
@@ -236,7 +235,7 @@ public class WorkflowBuilder
     /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
     /// <exception cref="InvalidOperationException">Thrown if an unconditional edge between the specified source and target
     /// executors already exists.</exception>
-    public WorkflowBuilder AddEdge<T>(ExecutorIsh source, ExecutorIsh target, Func<T?, bool>? condition = null, bool idempotent = false)
+    public WorkflowBuilder AddEdge<T>(ExecutorBinding source, ExecutorBinding target, Func<T?, bool>? condition = null, bool idempotent = false)
     {
         // Add an edge from source to target with an optional condition.
         // This is a low-level builder method that does not enforce any specific executor type.
@@ -273,12 +272,12 @@ public class WorkflowBuilder
     /// <param name="source">The source executor from which the fan-out edge originates. Cannot be null.</param>
     /// <param name="targets">One or more target executors that will receive the fan-out edge. Cannot be null or empty.</param>
     /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
-    public WorkflowBuilder AddFanOutEdge(ExecutorIsh source, params IEnumerable<ExecutorIsh> targets)
-        => this.AddFanOutEdge<object>(source, null, targets);
+    public WorkflowBuilder AddFanOutEdge(ExecutorBinding source, IEnumerable<ExecutorBinding> targets)
+        => this.AddFanOutEdge<object>(source, targets, null);
 
-    internal static Func<object?, int, IEnumerable<int>>? CreateEdgeAssignerFunc<T>(Func<T?, int, IEnumerable<int>>? partitioner)
+    internal static Func<object?, int, IEnumerable<int>>? CreateTargetAssignerFunc<T>(Func<T?, int, IEnumerable<int>>? targetAssigner)
     {
-        if (partitioner is null)
+        if (targetAssigner is null)
         {
             return null;
         }
@@ -290,7 +289,7 @@ public class WorkflowBuilder
                 maybeObj = portableValue.AsType(typeof(T));
             }
 
-            return partitioner(maybeObj is T typed ? typed : default, count);
+            return targetAssigner(maybeObj is T typed ? typed : default, count);
         };
     }
 
@@ -301,11 +300,11 @@ public class WorkflowBuilder
     /// <remarks>If a partitioner function is provided, it will be used to distribute input across the target
     /// executors. The order of targets determines their mapping in the partitioning process.</remarks>
     /// <param name="source">The source executor from which the fan-out edge originates. Cannot be null.</param>
-    /// <param name="partitioner">An optional function that determines how input is partitioned among the target executors.
-    /// If null, messages will route to all targets.</param>
     /// <param name="targets">One or more target executors that will receive the fan-out edge. Cannot be null or empty.</param>
     /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
-    public WorkflowBuilder AddFanOutEdge<T>(ExecutorIsh source, Func<T?, int, IEnumerable<int>>? partitioner = null, params IEnumerable<ExecutorIsh> targets)
+    /// <param name="targetSelector">An optional function that determines how input is assigned among the target executors.
+    /// If null, messages will route to all targets.</param>
+    public WorkflowBuilder AddFanOutEdge<T>(ExecutorBinding source, IEnumerable<ExecutorBinding> targets, Func<T?, int, IEnumerable<int>>? targetSelector = null)
     {
         Throw.IfNull(source);
         Throw.IfNull(targets);
@@ -322,7 +321,7 @@ public class WorkflowBuilder
             this.Track(source).Id,
             sinkIds,
             this.TakeEdgeId(),
-            CreateEdgeAssignerFunc(partitioner));
+            CreateTargetAssignerFunc(targetSelector));
 
         this.EnsureEdgesFor(source.Id).Add(new(fanOutEdge));
 
@@ -336,10 +335,10 @@ public class WorkflowBuilder
     /// <remarks>This method establishes a fan-in relationship, allowing the target executor to be activated
     /// based on the completion or state of multiple sources. The trigger parameter can be used to customize activation
     /// behavior.</remarks>
-    /// <param name="target">The target executor that receives input from the specified source executors. Cannot be null.</param>
     /// <param name="sources">One or more source executors that provide input to the target. Cannot be null or empty.</param>
+    /// <param name="target">The target executor that receives input from the specified source executors. Cannot be null.</param>
     /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
-    public WorkflowBuilder AddFanInEdge(ExecutorIsh target, params IEnumerable<ExecutorIsh> sources)
+    public WorkflowBuilder AddFanInEdge(IEnumerable<ExecutorBinding> sources, ExecutorBinding target)
     {
         Throw.IfNull(target);
         Throw.IfNull(sources);
@@ -365,8 +364,14 @@ public class WorkflowBuilder
         return this;
     }
 
+    /// <inheritdoc cref="AddFanInEdge(IEnumerable{ExecutorBinding}, ExecutorBinding)"/>
+    [Obsolete("Use AddFanInEdge(IEnumerable<ExecutorBinding>, ExecutorBinding) instead.")]
+    public WorkflowBuilder AddFanInEdge(ExecutorBinding target, params IEnumerable<ExecutorBinding> sources)
+        => this.AddFanInEdge(sources, target);
+
     private void Validate()
     {
+        // Validate that there are no unbound executors
         if (this._unboundExecutors.Count > 0)
         {
             throw new InvalidOperationException(
@@ -398,9 +403,9 @@ public class WorkflowBuilder
 
         var workflow = new Workflow(this._startExecutorId, this._name, this._description)
         {
-            Registrations = this._executors,
+            ExecutorBindings = this._executors,
             Edges = this._edges,
-            Ports = this._inputPorts,
+            Ports = this._requestPorts,
             OutputExecutors = this._outputExecutors
         };
 

@@ -60,13 +60,13 @@ public static class Program
         WorkflowBuilder builder = new(emailAnalysisExecutor);
         builder.AddFanOutEdge(
             emailAnalysisExecutor,
-            targets: [
+            [
                 handleSpamExecutor,
                 emailAssistantExecutor,
                 emailSummaryExecutor,
                 handleUncertainExecutor,
             ],
-            partitioner: GetPartitioner()
+            GetTargetAssigner()
         )
         // After the email assistant writes a response, it will be sent to the send email executor
         .AddEdge(emailAssistantExecutor, sendEmailExecutor)
@@ -105,7 +105,7 @@ public static class Program
     /// Creates a partitioner for routing messages based on the analysis result.
     /// </summary>
     /// <returns>A function that takes an analysis result and returns the target partitions.</returns>
-    private static Func<AnalysisResult?, int, IEnumerable<int>> GetPartitioner()
+    private static Func<AnalysisResult?, int, IEnumerable<int>> GetTargetAssigner()
     {
         return (analysisResult, targetCount) =>
         {

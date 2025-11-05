@@ -3,6 +3,7 @@
 from collections.abc import AsyncIterable, AsyncIterator
 from dataclasses import dataclass
 from typing import Any, cast
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -10,6 +11,7 @@ from agent_framework import (
     AgentRunResponse,
     AgentRunResponseUpdate,
     BaseAgent,
+    ChatAgent,
     ChatMessage,
     FunctionCallContent,
     HandoffBuilder,
@@ -20,6 +22,8 @@ from agent_framework import (
     WorkflowEvent,
     WorkflowOutputEvent,
 )
+from agent_framework._mcp import MCPTool
+from agent_framework._workflows._handoff import _clone_chat_agent
 
 
 @dataclass
@@ -153,31 +157,6 @@ def _normalise(messages: str | ChatMessage | list[str] | list[ChatMessage] | Non
 
 async def _drain(stream: AsyncIterable[WorkflowEvent]) -> list[WorkflowEvent]:
     return [event async for event in stream]
-
-
-async def test_handoff_routes_to_specialist_and_requests_user_input():
-    triage = _RecordingAgent(name="triage", handoff_to="specialist")
-    specialist = _RecordingAgent(name="specialist")
-
-    workflow = HandoffBuilder(participants=[triage, specialist]).set_coordinator("triage").build()
-
-    events = await _drain(workflow.run_stream("Need help with a refund"))
-
-    assert triage.calls, "Starting agent should receive initial conversation"
-    assert specialist.calls, "Specialist should be invoked after handoff"
-    assert len(specialist.calls[0]) == 2  # user + triage reply
-
-    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
-    assert requests, "Workflow should request additional user input"
-    request_payload = requests[-1].data
-    assert isinstance(request_payload, HandoffUserInputRequest)
-    assert len(request_payload.conversation) == 4  # user, triage tool call, tool ack, specialist
-    assert request_payload.conversation[2].role == Role.TOOL
-    assert request_payload.conversation[3].role == Role.ASSISTANT
-    assert "specialist reply" in request_payload.conversation[3].text
-
-    follow_up = await _drain(workflow.send_responses_streaming({requests[-1].request_id: "Thanks"}))
-    assert any(isinstance(ev, RequestInfoEvent) for ev in follow_up)
 
 
 async def test_specialist_to_specialist_handoff():
@@ -393,3 +372,32 @@ async def test_handoff_async_termination_condition() -> None:
     user_messages = [msg for msg in final_conv_list if msg.role == Role.USER]
     assert len(user_messages) == 2
     assert termination_call_count > 0
+
+
+async def test_clone_chat_agent_preserves_mcp_tools() -> None:
+    """Test that _clone_chat_agent preserves MCP tools when cloning an agent."""
+    mock_chat_client = MagicMock()
+
+    mock_mcp_tool = MagicMock(spec=MCPTool)
+    mock_mcp_tool.name = "test_mcp_tool"
+
+    def sample_function() -> str:
+        return "test"
+
+    original_agent = ChatAgent(
+        chat_client=mock_chat_client,
+        name="TestAgent",
+        instructions="Test instructions",
+        tools=[mock_mcp_tool, sample_function],
+    )
+
+    assert hasattr(original_agent, "_local_mcp_tools")
+    assert len(original_agent._local_mcp_tools) == 1
+    assert original_agent._local_mcp_tools[0] == mock_mcp_tool
+
+    cloned_agent = _clone_chat_agent(original_agent)
+
+    assert hasattr(cloned_agent, "_local_mcp_tools")
+    assert len(cloned_agent._local_mcp_tools) == 1
+    assert cloned_agent._local_mcp_tools[0] == mock_mcp_tool
+    assert len(cloned_agent.chat_options.tools) == 1

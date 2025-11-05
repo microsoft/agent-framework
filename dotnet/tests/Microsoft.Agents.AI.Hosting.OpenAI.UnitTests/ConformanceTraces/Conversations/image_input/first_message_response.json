@@ -1,0 +1,70 @@
+{
+  "id": "resp_003edf96db5b4ed70068fb98bd80808194b25763125111fffa",
+  "object": "response",
+  "created_at": 1761319101,
+  "status": "completed",
+  "background": false,
+  "billing": {
+    "payer": "developer"
+  },
+  "conversation": {
+    "id": "conv_68fb989f39ec8194be3ec32525cd53c1003edf96db5b4ed7"
+  },
+  "error": null,
+  "incomplete_details": null,
+  "instructions": null,
+  "max_output_tokens": 200,
+  "max_tool_calls": null,
+  "model": "gpt-4o-mini-2024-07-18",
+  "output": [
+    {
+      "id": "msg_003edf96db5b4ed70068fb98c1197481949e138bc36200ee18",
+      "type": "message",
+      "status": "completed",
+      "content": [
+        {
+          "type": "output_text",
+          "annotations": [],
+          "logprobs": [],
+          "text": "The image depicts a serene natural landscape featuring a wooden boardwalk winding through lush greenery. \n\n### Details:\n- **Pathway**: The boardwalk is made of wooden planks and extends straight ahead, encouraging exploration.\n- **Grass**: On both sides of the pathway, there is tall, vibrant green grass, suggesting a lush environment with possible wildflowers.\n- **Surrounding Vegetation**: Beyond the grass, there are various bushes and trees, adding layers of texture and color. Some foliage appears dense and lush, while other areas have more sparse coverage.\n- **Sky**: The sky is expansive and bright, with soft, fluffy clouds scattered throughout. The blue hues create a tranquil atmosphere, illuminated by sunlight.\n- **Overall Mood**: The scene conveys a sense of peace and openness, perfect for a nature walk or outdoor meditation.\n\nThis idyllic setting invites the viewer to appreciate the tranquility of nature and the beauty of the landscape."
+        }
+      ],
+      "role": "assistant"
+    }
+  ],
+  "parallel_tool_calls": true,
+  "previous_response_id": null,
+  "prompt_cache_key": null,
+  "reasoning": {
+    "effort": null,
+    "summary": null
+  },
+  "safety_identifier": null,
+  "service_tier": "default",
+  "store": true,
+  "temperature": 1.0,
+  "text": {
+    "format": {
+      "type": "text"
+    },
+    "verbosity": "medium"
+  },
+  "tool_choice": "auto",
+  "tools": [],
+  "top_logprobs": 0,
+  "top_p": 1.0,
+  "truncation": "disabled",
+  "usage": {
+    "input_tokens": 36852,
+    "input_tokens_details": {
+      "cached_tokens": 0
+    },
+    "output_tokens": 192,
+    "output_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "total_tokens": 37044
+  },
+  "user": null,
+  "metadata": {}
+}

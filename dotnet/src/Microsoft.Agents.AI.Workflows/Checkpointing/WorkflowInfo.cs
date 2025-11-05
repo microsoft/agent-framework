@@ -47,10 +47,10 @@ internal sealed class WorkflowInfo
         }
 
         // Validate the executors
-        if (workflow.Registrations.Count != this.Executors.Count ||
+        if (workflow.ExecutorBindings.Count != this.Executors.Count ||
             this.Executors.Keys.Any(
-            executorId => workflow.Registrations.TryGetValue(executorId, out ExecutorRegistration? registration)
-                       && !this.Executors[executorId].IsMatch(registration)))
+            executorId => workflow.ExecutorBindings.TryGetValue(executorId, out ExecutorBinding? binding)
+                       && !this.Executors[executorId].IsMatch(binding)))
         {
             return false;
         }

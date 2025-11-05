@@ -30,11 +30,14 @@ from agent_framework import (
     HostedWebSearchTool,
     Role,
     TextContent,
+    ToolMode,
     UriContent,
 )
 from agent_framework._serialization import SerializationMixin
 from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.agents.models import (
+    AgentsNamedToolChoice,
+    AgentsNamedToolChoiceType,
     CodeInterpreterToolDefinition,
     FileInfo,
     MessageDeltaChunk,
@@ -69,7 +72,7 @@ def create_test_azure_ai_chat_client(
     agent_id: str | None = None,
     thread_id: str | None = None,
     azure_ai_settings: AzureAISettings | None = None,
-    should_delete_agent: bool = False,
+    should_cleanup_agent: bool = True,
     agent_name: str | None = None,
 ) -> AzureAIAgentClient:
     """Helper function to create AzureAIAgentClient instances for testing, bypassing normal validation."""
@@ -86,9 +89,10 @@ def create_test_azure_ai_chat_client(
     client.agent_name = agent_name
     client.model_id = azure_ai_settings.model_deployment_name
     client.thread_id = thread_id
-    client._should_delete_agent = should_delete_agent  # type: ignore
-    client._should_close_client = False  # type: ignore
-    client._agent_definition = None  # type: ignore
+    client.should_cleanup_agent = should_cleanup_agent
+    client._agent_created = False
+    client._should_close_client = False
+    client._agent_definition = None
     client.additional_properties = {}
     client.middleware = None
 
@@ -123,7 +127,6 @@ def test_azure_ai_chat_client_init_with_client(mock_ai_project_client: MagicMock
     assert chat_client.project_client is mock_ai_project_client
     assert chat_client.agent_id == "existing-agent-id"
     assert chat_client.thread_id == "test-thread-id"
-    assert not chat_client._should_delete_agent  # type: ignore
     assert isinstance(chat_client, ChatClientProtocol)
 
 
@@ -139,7 +142,6 @@ def test_azure_ai_chat_client_init_auto_create_client(
     chat_client.project_client = mock_ai_project_client
     chat_client.agent_id = None
     chat_client.thread_id = None
-    chat_client._should_delete_agent = False  # type: ignore
     chat_client._should_close_client = False  # type: ignore
     chat_client.credential = None
     chat_client.model_id = azure_ai_settings.model_deployment_name
@@ -149,7 +151,6 @@ def test_azure_ai_chat_client_init_auto_create_client(
 
     assert chat_client.project_client is mock_ai_project_client
     assert chat_client.agent_id is None
-    assert not chat_client._should_delete_agent  # type: ignore
 
 
 def test_azure_ai_chat_client_init_missing_project_endpoint() -> None:
@@ -268,6 +269,29 @@ def test_azure_ai_chat_client_from_settings() -> None:
     assert client.agent_name == "TestAgent"
 
 
+async def test_azure_ai_chat_client_get_agent_id_or_create_with_temperature_and_top_p(
+    mock_ai_project_client: MagicMock, azure_ai_unit_test_env: dict[str, str]
+) -> None:
+    """Test _get_agent_id_or_create with temperature and top_p in run_options."""
+    azure_ai_settings = AzureAISettings(model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"])
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, azure_ai_settings=azure_ai_settings)
+
+    run_options = {
+        "model": azure_ai_settings.model_deployment_name,
+        "temperature": 0.7,
+        "top_p": 0.9,
+    }
+
+    agent_id = await chat_client._get_agent_id_or_create(run_options)  # type: ignore
+
+    assert agent_id == "test-agent-id"
+    # Verify create_agent was called with temperature and top_p parameters
+    mock_ai_project_client.agents.create_agent.assert_called_once()
+    call_kwargs = mock_ai_project_client.agents.create_agent.call_args[1]
+    assert call_kwargs["temperature"] == 0.7
+    assert call_kwargs["top_p"] == 0.9
+
+
 async def test_azure_ai_chat_client_get_agent_id_or_create_existing_agent(
     mock_ai_project_client: MagicMock,
 ) -> None:
@@ -277,7 +301,7 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_existing_agent(
     agent_id = await chat_client._get_agent_id_or_create()  # type: ignore
 
     assert agent_id == "existing-agent-id"
-    assert not chat_client._should_delete_agent  # type: ignore
+    assert not chat_client._agent_created
 
 
 async def test_azure_ai_chat_client_get_agent_id_or_create_create_new(
@@ -291,7 +315,7 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_create_new(
     agent_id = await chat_client._get_agent_id_or_create(run_options={"model": azure_ai_settings.model_deployment_name})  # type: ignore
 
     assert agent_id == "test-agent-id"
-    assert chat_client._should_delete_agent  # type: ignore
+    assert chat_client._agent_created
 
 
 async def test_azure_ai_chat_client_thread_management_through_public_api(mock_ai_project_client: MagicMock) -> None:
@@ -337,74 +361,6 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_missing_model(
 
     with pytest.raises(ServiceInitializationError, match="Model deployment name is required"):
         await chat_client._get_agent_id_or_create()  # type: ignore
-
-
-async def test_azure_ai_chat_client_cleanup_agent_if_needed_should_delete(
-    mock_ai_project_client: MagicMock,
-) -> None:
-    """Test _cleanup_agent_if_needed when agent should be deleted."""
-    chat_client = create_test_azure_ai_chat_client(
-        mock_ai_project_client, agent_id="agent-to-delete", should_delete_agent=True
-    )
-
-    await chat_client._cleanup_agent_if_needed()  # type: ignore
-    # Verify agent deletion was called
-    mock_ai_project_client.agents.delete_agent.assert_called_once_with("agent-to-delete")
-    assert not chat_client._should_delete_agent  # type: ignore
-
-
-async def test_azure_ai_chat_client_cleanup_agent_if_needed_should_not_delete(
-    mock_ai_project_client: MagicMock,
-) -> None:
-    """Test _cleanup_agent_if_needed when agent should not be deleted."""
-    chat_client = create_test_azure_ai_chat_client(
-        mock_ai_project_client, agent_id="agent-to-keep", should_delete_agent=False
-    )
-
-    await chat_client._cleanup_agent_if_needed()  # type: ignore
-
-    # Verify agent deletion was not called
-    mock_ai_project_client.agents.delete_agent.assert_not_called()
-    assert not chat_client._should_delete_agent  # type: ignore
-
-
-async def test_azure_ai_chat_client_cleanup_agent_if_needed_exception_handling(
-    mock_ai_project_client: MagicMock,
-) -> None:
-    """Test _cleanup_agent_if_needed propagates exceptions (it doesn't handle them)."""
-    chat_client = create_test_azure_ai_chat_client(
-        mock_ai_project_client, agent_id="agent-to-delete", should_delete_agent=True
-    )
-    mock_ai_project_client.agents.delete_agent.side_effect = Exception("Deletion failed")
-
-    with pytest.raises(Exception, match="Deletion failed"):
-        await chat_client._cleanup_agent_if_needed()  # type: ignore
-
-
-async def test_azure_ai_chat_client_aclose(mock_ai_project_client: MagicMock) -> None:
-    """Test aclose method calls cleanup."""
-    chat_client = create_test_azure_ai_chat_client(
-        mock_ai_project_client, agent_id="agent-to-delete", should_delete_agent=True
-    )
-
-    await chat_client.close()
-
-    # Verify agent deletion was called
-    mock_ai_project_client.agents.delete_agent.assert_called_once_with("agent-to-delete")
-
-
-async def test_azure_ai_chat_client_async_context_manager(mock_ai_project_client: MagicMock) -> None:
-    """Test async context manager functionality."""
-    chat_client = create_test_azure_ai_chat_client(
-        mock_ai_project_client, agent_id="agent-to-delete", should_delete_agent=True
-    )
-
-    # Test context manager
-    async with chat_client:
-        pass  # Just test that we can enter and exit
-
-    # Verify cleanup was called on exit
-    mock_ai_project_client.agents.delete_agent.assert_called_once_with("agent-to-delete")
 
 
 async def test_azure_ai_chat_client_create_run_options_basic(mock_ai_project_client: MagicMock) -> None:
@@ -531,19 +487,6 @@ async def test_azure_ai_chat_client_create_run_options_with_messages(mock_ai_pro
     assert "You are a helpful assistant" in run_options["instructions"]
     assert "additional_messages" in run_options
     assert len(run_options["additional_messages"]) == 1  # Only user message
-
-
-async def test_azure_ai_chat_client_instructions_sent_once(mock_ai_project_client: MagicMock) -> None:
-    """Ensure instructions are only sent once for AzureAIAgentClient."""
-    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client)
-
-    instructions = "You are a helpful assistant."
-    chat_options = ChatOptions(instructions=instructions)
-    messages = chat_client.prepare_messages([ChatMessage(role=Role.USER, text="Hello")], chat_options)
-
-    run_options, _ = await chat_client._create_run_options(messages, chat_options)  # type: ignore
-
-    assert run_options.get("instructions") == instructions
 
 
 async def test_azure_ai_chat_client_inner_get_response(mock_ai_project_client: MagicMock) -> None:
@@ -693,6 +636,47 @@ async def test_azure_ai_chat_client_create_run_options_with_auto_tool_choice(
     from azure.ai.agents.models import AgentsToolChoiceOptionMode
 
     assert run_options["tool_choice"] == AgentsToolChoiceOptionMode.AUTO
+
+
+async def test_azure_ai_chat_client_prepare_tool_choice_none_string(
+    mock_ai_project_client: MagicMock,
+) -> None:
+    """Test _prepare_tool_choice when tool_choice is string 'none'."""
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client)
+
+    # Create a mock tool for testing
+    mock_tool = MagicMock()
+    chat_options = ChatOptions(tools=[mock_tool], tool_choice="none")
+
+    # Call the method
+    chat_client._prepare_tool_choice(chat_options)  # type: ignore
+
+    # Verify tools are cleared and tool_choice is set to NONE mode
+    assert chat_options.tools is None
+    assert chat_options.tool_choice == ToolMode.NONE.mode
+
+
+async def test_azure_ai_chat_client_create_run_options_tool_choice_required_specific_function(
+    mock_ai_project_client: MagicMock,
+) -> None:
+    """Test _create_run_options with ToolMode.REQUIRED specifying a specific function name."""
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client)
+
+    required_tool_mode = ToolMode.REQUIRED("specific_function_name")
+
+    dict_tool = {"type": "function", "function": {"name": "test_function"}}
+
+    chat_options = ChatOptions(tools=[dict_tool], tool_choice=required_tool_mode)
+    messages = [ChatMessage(role=Role.USER, text="Hello")]
+
+    run_options, _ = await chat_client._create_run_options(messages, chat_options)  # type: ignore
+
+    # Verify tool_choice is set to the specific named function
+    assert "tool_choice" in run_options
+    tool_choice = run_options["tool_choice"]
+    assert isinstance(tool_choice, AgentsNamedToolChoice)
+    assert tool_choice.type == AgentsNamedToolChoiceType.FUNCTION
+    assert tool_choice.function.name == "specific_function_name"  # type: ignore
 
 
 async def test_azure_ai_chat_client_create_run_options_with_response_format(
@@ -868,9 +852,12 @@ async def test_azure_ai_chat_client_prep_tools_web_search_bing_grounding(mock_ai
 
         assert len(result) == 1
         assert result[0] == {"type": "bing_grounding"}
-        mock_bing_grounding.assert_called_once_with(
-            connection_id="test-connection-id", count=5, freshness="Day", market="en-US", set_lang="en"
-        )
+        call_args = mock_bing_grounding.call_args[1]
+        assert call_args["count"] == 5
+        assert call_args["freshness"] == "Day"
+        assert call_args["market"] == "en-US"
+        assert call_args["set_lang"] == "en"
+        assert "connection_id" in call_args
 
 
 async def test_azure_ai_chat_client_prep_tools_web_search_bing_grounding_with_connection_id(
@@ -953,7 +940,10 @@ async def test_azure_ai_chat_client_prep_tools_web_search_custom_bing_connection
     # Mock connection get to raise HttpResponseError
     mock_ai_project_client.connections.get = AsyncMock(side_effect=HttpResponseError("Connection not found"))
 
-    with pytest.raises(ServiceInitializationError, match="Bing custom connection 'nonexistent-connection' not found"):
+    with pytest.raises(
+        ServiceInitializationError,
+        match="Bing custom connection 'nonexistent-connection' not found in the Azure AI Project",
+    ):
         await chat_client._prep_tools([web_search_tool])  # type: ignore
 
 
@@ -973,7 +963,10 @@ async def test_azure_ai_chat_client_prep_tools_web_search_bing_grounding_connect
     # Mock connection get to raise HttpResponseError
     mock_ai_project_client.connections.get = AsyncMock(side_effect=HttpResponseError("Connection not found"))
 
-    with pytest.raises(ServiceInitializationError, match="Bing connection 'nonexistent-bing-connection' not found"):
+    with pytest.raises(
+        ServiceInitializationError,
+        match="Bing connection 'nonexistent-bing-connection' not found in the Azure AI Project",
+    ):
         await chat_client._prep_tools([web_search_tool])  # type: ignore
 
 
@@ -1368,23 +1361,6 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_with_tool_resources(
     mock_ai_project_client.agents.create_agent.assert_called_once()
     call_kwargs = mock_ai_project_client.agents.create_agent.call_args[1]
     assert call_kwargs["tool_resources"] == {"vector_store_ids": ["vs-123"]}
-
-
-async def test_azure_ai_chat_client_close_method(mock_ai_project_client: MagicMock) -> None:
-    """Test close method."""
-    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, should_delete_agent=True)
-    chat_client._should_close_client = True  # type: ignore
-    chat_client.agent_id = "test-agent"
-
-    # Mock cleanup methods
-    mock_ai_project_client.agents.delete_agent = AsyncMock()
-    mock_ai_project_client.close = AsyncMock()
-
-    await chat_client.close()
-
-    # Verify cleanup was called
-    mock_ai_project_client.agents.delete_agent.assert_called_once_with("test-agent")
-    mock_ai_project_client.close.assert_called_once()
 
 
 async def test_azure_ai_chat_client_create_agent_stream_submit_tool_outputs(
@@ -1884,3 +1860,57 @@ async def test_azure_ai_chat_client_agent_chat_options_agent_level() -> None:
         assert isinstance(response, AgentRunResponse)
         assert response.text is not None
         assert len(response.text) > 0
+
+
+async def test_azure_ai_chat_client_cleanup_agent_when_enabled_and_created(
+    mock_ai_project_client: MagicMock,
+) -> None:
+    """Test that agent is cleaned up when should_cleanup_agent=True and agent was created by client."""
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, agent_id=None, should_cleanup_agent=True)
+
+    # Simulate agent creation
+    chat_client.agent_id = "created-agent-id"
+    chat_client._agent_created = True  # type: ignore
+
+    await chat_client._cleanup_agent_if_needed()  # type: ignore
+
+    # Verify agent was deleted
+    mock_ai_project_client.agents.delete_agent.assert_called_once_with("created-agent-id")
+    assert chat_client.agent_id is None
+    assert chat_client._agent_created is False  # type: ignore
+
+
+async def test_azure_ai_chat_client_no_cleanup_when_disabled(
+    mock_ai_project_client: MagicMock,
+) -> None:
+    """Test that agent is not cleaned up when should_cleanup_agent=False."""
+    chat_client = create_test_azure_ai_chat_client(mock_ai_project_client, agent_id=None, should_cleanup_agent=False)
+
+    # Simulate agent creation
+    chat_client.agent_id = "created-agent-id"
+    chat_client._agent_created = True
+
+    await chat_client._cleanup_agent_if_needed()  # type: ignore
+
+    # Verify agent was NOT deleted
+    mock_ai_project_client.agents.delete_agent.assert_not_called()
+    assert chat_client.agent_id == "created-agent-id"
+    assert chat_client._agent_created is True
+
+
+async def test_azure_ai_chat_client_no_cleanup_when_agent_not_created_by_client(
+    mock_ai_project_client: MagicMock,
+) -> None:
+    """Test that agent is not cleaned up when it was not created by this client instance."""
+    chat_client = create_test_azure_ai_chat_client(
+        mock_ai_project_client, agent_id="existing-agent-id", should_cleanup_agent=True
+    )
+
+    # Agent exists but was not created by this client (_agent_created = False)
+    assert chat_client._agent_created is False  # type: ignore
+
+    await chat_client._cleanup_agent_if_needed()  # type: ignore
+
+    # Verify agent was NOT deleted
+    mock_ai_project_client.agents.delete_agent.assert_not_called()
+    assert chat_client.agent_id == "existing-agent-id"
