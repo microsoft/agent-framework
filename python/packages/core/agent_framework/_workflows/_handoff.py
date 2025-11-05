@@ -80,6 +80,14 @@ def _clone_chat_agent(agent: ChatAgent) -> ChatAgent:
     options = agent.chat_options
     middleware = list(agent.middleware or [])
 
+    # Reconstruct the original tools list by combining regular tools with MCP tools.
+    # ChatAgent.__init__ separates MCP tools into _local_mcp_tools during initialization,
+    # so we need to recombine them here to pass the complete tools list to the constructor.
+    # This makes sure MCP tools are preserved when cloning agents for handoff workflows.
+    all_tools = list(options.tools) if options.tools else []
+    if agent._local_mcp_tools:
+        all_tools.extend(agent._local_mcp_tools)
+
     return ChatAgent(
         chat_client=agent.chat_client,
         instructions=options.instructions,
@@ -101,7 +109,7 @@ def _clone_chat_agent(agent: ChatAgent) -> ChatAgent:
         store=options.store,
         temperature=options.temperature,
         tool_choice=options.tool_choice,  # type: ignore[arg-type]
-        tools=list(options.tools) if options.tools else None,
+        tools=all_tools if all_tools else None,
         top_p=options.top_p,
         user=options.user,
         additional_chat_options=dict(options.additional_properties),
