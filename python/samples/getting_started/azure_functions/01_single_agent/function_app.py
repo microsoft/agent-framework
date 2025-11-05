@@ -1,10 +1,8 @@
 """Azure Functions single-agent sample."""
 
-import io
 import logging
 import os
-import sys
-from typing import Any, Dict
+from typing import Any
 
 from azure.identity import AzureCliCredential
 from agent_framework.azure import AzureOpenAIChatClient

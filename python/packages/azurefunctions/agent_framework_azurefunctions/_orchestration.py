@@ -209,7 +209,7 @@ def get_agent(context: AgentOrchestrationContextType, agent_name: str) -> Durabl
 
     Usage::
 
-        from durableagent.orchestration import get_agent
+    from agent_framework.azurefunctions import get_agent
 
 
         @app.orchestration_trigger(context_name="context")

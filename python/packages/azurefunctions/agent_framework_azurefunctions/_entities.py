@@ -366,7 +366,7 @@ def create_agent_entity(
             logger.debug(f"[entity_function] Operation: {context.operation_name}")
 
             current_state = context.get_state(lambda: None)
-            logger.debug("Retrieved state: %s", current_state[:100])
+            logger.debug("Retrieved state: %s", str(current_state)[:100])
             entity = AgentEntity(agent, callback)
 
             if current_state is not None:

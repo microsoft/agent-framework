@@ -37,18 +37,23 @@ class AgentState:
         return datetime.now(timezone.utc).isoformat()
 
     def add_user_message(
-        self, content: str, correlation_id: str, role: Literal["user", "system", "assistant", "tool"] = "user"
+        self,
+        content: str,
+        role: Literal["user", "system", "assistant", "tool"] = "user",
+        correlation_id: str | None = None,
     ) -> None:
         """Add a user message to the conversation history as a ChatMessage object.
 
         Args:
             content: The message content
-            correlation_id: Correlation identifier associated with the user message
             role: The message role (user, system, etc.)
+            correlation_id: Optional correlation identifier associated with the user message
         """
         self.message_count += 1
         timestamp = self._current_timestamp()
-        additional_props: MutableMapping[str, Any] = {"timestamp": timestamp, "correlation_id": correlation_id}
+        additional_props: MutableMapping[str, Any] = {"timestamp": timestamp}
+        if correlation_id is not None:
+            additional_props["correlation_id"] = correlation_id
         chat_message = ChatMessage(  # type: ignore[call-overload]
             role=role, text=content, additional_properties=additional_props
         )

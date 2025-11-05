@@ -18,7 +18,7 @@ from agent_framework import AgentProtocol, get_logger
 from ._callbacks import AgentResponseCallbackProtocol
 from ._entities import create_agent_entity
 from ._errors import IncomingRequestError
-from ._models import AgentSessionId, RunRequest
+from ._models import AgentSessionId, ChatRole, RunRequest
 from ._state import AgentState
 
 logger = get_logger("agent_framework.azurefunctions")
@@ -42,7 +42,7 @@ class AgentFunctionApp(df.DFApp):
 
     Usage:
         ```python
-        from durableagent import AgentFunctionApp
+    from agent_framework.azurefunctions import AgentFunctionApp
         from agent_framework.azure import AzureOpenAIAssistantsClient
 
         # Create agents with unique names
@@ -76,6 +76,8 @@ class AgentFunctionApp(df.DFApp):
         agents: Dictionary of agent name to AgentProtocol instance
         enable_health_check: Whether health check endpoint is enabled
         enable_http_endpoints: Whether HTTP endpoints are created for agents
+        max_poll_retries: Maximum polling attempts when waiting for responses
+        poll_interval_seconds: Delay (seconds) between polling attempts
     """
 
     agents: dict[str, AgentProtocol]
@@ -89,6 +91,8 @@ class AgentFunctionApp(df.DFApp):
         http_auth_level: func.AuthLevel = func.AuthLevel.ANONYMOUS,
         enable_health_check: bool = True,
         enable_http_endpoints: bool = True,
+        max_poll_retries: int = 10,
+        poll_interval_seconds: float = 0.5,
         default_callback: AgentResponseCallbackProtocol | None = None,
     ):
         """Initialize the AgentFunctionApp.
@@ -98,6 +102,8 @@ class AgentFunctionApp(df.DFApp):
             http_auth_level: HTTP authentication level (default: ANONYMOUS)
             enable_health_check: Enable built-in health check endpoint (default: True)
             enable_http_endpoints: Enable HTTP endpoints for agents (default: True)
+            max_poll_retries: Maximum number of polling attempts when waiting for a response
+            poll_interval_seconds: Delay (in seconds) between polling attempts
             default_callback: Optional callback invoked for agents without specific callbacks
 
         Note:
@@ -114,6 +120,18 @@ class AgentFunctionApp(df.DFApp):
         self.enable_health_check = enable_health_check
         self.enable_http_endpoints = enable_http_endpoints
         self.default_callback = default_callback
+
+        try:
+            retries = int(max_poll_retries)
+        except (TypeError, ValueError):
+            retries = 10
+        self.max_poll_retries = max(1, retries)
+
+        try:
+            interval = float(poll_interval_seconds)
+        except (TypeError, ValueError):
+            interval = 0.5
+        self.poll_interval_seconds = interval if interval > 0 else 0.5
 
         if agents:
             # Register all provided agents
@@ -405,14 +423,15 @@ class AgentFunctionApp(df.DFApp):
         """Poll the entity state until a response is available or timeout occurs."""
         import asyncio
 
-        max_retries = 10
+        max_retries = self.max_poll_retries
+        interval = self.poll_interval_seconds
         retry_count = 0
         result: dict[str, Any] | None = None
 
         logger.debug(f"[HTTP Trigger] Waiting for response with correlation ID: {correlation_id}")
 
         while retry_count < max_retries:
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(interval)
 
             result = await self._poll_entity_for_response(
                 client=client,
@@ -432,7 +451,7 @@ class AgentFunctionApp(df.DFApp):
 
         logger.warning(
             f"[HTTP Trigger] Response with correlation ID {correlation_id} "
-            f"not found in time (waited {max_retries * 0.5} seconds)"
+            f"not found in time (waited {max_retries * interval} seconds)"
         )
         return await self._build_timeout_result(message=message, session_key=session_key, correlation_id=correlation_id)
 
@@ -497,9 +516,11 @@ class AgentFunctionApp(df.DFApp):
         enable_tool_calls_value = req_body.get("enable_tool_calls")
         enable_tool_calls = True if enable_tool_calls_value is None else self._coerce_to_bool(enable_tool_calls_value)
 
+        role = self._coerce_chat_role(req_body.get("role"))
+
         return RunRequest(
             message=message,
-            role=req_body.get("role", "user"),
+            role=role,
             response_format=req_body.get("response_format"),
             enable_tool_calls=enable_tool_calls,
             conversation_id=conversation_id,
@@ -611,6 +632,17 @@ class AgentFunctionApp(df.DFApp):
                 return self._coerce_to_bool(req_body.get(key))
 
         return False
+
+    def _coerce_chat_role(self, value: Any) -> ChatRole:
+        """Convert user-provided role to ChatRole, defaulting to user on error."""
+        if isinstance(value, ChatRole):
+            return value
+        if isinstance(value, str):
+            try:
+                return ChatRole(value.strip().lower())
+            except ValueError:
+                logger.warning("[AgentFunctionApp] Invalid role '%s'; defaulting to user", value)
+        return ChatRole.USER
 
     def _coerce_to_bool(self, value: Any) -> bool:
         """Convert various representations into a boolean flag."""

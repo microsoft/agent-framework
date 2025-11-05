@@ -291,7 +291,7 @@ class RunRequest:
     """
 
     message: str
-    role: ChatRole | None = ChatRole.USER
+    role: ChatRole = ChatRole.USER
     response_format: type["BaseModel"] | None = None
     enable_tool_calls: bool = True
     conversation_id: str | None = None
@@ -302,9 +302,8 @@ class RunRequest:
         result = {
             "message": self.message,
             "enable_tool_calls": self.enable_tool_calls,
+            "role": self.role.value,
         }
-        if self.role:
-            result["role"] = self.role.value if isinstance(self.role, ChatRole) else self.role
         if self.response_format:
             result["response_format"] = _serialize_response_format(self.response_format)
         if self.conversation_id:
