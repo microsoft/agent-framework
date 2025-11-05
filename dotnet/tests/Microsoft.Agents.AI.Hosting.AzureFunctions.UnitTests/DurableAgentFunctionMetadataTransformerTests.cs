@@ -1,11 +1,11 @@
 // Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Azure.Functions.Worker.Core.FunctionMetadata;
-using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Microsoft.Agents.AI.Hosting.AzureFunctions.UnitTests;
 
-public class DurableAgentFunctionMetadataTransformerTests
+public sealed class DurableAgentFunctionMetadataTransformerTests
 {
     [Theory]
     [InlineData(0)] // Empty original metadata list
@@ -50,20 +50,20 @@ public class DurableAgentFunctionMetadataTransformerTests
 
         transformer.Transform(metadataList);
 
-        Assert.Equal(InitialMetadataEntryCount + agents.Count * 2, metadataList.Count);
+        Assert.Equal(InitialMetadataEntryCount + (agents.Count * 2), metadataList.Count);
 
         foreach (string agentName in agents.Keys)
         {
             // The agent's entity trigger name is prefixed with "dafx-"
-            DefaultFunctionMetadata? entityMeta =
-                Assert.Single(metadataList, m => m.Name == "dafx-" + agentName) as DefaultFunctionMetadata;
-            Assert.NotNull(entityMeta);
+            DefaultFunctionMetadata entityMeta =
+                Assert.IsType<DefaultFunctionMetadata>(
+                    Assert.Single(metadataList, m => m.Name == "dafx-" + agentName));
             Assert.NotNull(entityMeta.RawBindings);
             Assert.Contains("entityTrigger", entityMeta.RawBindings[0]);
 
-            DefaultFunctionMetadata? httpMeta =
-                Assert.Single(metadataList, m => m.Name == agentName + "_http") as DefaultFunctionMetadata;
-            Assert.NotNull(httpMeta);
+            DefaultFunctionMetadata httpMeta =
+                Assert.IsType<DefaultFunctionMetadata>(
+                    Assert.Single(metadataList, m => m.Name == agentName + "_http"));
             Assert.NotNull(httpMeta.RawBindings);
             Assert.Contains("httpTrigger", httpMeta.RawBindings[0]);
             Assert.Contains($"agents/{agentName}/run", httpMeta.RawBindings[0]);
@@ -91,6 +91,5 @@ public class DurableAgentFunctionMetadataTransformerTests
         return list;
     }
 
-    private static ILogger<DurableAgentFunctionMetadataTransformer> GetTestLogger() =>
-        new LoggerFactory().CreateLogger<DurableAgentFunctionMetadataTransformer>();
+    private static NullLogger<DurableAgentFunctionMetadataTransformer> GetTestLogger() => new();
 }

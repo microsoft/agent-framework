@@ -43,18 +43,12 @@ internal static class BuiltInFunctions
         // The session ID is an optional query string parameter.
         string? threadIdFromQuery = req.Query["threadId"];
 
-        AgentSessionId sessionId;
-        if (string.IsNullOrEmpty(threadIdFromQuery))
-        {
-            // If no session ID is provided, use a new one based on the function name and invocation ID.
-            // This may be better than a random one because it can be correlated with the function invocation.
-            sessionId = new AgentSessionId(GetAgentName(context), context.InvocationId);
-        }
-        else
-        {
-            // Specifying a session ID is how the caller correlates multiple calls to the same agent session.
-            sessionId = AgentSessionId.Parse(threadIdFromQuery);
-        }
+        // If no session ID is provided, use a new one based on the function name and invocation ID.
+        // This may be better than a random one because it can be correlated with the function invocation.
+        // Specifying a session ID is how the caller correlates multiple calls to the same agent session.
+        AgentSessionId sessionId = string.IsNullOrEmpty(threadIdFromQuery)
+            ? new AgentSessionId(GetAgentName(context), context.InvocationId)
+            : AgentSessionId.Parse(threadIdFromQuery);
 
         string? message = await req.ReadAsStringAsync();
         if (string.IsNullOrWhiteSpace(message))
@@ -115,7 +109,7 @@ internal static class BuiltInFunctions
     /// <summary>
     /// A service provider that combines the original service provider with an additional DurableTaskClient instance.
     /// </summary>
-    private class CombinedServiceProvider(IServiceProvider originalProvider, DurableTaskClient client)
+    private sealed class CombinedServiceProvider(IServiceProvider originalProvider, DurableTaskClient client)
         : IServiceProvider, IKeyedServiceProvider
     {
         private readonly IServiceProvider _originalProvider = originalProvider;

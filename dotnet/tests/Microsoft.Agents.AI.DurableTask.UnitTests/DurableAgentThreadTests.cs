@@ -4,7 +4,7 @@ using System.Text.Json;
 
 namespace Microsoft.Agents.AI.DurableTask.UnitTests;
 
-public class DurableAgentThreadTests
+public sealed class DurableAgentThreadTests
 {
     [Fact]
     public void BuiltInSerialization()

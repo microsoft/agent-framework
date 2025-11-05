@@ -209,21 +209,13 @@ public sealed class DurableAIAgent : AIAgent
         serializerOptions ??= DurableAgentJsonUtilities.DefaultOptions;
 
         // Prefer source-generated metadata when available to support AOT/trimming scenarios.
-        // Fall back to reflection-based deserialization for user types without metadata.
-        T? result;
+        // Fallback to reflection-based deserialization for types without source-generated metadata.
+        // This is necessary since T is a user-provided type that may not have [JsonSerializable] coverage.
         JsonTypeInfo? typeInfo = serializerOptions.GetTypeInfo(typeof(T));
-        if (typeInfo is JsonTypeInfo typedInfo)
-        {
-            result = (T?)JsonSerializer.Deserialize(response.Text, typedInfo);
-        }
-        else
-        {
-            // Fallback to reflection-based deserialization for types without source-generated metadata.
-            // This is necessary since T is a user-provided type that may not have [JsonSerializable] coverage.
-            result = JsonSerializer.Deserialize<T>(response.Text, serializerOptions);
-        }
-
-        result = result ?? throw new InvalidOperationException($"Failed to deserialize agent response to type {typeof(T).Name}.");
+        T? result = (typeInfo is JsonTypeInfo typedInfo
+            ? (T?)JsonSerializer.Deserialize(response.Text, typedInfo)
+            : JsonSerializer.Deserialize<T>(response.Text, serializerOptions))
+            ?? throw new InvalidOperationException($"Failed to deserialize agent response to type {typeof(T).Name}.");
 
         return new DurableAIAgentRunResponse<T>(response, result);
     }

@@ -4,7 +4,7 @@ using Microsoft.DurableTask.Entities;
 
 namespace Microsoft.Agents.AI.DurableTask.UnitTests;
 
-public class AgentSessionIdTests
+public sealed class AgentSessionIdTests
 {
     [Fact]
     public void ParseValidSessionId()
@@ -48,6 +48,8 @@ public class AgentSessionIdTests
 
         Assert.Throws<ArgumentException>(() =>
         {
+            // This assignment should throw an exception because
+            // the entity ID is not a valid agent session ID.
             AgentSessionId sessionId = entityId;
         });
     }

@@ -60,14 +60,9 @@ internal sealed class EntityAgentWrapper(
         object? result = null;
         if (this._entityScopedServices is not null)
         {
-            if (serviceKey is not null && this._entityScopedServices is IKeyedServiceProvider keyedServiceProvider)
-            {
-                result = keyedServiceProvider.GetKeyedService(serviceType, serviceKey);
-            }
-            else
-            {
-                result = this._entityScopedServices.GetService(serviceType);
-            }
+            result = (serviceKey is not null && this._entityScopedServices is IKeyedServiceProvider keyedServiceProvider)
+                ? keyedServiceProvider.GetKeyedService(serviceType, serviceKey)
+                : this._entityScopedServices.GetService(serviceType);
         }
 
         return result ?? base.GetService(serviceType, serviceKey);

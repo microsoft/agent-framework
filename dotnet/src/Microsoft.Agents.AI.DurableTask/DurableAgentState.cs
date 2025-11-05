@@ -46,13 +46,12 @@ public class DurableAgentState
     /// <returns>True if the agent response was found, false otherwise.</returns>
     public bool TryGetAgentResponse(string correlationId, [NotNullWhen(true)] out AgentRunResponse? response)
     {
-        foreach (AgentStateEntry entry in this.ConversationHistory)
+        foreach (AgentStateEntry entry in this.ConversationHistory.Where(
+            entry => entry.Type == AgentStateEntry.EntryType.AgentResponse &&
+            entry.CorrelationId == correlationId))
         {
-            if (entry.Type == AgentStateEntry.EntryType.AgentResponse && entry.CorrelationId == correlationId)
-            {
-                response = entry.AgentResponse!;
-                return true;
-            }
+            response = entry.AgentResponse!;
+            return true;
         }
 
         response = null;

@@ -33,9 +33,8 @@ internal sealed class DurableAgentFunctionMetadataTransformer : IFunctionMetadat
     {
         this._logger.LogInformation("Transforming function metadata to add durable agent functions. Initial function count: {FunctionCount}", original.Count);
 
-        foreach (KeyValuePair<string, Func<IServiceProvider, AIAgent>> kvp in this._agents)
+        foreach (string agentName in this._agents.Keys)
         {
-            string agentName = kvp.Key;
             this._logger.LogInformation("Registering functions for agent: {AgentName}", agentName);
 
             // Each agent type gets its own entity trigger function.

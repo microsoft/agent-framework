@@ -48,13 +48,11 @@ internal sealed class AgentRunHandle
                 this.SessionId,
                 cancellation: cancellationToken);
             DurableAgentState? state = entityResponse?.State;
-            if (state?.ConversationHistory != null)
+
+            // Look for an agent response with matching CorrelationId
+            if (state is not null && state.TryGetAgentResponse(this.CorrelationId, out AgentRunResponse? response))
             {
-                // Look for an agent response with matching ResponseId
-                if (state.TryGetAgentResponse(this.CorrelationId, out AgentRunResponse? response))
-                {
-                    return response;
-                }
+                return response;
             }
 
             // Wait before polling again with exponential backoff
