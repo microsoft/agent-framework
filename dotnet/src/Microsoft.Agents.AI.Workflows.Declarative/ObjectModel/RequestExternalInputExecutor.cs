@@ -31,8 +31,8 @@ internal sealed class RequestExternalInputExecutor(RequestExternalInput model, W
         return default;
     }
 
-    public async ValueTask CaptureResponseAsync(IWorkflowContext context, ExternalInputResponse message, CancellationToken cancellationToken)
+    public async ValueTask CaptureResponseAsync(IWorkflowContext context, ExternalInputResponse response, CancellationToken cancellationToken)
     {
-        await this.AssignAsync(this.Model.Variable?.Path, message.Message.ToFormula(), context).ConfigureAwait(false);
+        await this.AssignAsync(this.Model.Variable?.Path, response.Messages.ToFormula(), context).ConfigureAwait(false);
     }
 }

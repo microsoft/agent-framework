@@ -6,6 +6,7 @@
 using System.Diagnostics;
 using System.Reflection;
 using System.Text.Json;
+using Azure.Core;
 using Azure.Identity;
 using Microsoft.Agents.AI.Workflows;
 #if CHECKPOINT_JSON
@@ -14,6 +15,7 @@ using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Declarative;
 using Microsoft.Agents.AI.Workflows.Declarative.Events;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
+using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using OpenAI.Responses;
@@ -319,73 +321,61 @@ internal sealed class Program
     }
 
     /// <summary>
-    /// Handle request for external input, either from a human or a function tool invocation.
+    /// Handle request for external input.
     /// </summary>
-    private async ValueTask<object> HandleExternalRequestAsync(ExternalRequest request) =>
-        request.Data.TypeId.TypeName switch
-        {
-            // Request for answer to a question
-            _ when request.Data.TypeId.IsMatch<AnswerRequest>() => HandleAnswerRequest(request.DataAs<AnswerRequest>()!),
-            // Request for function tool invocation.  (Only active when functions are defined and IncludeFunctions is true.)
-            _ when request.Data.TypeId.IsMatch<AgentFunctionToolRequest>() => await this.HandleToolRequestAsync(request.DataAs<AgentFunctionToolRequest>()!),
-            // Request for external
-            _ when request.Data.TypeId.IsMatch<ExternalInputRequest>() => HandleInputRequest(),
-            // Request for user input, such as function or mcp tool approval
-            _ when request.Data.TypeId.IsMatch<UserInputRequest>() => HandleUserInputRequest(request.DataAs<UserInputRequest>()!),
-            // Unknown request type.
-            _ => throw new InvalidOperationException($"Unsupported external request type: {request.GetType().Name}."),
-        };
-
-    /// <summary>
-    /// Handle request for answer.
-    /// </summary>
-    private static AnswerResponse HandleAnswerRequest(AnswerRequest request)
+    private async ValueTask<ExternalInputResponse> HandleExternalRequestAsync(ExternalRequest request)
     {
-        string? userInput;
-        do
-        {
-            Console.ForegroundColor = ConsoleColor.DarkGreen;
-            Console.Write($"\n{request.Prompt ?? "INPUT:"} ");
-            Console.ForegroundColor = ConsoleColor.White;
-            userInput = Console.ReadLine();
-        }
-        while (string.IsNullOrWhiteSpace(userInput));
+        ExternalInputRequest inputRequest =
+            request.DataAs<ExternalInputRequest>() ??
+            throw new InvalidOperationException($"Expected external request type: {request.GetType().Name}.");
 
-        return new AnswerResponse(userInput);
+        List<ChatMessage> responseMessages = [];
+
+        foreach (ChatMessage message in inputRequest.AgentResponse.Messages)
+        {
+            ChatMessage? responseMessage = await this.ProcessInputMessageAsync(message);
+            if (responseMessage is not null)
+            {
+                responseMessages.Add(responseMessage);
+            }
+        }
+
+        if (responseMessages.Count == 0)
+        {
+            // Must be request for user input.
+            responseMessages.Add(HandleUserInputRequest(inputRequest));
+        }
+
+        return new ExternalInputResponse(responseMessages);
     }
 
-    /// <summary>
-    /// Handle request for input.
-    /// </summary>
-    private static ExternalInputResponse HandleInputRequest()
+    private async ValueTask<ChatMessage?> ProcessInputMessageAsync(ChatMessage message)
     {
-        string? userInput;
-        do
+        List<AIContent> responseContents = [];
+
+        foreach (AIContent requestItem in message.Contents)
         {
-            Console.ForegroundColor = ConsoleColor.DarkGreen;
-            Console.Write("\nINPUT: ");
-            Console.ForegroundColor = ConsoleColor.White;
-            userInput = Console.ReadLine();
+            AIContent? responseItem =
+                requestItem switch
+                {
+                    FunctionCallContent functionCall => await InvokesToolAsync(functionCall),
+                    FunctionApprovalRequestContent functionApprovalRequest => functionApprovalRequest.CreateResponse(approved: true),
+                    McpServerToolApprovalRequestContent mcpApprovalRequest => mcpApprovalRequest.CreateResponse(approved: true),
+                    _ => null,
+                };
+
+            if (responseItem is not null)
+            {
+                responseContents.Add(responseItem);
+            }
         }
-        while (string.IsNullOrWhiteSpace(userInput));
 
-        return new ExternalInputResponse(new ChatMessage(ChatRole.User, userInput));
-    }
+        if (responseContents.Count == 0)
+        {
+            return null;
+        }
 
-    /// <summary>
-    /// Handle a function tool request by invoking the specified tools and returning the results.
-    /// </summary>
-    /// <remarks>
-    /// This handler is only active when <see cref="IncludeFunctions"/> is set to true and
-    /// one or more <see cref="AIFunction"/> instances are defined in the constructor.
-    /// </remarks>
-    private async ValueTask<AgentFunctionToolResponse> HandleToolRequestAsync(AgentFunctionToolRequest request)
-    {
-        Task<FunctionResultContent>[] functionTasks = request.FunctionCalls.Select(functionCall => InvokesToolAsync(functionCall)).ToArray();
-
-        await Task.WhenAll(functionTasks);
-
-        return AgentFunctionToolResponse.Create(request, functionTasks.Select(task => task.Result));
+        return new ChatMessage(ChatRole.User, responseContents);
 
         async Task<FunctionResultContent> InvokesToolAsync(FunctionCallContent functionCall)
         {
@@ -396,28 +386,19 @@ internal sealed class Program
         }
     }
 
-    /// <summary>
-    /// Handle request for user input for mcp and function tool approval.
-    /// </summary>
-    private static UserInputResponse HandleUserInputRequest(UserInputRequest request)
+    private static ChatMessage HandleUserInputRequest(ExternalInputRequest request)
     {
-        return UserInputResponse.Create(request, ProcessRequests());
-
-        IEnumerable<UserInputResponseContent> ProcessRequests()
+        string? userInput;
+        do
         {
-            foreach (UserInputRequestContent approvalRequest in request.InputRequests.OfType<UserInputRequestContent>())
-            {
-                // Here we are explicitly approving all requests.
-                // In a real-world scenario, you would replace this logic to either solicit user approval or implement a more complex approval process.
-                yield return
-                    approvalRequest switch
-                    {
-                        McpServerToolApprovalRequestContent mcpApprovalRequest => mcpApprovalRequest.CreateResponse(approved: true),
-                        FunctionApprovalRequestContent functionApprovalRequest => functionApprovalRequest.CreateResponse(approved: true),
-                        _ => throw new NotSupportedException($"Unsupported request of type {approvalRequest.GetType().Name}"),
-                    };
-            }
+            Console.ForegroundColor = ConsoleColor.DarkGreen;
+            Console.Write($"\n{request.AgentResponse.Text ?? "INPUT:"} ");
+            Console.ForegroundColor = ConsoleColor.White;
+            userInput = Console.ReadLine();
         }
+        while (string.IsNullOrWhiteSpace(userInput));
+
+        return new ChatMessage(ChatRole.User, userInput);
     }
 
     private static string? ParseWorkflowFile(string[] args)

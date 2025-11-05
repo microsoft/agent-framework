@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.Events;
 
@@ -18,5 +19,15 @@ public sealed class ExternalInputRequest
     internal ExternalInputRequest(AgentRunResponse agentResponse)
     {
         this.AgentResponse = agentResponse;
+    }
+
+    internal ExternalInputRequest(ChatMessage message)
+    {
+        this.AgentResponse = new AgentRunResponse(message);
+    }
+
+    internal ExternalInputRequest(string text)
+    {
+        this.AgentResponse = new AgentRunResponse(new ChatMessage(ChatRole.User, text));
     }
 }

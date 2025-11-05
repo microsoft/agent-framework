@@ -19,14 +19,11 @@ internal sealed class InvokeAzureResponseExecutor(InvokeAzureResponse model, Wor
 {
     public static class Steps
     {
-        public static string UserInput(string id) => $"{id}_{nameof(UserInput)}";
-        public static string FunctionTool(string id) => $"{id}_{nameof(FunctionTool)}";
+        public static string ExternaIInput(string id) => $"{id}_{nameof(ExternaIInput)}";
         public static string Resume(string id) => $"{id}_{nameof(Resume)}";
     }
 
-    public static bool RequiresFunctionCall(object? message) => message is AgentFunctionToolRequest;
-
-    public static bool RequiresUserInput(object? message) => message is UserInputRequest;
+    public static bool RequiresInput(object? message) => message is ExternalInputRequest;
 
     public static bool RequiresNothing(object? message) => message is ActionExecutorResult;
 
@@ -44,8 +41,8 @@ internal sealed class InvokeAzureResponseExecutor(InvokeAzureResponse model, Wor
         return default;
     }
 
-    public ValueTask ResumeAsync(IWorkflowContext context, AgentFunctionToolResponse message, CancellationToken cancellationToken) =>
-        this.InvokeAgentAsync(context, [message.FunctionResults.ToChatMessage()], cancellationToken);
+    public ValueTask ResumeAsync(IWorkflowContext context, ExternalInputResponse response, CancellationToken cancellationToken) =>
+        this.InvokeAgentAsync(context, response.Messages, cancellationToken);
 
     public async ValueTask CompleteAsync(IWorkflowContext context, ActionExecutorResult message, CancellationToken cancellationToken)
     {

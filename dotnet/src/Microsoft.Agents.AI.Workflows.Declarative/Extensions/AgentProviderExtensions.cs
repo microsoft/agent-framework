@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -34,13 +33,6 @@ internal static class AgentProviderExtensions
 
             updates.Add(update);
 
-            //if (update.RawRepresentation is ChatResponseUpdate chatUpdate && // %%% VALIDATE
-            //    chatUpdate.RawRepresentation is RunUpdate runUpdate &&
-            //    s_failureStatus.Contains(runUpdate.Value.Status))
-            //{
-            //    throw new DeclarativeActionException($"Unexpected failure invoking agent, run {runUpdate.Value.Status}: {agent.Name ?? agent.Id} [{runUpdate.Value.Id}/{conversationId}]");
-            //}
-
             if (autoSend)
             {
                 await context.AddEventAsync(new AgentRunUpdateEvent(executorId, update), cancellationToken).ConfigureAwait(false);
@@ -57,15 +49,7 @@ internal static class AgentProviderExtensions
         // If autoSend is enabled and this is not the workflow conversation, copy messages to the workflow conversation.
         if (autoSend && !isWorkflowConversation && workflowConversationId is not null)
         {
-            // Copy messages with content that aren't function calls or results.
-            // %%% SELECT FOR MESSAGE / DON'T EXCLUDE
-            IEnumerable<ChatMessage> messages =
-                response.Messages.Where(
-                    message =>
-                        !string.IsNullOrEmpty(message.Text) &&
-                        !message.Contents.OfType<FunctionCallContent>().Any() &&
-                        !message.Contents.OfType<FunctionResultContent>().Any());
-            foreach (ChatMessage message in messages)
+            foreach (ChatMessage message in response.Messages)
             {
                 await agentProvider.CreateMessageAsync(workflowConversationId, message, cancellationToken).ConfigureAwait(false);
             }

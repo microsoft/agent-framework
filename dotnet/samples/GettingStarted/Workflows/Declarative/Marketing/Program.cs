@@ -3,7 +3,6 @@
 using Azure.AI.Agents;
 using Azure.Identity;
 using Microsoft.Extensions.Configuration;
-using OpenAI.Responses;
 using Shared.Foundry;
 using Shared.Workflows;
 

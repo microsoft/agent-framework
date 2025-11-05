@@ -21,7 +21,8 @@ public sealed class ExternalInputResponseTest(ITestOutputHelper output) : EventT
         ExternalInputResponse copy = VerifyEventSerialization(source);
 
         // Assert
-        AssertMessage(source.Message, copy.Message);
+        ChatMessage messageCopy = Assert.Single(source.Messages);
+        AssertMessage(messageCopy, copy.Messages[0]);
     }
 
     [Fact]
@@ -42,21 +43,19 @@ public sealed class ExternalInputResponseTest(ITestOutputHelper output) : EventT
         ExternalInputResponse copy = VerifyEventSerialization(source);
 
         // Assert
-        Assert.Equal(source.Message.Contents.Count, copy.Message.Contents.Count);
+        ChatMessage responseMessage = Assert.Single(source.Messages);
+        Assert.Equal(responseMessage.Contents.Count, copy.Messages[0].Contents.Count);
 
-        McpServerToolApprovalResponseContent mcpApproval = AssertContent<McpServerToolApprovalResponseContent>(copy);
+        McpServerToolApprovalResponseContent mcpApproval = AssertContent<McpServerToolApprovalResponseContent>(responseMessage);
         Assert.Equal("call1", mcpApproval.Id);
 
-        FunctionApprovalResponseContent functionApproval = AssertContent<FunctionApprovalResponseContent>(copy);
+        FunctionApprovalResponseContent functionApproval = AssertContent<FunctionApprovalResponseContent>(responseMessage);
         Assert.Equal("call2", functionApproval.Id);
 
-        FunctionResultContent functionResult = AssertContent<FunctionResultContent>(copy);
+        FunctionResultContent functionResult = AssertContent<FunctionResultContent>(responseMessage);
         Assert.Equal("call3", functionResult.CallId);
 
-        TextContent textContent = AssertContent<TextContent>(copy);
+        TextContent textContent = AssertContent<TextContent>(responseMessage);
         Assert.Equal("Heya", textContent.Text);
     }
-
-    private static TContent AssertContent<TContent>(ExternalInputResponse response) where TContent : AIContent =>
-        AssertContent<TContent>(response.Message);
 }
