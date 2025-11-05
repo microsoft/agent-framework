@@ -388,11 +388,16 @@ internal sealed class Program
 
     private static ChatMessage HandleUserInputRequest(ExternalInputRequest request)
     {
+        string prompt =
+            string.IsNullOrWhiteSpace(request.AgentResponse.Text) || request.AgentResponse.ResponseId is not null ?
+                "INPUT:" :
+                request.AgentResponse.Text;
+
         string? userInput;
         do
         {
             Console.ForegroundColor = ConsoleColor.DarkGreen;
-            Console.Write($"\n{request.AgentResponse.Text ?? "INPUT:"} ");
+            Console.Write($"\n{prompt} ");
             Console.ForegroundColor = ConsoleColor.White;
             userInput = Console.ReadLine();
         }
