@@ -1,8 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Microsoft.DurableTask.Entities;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.DurableTask.Entities;
 
 namespace Microsoft.Agents.AI.DurableTask;
 
