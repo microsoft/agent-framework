@@ -27,7 +27,7 @@ def google_ai_unit_test_env(monkeypatch, exclude_list, override_env_param_dict):
 
     env_vars = {
         "GOOGLE_AI_API_KEY": "test-api-key-12345",
-        "GOOGLE_AI_MODEL_ID": "gemini-1.5-pro",
+        "GOOGLE_AI_CHAT_MODEL_ID": "gemini-1.5-pro",
     }
 
     env_vars.update(override_env_param_dict)  # type: ignore
@@ -53,7 +53,7 @@ def vertex_ai_unit_test_env(monkeypatch, exclude_list, override_env_param_dict):
     env_vars = {
         "VERTEX_AI_PROJECT_ID": "test-project-id",
         "VERTEX_AI_LOCATION": "us-central1",
-        "VERTEX_AI_MODEL_ID": "gemini-1.5-pro",
+        "VERTEX_AI_CHAT_MODEL_ID": "gemini-1.5-pro",
     }
 
     env_vars.update(override_env_param_dict)  # type: ignore

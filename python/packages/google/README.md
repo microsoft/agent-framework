@@ -37,14 +37,14 @@ from agent_framework_google import GoogleAISettings
 
 # Configure via environment variables
 # GOOGLE_AI_API_KEY=your_api_key
-# GOOGLE_AI_MODEL_ID=gemini-1.5-pro
+# GOOGLE_AI_CHAT_MODEL_ID=gemini-1.5-pro
 
 settings = GoogleAISettings()
 
 # Or pass parameters directly
 settings = GoogleAISettings(
     api_key="your_api_key",
-    model_id="gemini-1.5-pro"
+    chat_model_id="gemini-1.5-pro"
 )
 ```
 
@@ -56,7 +56,7 @@ from agent_framework_google import VertexAISettings
 # Configure via environment variables
 # VERTEX_AI_PROJECT_ID=your-project-id
 # VERTEX_AI_LOCATION=us-central1
-# VERTEX_AI_MODEL_ID=gemini-1.5-pro
+# VERTEX_AI_CHAT_MODEL_ID=gemini-1.5-pro
 # GOOGLE_APPLICATION_CREDENTIALS=/path/to/credentials.json
 
 settings = VertexAISettings()
@@ -65,7 +65,7 @@ settings = VertexAISettings()
 settings = VertexAISettings(
     project_id="your-project-id",
     location="us-central1",
-    model_id="gemini-1.5-pro"
+    chat_model_id="gemini-1.5-pro"
 )
 ```
 
@@ -82,7 +82,7 @@ from agent_framework.google import GoogleAIChatClient
 
 # Configure via environment variables
 # GOOGLE_AI_API_KEY=your_api_key
-# GOOGLE_AI_MODEL_ID=gemini-1.5-pro
+# GOOGLE_AI_CHAT_MODEL_ID=gemini-1.5-pro
 
 client = GoogleAIChatClient()
 agent = client.create_agent(
@@ -105,7 +105,7 @@ from agent_framework import HostedWebSearchTool
 # Configure via environment variables
 # VERTEX_AI_PROJECT_ID=your-project-id
 # VERTEX_AI_LOCATION=us-central1
-# VERTEX_AI_MODEL_ID=gemini-1.5-pro
+# VERTEX_AI_CHAT_MODEL_ID=gemini-1.5-pro
 # GOOGLE_APPLICATION_CREDENTIALS=/path/to/credentials.json
 
 client = VertexAIChatClient()
@@ -125,12 +125,12 @@ print(response.text)
 
 **Google AI:**
 - `GOOGLE_AI_API_KEY`: Your Google AI API key ([Get one here](https://ai.google.dev/))
-- `GOOGLE_AI_MODEL_ID`: Model to use (e.g., `gemini-1.5-pro`, `gemini-1.5-flash`)
+- `GOOGLE_AI_CHAT_MODEL_ID`: Model to use (e.g., `gemini-1.5-pro`, `gemini-1.5-flash`)
 
 **Vertex AI:**
 - `VERTEX_AI_PROJECT_ID`: Your GCP project ID
 - `VERTEX_AI_LOCATION`: GCP region (e.g., `us-central1`)
-- `VERTEX_AI_MODEL_ID`: Model to use (e.g., `gemini-1.5-pro`)
+- `VERTEX_AI_CHAT_MODEL_ID`: Model to use (e.g., `gemini-1.5-pro`)
 - `GOOGLE_APPLICATION_CREDENTIALS`: Path to service account JSON file
 
 ### Supported Models

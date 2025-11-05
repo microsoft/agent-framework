@@ -16,25 +16,25 @@ class GoogleAISettings(AFBaseSettings):
 
     Keyword Args:
         api_key: The Google AI API key.
-        model_id: The Google AI model ID (e.g., gemini-1.5-pro).
+        chat_model_id: The Google AI chat model ID (e.g., gemini-1.5-pro).
         env_file_path: If provided, the .env settings are read from this file path location.
         env_file_encoding: The encoding of the .env file, defaults to 'utf-8'.
 
     Examples:
         .. code-block:: python
 
-            from agent_framework_google import GoogleAISettings
+            from agent_framework.google import GoogleAISettings
 
             # Using environment variables
             # Set GOOGLE_AI_API_KEY=your_api_key
-            # GOOGLE_AI_MODEL_ID=gemini-1.5-pro
+            # GOOGLE_AI_CHAT_MODEL_ID=gemini-1.5-pro
 
             settings = GoogleAISettings()
 
             # Or passing parameters directly
             settings = GoogleAISettings(
                 api_key="your_api_key",
-                model_id="gemini-1.5-pro"
+                chat_model_id="gemini-1.5-pro"
             )
 
             # Or loading from a .env file
@@ -44,7 +44,7 @@ class GoogleAISettings(AFBaseSettings):
     env_prefix: ClassVar[str] = "GOOGLE_AI_"
 
     api_key: SecretStr | None = None
-    model_id: str | None = None
+    chat_model_id: str | None = None
 
 
 class VertexAISettings(AFBaseSettings):
@@ -58,7 +58,7 @@ class VertexAISettings(AFBaseSettings):
     Keyword Args:
         project_id: The Google Cloud project ID.
         location: The Google Cloud region (e.g., us-central1).
-        model_id: The Vertex AI model ID (e.g., gemini-1.5-pro).
+        chat_model_id: The Vertex AI chat model ID (e.g., gemini-1.5-pro).
         credentials_path: Optional path to service account JSON file.
         env_file_path: If provided, the .env settings are read from this file path location.
         env_file_encoding: The encoding of the .env file, defaults to 'utf-8'.
@@ -66,12 +66,12 @@ class VertexAISettings(AFBaseSettings):
     Examples:
         .. code-block:: python
 
-            from agent_framework_google import VertexAISettings
+            from agent_framework.google import VertexAISettings
 
             # Using environment variables
             # Set VERTEX_AI_PROJECT_ID=your-project-id
             # VERTEX_AI_LOCATION=us-central1
-            # VERTEX_AI_MODEL_ID=gemini-1.5-pro
+            # VERTEX_AI_CHAT_MODEL_ID=gemini-1.5-pro
             # GOOGLE_APPLICATION_CREDENTIALS=/path/to/credentials.json
 
             settings = VertexAISettings()
@@ -80,7 +80,7 @@ class VertexAISettings(AFBaseSettings):
             settings = VertexAISettings(
                 project_id="your-project-id",
                 location="us-central1",
-                model_id="gemini-1.5-pro"
+                chat_model_id="gemini-1.5-pro"
             )
 
             # Or loading from a .env file
@@ -91,7 +91,7 @@ class VertexAISettings(AFBaseSettings):
 
     project_id: str | None = None
     location: str | None = None
-    model_id: str | None = None
+    chat_model_id: str | None = None
     credentials_path: str | None = None
 
 
