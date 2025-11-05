@@ -51,11 +51,11 @@ internal sealed class Program
                 Review and coach the student's approach to solving the given math problem.
                 Don't repeat the solution or try and solve it.
                 If the student has demonstrated comprehension and responded to all of your feedback,
-                give the student your congraluations by using the word "congratulations".
+                give the student your congratulations by using the word "congratulations".
                 Review and coach the student's approach to solving the given math problem.
                 Don't repeat the solution or try and solve it.
                 If the student has demonstrated comprehension and responded to all of your feedback,
-                give the student your congraluations by using the word "congratulations".
+                give the student your congratulations by using the word "congratulations".
                 """
         };
 }
