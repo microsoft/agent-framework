@@ -39,7 +39,7 @@ internal sealed class AgentRunHandle
     public async Task<AgentRunResponse> ReadAgentResponseAsync(CancellationToken cancellationToken = default)
     {
         TimeSpan pollInterval = TimeSpan.FromMilliseconds(50); // Start with 50ms
-        TimeSpan maxPollInterval = TimeSpan.FromSeconds(1); // Maximum 1 second
+        TimeSpan maxPollInterval = TimeSpan.FromSeconds(3); // Maximum 3 seconds
 
         while (true)
         {

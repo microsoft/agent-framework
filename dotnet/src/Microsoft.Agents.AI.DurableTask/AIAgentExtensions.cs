@@ -27,7 +27,9 @@ public static class AIAgentExtensions
         // Don't allow this method to be used on DurableAIAgent instances.
         if (agent is DurableAIAgent)
         {
-            throw new ArgumentException("DurableAIAgent instances should not be converted to a durable agent proxy.", nameof(agent));
+            throw new ArgumentException(
+                $"{nameof(DurableAIAgent)} instances cannot be converted to a durable agent proxy.",
+                nameof(agent));
         }
 
         string agentName = agent.Name ?? throw new ArgumentException("Agent must have a name.", nameof(agent));

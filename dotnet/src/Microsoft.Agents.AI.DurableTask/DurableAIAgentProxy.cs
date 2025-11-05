@@ -38,19 +38,29 @@ internal class DurableAIAgentProxy(string name, IDurableAgentClient agentClient)
                 paramName: nameof(thread));
         }
 
-        // Get the list of tool names to enable
-        List<string>? enableToolNames = null;
-        if (options is ChatClientAgentRunOptions chatClientOptions && chatClientOptions.ChatOptions?.Tools != null)
+        IList<string>? enableToolNames = null;
+        bool enableToolCalls = true;
+        ChatResponseFormat? responseFormat = null;
+        bool isFireAndForget = false;
+
+        if (options is DurableAgentRunOptions durableOptions)
         {
-            enableToolNames = [.. chatClientOptions.ChatOptions.Tools.Select(tool => tool.Name)];
+            enableToolCalls = durableOptions.EnableToolCalls;
+            enableToolNames = durableOptions.EnableToolNames;
+            responseFormat = durableOptions.ResponseFormat;
+            isFireAndForget = durableOptions.IsFireAndForget;
+        }
+        else if (options is ChatClientAgentRunOptions chatClientOptions)
+        {
+            // Honor the response format from the chat client options if specified
+            responseFormat = chatClientOptions.ChatOptions?.ResponseFormat;
         }
 
-        RunRequest request = new([.. messages]) { EnableToolNames = enableToolNames };
+        RunRequest request = new([.. messages], responseFormat, enableToolCalls, enableToolNames);
         AgentSessionId sessionId = durableThread.SessionId;
 
         AgentRunHandle agentRunHandle = await this._agentClient.RunAgentAsync(sessionId, request, cancellationToken);
 
-        bool isFireAndForget = options is DurableAgentRunOptions durableOptions && durableOptions.IsFireAndForget;
         if (isFireAndForget)
         {
             // If the request is fire and forget, return an empty response.

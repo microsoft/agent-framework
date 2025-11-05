@@ -1,8 +1,9 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
-using System.Diagnostics.CodeAnalysis;
 using Microsoft.DurableTask;
 using Microsoft.Extensions.AI;
 
@@ -89,9 +90,6 @@ public sealed class DurableAIAgent : AIAgent
         }
         else if (options is ChatClientAgentRunOptions chatClientOptions && chatClientOptions.ChatOptions?.Tools != null)
         {
-            // Get the list of tool names to enable
-            enableToolNames = [.. chatClientOptions.ChatOptions.Tools.Select(tool => tool.Name)];
-
             // Honor the response format from the chat client options if specified
             responseFormat = chatClientOptions.ChatOptions?.ResponseFormat;
         }
@@ -101,20 +99,30 @@ public sealed class DurableAIAgent : AIAgent
     }
 
     /// <summary>
-    /// Runs the agent with streaming support (not supported for durable agents).
+    /// Runs the agent with messages and returns a simulated streaming response.
     /// </summary>
+    /// <remarks>
+    /// Streaming is not supported for durable agents, so this method just returns the full response
+    /// as a single update.
+    /// </remarks>
     /// <param name="messages">The messages to send to the agent.</param>
     /// <param name="thread">The agent thread to use.</param>
     /// <param name="options">Optional run options.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A streaming response enumerable.</returns>
-    public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
-        CancellationToken cancellationToken = default)
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        throw new NotSupportedException("Streaming is not supported for durable agents.");
+        // Streaming is not supported for durable agents, so we just return the full response
+        // as a single update.
+        AgentRunResponse response = await this.RunAsync(messages, thread, options, cancellationToken);
+        foreach (AgentRunResponseUpdate update in response.ToAgentRunResponseUpdates())
+        {
+            yield return update;
+        }
     }
 
     /// <summary>
