@@ -201,7 +201,6 @@ class AzureAIAgentClient(BaseChatClient):
             agents_client = AgentsClient(
                 endpoint=azure_ai_settings.project_endpoint,
                 credential=async_credential,
-                # TODO (dmytrostruk): Verify if user_agent works with AgentsClient
                 user_agent=AGENT_FRAMEWORK_USER_AGENT,
             )
             should_close_client = True
