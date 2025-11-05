@@ -95,7 +95,9 @@ internal sealed record MessageContent : IEquatable<MessageContent>
         }
 
         // Both contents
-        if (this.Contents is not null && other.Contents is not null)
+        if (this.Contents is not null
+            && other.Contents is not null
+            && this.Contents.Count == other.Contents.Count)
         {
             return this.Contents.SequenceEqual(other.Contents);
         }

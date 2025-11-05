@@ -119,10 +119,10 @@ internal static class AgentRunResponseExtensions
     }
 
     /// <summary>
-    /// Converts UsageDetails to ResponseUsage.
+    /// Converts UsageDetails to CompletionUsage.
     /// </summary>
     /// <param name="usage">The usage details to convert.</param>
-    /// <returns>A ResponseUsage object with zeros if usage is null.</returns>
+    /// <returns>A CompletionUsage object with zeros if usage is null.</returns>
     public static CompletionUsage ToCompletionUsage(this UsageDetails? usage)
     {
         if (usage == null)
