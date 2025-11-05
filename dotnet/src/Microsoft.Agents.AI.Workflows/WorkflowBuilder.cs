@@ -272,12 +272,12 @@ public class WorkflowBuilder
     /// <param name="source">The source executor from which the fan-out edge originates. Cannot be null.</param>
     /// <param name="targets">One or more target executors that will receive the fan-out edge. Cannot be null or empty.</param>
     /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
-    public WorkflowBuilder AddFanOutEdge(ExecutorBinding source, params IEnumerable<ExecutorBinding> targets)
-        => this.AddFanOutEdge<object>(source, null, targets);
+    public WorkflowBuilder AddFanOutEdge(ExecutorBinding source, IEnumerable<ExecutorBinding> targets)
+        => this.AddFanOutEdge<object>(source, targets, null);
 
-    internal static Func<object?, int, IEnumerable<int>>? CreateEdgeAssignerFunc<T>(Func<T?, int, IEnumerable<int>>? partitioner)
+    internal static Func<object?, int, IEnumerable<int>>? CreateTargetAssignerFunc<T>(Func<T?, int, IEnumerable<int>>? targetAssigner)
     {
-        if (partitioner is null)
+        if (targetAssigner is null)
         {
             return null;
         }
@@ -289,7 +289,7 @@ public class WorkflowBuilder
                 maybeObj = portableValue.AsType(typeof(T));
             }
 
-            return partitioner(maybeObj is T typed ? typed : default, count);
+            return targetAssigner(maybeObj is T typed ? typed : default, count);
         };
     }
 
@@ -300,11 +300,11 @@ public class WorkflowBuilder
     /// <remarks>If a partitioner function is provided, it will be used to distribute input across the target
     /// executors. The order of targets determines their mapping in the partitioning process.</remarks>
     /// <param name="source">The source executor from which the fan-out edge originates. Cannot be null.</param>
-    /// <param name="partitioner">An optional function that determines how input is partitioned among the target executors.
-    /// If null, messages will route to all targets.</param>
     /// <param name="targets">One or more target executors that will receive the fan-out edge. Cannot be null or empty.</param>
     /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
-    public WorkflowBuilder AddFanOutEdge<T>(ExecutorBinding source, Func<T?, int, IEnumerable<int>>? partitioner = null, params IEnumerable<ExecutorBinding> targets)
+    /// <param name="targetSelector">An optional function that determines how input is assigned among the target executors.
+    /// If null, messages will route to all targets.</param>
+    public WorkflowBuilder AddFanOutEdge<T>(ExecutorBinding source, IEnumerable<ExecutorBinding> targets, Func<T?, int, IEnumerable<int>>? targetSelector = null)
     {
         Throw.IfNull(source);
         Throw.IfNull(targets);
@@ -321,7 +321,7 @@ public class WorkflowBuilder
             this.Track(source).Id,
             sinkIds,
             this.TakeEdgeId(),
-            CreateEdgeAssignerFunc(partitioner));
+            CreateTargetAssignerFunc(targetSelector));
 
         this.EnsureEdgesFor(source.Id).Add(new(fanOutEdge));
 
@@ -335,10 +335,10 @@ public class WorkflowBuilder
     /// <remarks>This method establishes a fan-in relationship, allowing the target executor to be activated
     /// based on the completion or state of multiple sources. The trigger parameter can be used to customize activation
     /// behavior.</remarks>
-    /// <param name="target">The target executor that receives input from the specified source executors. Cannot be null.</param>
     /// <param name="sources">One or more source executors that provide input to the target. Cannot be null or empty.</param>
+    /// <param name="target">The target executor that receives input from the specified source executors. Cannot be null.</param>
     /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
-    public WorkflowBuilder AddFanInEdge(ExecutorBinding target, params IEnumerable<ExecutorBinding> sources)
+    public WorkflowBuilder AddFanInEdge(IEnumerable<ExecutorBinding> sources, ExecutorBinding target)
     {
         Throw.IfNull(target);
         Throw.IfNull(sources);
@@ -364,8 +364,14 @@ public class WorkflowBuilder
         return this;
     }
 
+    /// <inheritdoc cref="AddFanInEdge(IEnumerable{ExecutorBinding}, ExecutorBinding)"/>
+    [Obsolete("Use AddFanInEdge(IEnumerable<ExecutorBinding>, ExecutorBinding) instead.")]
+    public WorkflowBuilder AddFanInEdge(ExecutorBinding target, params IEnumerable<ExecutorBinding> sources)
+        => this.AddFanInEdge(sources, target);
+
     private void Validate()
     {
+        // Validate that there are no unbound executors
         if (this._unboundExecutors.Count > 0)
         {
             throw new InvalidOperationException(
