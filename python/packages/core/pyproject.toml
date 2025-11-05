@@ -36,6 +36,7 @@ dependencies = [
     "openai>=1.99.0",
     "azure-identity>=1,<2",
     "mcp[ws]>=1.13",
+    "packaging>=24.1",
 ]
 
 [project.optional-dependencies]
