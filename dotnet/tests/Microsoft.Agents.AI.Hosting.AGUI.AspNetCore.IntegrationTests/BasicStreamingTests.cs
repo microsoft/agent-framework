@@ -258,16 +258,11 @@ public sealed class BasicStreamingTests : IAsyncDisposable
 
         this._app = builder.Build();
 
-        if (useMultiMessageAgent)
-        {
-            this._app.MapAGUIAgent("/agent", (IEnumerable<ChatMessage> messages) =>
-                this._app.Services.GetRequiredService<FakeMultiMessageAgent>());
-        }
-        else
-        {
-            this._app.MapAGUIAgent("/agent", (IEnumerable<ChatMessage> messages) =>
-                this._app.Services.GetRequiredService<FakeChatClientAgent>());
-        }
+        AIAgent agent = useMultiMessageAgent
+            ? this._app.Services.GetRequiredService<FakeMultiMessageAgent>()
+            : this._app.Services.GetRequiredService<FakeChatClientAgent>();
+
+        this._app.MapAGUI("/agent", agent);
 
         await this._app.StartAsync();
 

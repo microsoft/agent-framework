@@ -24,12 +24,12 @@ public static class AGUIEndpointRouteBuilderExtensions
     /// </summary>
     /// <param name="endpoints">The endpoint route builder.</param>
     /// <param name="pattern">The URL pattern for the endpoint.</param>
-    /// <param name="agentFactory">Factory function to create an agent instance.</param>
+    /// <param name="aiAgent">The agent instance.</param>
     /// <returns>An <see cref="IEndpointConventionBuilder"/> for the mapped endpoint.</returns>
-    public static IEndpointConventionBuilder MapAGUIAgent(
+    public static IEndpointConventionBuilder MapAGUI(
         this IEndpointRouteBuilder endpoints,
         string pattern,
-        Func<IEnumerable<ChatMessage>, AIAgent> agentFactory)
+        AIAgent aiAgent)
     {
         return endpoints.MapPost(pattern, async ([FromBody] RunAgentInput? input, HttpContext context, CancellationToken cancellationToken) =>
         {
@@ -39,7 +39,7 @@ public static class AGUIEndpointRouteBuilderExtensions
             }
 
             var messages = input.Messages.AsChatMessages();
-            var agent = agentFactory(messages);
+            var agent = aiAgent;
 
             var events = agent.RunStreamingAsync(
                 messages,

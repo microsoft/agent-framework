@@ -114,18 +114,16 @@ User (:q or quit to exit): :q
 
 ### Server Side
 
-The `AGUIServer` uses the `MapAGUIAgent` extension method to expose an agent through the AG-UI protocol:
+The `AGUIServer` uses the `MapAGUI` extension method to expose an agent through the AG-UI protocol:
 
 ```csharp
-app.MapAGUIAgent("/", (messages, tools, context, forwardedProps) =>
-{
-    AIAgent agent = new OpenAIClient(apiKey)
-        .GetChatClient(model)
-        .CreateAIAgent(
-            instructions: "You are a helpful assistant.",
-            name: "AGUIAssistant");
-    return agent;
-});
+AIAgent agent = new OpenAIClient(apiKey)
+    .GetChatClient(model)
+    .CreateAIAgent(
+        instructions: "You are a helpful assistant.",
+        name: "AGUIAssistant");
+
+app.MapAGUI("/", agent);
 ```
 
 This automatically handles:
