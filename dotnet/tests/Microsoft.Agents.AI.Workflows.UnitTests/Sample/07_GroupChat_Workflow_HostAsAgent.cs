@@ -27,11 +27,10 @@ internal static class Step7EntryPoint
                     // Skip workflow status updates
                     continue;
                 }
-
                 string updateText = $"{update.AuthorName
-                                           ?? update.AgentId
-                                           ?? update.Role.ToString()
-                                           ?? ChatRole.Assistant.ToString()}: {update.Text}";
+                                       ?? update.AgentId
+                                       ?? update.Role.ToString()
+                                       ?? ChatRole.Assistant.ToString()}: {update.Text}";
                 writer.WriteLine(updateText);
             }
         }
