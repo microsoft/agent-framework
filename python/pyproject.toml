@@ -4,7 +4,7 @@ description = "Microsoft Agent Framework for building AI Agents with Python. Thi
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b251028"
+version = "1.0.0b251104"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -24,8 +24,10 @@ classifiers = [
 dependencies = [
     "agent-framework-core",
     "agent-framework-a2a",
+    "agent-framework-ag-ui",
     "agent-framework-anthropic",
     "agent-framework-azure-ai",
+    "agent-framework-chatkit",
     "agent-framework-copilotstudio",
     "agent-framework-devui",
     "agent-framework-lab",
@@ -88,7 +90,9 @@ members = [ "packages/*" ]
 agent-framework = { workspace = true }
 agent-framework-core = { workspace = true }
 agent-framework-a2a = { workspace = true }
+agent-framework-ag-ui = { workspace = true }
 agent-framework-azure-ai = { workspace = true }
+agent-framework-chatkit = { workspace = true }
 agent-framework-copilotstudio = { workspace = true }
 agent-framework-lab = { workspace = true }
 agent-framework-mem0 = { workspace = true }
@@ -239,7 +243,9 @@ cmd = """
 pytest --import-mode=importlib
 --cov=agent_framework
 --cov=agent_framework_a2a
+--cov=agent_framework_ag_ui
 --cov=agent_framework_azure_ai
+--cov=agent_framework_chatkit
 --cov=agent_framework_copilotstudio
 --cov=agent_framework_mem0
 --cov=agent_framework_redis

@@ -3,6 +3,7 @@
 from collections.abc import AsyncIterable, AsyncIterator
 from dataclasses import dataclass
 from typing import Any, cast
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -10,6 +11,7 @@ from agent_framework import (
     AgentRunResponse,
     AgentRunResponseUpdate,
     BaseAgent,
+    ChatAgent,
     ChatMessage,
     FunctionCallContent,
     HandoffBuilder,
@@ -20,6 +22,8 @@ from agent_framework import (
     WorkflowEvent,
     WorkflowOutputEvent,
 )
+from agent_framework._mcp import MCPTool
+from agent_framework._workflows._handoff import _clone_chat_agent
 
 
 @dataclass
@@ -368,3 +372,32 @@ async def test_handoff_async_termination_condition() -> None:
     user_messages = [msg for msg in final_conv_list if msg.role == Role.USER]
     assert len(user_messages) == 2
     assert termination_call_count > 0
+
+
+async def test_clone_chat_agent_preserves_mcp_tools() -> None:
+    """Test that _clone_chat_agent preserves MCP tools when cloning an agent."""
+    mock_chat_client = MagicMock()
+
+    mock_mcp_tool = MagicMock(spec=MCPTool)
+    mock_mcp_tool.name = "test_mcp_tool"
+
+    def sample_function() -> str:
+        return "test"
+
+    original_agent = ChatAgent(
+        chat_client=mock_chat_client,
+        name="TestAgent",
+        instructions="Test instructions",
+        tools=[mock_mcp_tool, sample_function],
+    )
+
+    assert hasattr(original_agent, "_local_mcp_tools")
+    assert len(original_agent._local_mcp_tools) == 1
+    assert original_agent._local_mcp_tools[0] == mock_mcp_tool
+
+    cloned_agent = _clone_chat_agent(original_agent)
+
+    assert hasattr(cloned_agent, "_local_mcp_tools")
+    assert len(cloned_agent._local_mcp_tools) == 1
+    assert cloned_agent._local_mcp_tools[0] == mock_mcp_tool
+    assert len(cloned_agent.chat_options.tools) == 1
