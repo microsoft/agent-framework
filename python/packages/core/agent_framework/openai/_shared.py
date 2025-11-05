@@ -136,7 +136,7 @@ class OpenAIBase(SerializationMixin):
             **kwargs: Additional keyword arguments.
         """
         self.client = client
-
+        self.model_id = None
         if model_id:
             self.model_id = model_id.strip()
 
