@@ -45,8 +45,8 @@ public sealed class Mem0ProviderTests : IDisposable
         // Arrange
         var question = new ChatMessage(ChatRole.User, "What is my name?");
         var input = new ChatMessage(ChatRole.User, "Hello, my name is Caoimhe.");
-        var options = new Mem0ProviderOptions { ThreadId = "it-thread-1", UserId = "it-user-1" };
-        var sut = new Mem0Provider(this._httpClient, options);
+        var storageScope = new Mem0ProviderScope { ThreadId = "it-thread-1", UserId = "it-user-1" };
+        var sut = new Mem0Provider(this._httpClient, storageScope);
 
         await sut.ClearStoredMemoriesAsync();
         var ctxBefore = await sut.InvokingAsync(new AIContextProvider.InvokingContext(new[] { question }));
@@ -69,8 +69,8 @@ public sealed class Mem0ProviderTests : IDisposable
         // Arrange
         var question = new ChatMessage(ChatRole.User, "What is your name?");
         var assistantIntro = new ChatMessage(ChatRole.Assistant, "Hello, I'm a friendly assistant and my name is Caoimhe.");
-        var options = new Mem0ProviderOptions { AgentId = "it-agent-1" };
-        var sut = new Mem0Provider(this._httpClient, options);
+        var storageScope = new Mem0ProviderScope { AgentId = "it-agent-1" };
+        var sut = new Mem0Provider(this._httpClient, storageScope);
 
         await sut.ClearStoredMemoriesAsync();
         var ctxBefore = await sut.InvokingAsync(new AIContextProvider.InvokingContext(new[] { question }));
@@ -93,8 +93,8 @@ public sealed class Mem0ProviderTests : IDisposable
         // Arrange
         var question = new ChatMessage(ChatRole.User, "What is your name?");
         var assistantIntro = new ChatMessage(ChatRole.Assistant, "I'm an AI tutor and my name is Caoimhe.");
-        var sut1 = new Mem0Provider(this._httpClient, new Mem0ProviderOptions { AgentId = "it-agent-a" });
-        var sut2 = new Mem0Provider(this._httpClient, new Mem0ProviderOptions { AgentId = "it-agent-b" });
+        var sut1 = new Mem0Provider(this._httpClient, new Mem0ProviderScope { AgentId = "it-agent-a" });
+        var sut2 = new Mem0Provider(this._httpClient, new Mem0ProviderScope { AgentId = "it-agent-b" });
 
         await sut1.ClearStoredMemoriesAsync();
         await sut2.ClearStoredMemoriesAsync();

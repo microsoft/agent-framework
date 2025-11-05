@@ -2442,16 +2442,6 @@ class MagenticWorkflow:
             f"Missing names: {missing}; unexpected names: {unexpected}."
         )
 
-    async def run_stream_from_checkpoint(
-        self,
-        checkpoint_id: str,
-        checkpoint_storage: CheckpointStorage | None = None,
-    ) -> AsyncIterable[WorkflowEvent]:
-        """Resume orchestration from a checkpoint and stream resulting events."""
-        await self._validate_checkpoint_participants(checkpoint_id, checkpoint_storage)
-        async for event in self._workflow.run_stream_from_checkpoint(checkpoint_id, checkpoint_storage):
-            yield event
-
     async def run_with_string(self, task_text: str) -> WorkflowRunResult:
         """Run the workflow with a task string and return all events.
 
@@ -2494,32 +2484,6 @@ class MagenticWorkflow:
         async for event in self.run_stream(message):
             events.append(event)
         return WorkflowRunResult(events)
-
-    async def run_from_checkpoint(
-        self,
-        checkpoint_id: str,
-        checkpoint_storage: CheckpointStorage | None = None,
-    ) -> WorkflowRunResult:
-        """Resume orchestration from a checkpoint and collect all resulting events."""
-        events: list[WorkflowEvent] = []
-        async for event in self.run_stream_from_checkpoint(checkpoint_id, checkpoint_storage):
-            events.append(event)
-        return WorkflowRunResult(events)
-
-    async def send_responses_streaming(self, responses: dict[str, Any]) -> AsyncIterable[WorkflowEvent]:
-        """Forward responses to pending requests and stream resulting events.
-
-        This delegates to the underlying Workflow implementation.
-        """
-        async for event in self._workflow.send_responses_streaming(responses):
-            yield event
-
-    async def send_responses(self, responses: dict[str, Any]) -> WorkflowRunResult:
-        """Forward responses to pending requests and return all resulting events.
-
-        This delegates to the underlying Workflow implementation.
-        """
-        return await self._workflow.send_responses(responses)
 
     def __getattr__(self, name: str) -> Any:
         """Delegate unknown attributes to the underlying workflow."""

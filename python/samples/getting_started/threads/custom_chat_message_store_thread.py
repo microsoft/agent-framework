@@ -5,14 +5,8 @@ from collections.abc import Collection
 from typing import Any
 
 from agent_framework import ChatMessage, ChatMessageStoreProtocol
+from agent_framework._threads import ChatMessageStoreState
 from agent_framework.openai import OpenAIChatClient
-from pydantic import BaseModel
-
-
-class CustomStoreState(BaseModel):
-    """Implementation of custom chat message store state."""
-
-    messages: list[ChatMessage]
 
 
 class CustomChatMessageStore(ChatMessageStoreProtocol):
@@ -32,13 +26,13 @@ class CustomChatMessageStore(ChatMessageStoreProtocol):
 
     async def deserialize_state(self, serialized_store_state: Any, **kwargs: Any) -> None:
         if serialized_store_state:
-            state = CustomStoreState.model_validate(serialized_store_state, **kwargs)
+            state = ChatMessageStoreState.from_dict(serialized_store_state, **kwargs)
             if state.messages:
                 self._messages.extend(state.messages)
 
     async def serialize_state(self, **kwargs: Any) -> Any:
-        state = CustomStoreState(messages=self._messages)
-        return state.model_dump(**kwargs)
+        state = ChatMessageStoreState(messages=self._messages)
+        return state.to_dict(**kwargs)
 
 
 async def main() -> None:

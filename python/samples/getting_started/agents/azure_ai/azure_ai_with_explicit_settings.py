@@ -41,6 +41,7 @@ async def main() -> None:
                 model_deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
                 async_credential=credential,
                 agent_name="WeatherAgent",
+                should_cleanup_agent=True,  # Set to False if you want to disable automatic agent cleanup
             ),
             instructions="You are a helpful weather agent.",
             tools=get_weather,

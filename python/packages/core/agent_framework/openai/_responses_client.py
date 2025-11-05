@@ -501,8 +501,6 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                 }
                 if content.result:
                     args["output"] = prepare_function_call_results(content.result)
-                if content.exception:
-                    args["output"] = "Error: " + str(content.exception)
                 return args
             case FunctionApprovalRequestContent():
                 return {

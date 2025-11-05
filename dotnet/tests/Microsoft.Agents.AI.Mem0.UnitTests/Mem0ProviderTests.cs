@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
+using Moq;
 
 namespace Microsoft.Agents.AI.Mem0.UnitTests;
 
@@ -17,13 +18,23 @@ namespace Microsoft.Agents.AI.Mem0.UnitTests;
 /// </summary>
 public sealed class Mem0ProviderTests : IDisposable
 {
+    private readonly Mock<ILogger<Mem0Provider>> _loggerMock;
+    private readonly Mock<ILoggerFactory> _loggerFactoryMock;
     private readonly RecordingHandler _handler = new();
     private readonly HttpClient _httpClient;
-    private readonly ILoggerFactory _loggerFactory = LoggerFactory.Create(b => b.AddProvider(new NullLoggerProvider()));
     private bool _disposed;
 
     public Mem0ProviderTests()
     {
+        this._loggerMock = new();
+        this._loggerFactoryMock = new();
+        this._loggerFactoryMock
+            .Setup(f => f.CreateLogger(It.IsAny<string>()))
+            .Returns(this._loggerMock.Object);
+        this._loggerFactoryMock
+            .Setup(f => f.CreateLogger(typeof(Mem0Provider).FullName!))
+            .Returns(this._loggerMock.Object);
+
         this._httpClient = new HttpClient(this._handler)
         {
             BaseAddress = new Uri("https://localhost/")
@@ -37,35 +48,35 @@ public sealed class Mem0ProviderTests : IDisposable
         using HttpClient client = new();
 
         // Act & Assert
-        var ex = Assert.Throws<ArgumentException>(() => new Mem0Provider(client));
+        var ex = Assert.Throws<ArgumentException>(() => new Mem0Provider(client, new Mem0ProviderScope() { ThreadId = "tid" }));
         Assert.StartsWith("The HttpClient BaseAddress must be set for Mem0 operations.", ex.Message);
     }
 
     [Fact]
-    public void Constructor_Defaults_Scopes()
+    public void Constructor_Throws_WhenNoStorageScopeValueIsSet()
     {
-        // Arrange & Act
-        var sut = new Mem0Provider(this._httpClient);
-
-        // Assert
-        Assert.Null(sut.ApplicationId);
-        Assert.Null(sut.AgentId);
-        Assert.Null(sut.ThreadId);
-        Assert.Null(sut.UserId);
+        // Act & Assert
+        var ex = Assert.Throws<ArgumentException>(() => new Mem0Provider(this._httpClient, new Mem0ProviderScope()));
+        Assert.StartsWith("At least one of ApplicationId, AgentId, ThreadId, or UserId must be provided for the storage scope.", ex.Message);
     }
 
     [Fact]
-    public void DeserializingConstructor_Defaults_Scopes()
+    public void Constructor_Throws_WhenNoSearchScopeValueIsSet()
     {
-        // Arrange & Act
-        var jsonElement = JsonSerializer.SerializeToElement(new object(), Mem0JsonUtilities.DefaultOptions);
-        var sut = new Mem0Provider(this._httpClient, jsonElement);
+        // Act & Assert
+        var ex = Assert.Throws<ArgumentException>(() => new Mem0Provider(this._httpClient, new Mem0ProviderScope() { ThreadId = "tid" }, new Mem0ProviderScope()));
+        Assert.StartsWith("At least one of ApplicationId, AgentId, ThreadId, or UserId must be provided for the search scope.", ex.Message);
+    }
 
-        // Assert
-        Assert.Null(sut.ApplicationId);
-        Assert.Null(sut.AgentId);
-        Assert.Null(sut.ThreadId);
-        Assert.Null(sut.UserId);
+    [Fact]
+    public void DeserializingConstructor_Throws_WithEmptyJsonElement()
+    {
+        // Arrange
+        var jsonElement = JsonSerializer.SerializeToElement(new object(), Mem0JsonUtilities.DefaultOptions);
+
+        // Act & Assert
+        var ex = Assert.Throws<InvalidOperationException>(() => new Mem0Provider(this._httpClient, jsonElement));
+        Assert.StartsWith("The Mem0Provider state did not contain the required scope properties.", ex.Message);
     }
 
     [Fact]
@@ -73,14 +84,14 @@ public sealed class Mem0ProviderTests : IDisposable
     {
         // Arrange
         this._handler.EnqueueJsonResponse("[ { \"id\": \"1\", \"memory\": \"Name is Caoimhe\", \"hash\": \"h\", \"metadata\": null, \"score\": 0.9, \"created_at\": \"2023-01-01T00:00:00Z\", \"updated_at\": null, \"user_id\": \"u\", \"app_id\": null, \"agent_id\": \"agent\", \"session_id\": \"thread\" } ]");
-        var options = new Mem0ProviderOptions
+        var storageScope = new Mem0ProviderScope
         {
             ApplicationId = "app",
             AgentId = "agent",
             ThreadId = "thread",
             UserId = "user"
         };
-        var sut = new Mem0Provider(this._httpClient, options, this._loggerFactory);
+        var sut = new Mem0Provider(this._httpClient, storageScope, loggerFactory: this._loggerFactoryMock.Object);
         var invokingContext = new AIContextProvider.InvokingContext(new[] { new ChatMessage(ChatRole.User, "What is my name?") });
 
         // Act
@@ -99,6 +110,24 @@ public sealed class Mem0ProviderTests : IDisposable
         var contextMessage = Assert.Single(aiContext.Messages);
         Assert.Equal(ChatRole.User, contextMessage.Role);
         Assert.Contains("Name is Caoimhe", contextMessage.Text);
+
+        this._loggerMock.Verify(
+            l => l.Log(
+                LogLevel.Information,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, t) => v.ToString()!.Contains("Mem0AIContextProvider: Retrieved 1 memories.")),
+                It.IsAny<Exception>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once);
+
+        this._loggerMock.Verify(
+            l => l.Log(
+                LogLevel.Trace,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, t) => v.ToString()!.Contains("Mem0AIContextProvider: Search Results\nInput:What is my name?\nOutput")),
+                It.IsAny<Exception>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once);
     }
 
     [Fact]
@@ -108,8 +137,8 @@ public sealed class Mem0ProviderTests : IDisposable
         this._handler.EnqueueEmptyOk(); // For first CreateMemory
         this._handler.EnqueueEmptyOk(); // For second CreateMemory
         this._handler.EnqueueEmptyOk(); // For third CreateMemory
-        var options = new Mem0ProviderOptions { ApplicationId = "a", AgentId = "b", ThreadId = "c", UserId = "d" };
-        var sut = new Mem0Provider(this._httpClient, options);
+        var storageScope = new Mem0ProviderScope { ApplicationId = "a", AgentId = "b", ThreadId = "c", UserId = "d" };
+        var sut = new Mem0Provider(this._httpClient, storageScope);
 
         var requestMessages = new List<ChatMessage>
         {
@@ -139,8 +168,8 @@ public sealed class Mem0ProviderTests : IDisposable
     public async Task InvokedAsync_PersistsNothingForFailedRequestAsync()
     {
         // Arrange
-        var options = new Mem0ProviderOptions { ApplicationId = "a", AgentId = "b", ThreadId = "c", UserId = "d" };
-        var sut = new Mem0Provider(this._httpClient, options);
+        var storageScope = new Mem0ProviderScope { ApplicationId = "a", AgentId = "b", ThreadId = "c", UserId = "d" };
+        var sut = new Mem0Provider(this._httpClient, storageScope);
 
         var requestMessages = new List<ChatMessage>
         {
@@ -157,11 +186,44 @@ public sealed class Mem0ProviderTests : IDisposable
     }
 
     [Fact]
+    public async Task InvokedAsync_ShouldNotThrow_WhenStorageFailsAsync()
+    {
+        // Arrange
+        var storageScope = new Mem0ProviderScope { ApplicationId = "a", AgentId = "b", ThreadId = "c", UserId = "d" };
+        var sut = new Mem0Provider(this._httpClient, storageScope, loggerFactory: this._loggerFactoryMock.Object);
+        this._handler.EnqueueEmptyInternalServerError();
+
+        var requestMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "User text"),
+            new(ChatRole.System, "System text"),
+            new(ChatRole.Tool, "Tool text should be ignored")
+        };
+        var responseMessages = new List<ChatMessage>
+        {
+            new(ChatRole.Assistant, "Assistant text")
+        };
+
+        // Act
+        await sut.InvokedAsync(new AIContextProvider.InvokedContext(requestMessages, aiContextProviderMessages: null) { ResponseMessages = responseMessages });
+
+        // Assert
+        this._loggerMock.Verify(
+            l => l.Log(
+                LogLevel.Error,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, t) => v.ToString()!.Contains("Mem0AIContextProvider: Failed to send messages to Mem0 due to error")),
+                It.IsAny<Exception>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once);
+    }
+
+    [Fact]
     public async Task ClearStoredMemoriesAsync_SendsDeleteWithQueryAsync()
     {
         // Arrange
-        var options = new Mem0ProviderOptions { ApplicationId = "app", AgentId = "agent", ThreadId = "thread", UserId = "user" };
-        var sut = new Mem0Provider(this._httpClient, options);
+        var storageScope = new Mem0ProviderScope { ApplicationId = "app", AgentId = "agent", ThreadId = "thread", UserId = "user" };
+        var sut = new Mem0Provider(this._httpClient, storageScope);
         this._handler.EnqueueEmptyOk(); // for DELETE
 
         // Act
@@ -173,80 +235,39 @@ public sealed class Mem0ProviderTests : IDisposable
     }
 
     [Fact]
-    public void Properties_Roundtrip()
+    public void Serialize_RoundTripsScopes()
     {
         // Arrange
-        var options = new Mem0ProviderOptions { ApplicationId = "app", AgentId = "agent", ThreadId = "thread", UserId = "user" };
-        var sut = new Mem0Provider(this._httpClient, options);
-
-        // Assert
-        Assert.Equal("app", sut.ApplicationId);
-        Assert.Equal("agent", sut.AgentId);
-        Assert.Equal("thread", sut.ThreadId);
-        Assert.Equal("user", sut.UserId);
-
-        // Act
-        sut.ApplicationId = "app2";
-        sut.AgentId = "agent2";
-        sut.ThreadId = "thread2";
-        sut.UserId = "user2";
-
-        // Assert
-        Assert.Equal("app2", sut.ApplicationId);
-        Assert.Equal("agent2", sut.AgentId);
-        Assert.Equal("thread2", sut.ThreadId);
-        Assert.Equal("user2", sut.UserId);
-    }
-
-    [Fact]
-    public void Serialize_Deserialize_Roundtrips()
-    {
-        // Arrange
-        var options = new Mem0ProviderOptions { ApplicationId = "app", AgentId = "agent", ThreadId = "thread", UserId = "user" };
-        var sut = new Mem0Provider(this._httpClient, options);
-
-        // Act
-        var stateElement = sut.Serialize();
-        var sut2 = new Mem0Provider(this._httpClient, stateElement);
-
-        // Assert
-        Assert.Equal("app", sut.ApplicationId);
-        Assert.Equal("agent", sut.AgentId);
-        Assert.Equal("thread", sut.ThreadId);
-        Assert.Equal("user", sut.UserId);
-
-        Assert.Equal("app", sut2.ApplicationId);
-        Assert.Equal("agent", sut2.AgentId);
-        Assert.Equal("thread", sut2.ThreadId);
-        Assert.Equal("user", sut2.UserId);
-    }
-
-    [Fact]
-    public void Serialize_RoundTripsCustomContextPrompt()
-    {
-        // Arrange
-        var options = new Mem0ProviderOptions { ApplicationId = "app", AgentId = "agent", ThreadId = "thread", UserId = "user", ContextPrompt = "Custom:" };
-        var sut = new Mem0Provider(this._httpClient, options);
+        var storageScope = new Mem0ProviderScope { ApplicationId = "app", AgentId = "agent", ThreadId = "thread", UserId = "user" };
+        var sut = new Mem0Provider(this._httpClient, storageScope, options: new() { ContextPrompt = "Custom:" }, loggerFactory: this._loggerFactoryMock.Object);
 
         // Act
         var stateElement = sut.Serialize();
         using JsonDocument doc = JsonDocument.Parse(stateElement.GetRawText());
-        Assert.Equal("Custom:", doc.RootElement.GetProperty("contextPrompt").GetString());
+        var storageScopeElement = doc.RootElement.GetProperty("storageScope");
+        Assert.Equal("app", storageScopeElement.GetProperty("applicationId").GetString());
+        Assert.Equal("agent", storageScopeElement.GetProperty("agentId").GetString());
+        Assert.Equal("thread", storageScopeElement.GetProperty("threadId").GetString());
+        Assert.Equal("user", storageScopeElement.GetProperty("userId").GetString());
 
         var sut2 = new Mem0Provider(this._httpClient, stateElement);
         var stateElement2 = sut2.Serialize();
 
         // Assert
         using JsonDocument doc2 = JsonDocument.Parse(stateElement2.GetRawText());
-        Assert.Equal("Custom:", doc2.RootElement.GetProperty("contextPrompt").GetString());
+        var storageScopeElement2 = doc2.RootElement.GetProperty("storageScope");
+        Assert.Equal("app", storageScopeElement2.GetProperty("applicationId").GetString());
+        Assert.Equal("agent", storageScopeElement2.GetProperty("agentId").GetString());
+        Assert.Equal("thread", storageScopeElement2.GetProperty("threadId").GetString());
+        Assert.Equal("user", storageScopeElement2.GetProperty("userId").GetString());
     }
 
     [Fact]
     public void Serialize_DoesNotIncludeDefaultContextPrompt()
     {
         // Arrange
-        var options = new Mem0ProviderOptions { ApplicationId = "app" };
-        var sut = new Mem0Provider(this._httpClient, options);
+        var storageScope = new Mem0ProviderScope { ApplicationId = "app" };
+        var sut = new Mem0Provider(this._httpClient, storageScope);
 
         // Act
         var stateElement = sut.Serialize();
@@ -257,14 +278,27 @@ public sealed class Mem0ProviderTests : IDisposable
     }
 
     [Fact]
-    public async Task InvokingAsync_Throws_WhenNoScopesAsync()
+    public async Task InvokingAsync_ShouldNotThrow_WhenSearchFailsAsync()
     {
         // Arrange
-        var sut = new Mem0Provider(this._httpClient, new Mem0ProviderOptions());
-        var ctx = new AIContextProvider.InvokingContext(new[] { new ChatMessage(ChatRole.User, "Test") });
+        var storageScope = new Mem0ProviderScope { ApplicationId = "app" };
+        var provider = new Mem0Provider(this._httpClient, storageScope, loggerFactory: this._loggerFactoryMock.Object);
+        var invokingContext = new AIContextProvider.InvokingContext(new[] { new ChatMessage(ChatRole.User, "Q?") });
 
-        // Act & Assert
-        await Assert.ThrowsAsync<ArgumentException>(() => sut.InvokingAsync(ctx).AsTask());
+        // Act
+        var aiContext = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert
+        Assert.Null(aiContext.Messages);
+        Assert.Null(aiContext.Tools);
+        this._loggerMock.Verify(
+            l => l.Log(
+                LogLevel.Error,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, t) => v.ToString()!.Contains("Mem0AIContextProvider: Failed to search Mem0 for memories due to error")),
+                It.IsAny<Exception>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once);
     }
 
     private static bool ContainsOrdinal(string source, string value) => source.IndexOf(value, StringComparison.Ordinal) >= 0;
@@ -275,7 +309,6 @@ public sealed class Mem0ProviderTests : IDisposable
         {
             this._httpClient.Dispose();
             this._handler.Dispose();
-            this._loggerFactory.Dispose();
             this._disposed = true;
         }
     }
@@ -309,18 +342,7 @@ public sealed class Mem0ProviderTests : IDisposable
         }
 
         public void EnqueueEmptyOk() => this._responses.Enqueue(new HttpResponseMessage(System.Net.HttpStatusCode.OK));
-    }
 
-    private sealed class NullLoggerProvider : ILoggerProvider
-    {
-        public ILogger CreateLogger(string categoryName) => new NullLogger();
-        public void Dispose() { }
-
-        private sealed class NullLogger : ILogger
-        {
-            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
-            public bool IsEnabled(LogLevel logLevel) => false;
-            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) { }
-        }
+        public void EnqueueEmptyInternalServerError() => this._responses.Enqueue(new HttpResponseMessage(System.Net.HttpStatusCode.InternalServerError));
     }
 }

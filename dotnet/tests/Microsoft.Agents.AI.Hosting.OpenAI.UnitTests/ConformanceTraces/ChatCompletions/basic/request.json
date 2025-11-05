@@ -1,0 +1,12 @@
+{
+  "model": "gpt-4o-mini",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Hello, how are you?"
+    }
+  ],
+  "max_completion_tokens": 100,
+  "temperature": 1.0,
+  "top_p": 1.0
+}

@@ -33,9 +33,9 @@ AIAgent agent = new AzureOpenAIClient(
         Instructions = "You are a friendly travel assistant. Use known memories about the user when responding, and do not invent details.",
         AIContextProviderFactory = ctx => ctx.SerializedState.ValueKind is not JsonValueKind.Null or JsonValueKind.Undefined
             // If each thread should have its own Mem0 scope, you can create a new id per thread here:
-            // ? new Mem0Provider(mem0HttpClient, new Mem0ProviderOptions() { ThreadId = Guid.NewGuid().ToString() })
+            // ? new Mem0Provider(mem0HttpClient, new Mem0ProviderScope() { ThreadId = Guid.NewGuid().ToString() })
             // In this case we are storing memories scoped by application and user instead so that memories are retained across threads.
-            ? new Mem0Provider(mem0HttpClient, new Mem0ProviderOptions() { ApplicationId = "getting-started-agents", UserId = "sample-user" })
+            ? new Mem0Provider(mem0HttpClient, new Mem0ProviderScope() { ApplicationId = "getting-started-agents", UserId = "sample-user" })
             // For cases where we are restoring from serialized state:
             : new Mem0Provider(mem0HttpClient, ctx.SerializedState, ctx.JsonSerializerOptions)
     });

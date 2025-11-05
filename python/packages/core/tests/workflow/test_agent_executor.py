@@ -125,7 +125,7 @@ async def test_agent_executor_checkpoint_stores_and_restores_state() -> None:
 
     # Resume from checkpoint
     resumed_output: AgentExecutorResponse | None = None
-    async for ev in wf_resume.run_stream_from_checkpoint(restore_checkpoint.checkpoint_id):
+    async for ev in wf_resume.run_stream(checkpoint_id=restore_checkpoint.checkpoint_id):
         if isinstance(ev, WorkflowOutputEvent):
             resumed_output = ev.data  # type: ignore[assignment]
         if isinstance(ev, WorkflowStatusEvent) and ev.state in (

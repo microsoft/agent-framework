@@ -26,8 +26,10 @@ public static class HostedWorkflowBuilderExtensions
     /// <returns>An <see cref="IHostedAgentBuilder"/> that can be used to further configure the agent.</returns>
     public static IHostedAgentBuilder AddAsAIAgent(this IHostedWorkflowBuilder builder, string? name)
     {
-        var agentName = name ?? builder.Name;
-        return builder.HostApplicationBuilder.AddAIAgent(agentName, (sp, key) => sp.GetRequiredKeyedService<Workflow>(key)
-                                                                                   .AsAgent(name: key));
+        var workflowName = builder.Name;
+        var agentName = name ?? workflowName;
+
+        return builder.HostApplicationBuilder.AddAIAgent(agentName, (sp, key) =>
+            sp.GetRequiredKeyedService<Workflow>(workflowName).AsAgent(name: key));
     }
 }

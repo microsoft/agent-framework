@@ -218,9 +218,14 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 
 | File | Description |
 |------|-------------|
-| [`getting_started/tools/ai_tool_with_approval.py`](./getting_started/tools/ai_tool_with_approval.py) | Demonstration of a tool with approvals |
-| [`getting_started/tools/ai_tool_with_approval_and_threads.py`](./getting_started/tools/ai_tool_with_approval_and_threads.py) | Tool Approvals with Threads |
-| [`getting_started/tools/failing_tools.py`](./getting_started/tools/failing_tools.py) | Tool exceptions handled by returning the error for the agent to recover from |
+| [`getting_started/tools/ai_function_declaration_only.py`](./getting_started/tools/ai_function_declaration_only.py) | Function declarations without implementations for testing agent reasoning |
+| [`getting_started/tools/ai_function_from_dict_with_dependency_injection.py`](./getting_started/tools/ai_function_from_dict_with_dependency_injection.py) | Creating AI functions from dictionary definitions using dependency injection |
+| [`getting_started/tools/ai_function_recover_from_failures.py`](./getting_started/tools/ai_function_recover_from_failures.py) | Graceful error handling when tools raise exceptions |
+| [`getting_started/tools/ai_function_with_approval.py`](./getting_started/tools/ai_function_with_approval.py) | User approval workflows for function calls without threads |
+| [`getting_started/tools/ai_function_with_approval_and_threads.py`](./getting_started/tools/ai_function_with_approval_and_threads.py) | Tool approval workflows using threads for conversation history management |
+| [`getting_started/tools/ai_function_with_max_exceptions.py`](./getting_started/tools/ai_function_with_max_exceptions.py) | Limiting tool failure exceptions using max_invocation_exceptions |
+| [`getting_started/tools/ai_function_with_max_invocations.py`](./getting_started/tools/ai_function_with_max_invocations.py) | Limiting total tool invocations using max_invocations |
+| [`getting_started/tools/ai_functions_in_class.py`](./getting_started/tools/ai_functions_in_class.py) | Using ai_function decorator with class methods for stateful tools |
 
 ## Workflows
 

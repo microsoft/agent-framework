@@ -689,12 +689,15 @@ def test_function_result_exception_handling(openai_unit_test_env: dict[str, str]
     # Test with exception (no result)
     test_exception = ValueError("Test error message")
     message_with_exception = ChatMessage(
-        role="tool", contents=[FunctionResultContent(call_id="call-123", exception=test_exception)]
+        role="tool",
+        contents=[
+            FunctionResultContent(call_id="call-123", result="Error: Function failed.", exception=test_exception)
+        ],
     )
 
     openai_messages = client._openai_chat_message_parser(message_with_exception)
     assert len(openai_messages) == 1
-    assert openai_messages[0]["content"] == "Error: Test error message"
+    assert openai_messages[0]["content"] == "Error: Function failed."
     assert openai_messages[0]["tool_call_id"] == "call-123"
 
 

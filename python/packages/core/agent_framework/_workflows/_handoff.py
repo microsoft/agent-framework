@@ -80,6 +80,14 @@ def _clone_chat_agent(agent: ChatAgent) -> ChatAgent:
     options = agent.chat_options
     middleware = list(agent.middleware or [])
 
+    # Reconstruct the original tools list by combining regular tools with MCP tools.
+    # ChatAgent.__init__ separates MCP tools into _local_mcp_tools during initialization,
+    # so we need to recombine them here to pass the complete tools list to the constructor.
+    # This makes sure MCP tools are preserved when cloning agents for handoff workflows.
+    all_tools = list(options.tools) if options.tools else []
+    if agent._local_mcp_tools:
+        all_tools.extend(agent._local_mcp_tools)
+
     return ChatAgent(
         chat_client=agent.chat_client,
         instructions=options.instructions,
@@ -101,7 +109,7 @@ def _clone_chat_agent(agent: ChatAgent) -> ChatAgent:
         store=options.store,
         temperature=options.temperature,
         tool_choice=options.tool_choice,  # type: ignore[arg-type]
-        tools=list(options.tools) if options.tools else None,
+        tools=all_tools if all_tools else None,
         top_p=options.top_p,
         user=options.user,
         additional_chat_options=dict(options.additional_properties),
@@ -336,10 +344,15 @@ class _HandoffCoordinator(BaseGroupChatOrchestrator):
 
         if await self._check_termination():
             logger.info("Handoff workflow termination condition met. Ending conversation.")
-            await ctx.yield_output(list(conversation))
+            # Clean the output conversation for display
+            cleaned_output = clean_conversation_for_handoff(conversation)
+            await ctx.yield_output(cleaned_output)
             return
 
-        await ctx.send_message(list(conversation), target_id=self._input_gateway_id)
+        # Clean conversation before sending to gateway for user input request
+        # This removes tool messages that shouldn't be shown to users
+        cleaned_for_display = clean_conversation_for_handoff(conversation)
+        await ctx.send_message(cleaned_for_display, target_id=self._input_gateway_id)
 
     @handler
     async def handle_user_input(
@@ -1274,12 +1287,12 @@ class HandoffBuilder:
                         updated_executor, tool_targets = self._prepare_agent_with_handoffs(executor, targets_map)
                         self._executors[source_exec_id] = updated_executor
                         handoff_tool_targets.update(tool_targets)
-        else:
-            # Default behavior: only coordinator gets handoff tools to all specialists
-            if isinstance(starting_executor, AgentExecutor) and specialists:
-                starting_executor, tool_targets = self._prepare_agent_with_handoffs(starting_executor, specialists)
-                self._executors[self._starting_agent_id] = starting_executor
-                handoff_tool_targets.update(tool_targets)  # Update references after potential agent modifications
+            else:
+                # Default behavior: only coordinator gets handoff tools to all specialists
+                if isinstance(starting_executor, AgentExecutor) and specialists:
+                    starting_executor, tool_targets = self._prepare_agent_with_handoffs(starting_executor, specialists)
+                    self._executors[self._starting_agent_id] = starting_executor
+                    handoff_tool_targets.update(tool_targets)  # Update references after potential agent modifications
         starting_executor = self._executors[self._starting_agent_id]
         specialists = {
             exec_id: executor for exec_id, executor in self._executors.items() if exec_id != self._starting_agent_id

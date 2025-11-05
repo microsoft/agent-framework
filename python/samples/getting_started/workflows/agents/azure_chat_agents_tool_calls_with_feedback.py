@@ -261,17 +261,21 @@ async def main() -> None:
 
     pending_responses: dict[str, str] | None = None
     completed = False
+    initial_run = True
 
     while not completed:
         last_executor: str | None = None
-        stream = (
-            workflow.send_responses_streaming(pending_responses)
-            if pending_responses is not None
-            else workflow.run_stream(
+        if initial_run:
+            stream = workflow.run_stream(
                 "Create a short launch blurb for the LumenX desk lamp. Emphasize adjustability and warm lighting."
             )
-        )
-        pending_responses = None
+            initial_run = False
+        elif pending_responses is not None:
+            stream = workflow.send_responses_streaming(pending_responses)
+            pending_responses = None
+        else:
+            break
+
         requests: list[tuple[str, DraftFeedbackRequest]] = []
 
         async for event in stream:
