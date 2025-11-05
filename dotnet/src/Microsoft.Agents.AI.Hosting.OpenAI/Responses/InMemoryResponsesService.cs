@@ -275,13 +275,14 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
 
     public Task<ListResponse<ItemResource>> ListResponseInputItemsAsync(
         string responseId,
-        int limit = 20,
-        string order = "desc",
+        int? limit = null,
+        SortOrder? order = null,
         string? after = null,
         string? before = null,
         CancellationToken cancellationToken = default)
     {
-        limit = Math.Clamp(limit, 1, 100);
+        int effectiveLimit = Math.Clamp(limit ?? IResponsesService.DefaultListLimit, 1, 100);
+        SortOrder effectiveOrder = order ?? SortOrder.Descending;
 
         if (!this._cache.TryGetValue(responseId, out ResponseState? state))
         {
@@ -296,7 +297,7 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
         var itemResources = GetInputItems(responseId, state);
 
         // Apply ordering
-        if (order == "desc")
+        if (effectiveOrder == SortOrder.Descending)
         {
             itemResources.Reverse();
         }
@@ -322,11 +323,11 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
             }
         }
 
-        var result = filtered.Take(limit + 1).ToList();
-        var hasMore = result.Count > limit;
+        var result = filtered.Take(effectiveLimit + 1).ToList();
+        var hasMore = result.Count > effectiveLimit;
         if (hasMore)
         {
-            result = result.Take(limit).ToList();
+            result = result.Take(effectiveLimit).ToList();
         }
 
         return Task.FromResult(new ListResponse<ItemResource>

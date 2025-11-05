@@ -12,7 +12,6 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses.Streaming;
 /// A generator for streaming events from function approval request content.
 /// This is a non-standard DevUI extension for human-in-the-loop scenarios.
 /// </summary>
-#pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates.
 internal sealed class FunctionApprovalRequestEventGenerator(
         IdGenerator idGenerator,
         SequenceNumber seq,
@@ -38,15 +37,12 @@ internal sealed class FunctionApprovalRequestEventGenerator(
             {
                 Id = approvalRequest.FunctionCall.CallId,
                 Name = approvalRequest.FunctionCall.Name,
-#pragma warning disable IL2026 // Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code
-#pragma warning disable IL3050 // Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
-                Arguments = JsonSerializer.SerializeToElement(approvalRequest.FunctionCall.Arguments, jsonSerializerOptions)
-#pragma warning restore IL3050 // Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
-#pragma warning restore IL2026 // Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code
+                Arguments = JsonSerializer.SerializeToElement(
+                    approvalRequest.FunctionCall.Arguments,
+                    jsonSerializerOptions.GetTypeInfo(typeof(IDictionary<string, object>)))
             }
         };
     }
 
     public override IEnumerable<StreamingResponseEvent> Complete() => [];
 }
-#pragma warning restore MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates.

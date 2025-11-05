@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
@@ -11,7 +10,6 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses.Converters;
 /// <summary>
 /// JSON converter for ItemResource that handles type discrimination.
 /// </summary>
-[ExcludeFromCodeCoverage]
 internal sealed class ItemResourceConverter : JsonConverter<ItemResource>
 {
     /// <inheritdoc/>
@@ -82,7 +80,7 @@ internal sealed class ItemResourceConverter : JsonConverter<ItemResource>
             MCPApprovalRequestItemResource.ItemType => JsonSerializer.Deserialize(ref reader, OpenAIHostingJsonContext.Default.MCPApprovalRequestItemResource),
             MCPApprovalResponseItemResource.ItemType => JsonSerializer.Deserialize(ref reader, OpenAIHostingJsonContext.Default.MCPApprovalResponseItemResource),
             MCPCallItemResource.ItemType => JsonSerializer.Deserialize(ref reader, OpenAIHostingJsonContext.Default.MCPCallItemResource),
-            _ => throw new JsonException($"Unknown item type: {type}")
+            _ => null
         };
     }
 

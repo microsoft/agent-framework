@@ -193,10 +193,19 @@ internal sealed class ResponsesHttpHandler
     {
         try
         {
+            // Convert string order to SortOrder enum
+            SortOrder? sortOrder = order switch
+            {
+                string s when s.Equals("asc", StringComparison.OrdinalIgnoreCase) => SortOrder.Ascending,
+                string s when s.Equals("desc", StringComparison.OrdinalIgnoreCase) => SortOrder.Descending,
+                null => null,
+                _ => throw new InvalidOperationException($"Invalid order value: {order}. Must be 'asc' or 'desc'.")
+            };
+
             var result = await this._responsesService.ListResponseInputItemsAsync(
                 responseId,
-                limit ?? 20,
-                order ?? "desc",
+                limit,
+                sortOrder,
                 after,
                 before,
                 cancellationToken).ConfigureAwait(false);

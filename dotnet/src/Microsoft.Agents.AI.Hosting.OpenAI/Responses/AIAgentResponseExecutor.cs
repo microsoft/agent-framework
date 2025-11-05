@@ -38,21 +38,11 @@ internal sealed class AIAgentResponseExecutor : IResponseExecutor
             MaxOutputTokens = request.MaxOutputTokens,
             Instructions = request.Instructions,
             ModelId = request.Model,
-            AdditionalProperties = new AdditionalPropertiesDictionary
-            {
-                [nameof(CreateResponse)] = request
-            }
         };
         var options = new ChatClientAgentRunOptions(chatOptions);
 
         // Convert input to chat messages
         var messages = new List<ChatMessage>();
-
-        // If instructions are provided in the request, prepend them as a system message
-        if (!string.IsNullOrWhiteSpace(request.Instructions))
-        {
-            messages.Add(new ChatMessage(ChatRole.System, request.Instructions));
-        }
 
         foreach (var inputMessage in request.Input.GetInputMessages())
         {

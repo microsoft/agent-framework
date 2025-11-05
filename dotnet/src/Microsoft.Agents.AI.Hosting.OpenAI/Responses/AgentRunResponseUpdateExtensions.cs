@@ -108,10 +108,8 @@ internal static class AgentRunResponseUpdateExtensions
                         TextReasoningContent => new TextReasoningContentEventGenerator(context.IdGenerator, seq, outputIndex),
                         FunctionCallContent => new FunctionCallEventGenerator(context.IdGenerator, seq, outputIndex, context.JsonSerializerOptions),
                         FunctionResultContent => new FunctionResultEventGenerator(context.IdGenerator, seq, outputIndex),
-#pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates.
                         FunctionApprovalRequestContent => new FunctionApprovalRequestEventGenerator(context.IdGenerator, seq, outputIndex, context.JsonSerializerOptions),
                         FunctionApprovalResponseContent => new FunctionApprovalResponseEventGenerator(context.IdGenerator, seq, outputIndex),
-#pragma warning restore MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates.
                         ErrorContent => new ErrorContentEventGenerator(context.IdGenerator, seq, outputIndex),
                         UriContent uriContent when uriContent.HasTopLevelMediaType("image") => new ImageContentEventGenerator(context.IdGenerator, seq, outputIndex),
                         DataContent dataContent when dataContent.HasTopLevelMediaType("image") => new ImageContentEventGenerator(context.IdGenerator, seq, outputIndex),
@@ -220,11 +218,7 @@ internal static class AgentRunResponseUpdateExtensions
             JsonElement? dataElement = null;
             if (workflowEvent.Data is not null)
             {
-#pragma warning disable IL2026 // Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code
-#pragma warning disable IL3050 // Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
-                dataElement = JsonSerializer.SerializeToElement(workflowEvent.Data, OpenAIHostingJsonUtilities.DefaultOptions);
-#pragma warning restore IL3050 // Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
-#pragma warning restore IL2026 // Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code
+                dataElement = JsonSerializer.SerializeToElement(workflowEvent.Data, OpenAIHostingJsonUtilities.DefaultOptions.GetTypeInfo(typeof(object)));
             }
 
             var eventDataObj = new WorkflowEventData
@@ -235,11 +229,7 @@ internal static class AgentRunResponseUpdateExtensions
                 Timestamp = DateTime.UtcNow.ToString("O")
             };
 
-#pragma warning disable IL2026 // Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code
-#pragma warning disable IL3050 // Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
-            eventData = JsonSerializer.SerializeToElement(eventDataObj, OpenAIHostingJsonUtilities.DefaultOptions);
-#pragma warning restore IL3050 // Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
-#pragma warning restore IL2026 // Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code
+            eventData = JsonSerializer.SerializeToElement(eventDataObj, OpenAIHostingJsonUtilities.DefaultOptions.GetTypeInfo(typeof(WorkflowEventData)));
         }
         else
         {

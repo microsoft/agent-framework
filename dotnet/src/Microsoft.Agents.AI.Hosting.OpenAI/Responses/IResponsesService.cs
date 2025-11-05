@@ -15,6 +15,10 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses;
 internal interface IResponsesService
 {
     /// <summary>
+    /// Default limit for list operations.
+    /// </summary>
+    const int DefaultListLimit = 20;
+    /// <summary>
     /// Creates a model response for the given input.
     /// </summary>
     /// <param name="request">The create response request.</param>
@@ -80,16 +84,16 @@ internal interface IResponsesService
     /// Lists the input items for a response.
     /// </summary>
     /// <param name="responseId">The ID of the response.</param>
-    /// <param name="limit">Maximum number of items to return (1-100).</param>
-    /// <param name="order">Sort order ("asc" or "desc").</param>
+    /// <param name="limit">Maximum number of items to return (1-100). Defaults to <see cref="DefaultListLimit"/> if null.</param>
+    /// <param name="order">Sort order. Defaults to <see cref="SortOrder.Descending"/> if null.</param>
     /// <param name="after">Return items after this ID.</param>
     /// <param name="before">Return items before this ID.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>A list response with items and pagination info.</returns>
     Task<ListResponse<ItemResource>> ListResponseInputItemsAsync(
         string responseId,
-        int limit = 20,
-        string order = "desc",
+        int? limit = null,
+        SortOrder? order = null,
         string? after = null,
         string? before = null,
         CancellationToken cancellationToken = default);

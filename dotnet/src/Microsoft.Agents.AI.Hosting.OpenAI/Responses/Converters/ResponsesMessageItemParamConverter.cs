@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
@@ -11,7 +10,6 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses.Converters;
 /// <summary>
 /// JSON converter for ResponsesMessageItemParam that handles role-based polymorphic deserialization.
 /// </summary>
-[ExcludeFromCodeCoverage]
 internal sealed class ResponsesMessageItemParamConverter : JsonConverter<ResponsesMessageItemParam>
 {
     /// <inheritdoc/>

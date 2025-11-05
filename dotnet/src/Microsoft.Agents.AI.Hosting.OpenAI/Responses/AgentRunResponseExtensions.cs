@@ -15,6 +15,8 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses;
 /// </summary>
 internal static class AgentRunResponseExtensions
 {
+    private static ChatRole s_DeveloperRole => new("developer");
+
     /// <summary>
     /// Converts an AgentRunResponse to a Response model.
     /// </summary>
@@ -89,7 +91,7 @@ internal static class AgentRunResponseExtensions
     public static IEnumerable<ItemResource> ToItemResource(this ChatMessage message, IdGenerator idGenerator, JsonSerializerOptions jsonSerializerOptions)
     {
         List<ItemContent> contents = [];
-        foreach (var content in message.Contents)
+        foreach (AIContent content in message.Contents)
         {
             switch (content)
             {
@@ -115,33 +117,31 @@ internal static class AgentRunResponseExtensions
             List<ItemContent> contentArray = contents;
             string messageId = idGenerator.GenerateMessageId();
 
-            yield return message.Role.Value.ToUpperInvariant() switch
-            {
-                "USER" => new ResponsesUserMessageItemResource
+            yield return
+                message.Role == ChatRole.User ? new ResponsesUserMessageItemResource
                 {
                     Id = messageId,
                     Status = ResponsesMessageItemResourceStatus.Completed,
                     Content = contentArray
-                },
-                "SYSTEM" => new ResponsesSystemMessageItemResource
+                } :
+                message.Role == ChatRole.System ? new ResponsesSystemMessageItemResource
                 {
                     Id = messageId,
                     Status = ResponsesMessageItemResourceStatus.Completed,
                     Content = contentArray
-                },
-                "DEVELOPER" => new ResponsesDeveloperMessageItemResource
+                } :
+                message.Role == s_DeveloperRole ? new ResponsesDeveloperMessageItemResource
                 {
                     Id = messageId,
                     Status = ResponsesMessageItemResourceStatus.Completed,
                     Content = contentArray
-                },
-                _ => new ResponsesAssistantMessageItemResource
+                } :
+                new ResponsesAssistantMessageItemResource
                 {
                     Id = messageId,
                     Status = ResponsesMessageItemResourceStatus.Completed,
                     Content = contentArray
-                }
-            };
+                };
         }
     }
 
@@ -204,33 +204,32 @@ internal static class AgentRunResponseExtensions
         string messageId = idGenerator.GenerateMessageId();
 
         // Create the appropriate message type based on role
-        yield return inputMessage.Role.Value.ToUpperInvariant() switch
-        {
-            "USER" => new ResponsesUserMessageItemResource
+        ChatRole role = new(inputMessage.Role.Value);
+        yield return
+            role == ChatRole.User ? new ResponsesUserMessageItemResource
             {
                 Id = messageId,
                 Status = ResponsesMessageItemResourceStatus.Completed,
                 Content = contentArray
-            },
-            "SYSTEM" => new ResponsesSystemMessageItemResource
+            } :
+            role == ChatRole.System ? new ResponsesSystemMessageItemResource
             {
                 Id = messageId,
                 Status = ResponsesMessageItemResourceStatus.Completed,
                 Content = contentArray
-            },
-            "DEVELOPER" => new ResponsesDeveloperMessageItemResource
+            } :
+            role == s_DeveloperRole ? new ResponsesDeveloperMessageItemResource
             {
                 Id = messageId,
                 Status = ResponsesMessageItemResourceStatus.Completed,
                 Content = contentArray
-            },
-            _ => new ResponsesAssistantMessageItemResource
+            } :
+            new ResponsesAssistantMessageItemResource
             {
                 Id = messageId,
                 Status = ResponsesMessageItemResourceStatus.Completed,
                 Content = contentArray
-            }
-        };
+            };
     }
 
     /// <summary>

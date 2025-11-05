@@ -5,7 +5,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.AI.Hosting.OpenAI.Conversations.Models;
 using Microsoft.Agents.AI.Hosting.OpenAI.Models;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
 using Microsoft.AspNetCore.Http;
@@ -31,6 +30,7 @@ internal sealed class ConversationsHttpHandler
         this._storage = storage ?? throw new ArgumentNullException(nameof(storage));
         this._conversationIndex = conversationIndex;
     }
+
     /// <summary>
     /// Lists conversations by agent ID.
     /// </summary>
@@ -88,9 +88,10 @@ internal sealed class ConversationsHttpHandler
         CancellationToken cancellationToken)
     {
         Dictionary<string, string> metadata = request.Metadata ?? [];
+        var idGenerator = new IdGenerator(responseId: null, conversationId: null);
         var conversation = new Conversation
         {
-            Id = $"conv_{Guid.NewGuid():N}",
+            Id = idGenerator.ConversationId,
             CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
             Metadata = metadata
         };
@@ -246,7 +247,7 @@ internal sealed class ConversationsHttpHandler
         CancellationToken cancellationToken)
     {
         // Validate limit parameter
-        if (limit is not null && limit.Value < 1)
+        if (limit is < 1)
         {
             return Results.BadRequest(new ErrorResponse
             {
@@ -272,7 +273,7 @@ internal sealed class ConversationsHttpHandler
             });
         }
 
-        var result = await this._storage.ListItemsAsync(conversationId, limit ?? 20, ParseOrder(order ?? "desc"), after, cancellationToken).ConfigureAwait(false);
+        var result = await this._storage.ListItemsAsync(conversationId, limit, ParseOrder(order), after, cancellationToken).ConfigureAwait(false);
         return Results.Ok(result);
     }
 
@@ -327,8 +328,13 @@ internal sealed class ConversationsHttpHandler
         });
     }
 
-    private static SortOrder ParseOrder(string order)
+    private static SortOrder? ParseOrder(string? order)
     {
+        if (order is null)
+        {
+            return null;
+        }
+
         return string.Equals(order, "asc", StringComparison.OrdinalIgnoreCase) ? SortOrder.Ascending : SortOrder.Descending;
     }
 }

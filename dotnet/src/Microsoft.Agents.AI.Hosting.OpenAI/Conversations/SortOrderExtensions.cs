@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Microsoft.Agents.AI.Hosting.OpenAI.Conversations.Models;
+using Microsoft.Agents.AI.Hosting.OpenAI.Models;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.Conversations;
 

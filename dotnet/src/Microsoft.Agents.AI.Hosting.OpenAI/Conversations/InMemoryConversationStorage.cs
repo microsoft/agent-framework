@@ -5,7 +5,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.AI.Hosting.OpenAI.Conversations.Models;
 using Microsoft.Agents.AI.Hosting.OpenAI.Models;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
 using Microsoft.Extensions.Caching.Memory;
@@ -18,6 +17,8 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.Conversations;
 /// </summary>
 internal sealed class InMemoryConversationStorage : IConversationStorage, IDisposable
 {
+    private const int DefaultListItemLimit = 20;
+
     private readonly MemoryCache _cache;
     private readonly InMemoryStorageOptions _options;
 
@@ -122,12 +123,13 @@ internal sealed class InMemoryConversationStorage : IConversationStorage, IDispo
     /// <inheritdoc/>
     public Task<ListResponse<ItemResource>> ListItemsAsync(
         string conversationId,
-        int limit = 20,
-        SortOrder order = SortOrder.Descending,
+        int? limit = null,
+        SortOrder? order = null,
         string? after = null,
         CancellationToken cancellationToken = default)
     {
-        limit = Math.Clamp(limit, 1, 100);
+        int effectiveLimit = Math.Clamp(limit ?? DefaultListItemLimit, 1, 100);
+        SortOrder effectiveOrder = order ?? SortOrder.Descending;
 
         if (!this._cache.TryGetValue(conversationId, out ConversationState? state) || state is null)
         {
@@ -137,7 +139,7 @@ internal sealed class InMemoryConversationStorage : IConversationStorage, IDispo
         var allItems = state.GetAllItems();
 
         // For descending order, reverse the list
-        if (order == SortOrder.Descending)
+        if (effectiveOrder == SortOrder.Descending)
         {
             allItems.Reverse();
         }
@@ -153,11 +155,22 @@ internal sealed class InMemoryConversationStorage : IConversationStorage, IDispo
             }
         }
 
-        var result = filtered.Take(limit + 1).ToList();
-        var hasMore = result.Count > limit;
-        if (hasMore)
+        List<ItemResource> result;
+        bool hasMore;
+
+        if (filtered.TryGetNonEnumeratedCount(out int count))
         {
-            result = result.Take(limit).ToList();
+            hasMore = count > effectiveLimit;
+            result = filtered.Take(effectiveLimit).ToList();
+        }
+        else
+        {
+            result = filtered.Take(effectiveLimit + 1).ToList();
+            hasMore = result.Count > effectiveLimit;
+            if (hasMore)
+            {
+                result = result.Take(effectiveLimit).ToList();
+            }
         }
 
         return Task.FromResult(new ListResponse<ItemResource>
@@ -290,10 +303,11 @@ internal sealed class InMemoryConversationStorage : IConversationStorage, IDispo
         {
             lock (this._lock)
             {
-                if (this._items.Any(i => i.Id == item.Id))
+                if (this._items.Exists(i => i.Id == item.Id))
                 {
                     throw new InvalidOperationException($"Item with ID '{item.Id}' already exists.");
                 }
+
                 this._items.Add(item);
             }
         }
@@ -302,7 +316,7 @@ internal sealed class InMemoryConversationStorage : IConversationStorage, IDispo
         {
             lock (this._lock)
             {
-                return this._items.FirstOrDefault(i => i.Id == itemId);
+                return this._items.Find(i => i.Id == itemId);
             }
         }
 
@@ -318,13 +332,7 @@ internal sealed class InMemoryConversationStorage : IConversationStorage, IDispo
         {
             lock (this._lock)
             {
-                var item = this._items.FirstOrDefault(i => i.Id == itemId);
-                if (item != null)
-                {
-                    this._items.Remove(item);
-                    return true;
-                }
-                return false;
+                return this._items.RemoveAll(i => i.Id == itemId) > 0;
             }
         }
 #endif

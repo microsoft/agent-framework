@@ -1,10 +1,10 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace Microsoft.Agents.AI.Hosting.OpenAI.Conversations.Models;
+namespace Microsoft.Agents.AI.Hosting.OpenAI.Models;
 
 /// <summary>
 /// Specifies the sort order for list operations.
@@ -32,10 +32,11 @@ internal sealed class SortOrderJsonConverter : JsonConverter<SortOrder>
     public override SortOrder Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
         var value = reader.GetString();
-        return value?.ToUpperInvariant() switch
+        return value switch
         {
-            "ASC" => SortOrder.Ascending,
-            "DESC" => SortOrder.Descending,
+            string s when s.Equals("asc", StringComparison.OrdinalIgnoreCase) => SortOrder.Ascending,
+            string s when s.Equals("desc", StringComparison.OrdinalIgnoreCase) => SortOrder.Descending,
+            null => throw new JsonException("SortOrder value cannot be null"),
             _ => throw new JsonException($"Invalid SortOrder value: {value}")
         };
     }

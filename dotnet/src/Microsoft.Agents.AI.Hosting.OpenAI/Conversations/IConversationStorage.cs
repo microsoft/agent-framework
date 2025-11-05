@@ -3,7 +3,6 @@
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.AI.Hosting.OpenAI.Conversations.Models;
 using Microsoft.Agents.AI.Hosting.OpenAI.Models;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
 
@@ -80,8 +79,8 @@ internal interface IConversationStorage
     /// <returns>A list response with items and pagination info.</returns>
     Task<ListResponse<ItemResource>> ListItemsAsync(
         string conversationId,
-        int limit = 20,
-        SortOrder order = SortOrder.Descending,
+        int? limit = null,
+        SortOrder? order = null,
         string? after = null,
         CancellationToken cancellationToken = default);
 

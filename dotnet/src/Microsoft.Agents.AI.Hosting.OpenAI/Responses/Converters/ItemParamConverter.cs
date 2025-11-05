@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
@@ -11,7 +10,6 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses.Converters;
 /// <summary>
 /// JSON converter for ItemParam that handles polymorphic deserialization based on the "type" discriminator.
 /// </summary>
-[ExcludeFromCodeCoverage]
 internal sealed class ItemParamConverter : JsonConverter<ItemParam>
 {
     public override ItemParam? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
@@ -47,7 +45,7 @@ internal sealed class ItemParamConverter : JsonConverter<ItemParam>
             "mcp_approval_request" => JsonSerializer.Deserialize(jsonText, OpenAIHostingJsonContext.Default.MCPApprovalRequestItemParam),
             "mcp_approval_response" => JsonSerializer.Deserialize(jsonText, OpenAIHostingJsonContext.Default.MCPApprovalResponseItemParam),
             "mcp_call" => JsonSerializer.Deserialize(jsonText, OpenAIHostingJsonContext.Default.MCPCallItemParam),
-            _ => throw new JsonException($"Unknown ItemParam type: {type}")
+            _ => null // Ignore unknown types.
         };
     }
 

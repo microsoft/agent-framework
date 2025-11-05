@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -41,7 +40,6 @@ internal sealed class ConversationReference
 /// <summary>
 /// JSON converter for ConversationReference that handles both string (conversation ID) and object representations.
 /// </summary>
-[ExcludeFromCodeCoverage]
 internal sealed class ConversationReferenceJsonConverter : JsonConverter<ConversationReference>
 {
     /// <inheritdoc/>
