@@ -123,16 +123,6 @@ def test_azure_ai_client_init_missing_project_endpoint() -> None:
             AzureAIClient(async_credential=MagicMock())
 
 
-def test_azure_ai_client_init_missing_model_deployment() -> None:
-    """Test AzureAIClient initialization when model deployment is missing for agent creation."""
-    with patch("agent_framework_azure_ai._client.AzureAISettings") as mock_settings:
-        mock_settings.return_value.project_endpoint = "https://test.com"
-        mock_settings.return_value.model_deployment_name = None
-
-        with pytest.raises(ServiceInitializationError, match="Azure AI model deployment name is required"):
-            AzureAIClient(async_credential=MagicMock())
-
-
 def test_azure_ai_client_init_missing_credential(azure_ai_unit_test_env: dict[str, str]) -> None:
     """Test AzureAIClient.__init__ when async_credential is missing and no project_client provided."""
     with pytest.raises(

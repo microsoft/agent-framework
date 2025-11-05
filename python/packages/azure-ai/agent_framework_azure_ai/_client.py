@@ -121,12 +121,6 @@ class AzureAIClient(OpenAIBaseResponsesClient):
                     "or 'AZURE_AI_PROJECT_ENDPOINT' environment variable."
                 )
 
-            if not azure_ai_settings.model_deployment_name:
-                raise ServiceInitializationError(
-                    "Azure AI model deployment name is required. Set via 'model_deployment_name' parameter "
-                    "or 'AZURE_AI_MODEL_DEPLOYMENT_NAME' environment variable."
-                )
-
             # Use provided credential
             if not async_credential:
                 raise ServiceInitializationError("Azure credential is required when project_client is not provided.")
@@ -139,7 +133,6 @@ class AzureAIClient(OpenAIBaseResponsesClient):
 
         # Initialize parent
         super().__init__(
-            model_id=azure_ai_settings.model_deployment_name,  # type: ignore
             **kwargs,
         )
 
