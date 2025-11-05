@@ -35,6 +35,7 @@ dependencies = [
     "openai>=1.99.0,<2",
     "azure-identity>=1,<2",
     "mcp[ws]>=1.13",
+    "azure-search-documents>=11.7.0b1",
 ]
 
 [project.optional-dependencies]
