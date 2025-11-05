@@ -83,7 +83,7 @@ async def main():
         )
 
         # Build a workflow: Agent generates code -> Evaluator assesses results
-        # The agent will be wrapped in an special agent executor which produces AgentExecutorResponse
+        # The agent will be wrapped in a special agent executor which produces AgentExecutorResponse
         workflow = WorkflowBuilder().set_start_executor(agent).add_edge(agent, Evaluator(id="evaluator")).build()
 
         # Execute the workflow with a specific coding task
