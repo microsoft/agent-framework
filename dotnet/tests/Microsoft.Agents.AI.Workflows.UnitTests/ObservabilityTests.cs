@@ -70,18 +70,6 @@ public sealed class ObservabilityTests : IDisposable
         return builder.Build();
     }
 
-    private static List<string> GetExpectedOrderedActivityNames() =>
-    [
-        ActivityNames.WorkflowBuild,
-        ActivityNames.WorkflowRun,
-        ActivityNames.EdgeGroupProcess,
-        ActivityNames.ExecutorProcess,
-        ActivityNames.MessageSend,
-        ActivityNames.EdgeGroupProcess,
-        ActivityNames.ExecutorProcess,
-        ActivityNames.MessageSend
-    ];
-
     private static Dictionary<string, int> GetExpectedActivityNameCounts() =>
         new()
         {
