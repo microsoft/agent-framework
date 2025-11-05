@@ -4,6 +4,7 @@
 
 import argparse
 from enum import Enum
+import glob
 import logging
 import tempfile
 import subprocess  # nosec
@@ -30,6 +31,16 @@ class Colors(str, Enum):
 def with_color(text: str, color: Colors) -> str:
     """Prints a string with the specified color."""
     return f"{color.value}{text}{Colors.CEND.value}"
+
+
+def expand_file_patterns(patterns: list[str]) -> list[str]:
+    """Expand glob patterns to actual file paths."""
+    all_files: list[str] = []
+    for pattern in patterns:
+        # Handle both relative and absolute paths
+        matches = glob.glob(pattern, recursive=True)
+        all_files.extend(matches)
+    return sorted(set(all_files))  # Remove duplicates and sort
 
 
 def extract_python_code_blocks(markdown_file_path: str) -> list[tuple[str, int]]:
@@ -113,7 +124,10 @@ def check_code_blocks(markdown_file_paths: list[str], exclude_patterns: list[str
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Check code blocks in Markdown files for syntax errors.")
     # Argument is a list of markdown files containing glob patterns
-    parser.add_argument("markdown_files", nargs="+", help="Markdown files to check.")
+    parser.add_argument("markdown_files", nargs="+", help="Markdown files to check (supports glob patterns).")
     parser.add_argument("--exclude", action="append", help="Exclude files containing this pattern.")
     args = parser.parse_args()
-    check_code_blocks(args.markdown_files, args.exclude)
+    
+    # Expand glob patterns to actual file paths
+    expanded_files = expand_file_patterns(args.markdown_files)
+    check_code_blocks(expanded_files, args.exclude)
