@@ -161,6 +161,7 @@ class AzureAIAgentClient(BaseChatClient):
         project_endpoint: str | None = None,
         model_deployment_name: str | None = None,
         async_credential: AsyncTokenCredential | None = None,
+        should_cleanup_agent: bool = True,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         **kwargs: Any,
@@ -181,6 +182,9 @@ class AzureAIAgentClient(BaseChatClient):
             model_deployment_name: The model deployment name to use for agent creation.
                 Can also be set via environment variable AZURE_AI_MODEL_DEPLOYMENT_NAME.
             async_credential: Azure async credential to use for authentication.
+            should_cleanup_agent: Whether to cleanup (delete) agents created by this client when
+                the client is closed or context is exited. Defaults to True. Only affects agents
+                created by this client instance; existing agents passed via agent_id are never deleted.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
             kwargs: Additional keyword arguments passed to the parent class.
@@ -252,7 +256,8 @@ class AzureAIAgentClient(BaseChatClient):
         self.agent_name = agent_name
         self.model_id = azure_ai_settings.model_deployment_name
         self.thread_id = thread_id
-        self._should_delete_agent = False  # Track whether we should delete the agent
+        self.should_cleanup_agent = should_cleanup_agent  # Track whether we should delete the agent
+        self._agent_created = False  # Track whether agent was created inside this class
         self._should_close_client = should_close_client  # Track whether we should close client connection
         self._agent_definition: Agent | None = None  # Cached definition for existing agent
 
@@ -306,6 +311,7 @@ class AzureAIAgentClient(BaseChatClient):
             agent_name=settings.get("agent_name"),
             credential=settings.get("credential"),
             env_file_path=settings.get("env_file_path"),
+            should_cleanup_agent=settings.get("should_cleanup_agent", True),
         )
 
     async def _inner_get_response(
@@ -381,7 +387,7 @@ class AzureAIAgentClient(BaseChatClient):
             created_agent = await self.project_client.agents.create_agent(**args)
             self.agent_id = str(created_agent.id)
             self._agent_definition = created_agent
-            self._should_delete_agent = True
+            self._agent_created = True
 
         return self.agent_id
 
@@ -715,10 +721,10 @@ class AzureAIAgentClient(BaseChatClient):
 
     async def _cleanup_agent_if_needed(self) -> None:
         """Clean up the agent if we created it."""
-        if self._should_delete_agent and self.agent_id is not None:
+        if self._agent_created and self.should_cleanup_agent and self.agent_id is not None:
             await self.project_client.agents.delete_agent(self.agent_id)
             self.agent_id = None
-            self._should_delete_agent = False
+            self._agent_created = False
 
     async def _load_agent_definition_if_needed(self) -> Agent | None:
         """Load and cache agent details if not already loaded."""

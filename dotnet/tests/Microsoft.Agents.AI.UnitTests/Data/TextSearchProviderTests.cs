@@ -58,7 +58,7 @@ public sealed class TextSearchProviderTests
             ContextPrompt = overrideContextPrompt,
             CitationsPrompt = overrideCitationsPrompt
         };
-        var provider = new TextSearchProvider(SearchDelegateAsync, options, withLogging ? this._loggerFactoryMock.Object : null);
+        var provider = new TextSearchProvider(SearchDelegateAsync, default, null, options, withLogging ? this._loggerFactoryMock.Object : null);
 
         var invokingContext = new AIContextProvider.InvokingContext(new[]
         {
@@ -135,7 +135,7 @@ public sealed class TextSearchProviderTests
             FunctionToolName = overrideName,
             FunctionToolDescription = overrideDescription
         };
-        var provider = new TextSearchProvider(this.NoResultSearchAsync, options);
+        var provider = new TextSearchProvider(this.NoResultSearchAsync, default, null, options);
         var invokingContext = new AIContextProvider.InvokingContext(new[] { new ChatMessage(ChatRole.User, "Q?") });
 
         // Act
@@ -154,7 +154,7 @@ public sealed class TextSearchProviderTests
     public async Task InvokingAsync_ShouldNotThrow_WhenSearchFailsAsync()
     {
         // Arrange
-        var provider = new TextSearchProvider(this.FailingSearchAsync, loggerFactory: this._loggerFactoryMock.Object);
+        var provider = new TextSearchProvider(this.FailingSearchAsync, default, null, loggerFactory: this._loggerFactoryMock.Object);
         var invokingContext = new AIContextProvider.InvokingContext(new[] { new ChatMessage(ChatRole.User, "Q?") });
 
         // Act
@@ -195,7 +195,7 @@ public sealed class TextSearchProviderTests
             ContextPrompt = overrideContextPrompt,
             CitationsPrompt = overrideCitationsPrompt
         };
-        var provider = new TextSearchProvider(SearchDelegateAsync, options);
+        var provider = new TextSearchProvider(SearchDelegateAsync, default, null, options);
 
         // Act
         var formatted = await provider.SearchAsync("Sample user question?", CancellationToken.None);
@@ -247,7 +247,7 @@ public sealed class TextSearchProviderTests
             SearchTime = TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke,
             ContextFormatter = r => $"Custom formatted context with {r.Count} results."
         };
-        var provider = new TextSearchProvider(SearchDelegateAsync, options);
+        var provider = new TextSearchProvider(SearchDelegateAsync, default, null, options);
         var invokingContext = new AIContextProvider.InvokingContext(new[] { new ChatMessage(ChatRole.User, "Q?") });
 
         // Act
@@ -281,7 +281,7 @@ public sealed class TextSearchProviderTests
             SearchTime = TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke,
             ContextFormatter = r => string.Join(",", r.Select(x => ((RawPayload)x.RawRepresentation!).Id))
         };
-        var provider = new TextSearchProvider(SearchDelegateAsync, options);
+        var provider = new TextSearchProvider(SearchDelegateAsync, default, null, options);
         var invokingContext = new AIContextProvider.InvokingContext(new[] { new ChatMessage(ChatRole.User, "Q?") });
 
         // Act
@@ -298,7 +298,7 @@ public sealed class TextSearchProviderTests
     {
         // Arrange
         var options = new TextSearchProviderOptions { SearchTime = TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke };
-        var provider = new TextSearchProvider(this.NoResultSearchAsync, options);
+        var provider = new TextSearchProvider(this.NoResultSearchAsync, default, null, options);
         var invokingContext = new AIContextProvider.InvokingContext(new[] { new ChatMessage(ChatRole.User, "Q?") });
 
         // Act
@@ -327,7 +327,7 @@ public sealed class TextSearchProviderTests
             capturedInput = input;
             return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchResult>>([]); // No results needed.
         }
-        var provider = new TextSearchProvider(SearchDelegateAsync, options);
+        var provider = new TextSearchProvider(SearchDelegateAsync, default, null, options);
 
         // Populate memory with more messages than the limit (A,B,C,D) -> should retain B,C,D
         var initialMessages = new[]
@@ -367,7 +367,7 @@ public sealed class TextSearchProviderTests
             capturedInput = input;
             return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchResult>>([]); // No results needed.
         }
-        var provider = new TextSearchProvider(SearchDelegateAsync, options);
+        var provider = new TextSearchProvider(SearchDelegateAsync, default, null, options);
 
         // Populate memory with more messages than the limit (A,B,C,D) -> should retain B,C,D
         var initialMessages = new[]
@@ -407,7 +407,7 @@ public sealed class TextSearchProviderTests
             capturedInput = input;
             return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchResult>>([]);
         }
-        var provider = new TextSearchProvider(SearchDelegateAsync, options);
+        var provider = new TextSearchProvider(SearchDelegateAsync, default, null, options);
 
         // First memory update (A,B)
         await provider.InvokedAsync(new(new[]
@@ -449,7 +449,7 @@ public sealed class TextSearchProviderTests
             capturedInput = input;
             return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchResult>>([]); // No results needed for this test.
         }
-        var provider = new TextSearchProvider(SearchDelegateAsync, options);
+        var provider = new TextSearchProvider(SearchDelegateAsync, default, null, options);
 
         // Populate memory with mixed roles; only Assistant messages (A1,A2) should be retained.
         var initialMessages = new[]
@@ -486,7 +486,7 @@ public sealed class TextSearchProviderTests
             SearchTime = TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke,
             RecentMessageMemoryLimit = 3
         };
-        var provider = new TextSearchProvider(this.NoResultSearchAsync, options);
+        var provider = new TextSearchProvider(this.NoResultSearchAsync, default, null, options);
 
         // Act
         var state = provider.Serialize();
@@ -506,7 +506,7 @@ public sealed class TextSearchProviderTests
             RecentMessageMemoryLimit = 3,
             RecentMessageRolesIncluded = [ChatRole.User, ChatRole.Assistant]
         };
-        var provider = new TextSearchProvider(this.NoResultSearchAsync, options);
+        var provider = new TextSearchProvider(this.NoResultSearchAsync, default, null, options);
         var messages = new[]
         {
             new ChatMessage(ChatRole.User, "M1"),
@@ -536,7 +536,7 @@ public sealed class TextSearchProviderTests
             RecentMessageMemoryLimit = 4,
             RecentMessageRolesIncluded = [ChatRole.User, ChatRole.Assistant]
         };
-        var provider = new TextSearchProvider(this.NoResultSearchAsync, options);
+        var provider = new TextSearchProvider(this.NoResultSearchAsync, default, null, options);
         var messages = new[]
         {
             new ChatMessage(ChatRole.User, "A"),
@@ -571,7 +571,7 @@ public sealed class TextSearchProviderTests
     public async Task Deserialize_WithChangedLowerLimit_ShouldTruncateToNewLimitAsync()
     {
         // Arrange
-        var initialProvider = new TextSearchProvider(this.NoResultSearchAsync, new TextSearchProviderOptions
+        var initialProvider = new TextSearchProvider(this.NoResultSearchAsync, default, null, new TextSearchProviderOptions
         {
             SearchTime = TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke,
             RecentMessageMemoryLimit = 5,

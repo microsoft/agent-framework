@@ -19,7 +19,7 @@ from ._middleware import (
 )
 from ._serialization import SerializationMixin
 from ._threads import ChatMessageStoreProtocol
-from ._tools import ToolProtocol
+from ._tools import FUNCTION_INVOKING_CHAT_CLIENT_MARKER, FunctionInvocationConfiguration, ToolProtocol
 from ._types import ChatMessage, ChatOptions, ChatResponse, ChatResponseUpdate, ToolMode, prepare_messages
 
 if TYPE_CHECKING:
@@ -356,6 +356,10 @@ class BaseChatClient(SerializationMixin, ABC):
         self.additional_properties.update(kwargs)
 
         self.middleware = middleware
+
+        self.function_invocation_configuration = (
+            FunctionInvocationConfiguration() if hasattr(self.__class__, FUNCTION_INVOKING_CHAT_CLIENT_MARKER) else None
+        )
 
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
         """Convert the instance to a dictionary.

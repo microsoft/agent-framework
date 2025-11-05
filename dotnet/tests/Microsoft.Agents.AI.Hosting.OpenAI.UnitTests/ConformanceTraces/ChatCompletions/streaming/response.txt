@@ -1,0 +1,21 @@
+data: {"id":"chatcmpl-ABC123","object":"chat.completion.chunk","created":1730371200,"model":"gpt-4o-mini-2024-07-18","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-ABC123","object":"chat.completion.chunk","created":1730371200,"model":"gpt-4o-mini-2024-07-18","choices":[{"index":0,"delta":{"content":"In"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-ABC123","object":"chat.completion.chunk","created":1730371200,"model":"gpt-4o-mini-2024-07-18","choices":[{"index":0,"delta":{"content":" circuits"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-ABC123","object":"chat.completion.chunk","created":1730371200,"model":"gpt-4o-mini-2024-07-18","choices":[{"index":0,"delta":{"content":" bright"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-ABC123","object":"chat.completion.chunk","created":1730371200,"model":"gpt-4o-mini-2024-07-18","choices":[{"index":0,"delta":{"content":","},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-ABC123","object":"chat.completion.chunk","created":1730371200,"model":"gpt-4o-mini-2024-07-18","choices":[{"index":0,"delta":{"content":" minds"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-ABC123","object":"chat.completion.chunk","created":1730371200,"model":"gpt-4o-mini-2024-07-18","choices":[{"index":0,"delta":{"content":" take"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-ABC123","object":"chat.completion.chunk","created":1730371200,"model":"gpt-4o-mini-2024-07-18","choices":[{"index":0,"delta":{"content":" flight"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-ABC123","object":"chat.completion.chunk","created":1730371200,"model":"gpt-4o-mini-2024-07-18","choices":[{"index":0,"delta":{"content":"."},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-ABC123","object":"chat.completion.chunk","created":1730371200,"model":"gpt-4o-mini-2024-07-18","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":12,"total_tokens":24,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}}}
+
+data: [DONE]
