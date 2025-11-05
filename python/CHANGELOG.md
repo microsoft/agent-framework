@@ -12,6 +12,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **agent-framework-ag-ui**: Initial release of AG-UI protocol integration for Agent Framework ([#1826](https://github.com/microsoft/agent-framework/pull/1826))
+- **agent-framework-chatkit**: ChatKit integration with a sample application ([#1273](https://github.com/microsoft/agent-framework/pull/1273))
+- Added parameter to disable agent cleanup in AzureAIAgentClient ([#1882](https://github.com/microsoft/agent-framework/pull/1882))
+- Add support for Python 3.14 ([#1904](https://github.com/microsoft/agent-framework/pull/1904))
+
+### Changed
+
+- [BREAKING] Replaced AIProjectClient with AgentsClient in Foundry ([#1936](https://github.com/microsoft/agent-framework/pull/1936))
+- Updates to Tools ([#1835](https://github.com/microsoft/agent-framework/pull/1835))
+
+### Fixed
+
+- Fix missing packaging dependency ([#1929](https://github.com/microsoft/agent-framework/pull/1929))
 
 ## [1.0.0b251104] - 2025-11-04
 
