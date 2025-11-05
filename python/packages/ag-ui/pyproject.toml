@@ -1,13 +1,26 @@
 [project]
 name = "agent-framework-ag-ui"
-version = "0.1.0"
+version = "1.0.0b251105"
 description = "AG-UI protocol integration for Agent Framework"
 readme = "README.md"
-license = { file = "LICENSE" }
-authors = [
-    { name = "Microsoft", email = "agent-framework@microsoft.com" }
-]
+license-files = ["LICENSE"]
+authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 requires-python = ">=3.10"
+urls.homepage = "https://aka.ms/agent-framework"
+urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
+urls.release_notes = "https://github.com/microsoft/agent-framework/releases?q=tag%3Apython-1&expanded=true"
+urls.issues = "https://github.com/microsoft/agent-framework/issues"
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Typing :: Typed",
+]
 dependencies = [
     "agent-framework-core",
     "ag-ui-protocol>=0.1.9",
