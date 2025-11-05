@@ -814,16 +814,11 @@ class MessageMapper:
                 return [trace_event]
 
             # For unknown/legacy events, still emit as workflow event for backward compatibility
-            # Get event data and serialize if it's a SerializationMixin
+            # Get event data and deep serialize it to handle nested SerializationMixin objects
             raw_event_data = getattr(event, "data", None)
-            serialized_event_data: dict[str, Any] | str | None = raw_event_data
-            if raw_event_data is not None and hasattr(raw_event_data, "to_dict"):
-                # SerializationMixin objects - convert to dict for JSON serialization
-                try:
-                    serialized_event_data = raw_event_data.to_dict()
-                except Exception as e:
-                    logger.debug(f"Failed to serialize event data with to_dict(): {e}")
-                    serialized_event_data = str(raw_event_data)
+            serialized_event_data: dict[str, Any] | str | list[Any] | None = (
+                self._deep_serialize(raw_event_data) if raw_event_data is not None else None
+            )
 
             # Create structured workflow event (keeping for backward compatibility)
             workflow_event = ResponseWorkflowEventComplete(
@@ -846,6 +841,61 @@ class MessageMapper:
         except Exception as e:
             logger.warning(f"Error converting workflow event: {e}")
             return [await self._create_error_event(str(e), context)]
+
+    def _deep_serialize(self, obj: Any) -> Any:
+        """Recursively serialize objects to JSON-compatible types.
+        
+        This method handles nested structures containing SerializationMixin objects
+        (like ChatMessage) that need to be converted to dictionaries before JSON
+        serialization. It supports arbitrary nesting depth and multiple object types.
+        
+        Args:
+            obj: Object to serialize. Can be a primitive type, list, dict, 
+                 SerializationMixin object, Pydantic model, or nested combination.
+            
+        Returns:
+            JSON-serializable version of the object (dict, list, str, int, float, bool, or None).
+        """
+        # Base case: None
+        if obj is None:
+            return None
+            
+        # Base case: JSON primitives - return as-is
+        if isinstance(obj, (str, int, float, bool)):
+            return obj
+            
+        # Recursive case: Lists and tuples
+        if isinstance(obj, (list, tuple)):
+            return [self._deep_serialize(item) for item in obj]
+            
+        # Recursive case: Dictionaries
+        if isinstance(obj, dict):
+            return {key: self._deep_serialize(value) for key, value in obj.items()}
+            
+        # Recursive case: SerializationMixin objects (ChatMessage, Role, etc.)
+        # These objects have a to_dict() method that returns a dictionary representation
+        if hasattr(obj, "to_dict") and callable(getattr(obj, "to_dict", None)):
+            try:
+                # Call to_dict() and recursively serialize the result
+                # This handles nested SerializationMixin objects within the dictionary
+                return self._deep_serialize(obj.to_dict())
+            except Exception as e:
+                logger.debug(f"Failed to serialize object with to_dict(): {e}")
+                return str(obj)
+                
+        # Recursive case: Pydantic models
+        # These have a model_dump() method (Pydantic v2) for serialization
+        if hasattr(obj, "model_dump") and callable(getattr(obj, "model_dump", None)):
+            try:
+                return self._deep_serialize(obj.model_dump())
+            except Exception as e:
+                logger.debug(f"Failed to serialize Pydantic model: {e}")
+                return str(obj)
+                
+        # Fallback: Convert to string representation
+        # This ensures we always return something serializable, even for unknown types
+        logger.debug(f"Unknown type {type(obj).__name__}, converting to string")
+        return str(obj)
 
     # Content type mappers - implementing our comprehensive mapping plan
 
