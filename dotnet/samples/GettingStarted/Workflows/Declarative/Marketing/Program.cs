@@ -45,10 +45,9 @@ internal sealed class Program
                 """,
             Tools =
             {
-                //AgentTool.CreateBingGroundingTool( // %%% SUPPORTED ???
-                //    new BingGroundingSearchToolParameters(
-                //        [new BingGroundingSearchConfiguration(configuration[ConfigKeyFoundryGroundingTool])]))
-                ResponseTool.CreateWebSearchTool()
+                AgentTool.CreateBingGroundingTool(
+                    new BingGroundingSearchToolParameters(
+                        [new BingGroundingSearchConfiguration(configuration[Application.Settings.FoundryGroundingTool])]))
             }
         };
 

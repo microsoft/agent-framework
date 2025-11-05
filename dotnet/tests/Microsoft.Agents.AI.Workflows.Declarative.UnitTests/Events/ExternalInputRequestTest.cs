@@ -15,13 +15,14 @@ public sealed class ExternalInputRequestTest(ITestOutputHelper output) : EventTe
     public void VerifySerializationWithText()
     {
         // Arrange
-        ExternalInputRequest source = new(new ChatMessage(ChatRole.User, "Wassup?"));
+        ExternalInputRequest source = new(new AgentRunResponse(new ChatMessage(ChatRole.User, "Wassup?")));
 
         // Act
         ExternalInputRequest copy = VerifyEventSerialization(source);
 
         // Assert
-        AssertMessage(source.Message, copy.Message);
+        ChatMessage messageCopy = Assert.Single(source.AgentResponse.Messages);
+        AssertMessage(messageCopy, copy.AgentResponse.Messages[0]);
     }
 
     [Fact]
@@ -29,27 +30,33 @@ public sealed class ExternalInputRequestTest(ITestOutputHelper output) : EventTe
     {
         // Arrange
         ExternalInputRequest source =
-            new(new ChatMessage(ChatRole.Assistant,
-                [
-                    new McpServerToolApprovalRequestContent("call1", new McpServerToolCallContent("call1", "testmcp", "server-name")),
-                    new FunctionApprovalRequestContent("call2", new FunctionCallContent("call2", "result1")),
-                    // %%% FUNCTION CALL
-                    // %%% RAW REPRESENTATION ONLY
-                ]));
+            new(new AgentRunResponse(
+                    new ChatMessage(
+                        ChatRole.Assistant,
+                        [
+                            new McpServerToolApprovalRequestContent("call1", new McpServerToolCallContent("call1", "testmcp", "server-name")),
+                            new FunctionApprovalRequestContent("call2", new FunctionCallContent("call2", "result1")),
+                            new FunctionCallContent("call3", "myfunc"),
+                            new TextContent("Heya"),
+                        ])));
 
         // Act
         ExternalInputRequest copy = VerifyEventSerialization(source);
 
         // Assert
-        Assert.Equal(source.Message.Contents.Count, copy.Message.Contents.Count);
+        ChatMessage messageCopy = Assert.Single(source.AgentResponse.Messages);
+        Assert.Equal(messageCopy.Contents.Count, copy.AgentResponse.Messages[0].Contents.Count);
 
-        McpServerToolApprovalRequestContent mcpRequest = AssertContent<McpServerToolApprovalRequestContent>(copy);
+        McpServerToolApprovalRequestContent mcpRequest = AssertContent<McpServerToolApprovalRequestContent>(messageCopy);
         Assert.Equal("call1", mcpRequest.Id);
 
-        FunctionApprovalRequestContent functionRequest = AssertContent<FunctionApprovalRequestContent>(copy);
+        FunctionApprovalRequestContent functionRequest = AssertContent<FunctionApprovalRequestContent>(messageCopy);
         Assert.Equal("call2", functionRequest.Id);
-    }
 
-    private static TContent AssertContent<TContent>(ExternalInputRequest request) where TContent : AIContent =>
-        AssertContent<TContent>(request.Message);
+        FunctionCallContent functionCall = AssertContent<FunctionCallContent>(messageCopy);
+        Assert.Equal("call3", functionCall.CallId);
+
+        TextContent textContent = AssertContent<TextContent>(messageCopy);
+        Assert.Equal("Heya", textContent.Text);
+    }
 }

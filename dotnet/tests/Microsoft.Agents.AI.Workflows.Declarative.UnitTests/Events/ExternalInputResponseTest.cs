@@ -29,12 +29,13 @@ public sealed class ExternalInputResponseTest(ITestOutputHelper output) : EventT
     {
         // Arrange
         ExternalInputResponse source =
-            new(new ChatMessage(ChatRole.Assistant,
+            new(new ChatMessage(
+                ChatRole.Assistant,
                 [
                     new McpServerToolApprovalRequestContent("call1", new McpServerToolCallContent("call1", "testmcp", "server-name")).CreateResponse(approved: true),
                     new FunctionApprovalRequestContent("call2", new FunctionCallContent("call2", "result1")).CreateResponse(approved: true),
-                    // %%% FUNCTION CALL
-                    // %%% RAW REPRESENTATION ONLY
+                    new FunctionResultContent("call3", 33),
+                    new TextContent("Heya"),
                 ]));
 
         // Act
@@ -43,11 +44,17 @@ public sealed class ExternalInputResponseTest(ITestOutputHelper output) : EventT
         // Assert
         Assert.Equal(source.Message.Contents.Count, copy.Message.Contents.Count);
 
-        McpServerToolApprovalResponseContent mcpRequest = AssertContent<McpServerToolApprovalResponseContent>(copy);
-        Assert.Equal("call1", mcpRequest.Id);
+        McpServerToolApprovalResponseContent mcpApproval = AssertContent<McpServerToolApprovalResponseContent>(copy);
+        Assert.Equal("call1", mcpApproval.Id);
 
-        FunctionApprovalResponseContent functionRequest = AssertContent<FunctionApprovalResponseContent>(copy);
-        Assert.Equal("call2", functionRequest.Id);
+        FunctionApprovalResponseContent functionApproval = AssertContent<FunctionApprovalResponseContent>(copy);
+        Assert.Equal("call2", functionApproval.Id);
+
+        FunctionResultContent functionResult = AssertContent<FunctionResultContent>(copy);
+        Assert.Equal("call3", functionResult.CallId);
+
+        TextContent textContent = AssertContent<TextContent>(copy);
+        Assert.Equal("Heya", textContent.Text);
     }
 
     private static TContent AssertContent<TContent>(ExternalInputResponse response) where TContent : AIContent =>

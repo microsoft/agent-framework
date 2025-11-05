@@ -15,7 +15,7 @@ internal static class Application
         public const string FoundryEndpoint = "FOUNDRY_PROJECT_ENDPOINT";
         public const string FoundryModelMini = "FOUNDRY_MODEL_DEPLOYMENT_NAME";
         public const string FoundryModelFull = "FOUNDRY_MEDIA_DEPLOYMENT_NAME";
-        public const string FoundryGroundingTool = "FOUNDRY_CONNECTION_GROUNDING_TOOL"; // %%% VALID FOR V2 ???
+        public const string FoundryGroundingTool = "FOUNDRY_CONNECTION_GROUNDING_TOOL";
     }
 
     public static string GetValue(this IConfiguration configuration, string settingName) =>

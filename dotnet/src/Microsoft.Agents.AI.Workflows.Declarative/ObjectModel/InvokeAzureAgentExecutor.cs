@@ -106,7 +106,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
             if (requestInput)
             {
                 isComplete = false;
-                ExternalInputRequest inputRequest = new(agentResponse.Messages.Last()); // %%% EXTERNAL INPUT - REVIEW
+                ExternalInputRequest inputRequest = new(agentResponse);
                 await context.SendMessageAsync(inputRequest, cancellationToken).ConfigureAwait(false);
             }
         }

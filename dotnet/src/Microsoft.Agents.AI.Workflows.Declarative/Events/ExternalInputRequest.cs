@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Text.Json.Serialization;
-using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.Events;
 
@@ -13,11 +12,11 @@ public sealed class ExternalInputRequest
     /// <summary>
     /// The source message that triggered the request for external input.
     /// </summary>
-    public ChatMessage Message { get; }
+    public AgentRunResponse AgentResponse { get; }
 
     [JsonConstructor]
-    internal ExternalInputRequest(ChatMessage message)
+    internal ExternalInputRequest(AgentRunResponse agentResponse)
     {
-        this.Message = message;
+        this.AgentResponse = agentResponse;
     }
 }
