@@ -11,9 +11,8 @@ import azure.functions as func
 import pytest
 from agent_framework import AgentRunResponse, ChatMessage
 
-import agent_framework_azurefunctions._entities as azure_entities
 from agent_framework_azurefunctions import AgentFunctionApp
-from agent_framework_azurefunctions._entities import AgentEntity, create_agent_entity
+from agent_framework_azurefunctions._entities import AgentEntity, AgentState, create_agent_entity
 from agent_framework_azurefunctions._errors import IncomingRequestError
 
 TFunc = TypeVar("TFunc", bound=Callable[..., Any])
@@ -461,7 +460,7 @@ class TestAgentEntityFactory:
         mock_context.operation_name = "reset"
         mock_context.get_state.return_value = existing_state
 
-        with patch.object(azure_entities.AgentState, "restore_state") as restore_state_mock:
+        with patch.object(AgentState, "restore_state") as restore_state_mock:
             entity_function(mock_context)
 
         restore_state_mock.assert_called_once_with(existing_state)
