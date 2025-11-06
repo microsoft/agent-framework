@@ -279,8 +279,8 @@ public static class AgentsClientExtensions
         return CreateAIAgent(
             agentsClient,
             name,
-            new PromptAgentDefinition(model) { Instructions = instructions },
             tools,
+            new PromptAgentDefinition(model) { Instructions = instructions },
             creationOptions,
             clientFactory,
             openAIClientOptions,
@@ -323,8 +323,8 @@ public static class AgentsClientExtensions
         return CreateAIAgentAsync(
             agentsClient,
             name,
-            new PromptAgentDefinition(model) { Instructions = instructions },
             tools,
+            new PromptAgentDefinition(model) { Instructions = instructions },
             creationOptions,
             clientFactory,
             openAIClientOptions,
@@ -450,31 +450,106 @@ public static class AgentsClientExtensions
     /// <param name="agentsClient">The client used to manage and interact with AI agents. Cannot be <see langword="null"/>.</param>
     /// <param name="name">The name for the agent.</param>
     /// <param name="agentDefinition">The definition that specifies the configuration and behavior of the agent to create. Cannot be <see langword="null"/>.</param>
-    /// <param name="tools">The tools to use when interacting with the agent, this is required when using prompt agent definitions with tools.</param>
     /// <param name="creationOptions">Settings that control the creation of the agent.</param>
     /// <param name="clientFactory">A factory function to customize the creation of the chat client used by the agent.</param>
     /// <param name="openAIClientOptions">An optional <see cref="OpenAIClientOptions"/> for configuring the underlying OpenAI client.</param>
-    /// <param name="requireInvocableTools">This defaults to true and indicates whether to enforce the presence of invocable tools when the AIAgent is created with an agent definition that uses them. Setting this to false will require manual handling of in-proc tool invocations by the caller.</param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the newly created agent.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="agentsClient"/> or <paramref name="agentDefinition"/> is <see langword="null"/>.</exception>
-    /// <remarks>When using prompt agent definitions with tools the parameter <paramref name="tools"/> needs to be provided.</remarks>
+    /// <remarks>
+    /// When using this extension method with a <see cref="PromptAgentDefinition"/> the tools are only declarative and not invocable.
+    /// Invocation of any in-process tools will need to be handled manually.
+    /// </remarks>
     public static ChatClientAgent CreateAIAgent(
         this AgentsClient agentsClient,
         string name,
         AgentDefinition agentDefinition,
-        IList<AITool>? tools = null,
         AgentVersionCreationOptions? creationOptions = null,
         Func<IChatClient, IChatClient>? clientFactory = null,
         OpenAIClientOptions? openAIClientOptions = null,
-        bool requireInvocableTools = true,
         CancellationToken cancellationToken = default)
     {
         Throw.IfNull(agentsClient);
         Throw.IfNullOrWhitespace(name);
         Throw.IfNull(agentDefinition);
 
-        ValidateUsingToolsParameter(agentDefinition, tools);
+        var tools = (agentDefinition as PromptAgentDefinition)?.Tools.Select(t => t.AsAITool()).ToList();
+
+        return CreateAIAgent(
+            agentsClient,
+            name,
+            tools,
+            agentDefinition,
+            creationOptions,
+            clientFactory,
+            openAIClientOptions,
+            requireInvocableTools: false,
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// Asynchronously creates a new AI agent using the specified agent definition and optional configuration
+    /// parameters.
+    /// </summary>
+    /// <param name="agentsClient">The client used to manage and interact with AI agents. Cannot be <see langword="null"/>.</param>
+    /// <param name="name">The name for the agent.</param>
+    /// <param name="agentDefinition">The definition that specifies the configuration and behavior of the agent to create. Cannot be <see langword="null"/>.</param>
+    /// <param name="agentVersionCreationOptions">Settings that control the creation of the agent.</param>
+    /// <param name="clientFactory">A factory function to customize the creation of the chat client used by the agent.</param>
+    /// <param name="openAIClientOptions">An optional <see cref="OpenAIClientOptions"/> for configuring the underlying OpenAI client.</param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+    /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the newly created agent.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="agentsClient"/> or <paramref name="agentDefinition"/> is <see langword="null"/>.</exception>
+    /// <remarks>
+    /// When using this extension method with a <see cref="PromptAgentDefinition"/> the tools are only declarative and not invocable.
+    /// Invocation of any in-process tools will need to be handled manually.
+    /// </remarks>
+    public static Task<ChatClientAgent> CreateAIAgentAsync(
+        this AgentsClient agentsClient,
+        string name,
+        AgentDefinition agentDefinition,
+        AgentVersionCreationOptions? agentVersionCreationOptions = null,
+        Func<IChatClient, IChatClient>? clientFactory = null,
+        OpenAIClientOptions? openAIClientOptions = null,
+        CancellationToken cancellationToken = default)
+    {
+        Throw.IfNullOrWhitespace(name);
+        Throw.IfNull(agentsClient);
+        Throw.IfNull(agentDefinition);
+
+        var tools = (agentDefinition as PromptAgentDefinition)?.Tools.Select(t => t.AsAITool()).ToList();
+
+        return CreateAIAgentAsync(
+            agentsClient,
+            name,
+            tools,
+            agentDefinition,
+            agentVersionCreationOptions,
+            clientFactory,
+            openAIClientOptions,
+            requireInvocableTools: false,
+            cancellationToken);
+    }
+
+    #region Private
+
+    private static ChatClientAgent CreateAIAgent(
+        this AgentsClient agentsClient,
+        string name,
+        IList<AITool>? tools,
+        AgentDefinition agentDefinition,
+        AgentVersionCreationOptions? creationOptions,
+        Func<IChatClient, IChatClient>? clientFactory,
+        OpenAIClientOptions? openAIClientOptions,
+        bool requireInvocableTools,
+        CancellationToken cancellationToken)
+    {
+        Throw.IfNull(agentsClient);
+        Throw.IfNullOrWhitespace(name);
+        Throw.IfNull(agentDefinition);
+
+        tools ??= (agentDefinition as PromptAgentDefinition)?.Tools.Select(t => t.AsAITool()).ToList();
+
         ApplyToolsToAgentDefinition(agentDefinition, tools, requireInvocableTools);
 
         AgentVersion agentVersion = agentsClient.CreateAgentVersion(name, agentDefinition, creationOptions, cancellationToken).Value;
@@ -488,38 +563,23 @@ public static class AgentsClientExtensions
             requireInvocableTools);
     }
 
-    /// <summary>
-    /// Asynchronously creates a new AI agent using the specified agent definition and optional configuration
-    /// parameters.
-    /// </summary>
-    /// <param name="agentsClient">The client used to manage and interact with AI agents. Cannot be <see langword="null"/>.</param>
-    /// <param name="name">The name for the agent.</param>
-    /// <param name="agentDefinition">The definition that specifies the configuration and behavior of the agent to create. Cannot be <see langword="null"/>.</param>
-    /// <param name="tools">The tools to use when interacting with the agent. This is required when using prompt agent definitions with tools.</param>
-    /// <param name="agentVersionCreationOptions">Settings that control the creation of the agent.</param>
-    /// <param name="clientFactory">A factory function to customize the creation of the chat client used by the agent.</param>
-    /// <param name="openAIClientOptions">An optional <see cref="OpenAIClientOptions"/> for configuring the underlying OpenAI client.</param>
-    /// <param name="requireInvocableTools">This defaults to true and indicates whether to enforce the presence of invocable tools when the AIAgent is created with an agent definition that uses them. Setting this to false will require manual handling of in-proc tool invocations by the caller.</param>
-    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
-    /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the newly created agent.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="agentsClient"/> or <paramref name="agentDefinition"/> is <see langword="null"/>.</exception>
-    /// <remarks>When using prompt agent definitions with tools the parameter <paramref name="tools"/> needs to be provided.</remarks>
-    public static async Task<ChatClientAgent> CreateAIAgentAsync(
+    private static async Task<ChatClientAgent> CreateAIAgentAsync(
         this AgentsClient agentsClient,
         string name,
+        IList<AITool>? tools,
         AgentDefinition agentDefinition,
-        IList<AITool>? tools = null,
-        AgentVersionCreationOptions? agentVersionCreationOptions = null,
-        Func<IChatClient, IChatClient>? clientFactory = null,
-        OpenAIClientOptions? openAIClientOptions = null,
-        bool requireInvocableTools = true,
-        CancellationToken cancellationToken = default)
+        AgentVersionCreationOptions? agentVersionCreationOptions,
+        Func<IChatClient, IChatClient>? clientFactory,
+        OpenAIClientOptions? openAIClientOptions,
+        bool requireInvocableTools,
+        CancellationToken cancellationToken)
     {
         Throw.IfNullOrWhitespace(name);
         Throw.IfNull(agentsClient);
         Throw.IfNull(agentDefinition);
 
-        ValidateUsingToolsParameter(agentDefinition, tools);
+        tools ??= (agentDefinition as PromptAgentDefinition)?.Tools.Select(t => t.AsAITool()).ToList();
+
         ApplyToolsToAgentDefinition(agentDefinition, tools, requireInvocableTools);
 
         AgentVersion agentVersion = await agentsClient.CreateAgentVersionAsync(name, agentDefinition, agentVersionCreationOptions, cancellationToken).ConfigureAwait(false);
@@ -532,8 +592,6 @@ public static class AgentsClientExtensions
             openAIClientOptions,
             requireInvocableTools);
     }
-
-    #region Private
 
     /// <summary>This method creates an <see cref="ChatClientAgent"/> with the specified ChatClientAgentOptions.</summary>
     private static ChatClientAgent CreateChatClientAgent(
@@ -591,42 +649,43 @@ public static class AgentsClientExtensions
         if (agentDefinition is PromptAgentDefinition { Tools: { Count: > 0 } definitionTools })
         {
             // Check if no tools were provided while the agent definition requires in-proc tools.
-            if (requireInvocableTools)
+            if (requireInvocableTools && tools is null or { Count: 0 } && definitionTools.Any(t => t is FunctionTool))
             {
-                if (tools is null or { Count: 0 } && definitionTools.Any(t => t is FunctionTool))
-                {
-                    throw new ArgumentException("The agent definition in-process tools must be provided in the extension method tools parameter.");
-                }
+                throw new ArgumentException("The agent definition in-process tools must be provided in the extension method tools parameter.");
+            }
 
-                // Aggregate all missing tools for a single error message.
-                List<string>? missingTools = null;
+            // Agregate all missing tools for a single error message.
+            List<string>? missingTools = null;
 
-                // Check function tools
-                foreach (ResponseTool responseTool in definitionTools)
+            // Check function tools
+            foreach (ResponseTool responseTool in definitionTools)
+            {
+                if (responseTool is FunctionTool functionTool)
                 {
-                    if (responseTool is FunctionTool functionTool)
+                    // Check if a tool with the same type and name exists in the provided tools.
+                    var matchingTool = tools?.FirstOrDefault(t =>
+                        requireInvocableTools
+                            ? t is AIFunction tf && functionTool.FunctionName == tf.Name // When invocable tools are required, match only AIFunction.
+                            : (t is AIFunctionDeclaration tfd && functionTool.FunctionName == tfd.Name) ? true // When not required, match AIFunctionDeclaration OR
+                            : (t.GetService<FunctionTool>() is FunctionTool ft && functionTool.FunctionName == ft.FunctionName)); // Match a FunctionTool converted AsAITool.
+
+                    if (matchingTool is null)
                     {
-                        // Check if a tool with the same type and name exists in the provided tools.
-                        var matchingTool = tools?.FirstOrDefault(t => t is AIFunction tf && functionTool.FunctionName == tf.Name);
-
-                        if (matchingTool is null)
-                        {
-                            (missingTools ??= []).Add($"Function tool: {functionTool.FunctionName}");
-                        }
-                        else
-                        {
-                            (agentTools ??= []).Add(matchingTool!);
-                        }
-                        continue;
+                        (missingTools ??= []).Add($"Function tool: {functionTool.FunctionName}");
                     }
-
-                    (agentTools ??= []).Add(responseTool.AsAITool());
+                    else
+                    {
+                        (agentTools ??= []).Add(matchingTool!);
+                    }
+                    continue;
                 }
 
-                if (missingTools is { Count: > 0 })
-                {
-                    throw new InvalidOperationException($"The following prompt agent definition required tools were not provided: {string.Join(", ", missingTools)}");
-                }
+                (agentTools ??= []).Add(responseTool.AsAITool());
+            }
+
+            if (missingTools is { Count: > 0 })
+            {
+                throw new InvalidOperationException($"The following prompt agent definition required tools were not provided: {string.Join(", ", missingTools)}");
             }
         }
 
@@ -680,20 +739,6 @@ public static class AgentsClientExtensions
         return agentOptions;
     }
 
-    /// <summary>When creating agents, validates the <paramref name="tools"/> parameter is used instead of providing via <see cref="PromptAgentDefinition"/>.</summary>
-    /// <exception cref="ArgumentException">The <paramref name="tools"/> parameter should be used instead of <see cref="PromptAgentDefinition.Tools"/>.</exception>
-    /// <remarks>
-    /// Because <see cref="PromptAgentDefinition.Tools"/> doesn't support in-proc tools (only declarative/definitions),
-    /// the <paramref name="tools"/> parameter needs to be the single source of truth for tools, and must be provided when using tools.
-    /// </remarks>
-    private static void ValidateUsingToolsParameter(AgentDefinition agentDefinition, IList<AITool>? tools)
-    {
-        if (agentDefinition is PromptAgentDefinition { Tools.Count: > 0 })
-        {
-            throw new ArgumentException("When creating agents with prompt agent definitions use the dedicated tools parameter to provide the necessary tools instead of PromptAgentDefinition.Tools.", nameof(tools));
-        }
-    }
-
     /// <summary>For already created agent versions, retrieve the definition and validate the tools parameter.</summary>
     /// <exception cref="ArgumentException"><see cref="PromptAgentDefinition.Tools"/> cannot be used. The <paramref name="tools"/> parameter should be used instead.</exception>
     /// <remarks>
@@ -734,9 +779,11 @@ public static class AgentsClientExtensions
             foreach (var tool in tools)
             {
                 // Ensure that any AIFunctions provided are In-Proc, not just the declarations.
-                if (requireInvocableTools && tool is AIFunctionDeclaration and not AIFunction)
+                if (requireInvocableTools && tool is not AIFunction && (
+                    tool.GetService<FunctionTool>() is not null // Declarative FunctionTool converted as AsAITool()
+                    || tool is AIFunctionDeclaration)) // AIFunctionDeclaration type
                 {
-                    throw new InvalidOperationException("When providing functions, they need to be invokable AIFunctions and not non-invokable AIFunctionDeclarations. AIFunctions can be created correctly using AIFunctionFactory.Create");
+                    throw new InvalidOperationException("When providing functions, they need to be invokable AIFunctions. AIFunctions can be created correctly using AIFunctionFactory.Create");
                 }
 
                 promptAgentDefinition.Tools.Add(

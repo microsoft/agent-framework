@@ -5,6 +5,7 @@ using System.ClientModel;
 using System.ClientModel.Primitives;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -867,41 +868,17 @@ public sealed class AgentsClientExtensionsTests
     #region Tool Validation Tests
 
     /// <summary>
-    /// Verify that CreateAIAgent throws ArgumentException when agent definition contains inline tools.
+    /// Verify that CreateAIAgent creates an agent successfully.
     /// </summary>
     [Fact]
-    public void CreateAIAgent_WithInlineToolsInDefinition_ThrowsArgumentException()
+    public void CreateAIAgent_WithDefinition_CreatesAgentSuccessfully()
     {
         // Arrange
         AgentsClient client = this.CreateTestAgentsClient();
-        var definition = new PromptAgentDefinition("test-model");
-        definition.Tools.Add(ResponseTool.CreateFunctionTool("inline_tool", BinaryData.FromString("{}"), strictModeEnabled: false));
-
-        // Act & Assert
-        var exception = Assert.Throws<ArgumentException>(() =>
-            client.CreateAIAgent("test-agent", definition));
-
-        Assert.Contains("dedicated tools parameter", exception.Message);
-    }
-
-    /// <summary>
-    /// Verify that CreateAIAgent with requireInvocableTools=true enforces invocable tools.
-    /// </summary>
-    [Fact]
-    public void CreateAIAgent_WithRequireInvocableToolsTrue_EnforcesInvocableTools()
-    {
-        // Arrange
         var definition = new PromptAgentDefinition("test-model") { Instructions = "Test" };
-        var tools = new List<AITool>
-        {
-            AIFunctionFactory.Create(() => "test", "test_function", "A test function")
-        };
-
-        var definitionResponse = GeneratePromptDefinitionResponse(definition, tools);
-        AgentsClient client = this.CreateTestAgentsClient(agentName: "test-agent", agentDefinitionResponse: definitionResponse);
 
         // Act
-        var agent = client.CreateAIAgent("test-agent", definition, tools: tools, requireInvocableTools: true);
+        var agent = client.CreateAIAgent("test-agent", definition);
 
         // Assert
         Assert.NotNull(agent);
@@ -909,17 +886,37 @@ public sealed class AgentsClientExtensionsTests
     }
 
     /// <summary>
-    /// Verify that CreateAIAgent with requireInvocableTools=false allows declarative functions.
+    /// Verify that CreateAIAgent without tools parameter creates an agent successfully.
     /// </summary>
     [Fact]
-    public void CreateAIAgent_WithRequireInvocableToolsFalse_AllowsDeclarativeFunctions()
+    public void CreateAIAgent_WithoutToolsParameter_CreatesAgentSuccessfully()
+    {
+        // Arrange
+        var definition = new PromptAgentDefinition("test-model") { Instructions = "Test" };
+
+        var definitionResponse = GeneratePromptDefinitionResponse(definition, null);
+        AgentsClient client = this.CreateTestAgentsClient(agentName: "test-agent", agentDefinitionResponse: definitionResponse);
+
+        // Act
+        var agent = client.CreateAIAgent("test-agent", definition);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.IsType<ChatClientAgent>(agent);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgent without tools in definition creates an agent successfully.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithoutToolsInDefinition_CreatesAgentSuccessfully()
     {
         // Arrange
         var definition = new PromptAgentDefinition("test-model") { Instructions = "Test" };
         AgentsClient client = this.CreateTestAgentsClient(agentName: "test-agent", agentDefinitionResponse: definition);
 
-        // Act - should not throw even without tools when requireInvocableTools is false
-        var agent = client.CreateAIAgent("test-agent", definition, requireInvocableTools: false);
+        // Act
+        var agent = client.CreateAIAgent("test-agent", definition);
 
         // Assert
         Assert.NotNull(agent);
@@ -927,43 +924,23 @@ public sealed class AgentsClientExtensionsTests
     }
 
     /// <summary>
-    /// Verify that CreateAIAgent throws ArgumentException when agent definition has tools but none provided as parameter.
+    /// Verify that CreateAIAgent uses tools from the definition when no separate tools parameter is provided.
     /// </summary>
     [Fact]
-    public void CreateAIAgent_WithDefinitionToolsButNoToolsParameter_ThrowsArgumentException()
+    public void CreateAIAgent_WithDefinitionTools_UsesDefinitionTools()
     {
         // Arrange
-        AgentsClient client = this.CreateTestAgentsClient();
         var definition = new PromptAgentDefinition("test-model") { Instructions = "Test" };
 
-        // Add a function tool to the definition to simulate a tool requirement
+        // Add a function tool to the definition
         definition.Tools.Add(ResponseTool.CreateFunctionTool("required_tool", BinaryData.FromString("{}"), strictModeEnabled: false));
 
-        // Act & Assert
-        var exception = Assert.Throws<ArgumentException>(() =>
-            client.CreateAIAgent("test-agent", definition, tools: null, requireInvocableTools: true));
-
-        Assert.Contains("dedicated tools parameter", exception.Message);
-    }
-
-    /// <summary>
-    /// Verify that CreateAIAgent with tools parameter applies tools to the agent definition.
-    /// </summary>
-    [Fact]
-    public void CreateAIAgent_WithToolsParameter_AppliesToolsToDefinition()
-    {
-        // Arrange
-        var definition = new PromptAgentDefinition("test-model");
-        var tools = new List<AITool>
-        {
-            AIFunctionFactory.Create(() => "test", "test_function", "A test function")
-        };
-
-        var agentDefinitionResponse = GeneratePromptDefinitionResponse(definition, tools);
-        AgentsClient client = this.CreateTestAgentsClient(agentName: "test-agent", agentDefinitionResponse: agentDefinitionResponse);
+        // Create a response definition with the same tool
+        var definitionResponse = GeneratePromptDefinitionResponse(definition, definition.Tools.Select(t => t.AsAITool()).ToList());
+        AgentsClient client = this.CreateTestAgentsClient(agentName: "test-agent", agentDefinitionResponse: definitionResponse);
 
         // Act
-        var agent = client.CreateAIAgent("test-agent", definition, tools: tools);
+        var agent = client.CreateAIAgent("test-agent", definition);
 
         // Assert
         Assert.NotNull(agent);
@@ -974,7 +951,28 @@ public sealed class AgentsClientExtensionsTests
         {
             Assert.NotEmpty(promptDef.Tools);
             Assert.Single(promptDef.Tools);
+            Assert.Equal("required_tool", (promptDef.Tools.First() as FunctionTool)?.FunctionName);
         }
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgent without tools creates an agent successfully.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithoutTools_CreatesAgentSuccessfully()
+    {
+        // Arrange
+        var definition = new PromptAgentDefinition("test-model");
+
+        var agentDefinitionResponse = GeneratePromptDefinitionResponse(definition, null);
+        AgentsClient client = this.CreateTestAgentsClient(agentName: "test-agent", agentDefinitionResponse: agentDefinitionResponse);
+
+        // Act
+        var agent = client.CreateAIAgent("test-agent", definition);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.IsType<ChatClientAgent>(agent);
     }
 
     /// <summary>
@@ -1032,25 +1030,22 @@ public sealed class AgentsClientExtensionsTests
     }
 
     /// <summary>
-    /// Verify that CreateAIAgent with parameter tools creates an agent successfully.
+    /// Verify that CreateAIAgent with tools in definition creates an agent successfully.
     /// </summary>
     [Fact]
-    public void CreateAIAgent_WithParameterTools_CreatesAgentSuccessfully()
+    public void CreateAIAgent_WithDefinitionTools_CreatesAgentSuccessfully()
     {
         // Arrange
         var definition = new PromptAgentDefinition("test-model") { Instructions = "Test instructions" };
-        var tools = new List<AITool>
-        {
-            AIFunctionFactory.Create(() => "result", "create_tool", "A tool for creation")
-        };
+        definition.Tools.Add(ResponseTool.CreateFunctionTool("create_tool", BinaryData.FromString("{}"), strictModeEnabled: false));
 
         // Simulate agent definition response with the tools
-        var definitionResponse = GeneratePromptDefinitionResponse(definition, tools);
+        var definitionResponse = GeneratePromptDefinitionResponse(definition, definition.Tools.Select(t => t.AsAITool()).ToList());
 
         AgentsClient client = this.CreateTestAgentsClient(agentDefinitionResponse: definitionResponse);
 
         // Act
-        var agent = client.CreateAIAgent("test-agent", definition, tools: tools);
+        var agent = client.CreateAIAgent("test-agent", definition);
 
         // Assert
         Assert.NotNull(agent);
@@ -1065,31 +1060,28 @@ public sealed class AgentsClientExtensionsTests
     }
 
     /// <summary>
-    /// Verify that CreateAIAgent creates an agent successfully when provided with a mix of custom and hosted tools.
+    /// Verify that CreateAIAgent creates an agent successfully when definition has a mix of custom and hosted tools.
     /// </summary>
     [Fact]
-    public void CreateAIAgent_WithMixedTools_CreatesAgentSuccessfully()
+    public void CreateAIAgent_WithMixedToolsInDefinition_CreatesAgentSuccessfully()
     {
         // Arrange
         var definition = new PromptAgentDefinition("test-model") { Instructions = "Test instructions" };
-        var tools = new List<AITool>
-        {
-            AIFunctionFactory.Create(() => "result", "create_tool", "A tool for creation"),
-            new HostedWebSearchTool(),
-            new HostedFileSearchTool(),
-        };
+        definition.Tools.Add(ResponseTool.CreateFunctionTool("create_tool", BinaryData.FromString("{}"), strictModeEnabled: false));
+        definition.Tools.Add(new HostedWebSearchTool().GetService<ResponseTool>() ?? new HostedWebSearchTool().AsOpenAIResponseTool());
+        definition.Tools.Add(new HostedFileSearchTool().GetService<ResponseTool>() ?? new HostedFileSearchTool().AsOpenAIResponseTool());
 
         // Simulate agent definition response with the tools
         var definitionResponse = new PromptAgentDefinition("test-model") { Instructions = "Test instructions" };
-        foreach (var tool in tools)
+        foreach (var tool in definition.Tools)
         {
-            definitionResponse.Tools.Add(tool.GetService<ResponseTool>() ?? tool.AsOpenAIResponseTool());
+            definitionResponse.Tools.Add(tool);
         }
 
         AgentsClient client = this.CreateTestAgentsClient(agentDefinitionResponse: definitionResponse);
 
         // Act
-        var agent = client.CreateAIAgent("test-agent", definition, tools: tools);
+        var agent = client.CreateAIAgent("test-agent", definition);
 
         // Assert
         Assert.NotNull(agent);
@@ -1104,10 +1096,10 @@ public sealed class AgentsClientExtensionsTests
     }
 
     /// <summary>
-    /// Verifies that CreateAIAgent accepts tools provided as ResponseTool instances and correctly converts them to AITool instances, resulting in successful agent creation.
+    /// Verifies that CreateAIAgent uses tools from definition when they are ResponseTool instances, resulting in successful agent creation.
     /// </summary>
     [Fact]
-    public void CreateAIAgent_WithResponseToolsAsAITools_CreatesAgentSuccessfully()
+    public void CreateAIAgent_WithResponseToolsInDefinition_CreatesAgentSuccessfully()
     {
         // Arrange
         var definition = new PromptAgentDefinition("test-model") { Instructions = "Test instructions" };
@@ -1123,33 +1115,25 @@ public sealed class AgentsClientExtensionsTests
             ["structured-1"] = BinaryData.FromString(AIJsonUtilities.CreateJsonSchema(new { id = "test" }.GetType()).ToString())
         }, false);
 
-        ResponseTool openAIResponseTool = (ResponseTool)new AzureAISearchAgentTool(new());
-
-        var tools = new List<AITool>
-        {
-            AIFunctionFactory.Create(() => "result", "create_tool", "A tool for creation"),
-            ((ResponseTool)AgentTool.CreateBingCustomSearchTool(new BingCustomSearchToolParameters([new BingCustomSearchConfiguration("connection-id", "instance-name")]))).AsAITool(),
-            ((ResponseTool)AgentTool.CreateBrowserAutomationTool(new BrowserAutomationToolParameters(new BrowserAutomationToolConnectionParameters("id")))).AsAITool(),
-            AgentTool.CreateA2ATool(new Uri("https://test-uri.microsoft.com")).AsAITool(),
-            ((ResponseTool)AgentTool.CreateBingGroundingTool(new BingGroundingSearchToolParameters([new BingGroundingSearchConfiguration("connection-id")]))).AsAITool(),
-            ((ResponseTool)AgentTool.CreateMicrosoftFabricTool(fabricParameters)).AsAITool(),
-            ((ResponseTool)AgentTool.CreateOpenApiTool(new OpenApiFunctionDefinition("name", BinaryData.FromString(OpenAPISpec), new OpenApiAnonymousAuthDetails()))).AsAITool(),
-            ((ResponseTool)AgentTool.CreateSharepointTool(sharepointParameters)).AsAITool(),
-            ((ResponseTool)AgentTool.CreateStructuredOutputsTool(structuredOutputs)).AsAITool(),
-
-            // Workaround the bug with the AgentTool.CreateAzureAISearchTool() extension
-            // Using the extension method AgentTool.CreateAzureAISearchTool() fails serialization, 
-            // TODO: Revert back once bug fix is applied: https://github.com/Azure/azure-sdk-for-net/pull/53656
-            ((ResponseTool)new AzureAISearchAgentTool(new())).AsAITool()
-        };
+        // Add tools to the definition
+        definition.Tools.Add(ResponseTool.CreateFunctionTool("create_tool", BinaryData.FromString("{}"), strictModeEnabled: false));
+        definition.Tools.Add((ResponseTool)AgentTool.CreateBingCustomSearchTool(new BingCustomSearchToolParameters([new BingCustomSearchConfiguration("connection-id", "instance-name")])));
+        definition.Tools.Add((ResponseTool)AgentTool.CreateBrowserAutomationTool(new BrowserAutomationToolParameters(new BrowserAutomationToolConnectionParameters("id"))));
+        definition.Tools.Add(AgentTool.CreateA2ATool(new Uri("https://test-uri.microsoft.com")));
+        definition.Tools.Add((ResponseTool)AgentTool.CreateBingGroundingTool(new BingGroundingSearchToolParameters([new BingGroundingSearchConfiguration("connection-id")])));
+        definition.Tools.Add((ResponseTool)AgentTool.CreateMicrosoftFabricTool(fabricParameters));
+        definition.Tools.Add((ResponseTool)AgentTool.CreateOpenApiTool(new OpenApiFunctionDefinition("name", BinaryData.FromString(OpenAPISpec), new OpenApiAnonymousAuthDetails())));
+        definition.Tools.Add((ResponseTool)AgentTool.CreateSharepointTool(sharepointParameters));
+        definition.Tools.Add((ResponseTool)AgentTool.CreateStructuredOutputsTool(structuredOutputs));
+        definition.Tools.Add((ResponseTool)new AzureAISearchAgentTool(new()));
 
         // Generate agent definition response with the tools
-        var definitionResponse = GeneratePromptDefinitionResponse(definition, tools);
+        var definitionResponse = GeneratePromptDefinitionResponse(definition, definition.Tools.Select(t => t.AsAITool()).ToList());
 
         AgentsClient client = this.CreateTestAgentsClient(agentDefinitionResponse: definitionResponse);
 
         // Act
-        var agent = client.CreateAIAgent("test-agent", definition, tools: tools);
+        var agent = client.CreateAIAgent("test-agent", definition);
 
         // Assert
         Assert.NotNull(agent);
@@ -1199,21 +1183,18 @@ public sealed class AgentsClientExtensionsTests
     }
 
     /// <summary>
-    /// Verify that CreateAIAgentAsync with tools parameter creates an agent.
+    /// Verify that CreateAIAgentAsync with tools in definition creates an agent.
     /// </summary>
     [Fact]
-    public async Task CreateAIAgentAsync_WithToolsParameter_CreatesAgentAsync()
+    public async Task CreateAIAgentAsync_WithDefinitionTools_CreatesAgentAsync()
     {
         // Arrange
         AgentsClient client = this.CreateTestAgentsClient();
         var definition = new PromptAgentDefinition("test-model") { Instructions = "Test instructions" };
-        var tools = new List<AITool>
-        {
-            AIFunctionFactory.Create(() => "async_result", "async_tool", "An async tool")
-        };
+        definition.Tools.Add(ResponseTool.CreateFunctionTool("async_tool", BinaryData.FromString("{}"), strictModeEnabled: false));
 
         // Act
-        var agent = await client.CreateAIAgentAsync("test-agent", definition, tools: tools);
+        var agent = await client.CreateAIAgentAsync("test-agent", definition);
 
         // Assert
         Assert.NotNull(agent);
@@ -1246,10 +1227,10 @@ public sealed class AgentsClientExtensionsTests
     #region Declarative Function Handling Tests
 
     /// <summary>
-    /// Verify that CreateAIAgent throws InvalidOperationException when provided with non-invocable AIFunctionDeclaration when requireInvocableTools=true.
+    /// Verify that CreateAIAgent accepts declarative functions from definition.
     /// </summary>
     [Fact]
-    public void CreateAIAgent_WithDeclarativeFunctionAndRequireInvocableTrue_ThrowsInvalidOperationException()
+    public void CreateAIAgent_WithDeclarativeFunctionInDefinition_AcceptsDeclarativeFunction()
     {
         // Arrange
         AgentsClient client = this.CreateTestAgentsClient();
@@ -1259,38 +1240,11 @@ public sealed class AgentsClientExtensionsTests
         using var doc = JsonDocument.Parse("{}");
         var declarativeFunction = AIFunctionFactory.CreateDeclaration("test_function", "A test function", doc.RootElement);
 
-        var tools = new List<AITool> { declarativeFunction };
-
-        // Act & Assert
-        var exception = Assert.Throws<InvalidOperationException>(() =>
-            client.CreateAIAgent("test-agent", definition, tools: tools, requireInvocableTools: true));
-
-        Assert.Contains("invokable AIFunctions", exception.Message);
-    }
-
-    /// <summary>
-    /// Verify that CreateAIAgent accepts declarative functions when requireInvocableTools=false.
-    /// </summary>
-    [Fact]
-    public void CreateAIAgent_WithDeclarativeFunctionAndRequireInvocableFalse_AcceptsDeclarativeFunction()
-    {
-        // Arrange
-        var definition = new PromptAgentDefinition("test-model") { Instructions = "Test" };
-
-        // Create a declarative function (not invocable) using AIFunctionFactory.CreateDeclaration
-        using var doc = JsonDocument.Parse("{}");
-        var declarativeFunction = AIFunctionFactory.CreateDeclaration("test_function", "A test function", doc.RootElement);
-
-        var tools = new List<AITool> { declarativeFunction };
-
-        // Generate response with the declarative function
-        var definitionResponse = new PromptAgentDefinition("test-model") { Instructions = "Test" };
-        definitionResponse.Tools.Add(declarativeFunction.AsOpenAIResponseTool() ?? throw new InvalidOperationException());
-
-        AgentsClient client = this.CreateTestAgentsClient(agentName: "test-agent", agentDefinitionResponse: definitionResponse);
+        // Add to definition
+        definition.Tools.Add(declarativeFunction.AsOpenAIResponseTool() ?? throw new InvalidOperationException());
 
         // Act
-        var agent = client.CreateAIAgent("test-agent", definition, tools: tools, requireInvocableTools: false);
+        var agent = client.CreateAIAgent("test-agent", definition);
 
         // Assert
         Assert.NotNull(agent);
@@ -1298,10 +1252,104 @@ public sealed class AgentsClientExtensionsTests
     }
 
     /// <summary>
-    /// Verify that CreateAIAgentAsync throws InvalidOperationException when provided with non-invocable AIFunctionDeclaration when requireInvocableTools=true.
+    /// Verify that CreateAIAgent accepts declarative functions from definition.
     /// </summary>
     [Fact]
-    public async Task CreateAIAgentAsync_WithDeclarativeFunctionAndRequireInvocableTrue_ThrowsInvalidOperationExceptionAsync()
+    public void CreateAIAgent_WithDeclarativeFunctionFromDefinition_AcceptsDeclarativeFunction()
+    {
+        // Arrange
+        var definition = new PromptAgentDefinition("test-model") { Instructions = "Test" };
+
+        // Create a declarative function (not invocable) using AIFunctionFactory.CreateDeclaration
+        using var doc = JsonDocument.Parse("{}");
+        var declarativeFunction = AIFunctionFactory.CreateDeclaration("test_function", "A test function", doc.RootElement);
+
+        // Add to definition
+        definition.Tools.Add(declarativeFunction.AsOpenAIResponseTool() ?? throw new InvalidOperationException());
+
+        // Generate response with the declarative function
+        var definitionResponse = new PromptAgentDefinition("test-model") { Instructions = "Test" };
+        definitionResponse.Tools.Add(declarativeFunction.AsOpenAIResponseTool() ?? throw new InvalidOperationException());
+
+        AgentsClient client = this.CreateTestAgentsClient(agentName: "test-agent", agentDefinitionResponse: definitionResponse);
+
+        // Act
+        var agent = client.CreateAIAgent("test-agent", definition);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.IsType<ChatClientAgent>(agent);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgent accepts FunctionTools from definition.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithFunctionToolsInDefinition_AcceptsDeclarativeFunction()
+    {
+        // Arrange
+        var functionTool = ResponseTool.CreateFunctionTool(
+            functionName: "get_user_name",
+            functionParameters: BinaryData.FromString("{}"),
+            strictModeEnabled: false,
+            functionDescription: "Gets the user's name, as used for friendly address."
+        );
+
+        var definition = new PromptAgentDefinition("test-model") { Instructions = "Test" };
+        definition.Tools.Add(functionTool);
+
+        // Generate response with the declarative function
+        var definitionResponse = new PromptAgentDefinition("test-model") { Instructions = "Test" };
+        definitionResponse.Tools.Add(functionTool);
+
+        AgentsClient client = this.CreateTestAgentsClient(agentName: "test-agent", agentDefinitionResponse: definitionResponse);
+
+        // Act
+        var agent = client.CreateAIAgent("test-agent", definition);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.IsType<ChatClientAgent>(agent);
+        var definitionFromAgent = Assert.IsType<PromptAgentDefinition>(agent.GetService<AgentVersion>()?.Definition);
+        Assert.Single(definitionFromAgent.Tools);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgentAsync accepts FunctionTools from definition.
+    /// </summary>
+    [Fact]
+    public async Task CreateAIAgentAsync_WithFunctionToolsInDefinition_AcceptsDeclarativeFunctionAsync()
+    {
+        // Arrange
+        var functionTool = ResponseTool.CreateFunctionTool(
+            functionName: "get_user_name",
+            functionParameters: BinaryData.FromString("{}"),
+            strictModeEnabled: false,
+            functionDescription: "Gets the user's name, as used for friendly address."
+        );
+
+        var definition = new PromptAgentDefinition("test-model") { Instructions = "Test" };
+        definition.Tools.Add(functionTool);
+
+        // Generate response with the declarative function
+        var definitionResponse = new PromptAgentDefinition("test-model") { Instructions = "Test" };
+        definitionResponse.Tools.Add(functionTool);
+
+        AgentsClient client = this.CreateTestAgentsClient(agentName: "test-agent", agentDefinitionResponse: definitionResponse);
+
+        // Act
+        var agent = await client.CreateAIAgentAsync("test-agent", definition);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.IsType<ChatClientAgent>(agent);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgentAsync accepts declarative functions from definition.
+    /// </summary>
+    [Fact]
+    public async Task CreateAIAgentAsync_WithDeclarativeFunctionFromDefinition_AcceptsDeclarativeFunctionAsync()
     {
         // Arrange
         AgentsClient client = this.CreateTestAgentsClient();
@@ -1311,20 +1359,22 @@ public sealed class AgentsClientExtensionsTests
         using var doc = JsonDocument.Parse("{}");
         var declarativeFunction = AIFunctionFactory.CreateDeclaration("test_function", "A test function", doc.RootElement);
 
-        var tools = new List<AITool> { declarativeFunction };
+        // Add to definition
+        definition.Tools.Add(declarativeFunction.AsOpenAIResponseTool() ?? throw new InvalidOperationException());
 
-        // Act & Assert
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            client.CreateAIAgentAsync("test-agent", definition, tools: tools, requireInvocableTools: true));
+        // Act
+        var agent = await client.CreateAIAgentAsync("test-agent", definition);
 
-        Assert.Contains("invokable AIFunctions", exception.Message);
+        // Assert
+        Assert.NotNull(agent);
+        Assert.IsType<ChatClientAgent>(agent);
     }
 
     /// <summary>
-    /// Verify that CreateAIAgentAsync accepts declarative functions when requireInvocableTools=false.
+    /// Verify that CreateAIAgentAsync accepts declarative functions from definition.
     /// </summary>
     [Fact]
-    public async Task CreateAIAgentAsync_WithDeclarativeFunctionAndRequireInvocableFalse_AcceptsDeclarativeFunctionAsync()
+    public async Task CreateAIAgentAsync_WithDeclarativeFunctionInDefinition_AcceptsDeclarativeFunctionAsync()
     {
         // Arrange
         var definition = new PromptAgentDefinition("test-model") { Instructions = "Test" };
@@ -1333,7 +1383,8 @@ public sealed class AgentsClientExtensionsTests
         using var doc = JsonDocument.Parse("{}");
         var declarativeFunction = AIFunctionFactory.CreateDeclaration("test_function", "A test function", doc.RootElement);
 
-        var tools = new List<AITool> { declarativeFunction };
+        // Add to definition
+        definition.Tools.Add(declarativeFunction.AsOpenAIResponseTool() ?? throw new InvalidOperationException());
 
         // Generate response with the declarative function
         var definitionResponse = new PromptAgentDefinition("test-model") { Instructions = "Test" };
@@ -1342,7 +1393,7 @@ public sealed class AgentsClientExtensionsTests
         AgentsClient client = this.CreateTestAgentsClient(agentName: "test-agent", agentDefinitionResponse: definitionResponse);
 
         // Act
-        var agent = await client.CreateAIAgentAsync("test-agent", definition, tools: tools, requireInvocableTools: false);
+        var agent = await client.CreateAIAgentAsync("test-agent", definition);
 
         // Assert
         Assert.NotNull(agent);
@@ -1354,23 +1405,19 @@ public sealed class AgentsClientExtensionsTests
     #region Options Generation Validation Tests
 
     /// <summary>
-    /// Verify that ChatClientAgentOptions are generated correctly with proper tool matching.
+    /// Verify that ChatClientAgentOptions are generated correctly without tools.
     /// </summary>
     [Fact]
     public void CreateAIAgent_GeneratesCorrectChatClientAgentOptions()
     {
         // Arrange
         var definition = new PromptAgentDefinition("test-model") { Instructions = "Test instructions" };
-        var tools = new List<AITool>
-        {
-            AIFunctionFactory.Create(() => "result", "test_tool", "A test tool")
-        };
 
-        var definitionResponse = GeneratePromptDefinitionResponse(definition, tools);
+        var definitionResponse = GeneratePromptDefinitionResponse(definition, null);
         AgentsClient client = this.CreateTestAgentsClient(agentName: "test-agent", agentDefinitionResponse: definitionResponse);
 
         // Act
-        var agent = client.CreateAIAgent("test-agent", definition, tools: tools);
+        var agent = client.CreateAIAgent("test-agent", definition);
 
         // Assert
         Assert.NotNull(agent);
@@ -1560,26 +1607,21 @@ public sealed class AgentsClientExtensionsTests
     }
 
     /// <summary>
-    /// Verify that agent created with tools and clientFactory is created successfully.
+    /// Verify that agent created with clientFactory is created successfully.
     /// </summary>
     [Fact]
-    public void CreateAIAgent_WithToolsAndClientFactory_CreatesAgentSuccessfully()
+    public void CreateAIAgent_WithClientFactory_CreatesAgentSuccessfully()
     {
         // Arrange
         var definition = new PromptAgentDefinition("test-model") { Instructions = "Test" };
-        var tools = new List<AITool>
-        {
-            AIFunctionFactory.Create(() => "test", "test_tool", "A test tool")
-        };
 
-        var agentDefinitionResponse = GeneratePromptDefinitionResponse(definition, tools);
+        var agentDefinitionResponse = GeneratePromptDefinitionResponse(definition, null);
         AgentsClient client = this.CreateTestAgentsClient(agentName: "test-agent", agentDefinitionResponse: agentDefinitionResponse);
 
         // Act
         var agent = client.CreateAIAgent(
             "test-agent",
             definition,
-            tools: tools,
             clientFactory: (innerClient) => new TestChatClient(innerClient));
 
         // Assert
@@ -1588,11 +1630,6 @@ public sealed class AgentsClientExtensionsTests
         Assert.NotNull(wrappedClient);
         var agentVersion = agent.GetService<AgentVersion>();
         Assert.NotNull(agentVersion);
-        if (agentVersion.Definition is PromptAgentDefinition promptDef)
-        {
-            Assert.NotEmpty(promptDef.Tools);
-            Assert.Single(promptDef.Tools);
-        }
     }
 
     #endregion
@@ -1824,12 +1861,15 @@ public sealed class AgentsClientExtensionsTests
         }
     }
 
-    private static PromptAgentDefinition GeneratePromptDefinitionResponse(PromptAgentDefinition inputDefinition, List<AITool> tools)
+    private static PromptAgentDefinition GeneratePromptDefinitionResponse(PromptAgentDefinition inputDefinition, List<AITool>? tools)
     {
         var definitionResponse = new PromptAgentDefinition(inputDefinition.Model) { Instructions = inputDefinition.Instructions };
-        foreach (var tool in tools)
+        if (tools is not null)
         {
-            definitionResponse.Tools.Add(tool.GetService<ResponseTool>() ?? tool.AsOpenAIResponseTool());
+            foreach (var tool in tools)
+            {
+                definitionResponse.Tools.Add(tool.GetService<ResponseTool>() ?? tool.AsOpenAIResponseTool());
+            }
         }
 
         return definitionResponse;
