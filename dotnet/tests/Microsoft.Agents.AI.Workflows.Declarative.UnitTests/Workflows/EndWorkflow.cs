@@ -89,6 +89,6 @@ public static class WorkflowProvider
         builder.AddEdge(endAllRestart, sendActivity1);
 
         // Build the workflow
-        return builder.Build();
+        return builder.Build(validateOrphans: false);
     }
 }
