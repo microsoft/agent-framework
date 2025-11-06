@@ -197,9 +197,10 @@ class DurableAgentThread(AgentThread):
         **kwargs: Any,
     ) -> "DurableAgentThread":
         """Restores a durable thread, rehydrating the stored session identifier."""
-        session_id_value = serialized_thread_state.get(cls._SERIALIZED_SESSION_ID_KEY)
+        state_payload = dict(serialized_thread_state)
+        session_id_value = state_payload.pop(cls._SERIALIZED_SESSION_ID_KEY, None)
         thread = await super().deserialize(
-            serialized_thread_state,
+            state_payload,
             message_store=message_store,
             **kwargs,
         )
