@@ -35,8 +35,6 @@ public static class AGUIEndpointRouteBuilderExtensions
     {
         return endpoints.MapPost(pattern, async ([FromBody] RunAgentInput? input, HttpContext context, CancellationToken cancellationToken) =>
         {
-            var logger = context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("MapAGUI");
-
             if (input is null)
             {
                 return Results.BadRequest();
@@ -60,9 +58,6 @@ public static class AGUIEndpointRouteBuilderExtensions
                     }
                 };
             }
-
-            logger.LogInformation("[MapAGUI] Starting agent.RunStreamingAsync for ThreadId: {ThreadId}, RunId: {RunId}",
-                input.ThreadId, input.RunId);
 
             var events = agent.RunStreamingAsync(
                 messages,

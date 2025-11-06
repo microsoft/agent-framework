@@ -5,6 +5,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
@@ -381,7 +383,7 @@ public sealed class ToolCallingTests : IAsyncDisposable
         await this.SetupTestServerAsync();
 
         // Client uses custom JSON context
-        var clientJsonOptions = new System.Text.Json.JsonSerializerOptions();
+        var clientJsonOptions = new JsonSerializerOptions();
         clientJsonOptions.TypeInfoResolverChain.Add(ClientJsonContext.Default);
 
         _ = new AGUIChatClient(this._client!, "", null, clientJsonOptions);
@@ -389,14 +391,15 @@ public sealed class ToolCallingTests : IAsyncDisposable
         // Act - Verify that both AG-UI types and custom types can be serialized
         // The AGUIChatClient should have combined AGUIJsonSerializerContext with ClientJsonContext
 
-        // Try to serialize a custom type using System.Text.Json with the ClientJsonContext
+        // Try to serialize a custom type using the ClientJsonContext
         var testResponse = new ClientForecastResponse(75, 60, "Rainy");
-        var json = System.Text.Json.JsonSerializer.Serialize(testResponse, ClientJsonContext.Default.ClientForecastResponse);
+        var json = JsonSerializer.Serialize(testResponse, ClientJsonContext.Default.ClientForecastResponse);
 
         // Assert
-        json.Should().Contain("\"MaxTemp\":75");
-        json.Should().Contain("\"MinTemp\":60");
-        json.Should().Contain("\"Outlook\":\"Rainy\"");
+        var jsonElement = JsonDocument.Parse(json).RootElement;
+        jsonElement.GetProperty("MaxTemp").GetInt32().Should().Be(75);
+        jsonElement.GetProperty("MinTemp").GetInt32().Should().Be(60);
+        jsonElement.GetProperty("Outlook").GetString().Should().Be("Rainy");
 
         this._output.WriteLine("Successfully serialized custom type: " + json);
 
@@ -499,7 +502,7 @@ public sealed class ToolCallingTests : IAsyncDisposable
     private async Task SetupTestServerAsync(
         IList<AITool>? serverTools = null,
         bool triggerParallelCalls = false,
-        System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null)
+        JsonSerializerOptions? jsonSerializerOptions = null)
     {
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         builder.Services.AddAGUI();
@@ -541,7 +544,7 @@ internal sealed class FakeToolCallingChatClient : IChatClient
 {
     private readonly bool _triggerParallelCalls;
     private readonly ITestOutputHelper? _output;
-    public FakeToolCallingChatClient(bool triggerParallelCalls = false, ITestOutputHelper? output = null, System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null)
+    public FakeToolCallingChatClient(bool triggerParallelCalls = false, ITestOutputHelper? output = null, JsonSerializerOptions? jsonSerializerOptions = null)
     {
         this._triggerParallelCalls = triggerParallelCalls;
         this._output = output;
@@ -683,12 +686,12 @@ public record ServerForecastResponse(int Temperature, string Condition, int Humi
 public record ClientForecastRequest(string City, bool IncludeHourly);
 public record ClientForecastResponse(int MaxTemp, int MinTemp, string Outlook);
 
-[System.Text.Json.Serialization.JsonSourceGenerationOptions(WriteIndented = false)]
-[System.Text.Json.Serialization.JsonSerializable(typeof(ServerForecastRequest))]
-[System.Text.Json.Serialization.JsonSerializable(typeof(ServerForecastResponse))]
-internal sealed partial class ServerJsonContext : System.Text.Json.Serialization.JsonSerializerContext { }
+[JsonSourceGenerationOptions(WriteIndented = false)]
+[JsonSerializable(typeof(ServerForecastRequest))]
+[JsonSerializable(typeof(ServerForecastResponse))]
+internal sealed partial class ServerJsonContext : JsonSerializerContext { }
 
-[System.Text.Json.Serialization.JsonSourceGenerationOptions(WriteIndented = false)]
-[System.Text.Json.Serialization.JsonSerializable(typeof(ClientForecastRequest))]
-[System.Text.Json.Serialization.JsonSerializable(typeof(ClientForecastResponse))]
-internal sealed partial class ClientJsonContext : System.Text.Json.Serialization.JsonSerializerContext { }
+[JsonSourceGenerationOptions(WriteIndented = false)]
+[JsonSerializable(typeof(ClientForecastRequest))]
+[JsonSerializable(typeof(ClientForecastResponse))]
+internal sealed partial class ClientJsonContext : JsonSerializerContext { }

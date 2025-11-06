@@ -263,8 +263,6 @@ public sealed class AGUIChatClient : DelegatingChatClient
                 update.ConversationId = null;
                 yield return update;
             }
-
-            this._logger.LogInformation("[AGUIChatClient] Request completed - ThreadId: {ThreadId}, RunId: {RunId}", "", runId);
         }
 
         // Extract the thread id from the options additional properties

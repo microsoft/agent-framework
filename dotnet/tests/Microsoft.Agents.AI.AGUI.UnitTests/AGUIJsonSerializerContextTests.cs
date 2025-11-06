@@ -147,7 +147,8 @@ public sealed class AGUIJsonSerializerContextTests
         string json = JsonSerializer.Serialize(evt, AGUIJsonSerializerContext.Default.RunStartedEvent);
 
         // Assert
-        Assert.Contains($"\"type\":\"{AGUIEventTypes.RunStarted}\"", json);
+        var jsonElement = JsonDocument.Parse(json).RootElement;
+        Assert.Equal(AGUIEventTypes.RunStarted, jsonElement.GetProperty("type").GetString());
     }
 
     [Fact]
@@ -215,7 +216,8 @@ public sealed class AGUIJsonSerializerContextTests
         string json = JsonSerializer.Serialize(evt, AGUIJsonSerializerContext.Default.RunFinishedEvent);
 
         // Assert
-        Assert.Contains($"\"type\":\"{AGUIEventTypes.RunFinished}\"", json);
+        var jsonElement = JsonDocument.Parse(json).RootElement;
+        Assert.Equal(AGUIEventTypes.RunFinished, jsonElement.GetProperty("type").GetString());
     }
 
     [Fact]
@@ -287,7 +289,8 @@ public sealed class AGUIJsonSerializerContextTests
         string json = JsonSerializer.Serialize(evt, AGUIJsonSerializerContext.Default.RunErrorEvent);
 
         // Assert
-        Assert.Contains($"\"type\":\"{AGUIEventTypes.RunError}\"", json);
+        var jsonElement = JsonDocument.Parse(json).RootElement;
+        Assert.Equal(AGUIEventTypes.RunError, jsonElement.GetProperty("type").GetString());
     }
 
     [Fact]
@@ -354,7 +357,8 @@ public sealed class AGUIJsonSerializerContextTests
         string json = JsonSerializer.Serialize(evt, AGUIJsonSerializerContext.Default.TextMessageStartEvent);
 
         // Assert
-        Assert.Contains($"\"type\":\"{AGUIEventTypes.TextMessageStart}\"", json);
+        var jsonElement = JsonDocument.Parse(json).RootElement;
+        Assert.Equal(AGUIEventTypes.TextMessageStart, jsonElement.GetProperty("type").GetString());
     }
 
     [Fact]
@@ -421,7 +425,8 @@ public sealed class AGUIJsonSerializerContextTests
         string json = JsonSerializer.Serialize(evt, AGUIJsonSerializerContext.Default.TextMessageContentEvent);
 
         // Assert
-        Assert.Contains($"\"type\":\"{AGUIEventTypes.TextMessageContent}\"", json);
+        var jsonElement = JsonDocument.Parse(json).RootElement;
+        Assert.Equal(AGUIEventTypes.TextMessageContent, jsonElement.GetProperty("type").GetString());
     }
 
     [Fact]
@@ -488,7 +493,8 @@ public sealed class AGUIJsonSerializerContextTests
         string json = JsonSerializer.Serialize(evt, AGUIJsonSerializerContext.Default.TextMessageEndEvent);
 
         // Assert
-        Assert.Contains($"\"type\":\"{AGUIEventTypes.TextMessageEnd}\"", json);
+        var jsonElement = JsonDocument.Parse(json).RootElement;
+        Assert.Equal(AGUIEventTypes.TextMessageEnd, jsonElement.GetProperty("type").GetString());
     }
 
     [Fact]
