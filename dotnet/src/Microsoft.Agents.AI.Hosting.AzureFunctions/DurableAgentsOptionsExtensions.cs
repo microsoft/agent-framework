@@ -5,7 +5,7 @@ using Microsoft.Agents.AI.DurableTask;
 namespace Microsoft.Agents.AI.Hosting.AzureFunctions;
 
 /// <summary>
-/// Provides extension methods for registering and configuring AI agents in the context Azure Functions hosting environment.
+/// Provides extension methods for registering and configuring AI agents in the context of the Azure Functions hosting environment.
 /// </summary>
 public static class DurableAgentsOptionsExtensions
 {

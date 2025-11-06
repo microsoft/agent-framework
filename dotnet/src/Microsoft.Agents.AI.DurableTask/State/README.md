@@ -1,6 +1,6 @@
 # Durable Agent State
 
-Durable agents are represented as durable entities, with each session (i.e. thread) of conversation history stored as JSON-serialized state for a individual entity instance.
+Durable agents are represented as durable entities, with each session (i.e. thread) of conversation history stored as JSON-serialized state for an individual entity instance.
 
 ## State Schema
 
@@ -10,14 +10,14 @@ The [schema](../../../../schemas/durable-agent-entity-state.json) for durable ag
 
 ## State Versioning
 
-Serialized state contain a root `schemaVersion` property, which represents the version of schema used to serialize data in that state (represented by the `data` property).
+The serialized state contains a root `schemaVersion` property, which represents the version of the schema used to serialize data in that state (represented by the `data` property).
 
 Some versioning considerations:
 
- - Versions should use semver notation (e.g. `"<major>.<minor>.<patch>"`)
- - Durable agents should use the version property to determine how to deserialize that state and should not attempt to deserialize semver-incompatible versions
- - Newer versions of durable agents should strive to be compatible with older schema versions (e.g. new properties and objects should be optional)
- - Durable agents should preserve existing, but unrecognized, properties when serializing state
+- Versions should use semver notation (e.g. `"<major>.<minor>.<patch>"`)
+- Durable agents should use the version property to determine how to deserialize that state and should not attempt to deserialize semver-incompatible versions
+- Newer versions of durable agents should strive to be compatible with older schema versions (e.g. new properties and objects should be optional)
+- Durable agents should preserve existing, but unrecognized, properties when serializing state
 
 ## Sample State
 
