@@ -591,42 +591,42 @@ public static class AgentsClientExtensions
         if (agentDefinition is PromptAgentDefinition { Tools: { Count: > 0 } definitionTools })
         {
             // Check if no tools were provided while the agent definition requires in-proc tools.
-            if (requireInvocableTools && tools is null or { Count: 0 } && definitionTools.Any(t => t is FunctionTool))
+            if (requireInvocableTools)
             {
-                throw new ArgumentException("The agent definition in-process tools must be provided in the extension method tools parameter.");
-            }
-
-            // Agregate all missing tools for a single error message.
-            List<string>? missingTools = null;
-
-            // Check function tools
-            foreach (ResponseTool responseTool in definitionTools)
-            {
-                if (responseTool is FunctionTool functionTool)
+                if (tools is null or { Count: 0 } && definitionTools.Any(t => t is FunctionTool))
                 {
-                    // Check if a tool with the same type and name exists in the provided tools.
-                    var matchingTool = tools?.FirstOrDefault(t =>
-                        requireInvocableTools
-                            ? t is AIFunction tf && functionTool.FunctionName == tf.Name // When invocable tools are required, match only AIFunction.
-                            : t is AIFunctionDeclaration tfd && functionTool.FunctionName == tfd.Name); // Otherwise, matching only AIFunctionDeclaration is sufficient.
-
-                    if (matchingTool is null)
-                    {
-                        (missingTools ??= []).Add($"Function tool: {functionTool.FunctionName}");
-                    }
-                    else
-                    {
-                        (agentTools ??= []).Add(matchingTool!);
-                    }
-                    continue;
+                    throw new ArgumentException("The agent definition in-process tools must be provided in the extension method tools parameter.");
                 }
 
-                (agentTools ??= []).Add(responseTool.AsAITool());
-            }
+                // Agregate all missing tools for a single error message.
+                List<string>? missingTools = null;
 
-            if (missingTools is { Count: > 0 })
-            {
-                throw new InvalidOperationException($"The following prompt agent definition required tools were not provided: {string.Join(", ", missingTools)}");
+                // Check function tools
+                foreach (ResponseTool responseTool in definitionTools)
+                {
+                    if (responseTool is FunctionTool functionTool)
+                    {
+                        // Check if a tool with the same type and name exists in the provided tools.
+                        var matchingTool = tools?.FirstOrDefault(t => t is AIFunction tf && functionTool.FunctionName == tf.Name);
+
+                        if (matchingTool is null)
+                        {
+                            (missingTools ??= []).Add($"Function tool: {functionTool.FunctionName}");
+                        }
+                        else
+                        {
+                            (agentTools ??= []).Add(matchingTool!);
+                        }
+                        continue;
+                    }
+
+                    (agentTools ??= []).Add(responseTool.AsAITool());
+                }
+
+                if (missingTools is { Count: > 0 })
+                {
+                    throw new InvalidOperationException($"The following prompt agent definition required tools were not provided: {string.Join(", ", missingTools)}");
+                }
             }
         }
 
