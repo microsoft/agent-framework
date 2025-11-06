@@ -16,7 +16,6 @@ public static class DevUIExtensions
     {
         ArgumentNullException.ThrowIfNull(builder);
         builder.Services.AddOpenAIConversations();
-        builder.Services.AddOpenAIResponses();
 
         return builder;
     }
@@ -34,7 +33,6 @@ public static class DevUIExtensions
         group.MapDevUI(pattern: "/devui");
         group.MapEntities();
         group.MapOpenAIConversations();
-        group.MapOpenAIResponses();
         return group;
     }
 
