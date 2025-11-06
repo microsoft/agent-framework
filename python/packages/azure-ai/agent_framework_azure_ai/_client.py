@@ -58,6 +58,7 @@ class AzureAIClient(OpenAIBaseResponsesClient):
         project_endpoint: str | None = None,
         model_deployment_name: str | None = None,
         async_credential: AsyncTokenCredential | None = None,
+        use_latest_version: bool | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         **kwargs: Any,
@@ -76,6 +77,8 @@ class AzureAIClient(OpenAIBaseResponsesClient):
             model_deployment_name: The model deployment name to use for agent creation.
                 Can also be set via environment variable AZURE_AI_MODEL_DEPLOYMENT_NAME.
             async_credential: Azure async credential to use for authentication.
+            use_latest_version: Boolean flag that indicates whether to use latest agent version
+                if it exists in the service.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
             kwargs: Additional keyword arguments passed to the parent class.
@@ -139,6 +142,7 @@ class AzureAIClient(OpenAIBaseResponsesClient):
         # Initialize instance variables
         self.agent_name = agent_name
         self.agent_version = agent_version
+        self.use_latest_version = use_latest_version
         self.project_client = project_client
         self.credential = async_credential
         self.model_id = azure_ai_settings.model_deployment_name
@@ -188,8 +192,19 @@ class AzureAIClient(OpenAIBaseResponsesClient):
         """
         agent_name = self.agent_name or "UnnamedAgent"
 
-        # If no agent_version is provided, create a new agent
+        # If no agent_version is provided, either use latest version or create a new agent:
         if self.agent_version is None:
+            # Try to use latest version if requested and agent exists
+            if self.use_latest_version:
+                try:
+                    existing_agent = await self.project_client.agents.retrieve(agent_name)
+                    self.agent_name = existing_agent.name
+                    self.agent_version = existing_agent.versions.latest.version
+                    return {"name": agent_name, "version": self.agent_version, "type": "agent_reference"}
+                except ResourceNotFoundError:
+                    # Agent doesn't exist, fall through to creation logic
+                    pass
+
             if "model" not in run_options or not run_options["model"]:
                 raise ServiceInitializationError(
                     "Model deployment name is required for agent creation, "
