@@ -18,6 +18,16 @@
     <Project Path="samples/AgentWebChat/AgentWebChat.ServiceDefaults/AgentWebChat.ServiceDefaults.csproj" />
     <Project Path="samples/AgentWebChat/AgentWebChat.Web/AgentWebChat.Web.csproj" />
   </Folder>
+  <Folder Name="/Samples/AzureFunctions/">
+    <File Path="samples/AzureFunctions/.editorconfig" />
+    <File Path="samples/AzureFunctions/README.md" />
+    <Project Path="samples/AzureFunctions/01_SingleAgent/01_SingleAgent.csproj" />
+    <Project Path="samples/AzureFunctions/02_AgentOrchestration_Chaining/02_AgentOrchestration_Chaining.csproj" />
+    <Project Path="samples/AzureFunctions/03_AgentOrchestration_Concurrency/03_AgentOrchestration_Concurrency.csproj" />
+    <Project Path="samples/AzureFunctions/04_AgentOrchestration_Conditionals/04_AgentOrchestration_Conditionals.csproj" />
+    <Project Path="samples/AzureFunctions/05_AgentOrchestration_HITL/05_AgentOrchestration_HITL.csproj" />
+    <Project Path="samples/AzureFunctions/06_LongRunningTools/06_LongRunningTools.csproj" />
+  </Folder>
   <Folder Name="/Samples/GettingStarted/">
     <File Path="samples/GettingStarted/README.md" />
   </Folder>
