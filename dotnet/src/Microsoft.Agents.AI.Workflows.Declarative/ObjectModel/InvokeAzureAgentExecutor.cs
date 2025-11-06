@@ -64,15 +64,19 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
 
         AgentRunResponse agentResponse = await agentProvider.InvokeAgentAsync(this.Id, context, agentName, conversationId, autoSend, messages, cancellationToken).ConfigureAwait(false);
 
-        // %%% TODO: Function calls with results don't require input.
-        bool requiresInput =
-            agentResponse.Messages
-                .SelectMany(message => message.Contents)
-                .Any(content => content is UserInputRequestContent || content is FunctionCallContent);
-
-        if (requiresInput)
+        ChatMessage[] actionablMessages = FilterActionableContent(agentResponse).ToArray();
+        if (actionablMessages.Length > 0)
         {
-            await context.SendMessageAsync(new ExternalInputRequest(agentResponse), cancellationToken).ConfigureAwait(false);
+            AgentRunResponse filteredResponse =
+                new(actionablMessages)
+                {
+                    AdditionalProperties = agentResponse.AdditionalProperties,
+                    AgentId = agentResponse.AgentId,
+                    CreatedAt = agentResponse.CreatedAt,
+                    ResponseId = agentResponse.ResponseId,
+                    Usage = agentResponse.Usage,
+                };
+            await context.SendMessageAsync(new ExternalInputRequest(filteredResponse), cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -118,27 +122,39 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
         return userInput?.ToChatMessages();
     }
 
-    //private static List<FunctionCallContent> GetOrphanedFunctionCalls(AgentRunResponse agentResponse) %%% REWRITE
-    //{
-    //    HashSet<string> functionResultIds =
-    //        [.. agentResponse.Messages
-    //                .SelectMany(
-    //                    m =>
-    //                        m.Contents
-    //                            .OfType<FunctionResultContent>()
-    //                            .Select(functionCall => functionCall.CallId))];
+    private static IEnumerable<ChatMessage> FilterActionableContent(AgentRunResponse agentResponse)
+    {
+        HashSet<string> functionResultIds =
+            [.. agentResponse.Messages
+                    .SelectMany(
+                        m =>
+                            m.Contents
+                                .OfType<FunctionResultContent>()
+                                .Select(functionCall => functionCall.CallId))];
 
-    //    List<FunctionCallContent> functionCalls = [];
-    //    foreach (FunctionCallContent functionCall in agentResponse.Messages.SelectMany(m => m.Contents.OfType<FunctionCallContent>()))
-    //    {
-    //        if (!functionResultIds.Contains(functionCall.CallId))
-    //        {
-    //            functionCalls.Add(functionCall);
-    //        }
-    //    }
+        foreach (ChatMessage responseMessage in agentResponse.Messages)
+        {
+            if (responseMessage.Contents.Any(content => content is UserInputRequestContent))
+            {
+                yield return responseMessage;
+                continue;
+            }
 
-    //    return functionCalls;
-    //}
+            if (responseMessage.Contents.OfType<FunctionCallContent>().Any(functionCall => !functionResultIds.Contains(functionCall.CallId)))
+            {
+                yield return responseMessage;
+                continue;
+            }
+        }
+
+        //foreach (FunctionCallContent functionCall in agentResponse.Messages.SelectMany(m => m.Contents.OfType<FunctionCallContent>()))
+        //{
+        //    if (!functionResultIds.Contains(functionCall.CallId))
+        //    {
+        //        functionCalls.Add(functionCall);
+        //    }
+        //}
+    }
 
     private string? GetConversationId()
     {

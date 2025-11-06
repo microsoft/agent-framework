@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 // Uncomment to output unknown content types for debugging.
-//#define DEBUG_CONTENT_TYPE 
+//#define DEBUG_OUTPUT 
 
 using System.Diagnostics;
 using System.Text.Json;
@@ -25,9 +25,9 @@ internal sealed class WorkflowRunner
     private Dictionary<string, AIFunction> FunctionMap { get; }
     private CheckpointInfo? LastCheckpoint { get; set; }
 
-    public static void Notify(string message)
+    public static void Notify(string message, ConsoleColor? color = null)
     {
-        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.ForegroundColor = color ?? ConsoleColor.Cyan;
         try
         {
             Console.WriteLine(message);
@@ -72,7 +72,7 @@ internal sealed class WorkflowRunner
             ExternalRequest? externalRequest = await this.MonitorAndDisposeWorkflowRunAsync(run, requestResponse).ConfigureAwait(false);
             if (externalRequest is not null)
             {
-                Notify("\nWORKFLOW: Yield\n");
+                Notify("\nWORKFLOW: Yield\n", ConsoleColor.DarkYellow);
 
                 if (this.LastCheckpoint is null)
                 {
@@ -88,7 +88,7 @@ internal sealed class WorkflowRunner
 
                 // Restore the latest checkpoint.
                 Debug.WriteLine($"RESTORE #{this.LastCheckpoint.CheckpointId}");
-                Notify("WORKFLOW: Restore");
+                Notify("WORKFLOW: Restore", ConsoleColor.DarkYellow);
 
                 run = await InProcessExecution.ResumeStreamAsync(workflow, this.LastCheckpoint, checkpointManager, run.Run.RunId).ConfigureAwait(false);
             }
@@ -242,7 +242,9 @@ internal sealed class WorkflowRunner
                     break;
 
                 default:
-                    Debug.WriteLine($"UNHANDLED EVENT: {workflowEvent.GetType().Name}");
+#if DEBUG_OUTPUT
+                    Debug.WriteLine($"UNHANDLED: {workflowEvent.GetType().Name}");
+#endif
                     break;
             }
 
@@ -268,8 +270,7 @@ internal sealed class WorkflowRunner
 
         foreach (ChatMessage message in inputRequest.AgentResponse.Messages)
         {
-            ChatMessage? responseMessage = await this.ProcessInputMessageAsync(message).ConfigureAwait(false);
-            if (responseMessage is not null)
+            await foreach (ChatMessage responseMessage in this.ProcessInputMessageAsync(message).ConfigureAwait(false))
             {
                 responseMessages.Add(responseMessage);
             }
@@ -286,13 +287,11 @@ internal sealed class WorkflowRunner
         return new ExternalInputResponse(responseMessages);
     }
 
-    private async ValueTask<ChatMessage?> ProcessInputMessageAsync(ChatMessage message)
+    private async IAsyncEnumerable<ChatMessage> ProcessInputMessageAsync(ChatMessage message)
     {
-        List<AIContent> responseContents = [];
-
         foreach (AIContent requestItem in message.Contents)
         {
-            AIContent? responseItem =
+            ChatMessage? responseMessage =
                 requestItem switch
                 {
                     FunctionCallContent functionCall => await InvokeFunctionAsync(functionCall).ConfigureAwait(false),
@@ -301,46 +300,39 @@ internal sealed class WorkflowRunner
                     _ => HandleUnknown(requestItem),
                 };
 
-            if (responseItem is not null)
+            if (responseMessage is not null)
             {
-                responseContents.Add(responseItem);
+                yield return responseMessage;
             }
         }
 
-        if (responseContents.Count == 0)
+        ChatMessage? HandleUnknown(AIContent request)
         {
-            return null;
-        }
-
-        return new ChatMessage(ChatRole.Tool, responseContents); // %%% ROLE
-
-        AIContent? HandleUnknown(AIContent request)
-        {
-#if DEBUG_CONTENT_TYPE
+#if DEBUG_OUTPUT
             Notify($"INPUT - Unknown: {request.GetType().Name} [{request.RawRepresentation?.GetType().Name ?? "*"}]");
 #endif
             return null;
         }
 
-        FunctionApprovalResponseContent ApproveFunction(FunctionApprovalRequestContent functionApprovalRequest)
+        ChatMessage ApproveFunction(FunctionApprovalRequestContent functionApprovalRequest)
         {
             Notify($"INPUT - Approving Function: {functionApprovalRequest.FunctionCall.Name}");
-            return functionApprovalRequest.CreateResponse(approved: true);
+            return new ChatMessage(ChatRole.User, [functionApprovalRequest.CreateResponse(approved: true)]);
         }
 
-        McpServerToolApprovalResponseContent ApproveMCP(McpServerToolApprovalRequestContent mcpApprovalRequest)
+        ChatMessage ApproveMCP(McpServerToolApprovalRequestContent mcpApprovalRequest)
         {
             Notify($"INPUT - Approving MCP: {mcpApprovalRequest.ToolCall.ToolName}");
-            return mcpApprovalRequest.CreateResponse(approved: true);
+            return new ChatMessage(ChatRole.User, [mcpApprovalRequest.CreateResponse(approved: true)]);
         }
 
-        async Task<FunctionResultContent> InvokeFunctionAsync(FunctionCallContent functionCall)
+        async Task<ChatMessage> InvokeFunctionAsync(FunctionCallContent functionCall)
         {
             Notify($"INPUT - Executing Function: {functionCall.Name}");
             AIFunction functionTool = this.FunctionMap[functionCall.Name];
             AIFunctionArguments? functionArguments = functionCall.Arguments is null ? null : new(functionCall.Arguments.NormalizePortableValues());
             object? result = await functionTool.InvokeAsync(functionArguments).ConfigureAwait(false);
-            return new FunctionResultContent(functionCall.CallId, JsonSerializer.Serialize(result));
+            return new ChatMessage(ChatRole.Tool, [new FunctionResultContent(functionCall.CallId, JsonSerializer.Serialize(result))]);
         }
     }
 
