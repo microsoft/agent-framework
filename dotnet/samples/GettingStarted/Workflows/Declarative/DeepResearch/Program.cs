@@ -7,15 +7,46 @@ using OpenAI.Responses;
 using Shared.Foundry;
 using Shared.Workflows;
 
-namespace Demo.Agents.MathChat;
+namespace Demo.Workflows.Declarative.DeepResearch;
 
+/// <summary>
+/// Demonstrate a declarative workflow that accomplishes a task
+/// using the Magentic orchestration pattern developed by AutoGen.
+/// </summary>
+/// <remarks>
+/// See the README.md file in the parent folder ("../Declarative/README.md") for detailed
+/// information the configuration required to run this sample.
+/// </remarks>
 internal sealed class Program
 {
     public static async Task Main(string[] args)
     {
+        // Initialize configuration
         IConfiguration configuration = Application.InitializeConfig();
-        string foundryEndpoint = configuration.GetValue(Application.Settings.FoundryEndpoint);
-        AgentsClient agentsClient = new(new Uri(foundryEndpoint), new AzureCliCredential());
+        Uri foundryEndpoint = new(configuration.GetValue(Application.Settings.FoundryEndpoint));
+
+        // Ensure sample agents exist in Foundry.
+        await CreateAgentsAsync(foundryEndpoint, configuration);
+
+        // Get input from command line or console
+        string workflowInput = Application.GetInput(args);
+
+        // Create the workflow factory.  This class demonstrates how to initialize a
+        // declarative workflow from a YAML file. Once the workflow is created, it
+        // can be executed just like any regular workflow.
+        WorkflowFactory workflowFactory = new("DeepResearch.yaml", foundryEndpoint);
+
+        // Execute the workflow:  The WorkflowRunner demonstrates now to execute
+        // a workflow, handle the workflow events, and providing external input.
+        // This also includes the ability to checkpoint workflow state and how to
+        // resume execution.
+        WorkflowRunner runner = new();
+        await runner.ExecuteAsync(workflowFactory.CreateWorkflow, workflowInput);
+    }
+
+    private static async Task CreateAgentsAsync(Uri foundryEndpoint, IConfiguration configuration)
+    {
+        AgentsClient agentsClient = new(foundryEndpoint, new AzureCliCredential());
 
         await agentsClient.CreateAgentAsync(
             agentName: "ResearchAgent",
@@ -54,7 +85,7 @@ internal sealed class Program
     }
 
     private static PromptAgentDefinition DefineResearchAgent(IConfiguration configuration) =>
-        new(configuration.GetValue(Application.Settings.FoundryModelMini))
+        new(configuration.GetValue(Application.Settings.FoundryModelFull))
         {
             Instructions =
                 """
@@ -79,20 +110,22 @@ internal sealed class Program
                 """,
             Tools =
             {
-                ResponseTool.CreateWebSearchTool()
+                //ResponseTool.CreateWebSearchTool() // %%% API BUG - Use Bing Grounding when available
             }
         };
 
     private static PromptAgentDefinition DefinePlannerAgent(IConfiguration configuration) =>
         new(configuration.GetValue(Application.Settings.FoundryModelMini))
         {
-            Instructions =
+            Instructions = // %%% API BUG - Use Structured Inputs / Prompt Template
                 """
                 Your only job is to devise an efficient plan that identifies (by name) how a team member may contribute to addressing the user request.
 
                 Only select the following team which is listed as "- [Name]: [Description]"
 
-                {TeamDescription}
+                - WeatherAgent: Able to retrieve weather information
+                - CoderAgent: Able to write and execute Python code
+                - KnowledgeAgent: Able to perform generic websearches
 
                 The plan must be a bullet point list must be in the form "- [AgentName]: [Specific action or task for that agent to perform]"
   
@@ -103,21 +136,19 @@ internal sealed class Program
     private static PromptAgentDefinition DefineManagerAgent(IConfiguration configuration) =>
         new(configuration.GetValue(Application.Settings.FoundryModelMini))
         {
-            Instructions =
+            Instructions = // %%% API BUG - Use Structured Inputs / Prompt Template
                 """
-                Recall we are working on the following request:
+                Recall we have assembled the following team:
 
-                {InputTask}
-
-                And we have assembled the following team:
-
-                {TeamDescription}
-
+                - KnowledgeAgent: Able to perform generic websearches
+                - CoderAgent: Able to write and execute Python code
+                - WeatherAgent: Able to retrieve weather information
+                                
                 To make progress on the request, please answer the following questions, including necessary reasoning:
                 - Is the request fully satisfied? (True if complete, or False if the original request has yet to be SUCCESSFULLY and FULLY addressed)
                 - Are we in a loop where we are repeating the same requests and / or getting the same responses from an agent multiple times? Loops can span multiple turns, and can include repeated actions like scrolling up or down more than a handful of times.
                 - Are we making forward progress? (True if just starting, or recent messages are adding value. False if recent messages show evidence of being stuck in a loop or if there is evidence of significant barriers to success such as the inability to read from a required file)
-                - Who should speak next? (select from: {Concat(Local.AvailableAgents, name, ",")}) 
+                - Who should speak next? (select from: KnowledgeAgent, CoderAgent, WeatherAgent) 
                 - What instruction or question would you give this team member? (Phrase as if speaking directly to them, and include any specific information they may need)
                 """,
             TextOptions =
@@ -194,11 +225,12 @@ internal sealed class Program
             Instructions =
                 """
                 We have completed the task.
-                Based only on the conversation and without adding any new information, synthesize the result of the conversation as a complete response to the user task.
-                The user will only ever see this last response and not the entire conversation, so please ensure it is complete and self-contained.
-                We have completed the task.
-                Based only on the conversation and without adding any new information, synthesize the result of the conversation as a complete response to the user task.
-                The user will only ever see this last response and not the entire conversation, so please ensure it is complete and self-contained.
+
+                Based only on the conversation and without adding any new information,
+                synthesize the result of the conversation as a complete response to the user task.
+
+                The user will only ever see this last response and not the entire conversation,
+                so please ensure it is complete and self-contained.
                 """
         };
 
@@ -207,13 +239,17 @@ internal sealed class Program
         {
             Tools =
             {
-                ResponseTool.CreateWebSearchTool()
+                //ResponseTool.CreateWebSearchTool() // %%% API BUG - Use Bing Grounding when available
             }
         };
 
     private static PromptAgentDefinition DefineCoderAgent(IConfiguration configuration) =>
         new(configuration.GetValue(Application.Settings.FoundryModelMini))
         {
+            Instructions =
+                """
+                You solve problem by writing and executing code.
+                """,
             Tools =
             {
                 ResponseTool.CreateCodeInterpreterTool(

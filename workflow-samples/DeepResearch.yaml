@@ -37,7 +37,7 @@ trigger:
                 description: "Able to write and execute Python code"
             },
             {
-                name: "ResearchAgent", 
+                name: "KnowledgeAgent", 
                 description: "Able to perform generic websearches"
             }
         ]
@@ -177,7 +177,6 @@ trigger:
               displayName: Increase stall count
               variable: Local.StallCount
               value: =Local.StallCount + 1
-
 
             - kind: ConditionGroup
               id: conditionGroup_vBTQd3
@@ -324,11 +323,6 @@ trigger:
 
            {Local.ProgressLedger.next_speaker.answer} - {Local.ProgressLedger.instruction_or_question.answer}
 
-        - kind: SetVariable
-          id: setVariable_L7ooQO
-          variable: Local.StallCount
-          value: 0
-
     - kind: SetVariable
       id: setVariable_nxN1mE
       variable: Local.NextSpeaker
@@ -341,6 +335,11 @@ trigger:
           condition: =CountRows(Local.NextSpeaker) = 1
           displayName: If next Agent tool Exists
           actions:
+          
+            - kind: SetVariable
+              id: setVariable_L7ooQO
+              variable: Local.StallCount
+              value: 0
 
             - kind: InvokeAzureAgent
               id: question_orsBf06

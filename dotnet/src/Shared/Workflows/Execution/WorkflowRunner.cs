@@ -1,5 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+// Uncomment to output unknown content types for debugging.
+//#define DEBUG_CONTENT_TYPE 
+
 using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Agents.AI.Workflows;
@@ -292,7 +295,9 @@ internal sealed class WorkflowRunner
 
         AIContent? HandleUnknown(AIContent request)
         {
+#if DEBUG_CONTENT_TYPE
             Notify($"INPUT - Unknown: {request.GetType().Name} [{request.RawRepresentation?.GetType().Name ?? "*"}]");
+#endif
             return null;
         }
 
