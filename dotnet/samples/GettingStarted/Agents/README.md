@@ -28,7 +28,8 @@ Before you begin, ensure you have the following prerequisites:
 |---|---|
 |[Running a simple agent](./Agent_Step01_Running/)|This sample demonstrates how to create and run a basic agent with instructions|
 |[Multi-turn conversation with a simple agent](./Agent_Step02_MultiturnConversation/)|This sample demonstrates how to implement a multi-turn conversation with a simple agent|
-|[Using function tools with a simple agent](./Agent_Step03_UsingFunctionTools/)|This sample demonstrates how to use function tools with a simple agent|
+|[Using function tools with a simple agent](./Agent_Step03.1_UsingFunctionTools/)|This sample demonstrates how to use function tools with a simple agent|
+|[Using OpenAPI function tools with a simple agent](./Agent_Step03.2_UsingFunctionTools_FromOpenAPI/)|This sample demonstrates how to create function tools from an OpenAPI spec and use them with a simple agent|
 |[Using function tools with approvals](./Agent_Step04_UsingFunctionToolsWithApprovals/)|This sample demonstrates how to use function tools where approvals require human in the loop approvals before execution|
 |[Structured output with a simple agent](./Agent_Step05_StructuredOutput/)|This sample demonstrates how to use structured output with a simple agent|
 |[Persisted conversations with a simple agent](./Agent_Step06_PersistedConversations/)|This sample demonstrates how to persist conversations and reload them later. This is useful for cases where an agent is hosted in a stateless service|

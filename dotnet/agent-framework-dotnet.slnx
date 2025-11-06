@@ -48,7 +48,8 @@
     <File Path="samples/GettingStarted/Agents/README.md" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step01_Running/Agent_Step01_Running.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step02_MultiturnConversation/Agent_Step02_MultiturnConversation.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Agent_Step03_UsingFunctionTools/Agent_Step03_UsingFunctionTools.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agent_Step03.1_UsingFunctionTools/Agent_Step03.1_UsingFunctionTools.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agent_Step03.2_UsingFunctionTools_FromOpenAPI/Agent_Step03.2_UsingFunctionTools_FromOpenAPI.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step04_UsingFunctionToolsWithApprovals/Agent_Step04_UsingFunctionToolsWithApprovals.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step05_StructuredOutput/Agent_Step05_StructuredOutput.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step06_PersistedConversations/Agent_Step06_PersistedConversations.csproj" />
