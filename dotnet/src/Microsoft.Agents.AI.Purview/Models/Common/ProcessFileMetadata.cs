@@ -16,7 +16,7 @@ internal sealed class ProcessFileMetadata : ProcessContentMetadataBase
     /// </summary>
     public ProcessFileMetadata(ContentBase contentBase, string identifier, bool isTruncated, string name) : base(contentBase, identifier, isTruncated, name)
     {
-        this.DataType = ProcessFileMetadata.ProcessFileMetadataDataType;
+        this.DataType = ProcessFileMetadataDataType;
     }
 
     /// <summary>

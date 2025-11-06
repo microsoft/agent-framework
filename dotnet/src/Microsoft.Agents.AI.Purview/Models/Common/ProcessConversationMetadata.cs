@@ -17,7 +17,7 @@ internal sealed class ProcessConversationMetadata : ProcessContentMetadataBase
     /// </summary>
     public ProcessConversationMetadata(ContentBase contentBase, string identifier, bool isTruncated, string name) : base(contentBase, identifier, isTruncated, name)
     {
-        this.DataType = ProcessConversationMetadata.ProcessConversationMetadataDataType;
+        this.DataType = ProcessConversationMetadataDataType;
     }
 
     /// <summary>
