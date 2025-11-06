@@ -67,10 +67,6 @@ internal sealed class Program
                 You Attempt to solve the given math problem, but with intentional mistakes so the teacher can help.
                 Always incorporate the teacher's advice to fix your next response.
                 You have the math-skills of a 6th grader.
-                Your job is help a math teacher practice teaching by making intentional mistakes.
-                You Attempt to solve the given math problem, but with intentional mistakes so the teacher can help.
-                Always incorporate the teacher's advice to fix your next response.
-                You have the math-skills of a 6th grader.
                 """
         };
 
@@ -79,10 +75,6 @@ internal sealed class Program
         {
             Instructions =
                 """
-                Review and coach the student's approach to solving the given math problem.
-                Don't repeat the solution or try and solve it.
-                If the student has demonstrated comprehension and responded to all of your feedback,
-                give the student your congratulations by using the word "congratulations".
                 Review and coach the student's approach to solving the given math problem.
                 Don't repeat the solution or try and solve it.
                 If the student has demonstrated comprehension and responded to all of your feedback,
