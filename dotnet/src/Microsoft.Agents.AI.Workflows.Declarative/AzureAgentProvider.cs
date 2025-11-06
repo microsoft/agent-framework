@@ -21,7 +21,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative;
 /// </summary>
 /// <remarks>This class is used to retrieve and manage AI agents associated with a Foundry project.  It requires a
 /// project endpoint and credentials to authenticate requests.</remarks>
-/// <param name="projectEndpoint">The endpoint URL of the Foundry project. This must be a valid, non-null URI pointing to the project.</param>
+/// <param name="projectEndpoint">A <see cref="Uri"/> instance representing the endpoint URL of the Foundry project. This must be a valid, non-null URI pointing to the project.</param>
 /// <param name="projectCredentials">The credentials used to authenticate with the Foundry project. This must be a valid instance of <see cref="TokenCredential"/>.</param>
 /// <param name="httpClient">An optional <see cref="HttpClient"/> instance to be used for making HTTP requests. If not provided, a default client will be used.</param>
 public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential projectCredentials, HttpClient? httpClient = null) : WorkflowAgentProvider
