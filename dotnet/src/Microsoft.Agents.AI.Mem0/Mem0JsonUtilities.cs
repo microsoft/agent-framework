@@ -44,8 +44,13 @@ public static partial class Mem0JsonUtilities
             Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping, // same as in AIJsonUtilities
         };
 
+        // Chain in the resolvers from both AgentAbstractionsJsonUtilities and our source generated context.
+        // We want AgentAbstractionsJsonUtilities first to ensure any M.E.AI types are handled via its resolver.
+        options.TypeInfoResolverChain.Clear();
+        options.TypeInfoResolverChain.Add(AgentAbstractionsJsonUtilities.DefaultOptions.TypeInfoResolver!);
+        options.TypeInfoResolverChain.Add(JsonContext.Default.Options.TypeInfoResolver!);
+
         // Chain with all supported types from Microsoft.Extensions.AI.Abstractions.
-        options.TypeInfoResolverChain.Add(AIJsonUtilities.DefaultOptions.TypeInfoResolver!);
         if (JsonSerializer.IsReflectionEnabledByDefault)
         {
             options.Converters.Add(new JsonStringEnumConverter());
