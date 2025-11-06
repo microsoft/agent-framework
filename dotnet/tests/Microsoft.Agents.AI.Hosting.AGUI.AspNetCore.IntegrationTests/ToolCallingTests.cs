@@ -7,8 +7,6 @@ using System.Net.Http;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
-using Azure.AI.OpenAI;
-using Azure.Identity;
 using FluentAssertions;
 using Microsoft.Agents.AI.AGUI;
 using Microsoft.AspNetCore.Builder;
@@ -16,7 +14,6 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.IntegrationTests;
@@ -231,7 +228,7 @@ public sealed class ToolCallingTests : IAsyncDisposable
             return "Client data";
         }, "GetClientData", "Gets data from the client");
 
-        await this.SetupTestServerAsync(serverTools: [serverTool], toolsToAdvertise: [serverTool, clientTool]);
+        await this.SetupTestServerAsync(serverTools: [serverTool]);
         var chatClient = new AGUIChatClient(this._client!, "", null);
         AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: [clientTool]);
         AgentThread thread = agent.GetNewThread();
@@ -375,150 +372,6 @@ public sealed class ToolCallingTests : IAsyncDisposable
     private static readonly string[] s_expectedFunctionNames = ["Function1", "Function2"];
 
     [Fact]
-    public async Task AzureOpenAI_ClientToolCallExecutesSuccessfullyAsync()
-    {
-        // This test verifies that client tool calls execute correctly and that tool messages
-        // are properly preceded by assistant tool_calls in the AG-UI protocol.
-        // It ensures the fix for the issue where tool messages were sent without
-        // preceding assistant tool_calls continues to work correctly.
-        // Arrange
-        const string Endpoint = "https://ag-ui-agent-framework.openai.azure.com/";
-        const string DeploymentName = "gpt-4.1-mini";
-
-        int clientToolCallCount = 0;
-        AIFunction clientTool = AIFunctionFactory.Create(() =>
-        {
-            clientToolCallCount++;
-            return "Client tool result";
-        }, "ClientFunction", "A function on the client");
-
-        // Setup server with real Azure OpenAI
-        await this.SetupTestServerWithAzureOpenAIAsync(Endpoint, DeploymentName);
-
-        // Create service provider for client-side logging
-        var clientServices = new ServiceCollection();
-        clientServices.AddLogging(logging =>
-        {
-            logging.SetMinimumLevel(LogLevel.Trace);
-            logging.AddProvider(new XunitLoggerProvider(this._output));
-        });
-        var clientServiceProvider = clientServices.BuildServiceProvider();
-
-        var chatClient = new AGUIChatClient(this._client!, "", null, null, clientServiceProvider);
-        AIAgent agent = chatClient.CreateAIAgent(
-            instructions: null,
-            name: "assistant",
-            description: "Test assistant",
-            tools: [clientTool]);
-
-        AgentThread thread = agent.GetNewThread();
-        ChatMessage userMessage = new(ChatRole.User, "Call the ClientFunction");
-
-        List<AgentRunResponseUpdate> updates = [];
-
-        // Act
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync([userMessage], thread, new AgentRunOptions(), CancellationToken.None))
-        {
-            updates.Add(update);
-            this._output.WriteLine($"Update: {update.Contents.Count} contents");
-            foreach (var content in update.Contents)
-            {
-                this._output.WriteLine($"  Content: {content.GetType().Name}");
-                if (content is FunctionCallContent fc)
-                {
-                    this._output.WriteLine($"    FunctionCall: {fc.Name} (CallId: {fc.CallId})");
-                }
-                if (content is FunctionResultContent fr)
-                {
-                    this._output.WriteLine($"    FunctionResult: {fr.CallId} - {fr.Result}");
-                }
-            }
-        }
-
-        // Assert
-        this._output.WriteLine($"clientToolCallCount={clientToolCallCount}");
-        clientToolCallCount.Should().Be(1, "client function should be called once");
-        updates.Should().Contain(u => u.Contents.Any(c => c is FunctionCallContent), "should contain function call");
-        updates.Should().Contain(u => u.Contents.Any(c => c is FunctionResultContent), "should contain function result");
-    }
-
-    [Fact]
-    public async Task AzureOpenAI_ServerToolCallExecutesSuccessfullyAsync()
-    {
-        // Arrange
-        const string Endpoint = "https://ag-ui-agent-framework.openai.azure.com/";
-        const string DeploymentName = "gpt-4.1-mini";
-
-        int serverToolCallCount = 0;
-        AIFunction serverTool = AIFunctionFactory.Create(() =>
-        {
-            serverToolCallCount++;
-            return DateTimeOffset.UtcNow.ToString("O");
-        }, "GetCurrentTime", "Get the current UTC time");
-
-        // Setup server with real Azure OpenAI and server tool
-        await this.SetupTestServerWithAzureOpenAIAsync(Endpoint, DeploymentName, serverTools: [serverTool]);
-
-        // Create service provider for client-side logging
-        var clientServices = new ServiceCollection();
-        clientServices.AddLogging(logging =>
-        {
-            logging.SetMinimumLevel(LogLevel.Trace);
-            logging.AddProvider(new XunitLoggerProvider(this._output));
-        });
-        var clientServiceProvider = clientServices.BuildServiceProvider();
-
-        var chatClient = new AGUIChatClient(this._client!, "", null, null, clientServiceProvider);
-        AIAgent agent = chatClient.CreateAIAgent(
-            instructions: null,
-            name: "assistant",
-            description: "Test assistant",
-            tools: null); // No client tools
-
-        AgentThread thread = agent.GetNewThread();
-        ChatMessage userMessage = new(ChatRole.User, "What is the current time?");
-
-        List<AgentRunResponseUpdate> updates = [];
-
-        // Act
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync([userMessage], thread, new AgentRunOptions(), CancellationToken.None))
-        {
-            updates.Add(update);
-            this._output.WriteLine($"Update: {update.Contents.Count} contents");
-            foreach (var content in update.Contents)
-            {
-                this._output.WriteLine($"  Content: {content.GetType().Name}");
-                if (content is FunctionCallContent fc)
-                {
-                    this._output.WriteLine($"    FunctionCall: {fc.Name} (CallId: {fc.CallId})");
-                }
-                if (content is FunctionResultContent fr)
-                {
-                    this._output.WriteLine($"    FunctionResult: {fr.CallId} - {fr.Result}");
-                }
-                if (content is TextContent tc)
-                {
-                    this._output.WriteLine($"    TextContent: {tc.Text}");
-                }
-            }
-        }
-
-        // Assert
-        this._output.WriteLine($"serverToolCallCount={serverToolCallCount}");
-        serverToolCallCount.Should().Be(1, "server function should be called once");
-        updates.Should().Contain(u => u.Contents.Any(c => c is FunctionCallContent), "should contain function call");
-        updates.Should().Contain(u => u.Contents.Any(c => c is FunctionResultContent), "should contain function result");
-
-        var functionCallContent = updates.SelectMany(u => u.Contents.OfType<FunctionCallContent>()).FirstOrDefault();
-        functionCallContent.Should().NotBeNull();
-        functionCallContent!.Name.Should().Be("GetCurrentTime");
-
-        var functionResultContent = updates.SelectMany(u => u.Contents.OfType<FunctionResultContent>()).FirstOrDefault();
-        functionResultContent.Should().NotBeNull();
-        functionResultContent!.Result.Should().NotBeNull();
-    }
-
-    [Fact]
     public async Task AGUIChatClientCombinesCustomJsonSerializerOptionsAsync()
     {
         // This test verifies that custom JSON contexts work correctly with AGUIChatClient by testing
@@ -551,152 +404,117 @@ public sealed class ToolCallingTests : IAsyncDisposable
         // which verifies that AG-UI protocol works end-to-end with custom types
     }
 
-    [Fact(Skip = "Custom JsonSerializerOptions with AIFunctionFactory.Create requires additional investigation")]
+    [Fact]
     public async Task ServerToolCallWithCustomArgumentsAsync()
     {
-        // RESEARCH FINDINGS:
-        // - AIFunctionFactory.Create DOES accept JsonSerializerOptions parameter
-        // - AIFunction.JsonSerializerOptions property exists and is used by FunctionInvokingChatClient
-        // - The pattern should work: pass serializerOptions to AIFunctionFactory.Create
-        //
-        // ISSUE OBSERVED:
-        // - When function execution throws an exception, the exception message is returned as a string
-        // - This string (" 'E' is an invalid start of a value") gets passed to the client
-        // - Client tries to deserialize it as JSON and fails
-        //
-        // This suggests FunctionInvokingChatClient may be catching exceptions during deserialization
-        // of function arguments and returning the exception message instead of the typed result.
-        //
-        // Further investigation needed into how FunctionInvokingChatClient handles:
-        // 1. Deserialization failures for custom types in function parameters
-        // 2. Serialization of function results with custom types
-        // 3. Error handling when JsonSerializerOptions don't contain required type info
+        // Arrange
+        int callCount = 0;
+        AIFunction serverTool = AIFunctionFactory.Create(
+            (ServerForecastRequest request) =>
+            {
+                callCount++;
+                return new ServerForecastResponse(
+                    Temperature: 72,
+                    Condition: request.Location == "Seattle" ? "Rainy" : "Sunny",
+                    Humidity: 65);
+            },
+            "GetServerForecast",
+            "Gets the weather forecast from server",
+            ServerJsonContext.Default.Options);
 
-        await Task.CompletedTask;
+        await this.SetupTestServerAsync(serverTools: [serverTool], jsonSerializerOptions: ServerJsonContext.Default.Options);
+        var chatClient = new AGUIChatClient(this._client!, "", null, ServerJsonContext.Default.Options);
+        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: []);
+        AgentThread thread = agent.GetNewThread();
+        ChatMessage userMessage = new(ChatRole.User, "Get server forecast for Seattle for 5 days");
+
+        List<AgentRunResponseUpdate> updates = [];
+
+        // Act
+        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync([userMessage], thread, new AgentRunOptions(), CancellationToken.None))
+        {
+            updates.Add(update);
+        }
+
+        // Assert
+        callCount.Should().Be(1, "server function with custom arguments should be called once");
+        updates.Should().Contain(u => u.Contents.Any(c => c is FunctionCallContent), "should contain function call");
+        updates.Should().Contain(u => u.Contents.Any(c => c is FunctionResultContent), "should contain function result");
+
+        var functionCallContent = updates.SelectMany(u => u.Contents.OfType<FunctionCallContent>()).FirstOrDefault();
+        functionCallContent.Should().NotBeNull();
+        functionCallContent!.Name.Should().Be("GetServerForecast");
+
+        var functionResultContent = updates.SelectMany(u => u.Contents.OfType<FunctionResultContent>()).FirstOrDefault();
+        functionResultContent.Should().NotBeNull();
+        functionResultContent!.Result.Should().NotBeNull();
     }
 
-    [Fact(Skip = "Custom JsonSerializerOptions with AIFunctionFactory.Create requires additional investigation")]
+    [Fact]
     public async Task ClientToolCallWithCustomArgumentsAsync()
     {
-        // RESEARCH FINDINGS:
-        // - AIFunctionFactory.Create accepts JsonSerializerOptions parameter
-        // - AIFunction.JsonSerializerOptions property is used for marshaling parameters
-        // - Pattern: Create JsonSerializerOptions with TypeInfoResolverChain containing custom contexts
-        //
-        // ISSUE OBSERVED:
-        // - Function not being invoked (callCount stays at 0)
-        // - Test output shows "type: DefaultAIFunctionDeclaration" instead of "ReflectionAIFunction"
-        // - This suggests the tool is being passed as a declaration-only, not executable
-        //
-        // HYPOTHESIS:
-        // When tools are passed to CreateAIAgent() and then through the AG-UI protocol,
-        // they may be getting converted to declarations and losing their execution context.
-        // The client-side FunctionInvokingChatClient may need the executable AIFunction
-        // to be reconstructed with its JsonSerializerOptions intact.
-        //
-        // Further investigation needed into:
-        // 1. How tools are serialized/deserialized across AG-UI boundary
-        // 2. Whether AIFunction metadata (including JsonSerializerOptions) survives the round-trip
-        // 3. How to ensure client-side FunctionInvokingChatClient has access to custom serialization options
+        // Arrange
+        int callCount = 0;
+        AIFunction clientTool = AIFunctionFactory.Create(
+            (ClientForecastRequest request) =>
+            {
+                callCount++;
+                return new ClientForecastResponse(
+                    MaxTemp: request.City == "Portland" ? 68 : 75,
+                    MinTemp: 55,
+                    Outlook: "Partly Cloudy");
+            },
+            "GetClientForecast",
+            "Gets the weather forecast from client",
+            ClientJsonContext.Default.Options);
 
-        await Task.CompletedTask;
-    }
+        await this.SetupTestServerAsync();
+        var chatClient = new AGUIChatClient(this._client!, "", null, ClientJsonContext.Default.Options);
+        AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: [clientTool]);
+        AgentThread thread = agent.GetNewThread();
+        ChatMessage userMessage = new(ChatRole.User, "Get client forecast for Portland with hourly data");
 
-    [Fact(Skip = "Custom JsonSerializerOptions with AIFunctionFactory.Create requires additional investigation")]
-    public async Task MultiTurnConversationWithMixedCustomToolCallsAsync()
-    {
-        // RESEARCH FINDINGS:
-        // Microsoft.Extensions.AI documentation confirms:
-        // - AIFunctionFactory.Create(delegate, name, description, JsonSerializerOptions) fully supported
-        // - AIFunction.JsonSerializerOptions property used for marshaling parameters and return values
-        // - Arguments as JsonElement/JsonDocument/JsonNode deserialized using provided serializerOptions
-        // - Return values serialized to JsonElement using provided serializerOptions
-        // - FunctionInvokingChatClient uses context.Function.JsonSerializerOptions for telemetry and invocation
-        //
-        // CORRECT PATTERN (verified from dotnet/extensions source code):
-        // ```
-        // var customOptions = new JsonSerializerOptions();
-        // customOptions.TypeInfoResolverChain.Add(MyCustomContext.Default);
-        // customOptions.TypeInfoResolverChain.Add(AIJsonUtilities.DefaultOptions.TypeInfoResolver!);
-        //
-        // AIFunction func = AIFunctionFactory.Create(
-        //     (MyCustomType arg) => new MyCustomResponse(...),
-        //     "FunctionName",
-        //     "Description",
-        //     serializerOptions: customOptions);  // ← Threads through to AIFunction.JsonSerializerOptions
-        // ```
-        //
-        // REMAINING ISSUES TO INVESTIGATE:
-        // 1. Exception handling: When function invocation fails (e.g., deserialization error),
-        //    the error message gets returned as a string that can't be deserialized by the client
-        //
-        // 2. Tool serialization: When tools are sent across AG-UI protocol boundary,
-        //    the executable AIFunction may be converted to AIFunctionDeclaration,
-        //    losing the JsonSerializerOptions context
-        //
-        // 3. Function reconstruction: Client-side FunctionInvokingChatClient needs to reconstruct
-        //    executable functions from declarations, but may not have access to custom serialization options
-        //
-        // POTENTIAL SOLUTIONS:
-        // - Add JsonSerializerOptions to AIFunctionDeclaration metadata
-        // - Ensure AG-UI protocol preserves JsonSerializerOptions when transmitting tool definitions
-        // - Have client-side provide JsonSerializerOptions when reconstructing functions from declarations
-        // - Alternative: Use type discovery/reflection to automatically add required contexts
+        List<AgentRunResponseUpdate> updates = [];
 
-        await Task.CompletedTask;
-    }
-
-    private async Task SetupTestServerWithAzureOpenAIAsync(string endpoint, string deploymentName, IList<AITool>? serverTools = null)
-    {
-        WebApplicationBuilder builder = WebApplication.CreateBuilder();
-        builder.WebHost.UseTestServer();
-
-        // Add logging
-        builder.Services.AddLogging(logging =>
+        // Act
+        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync([userMessage], thread, new AgentRunOptions(), CancellationToken.None))
         {
-            logging.ClearProviders();
-            logging.SetMinimumLevel(LogLevel.Trace);
-            logging.AddProvider(new XunitLoggerProvider(this._output));
-        });
+            updates.Add(update);
+        }
 
-        this._app = builder.Build();
+        // Assert
+        callCount.Should().Be(1, "client function with custom arguments should be called once");
+        updates.Should().Contain(u => u.Contents.Any(c => c is FunctionCallContent), "should contain function call");
+        updates.Should().Contain(u => u.Contents.Any(c => c is FunctionResultContent), "should contain function result");
 
-        var azureOpenAIClient = new AzureOpenAIClient(
-            new Uri(endpoint),
-            new DefaultAzureCredential());
+        var functionCallContent = updates.SelectMany(u => u.Contents.OfType<FunctionCallContent>()).FirstOrDefault();
+        functionCallContent.Should().NotBeNull();
+        functionCallContent!.Name.Should().Be("GetClientForecast");
 
-        var chatClient = azureOpenAIClient
-            .GetChatClient(deploymentName)
-            .AsIChatClient();
-
-        // DO NOT pass client tools to Azure OpenAI
-        // Client tools should only be executed on the client side
-        // Pass only server-side tools to Azure OpenAI
-        var agent = chatClient.CreateAIAgent(
-            instructions: null,
-            name: "azure-openai-agent",
-            description: "An agent using Azure OpenAI",
-            tools: serverTools);
-
-        this._app.MapAGUI("/agent", agent);
-        await this._app.StartAsync();
-
-        TestServer testServer = this._app.Services.GetRequiredService<IServer>() as TestServer
-            ?? throw new InvalidOperationException("TestServer not found");
-
-        this._client = testServer.CreateClient();
-        this._client.BaseAddress = new Uri("http://localhost/agent");
+        var functionResultContent = updates.SelectMany(u => u.Contents.OfType<FunctionResultContent>()).FirstOrDefault();
+        functionResultContent.Should().NotBeNull();
+        functionResultContent!.Result.Should().NotBeNull();
     }
 
-    private async Task SetupTestServerAsync(IList<AITool>? serverTools = null, bool triggerParallelCalls = false, System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null, IList<AITool>? toolsToAdvertise = null)
+    private async Task SetupTestServerAsync(
+        IList<AITool>? serverTools = null,
+        bool triggerParallelCalls = false,
+        System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null)
     {
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
+        builder.Services.AddAGUI();
         builder.WebHost.UseTestServer();
 
-        builder.Services.AddAGUI();
+        // Configure HTTP JSON options if custom serializer options provided
+        if (jsonSerializerOptions?.TypeInfoResolver != null)
+        {
+            builder.Services.ConfigureHttpJsonOptions(options =>
+                options.SerializerOptions.TypeInfoResolverChain.Add(jsonSerializerOptions.TypeInfoResolver));
+        }
 
         this._app = builder.Build();
-        var fakeChatClient = new FakeToolCallingChatClient(triggerParallelCalls, this._output, jsonSerializerOptions: jsonSerializerOptions, toolsToAdvertise: toolsToAdvertise);
+        // FakeChatClient will receive options.Tools containing both server and client tools (merged by framework)
+        var fakeChatClient = new FakeToolCallingChatClient(triggerParallelCalls, this._output, jsonSerializerOptions: jsonSerializerOptions);
         AIAgent baseAgent = fakeChatClient.CreateAIAgent(instructions: null, name: "base-agent", description: "A base agent for tool testing", tools: serverTools ?? []);
         this._app.MapAGUI("/agent", baseAgent);
 
@@ -723,15 +541,10 @@ internal sealed class FakeToolCallingChatClient : IChatClient
 {
     private readonly bool _triggerParallelCalls;
     private readonly ITestOutputHelper? _output;
-    private readonly IList<AITool>? _toolsToAdvertise;
-
-    public FakeToolCallingChatClient(bool triggerParallelCalls = false, ITestOutputHelper? output = null, IList<AITool>? toolsToAdvertise = null, System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null)
+    public FakeToolCallingChatClient(bool triggerParallelCalls = false, ITestOutputHelper? output = null, System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null)
     {
         this._triggerParallelCalls = triggerParallelCalls;
         this._output = output;
-        this._toolsToAdvertise = toolsToAdvertise;
-        // jsonSerializerOptions parameter kept for API compatibility but not used
-        // (FunctionInvokingChatClient doesn't support custom JSON contexts for tool results)
     }
 
     public ChatClientMetadata Metadata => new("fake-tool-calling-chat-client");
@@ -762,9 +575,8 @@ internal sealed class FakeToolCallingChatClient : IChatClient
             yield break;
         }
 
-        // options?.Tools contains tools passed to CreateAIAgent (server tools only)
-        // this._toolsToAdvertise contains all tools (both server and client) for the fake LLM to generate calls for
-        var allTools = (this._toolsToAdvertise ?? options?.Tools ?? []).ToList();
+        // options?.Tools contains all tools (server + client merged by framework)
+        var allTools = (options?.Tools ?? []).ToList();
         this._output?.WriteLine($"[FakeChatClient] Received {allTools.Count} tools to advertise");
 
         if (allTools.Count == 0)
@@ -842,8 +654,9 @@ internal sealed class FakeToolCallingChatClient : IChatClient
             "FormatText" => new Dictionary<string, object?> { ["text"] = "hello" },
             "GetServerData" => new Dictionary<string, object?>(), // No parameters
             "GetClientData" => new Dictionary<string, object?>(), // No parameters
-            "GetServerForecast" => new Dictionary<string, object?> { ["Location"] = "Seattle", ["Days"] = 5 },
-            "GetClientForecast" => new Dictionary<string, object?> { ["City"] = "Portland", ["IncludeHourly"] = true },
+            // For custom types, the parameter name is "request" and the value is an instance of the request type
+            "GetServerForecast" => new Dictionary<string, object?> { ["request"] = new ServerForecastRequest("Seattle", 5) },
+            "GetClientForecast" => new Dictionary<string, object?> { ["request"] = new ClientForecastRequest("Portland", true) },
             _ => new Dictionary<string, object?>() // Default: no parameters
         };
     }
@@ -861,53 +674,6 @@ internal sealed class FakeToolCallingChatClient : IChatClient
     }
 
     public object? GetService(Type serviceType, object? serviceKey = null) => null;
-}
-
-// Simple XUnit logger provider for integration tests
-internal sealed class XunitLoggerProvider : ILoggerProvider
-{
-    private readonly ITestOutputHelper _output;
-
-    public XunitLoggerProvider(ITestOutputHelper output)
-    {
-        this._output = output;
-    }
-
-    public ILogger CreateLogger(string categoryName) => new XunitLogger(this._output, categoryName);
-
-    public void Dispose() { }
-
-    private sealed class XunitLogger : ILogger
-    {
-        private readonly ITestOutputHelper _output;
-        private readonly string _category;
-
-        public XunitLogger(ITestOutputHelper output, string category)
-        {
-            this._output = output;
-            this._category = category;
-        }
-
-        public IDisposable BeginScope<TState>(TState state) where TState : notnull => null!;
-
-        public bool IsEnabled(LogLevel logLevel) => true;
-
-        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
-        {
-            try
-            {
-                this._output.WriteLine($"[{logLevel}] {this._category}: {formatter(state, exception)}");
-                if (exception != null)
-                {
-                    this._output.WriteLine(exception.ToString());
-                }
-            }
-            catch
-            {
-                // Ignore logging errors
-            }
-        }
-    }
 }
 
 // Custom types and serialization contexts for testing cross-boundary serialization
