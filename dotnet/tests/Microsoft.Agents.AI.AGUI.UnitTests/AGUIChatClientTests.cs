@@ -1272,7 +1272,7 @@ public sealed class AGUIAgentTests
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act
-        await foreach (var update in chatClient.GetStreamingResponseAsync(messages, options))
+        await foreach (var _ in chatClient.GetStreamingResponseAsync(messages, options))
         {
             // Just consume the stream
         }

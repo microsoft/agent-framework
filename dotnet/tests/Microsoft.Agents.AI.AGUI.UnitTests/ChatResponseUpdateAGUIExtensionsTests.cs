@@ -291,6 +291,7 @@ public sealed class ChatResponseUpdateAGUIExtensionsTests
         {
             await foreach (var _ in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
             {
+                // Consume stream to trigger exception
             }
         });
     }
@@ -310,6 +311,7 @@ public sealed class ChatResponseUpdateAGUIExtensionsTests
         {
             await foreach (var _ in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
             {
+                // Consume stream to trigger exception
             }
         });
     }
@@ -330,6 +332,7 @@ public sealed class ChatResponseUpdateAGUIExtensionsTests
         {
             await foreach (var _ in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
             {
+                // Consume stream to trigger exception
             }
         });
     }

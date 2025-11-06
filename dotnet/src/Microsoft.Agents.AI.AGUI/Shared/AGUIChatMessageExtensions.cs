@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Microsoft.Extensions.AI;
@@ -95,84 +96,91 @@ internal static class AGUIChatMessageExtensions
             message.MessageId ??= Guid.NewGuid().ToString();
             if (message.Role == ChatRole.Tool)
             {
-                FunctionResultContent? functionResult = null;
-                foreach (var content in message.Contents)
+                foreach (var toolMessage in MapToolMessages(jsonSerializerOptions, message))
                 {
-                    if (content is FunctionResultContent frc)
-                    {
-                        if (functionResult is not null)
-                        {
-                            throw new InvalidOperationException("A tool message should contain only one FunctionResultContent.");
-                        }
-                        functionResult = frc;
-                    }
-                }
-
-                if (functionResult is not null)
-                {
-                    yield return new AGUIToolMessage
-                    {
-                        Id = message.MessageId,
-                        ToolCallId = functionResult.CallId,
-                        Content = functionResult.Result is null ?
-                            string.Empty :
-                            JsonSerializer.Serialize(functionResult.Result, jsonSerializerOptions.GetTypeInfo(functionResult.Result.GetType()))
-                    };
-                    continue;
+                    yield return toolMessage;
                 }
             }
-
-            if (message.Role == ChatRole.Assistant)
+            else if (message.Role == ChatRole.Assistant)
             {
-                var toolCalls = new List<AGUIToolCall>();
-                string? textContent = null;
-
-                foreach (var content in message.Contents)
+                var assistantMessage = MapAssistantMessage(jsonSerializerOptions, message);
+                if (assistantMessage != null)
                 {
-                    if (content is FunctionCallContent functionCall)
-                    {
-                        var argumentsJson = functionCall.Arguments is null ?
-                            "{}" :
-                            JsonSerializer.Serialize(functionCall.Arguments, jsonSerializerOptions.GetTypeInfo(typeof(IDictionary<string, object?>)));
-
-                        toolCalls.Add(new AGUIToolCall
-                        {
-                            Id = functionCall.CallId,
-                            Type = "function",
-                            Function = new AGUIFunctionCall
-                            {
-                                Name = functionCall.Name,
-                                Arguments = argumentsJson
-                            }
-                        });
-                    }
-                    else if (content is TextContent textContentItem)
-                    {
-                        textContent = textContentItem.Text;
-                    }
-                }
-
-                // Create message with tool calls and/or text content
-                if (toolCalls.Count > 0 || !string.IsNullOrEmpty(textContent))
-                {
-                    yield return new AGUIAssistantMessage
-                    {
-                        Id = message.MessageId,
-                        Content = textContent ?? string.Empty,
-                        ToolCalls = toolCalls.Count > 0 ? toolCalls.ToArray() : null
-                    };
-                    continue;
+                    yield return assistantMessage;
                 }
             }
-
-            yield return message.Role.Value switch
+            else
             {
-                AGUIRoles.Developer => new AGUIDeveloperMessage { Id = message.MessageId, Content = message.Text ?? string.Empty },
-                AGUIRoles.System => new AGUISystemMessage { Id = message.MessageId, Content = message.Text ?? string.Empty },
-                AGUIRoles.User => new AGUIUserMessage { Id = message.MessageId, Content = message.Text ?? string.Empty },
-                AGUIRoles.Assistant => new AGUIAssistantMessage { Id = message.MessageId, Content = message.Text ?? string.Empty },
-                _ => throw new InvalidOperationException($"Unknown role: {message.Role.Value}")
+                yield return message.Role.Value switch
+                {
+                    AGUIRoles.Developer => new AGUIDeveloperMessage { Id = message.MessageId, Content = message.Text ?? string.Empty },
+                    AGUIRoles.System => new AGUISystemMessage { Id = message.MessageId, Content = message.Text ?? string.Empty },
+                    AGUIRoles.User => new AGUIUserMessage { Id = message.MessageId, Content = message.Text ?? string.Empty },
+                    _ => throw new InvalidOperationException($"Unknown role: {message.Role.Value}")
+                };
+            }
+        }
+    }
+
+    private static AGUIAssistantMessage? MapAssistantMessage(JsonSerializerOptions jsonSerializerOptions, ChatMessage message)
+    {
+        List<AGUIToolCall>? toolCalls = null;
+        string? textContent = null;
+
+        foreach (var content in message.Contents)
+        {
+            if (content is FunctionCallContent functionCall)
+            {
+                var argumentsJson = functionCall.Arguments is null ?
+                    "{}" :
+                    JsonSerializer.Serialize(functionCall.Arguments, jsonSerializerOptions.GetTypeInfo(typeof(IDictionary<string, object?>)));
+                toolCalls ??= [];
+                toolCalls.Add(new AGUIToolCall
+                {
+                    Id = functionCall.CallId,
+                    Type = "function",
+                    Function = new AGUIFunctionCall
+                    {
+                        Name = functionCall.Name,
+                        Arguments = argumentsJson
+                    }
+                });
+            }
+            else if (content is TextContent textContentItem)
+            {
+                textContent = textContentItem.Text;
+            }
+        }
+
+        // Create message with tool calls and/or text content
+        if (toolCalls?.Count > 0 || !string.IsNullOrEmpty(textContent))
+        {
+            return new AGUIAssistantMessage
+            {
+                Id = message.MessageId,
+                Content = textContent ?? string.Empty,
+                ToolCalls = toolCalls?.Count > 0 ? toolCalls.ToArray() : null
             };
+        }
+
+        return null;
+    }
+
+    private static IEnumerable<AGUIToolMessage> MapToolMessages(JsonSerializerOptions jsonSerializerOptions, ChatMessage message)
+    {
+        foreach (var content in message.Contents)
+        {
+            if (content is FunctionResultContent functionResult)
+            {
+                yield return new AGUIToolMessage
+                {
+                    Id = functionResult.CallId,
+                    ToolCallId = functionResult.CallId,
+                    Content = functionResult.Result is null ?
+                        string.Empty :
+                        JsonSerializer.Serialize(functionResult.Result, jsonSerializerOptions.GetTypeInfo(functionResult.Result.GetType()))
+                };
+            }
         }
     }
 
