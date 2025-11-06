@@ -377,7 +377,10 @@ def _parse_human_approval(raw: Any) -> HumanApproval:
             if isinstance(parsed, Mapping):
                 return HumanApproval.model_validate(parsed)
         except json.JSONDecodeError:
-            pass
+            logger.debug(
+                "[HITL] Approval payload is not valid JSON; using string heuristics.",
+                exc_info=True,
+            )
 
         affirmative = {"true", "yes", "approved", "y", "1"}
         negative = {"false", "no", "rejected", "n", "0"}

@@ -53,6 +53,7 @@ def _build_client_kwargs() -> dict[str, Any]:
 
     return client_kwargs
 
+
 # 3. Instantiate both agents that the orchestration will run concurrently.
 def _create_agents() -> list[Any]:
     client_kwargs = _build_client_kwargs()

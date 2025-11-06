@@ -67,8 +67,10 @@ def _build_client_kwargs() -> dict[str, Any]:
     else:
         client_kwargs["credential"] = AzureCliCredential()
 
-# 3. Instantiate both agents so they can be registered with AgentFunctionApp.
     return client_kwargs
+
+
+# 3. Instantiate both agents so they can be registered with AgentFunctionApp.
 
 
 def _create_agents() -> list[Any]:
@@ -102,9 +104,9 @@ def send_email(message: str) -> str:
     return f"Email sent: {message}"
 
 
+# 5. Orchestration validates input, runs agents, and branches on spam results.
 @app.orchestration_trigger(context_name="context")
 def spam_detection_orchestration(context: DurableOrchestrationContext):
-# 5. Orchestration validates input, runs agents, and branches on spam results.
     payload_raw = context.get_input()
     if not isinstance(payload_raw, Mapping):
         raise ValueError("Email data is required")

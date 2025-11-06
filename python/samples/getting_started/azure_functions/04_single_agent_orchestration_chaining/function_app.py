@@ -56,6 +56,7 @@ def _build_client_kwargs() -> dict[str, Any]:
 
     return client_kwargs
 
+
 # 3. Create the writer agent that will be invoked twice within the orchestration.
 def _create_writer_agent() -> Any:
     """Create the writer agent with the same persona as the C# sample."""
