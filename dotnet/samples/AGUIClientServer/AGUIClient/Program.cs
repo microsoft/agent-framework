@@ -4,7 +4,9 @@
 // and display streaming updates including conversation/response metadata, text content, and errors.
 
 using System.CommandLine;
+using System.ComponentModel;
 using System.Reflection;
+using System.Text;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AGUI;
 using Microsoft.Extensions.AI;
@@ -61,15 +63,30 @@ public static class Program
             description: "Change the console background color to dark blue."
         );
 
+        var readClientClimateSensors = AIFunctionFactory.Create(
+            ([Description("The sensors measurements to include in the response")] SensorRequest request) =>
+            {
+                return new SensorResponse()
+                {
+                    Temperature = 22.5,
+                    Humidity = 45.0,
+                    AirQualityIndex = 75
+                };
+            },
+            name: "read_client_climate_sensors",
+            description: "Reads the climate sensor data from the client device.",
+            serializerOptions: AGUIClientSerializerContext.Default.Options
+        );
+
         var chatClient = new AGUIChatClient(
             httpClient,
             serverUrl,
-            jsonSerializerOptions: null);
+            jsonSerializerOptions: AGUIClientSerializerContext.Default.Options);
 
         AIAgent agent = chatClient.CreateAIAgent(
             name: "agui-client",
             description: "AG-UI Client Agent",
-            tools: [changeBackground]);
+            tools: [changeBackground, readClientClimateSensors]);
 
         AgentThread thread = agent.GetNewThread();
         List<ChatMessage> messages = [new(ChatRole.System, "You are a helpful assistant.")];
@@ -127,6 +144,25 @@ public static class Program
                                 Console.ResetColor();
                                 break;
 
+                            case FunctionCallContent functionCallContent:
+                                Console.ForegroundColor = ConsoleColor.Green;
+                                Console.WriteLine($"\n[Function Call - Name: {functionCallContent.Name}, Arguments: {PrintArguments(functionCallContent.Arguments)}]");
+                                Console.ResetColor();
+                                break;
+
+                            case FunctionResultContent functionResultContent:
+                                Console.ForegroundColor = ConsoleColor.Magenta;
+                                if (functionResultContent.Exception != null)
+                                {
+                                    Console.WriteLine($"\n[Function Result - Exception: {functionResultContent.Exception}]");
+                                }
+                                else
+                                {
+                                    Console.WriteLine($"\n[Function Result - Result: {functionResultContent.Result}]");
+                                }
+                                Console.ResetColor();
+                                break;
+
                             case ErrorContent errorContent:
                                 Console.ForegroundColor = ConsoleColor.Red;
                                 string code = errorContent.AdditionalProperties?["Code"] as string ?? "Unknown";
@@ -157,5 +193,21 @@ public static class Program
             logger.LogError(ex, "An error occurred while running the AGUIClient");
             return;
         }
+    }
+
+    private static string PrintArguments(IDictionary<string, object?>? arguments)
+    {
+        if (arguments == null)
+        {
+            return "";
+        }
+        var builder = new StringBuilder();
+        builder.AppendLine();
+        foreach (var kvp in arguments)
+        {
+            builder.AppendLine($"   Name: {kvp.Key}");
+            builder.AppendLine($"   Value: {kvp.Value}");
+        }
+        return builder.ToString();
     }
 }

@@ -6,7 +6,6 @@ using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Serialization.Metadata;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -24,14 +23,10 @@ internal static class ChatResponseUpdateAGUIExtensions
         JsonSerializerOptions jsonSerializerOptions,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        string? currentMessageId = null;
-        ChatRole currentRole = default!;
         string? conversationId = null;
         string? responseId = null;
-        string? currentToolCallId = null;
-        string? currentToolCallName = null;
-        StringBuilder? accumulatedArgs = null;
-        string? currentToolCallParentMessageId = null;
+        var textMessageBuilder = new TextMessageBuilder();
+        var toolCallAccumulator = new ToolCallBuilder();
         await foreach (var evt in events.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
             switch (evt)
@@ -40,140 +35,207 @@ internal static class ChatResponseUpdateAGUIExtensions
                 case RunStartedEvent runStarted:
                     conversationId = runStarted.ThreadId;
                     responseId = runStarted.RunId;
-                    yield return new ChatResponseUpdate(
-                        ChatRole.Assistant,
-                        [])
-                    {
-                        ConversationId = conversationId,
-                        ResponseId = responseId,
-                        CreatedAt = DateTimeOffset.UtcNow
-                    };
+                    toolCallAccumulator.SetConversationAndResponseIds(conversationId, responseId);
+                    textMessageBuilder.SetConversationAndResponseIds(conversationId, responseId);
+                    yield return ValidateAndEmitRunStart(runStarted);
                     break;
                 case RunFinishedEvent runFinished:
-                    if (!string.Equals(runFinished.ThreadId, conversationId, StringComparison.Ordinal))
-                    {
-                        throw new InvalidOperationException($"The run finished event didn't match the run started event thread ID: {runFinished.ThreadId}, {conversationId}");
-                    }
-                    if (!string.Equals(runFinished.RunId, responseId, StringComparison.Ordinal))
-                    {
-                        throw new InvalidOperationException($"The run finished event didn't match the run started event run ID: {runFinished.RunId}, {responseId}");
-                    }
-                    yield return new ChatResponseUpdate(
-                        ChatRole.Assistant, runFinished.Result?.GetRawText())
-                    {
-                        ConversationId = conversationId,
-                        ResponseId = responseId,
-                        CreatedAt = DateTimeOffset.UtcNow
-                    };
+                    yield return ValidateAndEmitRunFinished(conversationId, responseId, runFinished);
                     break;
                 case RunErrorEvent runError:
-                    yield return new ChatResponseUpdate(
-                        ChatRole.Assistant,
-                        [(new ErrorContent(runError.Message) { ErrorCode = runError.Code })]);
+                    yield return new ChatResponseUpdate(ChatRole.Assistant, [(new ErrorContent(runError.Message) { ErrorCode = runError.Code })]);
                     break;
 
                 // Text events
                 case TextMessageStartEvent textStart:
-                    if (currentRole != default || currentMessageId != null)
-                    {
-                        throw new InvalidOperationException("Received TextMessageStartEvent while another message is being processed.");
-                    }
-
-                    currentRole = AGUIChatMessageExtensions.MapChatRole(textStart.Role);
-                    currentMessageId = textStart.MessageId;
+                    textMessageBuilder.AddTextStart(textStart);
                     break;
                 case TextMessageContentEvent textContent:
-                    yield return new ChatResponseUpdate(
-                        currentRole,
-                        textContent.Delta)
-                    {
-                        ConversationId = conversationId,
-                        ResponseId = responseId,
-                        MessageId = textContent.MessageId,
-                        CreatedAt = DateTimeOffset.UtcNow
-                    };
+                    yield return textMessageBuilder.EmitTextUpdate(textContent);
                     break;
                 case TextMessageEndEvent textEnd:
-                    if (currentMessageId != textEnd.MessageId)
-                    {
-                        throw new InvalidOperationException("Received TextMessageEndEvent for a different message than the current one.");
-                    }
-                    currentRole = default!;
-                    currentMessageId = null;
+                    textMessageBuilder.EndCurrentMessage(textEnd);
                     break;
 
                 // Tool call events
                 case ToolCallStartEvent toolCallStart:
-                    if (currentToolCallId != null)
-                    {
-                        throw new InvalidOperationException("Received ToolCallStartEvent while another tool call is being processed.");
-                    }
-                    currentToolCallId = toolCallStart.ToolCallId;
-                    currentToolCallName = toolCallStart.ToolCallName;
-                    currentToolCallParentMessageId = toolCallStart.ParentMessageId;
-                    accumulatedArgs ??= new StringBuilder();
+                    toolCallAccumulator.AddToolCallStart(toolCallStart);
                     break;
                 case ToolCallArgsEvent toolCallArgs:
-                    if (string.IsNullOrEmpty(currentToolCallId))
-                    {
-                        throw new InvalidOperationException("Received ToolCallArgsEvent without a current tool call.");
-                    }
-
-                    if (!string.Equals(currentToolCallId, toolCallArgs.ToolCallId, StringComparison.Ordinal))
-                    {
-                        throw new InvalidOperationException("Received ToolCallArgsEvent for a different tool call than the current one.");
-                    }
-                    Debug.Assert(accumulatedArgs != null, "Accumulated args should have been initialized in ToolCallStartEvent.");
-                    accumulatedArgs.Append(toolCallArgs.Delta);
+                    toolCallAccumulator.AddToolCallArgs(toolCallArgs, jsonSerializerOptions);
                     break;
                 case ToolCallEndEvent toolCallEnd:
-                    if (string.IsNullOrEmpty(currentToolCallId))
-                    {
-                        throw new InvalidOperationException("Received ToolCallEndEvent without a current tool call.");
-                    }
-                    if (currentToolCallId != toolCallEnd.ToolCallId)
-                    {
-                        throw new InvalidOperationException("Received ToolCallEndEvent for a different tool call than the current one.");
-                    }
-                    Debug.Assert(accumulatedArgs != null, "Accumulated args should have been initialized in ToolCallStartEvent.");
-                    var arguments = DeserializeArgumentsIfAvailable(accumulatedArgs.ToString(), jsonSerializerOptions);
-                    accumulatedArgs.Clear();
-                    yield return new ChatResponseUpdate(
-                        ChatRole.Assistant,
-                        [
-                            new FunctionCallContent(
-                                currentToolCallId!,
-                                currentToolCallName!,
-                                arguments)
-                        ])
-                    {
-                        ConversationId = conversationId,
-                        ResponseId = responseId,
-                        MessageId = currentToolCallParentMessageId,
-                        CreatedAt = DateTimeOffset.UtcNow
-                    };
-
-                    currentToolCallId = null;
-                    currentToolCallName = null;
-                    accumulatedArgs = null;
-                    currentToolCallParentMessageId = null;
+                    yield return toolCallAccumulator.EmitToolCallUpdate(toolCallEnd, jsonSerializerOptions);
                     break;
                 case ToolCallResultEvent toolCallResult:
-                    yield return new ChatResponseUpdate(
-                        ChatRole.Tool,
-                        [
-                            new FunctionResultContent(
-                                toolCallResult.ToolCallId,
-                                DeserializeResultIfAvailable(toolCallResult, jsonSerializerOptions))
-                        ])
-                    {
-                        ConversationId = conversationId,
-                        ResponseId = responseId,
-                        MessageId = toolCallResult.MessageId,
-                        CreatedAt = DateTimeOffset.UtcNow
-                    };
+                    yield return toolCallAccumulator.EmitToolCallResult(toolCallResult, jsonSerializerOptions);
                     break;
             }
+        }
+    }
+
+    private class TextMessageBuilder()
+    {
+        private ChatRole _currentRole;
+        private string? _currentMessageId;
+        private string? _conversationId;
+        private string? _responseId;
+
+        public void SetConversationAndResponseIds(string? conversationId, string? responseId)
+        {
+            this._conversationId = conversationId;
+            this._responseId = responseId;
+        }
+
+        public void AddTextStart(TextMessageStartEvent textStart)
+        {
+            if (this._currentRole != default || this._currentMessageId != null)
+            {
+                throw new InvalidOperationException("Received TextMessageStartEvent while another message is being processed.");
+            }
+
+            this._currentRole = AGUIChatMessageExtensions.MapChatRole(textStart.Role);
+            this._currentMessageId = textStart.MessageId;
+        }
+
+        internal ChatResponseUpdate EmitTextUpdate(TextMessageContentEvent textContent)
+        {
+            return new ChatResponseUpdate(
+                this._currentRole,
+                textContent.Delta)
+            {
+                ConversationId = this._conversationId,
+                ResponseId = this._responseId,
+                MessageId = textContent.MessageId,
+                CreatedAt = DateTimeOffset.UtcNow
+            };
+        }
+
+        internal void EndCurrentMessage(TextMessageEndEvent textEnd)
+        {
+            if (this._currentMessageId != textEnd.MessageId)
+            {
+                throw new InvalidOperationException("Received TextMessageEndEvent for a different message than the current one.");
+            }
+            this._currentRole = default;
+            this._currentMessageId = null;
+        }
+    }
+
+    private static ChatResponseUpdate ValidateAndEmitRunStart(RunStartedEvent runStarted)
+    {
+        return new ChatResponseUpdate(
+            ChatRole.Assistant,
+            [])
+        {
+            ConversationId = runStarted.ThreadId,
+            ResponseId = runStarted.RunId,
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+    }
+
+    private static ChatResponseUpdate ValidateAndEmitRunFinished(string? conversationId, string? responseId, RunFinishedEvent runFinished)
+    {
+        if (!string.Equals(runFinished.ThreadId, conversationId, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException($"The run finished event didn't match the run started event thread ID: {runFinished.ThreadId}, {conversationId}");
+        }
+        if (!string.Equals(runFinished.RunId, responseId, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException($"The run finished event didn't match the run started event run ID: {runFinished.RunId}, {responseId}");
+        }
+
+        return new ChatResponseUpdate(
+            ChatRole.Assistant, runFinished.Result?.GetRawText())
+        {
+            ConversationId = conversationId,
+            ResponseId = responseId,
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+    }
+
+    private class ToolCallBuilder
+    {
+        private string? _conversationId;
+        private string? _responseId;
+        private StringBuilder? _accumulatedArgs;
+        private FunctionCallContent? _currentFunctionCall;
+
+        public void AddToolCallStart(ToolCallStartEvent toolCallStart)
+        {
+            if (this._currentFunctionCall != null)
+            {
+                throw new InvalidOperationException("Received ToolCallStartEvent while another tool call is being processed.");
+            }
+            this._accumulatedArgs ??= new StringBuilder();
+            this._currentFunctionCall = new(
+                    toolCallStart.ToolCallId,
+                    toolCallStart.ToolCallName,
+                    null);
+        }
+
+        public void AddToolCallArgs(ToolCallArgsEvent toolCallArgs, JsonSerializerOptions options)
+        {
+            if (this._currentFunctionCall == null)
+            {
+                throw new InvalidOperationException("Received ToolCallArgsEvent without a current tool call.");
+            }
+
+            if (!string.Equals(this._currentFunctionCall.CallId, toolCallArgs.ToolCallId, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException("Received ToolCallArgsEvent for a different tool call than the current one.");
+            }
+
+            Debug.Assert(this._accumulatedArgs != null, "Accumulated args should have been initialized in ToolCallStartEvent.");
+            this._accumulatedArgs.Append(toolCallArgs.Delta);
+        }
+
+        internal ChatResponseUpdate EmitToolCallUpdate(ToolCallEndEvent toolCallEnd, JsonSerializerOptions jsonSerializerOptions)
+        {
+            if (this._currentFunctionCall == null)
+            {
+                throw new InvalidOperationException("Received ToolCallEndEvent without a current tool call.");
+            }
+            if (!string.Equals(this._currentFunctionCall.CallId, toolCallEnd.ToolCallId, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException("Received ToolCallEndEvent for a different tool call than the current one.");
+            }
+            Debug.Assert(this._accumulatedArgs != null, "Accumulated args should have been initialized in ToolCallStartEvent.");
+            var arguments = DeserializeArgumentsIfAvailable(this._accumulatedArgs.ToString(), jsonSerializerOptions);
+            this._accumulatedArgs.Clear();
+            this._currentFunctionCall.Arguments = arguments;
+            var invocation = this._currentFunctionCall;
+            this._currentFunctionCall = null;
+            return new ChatResponseUpdate(
+                ChatRole.Assistant,
+                [invocation])
+            {
+                ConversationId = this._conversationId,
+                ResponseId = this._responseId,
+                MessageId = invocation.CallId,
+                CreatedAt = DateTimeOffset.UtcNow
+            };
+        }
+
+        public ChatResponseUpdate EmitToolCallResult(ToolCallResultEvent toolCallResult, JsonSerializerOptions options)
+        {
+            return new ChatResponseUpdate(
+                ChatRole.Tool,
+                [new FunctionResultContent(
+                    toolCallResult.ToolCallId,
+                    DeserializeResultIfAvailable(toolCallResult, options))])
+            {
+                ConversationId = this._conversationId,
+                ResponseId = this._responseId,
+                MessageId = toolCallResult.MessageId,
+                CreatedAt = DateTimeOffset.UtcNow
+            };
+        }
+
+        internal void SetConversationAndResponseIds(string conversationId, string responseId)
+        {
+            this._conversationId = conversationId;
+            this._responseId = responseId;
         }
     }
 

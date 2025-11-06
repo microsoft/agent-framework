@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading;
@@ -48,13 +49,14 @@ public static class AGUIEndpointRouteBuilderExtensions
             var agent = aiAgent;
 
             ChatClientAgentRunOptions? runOptions = null;
-            if (input.Tools?.Any() == true)
+            List<AITool>? clientTools = input.Tools?.AsAITools().ToList();
+            if (clientTools?.Count > 0)
             {
                 runOptions = new ChatClientAgentRunOptions
                 {
                     ChatOptions = new ChatOptions
                     {
-                        Tools = input.Tools.AsAITools().ToList()
+                        Tools = clientTools
                     }
                 };
             }
@@ -67,6 +69,7 @@ public static class AGUIEndpointRouteBuilderExtensions
                 options: runOptions,
                 cancellationToken: cancellationToken)
                 .AsChatResponseUpdatesAsync()
+                .FilterServerToolsFromMixedToolInvocationsAsync(clientTools, cancellationToken)
                 .AsAGUIEventStreamAsync(
                     input.ThreadId,
                     input.RunId,

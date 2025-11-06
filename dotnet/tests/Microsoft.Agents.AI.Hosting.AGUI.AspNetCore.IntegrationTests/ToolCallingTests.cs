@@ -558,32 +558,97 @@ public sealed class ToolCallingTests : IAsyncDisposable
         // which verifies that AG-UI protocol works end-to-end with custom types
     }
 
-    [Fact(Skip = "FunctionInvokingChatClient has limitations with custom JSON contexts - ArgumentException during deserialization")]
+    [Fact(Skip = "Custom JsonSerializerOptions with AIFunctionFactory.Create requires additional investigation")]
     public async Task ServerToolCallWithCustomArgumentsAsync()
     {
-        // This test demonstrates a limitation: even though AIFunctionFactory.Create accepts JsonSerializerOptions,
-        // FunctionInvokingChatClient (from Microsoft.Extensions.AI) has issues deserializing function arguments
-        // with custom JSON contexts. The test is skipped pending resolution of this upstream issue.
+        // RESEARCH FINDINGS:
+        // - AIFunctionFactory.Create DOES accept JsonSerializerOptions parameter
+        // - AIFunction.JsonSerializerOptions property exists and is used by FunctionInvokingChatClient
+        // - The pattern should work: pass serializerOptions to AIFunctionFactory.Create
+        // 
+        // ISSUE OBSERVED:
+        // - When function execution throws an exception, the exception message is returned as a string
+        // - This string (" 'E' is an invalid start of a value") gets passed to the client
+        // - Client tries to deserialize it as JSON and fails
+        // 
+        // This suggests FunctionInvokingChatClient may be catching exceptions during deserialization
+        // of function arguments and returning the exception message instead of the typed result.
+        // 
+        // Further investigation needed into how FunctionInvokingChatClient handles:
+        // 1. Deserialization failures for custom types in function parameters
+        // 2. Serialization of function results with custom types
+        // 3. Error handling when JsonSerializerOptions don't contain required type info
 
         await Task.CompletedTask;
     }
 
-    [Fact(Skip = "FunctionInvokingChatClient has limitations with custom JSON contexts - Client function not invoked")]
+    [Fact(Skip = "Custom JsonSerializerOptions with AIFunctionFactory.Create requires additional investigation")]
     public async Task ClientToolCallWithCustomArgumentsAsync()
     {
-        // This test demonstrates a limitation with custom JSON contexts in function invocation.
-        // While AIFunctionFactory.Create accepts JsonSerializerOptions, the client function
-        // execution path has issues. The test is skipped pending resolution of this upstream issue.
+        // RESEARCH FINDINGS:
+        // - AIFunctionFactory.Create accepts JsonSerializerOptions parameter
+        // - AIFunction.JsonSerializerOptions property is used for marshaling parameters
+        // - Pattern: Create JsonSerializerOptions with TypeInfoResolverChain containing custom contexts
+        // 
+        // ISSUE OBSERVED:
+        // - Function not being invoked (callCount stays at 0)
+        // - Test output shows "type: DefaultAIFunctionDeclaration" instead of "ReflectionAIFunction"
+        // - This suggests the tool is being passed as a declaration-only, not executable
+        // 
+        // HYPOTHESIS:
+        // When tools are passed to CreateAIAgent() and then through the AG-UI protocol,
+        // they may be getting converted to declarations and losing their execution context.
+        // The client-side FunctionInvokingChatClient may need the executable AIFunction
+        // to be reconstructed with its JsonSerializerOptions intact.
+        //
+        // Further investigation needed into:
+        // 1. How tools are serialized/deserialized across AG-UI boundary
+        // 2. Whether AIFunction metadata (including JsonSerializerOptions) survives the round-trip
+        // 3. How to ensure client-side FunctionInvokingChatClient has access to custom serialization options
 
         await Task.CompletedTask;
     }
 
-    [Fact(Skip = "FunctionInvokingChatClient doesn't support custom JSON contexts for function execution")]
+    [Fact(Skip = "Custom JsonSerializerOptions with AIFunctionFactory.Create requires additional investigation")]
     public async Task MultiTurnConversationWithMixedCustomToolCallsAsync()
     {
-        // This test is skipped because Microsoft.Extensions.AI's FunctionInvokingChatClient doesn't support
-        // custom JSON serialization contexts for function arguments and results.
-        // The test would require a custom function execution layer that respects JSON contexts.
+        // RESEARCH FINDINGS:
+        // Microsoft.Extensions.AI documentation confirms:
+        // - AIFunctionFactory.Create(delegate, name, description, JsonSerializerOptions) fully supported
+        // - AIFunction.JsonSerializerOptions property used for marshaling parameters and return values
+        // - Arguments as JsonElement/JsonDocument/JsonNode deserialized using provided serializerOptions
+        // - Return values serialized to JsonElement using provided serializerOptions
+        // - FunctionInvokingChatClient uses context.Function.JsonSerializerOptions for telemetry and invocation
+        //
+        // CORRECT PATTERN (verified from dotnet/extensions source code):
+        // ```
+        // var customOptions = new JsonSerializerOptions();
+        // customOptions.TypeInfoResolverChain.Add(MyCustomContext.Default);
+        // customOptions.TypeInfoResolverChain.Add(AIJsonUtilities.DefaultOptions.TypeInfoResolver!);
+        //
+        // AIFunction func = AIFunctionFactory.Create(
+        //     (MyCustomType arg) => new MyCustomResponse(...),
+        //     "FunctionName",
+        //     "Description",
+        //     serializerOptions: customOptions);  // ← Threads through to AIFunction.JsonSerializerOptions
+        // ```
+        //
+        // REMAINING ISSUES TO INVESTIGATE:
+        // 1. Exception handling: When function invocation fails (e.g., deserialization error),
+        //    the error message gets returned as a string that can't be deserialized by the client
+        // 
+        // 2. Tool serialization: When tools are sent across AG-UI protocol boundary,
+        //    the executable AIFunction may be converted to AIFunctionDeclaration,
+        //    losing the JsonSerializerOptions context
+        //
+        // 3. Function reconstruction: Client-side FunctionInvokingChatClient needs to reconstruct
+        //    executable functions from declarations, but may not have access to custom serialization options
+        //
+        // POTENTIAL SOLUTIONS:
+        // - Add JsonSerializerOptions to AIFunctionDeclaration metadata
+        // - Ensure AG-UI protocol preserves JsonSerializerOptions when transmitting tool definitions
+        // - Have client-side provide JsonSerializerOptions when reconstructing functions from declarations
+        // - Alternative: Use type discovery/reflection to automatically add required contexts
 
         await Task.CompletedTask;
     }
