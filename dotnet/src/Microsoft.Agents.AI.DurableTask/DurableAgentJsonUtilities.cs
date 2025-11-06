@@ -3,6 +3,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Agents.AI.DurableTask.State;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.DurableTask;
@@ -73,7 +74,6 @@ internal static partial class DurableAgentJsonUtilities
 
     // Durable Agent State Types
     [JsonSerializable(typeof(DurableAgentState))]
-    [JsonSerializable(typeof(AgentStateEntry))]
     [JsonSerializable(typeof(DurableAgentThread))]
 
     // Request Types

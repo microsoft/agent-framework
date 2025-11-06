@@ -28,4 +28,22 @@ internal static partial class Logs
         long? inputTokenCount,
         long? outputTokenCount,
         long? totalTokenCount);
+
+    [LoggerMessage(
+        EventId = 3,
+        Level = LogLevel.Information,
+        Message = "Signalling agent with session ID '{SessionId}'")]
+    public static partial void LogSignallingAgent(this ILogger logger, AgentSessionId sessionId);
+
+    [LoggerMessage(
+        EventId = 4,
+        Level = LogLevel.Information,
+        Message = "Polling agent with session ID '{SessionId}' for response with correlation ID '{CorrelationId}'")]
+    public static partial void LogStartPollingForResponse(this ILogger logger, AgentSessionId sessionId, string correlationId);
+
+    [LoggerMessage(
+        EventId = 5,
+        Level = LogLevel.Information,
+        Message = "Found response for agent with session ID '{SessionId}' with correlation ID '{CorrelationId}'")]
+    public static partial void LogDonePollingForResponse(this ILogger logger, AgentSessionId sessionId, string correlationId);
 }
