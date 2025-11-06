@@ -3,55 +3,72 @@
 using Azure.AI.Agents;
 using Azure.Identity;
 using Microsoft.Extensions.Configuration;
+using OpenAI.Responses;
 using Shared.Foundry;
 using Shared.Workflows;
 
-namespace Demo.Agents.ToolApproval;
+namespace Demo.Agents.MathChat;
 
+/// <summary>
+/// Demonstrate a workflow that responds to user input using an agent who
+/// has an MCP tool that requires approval.  Exits the loop when the user enters "exit".
+/// </summary>
+/// <remarks>
+/// See the README.md file in the parent folder ("../Declarative/README.md") for detailed
+/// information the configuration required to run this sample.
+/// </remarks>
 internal sealed class Program
 {
     public static async Task Main(string[] args)
     {
+        // Initialize configuration
         IConfiguration configuration = Application.InitializeConfig();
-        string foundryEndpoint = configuration.GetValue(Application.Settings.FoundryEndpoint);
-        AgentsClient agentsClient = new(new Uri(foundryEndpoint), new AzureCliCredential());
+        Uri foundryEndpoint = new(configuration.GetValue(Application.Settings.FoundryEndpoint));
 
-        await agentsClient.CreateAgentAsync(
-            agentName: "StudentAgent",
-            agentDefinition: DefineStudentAgent(configuration),
-            agentDescription: "Student agent for MathChat workflow");
+        // Ensure sample agents exist in Foundry.
+        await CreateAgentsAsync(foundryEndpoint, configuration);
 
-        await agentsClient.CreateAgentAsync(
-            agentName: "TeacherAgent",
-            agentDefinition: DefineTeacherAgent(configuration),
-            agentDescription: "Teacher agent for MathChat workflow");
+        // Get input from command line or console
+        string workflowInput = Application.GetInput(args);
+
+        // Create the workflow factory.  This class demonstrates how to initialize a
+        // declarative workflow from a YAML file. Once the workflow is created, it
+        // can be executed just like any regular workflow.
+        WorkflowFactory workflowFactory = new("ToolApproval.yaml", foundryEndpoint);
+
+        // Execute the workflow:  The WorkflowRunner demonstrates now to execute
+        // a workflow, handle the workflow events, and providing external input.
+        // This also includes the ability to checkpoint workflow state and how to
+        // resume execution.
+        WorkflowRunner runner = new();
+        await runner.ExecuteAsync(workflowFactory.CreateWorkflow, workflowInput);
     }
 
-    private static PromptAgentDefinition DefineStudentAgent(IConfiguration configuration) =>
-        new(configuration.GetValue(Application.Settings.FoundryModelMini))
-        {
-            Instructions =
-                """
-                Your job is help a math teacher practice teaching by making intentional mistakes.
-                You Attempt to solve the given math problem, but with intentional mistakes so the teacher can help.
-                Always incorporate the teacher's advice to fix your next response.
-                You have the math-skills of a 6th grader.
-                Your job is help a math teacher practice teaching by making intentional mistakes.
-                You Attempt to solve the given math problem, but with intentional mistakes so the teacher can help.
-                Always incorporate the teacher's advice to fix your next response.
-                You have the math-skills of a 6th grader.
-                """
-        };
+    private static async Task CreateAgentsAsync(Uri foundryEndpoint, IConfiguration configuration)
+    {
+        AgentsClient agentsClient = new(foundryEndpoint, new AzureCliCredential());
 
-    private static PromptAgentDefinition DefineTeacherAgent(IConfiguration configuration) =>
+        await agentsClient.CreateAgentAsync(
+            agentName: "DocumentSearchAgent",
+            agentDefinition: DefineSearchAgent(configuration),
+            agentDescription: "Searches documents on Microsoft Learn");
+    }
+
+    private static PromptAgentDefinition DefineSearchAgent(IConfiguration configuration) =>
         new(configuration.GetValue(Application.Settings.FoundryModelMini))
         {
             Instructions =
                 """
-                Review and coach the student's approach to solving the given math problem.
-                Don't repeat the solution or try and solve it.
-                If the student has demonstrated comprehension and responded to all of your feedback,
-                give the student your congratulations by using the word "congratulations".
-                """
+                Answer the users questions by searching the Microsoft Learn documentation.
+                For questions or input that do not require searching the documentation, inform the
+                user that you can only answer questions related to Microsoft Learn documentation.
+                """,
+            Tools =
+                {
+                    ResponseTool.CreateMcpTool(
+                        "microsoft_docs",
+                        new Uri("https://learn.microsoft.com/api/mcp"),
+                        toolCallApprovalPolicy: new McpToolCallApprovalPolicy(GlobalMcpToolCallApprovalPolicy.AlwaysRequireApproval))
+                }
         };
 }

@@ -58,8 +58,6 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
         string agentName = this.GetAgentName();
         bool autoSend = this.GetAutoSendValue();
 
-        bool isComplete = true;
-
         AgentRunResponse agentResponse = await agentProvider.InvokeAgentAsync(this.Id, context, agentName, conversationId, autoSend, messages, cancellationToken).ConfigureAwait(false);
 
         // %%% TODO: Function calls with results don't require input.
@@ -70,8 +68,8 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
 
         if (requiresInput)
         {
-            isComplete = false;
             await context.SendMessageAsync(new ExternalInputRequest(agentResponse), cancellationToken).ConfigureAwait(false);
+            return;
         }
 
         await this.AssignAsync(this.AgentOutput?.Messages?.Path, agentResponse.Messages.ToTable(), context).ConfigureAwait(false);
@@ -88,6 +86,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
             // Not valid json, skip assignment.
         }
 
+        bool isComplete = true;
         if (this.Model.ExternalLoop?.When is not null)
         {
             bool requestInput = this.Evaluator.GetValue(this.Model.ExternalLoop.When).Value;

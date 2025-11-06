@@ -25,7 +25,15 @@ internal static class AgentFactory
 
         AgentVersion agentVersion = await agentsClient.CreateAgentVersionAsync(agentName, agentDefinition, options).ConfigureAwait(false);
 
-        Console.WriteLine($"CREATED PROMPT AGENT: {agentVersion.Name}:{agentVersion.Version}");
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        try
+        {
+            Console.WriteLine($"PROMPT AGENT: {agentVersion.Name}:{agentVersion.Version}");
+        }
+        finally
+        {
+            Console.ResetColor();
+        }
 
         return agentVersion;
     }

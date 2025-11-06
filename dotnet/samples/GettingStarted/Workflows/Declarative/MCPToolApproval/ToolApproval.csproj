@@ -11,6 +11,7 @@
 
   <PropertyGroup>
     <InjectSharedFoundryAgents>true</InjectSharedFoundryAgents>
+    <InjectSharedWorkflowsExecution>true</InjectSharedWorkflowsExecution>
     <InjectSharedWorkflowsSettings>true</InjectSharedWorkflowsSettings>
   </PropertyGroup>
 
@@ -26,6 +27,12 @@
   
   <ItemGroup>
     <ProjectReference Include="..\..\..\..\..\src\Microsoft.Agents.AI.Workflows.Declarative\Microsoft.Agents.AI.Workflows.Declarative.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="ToolApproval.yaml">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
 </Project>

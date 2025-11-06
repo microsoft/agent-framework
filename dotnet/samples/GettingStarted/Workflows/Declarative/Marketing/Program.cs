@@ -8,13 +8,44 @@ using Shared.Workflows;
 
 namespace Demo.Agents.MathChat;
 
+/// <summary>
+/// Demonstrate a declarative workflow with three agents (Analyst, Writer, Editor)
+/// sequentially engaging in a task.
+/// </summary>
+/// <remarks>
+/// See the README.md file in the parent folder ("../Declarative/README.md") for detailed
+/// information the configuration required to run this sample.
+/// </remarks>
 internal sealed class Program
 {
     public static async Task Main(string[] args)
     {
+        // Initialize configuration
         IConfiguration configuration = Application.InitializeConfig();
-        string foundryEndpoint = configuration.GetValue(Application.Settings.FoundryEndpoint);
-        AgentsClient agentsClient = new(new Uri(foundryEndpoint), new AzureCliCredential());
+        Uri foundryEndpoint = new(configuration.GetValue(Application.Settings.FoundryEndpoint));
+
+        // Ensure sample agents exist in Foundry.
+        await CreateAgentsAsync(foundryEndpoint, configuration);
+
+        // Get input from command line or console
+        string workflowInput = Application.GetInput(args);
+
+        // Create the workflow factory.  This class demonstrates how to initialize a
+        // declarative workflow from a YAML file. Once the workflow is created, it
+        // can be executed just like any regular workflow.
+        WorkflowFactory workflowFactory = new("Marketing.yaml", foundryEndpoint);
+
+        // Execute the workflow:  The WorkflowRunner demonstrates now to execute
+        // a workflow, handle the workflow events, and providing external input.
+        // This also includes the ability to checkpoint workflow state and how to
+        // resume execution.
+        WorkflowRunner runner = new();
+        await runner.ExecuteAsync(workflowFactory.CreateWorkflow, workflowInput);
+    }
+
+    private static async Task CreateAgentsAsync(Uri foundryEndpoint, IConfiguration configuration)
+    {
+        AgentsClient agentsClient = new(foundryEndpoint, new AzureCliCredential());
 
         await agentsClient.CreateAgentAsync(
             agentName: "AnalystAgent",

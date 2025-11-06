@@ -18,6 +18,53 @@ internal static class Application
         public const string FoundryGroundingTool = "FOUNDRY_CONNECTION_GROUNDING_TOOL";
     }
 
+    public static string GetInput(string[] args)
+    {
+        string? input = args.FirstOrDefault();
+
+        try
+        {
+            Console.ForegroundColor = ConsoleColor.DarkGreen;
+
+            Console.Write("\nINPUT: ");
+
+            Console.ForegroundColor = ConsoleColor.White;
+
+            if (!string.IsNullOrWhiteSpace(input))
+            {
+                Console.WriteLine(input);
+                return input;
+            }
+            while (string.IsNullOrWhiteSpace(input))
+            {
+                input = Console.ReadLine();
+            }
+
+            return input.Trim();
+        }
+        finally
+        {
+            Console.ResetColor();
+        }
+    }
+
+    public static string? GetRepoFolder()
+    {
+        DirectoryInfo? current = new(Directory.GetCurrentDirectory());
+
+        while (current is not null)
+        {
+            if (Directory.Exists(Path.Combine(current.FullName, ".git")))
+            {
+                return current.FullName;
+            }
+
+            current = current.Parent;
+        }
+
+        return null;
+    }
+
     public static string GetValue(this IConfiguration configuration, string settingName) =>
         configuration[settingName] ??
         throw new InvalidOperationException($"Undefined configuration setting: {settingName}");

@@ -1,71 +1,49 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// Uncomment this to enable JSON checkpointing to the local file system.
-//#define CHECKPOINT_JSON
-
 using System.Diagnostics;
-using System.Reflection;
 using System.Text.Json;
-using Azure.Identity;
 using Microsoft.Agents.AI.Workflows;
-#if CHECKPOINT_JSON
-using Microsoft.Agents.AI.Workflows.Checkpointing;
-#endif
 using Microsoft.Agents.AI.Workflows.Declarative;
 using Microsoft.Agents.AI.Workflows.Declarative.Events;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.Configuration;
 using OpenAI.Responses;
 
-namespace Demo.DeclarativeWorkflow;
+namespace Shared.Workflows;
 
-/// <summary>
-/// HOW TO: Create a workflow from a declarative (yaml based) definition.
-/// </summary>
-/// <remarks>
-/// <b>Configuration</b>
-/// Define FOUNDRY_PROJECT_ENDPOINT as a user-secret or environment variable that
-/// points to your Foundry project endpoint.
-/// <b>Usage</b>
-/// Provide the path to the workflow definition file as the first argument.
-/// All other arguments are intepreted as a queue of inputs.
-/// When no input is queued, interactive input is requested from the console.
-/// </remarks>
-internal sealed class Program
+// Types are for evaluation purposes only and is subject to change or removal in future updates.
+#pragma warning disable OPENAI001 
+#pragma warning disable OPENAICUA001
+#pragma warning disable MEAI001
+
+internal sealed class WorkflowRunner
 {
-    public static async Task Main(string[] args)
+    private Dictionary<string, AIFunction> FunctionMap { get; }
+    private CheckpointInfo? LastCheckpoint { get; set; }
+
+    public static void Notify(string message)
     {
-        string? workflowFile = ParseWorkflowFile(args);
-        if (workflowFile is null)
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        try
         {
-            Notify("\nUsage: DeclarativeWorkflow <workflow-file> [<input>]\n");
-            return;
+            Console.WriteLine(message);
         }
-
-        string? workflowInput = ParseWorkflowInput(args);
-
-        Program program = new(workflowFile, workflowInput);
-        await program.ExecuteAsync();
+        finally
+        {
+            Console.ResetColor();
+        }
     }
 
-    private async Task ExecuteAsync()
+    public WorkflowRunner(params IEnumerable<AIFunction> functions)
     {
-        // Read and parse the declarative workflow.
-        Notify($"\nWORKFLOW: Parsing {Path.GetFullPath(this.WorkflowFile)}");
+        this.FunctionMap = functions.ToDictionary(f => f.Name);
+    }
 
-        Stopwatch timer = Stopwatch.StartNew();
+    public async Task ExecuteAsync(Func<Workflow> workflowProvider, string input)
+    {
+        Workflow workflow = workflowProvider.Invoke();
 
-        Workflow workflow = this.CreateWorkflow();
-
-        Notify($"\nWORKFLOW: Defined {timer.Elapsed}");
-
-        Notify("\nWORKFLOW: Starting...");
-
-        // Run the workflow, just like any other workflow
-        string input = this.GetWorkflowInput();
-
-#if CHECKPOINT_JSON
+#if CHECKPOINT_JSON // %%% TODO - OPTION
         // Use a file-system based JSON checkpoint store to persist checkpoints to disk.
         DirectoryInfo checkpointFolder = Directory.CreateDirectory(Path.Combine(".", $"chk-{DateTime.Now:yyMMdd-hhmmss-ff}"));
         CheckpointManager checkpointManager = CheckpointManager.CreateJson(new FileSystemJsonCheckpointStore(checkpointFolder));
@@ -74,16 +52,16 @@ internal sealed class Program
         CheckpointManager checkpointManager = CheckpointManager.CreateInMemory();
 #endif
 
-        Checkpointed<StreamingRun> run = await InProcessExecution.StreamAsync(workflow, input, checkpointManager);
+        Checkpointed<StreamingRun> run = await InProcessExecution.StreamAsync(workflow, input, checkpointManager).ConfigureAwait(false);
 
         bool isComplete = false;
         object? response = null;
         do
         {
-            ExternalRequest? externalRequest = await this.MonitorAndDisposeWorkflowRunAsync(run, response);
+            ExternalRequest? externalRequest = await this.MonitorAndDisposeWorkflowRunAsync(run, response).ConfigureAwait(false);
             if (externalRequest is not null)
             {
-                Notify("\nWORKFLOW: Yield");
+                Notify("\nWORKFLOW: Yield\n");
 
                 if (this.LastCheckpoint is null)
                 {
@@ -91,16 +69,16 @@ internal sealed class Program
                 }
 
                 // Process the external request.
-                response = await this.HandleExternalRequestAsync(externalRequest);
+                response = await this.HandleExternalRequestAsync(externalRequest).ConfigureAwait(false);
 
                 // Let's resume on an entirely new workflow instance to demonstrate checkpoint portability.
-                workflow = this.CreateWorkflow();
+                workflow = workflowProvider.Invoke();
 
                 // Restore the latest checkpoint.
                 Debug.WriteLine($"RESTORE #{this.LastCheckpoint.CheckpointId}");
-                Notify("\nWORKFLOW: Restore");
+                Notify("WORKFLOW: Restore");
 
-                run = await InProcessExecution.ResumeStreamAsync(workflow, this.LastCheckpoint, checkpointManager, run.Run.RunId);
+                run = await InProcessExecution.ResumeStreamAsync(workflow, this.LastCheckpoint, checkpointManager, run.Run.RunId).ConfigureAwait(false);
             }
             else
             {
@@ -112,81 +90,16 @@ internal sealed class Program
         Notify("\nWORKFLOW: Done!\n");
     }
 
-    /// <summary>
-    /// Create the workflow from the declarative YAML.  Includes definition of the
-    /// <see cref="DeclarativeWorkflowOptions" /> and the associated <see cref="WorkflowAgentProvider"/>.
-    /// </summary>
-    /// <remarks>
-    /// The value assigned to <see cref="IncludeFunctions" /> controls on whether the function
-    /// tools (<see cref="AIFunction"/>) initialized in the constructor are included for auto-invocation.
-    /// </remarks>
-    private Workflow CreateWorkflow()
+    public async Task<ExternalRequest?> MonitorAndDisposeWorkflowRunAsync(Checkpointed<StreamingRun> run, object? response = null)
     {
-        // Create the agent provider that will service agent requests within the workflow.
-        AzureAgentProvider agentProvider = new(new Uri(this.FoundryEndpoint), new AzureCliCredential())
-        {
-            // Functions included here will be auto-executed by the framework.
-            Functions = IncludeFunctions ? this.FunctionMap.Values : null,
-        };
-
-        // Define the workflow options.
-        DeclarativeWorkflowOptions options =
-            new(agentProvider)
-            {
-                Configuration = this.Configuration,
-                //ConversationId = null, // Assign to continue a conversation
-                //LoggerFactory = null, // Assign to enable logging
-            };
-
-        // Use DeclarativeWorkflowBuilder to build a workflow based on a YAML file.
-        return DeclarativeWorkflowBuilder.Build<string>(this.WorkflowFile, options);
-    }
-
-    /// <summary>
-    /// Configuration key used to identify the Foundry project endpoint.
-    /// </summary>
-    private const string ConfigKeyFoundryEndpoint = "FOUNDRY_PROJECT_ENDPOINT";
-
-    /// <summary>
-    /// Controls on whether the function tools (<see cref="AIFunction"/>) initialized
-    /// in the constructor are included for auto-invocation.
-    /// NOTE: By default, no functions exist as part of this sample.
-    /// </summary>
-    private const bool IncludeFunctions = true;
-
-    private string WorkflowFile { get; }
-    private string? WorkflowInput { get; }
-    private string FoundryEndpoint { get; }
-    private IConfiguration Configuration { get; }
-    private CheckpointInfo? LastCheckpoint { get; set; }
-    private Dictionary<string, AIFunction> FunctionMap { get; }
-
-    private Program(string workflowFile, string? workflowInput)
-    {
-        this.WorkflowFile = workflowFile;
-        this.WorkflowInput = workflowInput;
-
-        this.Configuration = InitializeConfig();
-
-        this.FoundryEndpoint = this.Configuration[ConfigKeyFoundryEndpoint] ?? throw new InvalidOperationException($"Undefined configuration setting: {ConfigKeyFoundryEndpoint}");
-
-        List<AIFunction> functions =
-            [
-                // Manually define any custom functions that may be required by agents within the workflow.
-                // By default, this sample does not include any functions.
-                //AIFunctionFactory.Create(),
-            ];
-        this.FunctionMap = functions.ToDictionary(f => f.Name);
-    }
-
-    private async Task<ExternalRequest?> MonitorAndDisposeWorkflowRunAsync(Checkpointed<StreamingRun> run, object? response = null)
-    {
+#pragma warning disable CA2007 // Consider calling ConfigureAwait on the awaited task
         await using IAsyncDisposable disposeRun = run;
+#pragma warning restore CA2007 // Consider calling ConfigureAwait on the awaited task
 
         bool hasStreamed = false;
         string? messageId = null;
 
-        await foreach (WorkflowEvent workflowEvent in run.Run.WatchStreamAsync())
+        await foreach (WorkflowEvent workflowEvent in run.Run.WatchStreamAsync().ConfigureAwait(false))
         {
             switch (workflowEvent)
             {
@@ -223,12 +136,11 @@ internal sealed class Program
                     if (response is not null)
                     {
                         ExternalResponse requestResponse = requestInfo.Request.CreateResponse(response);
-                        await run.Run.SendResponseAsync(requestResponse);
+                        await run.Run.SendResponseAsync(requestResponse).ConfigureAwait(false);
                         response = null;
                     }
                     else
                     {
-                        await run.Run.DisposeAsync();
                         return requestInfo.Request;
                     }
                     break;
@@ -264,7 +176,7 @@ internal sealed class Program
                     switch (chatUpdate?.RawRepresentation)
                     {
                         case ImageGenerationCallResponseItem messageUpdate:
-                            await DownloadFileContentAsync(Path.GetFileName("response.png"), messageUpdate.ImageResultBytes);
+                            await DownloadFileContentAsync(Path.GetFileName("response.png"), messageUpdate.ImageResultBytes).ConfigureAwait(false);
                             break;
 
                         case FunctionCallResponseItem actionUpdate:
@@ -281,6 +193,7 @@ internal sealed class Program
                             Console.WriteLine($" [{actionUpdate.Id}]");
                             break;
                     }
+
                     try
                     {
                         Console.ResetColor();
@@ -331,7 +244,7 @@ internal sealed class Program
 
         foreach (ChatMessage message in inputRequest.AgentResponse.Messages)
         {
-            ChatMessage? responseMessage = await this.ProcessInputMessageAsync(message);
+            ChatMessage? responseMessage = await this.ProcessInputMessageAsync(message).ConfigureAwait(false);
             if (responseMessage is not null)
             {
                 responseMessages.Add(responseMessage);
@@ -343,6 +256,8 @@ internal sealed class Program
             // Must be request for user input.
             responseMessages.Add(HandleUserInputRequest(inputRequest));
         }
+
+        Console.WriteLine();
 
         return new ExternalInputResponse(responseMessages);
     }
@@ -356,10 +271,10 @@ internal sealed class Program
             AIContent? responseItem =
                 requestItem switch
                 {
-                    FunctionCallContent functionCall => await InvokesToolAsync(functionCall),
-                    FunctionApprovalRequestContent functionApprovalRequest => functionApprovalRequest.CreateResponse(approved: true),
-                    McpServerToolApprovalRequestContent mcpApprovalRequest => mcpApprovalRequest.CreateResponse(approved: true),
-                    _ => null,
+                    FunctionCallContent functionCall => await InvokeFunctionAsync(functionCall).ConfigureAwait(false),
+                    FunctionApprovalRequestContent functionApprovalRequest => ApproveFunction(functionApprovalRequest),
+                    McpServerToolApprovalRequestContent mcpApprovalRequest => ApproveMCP(mcpApprovalRequest),
+                    _ => HandleUnknown(requestItem),
                 };
 
             if (responseItem is not null)
@@ -375,11 +290,30 @@ internal sealed class Program
 
         return new ChatMessage(ChatRole.User, responseContents);
 
-        async Task<FunctionResultContent> InvokesToolAsync(FunctionCallContent functionCall)
+        AIContent? HandleUnknown(AIContent request)
         {
+            Notify($"INPUT - Unknown: {request.GetType().Name} [{request.RawRepresentation?.GetType().Name ?? "*"}]");
+            return null;
+        }
+
+        FunctionApprovalResponseContent ApproveFunction(FunctionApprovalRequestContent functionApprovalRequest)
+        {
+            Notify($"INPUT - Approving Function: {functionApprovalRequest.FunctionCall.Name}");
+            return functionApprovalRequest.CreateResponse(approved: true);
+        }
+
+        McpServerToolApprovalResponseContent ApproveMCP(McpServerToolApprovalRequestContent mcpApprovalRequest)
+        {
+            Notify($"INPUT - Approving MCP: {mcpApprovalRequest.ToolCall.ToolName}");
+            return mcpApprovalRequest.CreateResponse(approved: true);
+        }
+
+        async Task<FunctionResultContent> InvokeFunctionAsync(FunctionCallContent functionCall)
+        {
+            Notify($"INPUT - Executing Function: {functionCall.Name}");
             AIFunction functionTool = this.FunctionMap[functionCall.Name];
             AIFunctionArguments? functionArguments = functionCall.Arguments is null ? null : new(functionCall.Arguments.NormalizePortableValues());
-            object? result = await functionTool.InvokeAsync(functionArguments);
+            object? result = await functionTool.InvokeAsync(functionArguments).ConfigureAwait(false);
             return new FunctionResultContent(functionCall.CallId, JsonSerializer.Serialize(result));
         }
     }
@@ -395,7 +329,7 @@ internal sealed class Program
         do
         {
             Console.ForegroundColor = ConsoleColor.DarkGreen;
-            Console.Write($"\n{prompt} ");
+            Console.Write($"{prompt} ");
             Console.ForegroundColor = ConsoleColor.White;
             userInput = Console.ReadLine();
         }
@@ -404,117 +338,12 @@ internal sealed class Program
         return new ChatMessage(ChatRole.User, userInput);
     }
 
-    private static string? ParseWorkflowFile(string[] args)
-    {
-        string? workflowFile = args.FirstOrDefault();
-        if (string.IsNullOrWhiteSpace(workflowFile))
-        {
-            return null;
-        }
-
-        if (!File.Exists(workflowFile) && !Path.IsPathFullyQualified(workflowFile))
-        {
-            string? repoFolder = GetRepoFolder();
-            if (repoFolder is not null)
-            {
-                workflowFile = Path.Combine(repoFolder, "workflow-samples", workflowFile);
-                workflowFile = Path.ChangeExtension(workflowFile, ".yaml");
-            }
-        }
-
-        if (!File.Exists(workflowFile))
-        {
-            throw new InvalidOperationException($"Unable to locate workflow: {Path.GetFullPath(workflowFile)}.");
-        }
-
-        return workflowFile;
-
-        static string? GetRepoFolder()
-        {
-            DirectoryInfo? current = new(Directory.GetCurrentDirectory());
-
-            while (current is not null)
-            {
-                if (Directory.Exists(Path.Combine(current.FullName, ".git")))
-                {
-                    return current.FullName;
-                }
-
-                current = current.Parent;
-            }
-
-            return null;
-        }
-    }
-
-    private string GetWorkflowInput()
-    {
-        string? input = this.WorkflowInput;
-
-        try
-        {
-            Console.ForegroundColor = ConsoleColor.DarkGreen;
-
-            Console.Write("\nINPUT: ");
-
-            Console.ForegroundColor = ConsoleColor.White;
-
-            if (!string.IsNullOrWhiteSpace(input))
-            {
-                Console.WriteLine(input);
-                return input;
-            }
-            while (string.IsNullOrWhiteSpace(input))
-            {
-                input = Console.ReadLine();
-            }
-
-            return input.Trim();
-        }
-        finally
-        {
-            Console.ResetColor();
-        }
-    }
-
-    private static string? ParseWorkflowInput(string[] args)
-    {
-        if (args.Length == 0)
-        {
-            return null;
-        }
-
-        string[] workflowInput = [.. args.Skip(1)];
-
-        return workflowInput.FirstOrDefault();
-    }
-
-    // Load configuration from user-secrets
-    private static IConfigurationRoot InitializeConfig() =>
-        new ConfigurationBuilder()
-            .AddUserSecrets(Assembly.GetExecutingAssembly())
-            .AddEnvironmentVariables()
-            .Build();
-
-    private static void Notify(string message)
-    {
-        Console.ForegroundColor = ConsoleColor.Cyan;
-        try
-        {
-            Console.WriteLine(message);
-        }
-        finally
-        {
-            Console.ResetColor();
-        }
-    }
-
     private static async ValueTask DownloadFileContentAsync(string filename, BinaryData content)
     {
         string filePath = Path.Combine(Path.GetTempPath(), Path.GetFileName(filename));
         filePath = Path.ChangeExtension(filePath, ".png");
 
-        await File.WriteAllBytesAsync(filePath, content.ToArray());
+        await File.WriteAllBytesAsync(filePath, content.ToArray()).ConfigureAwait(false);
 
         Process.Start(
             new ProcessStartInfo

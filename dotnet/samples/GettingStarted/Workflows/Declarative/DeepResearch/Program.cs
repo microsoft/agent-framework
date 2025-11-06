@@ -233,7 +233,7 @@ internal sealed class Program
                 AgentTool.CreateOpenApiTool(
                     new OpenApiFunctionDefinition(
                         "weather-forecast",
-                        BinaryData.FromString(File.ReadAllText("C:/Users/crickman/source/repos/af9/workflow-samples/wttr.json")), // %%% FIX PATH
+                        BinaryData.FromString(File.ReadAllText($"{Application.GetRepoFolder()}/workflow-samples/wttr.json")),
                         new OpenApiAnonymousAuthDetails()))
             }
         };
