@@ -210,16 +210,11 @@ internal sealed class WorkflowTemplateVisitor : DialogActionVisitor
     protected override void Visit(Question item)
     {
         this.NotSupported(item);
-        //this.Trace(item);
-
-        //this.ContinueWith(new QuestionTemplate(item));
     }
 
     protected override void Visit(RequestExternalInput item)
     {
-        this.Trace(item);
-
-        // %%% EXTERNAL INPUT - IMPLEMENT
+        this.NotSupported(item);
     }
 
     protected override void Visit(EndDialog item)
@@ -292,9 +287,7 @@ internal sealed class WorkflowTemplateVisitor : DialogActionVisitor
 
     protected override void Visit(InvokeAzureResponse item)
     {
-        this.Trace(item);
-
-        // %%% INLINE AGENT - IMPLEMENT
+        this.NotSupported(item);
     }
 
     protected override void Visit(RetrieveConversationMessage item)
@@ -349,17 +342,11 @@ internal sealed class WorkflowTemplateVisitor : DialogActionVisitor
     protected override void Visit(EditTable item)
     {
         this.NotSupported(item);
-        //this.Trace(item);
-
-        //this.ContinueWith(new EditTableTemplate(item));
     }
 
     protected override void Visit(EditTableV2 item)
     {
         this.NotSupported(item);
-        //this.Trace(item);
-
-        //this.ContinueWith(new EditTableV2Template(item));
     }
 
     protected override void Visit(ParseValue item)

@@ -6,6 +6,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Agents.AI.Workflows;
+using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Declarative;
 using Microsoft.Agents.AI.Workflows.Declarative.Events;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
@@ -37,6 +38,8 @@ internal sealed class WorkflowRunner
         }
     }
 
+    public bool UseJsonCheckpoints { get; init; }
+
     public WorkflowRunner(params IEnumerable<AIFunction> functions)
     {
         this.FunctionMap = functions.ToDictionary(f => f.Name);
@@ -46,14 +49,19 @@ internal sealed class WorkflowRunner
     {
         Workflow workflow = workflowProvider.Invoke();
 
-#if CHECKPOINT_JSON // %%% TODO - OPTION
-        // Use a file-system based JSON checkpoint store to persist checkpoints to disk.
-        DirectoryInfo checkpointFolder = Directory.CreateDirectory(Path.Combine(".", $"chk-{DateTime.Now:yyMMdd-hhmmss-ff}"));
-        CheckpointManager checkpointManager = CheckpointManager.CreateJson(new FileSystemJsonCheckpointStore(checkpointFolder));
-#else
-        // Use an in-memory checkpoint store that will not persist checkpoints beyond the lifetime of the process.
-        CheckpointManager checkpointManager = CheckpointManager.CreateInMemory();
-#endif
+        CheckpointManager checkpointManager;
+
+        if (this.UseJsonCheckpoints)
+        {
+            // Use a file-system based JSON checkpoint store to persist checkpoints to disk.
+            DirectoryInfo checkpointFolder = Directory.CreateDirectory(Path.Combine(".", $"chk-{DateTime.Now:yyMMdd-hhmmss-ff}"));
+            checkpointManager = CheckpointManager.CreateJson(new FileSystemJsonCheckpointStore(checkpointFolder));
+        }
+        else
+        {
+            // Use an in-memory checkpoint store that will not persist checkpoints beyond the lifetime of the process.
+            checkpointManager = CheckpointManager.CreateInMemory();
+        }
 
         Checkpointed<StreamingRun> run = await InProcessExecution.StreamAsync(workflow, input, checkpointManager).ConfigureAwait(false);
 
@@ -291,7 +299,7 @@ internal sealed class WorkflowRunner
             return null;
         }
 
-        return new ChatMessage(ChatRole.User, responseContents);
+        return new ChatMessage(ChatRole.Tool, responseContents); // %%% ROLE
 
         AIContent? HandleUnknown(AIContent request)
         {

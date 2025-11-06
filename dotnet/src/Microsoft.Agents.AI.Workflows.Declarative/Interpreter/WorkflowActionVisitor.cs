@@ -377,9 +377,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
     protected override void Visit(InvokeAzureResponse item)
     {
-        this.Trace(item);
-
-        // %%% INLINE AGENT - IMPLEMENT
+        this.NotSupported(item);
     }
 
     protected override void Visit(RetrieveConversationMessage item)
