@@ -10,7 +10,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Shared.Workflows;
 
-internal sealed class WorkflowFactory(string workflowPath, Uri foundryEndpoint)
+internal sealed class WorkflowFactory(string workflowFile, Uri foundryEndpoint)
 {
     public IList<AIFunction> Functions { get; init; } = [];
 
@@ -43,6 +43,8 @@ internal sealed class WorkflowFactory(string workflowPath, Uri foundryEndpoint)
                 ConversationId = this.ConversationId,
                 LoggerFactory = this.LoggerFactory,
             };
+
+        string workflowPath = Path.Combine(AppContext.BaseDirectory, workflowFile);
 
         // Use DeclarativeWorkflowBuilder to build a workflow based on a YAML file.
         return DeclarativeWorkflowBuilder.Build<string>(workflowPath, options);
