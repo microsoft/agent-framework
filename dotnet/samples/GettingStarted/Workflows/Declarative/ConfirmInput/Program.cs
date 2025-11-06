@@ -1,12 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Azure.AI.Agents;
-using Azure.Identity;
 using Microsoft.Extensions.Configuration;
-using Shared.Foundry;
 using Shared.Workflows;
 
-namespace Demo.Workflows.Declarative.StudentTeacher;
+namespace Demo.Workflows.Declarative.ConfirmInput;
 
 /// <summary>
 /// Demonstrate how to use the question action to request user input
