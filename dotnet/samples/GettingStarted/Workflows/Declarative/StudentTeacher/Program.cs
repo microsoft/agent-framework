@@ -6,7 +6,7 @@ using Microsoft.Extensions.Configuration;
 using Shared.Foundry;
 using Shared.Workflows;
 
-namespace Demo.Agents.MathChat;
+namespace Demo.Workflows.Declarative.StudentTeacher;
 
 /// <summary>
 /// Demonstrate a declarative workflow with two agents (Student and Teacher)

@@ -7,7 +7,7 @@ using OpenAI.Responses;
 using Shared.Foundry;
 using Shared.Workflows;
 
-namespace Demo.Agents.MathChat;
+namespace Demo.Workflows.Declarative.ToolApproval;
 
 /// <summary>
 /// Demonstrate a workflow that responds to user input using an agent who
@@ -26,7 +26,7 @@ internal sealed class Program
         Uri foundryEndpoint = new(configuration.GetValue(Application.Settings.FoundryEndpoint));
 
         // Ensure sample agents exist in Foundry.
-        await CreateAgentsAsync(foundryEndpoint, configuration);
+        await CreateAgentAsync(foundryEndpoint, configuration);
 
         // Get input from command line or console
         string workflowInput = Application.GetInput(args);
@@ -44,7 +44,7 @@ internal sealed class Program
         await runner.ExecuteAsync(workflowFactory.CreateWorkflow, workflowInput);
     }
 
-    private static async Task CreateAgentsAsync(Uri foundryEndpoint, IConfiguration configuration)
+    private static async Task CreateAgentAsync(Uri foundryEndpoint, IConfiguration configuration)
     {
         AgentsClient agentsClient = new(foundryEndpoint, new AzureCliCredential());
 

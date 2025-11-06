@@ -26,6 +26,9 @@ namespace Microsoft.Agents.AI.Workflows.Declarative;
 /// <param name="httpClient">An optional <see cref="HttpClient"/> instance to be used for making HTTP requests. If not provided, a default client will be used.</param>
 public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential projectCredentials, HttpClient? httpClient = null) : WorkflowAgentProvider
 {
+    private readonly Dictionary<string, AgentVersion> _versionCache = [];
+    private readonly Dictionary<string, AIAgent> _agentCache = [];
+
     private AgentsClient? _agentsClient;
     private ConversationClient? _conversationClient;
 
@@ -104,9 +107,14 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
     /// <inheritdoc/>
     private async Task<AgentVersion> QueryAgentAsync(string agentName, string? agentVersion, CancellationToken cancellationToken = default)
     {
+        string agentKey = $"{agentName}:{agentVersion}";
+        if (this._versionCache.TryGetValue(agentKey, out AgentVersion? targetAgent))
+        {
+            return targetAgent;
+        }
+
         AgentsClient client = this.GetAgentsClient();
 
-        AgentVersion targetAgent;
         if (string.IsNullOrEmpty(agentVersion))
         {
             AgentRecord agentRecord =
@@ -125,11 +133,18 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
                     cancellationToken).ConfigureAwait(false);
         }
 
+        this._versionCache[agentKey] = targetAgent;
+
         return targetAgent;
     }
 
     private async Task<AIAgent> GetAgentAsync(AgentVersion agentDefinition, CancellationToken cancellationToken = default)
     {
+        if (this._agentCache.TryGetValue(agentDefinition.Id, out AIAgent? agent))
+        {
+            return agent;
+        }
+
         AgentsClient client = this.GetAgentsClient();
 
         IList<AITool>? tools = null;
@@ -137,12 +152,13 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
         {
             tools =
                 promptAgent.Tools
-                    .Where(tool => tool is not FunctionTool)
+                    .Where(tool => tool is not FunctionTool) // %%% V2 AGENT TOOLS
                     .Select(tool => tool.AsAITool())
                     .ToArray();
         }
 
-        AIAgent agent = client.GetAIAgent(agentDefinition, tools, clientFactory: null, openAIClientOptions: null, requireInvocableTools: false, cancellationToken);
+        //AIAgent agent = client.GetAIAgent(agentDefinition, tools, clientFactory: null, openAIClientOptions: null, requireInvocableTools: true, cancellationToken); // %%% V2 AGENT TOOLS
+        agent = client.GetAIAgent(agentDefinition, tools, clientFactory: null, openAIClientOptions: null, requireInvocableTools: false, cancellationToken);
 
         FunctionInvokingChatClient? functionInvokingClient = agent.GetService<FunctionInvokingChatClient>();
         if (functionInvokingClient is not null)
@@ -164,6 +180,8 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
                 }
             }
         }
+
+        this._agentCache[agentDefinition.Id] = agent;
 
         return agent;
     }
