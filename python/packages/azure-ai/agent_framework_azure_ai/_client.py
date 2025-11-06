@@ -200,7 +200,7 @@ class AzureAIClient(OpenAIBaseResponsesClient):
                     existing_agent = await self.project_client.agents.retrieve(agent_name)
                     self.agent_name = existing_agent.name
                     self.agent_version = existing_agent.versions.latest.version
-                    return {"name": agent_name, "version": self.agent_version, "type": "agent_reference"}
+                    return {"name": self.agent_name, "version": self.agent_version, "type": "agent_reference"}
                 except ResourceNotFoundError:
                     # Agent doesn't exist, fall through to creation logic
                     pass
