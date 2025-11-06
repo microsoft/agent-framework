@@ -81,7 +81,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
             ThreadId = "thread1",
             RunId = "run1",
             Messages = [new AGUIUserMessage { Id = "m1", Content = "Test" }],
-            Context = new Dictionary<string, string> { ["key1"] = "value1" }
+            Context = [new AGUIContextItem { Description = "key1", Value = "value1" }]
         };
         string json = JsonSerializer.Serialize(input, AGUIJsonSerializerContext.Default.RunAgentInput);
         httpContext.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(json));
@@ -218,7 +218,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
             }
 
             IEnumerable<ChatMessage> messages = input.Messages.AsChatMessages(AGUIJsonSerializerContext.Default.Options);
-            IEnumerable<KeyValuePair<string, string>> contextValues = input.Context;
+            IEnumerable<KeyValuePair<string, string>> contextValues = input.Context.Select(c => new KeyValuePair<string, string>(c.Description, c.Value));
             JsonElement forwardedProps = input.ForwardedProperties;
             AIAgent agent = factory(messages, [], contextValues, forwardedProps);
 

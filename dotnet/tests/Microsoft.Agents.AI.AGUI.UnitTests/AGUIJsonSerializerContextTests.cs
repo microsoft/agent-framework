@@ -74,7 +74,7 @@ public sealed class AGUIJsonSerializerContextTests
             RunId = "run1",
             Messages = [new AGUIUserMessage { Id = "m1", Content = "Test" }],
             State = JsonSerializer.SerializeToElement(new { key = "value" }),
-            Context = new Dictionary<string, string> { ["ctx1"] = "value1" },
+            Context = [new AGUIContextItem { Description = "ctx1", Value = "value1" }],
             ForwardedProperties = JsonSerializer.SerializeToElement(new { prop1 = "val1" })
         };
 
@@ -122,7 +122,10 @@ public sealed class AGUIJsonSerializerContextTests
                 new AGUIUserMessage { Id = "m1", Content = "First" },
                 new AGUIAssistantMessage { Id = "m2", Content = "Second" }
             ],
-            Context = new Dictionary<string, string> { ["key1"] = "value1", ["key2"] = "value2" }
+            Context = [
+                new AGUIContextItem { Description = "key1", Value = "value1" },
+                new AGUIContextItem { Description = "key2", Value = "value2" }
+            ]
         };
 
         // Act
@@ -134,7 +137,7 @@ public sealed class AGUIJsonSerializerContextTests
         Assert.Equal(original.ThreadId, deserialized.ThreadId);
         Assert.Equal(original.RunId, deserialized.RunId);
         Assert.Equal(2, deserialized.Messages.Count());
-        Assert.Equal(2, deserialized.Context.Count);
+        Assert.Equal(2, deserialized.Context.Length);
     }
 
     [Fact]
