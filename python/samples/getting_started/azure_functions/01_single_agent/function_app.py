@@ -1,8 +1,10 @@
-"""Azure Functions single-agent sample showcasing how to host a single Azure OpenAI agent.
+"""Host a single Azure OpenAI-powered agent inside Azure Functions.
 
-The sample reads the required endpoint and deployment environment variables, configures the Azure OpenAI chat client (using either an API key or Azure CLI credentials), and registers a joke-telling agent with an Azure Functions app that can optionally expose a health check.
+Components used in this sample:
+- AzureOpenAIChatClient to call the Azure OpenAI chat deployment.
+- AgentFunctionApp to expose HTTP endpoints via the Durable Functions extension.
 
-Summary: Demonstrates configuring and deploying a single 'Joker' agent via Azure Functions."""
+Prerequisites: set `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME` (plus `AZURE_OPENAI_API_KEY` or Azure CLI authentication) before starting the Functions host."""
 
 import logging
 import os
@@ -16,11 +18,13 @@ from agent_framework.azurefunctions import AgentFunctionApp
 logger = logging.getLogger(__name__)
 
 
+# 1. Define the environment variable keys required to configure Azure OpenAI.
 AZURE_OPENAI_ENDPOINT_ENV = "AZURE_OPENAI_ENDPOINT"
 AZURE_OPENAI_DEPLOYMENT_ENV = "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"
 AZURE_OPENAI_API_KEY_ENV = "AZURE_OPENAI_API_KEY"
 
 
+# 2. Build the Azure OpenAI chat client configuration used by the agent.
 def _build_client_kwargs() -> dict[str, Any]:
     """Construct Azure OpenAI client options."""
 
@@ -48,6 +52,7 @@ def _build_client_kwargs() -> dict[str, Any]:
     return client_kwargs
 
 
+# 3. Instantiate the agent with the chosen deployment and instructions.
 def _create_agent() -> Any:
     """Create the Joker agent."""
 
@@ -58,4 +63,18 @@ def _create_agent() -> Any:
     )
 
 
+# 4. Register the agent with AgentFunctionApp so Azure Functions exposes the required triggers.
 app = AgentFunctionApp(agents=[_create_agent()], enable_health_check=True)
+
+"""
+Expected output when invoking `POST /api/agents/Joker/run` with plain-text input:
+
+HTTP/1.1 202 Accepted
+{
+  "status": "accepted",
+  "response": "Agent request accepted",
+  "message": "Tell me a short joke about cloud computing.",
+  "conversation_id": "<guid>",
+  "correlation_id": "<guid>"
+}
+"""
