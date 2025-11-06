@@ -36,7 +36,7 @@ internal sealed class Program
         // can be executed just like any regular workflow.
         WorkflowFactory workflowFactory = new("ToolApproval.yaml", foundryEndpoint);
 
-        // Execute the workflow:  The WorkflowRunner demonstrates now to execute
+        // Execute the workflow:  The WorkflowRunner demonstrates how to execute
         // a workflow, handle the workflow events, and providing external input.
         // This also includes the ability to checkpoint workflow state and how to
         // resume execution.
