@@ -34,6 +34,9 @@
     <None Include="$(MSBuildThisFileDirectory)..\..\..\..\..\..\workflow-samples\DeepResearch.yaml">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
+    <None Include="wttr.json">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
 </Project>

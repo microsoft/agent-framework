@@ -1,5 +1,8 @@
 #
-# This workflow demonstrates a single agent interaction based on user input.
+# This workflow demonstrates how to use the Question action
+# to request user input and confirm it matches the original input.
+#
+# Note: This workflow doesn't make use of any agents.
 #
 kind: Workflow
 trigger:

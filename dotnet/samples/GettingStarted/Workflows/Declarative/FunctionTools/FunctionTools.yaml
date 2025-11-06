@@ -3,7 +3,7 @@
 # in a loop responding to user input.
 #
 # Example input: 
-# What is Microsoft Graph API used for?
+# What is the soup of the day?
 #
 kind: Workflow
 trigger:
@@ -17,22 +17,6 @@ trigger:
       conversationId: =System.ConversationId
       agent:
         name: MenuAgentAgent
-  
-    - kind: RequestExternalInput
-      id: request_requirements
-
-    - kind: ConditionGroup
-      id: check_completion
-      conditions:
-
-        - condition: =Upper(System.LastMessage.Text) = "EXIT"
-          id: check_done
-          actions:
-
-            - kind: EndWorkflow
-              id: all_done
-
-      elseActions:
-        - kind: GotoAction
-          id: goto_search
-          actionId: invoke_search
+      input:
+        externalLoop:
+          when: =Upper(System.LastMessage.Text) <> "EXIT"
