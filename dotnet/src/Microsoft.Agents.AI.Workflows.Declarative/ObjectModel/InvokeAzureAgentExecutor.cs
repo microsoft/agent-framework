@@ -5,7 +5,6 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Azure;
 using Microsoft.Agents.AI.Workflows.Declarative.Events;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
@@ -23,7 +22,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
 {
     public static class Steps
     {
-        public static string ExternaIInput(string id) => $"{id}_{nameof(ExternaIInput)}";
+        public static string ExternaInput(string id) => $"{id}_{nameof(ExternaInput)}";
         public static string Resume(string id) => $"{id}_{nameof(Resume)}";
     }
 

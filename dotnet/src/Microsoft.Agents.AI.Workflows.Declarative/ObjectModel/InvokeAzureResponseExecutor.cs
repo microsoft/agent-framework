@@ -19,7 +19,7 @@ internal sealed class InvokeAzureResponseExecutor(InvokeAzureResponse model, Wor
 {
     public static class Steps
     {
-        public static string ExternaIInput(string id) => $"{id}_{nameof(ExternaIInput)}";
+        public static string ExternaInput(string id) => $"{id}_{nameof(ExternaInput)}";
         public static string Resume(string id) => $"{id}_{nameof(Resume)}";
     }
 

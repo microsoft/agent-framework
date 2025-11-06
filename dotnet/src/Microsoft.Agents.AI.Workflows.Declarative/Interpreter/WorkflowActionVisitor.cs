@@ -359,7 +359,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         this._workflowModel.AddLink(action.Id, postId, InvokeAzureAgentExecutor.RequiresNothing);
 
         // Define request-port for function calling action
-        string externalInputPortId = InvokeAzureAgentExecutor.Steps.ExternaIInput(action.Id);
+        string externalInputPortId = InvokeAzureAgentExecutor.Steps.ExternaInput(action.Id);
         RequestPortAction externalInputPort = new(RequestPort.Create<ExternalInputRequest, ExternalInputResponse>(externalInputPortId));
         this._workflowModel.AddNode(externalInputPort, action.ParentId);
         this._workflowModel.AddLink(action.Id, externalInputPort.Id, InvokeAzureAgentExecutor.RequiresInput);
