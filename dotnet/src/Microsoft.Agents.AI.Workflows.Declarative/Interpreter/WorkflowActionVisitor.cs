@@ -268,7 +268,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     {
         this.Trace(item);
 
-        RequestExternalInputExecutor action = new(item, this._workflowState);
+        RequestExternalInputExecutor action = new(item, this._workflowOptions.AgentProvider, this._workflowState);
         this.ContinueWith(action);
 
         // Define input action
@@ -362,14 +362,16 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         string externalInputPortId = InvokeAzureAgentExecutor.Steps.ExternalInput(action.Id);
         RequestPortAction externalInputPort = new(RequestPort.Create<ExternalInputRequest, ExternalInputResponse>(externalInputPortId));
         this._workflowModel.AddNode(externalInputPort, action.ParentId);
-        this._workflowModel.AddLink(action.Id, externalInputPort.Id, InvokeAzureAgentExecutor.RequiresInput);
+        this._workflowModel.AddLink(action.Id, externalInputPortId, InvokeAzureAgentExecutor.RequiresInput);
 
         // Request ports always transitions to resume
         string resumeId = InvokeAzureAgentExecutor.Steps.Resume(action.Id);
-        this._workflowModel.AddNode(new DelegateActionExecutor<ExternalInputResponse>(resumeId, this._workflowState, action.ResumeAsync), action.ParentId);
+        this._workflowModel.AddNode(new DelegateActionExecutor<ExternalInputResponse>(resumeId, this._workflowState, action.ResumeAsync, emitResult: false), action.ParentId);
         this._workflowModel.AddLink(externalInputPortId, resumeId);
         // Transition to post action if complete
         this._workflowModel.AddLink(resumeId, postId, InvokeAzureAgentExecutor.RequiresNothing);
+        // Transition to request port if more input is required
+        this._workflowModel.AddLink(resumeId, externalInputPortId, InvokeAzureAgentExecutor.RequiresInput);
 
         // Define post action
         this._workflowModel.AddNode(new DelegateActionExecutor(postId, this._workflowState, action.CompleteAsync), action.ParentId);

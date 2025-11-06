@@ -90,22 +90,18 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
             // Not valid json, skip assignment.
         }
 
-        bool isComplete = true;
         if (this.Model.ExternalLoop?.When is not null)
         {
             bool requestInput = this.Evaluator.GetValue(this.Model.ExternalLoop.When).Value;
             if (requestInput)
             {
-                isComplete = false;
                 ExternalInputRequest inputRequest = new(agentResponse);
                 await context.SendMessageAsync(inputRequest, cancellationToken).ConfigureAwait(false);
+                return;
             }
         }
 
-        if (isComplete)
-        {
-            await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
-        }
+        await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
     }
 
     private IEnumerable<ChatMessage>? GetInputMessages()

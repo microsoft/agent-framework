@@ -66,10 +66,10 @@ internal sealed class WorkflowRunner
         Checkpointed<StreamingRun> run = await InProcessExecution.StreamAsync(workflow, input, checkpointManager).ConfigureAwait(false);
 
         bool isComplete = false;
-        object? response = null;
+        ExternalResponse? requestResponse = null;
         do
         {
-            ExternalRequest? externalRequest = await this.MonitorAndDisposeWorkflowRunAsync(run, response).ConfigureAwait(false);
+            ExternalRequest? externalRequest = await this.MonitorAndDisposeWorkflowRunAsync(run, requestResponse).ConfigureAwait(false);
             if (externalRequest is not null)
             {
                 Notify("\nWORKFLOW: Yield\n");
@@ -80,7 +80,8 @@ internal sealed class WorkflowRunner
                 }
 
                 // Process the external request.
-                response = await this.HandleExternalRequestAsync(externalRequest).ConfigureAwait(false);
+                object response = await this.HandleExternalRequestAsync(externalRequest).ConfigureAwait(false);
+                requestResponse = externalRequest.CreateResponse(response);
 
                 // Let's resume on an entirely new workflow instance to demonstrate checkpoint portability.
                 workflow = workflowProvider.Invoke();
@@ -101,7 +102,7 @@ internal sealed class WorkflowRunner
         Notify("\nWORKFLOW: Done!\n");
     }
 
-    public async Task<ExternalRequest?> MonitorAndDisposeWorkflowRunAsync(Checkpointed<StreamingRun> run, object? response = null)
+    public async Task<ExternalRequest?> MonitorAndDisposeWorkflowRunAsync(Checkpointed<StreamingRun> run, ExternalResponse? response = null)
     {
 #pragma warning disable CA2007 // Consider calling ConfigureAwait on the awaited task
         await using IAsyncDisposable disposeRun = run;
@@ -109,6 +110,14 @@ internal sealed class WorkflowRunner
 
         bool hasStreamed = false;
         string? messageId = null;
+
+        bool shouldExit = false;
+        ExternalRequest? externalResponse = null;
+
+        if (response is not null)
+        {
+            await run.Run.SendResponseAsync(response).ConfigureAwait(false);
+        }
 
         await foreach (WorkflowEvent workflowEvent in run.Run.WatchStreamAsync().ConfigureAwait(false))
         {
@@ -140,20 +149,15 @@ internal sealed class WorkflowRunner
                 case SuperStepCompletedEvent checkpointCompleted:
                     this.LastCheckpoint = checkpointCompleted.CompletionInfo?.Checkpoint;
                     Debug.WriteLine($"CHECKPOINT x{checkpointCompleted.StepNumber} [{this.LastCheckpoint?.CheckpointId ?? "(none)"}]");
+                    if (externalResponse is not null)
+                    {
+                        shouldExit = true;
+                    }
                     break;
 
                 case RequestInfoEvent requestInfo:
                     Debug.WriteLine($"REQUEST #{requestInfo.Request.RequestId}");
-                    if (response is not null)
-                    {
-                        ExternalResponse requestResponse = requestInfo.Request.CreateResponse(response);
-                        await run.Run.SendResponseAsync(requestResponse).ConfigureAwait(false);
-                        response = null;
-                    }
-                    else
-                    {
-                        return requestInfo.Request;
-                    }
+                    externalResponse = requestInfo.Request;
                     break;
 
                 case ConversationUpdateEvent invokeEvent:
@@ -236,10 +240,19 @@ internal sealed class WorkflowRunner
                         Console.ResetColor();
                     }
                     break;
+
+                default:
+                    Debug.WriteLine($"UNHANDLED EVENT: {workflowEvent.GetType().Name}");
+                    break;
+            }
+
+            if (shouldExit)
+            {
+                break;
             }
         }
 
-        return default;
+        return externalResponse;
     }
 
     /// <summary>

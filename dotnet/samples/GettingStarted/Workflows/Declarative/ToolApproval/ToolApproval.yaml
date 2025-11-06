@@ -17,7 +17,7 @@ trigger:
       conversationId: =System.ConversationId
       agent:
         name: DocumentSearchAgent
-  
+
     - kind: RequestExternalInput
       id: request_requirements
 
