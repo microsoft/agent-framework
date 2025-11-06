@@ -11,7 +11,8 @@ from pydantic import Field
 """
 Azure AI Agent Basic Example
 
-This sample demonstrates usage of latest agent version created in the service.
+This sample demonstrates how to reuse the latest version of an existing agent instead of creating a new agent version on each instantiation.
+The first call creates a new agent, while subsequent calls with `use_latest_version=True` reuse the latest agent version.
 """
 
 
