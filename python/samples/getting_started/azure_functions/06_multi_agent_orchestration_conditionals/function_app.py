@@ -71,8 +71,6 @@ def _build_client_kwargs() -> dict[str, Any]:
 
 
 # 3. Instantiate both agents so they can be registered with AgentFunctionApp.
-
-
 def _create_agents() -> list[Any]:
     client_kwargs = _build_client_kwargs()
     chat_client = AzureOpenAIChatClient(**client_kwargs)
