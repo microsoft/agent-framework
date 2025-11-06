@@ -90,6 +90,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
             // Not valid json, skip assignment.
         }
 
+        // %%% FIX NESTING ON PACKAGE UPDATE
         if (this.Model.ExternalLoop?.When is not null)
         {
             bool requestInput = this.Evaluator.GetValue(this.Model.ExternalLoop.When).Value;

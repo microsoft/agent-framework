@@ -17,6 +17,7 @@ trigger:
       conversationId: =System.ConversationId
       agent:
         name: MenuAgentAgent
-      input:
-        externalLoop:
-          when: =Upper(System.LastMessage.Text) <> "EXIT"
+      #input:
+      # // %%% FIX NESTING ON PACKAGE UPDATE
+      externalLoop:
+        when: =Upper(System.LastMessage.Text) <> "EXIT"
