@@ -25,14 +25,30 @@ internal static class AGUIChatMessageExtensions
 
             if (message is AGUIToolMessage toolMessage)
             {
+                object? result;
+                if (string.IsNullOrEmpty(toolMessage.Content))
+                {
+                    result = toolMessage.Content;
+                }
+                else
+                {
+                    // Try to deserialize as JSON, but fall back to string if it fails
+                    try
+                    {
+                        result = JsonSerializer.Deserialize(toolMessage.Content, AGUIJsonSerializerContext.Default.JsonElement);
+                    }
+                    catch (JsonException)
+                    {
+                        result = toolMessage.Content;
+                    }
+                }
+
                 yield return new ChatMessage(
                     role,
                     [
                         new FunctionResultContent(
                             toolMessage.ToolCallId,
-                             string.IsNullOrEmpty(toolMessage.Content) ?
-                                toolMessage.Content :
-                                JsonSerializer.Deserialize(toolMessage.Content, AGUIJsonSerializerContext.Default.JsonElement))
+                            result)
                     ]);
             }
             else if (message is AGUIAssistantMessage assistantMessage && assistantMessage.ToolCalls is { Length: > 0 })

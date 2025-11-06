@@ -301,12 +301,13 @@ internal static class ChatResponseUpdateAGUIExtensions
             }
 
             // Emit text content if present
-            if (chatResponse is { Contents.Count: > 0 } && chatResponse.Contents[0] is TextContent textContent)
+            if (chatResponse is { Contents.Count: > 0 } && chatResponse.Contents[0] is TextContent textContent &&
+                !string.IsNullOrEmpty(textContent.Text))
             {
                 yield return new TextMessageContentEvent
                 {
                     MessageId = chatResponse.MessageId!,
-                    Delta = textContent.Text ?? string.Empty
+                    Delta = textContent.Text
                 };
             }
 

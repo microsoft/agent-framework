@@ -31,9 +31,18 @@ internal sealed class RunAgentInput
     public IEnumerable<AGUITool>? Tools { get; set; }
 
     [JsonPropertyName("context")]
-    public Dictionary<string, string> Context { get; set; } = new(StringComparer.Ordinal);
+    public AGUIContextItem[] Context { get; set; } = [];
 
     [JsonPropertyName("forwardedProperties")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public JsonElement ForwardedProperties { get; set; }
+}
+
+internal sealed class AGUIContextItem
+{
+    [JsonPropertyName("description")]
+    public string Description { get; set; } = string.Empty;
+
+    [JsonPropertyName("value")]
+    public string Value { get; set; } = string.Empty;
 }
