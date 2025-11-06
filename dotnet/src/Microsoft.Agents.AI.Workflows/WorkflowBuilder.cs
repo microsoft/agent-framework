@@ -28,7 +28,7 @@ public class WorkflowBuilder
     }
 
     private int _edgeCount;
-    private readonly Dictionary<string, ExecutorBinding> _executors = [];
+    private readonly Dictionary<string, ExecutorBinding> _executorBindings = [];
     private readonly Dictionary<string, HashSet<Edge>> _edges = [];
     private readonly HashSet<string> _unboundExecutors = [];
     private readonly HashSet<EdgeConnection> _conditionlessConnections = [];
@@ -51,51 +51,51 @@ public class WorkflowBuilder
         this._startExecutorId = this.Track(start).Id;
     }
 
-    private ExecutorBinding Track(ExecutorBinding registration)
+    private ExecutorBinding Track(ExecutorBinding binding)
     {
         // If the executor is unbound, create an entry for it, unless it already exists.
         // Otherwise, update the entry for it, and remove the unbound tag
-        if (registration.IsPlaceholder && !this._executors.ContainsKey(registration.Id))
+        if (binding.IsPlaceholder && !this._executorBindings.ContainsKey(binding.Id))
         {
             // If this is an unbound executor, we need to track it separately
-            this._unboundExecutors.Add(registration.Id);
+            this._unboundExecutors.Add(binding.Id);
         }
-        else if (!registration.IsPlaceholder)
+        else if (!binding.IsPlaceholder)
         {
             // If there is already a bound executor with this ID, we need to validate (to best efforts)
             // that the two are matching (at least based on type)
-            if (this._executors.TryGetValue(registration.Id, out ExecutorBinding? existing))
+            if (this._executorBindings.TryGetValue(binding.Id, out ExecutorBinding? existing))
             {
-                if (existing.ExecutorType != registration.ExecutorType)
+                if (existing.ExecutorType != binding.ExecutorType)
                 {
                     throw new InvalidOperationException(
-                        $"Cannot bind executor with ID '{registration.Id}' because an executor with the same ID but a different type ({existing.ExecutorType.Name} vs {registration.ExecutorType.Name}) is already bound.");
+                        $"Cannot bind executor with ID '{binding.Id}' because an executor with the same ID but a different type ({existing.ExecutorType.Name} vs {binding.ExecutorType.Name}) is already bound.");
                 }
 
                 if (existing.RawValue is not null &&
-                    !ReferenceEquals(existing.RawValue, registration.RawValue))
+                    !ReferenceEquals(existing.RawValue, binding.RawValue))
                 {
                     throw new InvalidOperationException(
-                        $"Cannot bind executor with ID '{registration.Id}' because an executor with the same ID but different instance is already bound.");
+                        $"Cannot bind executor with ID '{binding.Id}' because an executor with the same ID but different instance is already bound.");
                 }
             }
             else
             {
-                this._executors[registration.Id] = registration;
-                if (this._unboundExecutors.Contains(registration.Id))
+                this._executorBindings[binding.Id] = binding;
+                if (this._unboundExecutors.Contains(binding.Id))
                 {
-                    this._unboundExecutors.Remove(registration.Id);
+                    this._unboundExecutors.Remove(binding.Id);
                 }
             }
         }
 
-        if (registration is RequestPortBinding portRegistration)
+        if (binding is RequestPortBinding portRegistration)
         {
             RequestPort port = portRegistration.Port;
             this._requestPorts[port.Id] = port;
         }
 
-        return registration;
+        return binding;
     }
 
     /// <summary>
@@ -369,25 +369,86 @@ public class WorkflowBuilder
     public WorkflowBuilder AddFanInEdge(ExecutorBinding target, params IEnumerable<ExecutorBinding> sources)
         => this.AddFanInEdge(sources, target);
 
-    private void Validate()
+    private void Validate(bool validateOrphans)
     {
-        // Validate that there are no unbound executors
+        // Check that there are no "unbound" (defined as placeholders that have not been replaced by real bindings)
+        // executors.
         if (this._unboundExecutors.Count > 0)
         {
             throw new InvalidOperationException(
                 $"Workflow cannot be built because there are unbound executors: {string.Join(", ", this._unboundExecutors)}.");
         }
 
-        // TODO: This is likely a pipe-dream, but can we do any type-checking on the edges? (Not without instantiating the executors...)
+        // Make sure that all nodes are connected to the start executor (transitively)
+        HashSet<string> remainingExecutors = new(this._executorBindings.Keys);
+        Queue<string> toVisit = new([this._startExecutorId]);
+
+        if (!validateOrphans)
+        {
+            return;
+        }
+
+        while (toVisit.Count > 0)
+        {
+            string currentId = toVisit.Dequeue();
+            bool unvisited = remainingExecutors.Remove(currentId);
+
+            if (unvisited &&
+                this._edges.TryGetValue(currentId, out HashSet<Edge>? outgoingEdges))
+            {
+                foreach (Edge edge in outgoingEdges)
+                {
+                    switch (edge.Data)
+                    {
+                        case DirectEdgeData directEdgeData:
+                            toVisit.Enqueue(directEdgeData.SinkId);
+                            break;
+                        case FanOutEdgeData fanOutEdgeData:
+                            foreach (string targetId in fanOutEdgeData.SinkIds)
+                            {
+                                toVisit.Enqueue(targetId);
+                            }
+                            break;
+                        case FanInEdgeData fanInEdgeData:
+                            toVisit.Enqueue(fanInEdgeData.SinkId);
+                            break;
+                    }
+
+                    // Ideally we would be able to validate that the types accepted by the target executor(s) are compatible
+                    // with those produced by the source executor. However, this is not possible at this time for a number of
+                    // reasons:
+                    //
+                    // - Right now we do not require users to specify the types produced by Executors exhaustively. This will
+                    //   likely change at some point in the future as part of implementing support for polymorphism in message
+                    //   handling. Until then it cannot be clear what types are produced by an upstream Executor.
+                    // - Edges with conditionals / target selectors can route messages
+                    // - We intend to expand the API surface of FanIn edges to allow different aggregation and synchronization
+                    //   strategies; this could introduce type transformations which we may not be able to validate here.
+                    // - All of the above seem like they can be solved with some effort, but the biggest blocker is that we
+                    //   currently support async Executor factories, and Executors register message handlers at runtime, so we
+                    //   cannot know which types they accept until they are instantiated, and we cannot instantiate them at
+                    //   build time because we are in an obligate (for DI-compatibility) synchronous context.
+                    //
+                    // TODO: Revisit the async Executor factory decision if we have a way to deal with "conditional" and
+                    //   "target selector-based" routing.
+                }
+            }
+        }
+
+        if (remainingExecutors.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"Workflow cannot be built because there are unreachable executors: {string.Join(", ", remainingExecutors)}.");
+        }
     }
 
-    private Workflow BuildInternal(Activity? activity = null)
+    private Workflow BuildInternal(bool validateOrphans, Activity? activity = null)
     {
         activity?.AddEvent(new ActivityEvent(EventNames.BuildStarted));
 
         try
         {
-            this.Validate();
+            this.Validate(validateOrphans);
         }
         catch (Exception ex) when (activity is not null)
         {
@@ -403,7 +464,7 @@ public class WorkflowBuilder
 
         var workflow = new Workflow(this._startExecutorId, this._name, this._description)
         {
-            ExecutorBindings = this._executors,
+            ExecutorBindings = this._executorBindings,
             Edges = this._edges,
             Ports = this._requestPorts,
             OutputExecutors = this._outputExecutors
@@ -433,13 +494,15 @@ public class WorkflowBuilder
     /// <summary>
     /// Builds and returns a workflow instance.
     /// </summary>
+    /// <param name="validateOrphans">Specifies whether workflow validation should check for Executor nodes that are
+    /// not reachable from the starting executor.</param>
     /// <exception cref="InvalidOperationException">Thrown if there are unbound executors in the workflow definition,
     /// or if the start executor is not bound.</exception>
-    public Workflow Build()
+    public Workflow Build(bool validateOrphans = true)
     {
         using Activity? activity = s_activitySource.StartActivity(ActivityNames.WorkflowBuild);
 
-        var workflow = this.BuildInternal(activity);
+        var workflow = this.BuildInternal(validateOrphans, activity);
 
         activity?.AddEvent(new ActivityEvent(EventNames.BuildCompleted));
 

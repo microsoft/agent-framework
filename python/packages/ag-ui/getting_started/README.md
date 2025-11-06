@@ -629,7 +629,7 @@ Now that you understand the basics of AG-UI, you can:
 
 ## Additional Resources
 
-- [AG-UI Examples](../examples/README.md): Complete working examples for all 7 features
+- [AG-UI Examples](../agent_framework_ag_ui_examples/README.md): Complete working examples for all 7 features
 - [Agent Framework Documentation](../../core/README.md): Learn more about creating agents
 - [AG-UI Protocol Spec](https://docs.ag-ui.com/): Official protocol documentation
 
