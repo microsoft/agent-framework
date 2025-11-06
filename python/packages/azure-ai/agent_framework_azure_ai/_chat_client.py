@@ -859,7 +859,7 @@ class AzureAIAgentClient(BaseChatClient):
                         config_args["market"] = market
                     if set_lang := additional_props.get("set_lang"):
                         config_args["set_lang"] = set_lang
-                    # Bing Grounding (support both connection_id and connection_name)
+                    # Bing Grounding
                     connection_id = additional_props.get("connection_id") or os.getenv("BING_CONNECTION_ID")
                     # Custom Bing Search
                     custom_connection_id = additional_props.get("custom_connection_id") or os.getenv(
@@ -873,7 +873,7 @@ class AzureAIAgentClient(BaseChatClient):
                         if connection_id:
                             conn_id = connection_id
                         else:
-                            raise ServiceInitializationError("Neither connection_id nor connection_name provided.")
+                            raise ServiceInitializationError("Parameter connection_id is not provided.")
                         bing_search = BingGroundingTool(connection_id=conn_id, **config_args)
                     if custom_connection_id and custom_instance_name:
                         bing_search = BingCustomSearchTool(
