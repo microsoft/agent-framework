@@ -50,7 +50,7 @@ public static partial class Mem0JsonUtilities
         options.TypeInfoResolverChain.Add(AgentAbstractionsJsonUtilities.DefaultOptions.TypeInfoResolver!);
         options.TypeInfoResolverChain.Add(JsonContext.Default.Options.TypeInfoResolver!);
 
-        // Chain with all supported types from Microsoft.Extensions.AI.Abstractions.
+
         if (JsonSerializer.IsReflectionEnabledByDefault)
         {
             options.Converters.Add(new JsonStringEnumConverter());
