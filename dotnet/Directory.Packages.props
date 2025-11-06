@@ -105,6 +105,7 @@
     <PackageVersion Include="Microsoft.Azure.Functions.Worker.Extensions.DurableTask.AzureManaged" Version="1.0.0" />
     <PackageVersion Include="Microsoft.Azure.Functions.Worker.Extensions.Http" Version="3.3.0" />
     <PackageVersion Include="Microsoft.Azure.Functions.Worker.Extensions.Http.AspNetCore" Version="2.1.0" />
+    <PackageVersion Include="Microsoft.Azure.Functions.Worker.Extensions.Mcp" Version="1.0.0" />
     <PackageVersion Include="Microsoft.Azure.Functions.Worker.Sdk" Version="2.0.5" />
     <!-- Community -->
     <PackageVersion Include="System.Linq.Async" Version="6.0.3" />

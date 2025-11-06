@@ -3,6 +3,7 @@
 using System.Net;
 using Microsoft.Agents.AI.DurableTask;
 using Microsoft.Azure.Functions.Worker;
+using Microsoft.Azure.Functions.Worker.Extensions.Mcp;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.DurableTask.Client;
 using Microsoft.Extensions.AI;
@@ -12,8 +13,12 @@ namespace Microsoft.Agents.AI.Hosting.AzureFunctions;
 
 internal static class BuiltInFunctions
 {
+    internal const string HttpPrefix = "http-";
+    internal const string McpToolPrefix = "mcptool-";
+
     internal static readonly string RunAgentHttpFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(RunAgentHttpAsync)}";
     internal static readonly string RunAgentEntityFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(InvokeAgentAsync)}";
+    internal static readonly string RunAgentMcpToolFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(RunMcpToolAsync)}";
 
     // Exposed as an entity trigger via AgentFunctionsProvider
     public static async Task InvokeAgentAsync(
@@ -91,19 +96,52 @@ internal static class BuiltInFunctions
         return httpResponse;
     }
 
-    private static string GetAgentName(FunctionContext context)
+    public static async Task<string?> RunMcpToolAsync(
+        [McpToolTrigger("BuiltInMcpTool")] ToolInvocationContext context,
+        [DurableClient] DurableTaskClient client,
+        FunctionContext functionContext)
     {
-        // Remove the trailing _http from the function name
-        string functionName = context.FunctionDefinition.Name;
-        if (!functionName.EndsWith("_http", StringComparison.Ordinal))
+        if (context.Arguments is null)
         {
-            // This should never happen because the function metadata provider ensures
-            // that the function name ends with '_http'.
-            throw new InvalidOperationException(
-                $"Built-in HTTP trigger function name '{functionName}' does not end with '_http'.");
+            throw new ArgumentException("MCP Tool invocation is missing required arguments.");
         }
 
-        return functionName[..^5];
+        if (!context.Arguments.TryGetValue("query", out object? queryObj) || queryObj is not string query)
+        {
+            throw new ArgumentException("MCP Tool invocation is missing required 'query' argument of type string.");
+        }
+
+        string agentName = context.Name;
+
+        // Derive session id: try to parse provided threadId, otherwise create a new one.
+        AgentSessionId sessionId = context.Arguments.TryGetValue("threadId", out object? threadObj) && threadObj is string threadId && !string.IsNullOrWhiteSpace(threadId)
+            ? AgentSessionId.Parse(threadId)
+            : new AgentSessionId(agentName, functionContext.InvocationId);
+
+        AIAgent agentProxy = client.AsDurableAgentProxy(functionContext, agentName);
+
+        AgentRunResponse agentResponse = await agentProxy.RunAsync(
+            message: new ChatMessage(ChatRole.User, query),
+            thread: new DurableAgentThread(sessionId),
+            options: null);
+
+        return agentResponse.Text;
+    }
+
+    private static string GetAgentName(FunctionContext context)
+    {
+        // Check if the function name starts with the HttpPrefix
+        string functionName = context.FunctionDefinition.Name;
+        if (!functionName.StartsWith(HttpPrefix, StringComparison.Ordinal))
+        {
+            // This should never happen because the function metadata provider ensures
+            // that the function name starts with the HttpPrefix (http-).
+            throw new InvalidOperationException(
+                $"Built-in HTTP trigger function name '{functionName}' does not start with '{HttpPrefix}'.");
+        }
+
+        // Remove the HttpPrefix from the function name to get the agent name.
+        return functionName[HttpPrefix.Length..];
     }
 
     /// <summary>
