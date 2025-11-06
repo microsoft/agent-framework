@@ -14,4 +14,4 @@ These example workflows may be executed by the workflow
 that are present in this repository.
 
 > See the [README.md](../dotnet/samples/GettingStarted/Workflows/Declarative/README.md) 
- associate with the samples for configuration details.
+ associated with the samples for configuration details.
