@@ -66,8 +66,8 @@ internal sealed class Program
             Tools =
                 {
                     ResponseTool.CreateMcpTool(
-                        "microsoft_docs",
-                        new Uri("https://learn.microsoft.com/api/mcp"),
+                        serverLabel: "microsoft_docs",
+                        serverUri: new Uri("https://learn.microsoft.com/api/mcp"),
                         toolCallApprovalPolicy: new McpToolCallApprovalPolicy(GlobalMcpToolCallApprovalPolicy.AlwaysRequireApproval))
                 }
         };
