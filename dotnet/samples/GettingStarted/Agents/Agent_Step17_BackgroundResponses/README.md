@@ -1,6 +1,6 @@
 ﻿# What This Sample Shows
 
-This sample demonstrates how to use background responses with ChatCompletionAgent and OpenAI Responses for long-running operations. Background responses support:
+This sample demonstrates how to use background responses with ChatCompletionAgent and Azure OpenAI Responses for long-running operations. Background responses support:
 
 - **Polling for completion** - Non-streaming APIs can start a background operation and return a continuation token. Poll with the token until the response completes.
 - **Resuming after interruption** - Streaming APIs can be interrupted and resumed from the last update using the continuation token.
@@ -14,7 +14,10 @@ For more information, see the [official documentation](https://learn.microsoft.c
 Before you begin, ensure you have the following prerequisites:
 
 - .NET 8.0 SDK or later
-- OpenAI api key
+- Azure OpenAI service endpoint and deployment configured
+- Azure CLI installed and authenticated (for Azure credential authentication)
+
+**Note**: This demo uses Azure CLI credentials for authentication. Make sure you're logged in with `az login` and have access to the Azure OpenAI resource. For more information, see the [Azure CLI documentation](https://learn.microsoft.com/cli/azure/authenticate-azure-cli-interactively).
 
 Set the following environment variables:
 

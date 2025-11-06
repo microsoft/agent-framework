@@ -408,7 +408,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
                     run_options["tools"] = tool_definitions
 
                 if chat_options.tool_choice == "none" or chat_options.tool_choice == "auto":
-                    run_options["tool_choice"] = chat_options.tool_choice
+                    run_options["tool_choice"] = chat_options.tool_choice.mode
                 elif (
                     isinstance(chat_options.tool_choice, ToolMode)
                     and chat_options.tool_choice == "required"
@@ -502,8 +502,6 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
                     tool_outputs = []
                 if function_result_content.result:
                     output = prepare_function_call_results(function_result_content.result)
-                elif function_result_content.exception:
-                    output = "Error: " + str(function_result_content.exception)
                 else:
                     output = "No output received."
                 tool_outputs.append(ToolOutput(tool_call_id=call_id, output=output))

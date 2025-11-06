@@ -15,6 +15,8 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses;
 /// </summary>
 internal static class AgentRunResponseExtensions
 {
+    private static ChatRole s_DeveloperRole => new("developer");
+
     /// <summary>
     /// Converts an AgentRunResponse to a Response model.
     /// </summary>
@@ -44,38 +46,38 @@ internal static class AgentRunResponseExtensions
 
         return new Response
         {
-            Id = context.ResponseId,
-            CreatedAt = (agentRunResponse.CreatedAt ?? DateTimeOffset.UtcNow).ToUnixTimeSeconds(),
-            Model = request.Agent?.Name ?? request.Model,
-            Status = ResponseStatus.Completed,
             Agent = request.Agent?.ToAgentId(),
+            Background = request.Background,
             Conversation = request.Conversation ?? (context.ConversationId != null ? new ConversationReference { Id = context.ConversationId } : null),
-            Metadata = request.Metadata is IReadOnlyDictionary<string, string> metadata ? new Dictionary<string, string>(metadata) : [],
+            CreatedAt = (agentRunResponse.CreatedAt ?? DateTimeOffset.UtcNow).ToUnixTimeSeconds(),
+            Error = null,
+            Id = context.ResponseId,
             Instructions = request.Instructions,
-            Temperature = request.Temperature ?? 1.0,
-            TopP = request.TopP ?? 1.0,
-            Output = output,
-            Usage = agentRunResponse.Usage.ToResponseUsage(),
-            ParallelToolCalls = request.ParallelToolCalls ?? true,
-            Tools = [.. request.Tools ?? []],
-            ToolChoice = request.ToolChoice,
-            ServiceTier = request.ServiceTier ?? "default",
-            Store = request.Store ?? true,
-            PreviousResponseId = request.PreviousResponseId,
-            Reasoning = request.Reasoning,
-            Text = request.Text,
             MaxOutputTokens = request.MaxOutputTokens,
+            MaxToolCalls = request.MaxToolCalls,
+            Metadata = request.Metadata is IReadOnlyDictionary<string, string> metadata ? new Dictionary<string, string>(metadata) : [],
+            Model = request.Agent?.Name ?? request.Model,
+            Output = output,
+            ParallelToolCalls = request.ParallelToolCalls ?? true,
+            PreviousResponseId = request.PreviousResponseId,
+            Prompt = request.Prompt,
+            PromptCacheKey = request.PromptCacheKey,
+            Reasoning = request.Reasoning,
+            SafetyIdentifier = request.SafetyIdentifier,
+            ServiceTier = request.ServiceTier ?? "default",
+            Status = ResponseStatus.Completed,
+            Store = request.Store ?? true,
+            Temperature = request.Temperature ?? 1.0,
+            Text = request.Text,
+            ToolChoice = request.ToolChoice,
+            Tools = [.. request.Tools ?? []],
+            TopLogprobs = request.TopLogprobs,
+            TopP = request.TopP ?? 1.0,
             Truncation = request.Truncation,
+            Usage = agentRunResponse.Usage.ToResponseUsage(),
 #pragma warning disable CS0618 // Type or member is obsolete
             User = request.User,
 #pragma warning restore CS0618 // Type or member is obsolete
-            PromptCacheKey = request.PromptCacheKey,
-            SafetyIdentifier = request.SafetyIdentifier,
-            TopLogprobs = request.TopLogprobs,
-            MaxToolCalls = request.MaxToolCalls,
-            Background = request.Background,
-            Prompt = request.Prompt,
-            Error = null
         };
     }
 
@@ -88,22 +90,19 @@ internal static class AgentRunResponseExtensions
     /// <returns>An enumerable of ItemResource objects.</returns>
     public static IEnumerable<ItemResource> ToItemResource(this ChatMessage message, IdGenerator idGenerator, JsonSerializerOptions jsonSerializerOptions)
     {
-        IList<ItemContent> contents = [];
-        foreach (var content in message.Contents)
+        List<ItemContent> contents = [];
+        foreach (AIContent content in message.Contents)
         {
             switch (content)
             {
                 case FunctionCallContent functionCallContent:
-                    // message.Role == ChatRole.Assistant
                     yield return functionCallContent.ToFunctionToolCallItemResource(idGenerator.GenerateFunctionCallId(), jsonSerializerOptions);
                     break;
                 case FunctionResultContent functionResultContent:
-                    // message.Role == ChatRole.Tool
                     yield return functionResultContent.ToFunctionToolCallOutputItemResource(
                         idGenerator.GenerateFunctionOutputId());
                     break;
                 default:
-                    // message.Role == ChatRole.Assistant
                     if (ItemContentConverter.ToItemContent(content) is { } itemContent)
                     {
                         contents.Add(itemContent);
@@ -115,12 +114,34 @@ internal static class AgentRunResponseExtensions
 
         if (contents.Count > 0)
         {
-            yield return new ResponsesAssistantMessageItemResource
-            {
-                Id = idGenerator.GenerateMessageId(),
-                Status = ResponsesMessageItemResourceStatus.Completed,
-                Content = contents
-            };
+            List<ItemContent> contentArray = contents;
+            string messageId = idGenerator.GenerateMessageId();
+
+            yield return
+                message.Role == ChatRole.User ? new ResponsesUserMessageItemResource
+                {
+                    Id = messageId,
+                    Status = ResponsesMessageItemResourceStatus.Completed,
+                    Content = contentArray
+                } :
+                message.Role == ChatRole.System ? new ResponsesSystemMessageItemResource
+                {
+                    Id = messageId,
+                    Status = ResponsesMessageItemResourceStatus.Completed,
+                    Content = contentArray
+                } :
+                message.Role == s_DeveloperRole ? new ResponsesDeveloperMessageItemResource
+                {
+                    Id = messageId,
+                    Status = ResponsesMessageItemResourceStatus.Completed,
+                    Content = contentArray
+                } :
+                new ResponsesAssistantMessageItemResource
+                {
+                    Id = messageId,
+                    Status = ResponsesMessageItemResourceStatus.Completed,
+                    Content = contentArray
+                };
         }
     }
 
@@ -166,6 +187,49 @@ internal static class AgentRunResponseExtensions
             CallId = functionResultContent.CallId,
             Output = output
         };
+    }
+
+    /// <summary>
+    /// Converts an InputMessage to ItemResource objects.
+    /// </summary>
+    /// <param name="inputMessage">The input message to convert.</param>
+    /// <param name="idGenerator">The ID generator to use for creating IDs.</param>
+    /// <returns>An enumerable of ItemResource objects.</returns>
+    public static IEnumerable<ItemResource> ToItemResource(this InputMessage inputMessage, IdGenerator idGenerator)
+    {
+        // Convert InputMessageContent to ItemContent array
+        List<ItemContent> contentArray = inputMessage.Content.ToItemContents();
+
+        // Generate a message ID
+        string messageId = idGenerator.GenerateMessageId();
+
+        // Create the appropriate message type based on role
+        ChatRole role = new(inputMessage.Role.Value);
+        yield return
+            role == ChatRole.User ? new ResponsesUserMessageItemResource
+            {
+                Id = messageId,
+                Status = ResponsesMessageItemResourceStatus.Completed,
+                Content = contentArray
+            } :
+            role == ChatRole.System ? new ResponsesSystemMessageItemResource
+            {
+                Id = messageId,
+                Status = ResponsesMessageItemResourceStatus.Completed,
+                Content = contentArray
+            } :
+            role == s_DeveloperRole ? new ResponsesDeveloperMessageItemResource
+            {
+                Id = messageId,
+                Status = ResponsesMessageItemResourceStatus.Completed,
+                Content = contentArray
+            } :
+            new ResponsesAssistantMessageItemResource
+            {
+                Id = messageId,
+                Status = ResponsesMessageItemResourceStatus.Completed,
+                Content = contentArray
+            };
     }
 
     /// <summary>

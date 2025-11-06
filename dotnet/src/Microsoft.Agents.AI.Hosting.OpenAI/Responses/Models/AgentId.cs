@@ -7,7 +7,7 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
 /// <summary>
 /// Represents an agent identifier.
 /// </summary>
-internal sealed record AgentId
+internal sealed class AgentId
 {
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentId"/> class.
@@ -44,7 +44,7 @@ internal sealed record AgentId
 /// <summary>
 /// Represents an agent ID type.
 /// </summary>
-internal sealed record AgentIdType
+internal sealed class AgentIdType
 {
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentIdType"/> class.
@@ -65,7 +65,7 @@ internal sealed record AgentIdType
 /// <summary>
 /// Represents an agent reference.
 /// </summary>
-internal sealed record AgentReference
+internal sealed class AgentReference
 {
     /// <summary>
     /// The type of the reference (e.g., "agent" or "agent_reference").
