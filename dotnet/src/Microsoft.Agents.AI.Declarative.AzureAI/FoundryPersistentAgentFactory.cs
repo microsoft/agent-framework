@@ -47,7 +47,7 @@ public sealed class FoundryPersistentAgentFactory : AgentFactory
             throw new InvalidOperationException("The model id must be specified in the agent definition model to create a foundry agent.");
         }
 
-        var outputSchema = promptAgent.OutputType;
+        //var outputSchema = promptAgent.OutputType;
         var modelOptions = promptAgent.Model?.Options;
 
         return await agentClient.CreateAIAgentAsync(
@@ -58,7 +58,7 @@ public sealed class FoundryPersistentAgentFactory : AgentFactory
             toolResources: promptAgent.GetToolResources(),
             temperature: (float?)modelOptions?.Temperature?.LiteralValue,
             topP: (float?)modelOptions?.TopP?.LiteralValue,
-            // responseFormat: outputSchema.AsBinaryData(), TODO: Fix converting RecordDataType to BinaryData
+            //responseFormat: outputSchema.AsBinaryData(), TODO: Fix converting RecordDataType to BinaryData
             metadata: promptAgent.Metadata?.ToDictionary(),
             cancellationToken: cancellationToken).ConfigureAwait(false);
     }
