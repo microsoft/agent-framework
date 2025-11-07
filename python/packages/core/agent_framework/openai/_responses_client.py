@@ -92,7 +92,8 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         client = await self.ensure_client()
         run_options = await self.prepare_options(messages, chat_options)
         try:
-            if not chat_options.response_format:
+            response_format = run_options.pop("response_format", None)
+            if not response_format:
                 response = await client.responses.create(
                     stream=False,
                     **run_options,
@@ -100,9 +101,8 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                 chat_options.conversation_id = self.get_conversation_id(response, chat_options.store)
                 return self._create_response_content(response, chat_options=chat_options)
             # create call does not support response_format, so we need to handle it via parse call
-            resp_format = chat_options.response_format
             parsed_response: ParsedResponse[BaseModel] = await client.responses.parse(
-                text_format=resp_format,
+                text_format=response_format,
                 stream=False,
                 **run_options,
             )
@@ -135,7 +135,8 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         run_options = await self.prepare_options(messages, chat_options)
         function_call_ids: dict[int, tuple[str, str]] = {}  # output_index: (call_id, name)
         try:
-            if not chat_options.response_format:
+            response_format = run_options.pop("response_format", None)
+            if not response_format:
                 response = await client.responses.create(
                     stream=True,
                     **run_options,
@@ -148,7 +149,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                 return
             # create call does not support response_format, so we need to handle it via stream call
             async with client.responses.stream(
-                text_format=chat_options.response_format,
+                text_format=response_format,
                 **run_options,
             ) as response:
                 async for chunk in response:
@@ -311,7 +312,6 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         run_options: dict[str, Any] = chat_options.to_dict(
             exclude={
                 "type",
-                "response_format",  # handled in inner get methods
                 "presence_penalty",  # not supported
                 "frequency_penalty",  # not supported
                 "logit_bias",  # not supported
@@ -320,6 +320,10 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                 "instructions",  # already added as system message
             }
         )
+
+        if chat_options.response_format:
+            run_options["response_format"] = chat_options.response_format
+
         translations = {
             "model_id": "model",
             "allow_multiple_tool_calls": "parallel_tool_calls",

@@ -17,7 +17,11 @@ from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.observability import use_observability
 from agent_framework.openai._responses_client import OpenAIBaseResponsesClient
 from azure.ai.projects.aio import AIProjectClient
-from azure.ai.projects.models import PromptAgentDefinition
+from azure.ai.projects.models import (
+    PromptAgentDefinition,
+    PromptAgentDefinitionText,
+    ResponseTextFormatConfigurationJsonSchema,
+)
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import ResourceNotFoundError
 from openai.types.responses.parsed_response import (
@@ -211,11 +215,19 @@ class AzureAIClient(OpenAIBaseResponsesClient):
                     "can also be passed to the get_response methods."
                 )
 
-            args: dict[str, Any] = {
-                "model": run_options["model"],
-            }
+            args: dict[str, Any] = {"model": run_options["model"]}
+
             if "tools" in run_options:
                 args["tools"] = run_options["tools"]
+
+            if "response_format" in run_options:
+                response_format = run_options["response_format"]
+                args["text"] = PromptAgentDefinitionText(
+                    format=ResponseTextFormatConfigurationJsonSchema(
+                        name=response_format.__name__,
+                        schema=response_format.model_json_schema(),
+                    )
+                )
 
             # Combine instructions from messages and options
             combined_instructions = [
@@ -286,13 +298,12 @@ class AzureAIClient(OpenAIBaseResponsesClient):
 
         run_options["extra_body"] = {"agent": agent_reference}
 
-        # Remove properties that are not supported
-        # Model and tools captured in the agent setup
-        if "model" in run_options:
-            run_options.pop("model", None)
+        # Remove properties that are not supported on request level
+        # but were configured on agent level
+        exclude = ["model", "tools", "response_format"]
 
-        if "tools" in run_options:
-            run_options.pop("tools", None)
+        for property in exclude:
+            run_options.pop(property, None)
 
         return run_options
 
