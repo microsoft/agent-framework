@@ -13,7 +13,7 @@ public sealed class DurableAgentFunctionMetadataTransformerTests
     [InlineData(0, true, false, 2)] // entity + http
     [InlineData(0, false, true, 2)] // entity + mcp tool
     [InlineData(0, true, true, 3)] // entity + http + mcp tool
-    [InlineData(3, true, true, 3)] // entity + http + mcp tool added to existing3
+    [InlineData(3, true, true, 3)] // entity + http + mcp tool added to existing
     public void Transform_AddsAgentAndHttpTriggers_ForEachAgent(
         int initialMetadataEntryCount,
         bool enableHttp,

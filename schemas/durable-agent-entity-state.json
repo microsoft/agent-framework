@@ -23,7 +23,7 @@
     },
     "errorContent": {
       "type": "object",
-      "description": "The content of a message exchanged with the agent.",
+      "description": "The error content of a message exchanged with the agent.",
       "properties": {
         "$type": { "type": "string", "const": "error" },
         "message": { "type": "string", "description": "The error message." },
@@ -34,7 +34,7 @@
     },
     "hostedFileContent": {
       "type": "object",
-      "description": "The content of a message exchanged with the agent.",
+      "description": "The hosted file content of a message exchanged with the agent.",
       "properties": {
         "$type": { "type": "string", "const": "hostedFile" },
         "fileId": { "type": "string", "description": "The identifier of the hosted file." }
@@ -43,7 +43,7 @@
     },
     "hostedVectorStoreContent": {
       "type": "object",
-      "description": "The content of a message exchanged with the agent.",
+      "description": "The hosted vector store content of a message exchanged with the agent.",
       "properties": {
         "$type": { "type": "string", "const": "hostedVectorStore" },
         "vectorStoreId": { "type": "string", "description": "The identifier of the hosted vector store." }
@@ -52,7 +52,7 @@
     },
     "textReasoningContent": {
       "type": "object",
-      "description": "The content of a message exchanged with the agent.",
+      "description": "The reasoning content of a message exchanged with the agent.",
       "properties": {
         "$type": { "type": "string", "const": "reasoning" },
         "text": { "type": "string", "description": "The reasoning text." }
@@ -61,7 +61,7 @@
     },
     "uriContent": {
       "type": "object",
-      "description": "The content of a message exchanged with the agent.",
+      "description": "The URI content of a message exchanged with the agent.",
       "properties": {
         "$type": { "type": "string", "const": "uri" },
         "uri": { "type": "string", "description": "The URI." },
@@ -71,7 +71,7 @@
     },
     "usageContent": {
       "type": "object",
-      "description": "The content of a message exchanged with the agent.",
+      "description": "The usage content of a message exchanged with the agent.",
       "properties": {
         "$type": { "type": "string", "const": "usage" },
         "usage": { "$ref": "#/$defs/usage" }
@@ -80,6 +80,7 @@
     },
     "textContent": {
       "type": "object",
+      "description": "The text content of a message exchanged with the agent.",
       "properties": {
         "$type": { "type": "string", "const": "text" },
         "text": { "type": "string", "description": "The text content of the message." }
@@ -88,6 +89,7 @@
     },
     "functionCallContent": {
       "type": "object",
+      "description": "The function call content of a message exchanged with the agent.",
       "properties": {
         "$type": { "type": "string", "const": "functionCall" },
         "callId": { "type": "string", "description": "The identifier of the function being called." },
@@ -98,6 +100,7 @@
     },
     "functionResultContent": {
       "type": "object",
+      "description": "The function result content of a message exchanged with the agent.",
       "properties": {
         "$type": { "type": "string", "const": "functionResult" },
         "callId": { "type": "string", "description": "The identifier of the function being called." },
@@ -107,6 +110,7 @@
     },
     "unknownContent": {
       "type": "object",
+      "description": "The unknown content of a message exchanged with the agent.",
       "properties": {
         "$type": { "type": "string", "const": "unknown" },
         "content": { "description": "The unknown message content serialized as JSON." }

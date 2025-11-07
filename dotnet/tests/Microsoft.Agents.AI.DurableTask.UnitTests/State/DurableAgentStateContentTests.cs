@@ -7,7 +7,7 @@ using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.DurableTask.Tests.Unit.State;
 
-public class DurableAgentStateContentTests
+public sealed class DurableAgentStateContentTests
 {
     private static readonly JsonTypeInfo s_stateContentTypeInfo =
         DurableAgentStateJsonContext.Default.GetTypeInfo(typeof(DurableAgentStateContent))!;

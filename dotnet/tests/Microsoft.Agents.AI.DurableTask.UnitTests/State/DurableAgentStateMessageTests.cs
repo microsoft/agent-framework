@@ -6,7 +6,7 @@ using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.DurableTask.Tests.Unit.State;
 
-public class DurableAgentStateMessageTests
+public sealed class DurableAgentStateMessageTests
 {
     [Fact]
     public void MessageSerializationDeserialization()

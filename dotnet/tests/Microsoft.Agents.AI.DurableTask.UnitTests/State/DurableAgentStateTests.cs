@@ -5,7 +5,7 @@ using Microsoft.Agents.AI.DurableTask.State;
 
 namespace Microsoft.Agents.AI.DurableTask.Tests.Unit.State;
 
-public class DurableAgentStateTests
+public sealed class DurableAgentStateTests
 {
     [Fact]
     public void InvalidVersion()

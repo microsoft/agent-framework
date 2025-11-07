@@ -84,7 +84,7 @@ Any MCP-compatible client can connect to the server endpoint and utilize the exp
    - **StockAdvisor** - Set "MSFT ATH" (ATH is "all time high") as the query and click the **Run Tool** button.
    - **PlantAdvisor** - Set "Low light in Seattle" as the query and click the **Run Tool** button.
 
-You'll see the results of the tool calls in the MCP Inspector interface under the **Tool Results** section. You should also see the results in the terminal where you ran the `dotnet run` command.
+You'll see the results of the tool calls in the MCP Inspector interface under the **Tool Results** section. You should also see the results in the terminal where you ran the `func start` command.
 
 ## Learn More
 
