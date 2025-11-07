@@ -112,8 +112,8 @@ async def test_agent_executor_checkpoint_stores_and_restores_state() -> None:
     assert "messages" in chat_store_state, "Message store state should include messages"
 
     # Verify checkpoint contains pending requests from agents and responses to be sent
-    assert "pending_agent_requests" in restore_checkpoint.shared_state
-    assert "pending_responses_to_agent" in restore_checkpoint.shared_state
+    assert "pending_agent_requests" in executor_state
+    assert "pending_responses_to_agent" in executor_state
 
     # Create a new agent and executor for restoration
     # This simulates starting from a fresh state and restoring from checkpoint
