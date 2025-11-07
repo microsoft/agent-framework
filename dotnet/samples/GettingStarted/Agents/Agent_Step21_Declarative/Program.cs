@@ -23,7 +23,7 @@ var text =
     kind: Prompt
     name: Assistant
     description: Helpful assistant
-    instructions: You are a helpful assistant. You answer questions is the language specified by the user. You return your answers in a JSON format.
+    instructions: You are a helpful assistant. You answer questions in the language specified by the user. You return your answers in a JSON format.
     model:
         options:
             temperature: 0.9
