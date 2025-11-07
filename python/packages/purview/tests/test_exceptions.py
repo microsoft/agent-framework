@@ -4,6 +4,7 @@
 
 from agent_framework_purview import (
     PurviewAuthenticationError,
+    PurviewPaymentRequiredError,
     PurviewRateLimitError,
     PurviewRequestError,
     PurviewServiceError,
@@ -23,6 +24,12 @@ class TestPurviewExceptions:
         """Test PurviewAuthenticationError exception."""
         error = PurviewAuthenticationError("Authentication failed")
         assert str(error) == "Authentication failed"
+        assert isinstance(error, PurviewServiceError)
+
+    def test_purview_payment_required_error(self) -> None:
+        """Test PurviewPaymentRequiredError exception."""
+        error = PurviewPaymentRequiredError("Payment required")
+        assert str(error) == "Payment required"
         assert isinstance(error, PurviewServiceError)
 
     def test_purview_rate_limit_error(self) -> None:
