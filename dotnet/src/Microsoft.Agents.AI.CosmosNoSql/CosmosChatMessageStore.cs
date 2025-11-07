@@ -353,7 +353,7 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
         }
 #pragma warning restore CA1513
 
-        var messageList = messages.ToList();
+        var messageList = messages as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
         if (messageList.Count == 0)
         {
             return;
@@ -366,14 +366,14 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
         }
         else
         {
-            await this.AddSingleMessageAsync(messageList[0], cancellationToken).ConfigureAwait(false);
+            await this.AddSingleMessageAsync(messageList.First(), cancellationToken).ConfigureAwait(false);
         }
     }
 
     /// <summary>
     /// Adds multiple messages using transactional batch operations for atomicity.
     /// </summary>
-    private async Task AddMessagesInBatchAsync(List<ChatMessage> messages, CancellationToken cancellationToken)
+    private async Task AddMessagesInBatchAsync(IReadOnlyCollection<ChatMessage> messages, CancellationToken cancellationToken)
     {
         var currentTimestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
