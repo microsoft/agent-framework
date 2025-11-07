@@ -14,7 +14,6 @@ using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
-using OpenAI.Responses;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
@@ -34,20 +33,13 @@ IServiceProvider serviceProvider = services.BuildServiceProvider();
 var agentsClient = new AgentsClient(new Uri(endpoint), new AzureCliCredential());
 
 // Define the agent with plugin tools
-var agentDefinition = new PromptAgentDefinition(model: deploymentName)
-{
-    Instructions = AssistantInstructions
-};
-foreach (var tool in serviceProvider.GetRequiredService<AgentPlugin>().AsAITools())
-{
-    agentDefinition.Tools.Add(tool.GetService<ResponseTool>() ?? tool.AsOpenAIResponseTool()!);
-}
-
-// Create a server side agent version with the Azure.AI.Agents SDK client.
-var agentVersion = agentsClient.CreateAgentVersion(agentName: AssistantName, definition: agentDefinition);
-
-// Retrieve an AIAgent for the created server side agent version.
-AIAgent agent = agentsClient.GetAIAgent(agentVersion);
+// Define the agent you want to create. (Prompt Agent in this case)
+AIAgent agent = agentsClient.CreateAIAgent(
+    name: AssistantName,
+    model: deploymentName,
+    instructions: AssistantInstructions,
+    tools: serviceProvider.GetRequiredService<AgentPlugin>().AsAITools().ToList(),
+    services: serviceProvider);
 
 // Invoke the agent and output the text result.
 AgentThread thread = agent.GetNewThread();

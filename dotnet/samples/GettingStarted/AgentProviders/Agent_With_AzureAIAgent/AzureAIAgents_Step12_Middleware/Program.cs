@@ -11,7 +11,6 @@ using Azure.AI.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using OpenAI.Responses;
 
 // Get Azure AI Foundry configuration from environment variables
 var endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
@@ -31,19 +30,15 @@ static string GetWeather([Description("The location to get the weather for.")] s
 static string GetDateTime()
     => DateTimeOffset.Now.ToString();
 
-// Define the agent with tools
-var agentDefinition = new PromptAgentDefinition(model: deploymentName)
-{
-    Instructions = AssistantInstructions
-};
 var dateTimeTool = AIFunctionFactory.Create(GetDateTime, name: nameof(GetDateTime));
-agentDefinition.Tools.Add(dateTimeTool.GetService<ResponseTool>() ?? dateTimeTool.AsOpenAIResponseTool()!);
+var getWeatherTool = AIFunctionFactory.Create(GetWeather, name: nameof(GetWeather));
 
-// Create a server side agent version with the Azure.AI.Agents SDK client.
-var agentVersion = agentsClient.CreateAgentVersion(agentName: AssistantName, definition: agentDefinition);
-
-// Retrieve an AIAgent for the created server side agent version.
-var originalAgent = agentsClient.GetAIAgent(agentVersion);
+// Define the agent you want to create. (Prompt Agent in this case)
+AIAgent originalAgent = agentsClient.CreateAIAgent(
+    name: AssistantName,
+    model: deploymentName,
+    instructions: AssistantInstructions,
+    tools: [getWeatherTool, dateTimeTool]);
 
 // Adding middleware to the agent level
 var middlewareEnabledAgent = originalAgent
@@ -68,33 +63,28 @@ Console.WriteLine("\n\n=== Example 3: Agent function middleware ===");
 
 // Agent function middleware support is limited to agents that wraps a upstream ChatClientAgent or derived from it.
 
-// Add Per-request tools
-var options = new ChatClientAgentRunOptions(new()
-{
-    Tools = [AIFunctionFactory.Create(GetWeather, name: nameof(GetWeather))]
-});
-
-var functionCallResponse = await middlewareEnabledAgent.RunAsync("What's the current time and the weather in Seattle?", thread, options);
+var functionCallResponse = await middlewareEnabledAgent.RunAsync("What's the current time and the weather in Seattle?", thread);
 Console.WriteLine($"Function calling response: {functionCallResponse}");
 
 // Special per-request middleware agent.
-Console.WriteLine("\n\n=== Example 4: Per-request middleware with human in the loop function approval ===");
+Console.WriteLine("\n\n=== Example 4: Middleware with human in the loop function approval ===");
 
-var optionsWithApproval = new ChatClientAgentRunOptions(new()
-{
+AIAgent humamInTheLoopAgent = agentsClient.CreateAIAgent(
+    name: "HumanInTheLoopAgent",
+    model: deploymentName,
+    instructions: "You are an Human in the loop testing AI assistant that helps people find information.",
+
     // Adding a function with approval required
-    Tools = [new ApprovalRequiredAIFunction(AIFunctionFactory.Create(GetWeather, name: nameof(GetWeather)))],
-});
+    tools: [new ApprovalRequiredAIFunction(AIFunctionFactory.Create(GetWeather, name: nameof(GetWeather)))]);
 
-// var response = middlewareAgent  // Using per-request middleware pipeline in addition to existing agent-level middleware
-var response = await originalAgent // Using per-request middleware pipeline without existing agent-level middleware
+// Using the ConsolePromptingApprovalMiddleware for a specific request to handle user approval during function calls.
+var response = await humamInTheLoopAgent
     .AsBuilder()
-    .Use(PerRequestFunctionCallingMiddleware)
     .Use(ConsolePromptingApprovalMiddleware, null)
     .Build()
-    .RunAsync("What's the current time and the weather in Seattle?", thread, optionsWithApproval);
+    .RunAsync("What's the current time and the weather in Seattle?");
 
-Console.WriteLine($"Per-request middleware response: {response}");
+Console.WriteLine($"HumamInTheLoopAgent agent middleware response: {response}");
 
 // Function invocation middleware that logs before and after function calls.
 async ValueTask<object?> FunctionCallMiddleware(AIAgent agent, FunctionInvocationContext context, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next, CancellationToken cancellationToken)
@@ -119,17 +109,6 @@ async ValueTask<object?> FunctionCallOverrideWeather(AIAgent agent, FunctionInvo
         result = "The weather is sunny with a high of 25°C.";
     }
     Console.WriteLine($"Function Name: {context!.Function.Name} - Middleware 2 Post-Invoke");
-    return result;
-}
-
-// There's no difference per-request middleware, except it's added to the agent and used for a single agent run.
-// This middleware logs function names before and after they are invoked.
-async ValueTask<object?> PerRequestFunctionCallingMiddleware(AIAgent agent, FunctionInvocationContext context, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next, CancellationToken cancellationToken)
-{
-    Console.WriteLine($"Agent Id: {agent.Id}");
-    Console.WriteLine($"Function Name: {context!.Function.Name} - Per-Request Pre-Invoke");
-    var result = await next(context, cancellationToken);
-    Console.WriteLine($"Function Name: {context!.Function.Name} - Per-Request Post-Invoke");
     return result;
 }
 

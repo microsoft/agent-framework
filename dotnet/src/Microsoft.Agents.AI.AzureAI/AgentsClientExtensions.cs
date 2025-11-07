@@ -25,6 +25,7 @@ public static class AgentsClientExtensions
     /// <param name="tools">The tools to use when interacting with the agent. This is required when using prompt agent definitions with tools.</param>
     /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <param name="openAIClientOptions">An optional <see cref="OpenAIClientOptions"/> for configuring the underlying OpenAI client.</param>
+    /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations based on the latest version of the named Azure AI Agent.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="agentsClient"/> or <paramref name="name"/> is <see langword="null"/>.</exception>
@@ -37,6 +38,7 @@ public static class AgentsClientExtensions
         IList<AITool>? tools = null,
         Func<IChatClient, IChatClient>? clientFactory = null,
         OpenAIClientOptions? openAIClientOptions = null,
+        IServiceProvider? services = null,
         CancellationToken cancellationToken = default)
     {
         Throw.IfNull(agentsClient);
@@ -51,6 +53,7 @@ public static class AgentsClientExtensions
             tools,
             clientFactory,
             openAIClientOptions,
+            services,
             cancellationToken);
     }
 
@@ -62,6 +65,7 @@ public static class AgentsClientExtensions
     /// <param name="tools">The tools to use when interacting with the agent. This is required when using prompt agent definitions with tools.</param>
     /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <param name="openAIClientOptions">An optional <see cref="OpenAIClientOptions"/> for configuring the underlying OpenAI client.</param>
+    /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations based on the latest version of the named Azure AI Agent.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="agentsClient"/> or <paramref name="name"/> is <see langword="null"/>.</exception>
@@ -74,6 +78,7 @@ public static class AgentsClientExtensions
         IList<AITool>? tools = null,
         Func<IChatClient, IChatClient>? clientFactory = null,
         OpenAIClientOptions? openAIClientOptions = null,
+        IServiceProvider? services = null,
         CancellationToken cancellationToken = default)
     {
         Throw.IfNull(agentsClient);
@@ -88,6 +93,7 @@ public static class AgentsClientExtensions
             tools,
             clientFactory,
             openAIClientOptions,
+            services,
             cancellationToken);
     }
 
@@ -99,6 +105,7 @@ public static class AgentsClientExtensions
     /// <param name="tools">The tools to use when interacting with the agent. This is required when using prompt agent definitions with tools.</param>
     /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <param name="openAIClientOptions">An optional <see cref="OpenAIClientOptions"/> for configuring the underlying OpenAI client.</param>
+    /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations based on the latest version of the Azure AI Agent.</returns>
     /// <remarks>When using prompt agent definitions with tools the parameter <paramref name="tools"/> needs to be provided.</remarks>
@@ -108,6 +115,7 @@ public static class AgentsClientExtensions
         IList<AITool>? tools = null,
         Func<IChatClient, IChatClient>? clientFactory = null,
         OpenAIClientOptions? openAIClientOptions = null,
+        IServiceProvider? services = null,
         CancellationToken cancellationToken = default)
     {
         Throw.IfNull(agentsClient);
@@ -119,7 +127,7 @@ public static class AgentsClientExtensions
             tools,
             clientFactory,
             openAIClientOptions,
-            requireInvocableTools: true,
+            services,
             cancellationToken);
     }
 
@@ -131,10 +139,7 @@ public static class AgentsClientExtensions
     /// <param name="tools">The tools to use when interacting with the agent. This is required when using prompt agent definitions with tools.</param>
     /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <param name="openAIClientOptions">An optional <see cref="OpenAIClientOptions"/> for configuring the underlying OpenAI client.</param>
-    /// <param name="requireInvocableTools">
-    /// This defaults to <see langword="true" /> and indicates whether to enforce the presence of invocable tools when the AIAgent is created with an agent definition that uses them.
-    /// Setting this to <see langword="false" /> will require manual handling of in-proc tool invocations by the caller.
-    /// </param>
+    /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations based on the provided version of the Azure AI Agent.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="agentsClient"/> or <paramref name="agentVersion"/> is <see langword="null"/>.</exception>
@@ -145,7 +150,7 @@ public static class AgentsClientExtensions
         IList<AITool>? tools = null,
         Func<IChatClient, IChatClient>? clientFactory = null,
         OpenAIClientOptions? openAIClientOptions = null,
-        bool requireInvocableTools = true,
+        IServiceProvider? services = null,
         CancellationToken cancellationToken = default)
     {
         Throw.IfNull(agentsClient);
@@ -159,7 +164,8 @@ public static class AgentsClientExtensions
             tools,
             clientFactory,
             openAIClientOptions,
-            requireInvocableTools);
+            requireInvocableTools: true,
+            services);
     }
 
     /// <summary>
@@ -169,6 +175,7 @@ public static class AgentsClientExtensions
     /// <param name="options">The options for creating the agent. Cannot be <see langword="null"/>.</param>
     /// <param name="clientFactory">A factory function to customize the creation of the chat client used by the agent.</param>
     /// <param name="openAIClientOptions">An optional <see cref="OpenAIClientOptions"/> for configuring the underlying OpenAI client.</param>
+    /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <param name="cancellationToken">A <see cref="CancellationToken"/> to cancel the operation if needed.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the newly created agent.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="agentsClient"/> or <paramref name="options"/> is <see langword="null"/>.</exception>
@@ -177,6 +184,7 @@ public static class AgentsClientExtensions
         ChatClientAgentOptions options,
         Func<IChatClient, IChatClient>? clientFactory = null,
         OpenAIClientOptions? openAIClientOptions = null,
+        IServiceProvider? services = null,
         CancellationToken cancellationToken = default)
     {
         Throw.IfNull(agentsClient);
@@ -200,7 +208,8 @@ public static class AgentsClientExtensions
             agentOptions,
             clientFactory,
             openAIClientOptions,
-            requireInvocableTools: true);
+            requireInvocableTools: true,
+            services);
     }
 
     /// <summary>
@@ -210,6 +219,7 @@ public static class AgentsClientExtensions
     /// <param name="options">The options for creating the agent. Cannot be <see langword="null"/>.</param>
     /// <param name="clientFactory">A factory function to customize the creation of the chat client used by the agent.</param>
     /// <param name="openAIClientOptions">An optional <see cref="OpenAIClientOptions"/> for configuring the underlying OpenAI client.</param>
+    /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <param name="cancellationToken">A <see cref="CancellationToken"/> to cancel the operation if needed.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the newly created agent.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="agentsClient"/> or <paramref name="options"/> is <see langword="null"/>.</exception>
@@ -218,6 +228,7 @@ public static class AgentsClientExtensions
         ChatClientAgentOptions options,
         Func<IChatClient, IChatClient>? clientFactory = null,
         OpenAIClientOptions? openAIClientOptions = null,
+        IServiceProvider? services = null,
         CancellationToken cancellationToken = default)
     {
         Throw.IfNull(agentsClient);
@@ -241,7 +252,8 @@ public static class AgentsClientExtensions
             agentOptions,
             clientFactory,
             openAIClientOptions,
-            requireInvocableTools: true);
+            requireInvocableTools: true,
+            services);
     }
 
     /// <summary>
@@ -255,6 +267,7 @@ public static class AgentsClientExtensions
     /// <param name="creationOptions">Settings that control the creation of the agent.</param>
     /// <param name="clientFactory">A factory function to customize the creation of the chat client used by the agent.</param>
     /// <param name="openAIClientOptions">An optional <see cref="OpenAIClientOptions"/> for configuring the underlying OpenAI client.</param>
+    /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the newly created agent.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="agentsClient"/>, <paramref name="model"/>, or <paramref name="instructions"/> is <see langword="null"/>.</exception>
@@ -269,6 +282,7 @@ public static class AgentsClientExtensions
         AgentVersionCreationOptions? creationOptions = null,
         Func<IChatClient, IChatClient>? clientFactory = null,
         OpenAIClientOptions? openAIClientOptions = null,
+        IServiceProvider? services = null,
         CancellationToken cancellationToken = default)
     {
         Throw.IfNull(agentsClient);
@@ -285,6 +299,7 @@ public static class AgentsClientExtensions
             clientFactory,
             openAIClientOptions,
             requireInvocableTools: true,
+            services,
             cancellationToken);
     }
 
@@ -299,6 +314,7 @@ public static class AgentsClientExtensions
     /// <param name="creationOptions">Settings that control the creation of the agent.</param>
     /// <param name="clientFactory">A factory function to customize the creation of the chat client used by the agent.</param>
     /// <param name="openAIClientOptions">An optional <see cref="OpenAIClientOptions"/> for configuring the underlying OpenAI client.</param>
+    /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the newly created agent.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="agentsClient"/>, <paramref name="model"/>, or <paramref name="instructions"/> is <see langword="null"/>.</exception>
@@ -313,6 +329,7 @@ public static class AgentsClientExtensions
         AgentVersionCreationOptions? creationOptions = null,
         Func<IChatClient, IChatClient>? clientFactory = null,
         OpenAIClientOptions? openAIClientOptions = null,
+        IServiceProvider? services = null,
         CancellationToken cancellationToken = default)
     {
         Throw.IfNull(agentsClient);
@@ -329,6 +346,7 @@ public static class AgentsClientExtensions
             clientFactory,
             openAIClientOptions,
             requireInvocableTools: true,
+            services,
             cancellationToken);
     }
 
@@ -340,6 +358,7 @@ public static class AgentsClientExtensions
     /// <param name="options">The options for creating the agent. Cannot be <see langword="null"/>.</param>
     /// <param name="clientFactory">A factory function to customize the creation of the chat client used by the agent.</param>
     /// <param name="openAIClientOptions">An optional <see cref="OpenAIClientOptions"/> for configuring the underlying OpenAI client.</param>
+    /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <param name="cancellationToken">A <see cref="CancellationToken"/> to cancel the operation if needed.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the newly created agent.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="agentsClient"/> or <paramref name="options"/> is <see langword="null"/>.</exception>
@@ -350,6 +369,7 @@ public static class AgentsClientExtensions
         ChatClientAgentOptions options,
         Func<IChatClient, IChatClient>? clientFactory = null,
         OpenAIClientOptions? openAIClientOptions = null,
+        IServiceProvider? services = null,
         CancellationToken cancellationToken = default)
     {
         Throw.IfNull(agentsClient);
@@ -385,7 +405,8 @@ public static class AgentsClientExtensions
             agentOptions,
             clientFactory,
             openAIClientOptions,
-            RequireInvocableTools);
+            RequireInvocableTools,
+            services);
     }
 
     /// <summary>
@@ -396,6 +417,7 @@ public static class AgentsClientExtensions
     /// <param name="options">The options for creating the agent. Cannot be <see langword="null"/>.</param>
     /// <param name="clientFactory">A factory function to customize the creation of the chat client used by the agent.</param>
     /// <param name="openAIClientOptions">An optional <see cref="OpenAIClientOptions"/> for configuring the underlying OpenAI client.</param>
+    /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <param name="cancellationToken">A <see cref="CancellationToken"/> to cancel the operation if needed.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the newly created agent.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="agentsClient"/> or <paramref name="options"/> is <see langword="null"/>.</exception>
@@ -406,6 +428,7 @@ public static class AgentsClientExtensions
         ChatClientAgentOptions options,
         Func<IChatClient, IChatClient>? clientFactory = null,
         OpenAIClientOptions? openAIClientOptions = null,
+        IServiceProvider? services = null,
         CancellationToken cancellationToken = default)
     {
         Throw.IfNull(agentsClient);
@@ -441,7 +464,8 @@ public static class AgentsClientExtensions
             agentOptions,
             clientFactory,
             openAIClientOptions,
-            RequireInvocableTools);
+            RequireInvocableTools,
+            services);
     }
 
     /// <summary>
@@ -484,6 +508,7 @@ public static class AgentsClientExtensions
             clientFactory,
             openAIClientOptions,
             requireInvocableTools: false,
+            services: null,
             cancellationToken);
     }
 
@@ -528,6 +553,7 @@ public static class AgentsClientExtensions
             clientFactory,
             openAIClientOptions,
             requireInvocableTools: false,
+            services: null,
             cancellationToken);
     }
 
@@ -542,6 +568,7 @@ public static class AgentsClientExtensions
         Func<IChatClient, IChatClient>? clientFactory,
         OpenAIClientOptions? openAIClientOptions,
         bool requireInvocableTools,
+        IServiceProvider? services,
         CancellationToken cancellationToken)
     {
         Throw.IfNull(agentsClient);
@@ -560,7 +587,8 @@ public static class AgentsClientExtensions
             tools,
             clientFactory,
             openAIClientOptions,
-            requireInvocableTools);
+            requireInvocableTools,
+            services);
     }
 
     private static async Task<ChatClientAgent> CreateAIAgentAsync(
@@ -572,6 +600,7 @@ public static class AgentsClientExtensions
         Func<IChatClient, IChatClient>? clientFactory,
         OpenAIClientOptions? openAIClientOptions,
         bool requireInvocableTools,
+        IServiceProvider? services,
         CancellationToken cancellationToken)
     {
         Throw.IfNullOrWhitespace(name);
@@ -590,7 +619,8 @@ public static class AgentsClientExtensions
             tools,
             clientFactory,
             openAIClientOptions,
-            requireInvocableTools);
+            requireInvocableTools,
+            services);
     }
 
     /// <summary>This method creates an <see cref="ChatClientAgent"/> with the specified ChatClientAgentOptions.</summary>
@@ -600,7 +630,8 @@ public static class AgentsClientExtensions
         ChatClientAgentOptions agentOptions,
         Func<IChatClient, IChatClient>? clientFactory,
         OpenAIClientOptions? openAIClientOptions,
-        bool requireInvocableTools)
+        bool requireInvocableTools,
+        IServiceProvider? services)
     {
         IChatClient chatClient = new AzureAIAgentChatClient(agentsClient, agentVersion, agentOptions.ChatOptions, openAIClientOptions);
 
@@ -609,7 +640,7 @@ public static class AgentsClientExtensions
             chatClient = clientFactory(chatClient);
         }
 
-        return new ChatClientAgent(chatClient, agentOptions);
+        return new ChatClientAgent(chatClient, agentOptions, services: services);
     }
 
     /// <summary>This method creates an <see cref="ChatClientAgent"/> with a auto-generated ChatClientAgentOptions from the specified configuration parameters.</summary>
@@ -619,14 +650,16 @@ public static class AgentsClientExtensions
         IList<AITool>? tools,
         Func<IChatClient, IChatClient>? clientFactory,
         OpenAIClientOptions? openAIClientOptions,
-        bool requireInvocableTools)
+        bool requireInvocableTools,
+        IServiceProvider? services)
         => CreateChatClientAgent(
             agentsClient,
             agentVersion,
             CreateChatClientAgentOptions(agentVersion, new ChatOptions() { Tools = tools }, requireInvocableTools),
             clientFactory,
             openAIClientOptions,
-            requireInvocableTools);
+            requireInvocableTools,
+            services);
 
     /// <summary>
     /// This method creates <see cref="ChatClientAgentOptions"/> for the specified <see cref="AgentVersion"/> and the provided tools.

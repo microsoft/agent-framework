@@ -7,7 +7,6 @@ using Azure.AI.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using OpenAI.Responses;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
@@ -25,24 +24,19 @@ static string GetWeather([Description("The location to get the weather for.")] s
 var agentsClient = new AgentsClient(new Uri(endpoint), new AzureCliCredential());
 
 // Create the weather agent with function tools.
-var weatherAgentDefinition = new PromptAgentDefinition(model: deploymentName)
-{
-    Instructions = WeatherInstructions
-};
 var weatherTool = AIFunctionFactory.Create(GetWeather);
-weatherAgentDefinition.Tools.Add(weatherTool.GetService<ResponseTool>() ?? weatherTool.AsOpenAIResponseTool()!);
-var weatherAgentVersion = agentsClient.CreateAgentVersion(agentName: WeatherName, definition: weatherAgentDefinition);
-AIAgent weatherAgent = agentsClient.GetAIAgent(weatherAgentVersion);
+AIAgent weatherAgent = agentsClient.CreateAIAgent(
+    name: WeatherName,
+    model: deploymentName,
+    instructions: WeatherInstructions,
+    tools: [weatherTool]);
 
 // Create the main agent, and provide the weather agent as a function tool.
-var mainAgentDefinition = new PromptAgentDefinition(model: deploymentName)
-{
-    Instructions = MainInstructions
-};
-var agentTool = weatherAgent.AsAIFunction();
-mainAgentDefinition.Tools.Add(agentTool.GetService<ResponseTool>() ?? agentTool.AsOpenAIResponseTool()!);
-var mainAgentVersion = agentsClient.CreateAgentVersion(agentName: MainName, definition: mainAgentDefinition);
-AIAgent agent = agentsClient.GetAIAgent(mainAgentVersion);
+AIAgent agent = agentsClient.CreateAIAgent(
+    name: MainName,
+    model: deploymentName,
+    instructions: MainInstructions,
+    tools: [weatherAgent.AsAIFunction()]);
 
 // Invoke the agent and output the text result.
 AgentThread thread = agent.GetNewThread();

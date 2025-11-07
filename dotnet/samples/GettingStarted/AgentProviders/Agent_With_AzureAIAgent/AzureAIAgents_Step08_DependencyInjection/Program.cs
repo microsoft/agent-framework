@@ -20,16 +20,12 @@ const string JokerName = "JokerAgent";
 HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
 
 // Add the agents client to the service collection.
-builder.Services.AddSingleton<AgentsClient>((sp) => new AgentsClient(new Uri(endpoint), new AzureCliCredential()));
+builder.Services.AddSingleton((sp) => new AgentsClient(new Uri(endpoint), new AzureCliCredential()));
 
 // Add the AI agent to the service collection.
-builder.Services.AddSingleton<AIAgent>((sp) =>
-{
-    var agentsClient = sp.GetRequiredService<AgentsClient>();
-    var agentDefinition = new PromptAgentDefinition(model: deploymentName) { Instructions = JokerInstructions };
-    var agentVersion = agentsClient.CreateAgentVersion(agentName: JokerName, definition: agentDefinition);
-    return agentsClient.GetAIAgent(agentVersion);
-});
+builder.Services.AddSingleton<AIAgent>((sp)
+    => sp.GetRequiredService<AgentsClient>()
+        .CreateAIAgent(name: JokerName, model: deploymentName, instructions: JokerInstructions));
 
 // Add a sample service that will use the agent to respond to user input.
 builder.Services.AddHostedService<SampleService>();

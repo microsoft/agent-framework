@@ -191,25 +191,7 @@ public sealed class AgentsClientExtensionsTests
         };
 
         // Act
-        var agent = client.GetAIAgent(agentVersion, tools: tools, requireInvocableTools: true);
-
-        // Assert
-        Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
-    }
-
-    /// <summary>
-    /// Verify that GetAIAgent with requireInvocableTools=false allows declarative functions.
-    /// </summary>
-    [Fact]
-    public void GetAIAgent_WithAgentVersion_WithRequireInvocableToolsFalse_AllowsDeclarativeFunctions()
-    {
-        // Arrange
-        AgentsClient client = this.CreateTestAgentsClient();
-        AgentVersion agentVersion = this.CreateTestAgentVersion();
-
-        // Act - should not throw even without tools when requireInvocableTools is false
-        var agent = client.GetAIAgent(agentVersion, requireInvocableTools: false);
+        var agent = client.GetAIAgent(agentVersion, tools: tools);
 
         // Assert
         Assert.NotNull(agent);
