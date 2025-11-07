@@ -9,6 +9,4 @@ namespace AGUIClient;
 
 [JsonSerializable(typeof(SensorRequest))]
 [JsonSerializable(typeof(SensorResponse))]
-internal sealed partial class AGUIClientSerializerContext : JsonSerializerContext
-{
-}
+internal sealed partial class AGUIClientSerializerContext : JsonSerializerContext;

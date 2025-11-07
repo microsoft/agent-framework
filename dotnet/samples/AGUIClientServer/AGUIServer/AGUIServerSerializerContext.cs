@@ -6,6 +6,4 @@ namespace AGUIServer;
 
 [JsonSerializable(typeof(ServerWeatherForecastRequest))]
 [JsonSerializable(typeof(ServerWeatherForecastResponse))]
-internal sealed partial class AGUIServerSerializerContext : JsonSerializerContext
-{
-}
+internal sealed partial class AGUIServerSerializerContext : JsonSerializerContext;

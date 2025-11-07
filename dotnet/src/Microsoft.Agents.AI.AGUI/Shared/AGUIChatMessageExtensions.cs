@@ -115,7 +115,7 @@ internal static class AGUIChatMessageExtensions
     {
         foreach (var message in chatMessages)
         {
-            message.MessageId ??= Guid.NewGuid().ToString();
+            message.MessageId ??= Guid.NewGuid().ToString("N");
             if (message.Role == ChatRole.Tool)
             {
                 foreach (var toolMessage in MapToolMessages(jsonSerializerOptions, message))

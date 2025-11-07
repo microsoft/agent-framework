@@ -50,14 +50,8 @@ public sealed class AGUIChatClient : DelegatingChatClient
             return AGUIJsonSerializerContext.Default.Options;
         }
 
-        // Create a new JsonSerializerOptions based on the provided one
         var combinedOptions = new JsonSerializerOptions(jsonSerializerOptions);
-
-        // Add the AGUI context to the type info resolver chain if not already present
-        if (!combinedOptions.TypeInfoResolverChain.Any(r => r == AGUIJsonSerializerContext.Default))
-        {
-            combinedOptions.TypeInfoResolverChain.Insert(0, AGUIJsonSerializerContext.Default);
-        }
+        combinedOptions.TypeInfoResolverChain.Add(AGUIJsonSerializerContext.Default);
 
         return combinedOptions;
     }
@@ -107,7 +101,7 @@ public sealed class AGUIChatClient : DelegatingChatClient
             if (conversationId == null && firstUpdate == null)
             {
                 firstUpdate = update;
-                if (firstUpdate.AdditionalProperties != null && firstUpdate.AdditionalProperties.TryGetValue("agui_thread_id", out var threadIdObj) && threadIdObj is string threadId)
+                if (firstUpdate.AdditionalProperties?.TryGetValue("agui_thread_id", out string? threadId) is true)
                 {
                     // Capture the thread id from the first update to use as conversation id if none was provided
                     conversationId = threadId;
@@ -170,7 +164,7 @@ public sealed class AGUIChatClient : DelegatingChatClient
             Uri metadataUri = string.IsNullOrEmpty(endpoint) && httpClient.BaseAddress is not null
                 ? httpClient.BaseAddress
                 : new Uri(endpoint, UriKind.RelativeOrAbsolute);
-            this.Metadata = new ChatClientMetadata("AGUI", metadataUri, null);
+            this.Metadata = new ChatClientMetadata("ag-ui", metadataUri, null);
         }
 
         public ChatClientMetadata Metadata { get; }
@@ -194,10 +188,10 @@ public sealed class AGUIChatClient : DelegatingChatClient
                 throw new ArgumentNullException(nameof(messages));
             }
 
-            var runId = $"run_{Guid.NewGuid()}";
+            var runId = $"run_{Guid.NewGuid():N}";
             var messagesList = messages.ToList(); // Avoid triggering the enumerator multiple times.
             var threadId = ExtractTemporaryThreadId(messagesList) ??
-                ExtractThreadIdFromOptions(options) ?? $"thread_{Guid.NewGuid()}";
+                ExtractThreadIdFromOptions(options) ?? $"thread_{Guid.NewGuid():N}";
 
             // Create the input for the AGUI service
             var input = new RunAgentInput
@@ -291,9 +285,7 @@ public sealed class AGUIChatClient : DelegatingChatClient
                 return null;
             }
 
-            if (content.AdditionalProperties == null ||
-              !content.AdditionalProperties.TryGetValue("agui_thread_id", out var threadIdObj) ||
-              threadIdObj is not string threadId ||
+            if (content.AdditionalProperties?.TryGetValue("agui_thread_id", out string? threadId) is not true ||
               string.IsNullOrEmpty(threadId))
             {
                 return null;
