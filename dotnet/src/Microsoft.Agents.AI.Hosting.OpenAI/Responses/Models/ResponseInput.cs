@@ -21,7 +21,7 @@ internal sealed class ResponseInput : IEquatable<ResponseInput>
         this.Messages = null;
     }
 
-    private ResponseInput(IReadOnlyList<InputMessage> messages)
+    private ResponseInput(List<InputMessage> messages)
     {
         this.Messages = messages ?? throw new ArgumentNullException(nameof(messages));
         this.Text = null;
@@ -35,12 +35,12 @@ internal sealed class ResponseInput : IEquatable<ResponseInput>
     /// <summary>
     /// Creates a ResponseInput from a list of messages.
     /// </summary>
-    public static ResponseInput FromMessages(IReadOnlyList<InputMessage> messages) => new(messages);
+    public static ResponseInput FromMessages(List<InputMessage> messages) => new(messages);
 
     /// <summary>
     /// Creates a ResponseInput from a list of messages.
     /// </summary>
-    public static ResponseInput FromMessages(params InputMessage[] messages) => new(messages);
+    public static ResponseInput FromMessages(params InputMessage[] messages) => new(messages.ToList());
 
     /// <summary>
     /// Implicit conversion from string to ResponseInput.
@@ -75,12 +75,13 @@ internal sealed class ResponseInput : IEquatable<ResponseInput>
     /// <summary>
     /// Gets the messages value, or null if this is not a messages input.
     /// </summary>
-    public IReadOnlyList<InputMessage>? Messages { get; }
+    public List<InputMessage>? Messages { get; }
 
     /// <summary>
     /// Gets the input as a list of InputMessage objects.
     /// </summary>
-    public IReadOnlyList<InputMessage> GetInputMessages()
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1024:Use properties where appropriate", Justification = "Method performs transformation logic")]
+    public List<InputMessage> GetInputMessages()
     {
         if (this.Text is not null)
         {
@@ -164,6 +165,7 @@ internal sealed class ResponseInput : IEquatable<ResponseInput>
 /// </summary>
 internal sealed class ResponseInputJsonConverter : JsonConverter<ResponseInput>
 {
+    /// <inheritdoc/>
     public override ResponseInput? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
         // Check if it's a string
@@ -176,13 +178,14 @@ internal sealed class ResponseInputJsonConverter : JsonConverter<ResponseInput>
         // Check if it's an array
         if (reader.TokenType == JsonTokenType.StartArray)
         {
-            var messages = JsonSerializer.Deserialize(ref reader, ResponsesJsonContext.Default.ListInputMessage);
+            var messages = JsonSerializer.Deserialize(ref reader, OpenAIHostingJsonContext.Default.ListInputMessage);
             return messages is not null ? ResponseInput.FromMessages(messages) : null;
         }
 
         throw new JsonException($"Unexpected token type for ResponseInput: {reader.TokenType}");
     }
 
+    /// <inheritdoc/>
     public override void Write(Utf8JsonWriter writer, ResponseInput value, JsonSerializerOptions options)
     {
         if (value.IsText)
@@ -191,7 +194,7 @@ internal sealed class ResponseInputJsonConverter : JsonConverter<ResponseInput>
         }
         else if (value.IsMessages)
         {
-            JsonSerializer.Serialize(writer, value.Messages!, ResponsesJsonContext.Default.IReadOnlyListInputMessage);
+            JsonSerializer.Serialize(writer, value.Messages!, OpenAIHostingJsonContext.Default.ListInputMessage);
         }
         else
         {

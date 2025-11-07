@@ -74,6 +74,7 @@ jobs:
             .
             .github
             dotnet
+            python
             workflow-samples
 
       - name: Setup dotnet
