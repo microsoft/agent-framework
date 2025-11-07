@@ -20,14 +20,14 @@ builder.Services.AddProblemDetails();
 // Configure the chat model and our agent.
 builder.AddKeyedChatClient("chat-model");
 
-var pirateAgent = builder.AddAIAgent(
+var pirateAgentBuilder = builder.AddAIAgent(
     "pirate",
     instructions: "You are a pirate. Speak like a pirate",
     description: "An agent that speaks like a pirate.",
     chatClientServiceKey: "chat-model")
     .WithInMemoryThreadStore();
 
-builder.AddAIAgent("knights-and-knaves", (sp, key) =>
+var knightsKnavesAgentBuilder = builder.AddAIAgent("knights-and-knaves", (sp, key) =>
 {
     var chatClient = sp.GetRequiredKeyedService<IChatClient>("chat-model");
 
@@ -78,20 +78,10 @@ var literatureAgent = builder.AddAIAgent("literator",
     description: "An agent that helps with literature.",
     chatClientServiceKey: "chat-model");
 
-var scienceSequentialWorkflow = builder.AddWorkflow("science-sequential-workflow", (sp, key) =>
-{
-    List<IHostedAgentBuilder> usedAgents = [chemistryAgent, mathsAgent, literatureAgent];
-    var agents = usedAgents.Select(ab => sp.GetRequiredKeyedService<AIAgent>(ab.Name));
-    return AgentWorkflowBuilder.BuildSequential(workflowName: key, agents: agents);
-}).AddAsAIAgent();
+builder.AddSequentialWorkflow("science-sequential-workflow", [chemistryAgent, mathsAgent, literatureAgent]).AddAsAIAgent();
+builder.AddConcurrentWorkflow("science-concurrent-workflow", [chemistryAgent, mathsAgent, literatureAgent]).AddAsAIAgent();
 
-var scienceConcurrentWorkflow = builder.AddWorkflow("science-concurrent-workflow", (sp, key) =>
-{
-    List<IHostedAgentBuilder> usedAgents = [chemistryAgent, mathsAgent, literatureAgent];
-    var agents = usedAgents.Select(ab => sp.GetRequiredKeyedService<AIAgent>(ab.Name));
-    return AgentWorkflowBuilder.BuildConcurrent(workflowName: key, agents: agents);
-}).AddAsAIAgent();
-
+builder.AddOpenAIChatCompletions();
 builder.AddOpenAIResponses();
 
 var app = builder.Build();
@@ -116,10 +106,8 @@ app.MapA2A(agentName: "knights-and-knaves", path: "/a2a/knights-and-knaves", age
 
 app.MapOpenAIResponses();
 
-app.MapOpenAIChatCompletions(pirateAgent);
-app.MapOpenAIChatCompletions("knights-and-knaves");
-app.MapOpenAIChatCompletions(scienceSequentialWorkflow);
-app.MapOpenAIChatCompletions(scienceConcurrentWorkflow);
+app.MapOpenAIChatCompletions(pirateAgentBuilder);
+app.MapOpenAIChatCompletions(knightsKnavesAgentBuilder);
 
 // Map the agents HTTP endpoints
 app.MapAgentDiscovery("/agents");

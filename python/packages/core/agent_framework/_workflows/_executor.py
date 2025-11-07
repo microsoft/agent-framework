@@ -99,7 +99,7 @@ class Executor(RequestInfoMixin, DictConvertible):
                     response = request.create_response(data=True)
                     await ctx.send_message(response, target_id=request.executor_id)
                 else:
-                    await ctx.request_info(request.source_event)
+                    await ctx.request_info(request.source_event, response_type=request.source_event.response_type)
 
     ## Context Types
     Handler methods receive different WorkflowContext variants based on their type annotations:

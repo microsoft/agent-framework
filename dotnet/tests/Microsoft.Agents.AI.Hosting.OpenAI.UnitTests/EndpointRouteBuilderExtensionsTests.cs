@@ -65,7 +65,7 @@ public sealed class EndpointRouteBuilderExtensionsTests
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         IChatClient mockChatClient = new TestHelpers.SimpleMockChatClient();
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        builder.Services.AddOpenAIResponses();
+        builder.AddOpenAIResponses();
         builder.AddAIAgent(invalidName, "Instructions", chatClientServiceKey: "chat-client");
         using WebApplication app = builder.Build();
         AIAgent agent = app.Services.GetRequiredKeyedService<AIAgent>(invalidName);
@@ -165,6 +165,62 @@ public sealed class EndpointRouteBuilderExtensionsTests
 
         // Act & Assert - Should not throw
         app.MapOpenAIResponses(agent);
+        Assert.NotNull(app);
+    }
+
+    /// <summary>
+    /// Verifies that MapOpenAIResponses without agent parameter works correctly.
+    /// </summary>
+    [Fact]
+    public void MapOpenAIResponses_WithoutAgent_Succeeds()
+    {
+        // Arrange
+        WebApplicationBuilder builder = WebApplication.CreateBuilder();
+        IChatClient mockChatClient = new TestHelpers.SimpleMockChatClient();
+        builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
+        builder.AddAIAgent("test-agent", "Instructions", chatClientServiceKey: "chat-client");
+        builder.AddOpenAIResponses();
+        using WebApplication app = builder.Build();
+
+        // Act & Assert - Should not throw
+        app.MapOpenAIResponses();
+        Assert.NotNull(app);
+    }
+
+    /// <summary>
+    /// Verifies that MapOpenAIResponses without agent parameter requires AddOpenAIResponses to be called.
+    /// </summary>
+    [Fact]
+    public void MapOpenAIResponses_WithoutAgent_NoServiceRegistered_ThrowsInvalidOperationException()
+    {
+        // Arrange
+        WebApplicationBuilder builder = WebApplication.CreateBuilder();
+        using WebApplication app = builder.Build();
+
+        // Act & Assert
+        InvalidOperationException exception = Assert.Throws<InvalidOperationException>(() =>
+            app.MapOpenAIResponses());
+
+        Assert.Contains("IResponsesService is not registered", exception.Message);
+        Assert.Contains("AddOpenAIResponses()", exception.Message);
+    }
+
+    /// <summary>
+    /// Verifies that MapOpenAIResponses without agent parameter with custom path works correctly.
+    /// </summary>
+    [Fact]
+    public void MapOpenAIResponses_WithoutAgent_CustomPath_Succeeds()
+    {
+        // Arrange
+        WebApplicationBuilder builder = WebApplication.CreateBuilder();
+        IChatClient mockChatClient = new TestHelpers.SimpleMockChatClient();
+        builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
+        builder.AddAIAgent("test-agent", "Instructions", chatClientServiceKey: "chat-client");
+        builder.AddOpenAIResponses();
+        using WebApplication app = builder.Build();
+
+        // Act & Assert - Should not throw
+        app.MapOpenAIResponses(responsesPath: "/custom/path/responses");
         Assert.NotNull(app);
     }
 }

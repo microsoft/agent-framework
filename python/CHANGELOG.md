@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0b251106.post1] - 2025-11-06
+
+### Fixed
+
+- **agent-framework-ag-ui**: Fix ag-ui examples packaging for PyPI publish ([#1953](https://github.com/microsoft/agent-framework/pull/1953))
+
+## [1.0.0b251106] - 2025-11-06
+
+### Changed
+
+- **agent-framework-ag-ui**: export sample ag-ui agents ([#1927](https://github.com/microsoft/agent-framework/pull/1927))
+
+## [1.0.0b251105] - 2025-11-05
+
+### Added
+
+- **agent-framework-ag-ui**: Initial release of AG-UI protocol integration for Agent Framework ([#1826](https://github.com/microsoft/agent-framework/pull/1826))
+- **agent-framework-chatkit**: ChatKit integration with a sample application ([#1273](https://github.com/microsoft/agent-framework/pull/1273))
+- Added parameter to disable agent cleanup in AzureAIAgentClient ([#1882](https://github.com/microsoft/agent-framework/pull/1882))
+- Add support for Python 3.14 ([#1904](https://github.com/microsoft/agent-framework/pull/1904))
+
+### Changed
+
+- [BREAKING] Replaced AIProjectClient with AgentsClient in Foundry ([#1936](https://github.com/microsoft/agent-framework/pull/1936))
+- Updates to Tools ([#1835](https://github.com/microsoft/agent-framework/pull/1835))
+
+### Fixed
+
+- Fix missing packaging dependency ([#1929](https://github.com/microsoft/agent-framework/pull/1929))
+
+## [1.0.0b251104] - 2025-11-04
+
+### Added
+
+- Introducing the Anthropic Client ([#1819](https://github.com/microsoft/agent-framework/pull/1819))
+
+### Changed
+
+- [BREAKING] Consolidate workflow run APIs ([#1723](https://github.com/microsoft/agent-framework/pull/1723))
+- [BREAKING] Remove request_type param from ctx.request_info() ([#1824](https://github.com/microsoft/agent-framework/pull/1824))
+- [BREAKING] Cleanup of dependencies ([#1803](https://github.com/microsoft/agent-framework/pull/1803))
+- [BREAKING] Replace `RequestInfoExecutor` with `request_info` API and `@response_handler` ([#1466](https://github.com/microsoft/agent-framework/pull/1466))
+- Azure AI Search Support Update + Refactored Samples & Unit Tests ([#1683](https://github.com/microsoft/agent-framework/pull/1683))
+- Lab: Updates to GAIA module ([#1763](https://github.com/microsoft/agent-framework/pull/1763))
+
+### Fixed
+
+- Azure AI `top_p` and `temperature` parameters fix ([#1839](https://github.com/microsoft/agent-framework/pull/1839))
+- Ensure agent thread is part of checkpoint ([#1756](https://github.com/microsoft/agent-framework/pull/1756))
+- Fix middleware and cleanup confusing function ([#1865](https://github.com/microsoft/agent-framework/pull/1865))
+- Fix type compatibility check ([#1753](https://github.com/microsoft/agent-framework/pull/1753))
+- Fix mcp tool cloning for handoff pattern ([#1883](https://github.com/microsoft/agent-framework/pull/1883))
+
 ## [1.0.0b251028] - 2025-10-28
 
 ### Added
@@ -124,7 +177,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251028...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251104...HEAD
+[1.0.0b251104]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251028...python-1.0.0b251104
 [1.0.0b251028]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251016...python-1.0.0b251028
 [1.0.0b251016]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251007...python-1.0.0b251016
 [1.0.0b251007]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251001...python-1.0.0b251007

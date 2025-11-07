@@ -62,22 +62,22 @@ internal sealed record class RequestFinished(string Id, string RequestType, Reso
 
 internal static class Step9EntryPoint
 {
-    public static WorkflowBuilder AddPassthroughRequestHandler<TRequest, TResponse>(this WorkflowBuilder builder, ExecutorIsh source, ExecutorIsh filter, string? id = null)
+    public static WorkflowBuilder AddPassthroughRequestHandler<TRequest, TResponse>(this WorkflowBuilder builder, ExecutorBinding source, ExecutorBinding filter, string? id = null)
     {
         id ??= typeof(TRequest).Name;
 
         var requestPort = RequestPort.Create<TRequest, TResponse>(id);
 
-        return builder.ForwardMessage<ExternalRequest>(source, executors: [filter], condition: message => message.DataIs<TRequest>())
-                      .ForwardMessage<ExternalRequest>(filter, executors: [requestPort], condition: message => message.DataIs<TRequest>())
-                      .ForwardMessage<ExternalResponse>(requestPort, executors: [filter], condition: message => message.DataIs<TResponse>())
-                      .ForwardMessage<ExternalResponse>(filter, executors: [source], condition: message => message.DataIs<TResponse>());
+        return builder.ForwardMessage<ExternalRequest>(source, targets: [filter], condition: message => message.DataIs<TRequest>())
+                      .ForwardMessage<ExternalRequest>(filter, targets: [requestPort], condition: message => message.DataIs<TRequest>())
+                      .ForwardMessage<ExternalResponse>(requestPort, targets: [filter], condition: message => message.DataIs<TResponse>())
+                      .ForwardMessage<ExternalResponse>(filter, targets: [source], condition: message => message.DataIs<TResponse>());
     }
 
-    public static WorkflowBuilder AddExternalRequest<TRequest, TResponse>(this WorkflowBuilder builder, ExecutorIsh source, string? id = null)
+    public static WorkflowBuilder AddExternalRequest<TRequest, TResponse>(this WorkflowBuilder builder, ExecutorBinding source, string? id = null)
         => builder.AddExternalRequest(source, out RequestPort<TRequest, TResponse> _, id);
 
-    public static WorkflowBuilder AddExternalRequest<TRequest, TResponse>(this WorkflowBuilder builder, ExecutorIsh source, out RequestPort<TRequest, TResponse> inputPort, string? id = null)
+    public static WorkflowBuilder AddExternalRequest<TRequest, TResponse>(this WorkflowBuilder builder, ExecutorBinding source, out RequestPort<TRequest, TResponse> inputPort, string? id = null)
     {
         id = id ?? $"{source.Id}.Requests[{typeof(TRequest).Name}=>{typeof(TResponse).Name}]";
 
@@ -86,12 +86,12 @@ internal static class Step9EntryPoint
         return builder.AddExternalRequest(source, inputPort);
     }
 
-    public static WorkflowBuilder AddExternalRequest<TRequest, TResponse>(this WorkflowBuilder builder, ExecutorIsh source, RequestPort<TRequest, TResponse> inputPort)
+    public static WorkflowBuilder AddExternalRequest<TRequest, TResponse>(this WorkflowBuilder builder, ExecutorBinding source, RequestPort<TRequest, TResponse> inputPort)
     {
-        return builder.ForwardMessage<TRequest>(source, inputPort)
-                      .ForwardMessage<ExternalRequest>(source, inputPort)
-                      .ForwardMessage<TResponse>(inputPort, source)
-                      .ForwardMessage<ExternalResponse>(inputPort, source);
+        return builder.ForwardMessage<TRequest>(source, [inputPort])
+                      .ForwardMessage<ExternalRequest>(source, [inputPort])
+                      .ForwardMessage<TResponse>(inputPort, [source])
+                      .ForwardMessage<ExternalResponse>(inputPort, [source]);
     }
 
     public static Workflow CreateSubWorkflow()
@@ -110,10 +110,10 @@ internal static class Step9EntryPoint
         Coordinator coordinator = new();
         ResourceCache cache = new();
         QuotaPolicyEngine policyEngine = new();
-        ExecutorIsh subworkflow = CreateSubWorkflow().ConfigureSubWorkflow("ResourceWorkflow");
+        ExecutorBinding subworkflow = CreateSubWorkflow().BindAsExecutor("ResourceWorkflow");
 
         return new WorkflowBuilder(coordinator)
-               .AddChain(coordinator, allowRepetition: true, subworkflow, coordinator)
+               .AddChain(coordinator, [subworkflow, coordinator], allowRepetition: true)
                .AddPassthroughRequestHandler<ResourceRequest, ResourceResponse>(subworkflow, cache)
                .AddPassthroughRequestHandler<PolicyCheckRequest, PolicyResponse>(subworkflow, policyEngine)
                .WithOutputFrom(coordinator)
@@ -520,6 +520,28 @@ internal sealed class Coordinator() : Executor(nameof(Coordinator), declareCross
             }
 
             return state + requests.Count;
+        }
+    }
+
+    internal async ValueTask RunWorkflowHandleEventsAsync<TInput>(Workflow workflow, TInput input) where TInput : notnull
+    {
+        StreamingRun run = await InProcessExecution.StreamAsync(workflow, input);
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+        {
+            switch (evt)
+            {
+                case ExecutorInvokedEvent invoked:
+                    Console.WriteLine($"Executor invoked: {invoked.ExecutorId}");
+                    break;
+                case ExecutorCompletedEvent completed:
+                    Console.WriteLine($"Executor completed: {completed.ExecutorId}");
+                    break;
+
+                // Other event types can be handled here as needed
+
+                default:
+                    break;
+            }
         }
     }
 }

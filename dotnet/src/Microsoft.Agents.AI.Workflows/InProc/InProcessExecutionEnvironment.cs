@@ -37,7 +37,7 @@ public sealed class InProcessExecutionEnvironment : IWorkflowExecutionEnvironmen
     }
 
     /// <inheritdoc/>
-    public async ValueTask<StreamingRun> StreamAsync(
+    public async ValueTask<StreamingRun> OpenStreamAsync(
         Workflow workflow,
         string? runId = null,
         CancellationToken cancellationToken = default)
