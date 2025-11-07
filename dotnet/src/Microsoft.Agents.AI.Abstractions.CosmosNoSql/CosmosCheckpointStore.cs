@@ -8,6 +8,7 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using Azure.Identity;
 using Microsoft.Azure.Cosmos;
+using Microsoft.Shared.Diagnostics;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -36,17 +37,10 @@ public class CosmosCheckpointStore<T> : JsonCheckpointStore, IDisposable
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
     public CosmosCheckpointStore(string connectionString, string databaseId, string containerId)
     {
-        if (string.IsNullOrWhiteSpace(connectionString))
-            throw new ArgumentException("Cannot be null or whitespace", nameof(connectionString));
-        if (string.IsNullOrWhiteSpace(databaseId))
-            throw new ArgumentException("Cannot be null or whitespace", nameof(databaseId));
-        if (string.IsNullOrWhiteSpace(containerId))
-            throw new ArgumentException("Cannot be null or whitespace", nameof(containerId));
-
         var cosmosClientOptions = new CosmosClientOptions();
 
-        _cosmosClient = new CosmosClient(connectionString, cosmosClientOptions);
-        _container = _cosmosClient.GetContainer(databaseId, containerId);
+        _cosmosClient = new CosmosClient(Throw.IfNullOrWhitespace(connectionString), cosmosClientOptions);
+        _container = _cosmosClient.GetContainer(Throw.IfNullOrWhitespace(databaseId), Throw.IfNullOrWhitespace(containerId));
         _ownsClient = true;
     }
 
@@ -61,15 +55,10 @@ public class CosmosCheckpointStore<T> : JsonCheckpointStore, IDisposable
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
     public CosmosCheckpointStore(string accountEndpoint, string databaseId, string containerId, bool useManagedIdentity)
     {
-        if (string.IsNullOrWhiteSpace(accountEndpoint))
-            throw new ArgumentException("Cannot be null or whitespace", nameof(accountEndpoint));
-        if (string.IsNullOrWhiteSpace(databaseId))
-            throw new ArgumentException("Cannot be null or whitespace", nameof(databaseId));
-        if (string.IsNullOrWhiteSpace(containerId))
-            throw new ArgumentException("Cannot be null or whitespace", nameof(containerId));
-
         if (!useManagedIdentity)
+        {
             throw new ArgumentException("This constructor requires useManagedIdentity to be true. Use the connection string constructor for key-based authentication.", nameof(useManagedIdentity));
+        }
 
         var cosmosClientOptions = new CosmosClientOptions
         {
@@ -79,9 +68,9 @@ public class CosmosCheckpointStore<T> : JsonCheckpointStore, IDisposable
             }
         };
 
-        _cosmosClient = new CosmosClient(accountEndpoint, new DefaultAzureCredential(), cosmosClientOptions);
-        _container = _cosmosClient.GetContainer(databaseId, containerId);
-        _ownsClient = true;
+        this._cosmosClient = new CosmosClient(Throw.IfNullOrWhitespace(accountEndpoint), new DefaultAzureCredential(), cosmosClientOptions);
+        this._container = this._cosmosClient.GetContainer(Throw.IfNullOrWhitespace(databaseId), Throw.IfNullOrWhitespace(containerId));
+        this._ownsClient = true;
     }
 
     /// <summary>
@@ -94,15 +83,10 @@ public class CosmosCheckpointStore<T> : JsonCheckpointStore, IDisposable
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
     public CosmosCheckpointStore(CosmosClient cosmosClient, string databaseId, string containerId)
     {
-        _cosmosClient = cosmosClient ?? throw new ArgumentNullException(nameof(cosmosClient));
+        this._cosmosClient = Throw.IfNull(cosmosClient);
 
-        if (string.IsNullOrWhiteSpace(databaseId))
-            throw new ArgumentException("Cannot be null or whitespace", nameof(databaseId));
-        if (string.IsNullOrWhiteSpace(containerId))
-            throw new ArgumentException("Cannot be null or whitespace", nameof(containerId));
-
-        _container = _cosmosClient.GetContainer(databaseId, containerId);
-        _ownsClient = false;
+        this._container = this._cosmosClient.GetContainer(Throw.IfNullOrWhitespace(databaseId), Throw.IfNullOrWhitespace(containerId));
+        this._ownsClient = false;
     }
 
     /// <summary>

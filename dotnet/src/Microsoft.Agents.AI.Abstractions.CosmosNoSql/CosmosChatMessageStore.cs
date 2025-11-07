@@ -11,6 +11,7 @@ using System.Threading.Tasks;
 using Azure.Identity;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
 
@@ -107,29 +108,9 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
     public CosmosChatMessageStore(string connectionString, string databaseId, string containerId, string conversationId)
     {
-        if (string.IsNullOrWhiteSpace(connectionString))
-        {
-            throw new ArgumentException("Connection string cannot be null or whitespace.", nameof(connectionString));
-        }
-
-        if (string.IsNullOrWhiteSpace(databaseId))
-        {
-            throw new ArgumentException("Database ID cannot be null or whitespace.", nameof(databaseId));
-        }
-
-        if (string.IsNullOrWhiteSpace(containerId))
-        {
-            throw new ArgumentException("Container ID cannot be null or whitespace.", nameof(containerId));
-        }
-
-        if (string.IsNullOrWhiteSpace(conversationId))
-        {
-            throw new ArgumentException("Conversation ID cannot be null or whitespace.", nameof(conversationId));
-        }
-
-        this._cosmosClient = new CosmosClient(connectionString);
-        this._container = this._cosmosClient.GetContainer(databaseId, containerId);
-        this._conversationId = conversationId;
+        this._cosmosClient = new CosmosClient(Throw.IfNullOrWhitespace(connectionString));
+        this._container = this._cosmosClient.GetContainer(Throw.IfNullOrWhitespace(databaseId), Throw.IfNullOrWhitespace(containerId));
+        this._conversationId = Throw.IfNullOrWhitespace(conversationId);
         this._databaseId = databaseId;
         this._containerId = containerId;
         this._ownsClient = true;
@@ -167,34 +148,14 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
     public CosmosChatMessageStore(string accountEndpoint, string databaseId, string containerId, string conversationId, bool useManagedIdentity)
     {
-        if (string.IsNullOrWhiteSpace(accountEndpoint))
-        {
-            throw new ArgumentException("Cannot be null or whitespace", nameof(accountEndpoint));
-        }
-
-        if (string.IsNullOrWhiteSpace(databaseId))
-        {
-            throw new ArgumentException("Cannot be null or whitespace", nameof(databaseId));
-        }
-
-        if (string.IsNullOrWhiteSpace(containerId))
-        {
-            throw new ArgumentException("Cannot be null or whitespace", nameof(containerId));
-        }
-
-        if (string.IsNullOrWhiteSpace(conversationId))
-        {
-            throw new ArgumentException("Cannot be null or whitespace", nameof(conversationId));
-        }
-
         if (!useManagedIdentity)
         {
             throw new ArgumentException("This constructor requires useManagedIdentity to be true. Use the connection string constructor for key-based authentication.", nameof(useManagedIdentity));
         }
 
-        this._cosmosClient = new CosmosClient(accountEndpoint, new DefaultAzureCredential());
-        this._container = this._cosmosClient.GetContainer(databaseId, containerId);
-        this._conversationId = conversationId;
+        this._cosmosClient = new CosmosClient(Throw.IfNullOrWhitespace(accountEndpoint), new DefaultAzureCredential());
+        this._container = this._cosmosClient.GetContainer(Throw.IfNullOrWhitespace(databaseId), Throw.IfNullOrWhitespace(containerId));
+        this._conversationId = Throw.IfNullOrWhitespace(conversationId);
         this._databaseId = databaseId;
         this._containerId = containerId;
         this._ownsClient = true;
@@ -230,26 +191,11 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
     public CosmosChatMessageStore(CosmosClient cosmosClient, string databaseId, string containerId, string conversationId)
     {
-        this._cosmosClient = cosmosClient ?? throw new ArgumentNullException(nameof(cosmosClient));
+        this._cosmosClient = Throw.IfNull(cosmosClient);
         this._ownsClient = false;
 
-        if (string.IsNullOrWhiteSpace(databaseId))
-        {
-            throw new ArgumentException("Cannot be null or whitespace", nameof(databaseId));
-        }
-
-        if (string.IsNullOrWhiteSpace(containerId))
-        {
-            throw new ArgumentException("Cannot be null or whitespace", nameof(containerId));
-        }
-
-        if (string.IsNullOrWhiteSpace(conversationId))
-        {
-            throw new ArgumentException("Cannot be null or whitespace", nameof(conversationId));
-        }
-
-        this._container = this._cosmosClient.GetContainer(databaseId, containerId);
-        this._conversationId = conversationId;
+        this._container = this._cosmosClient.GetContainer(Throw.IfNullOrWhitespace(databaseId), Throw.IfNullOrWhitespace(containerId));
+        this._conversationId = Throw.IfNullOrWhitespace(conversationId);
         this._databaseId = databaseId;
         this._containerId = containerId;
 
@@ -273,45 +219,15 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
     public CosmosChatMessageStore(string connectionString, string databaseId, string containerId, string tenantId, string userId, string sessionId)
     {
-        if (string.IsNullOrWhiteSpace(connectionString))
-        {
-            throw new ArgumentException("Connection string cannot be null or whitespace.", nameof(connectionString));
-        }
-
-        if (string.IsNullOrWhiteSpace(databaseId))
-        {
-            throw new ArgumentException("Database ID cannot be null or whitespace.", nameof(databaseId));
-        }
-
-        if (string.IsNullOrWhiteSpace(containerId))
-        {
-            throw new ArgumentException("Container ID cannot be null or whitespace.", nameof(containerId));
-        }
-
-        if (string.IsNullOrWhiteSpace(tenantId))
-        {
-            throw new ArgumentException("Tenant ID cannot be null or whitespace.", nameof(tenantId));
-        }
-
-        if (string.IsNullOrWhiteSpace(userId))
-        {
-            throw new ArgumentException("User ID cannot be null or whitespace.", nameof(userId));
-        }
-
-        if (string.IsNullOrWhiteSpace(sessionId))
-        {
-            throw new ArgumentException("Session ID cannot be null or whitespace.", nameof(sessionId));
-        }
-
-        this._cosmosClient = new CosmosClient(connectionString);
-        this._container = this._cosmosClient.GetContainer(databaseId, containerId);
-        this._conversationId = sessionId; // Use sessionId as conversationId for compatibility
+        this._cosmosClient = new CosmosClient(Throw.IfNullOrWhitespace(connectionString));
+        this._container = this._cosmosClient.GetContainer(Throw.IfNullOrWhitespace(databaseId), Throw.IfNullOrWhitespace(containerId));
+        this._conversationId = Throw.IfNullOrWhitespace(sessionId); // Use sessionId as conversationId for compatibility
         this._databaseId = databaseId;
         this._containerId = containerId;
 
         // Initialize hierarchical partitioning mode
-        this._tenantId = tenantId;
-        this._userId = userId;
+        this._tenantId = Throw.IfNullOrWhitespace(tenantId);
+        this._userId = Throw.IfNullOrWhitespace(userId);
         this._useHierarchicalPartitioning = true;
         // Use native hierarchical partition key with PartitionKeyBuilder
         this._partitionKey = new PartitionKeyBuilder()
@@ -335,50 +251,20 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
     public CosmosChatMessageStore(string accountEndpoint, string databaseId, string containerId, string tenantId, string userId, string sessionId, bool useManagedIdentity)
     {
-        if (string.IsNullOrWhiteSpace(accountEndpoint))
-        {
-            throw new ArgumentException("Cannot be null or whitespace", nameof(accountEndpoint));
-        }
-
-        if (string.IsNullOrWhiteSpace(databaseId))
-        {
-            throw new ArgumentException("Cannot be null or whitespace", nameof(databaseId));
-        }
-
-        if (string.IsNullOrWhiteSpace(containerId))
-        {
-            throw new ArgumentException("Cannot be null or whitespace", nameof(containerId));
-        }
-
-        if (string.IsNullOrWhiteSpace(tenantId))
-        {
-            throw new ArgumentException("Tenant ID cannot be null or whitespace.", nameof(tenantId));
-        }
-
-        if (string.IsNullOrWhiteSpace(userId))
-        {
-            throw new ArgumentException("User ID cannot be null or whitespace.", nameof(userId));
-        }
-
-        if (string.IsNullOrWhiteSpace(sessionId))
-        {
-            throw new ArgumentException("Session ID cannot be null or whitespace.", nameof(sessionId));
-        }
-
         if (!useManagedIdentity)
         {
             throw new ArgumentException("This constructor requires useManagedIdentity to be true. Use the connection string constructor for key-based authentication.", nameof(useManagedIdentity));
         }
 
-        this._cosmosClient = new CosmosClient(accountEndpoint, new DefaultAzureCredential());
-        this._container = this._cosmosClient.GetContainer(databaseId, containerId);
-        this._conversationId = sessionId; // Use sessionId as conversationId for compatibility
+        this._cosmosClient = new CosmosClient(Throw.IfNullOrWhitespace(accountEndpoint), new DefaultAzureCredential());
+        this._container = this._cosmosClient.GetContainer(Throw.IfNullOrWhitespace(databaseId), Throw.IfNullOrWhitespace(containerId));
+        this._conversationId = Throw.IfNullOrWhitespace(sessionId); // Use sessionId as conversationId for compatibility
         this._databaseId = databaseId;
         this._containerId = containerId;
 
         // Initialize hierarchical partitioning mode
-        this._tenantId = tenantId;
-        this._userId = userId;
+        this._tenantId = Throw.IfNullOrWhitespace(tenantId);
+        this._userId = Throw.IfNullOrWhitespace(userId);
         this._useHierarchicalPartitioning = true;
         // Use native hierarchical partition key with PartitionKeyBuilder
         this._partitionKey = new PartitionKeyBuilder()
@@ -401,42 +287,17 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
     public CosmosChatMessageStore(CosmosClient cosmosClient, string databaseId, string containerId, string tenantId, string userId, string sessionId)
     {
-        this._cosmosClient = cosmosClient ?? throw new ArgumentNullException(nameof(cosmosClient));
+        this._cosmosClient = Throw.IfNull(cosmosClient);
         this._ownsClient = false;
 
-        if (string.IsNullOrWhiteSpace(databaseId))
-        {
-            throw new ArgumentException("Cannot be null or whitespace", nameof(databaseId));
-        }
-
-        if (string.IsNullOrWhiteSpace(containerId))
-        {
-            throw new ArgumentException("Cannot be null or whitespace", nameof(containerId));
-        }
-
-        if (string.IsNullOrWhiteSpace(tenantId))
-        {
-            throw new ArgumentException("Tenant ID cannot be null or whitespace.", nameof(tenantId));
-        }
-
-        if (string.IsNullOrWhiteSpace(userId))
-        {
-            throw new ArgumentException("User ID cannot be null or whitespace.", nameof(userId));
-        }
-
-        if (string.IsNullOrWhiteSpace(sessionId))
-        {
-            throw new ArgumentException("Session ID cannot be null or whitespace.", nameof(sessionId));
-        }
-
-        this._container = this._cosmosClient.GetContainer(databaseId, containerId);
-        this._conversationId = sessionId; // Use sessionId as conversationId for compatibility
+        this._container = this._cosmosClient.GetContainer(Throw.IfNullOrWhitespace(databaseId), Throw.IfNullOrWhitespace(containerId));
+        this._conversationId = Throw.IfNullOrWhitespace(sessionId); // Use sessionId as conversationId for compatibility
         this._databaseId = databaseId;
         this._containerId = containerId;
 
         // Initialize hierarchical partitioning mode
-        this._tenantId = tenantId;
-        this._userId = userId;
+        this._tenantId = Throw.IfNullOrWhitespace(tenantId);
+        this._userId = Throw.IfNullOrWhitespace(userId);
         this._useHierarchicalPartitioning = true;
         // Use native hierarchical partition key with PartitionKeyBuilder
         this._partitionKey = new PartitionKeyBuilder()

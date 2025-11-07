@@ -181,7 +181,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
     public void Constructor_WithNullConnectionString_ShouldThrowArgumentException()
     {
         // Arrange & Act & Assert
-        Assert.Throws<ArgumentException>(() =>
+        Assert.Throws<ArgumentNullException>(() =>
             new CosmosChatMessageStore((string)null!, TestDatabaseId, TestContainerId, "test-conversation"));
     }
 
@@ -469,7 +469,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         // Arrange & Act & Assert
         this.SkipIfEmulatorNotAvailable();
 
-        Assert.Throws<ArgumentException>(() =>
+        Assert.Throws<ArgumentNullException>(() =>
             new CosmosChatMessageStore(this._connectionString, TestDatabaseId, TestContainerId, null!, "user-456", "session-789"));
     }
 

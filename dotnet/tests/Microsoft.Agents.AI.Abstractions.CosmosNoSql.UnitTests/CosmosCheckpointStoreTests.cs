@@ -167,7 +167,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
     public void Constructor_WithNullConnectionString_ThrowsArgumentException()
     {
         // Act & Assert
-        Assert.Throws<ArgumentException>(() =>
+        Assert.Throws<ArgumentNullException>(() =>
             new CosmosCheckpointStore((string)null!, TestDatabaseId, TestContainerId));
     }
 
