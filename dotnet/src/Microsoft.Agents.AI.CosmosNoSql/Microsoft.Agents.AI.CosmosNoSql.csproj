@@ -37,6 +37,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <InternalsVisibleTo Include="Microsoft.Agents.AI.Abstractions.CosmosNoSql.UnitTests" />
+    <InternalsVisibleTo Include="Microsoft.Agents.AI.CosmosNoSql.UnitTests" />
   </ItemGroup>
 </Project>

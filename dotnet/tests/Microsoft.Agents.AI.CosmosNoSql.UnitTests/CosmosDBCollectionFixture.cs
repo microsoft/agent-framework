@@ -2,7 +2,7 @@
 
 using Xunit;
 
-namespace Microsoft.Agents.AI.Abstractions.CosmosNoSql.UnitTests;
+namespace Microsoft.Agents.AI.CosmosNoSql.UnitTests;
 
 /// <summary>
 /// Defines a collection fixture for Cosmos DB tests to ensure they run sequentially.

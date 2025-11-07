@@ -10,7 +10,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Abstractions.CosmosNoSql\Microsoft.Agents.AI.Abstractions.CosmosNoSql.csproj" />
+    <ProjectReference Include="..\..\src\Microsoft.Agents.AI.CosmosNoSql\Microsoft.Agents.AI.CosmosNoSql.csproj" />
   </ItemGroup>
 
   <ItemGroup>

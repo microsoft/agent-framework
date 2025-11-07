@@ -9,7 +9,7 @@ using Microsoft.Agents.AI.Workflows;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Xunit;
 
-namespace Microsoft.Agents.AI.Abstractions.CosmosNoSql.UnitTests;
+namespace Microsoft.Agents.AI.CosmosNoSql.UnitTests;
 
 /// <summary>
 /// Contains tests for <see cref="CosmosCheckpointStore"/>.

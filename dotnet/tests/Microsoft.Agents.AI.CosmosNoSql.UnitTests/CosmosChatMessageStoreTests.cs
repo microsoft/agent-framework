@@ -13,7 +13,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Agents.AI;
 using Xunit;
 
-namespace Microsoft.Agents.AI.Abstractions.CosmosNoSql.UnitTests;
+namespace Microsoft.Agents.AI.CosmosNoSql.UnitTests;
 
 /// <summary>
 /// Contains tests for <see cref="CosmosChatMessageStore"/>.
@@ -36,9 +36,9 @@ namespace Microsoft.Agents.AI.Abstractions.CosmosNoSql.UnitTests;
 /// | COSMOS_PRESERVE_CONTAINERS | true / false | Controls whether to preserve test data after completion |
 ///
 /// Usage Examples:
-/// - Run all tests in preserve mode: $env:COSMOS_PRESERVE_CONTAINERS="true"; dotnet test tests/Microsoft.Agents.AI.Abstractions.CosmosNoSql.UnitTests/
-/// - Run specific test category in preserve mode: $env:COSMOS_PRESERVE_CONTAINERS="true"; dotnet test tests/Microsoft.Agents.AI.Abstractions.CosmosNoSql.UnitTests/ --filter "Category=CosmosDB"
-/// - Reset to cleanup mode: $env:COSMOS_PRESERVE_CONTAINERS=""; dotnet test tests/Microsoft.Agents.AI.Abstractions.CosmosNoSql.UnitTests/
+/// - Run all tests in preserve mode: $env:COSMOS_PRESERVE_CONTAINERS="true"; dotnet test tests/Microsoft.Agents.AI.CosmosNoSql.UnitTests/
+/// - Run specific test category in preserve mode: $env:COSMOS_PRESERVE_CONTAINERS="true"; dotnet test tests/Microsoft.Agents.AI.CosmosNoSql.UnitTests/ --filter "Category=CosmosDB"
+/// - Reset to cleanup mode: $env:COSMOS_PRESERVE_CONTAINERS=""; dotnet test tests/Microsoft.Agents.AI.CosmosNoSql.UnitTests/
 /// </summary>
 [Collection("CosmosDB")]
 public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
