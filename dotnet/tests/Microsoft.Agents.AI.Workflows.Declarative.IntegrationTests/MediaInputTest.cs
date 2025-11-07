@@ -5,7 +5,6 @@ using System.IO;
 using System.Net.Http;
 using System.Threading.Tasks;
 using Azure.AI.Agents;
-using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Framework;
 using Microsoft.Extensions.AI;
