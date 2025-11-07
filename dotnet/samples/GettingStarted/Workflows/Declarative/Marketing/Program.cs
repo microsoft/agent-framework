@@ -75,9 +75,9 @@ internal sealed class Program
                 """,
             Tools =
             {
-                AgentTool.CreateBingGroundingTool(
-                    new BingGroundingSearchToolParameters(
-                        [new BingGroundingSearchConfiguration(configuration[Application.Settings.FoundryGroundingTool])]))
+                //AgentTool.CreateBingGroundingTool( // %%% API BUG - Use Bing Grounding when available
+                //    new BingGroundingSearchToolParameters(
+                //        [new BingGroundingSearchConfiguration(configuration[Application.Settings.FoundryGroundingTool])]))
             }
         };
 

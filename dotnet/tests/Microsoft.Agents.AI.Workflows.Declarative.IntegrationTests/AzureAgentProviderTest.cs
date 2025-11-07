@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Linq;
 using System.Threading.Tasks;
 using Azure.Identity;
@@ -16,7 +15,7 @@ public sealed class AzureAgentProviderTest(ITestOutputHelper output) : Integrati
     public async Task ConversationTestAsync()
     {
         // Arrange
-        AzureAgentProvider provider = new(new Uri(this.FoundryConfiguration.Endpoint), new AzureCliCredential());
+        AzureAgentProvider provider = new(this.TestEndpoint, new AzureCliCredential());
         // Act
         string conversationId = await provider.CreateConversationAsync();
         // Assert

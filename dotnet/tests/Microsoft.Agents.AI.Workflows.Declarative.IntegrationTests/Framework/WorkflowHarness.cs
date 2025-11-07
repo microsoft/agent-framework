@@ -31,7 +31,7 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
             string inputText = testcase.Setup.Responses[responseCount].Value;
             Console.WriteLine($"INPUT: {inputText}");
             ++responseCount;
-            WorkflowEvents runEvents = await this.ResumeAsync(new ExternalInputRequest(inputText)).ConfigureAwait(false);
+            WorkflowEvents runEvents = await this.ResumeAsync(new ExternalInputResponse(new ChatMessage(ChatRole.User, inputText))).ConfigureAwait(false);
             workflowEvents = new WorkflowEvents([.. workflowEvents.Events, .. runEvents.Events]);
             requestCount = (workflowEvents.InputEvents.Count + 1) / 2;
         }
@@ -48,7 +48,7 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
         return new WorkflowEvents(workflowEvents);
     }
 
-    public async Task<WorkflowEvents> ResumeAsync(object response)
+    public async Task<WorkflowEvents> ResumeAsync(ExternalInputResponse response)
     {
         Console.WriteLine("\nRESUMING WORKFLOW...");
         Assert.NotNull(this.LastCheckpoint);
@@ -93,7 +93,7 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
         return this._checkpointManager;
     }
 
-    private static async IAsyncEnumerable<WorkflowEvent> MonitorAndDisposeWorkflowRunAsync(Checkpointed<StreamingRun> run, object? response = null)
+    private static async IAsyncEnumerable<WorkflowEvent> MonitorAndDisposeWorkflowRunAsync(Checkpointed<StreamingRun> run, ExternalInputResponse? response = null)
     {
         await using IAsyncDisposable disposeRun = run;
 

@@ -16,8 +16,7 @@ trigger:
       id: invoke_search
       conversationId: =System.ConversationId
       agent:
-        name: MenuAgentAgent
-      #input:
-      # // %%% FIX NESTING ON PACKAGE UPDATE
-      externalLoop:
-        when: =Upper(System.LastMessage.Text) <> "EXIT"
+        name: MenuAgent
+      input:
+        externalLoop:
+          when: =Upper(System.LastMessage.Text) <> "EXIT"

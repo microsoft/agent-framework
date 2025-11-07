@@ -49,7 +49,7 @@ internal sealed class Program
         // a workflow, handle the workflow events, and providing external input.
         // This also includes the ability to checkpoint workflow state and how to
         // resume execution.
-        WorkflowRunner runner = new(functions);
+        WorkflowRunner runner = new(functions) { UseJsonCheckpoints = true };
         await runner.ExecuteAsync(workflowFactory.CreateWorkflow, workflowInput);
     }
 
@@ -58,7 +58,7 @@ internal sealed class Program
         AgentsClient agentsClient = new(foundryEndpoint, new AzureCliCredential());
 
         await agentsClient.CreateAgentAsync(
-            agentName: "MenuAgentAgent",
+            agentName: "MenuAgent",
             agentDefinition: DefineMenuAgent(configuration, functions),
             agentDescription: "Provides information about the restaurant menu");
     }

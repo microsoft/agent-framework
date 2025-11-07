@@ -33,6 +33,9 @@ public sealed class FunctionCallingWorkflowTest(ITestOutputHelper output) : Inte
 
     private async Task RunWorkflowAsync(bool autoInvoke, params IEnumerable<AIFunction> functionTools)
     {
+        AgentProvider agentProvider = AgentProvider.Create(this.Configuration, AgentProvider.Names.FunctionTool);
+        await agentProvider.CreateAgentsAsync().ConfigureAwait(false);
+
         string workflowPath = GetWorkflowPath("FunctionTool.yaml");
         Dictionary<string, AIFunction> functionMap = autoInvoke ? [] : functionTools.ToDictionary(tool => tool.Name, tool => tool);
         DeclarativeWorkflowOptions workflowOptions = await this.CreateOptionsAsync(externalConversation: false, autoInvoke ? functionTools : []);
@@ -80,7 +83,7 @@ public sealed class FunctionCallingWorkflowTest(ITestOutputHelper output) : Inte
             Assert.NotEmpty(workflowEvents.InputEvents);
         }
 
-        Assert.Equal(autoInvoke ? 3 : 5, workflowEvents.AgentResponseEvents.Count);
+        Assert.Equal(autoInvoke ? 3 : 4, workflowEvents.AgentResponseEvents.Count);
         Assert.All(workflowEvents.AgentResponseEvents, response => response.Response.Text.Contains("4.95"));
     }
 

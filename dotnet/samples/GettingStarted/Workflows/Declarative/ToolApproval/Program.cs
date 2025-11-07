@@ -40,7 +40,7 @@ internal sealed class Program
         // a workflow, handle the workflow events, and providing external input.
         // This also includes the ability to checkpoint workflow state and how to
         // resume execution.
-        WorkflowRunner runner = new();
+        WorkflowRunner runner = new() { UseJsonCheckpoints = true };
         await runner.ExecuteAsync(workflowFactory.CreateWorkflow, workflowInput);
     }
 

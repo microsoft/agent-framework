@@ -1,5 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+#pragma warning disable IDE0005
+
+using System;
+using System.Threading.Tasks;
 using Azure.AI.Agents;
 
 namespace Shared.Foundry;

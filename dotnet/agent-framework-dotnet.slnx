@@ -117,10 +117,10 @@
     <Project Path="samples/GettingStarted/Workflows/Declarative/ToolApproval/ToolApproval.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflows/Declarative/Examples/">
+    <File Path="../workflow-samples/ConfirmInput.yaml" />
     <File Path="../workflow-samples/DeepResearch.yaml" />
     <File Path="../workflow-samples/Marketing.yaml" />
     <File Path="../workflow-samples/MathChat.yaml" />
-    <File Path="../workflow-samples/Question.yaml" />
     <File Path="../workflow-samples/README.md" />
     <File Path="../workflow-samples/wttr.json" />
   </Folder>

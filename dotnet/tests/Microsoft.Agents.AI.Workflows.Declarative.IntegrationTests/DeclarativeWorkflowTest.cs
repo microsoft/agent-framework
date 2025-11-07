@@ -4,6 +4,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Agents;
 using Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Framework;
 using Xunit.Abstractions;
 
@@ -33,7 +34,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         this.RunWorkflowAsync(GetWorkflowPath(workflowFileName, isSample: true), testcaseFileName, externalConveration);
 
     [Theory]
-    [InlineData("HumanInLoop.yaml", "HumanInLoop.json", true)]
+    [InlineData("ConfirmInput.yaml", "ConfirmInput.json", true)]
     [InlineData("RequestExternalInput.yaml", "RequestExternalInput.json", false)]
     public Task ValidateMultiTurnAsync(string workflowFileName, string testcaseFileName, bool isSample) =>
         this.RunWorkflowAsync(GetWorkflowPath(workflowFileName, isSample), testcaseFileName, useJsonCheckpoint: true);
@@ -45,6 +46,9 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
 
     protected override async Task RunAndVerifyAsync<TInput>(Testcase testcase, string workflowPath, DeclarativeWorkflowOptions workflowOptions, TInput input, bool useJsonCheckpoint)
     {
+        AgentProvider agentProvider = AgentProvider.Create(this.Configuration, Path.GetFileNameWithoutExtension(workflowPath));
+        await agentProvider.CreateAgentsAsync().ConfigureAwait(false);
+
         Workflow workflow = DeclarativeWorkflowBuilder.Build<TInput>(workflowPath, workflowOptions);
 
         WorkflowHarness harness = new(workflow, runId: Path.GetFileNameWithoutExtension(workflowPath));
