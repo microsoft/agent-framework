@@ -21,11 +21,15 @@
     <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" />
     <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" />
     <PackageReference Include="Azure.Identity" />
+    <PackageReference Include="Azure.AI.OpenAI" />
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" />
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\Microsoft.Agents.AI\Microsoft.Agents.AI.csproj" />
     <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Hosting.AGUI.AspNetCore\Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.csproj" />
     <ProjectReference Include="..\..\src\Microsoft.Agents.AI.AGUI\Microsoft.Agents.AI.AGUI.csproj" />
+    <ProjectReference Include="..\..\src\Microsoft.Agents.AI.OpenAI\Microsoft.Agents.AI.OpenAI.csproj" />
   </ItemGroup>
 
 </Project>
