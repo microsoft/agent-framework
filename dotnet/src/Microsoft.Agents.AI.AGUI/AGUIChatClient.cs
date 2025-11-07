@@ -50,8 +50,14 @@ public sealed class AGUIChatClient : DelegatingChatClient
             return AGUIJsonSerializerContext.Default.Options;
         }
 
+        // Create a new JsonSerializerOptions based on the provided one
         var combinedOptions = new JsonSerializerOptions(jsonSerializerOptions);
-        combinedOptions.TypeInfoResolverChain.Add(AGUIJsonSerializerContext.Default);
+
+        // Add the AGUI context to the type info resolver chain if not already present
+        if (!combinedOptions.TypeInfoResolverChain.Any(r => r == AGUIJsonSerializerContext.Default))
+        {
+            combinedOptions.TypeInfoResolverChain.Insert(0, AGUIJsonSerializerContext.Default);
+        }
 
         return combinedOptions;
     }
