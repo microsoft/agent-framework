@@ -11,7 +11,7 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <InjectSharedThrow>true</InjectSharedThrow>
+    <InjectIsExternalInitOnLegacy>true</InjectIsExternalInitOnLegacy>
     <InjectSharedWorkflowsExecution>true</InjectSharedWorkflowsExecution>
     <InjectSharedWorkflowsSettings>true</InjectSharedWorkflowsSettings>
   </PropertyGroup>

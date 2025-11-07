@@ -56,7 +56,6 @@ internal sealed class Program
 
         Notify("\nWORKFLOW: Starting...");
 
-        // Run the workflow, just like any other workflow
         string input = this.GetWorkflowInput();
 
         // Execute the workflow:  The WorkflowRunner demonstrates how to execute
