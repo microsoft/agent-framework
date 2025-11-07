@@ -70,6 +70,6 @@ foreach (string edge in ByLine(this.Edges))
  #>
 
         // Build the workflow
-        return builder.Build();
+        return builder.Build(validateOrphans: false);
     }
 }

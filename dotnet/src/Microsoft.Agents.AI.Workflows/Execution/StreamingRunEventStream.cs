@@ -2,10 +2,12 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.Observability;
 
 namespace Microsoft.Agents.AI.Workflows.Execution;
 
@@ -15,6 +17,9 @@ namespace Microsoft.Agents.AI.Workflows.Execution;
 /// </summary>
 internal sealed class StreamingRunEventStream : IRunEventStream
 {
+    private static readonly string s_namespace = typeof(StreamingRunEventStream).Namespace!;
+    private static readonly ActivitySource s_activitySource = new(s_namespace);
+
     private readonly Channel<WorkflowEvent> _eventChannel;
     private readonly ISuperStepRunner _stepRunner;
     private readonly InputWaiter _inputWaiter;
@@ -58,6 +63,9 @@ internal sealed class StreamingRunEventStream : IRunEventStream
         // Subscribe to events - they will flow directly to the channel as they're raised
         this._stepRunner.OutgoingEvents.EventRaised += OnEventRaisedAsync;
 
+        using Activity? activity = s_activitySource.StartActivity(ActivityNames.WorkflowRun);
+        activity?.SetTag(Tags.WorkflowId, this._stepRunner.StartExecutorId).SetTag(Tags.RunId, this._stepRunner.RunId);
+
         try
         {
             // Wait for the first input before starting
@@ -65,6 +73,7 @@ internal sealed class StreamingRunEventStream : IRunEventStream
             await this._inputWaiter.WaitForInputAsync(cancellationToken: linkedSource.Token).ConfigureAwait(false);
 
             this._runStatus = RunStatus.Running;
+            activity?.AddEvent(new ActivityEvent(EventNames.WorkflowStarted));
 
             while (!linkedSource.Token.IsCancellationRequested)
             {
@@ -99,9 +108,17 @@ internal sealed class StreamingRunEventStream : IRunEventStream
         {
             // Expected during shutdown
         }
-        catch (Exception e)
+        catch (Exception ex)
         {
-            await this._eventChannel.Writer.WriteAsync(new WorkflowErrorEvent(e), linkedSource.Token).ConfigureAwait(false);
+            if (activity != null)
+            {
+                activity.AddEvent(new ActivityEvent(EventNames.WorkflowError, tags: new() {
+                             { Tags.ErrorType, ex.GetType().FullName },
+                             { Tags.BuildErrorMessage, ex.Message },
+                        }));
+                activity.CaptureException(ex);
+            }
+            await this._eventChannel.Writer.WriteAsync(new WorkflowErrorEvent(ex), linkedSource.Token).ConfigureAwait(false);
         }
         finally
         {
@@ -110,6 +127,7 @@ internal sealed class StreamingRunEventStream : IRunEventStream
 
             // Mark as ended when run loop exits
             this._runStatus = RunStatus.Ended;
+            activity?.AddEvent(new ActivityEvent(EventNames.WorkflowCompleted));
         }
 
         async ValueTask OnEventRaisedAsync(object? sender, WorkflowEvent e)

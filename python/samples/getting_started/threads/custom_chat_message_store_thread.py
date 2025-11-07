@@ -8,6 +8,14 @@ from agent_framework import ChatMessage, ChatMessageStoreProtocol
 from agent_framework._threads import ChatMessageStoreState
 from agent_framework.openai import OpenAIChatClient
 
+"""
+Custom Chat Message Store Thread Example
+
+This sample demonstrates how to implement and use a custom chat message store
+for thread management, allowing you to persist conversation history in your
+preferred storage solution (database, file system, etc.).
+"""
+
 
 class CustomChatMessageStore(ChatMessageStoreProtocol):
     """Implementation of custom chat message store.
@@ -24,13 +32,22 @@ class CustomChatMessageStore(ChatMessageStoreProtocol):
     async def list_messages(self) -> list[ChatMessage]:
         return self._messages
 
-    async def deserialize_state(self, serialized_store_state: Any, **kwargs: Any) -> None:
+    @classmethod
+    async def deserialize(cls, serialized_store_state: Any, **kwargs: Any) -> "CustomChatMessageStore":
+        """Create a new instance from serialized state."""
+        store = cls()
+        await store.update_from_state(serialized_store_state, **kwargs)
+        return store
+
+    async def update_from_state(self, serialized_store_state: Any, **kwargs: Any) -> None:
+        """Update this instance from serialized state."""
         if serialized_store_state:
             state = ChatMessageStoreState.from_dict(serialized_store_state, **kwargs)
             if state.messages:
                 self._messages.extend(state.messages)
 
-    async def serialize_state(self, **kwargs: Any) -> Any:
+    async def serialize(self, **kwargs: Any) -> Any:
+        """Serialize this store's state."""
         state = ChatMessageStoreState(messages=self._messages)
         return state.to_dict(**kwargs)
 
@@ -42,8 +59,8 @@ async def main() -> None:
     # OpenAI Chat Client is used as an example here,
     # other chat clients can be used as well.
     agent = OpenAIChatClient().create_agent(
-        name="Joker",
-        instructions="You are good at telling jokes.",
+        name="CustomBot",
+        instructions="You are a helpful assistant that remembers our conversation.",
         # Use custom chat message store.
         # If not provided, the default in-memory store will be used.
         chat_message_store_factory=CustomChatMessageStore,
@@ -53,7 +70,7 @@ async def main() -> None:
     thread = agent.get_new_thread()
 
     # Respond to user input.
-    query = "Tell me a joke about a pirate."
+    query = "Hello! My name is Alice and I love pizza."
     print(f"User: {query}")
     print(f"Agent: {await agent.run(query, thread=thread)}\n")
 
@@ -67,7 +84,7 @@ async def main() -> None:
     resumed_thread = await agent.deserialize_thread(serialized_thread)
 
     # Respond to user input.
-    query = "Now tell the same joke in the voice of a pirate, and add some emojis to the joke."
+    query = "What do you remember about me?"
     print(f"User: {query}")
     print(f"Agent: {await agent.run(query, thread=resumed_thread)}\n")
 

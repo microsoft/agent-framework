@@ -68,10 +68,10 @@ internal static class Step9EntryPoint
 
         var requestPort = RequestPort.Create<TRequest, TResponse>(id);
 
-        return builder.ForwardMessage<ExternalRequest>(source, executors: [filter], condition: message => message.DataIs<TRequest>())
-                      .ForwardMessage<ExternalRequest>(filter, executors: [requestPort], condition: message => message.DataIs<TRequest>())
-                      .ForwardMessage<ExternalResponse>(requestPort, executors: [filter], condition: message => message.DataIs<TResponse>())
-                      .ForwardMessage<ExternalResponse>(filter, executors: [source], condition: message => message.DataIs<TResponse>());
+        return builder.ForwardMessage<ExternalRequest>(source, targets: [filter], condition: message => message.DataIs<TRequest>())
+                      .ForwardMessage<ExternalRequest>(filter, targets: [requestPort], condition: message => message.DataIs<TRequest>())
+                      .ForwardMessage<ExternalResponse>(requestPort, targets: [filter], condition: message => message.DataIs<TResponse>())
+                      .ForwardMessage<ExternalResponse>(filter, targets: [source], condition: message => message.DataIs<TResponse>());
     }
 
     public static WorkflowBuilder AddExternalRequest<TRequest, TResponse>(this WorkflowBuilder builder, ExecutorBinding source, string? id = null)
@@ -88,10 +88,10 @@ internal static class Step9EntryPoint
 
     public static WorkflowBuilder AddExternalRequest<TRequest, TResponse>(this WorkflowBuilder builder, ExecutorBinding source, RequestPort<TRequest, TResponse> inputPort)
     {
-        return builder.ForwardMessage<TRequest>(source, inputPort)
-                      .ForwardMessage<ExternalRequest>(source, inputPort)
-                      .ForwardMessage<TResponse>(inputPort, source)
-                      .ForwardMessage<ExternalResponse>(inputPort, source);
+        return builder.ForwardMessage<TRequest>(source, [inputPort])
+                      .ForwardMessage<ExternalRequest>(source, [inputPort])
+                      .ForwardMessage<TResponse>(inputPort, [source])
+                      .ForwardMessage<ExternalResponse>(inputPort, [source]);
     }
 
     public static Workflow CreateSubWorkflow()
@@ -113,7 +113,7 @@ internal static class Step9EntryPoint
         ExecutorBinding subworkflow = CreateSubWorkflow().BindAsExecutor("ResourceWorkflow");
 
         return new WorkflowBuilder(coordinator)
-               .AddChain(coordinator, allowRepetition: true, subworkflow, coordinator)
+               .AddChain(coordinator, [subworkflow, coordinator], allowRepetition: true)
                .AddPassthroughRequestHandler<ResourceRequest, ResourceResponse>(subworkflow, cache)
                .AddPassthroughRequestHandler<PolicyCheckRequest, PolicyResponse>(subworkflow, policyEngine)
                .WithOutputFrom(coordinator)
