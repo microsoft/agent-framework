@@ -9,7 +9,7 @@ with Azure Durable Entities, enabling stateful and durable AI agent execution.
 import json
 import re
 from collections.abc import Mapping
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import azure.durable_functions as df
 import azure.functions as func
@@ -20,6 +20,9 @@ from ._entities import create_agent_entity
 from ._errors import IncomingRequestError
 from ._models import AgentSessionId, ChatRole, RunRequest
 from ._state import AgentState
+
+if TYPE_CHECKING:
+    from .mcp._extension import MCPServerExtension
 
 logger = get_logger("agent_framework.azurefunctions")
 
@@ -70,12 +73,16 @@ class AgentFunctionApp(df.DFApp):
     This creates:
     - HTTP trigger endpoint for each agent's requests (if enabled)
     - Durable entity for each agent's state management and execution
+    - MCP tool trigger for agents (if enabled)
     - Full access to all Azure Functions capabilities
 
     Attributes:
         agents: Dictionary of agent name to AgentProtocol instance
         enable_health_check: Whether health check endpoint is enabled
-        enable_http_endpoints: Whether HTTP endpoints are created for agents
+        enable_http_endpoints: Whether HTTP endpoints are created for agents by default
+        enable_mcp_tool_triggers: Whether MCP tool triggers are created for agents by default
+        agent_http_endpoint_flags: Per-agent HTTP endpoint settings
+        agent_mcp_tool_flags: Per-agent MCP tool trigger settings
         max_poll_retries: Maximum polling attempts when waiting for responses
         poll_interval_seconds: Delay (seconds) between polling attempts
     """
@@ -83,7 +90,9 @@ class AgentFunctionApp(df.DFApp):
     agents: dict[str, AgentProtocol]
     enable_health_check: bool
     enable_http_endpoints: bool
+    enable_mcp_tool_triggers: bool
     agent_http_endpoint_flags: dict[str, bool]
+    agent_mcp_tool_flags: dict[str, bool]
 
     def __init__(
         self,
@@ -91,6 +100,7 @@ class AgentFunctionApp(df.DFApp):
         http_auth_level: func.AuthLevel = func.AuthLevel.ANONYMOUS,
         enable_health_check: bool = True,
         enable_http_endpoints: bool = True,
+        enable_mcp_tool_triggers: bool = False,
         max_poll_retries: int = 10,
         poll_interval_seconds: float = 0.5,
         default_callback: AgentResponseCallbackProtocol | None = None,
@@ -101,13 +111,15 @@ class AgentFunctionApp(df.DFApp):
             agents: List of agent instances to register
             http_auth_level: HTTP authentication level (default: ANONYMOUS)
             enable_health_check: Enable built-in health check endpoint (default: True)
-            enable_http_endpoints: Enable HTTP endpoints for agents (default: True)
+            enable_http_endpoints: Enable HTTP endpoints for agents by default (default: True)
+            enable_mcp_tool_triggers: Enable MCP tool triggers for agents by default (default: False)
             max_poll_retries: Maximum number of polling attempts when waiting for a response
             poll_interval_seconds: Delay (in seconds) between polling attempts
             default_callback: Optional callback invoked for agents without specific callbacks
 
         Note:
             If no agents are provided, they can be added later using add_agent().
+            Per-agent settings in add_agent() override these global defaults.
         """
         logger.debug("[AgentFunctionApp] Initializing with Durable Entities...")
 
@@ -116,9 +128,11 @@ class AgentFunctionApp(df.DFApp):
 
         # Initialize agents dictionary
         self.agents = {}
-        self.agent_http_endpoint_flags = {}
         self.enable_health_check = enable_health_check
         self.enable_http_endpoints = enable_http_endpoints
+        self.enable_mcp_tool_triggers = enable_mcp_tool_triggers
+        self.agent_http_endpoint_flags = {}
+        self.agent_mcp_tool_flags = {}
         self.default_callback = default_callback
 
         try:
@@ -150,6 +164,7 @@ class AgentFunctionApp(df.DFApp):
         agent: AgentProtocol,
         callback: AgentResponseCallbackProtocol | None = None,
         enable_http_endpoint: bool | None = None,
+        enable_mcp_tool_trigger: bool | None = None,
     ) -> None:
         """Add an agent to the function app after initialization.
 
@@ -157,8 +172,10 @@ class AgentFunctionApp(df.DFApp):
             agent: The Microsoft Agent Framework agent instance (must implement AgentProtocol)
                    The agent must have a 'name' attribute.
             callback: Optional callback invoked during agent execution
-            enable_http_endpoint: Optional flag that overrides the app-level
-                                   HTTP endpoint setting for this agent
+            enable_http_endpoint: Optional flag to enable/disable HTTP endpoint for this agent.
+                                   If None, uses the app-level enable_http_endpoints setting.
+            enable_mcp_tool_trigger: Optional flag to enable/disable MCP tool trigger for this agent.
+                                      If None, uses the app-level enable_mcp_tool_triggers setting.
 
         Raises:
             ValueError: If the agent doesn't have a 'name' attribute or if an agent
@@ -172,29 +189,27 @@ class AgentFunctionApp(df.DFApp):
         if name in self.agents:
             raise ValueError(f"Agent with name '{name}' is already registered. Each agent must have a unique name.")
 
-        effective_enable_http_endpoint = (
+        # Resolve effective settings (per-agent overrides global)
+        effective_enable_http = (
             self.enable_http_endpoints if enable_http_endpoint is None else self._coerce_to_bool(enable_http_endpoint)
+        )
+        effective_enable_mcp = (
+            self.enable_mcp_tool_triggers
+            if enable_mcp_tool_trigger is None
+            else self._coerce_to_bool(enable_mcp_tool_trigger)
         )
 
         logger.debug(f"[AgentFunctionApp] Adding agent: {name}")
-        logger.debug(f"[AgentFunctionApp] Route: /api/agents/{name}")
-        logger.debug(
-            "[AgentFunctionApp] HTTP endpoint %s for agent '%s'",
-            "enabled" if effective_enable_http_endpoint else "disabled",
-            name,
-        )
+        logger.debug(f"[AgentFunctionApp] HTTP endpoint: {'enabled' if effective_enable_http else 'disabled'}")
+        logger.debug(f"[AgentFunctionApp] MCP tool trigger: {'enabled' if effective_enable_mcp else 'disabled'}")
 
         self.agents[name] = agent
-        self.agent_http_endpoint_flags[name] = effective_enable_http_endpoint
+        self.agent_http_endpoint_flags[name] = effective_enable_http
+        self.agent_mcp_tool_flags[name] = effective_enable_mcp
 
         effective_callback = callback or self.default_callback
 
-        self._setup_agent_functions(
-            agent,
-            name,
-            effective_callback,
-            effective_enable_http_endpoint,
-        )
+        self._setup_agent_functions(agent, name, effective_callback, effective_enable_http, effective_enable_mcp)
 
         logger.debug(f"[AgentFunctionApp] Agent '{name}' added successfully")
 
@@ -204,26 +219,35 @@ class AgentFunctionApp(df.DFApp):
         agent_name: str,
         callback: AgentResponseCallbackProtocol | None,
         enable_http_endpoint: bool,
+        enable_mcp_tool_trigger: bool,
     ) -> None:
-        """Set up the HTTP trigger and entity for a specific agent.
+        """Set up the HTTP trigger, entity, and MCP tool trigger for a specific agent.
 
         Args:
             agent: The agent instance
             agent_name: The name to use for routing and entity registration
             callback: Optional callback to receive response updates
-            enable_http_endpoint: Whether the HTTP run route is enabled for
-                                   this agent
+            enable_http_endpoint: Whether to create HTTP endpoint
+            enable_mcp_tool_trigger: Whether to create MCP tool trigger
         """
         logger.debug(f"[AgentFunctionApp] Setting up functions for agent '{agent_name}'...")
 
+        # Set up HTTP endpoints if enabled
         if enable_http_endpoint:
             self._setup_http_run_route(agent_name)
+            self._setup_get_state_route(agent_name)
         else:
-            logger.debug(
-                "[AgentFunctionApp] HTTP run route disabled for agent '%s'",
-                agent_name,
-            )
+            logger.debug(f"[AgentFunctionApp] HTTP endpoints disabled for agent '{agent_name}'")
+
+        # Always set up entity (for state management)
         self._setup_agent_entity(agent, agent_name, callback)
+
+        # Set up MCP tool trigger if enabled
+        if enable_mcp_tool_trigger:
+            agent_description = getattr(agent, "description", None)
+            self._setup_mcp_tool_trigger(agent_name, agent_description)
+        else:
+            logger.debug(f"[AgentFunctionApp] MCP tool trigger disabled for agent '{agent_name}'")
 
     def _setup_http_run_route(self, agent_name: str) -> None:
         """Register the POST route that triggers agent execution.
@@ -355,6 +379,258 @@ class AgentFunctionApp(df.DFApp):
         entity_function.__name__ = entity_name_with_prefix
         self.entity_trigger(context_name="context", entity_name=entity_name_with_prefix)(entity_function)
 
+    def _setup_get_state_route(self, agent_name: str) -> None:
+        """Register the GET route for retrieving conversation state.
+
+        Args:
+            agent_name: The agent name (used for both routing and entity identification)
+        """
+        state_function_name = self._build_function_name(agent_name, "state")
+
+        @self.function_name(state_function_name)
+        @self.route(
+            route=f"agents/{agent_name}/{{{SESSION_ID_FIELD}}}",
+            methods=["GET"],
+        )
+        @self.durable_client_input(client_name="client")
+        async def get_conversation_state(
+            req: func.HttpRequest, client: df.DurableOrchestrationClient
+        ) -> func.HttpResponse:
+            """GET endpoint to retrieve conversation state for a given sessionId."""
+            session_key = req.route_params.get(SESSION_ID_FIELD)
+
+            logger.debug(f"[GET State] Retrieving state for session: {session_key}")
+
+            try:
+                session_id = AgentSessionId(name=agent_name, key=session_key)
+                entity_instance_id = session_id.to_entity_id()
+
+                state_response = await client.read_entity_state(entity_instance_id)
+
+                if not state_response or not state_response.entity_exists:
+                    logger.warning(f"[GET State] Session not found: {session_key}")
+                    return func.HttpResponse(
+                        json.dumps({"error": "Session not found"}),
+                        status_code=404,
+                        mimetype="application/json",
+                    )
+
+                state = state_response.entity_state
+                if isinstance(state, str):
+                    state = json.loads(state) if state else {}
+
+                logger.debug(f"[GET State] Found conversation with {state.get('message_count', 0)} messages")
+
+                return func.HttpResponse(json.dumps(state, indent=2), status_code=200, mimetype="application/json")
+
+            except Exception as exc:
+                logger.error(f"[GET State] Error: {str(exc)}", exc_info=True)
+                return func.HttpResponse(
+                    json.dumps({"error": str(exc)}), status_code=500, mimetype="application/json"
+                )
+
+    def _setup_mcp_tool_trigger(self, agent_name: str, agent_description: str | None) -> None:
+        """Register an MCP tool trigger for an agent.
+
+        Args:
+            agent_name: The agent name (used as the MCP tool name)
+            agent_description: Optional description for the MCP tool (shown to clients)
+        """
+        mcp_function_name = f"mcptool_{agent_name}"
+
+        tool_properties = json.dumps(
+            [
+                {
+                    "propertyName": "query",
+                    "propertyType": "string",
+                    "description": "The query to send to the agent.",
+                    "isRequired": True,
+                    "isArray": False,
+                },
+                {
+                    "propertyName": "threadId",
+                    "propertyType": "string",
+                    "description": "Optional thread identifier for conversation continuity.",
+                    "isRequired": False,
+                    "isArray": False,
+                },
+            ]
+        )
+
+        @self.function_name(mcp_function_name)
+        @self.mcp_tool_trigger(
+            arg_name="context",
+            tool_name=agent_name,
+            description=agent_description or f"Interact with {agent_name} agent",
+            tool_properties=tool_properties,
+            data_type=func.DataType.UNDEFINED,
+        )
+        @self.durable_client_input(client_name="client")
+        async def mcp_tool_handler(context: Any, client: df.DurableOrchestrationClient) -> str:
+            """Handle MCP tool invocation for the agent."""
+            return await self._handle_mcp_tool_invocation(agent_name=agent_name, context=context, client=client)
+
+        logger.debug(f"[AgentFunctionApp] Registered MCP tool trigger: {agent_name}")
+
+    async def _handle_mcp_tool_invocation(
+        self, agent_name: str, context: Any, client: df.DurableOrchestrationClient
+    ) -> str:
+        """Handle an MCP tool invocation."""
+        arguments = context.get("arguments", {}) if isinstance(context, dict) else {}
+
+        query = arguments.get("query")
+        if not query or not isinstance(query, str):
+            raise ValueError("MCP Tool invocation is missing required 'query' argument of type string.")
+
+        thread_id = arguments.get("threadId")
+
+        if thread_id and isinstance(thread_id, str) and thread_id.strip():
+            try:
+                session_id = AgentSessionId.parse(thread_id)
+            except Exception:
+                session_id = AgentSessionId(name=agent_name, key=thread_id)
+        else:
+            session_id = AgentSessionId.with_random_key(agent_name)
+
+        entity_instance_id = session_id.to_entity_id()
+
+        correlation_id = self._generate_unique_id()
+        run_request = self._build_request_data(
+            req_body={"message": query, "role": "user"},
+            message=query,
+            conversation_id=str(session_id),
+            correlation_id=correlation_id,
+        )
+
+        logger.debug(f"[MCP Tool] Invoking agent '{agent_name}' with query: {query[:50]}...")
+
+        await client.signal_entity(entity_instance_id, "run_agent", run_request)
+
+        try:
+            result = await self._get_response_from_entity(
+                client=client,
+                entity_instance_id=entity_instance_id,
+                correlation_id=correlation_id,
+                message=query,
+                session_key=str(session_id),
+            )
+
+            if result.get("status") == "success":
+                response_text = result.get("response", "No response")
+                logger.debug(f"[MCP Tool] Agent '{agent_name}' responded successfully")
+                return response_text
+            else:
+                error_msg = result.get("error", "Unknown error")
+                logger.error(f"[MCP Tool] Agent '{agent_name}' execution failed: {error_msg}")
+                raise RuntimeError(f"Agent execution failed: {error_msg}")
+
+        except Exception as exc:
+            logger.error(f"[MCP Tool] Error invoking agent '{agent_name}': {str(exc)}", exc_info=True)
+            raise
+
+    async def _get_response_from_entity(
+        self,
+        client: df.DurableOrchestrationClient,
+        entity_instance_id: df.EntityId,
+        correlation_id: str,
+        message: str,
+        session_key: str,
+    ) -> dict[str, Any]:
+        """Poll the entity state until a response is available or timeout occurs."""
+        import asyncio
+
+        max_retries = 120
+        retry_count = 0
+        result: dict[str, Any] | None = None
+
+        logger.debug(f"[Polling] Waiting for response with correlation ID: {correlation_id}")
+
+        while retry_count < max_retries:
+            await asyncio.sleep(0.5)
+
+            result = await self._poll_entity_for_response(
+                client=client,
+                entity_instance_id=entity_instance_id,
+                correlation_id=correlation_id,
+                message=message,
+                session_key=session_key,
+            )
+            if result is not None:
+                break
+
+            logger.debug(f"[Polling] Response not available yet (retry {retry_count})")
+            retry_count += 1
+
+        if result is not None:
+            return result
+
+        logger.warning(
+            f"[Polling] Response with correlation ID {correlation_id} "
+            f"not found in time (waited {max_retries * 0.5} seconds)"
+        )
+        return await self._build_timeout_result(message=message, session_key=session_key, correlation_id=correlation_id)
+
+    async def _poll_entity_for_response(
+        self,
+        client: df.DurableOrchestrationClient,
+        entity_instance_id: df.EntityId,
+        correlation_id: str,
+        message: str,
+        session_key: str,
+    ) -> dict[str, Any] | None:
+        """Poll entity once for a response matching the correlation ID."""
+        result: dict[str, Any] | None = None
+        try:
+            state = await self._read_cached_state(client, entity_instance_id)
+
+            if state is None:
+                return None
+
+            agent_response = state.try_get_agent_response(correlation_id)
+            if agent_response:
+                result = self._build_success_result(
+                    response_data=agent_response,
+                    message=message,
+                    session_key=session_key,
+                    correlation_id=correlation_id,
+                    state=state,
+                )
+                logger.debug(f"[Polling] Found response for correlation ID: {correlation_id}")
+
+        except Exception as exc:
+            logger.warning(f"[Polling] Error reading entity state: {exc}")
+
+        return result
+
+    async def _build_timeout_result(self, message: str, session_key: str, correlation_id: str) -> dict[str, Any]:
+        """Create the timeout response."""
+        return {
+            "response": "Agent is still processing or timed out...",
+            "message": message,
+            SESSION_ID_FIELD: session_key,
+            "status": "timeout",
+            "correlationId": correlation_id,
+        }
+
+    def _build_success_result(
+        self,
+        response_data: dict[str, Any],
+        message: str,
+        session_key: str,
+        correlation_id: str,
+        state: AgentState,
+    ) -> dict[str, Any]:
+        """Build the success result returned to the caller."""
+        return {
+            "response": response_data.get("response", ""),
+            "message": message,
+            SESSION_ID_FIELD: session_key,
+            "status": "success",
+            "correlationId": correlation_id,
+            "message_count": state.message_count,
+            "timestamp": response_data.get("timestamp"),
+        }
+
     def _setup_health_route(self) -> None:
         """Register the optional health check route."""
 
@@ -365,10 +641,8 @@ class AgentFunctionApp(df.DFApp):
                 {
                     "name": name,
                     "type": type(agent).__name__,
-                    "httpEndpointEnabled": self.agent_http_endpoint_flags.get(
-                        name,
-                        self.enable_http_endpoints,
-                    ),
+                    "httpEndpointEnabled": self.agent_http_endpoint_flags.get(name, self.enable_http_endpoints),
+                    "mcpToolTriggerEnabled": self.agent_mcp_tool_flags.get(name, self.enable_mcp_tool_triggers),
                 }
                 for name, agent in self.agents.items()
             ]
@@ -643,6 +917,59 @@ class AgentFunctionApp(df.DFApp):
             except ValueError:
                 logger.warning("[AgentFunctionApp] Invalid role '%s'; defaulting to user", value)
         return ChatRole.USER
+
+    async def _read_cached_state(
+        self,
+        client: df.DurableOrchestrationClient,
+        entity_instance_id: df.EntityId,
+    ) -> AgentState | None:
+        """Read the entity state from storage.
+
+        Args:
+            client: Durable orchestration client
+            entity_instance_id: Entity ID to read
+
+        Returns:
+            AgentState if entity exists, None otherwise
+        """
+        state_response = await client.read_entity_state(entity_instance_id)
+        if not state_response or not state_response.entity_exists:
+            return None
+
+        state_payload = state_response.entity_state
+        if not isinstance(state_payload, dict):
+            return None
+
+        agent_state = AgentState()
+        agent_state.restore_state(state_payload)
+        return agent_state
+
+    def register_mcp_server(self, mcp_extension: "MCPServerExtension") -> None:
+        """Register MCP server endpoints.
+
+        This enables the Model Context Protocol (MCP) for exposing agents as tools
+        that can be used by MCP clients like Claude Desktop, Cursor, etc.
+
+        Args:
+            mcp_extension: MCPServerExtension instance configured with desired settings
+
+        Example:
+            ```python
+            from agent_framework.azurefunctions.mcp import MCPServerExtension
+
+            mcp = MCPServerExtension(app)
+            app.register_mcp_server(mcp)
+            ```
+
+        Note:
+            This should be called after all agents are registered via add_agent().
+        """
+        logger.info(f"Registering MCP server with route prefix: {mcp_extension.route_prefix}")
+        logger.info(f"Exposing {len(mcp_extension.get_exposed_agents())} agents as MCP tools")
+
+        mcp_extension.register()
+
+        logger.info("MCP server registered successfully")
 
     def _coerce_to_bool(self, value: Any) -> bool:
         """Convert various representations into a boolean flag."""

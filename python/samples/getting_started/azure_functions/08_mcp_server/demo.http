@@ -1,0 +1,83 @@
+### Variables
+@baseUrl = http://localhost:7071
+
+### Health Check
+GET {{baseUrl}}/api/health
+
+### List MCP Tools
+GET {{baseUrl}}/api/mcp/v1/tools
+
+### Call Agent via Standard HTTP Endpoint
+POST {{baseUrl}}/api/agents/WeatherAgent/run
+Content-Type: application/json
+
+{
+  "message": "What is the weather in Seattle?"
+}
+
+### Call Agent via MCP Protocol (JSON-RPC)
+POST {{baseUrl}}/api/mcp/v1
+Content-Type: application/json
+
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "WeatherAgent",
+    "arguments": {
+      "message": "What is the weather in Seattle?"
+    }
+  }
+}
+
+### Call MCP Tool via Direct Endpoint
+POST {{baseUrl}}/api/mcp/v1/call
+Content-Type: application/json
+
+{
+  "name": "WeatherAgent",
+  "arguments": {
+    "message": "What is the weather in Seattle?"
+  }
+}
+
+### Call Agent with Session Continuity
+POST {{baseUrl}}/api/mcp/v1/call
+Content-Type: application/json
+
+{
+  "name": "WeatherAgent",
+  "arguments": {
+    "message": "What about New York?",
+    "sessionId": "test-session-123"
+  }
+}
+
+### MCP JSON-RPC: List Tools
+POST {{baseUrl}}/api/mcp/v1
+Content-Type: application/json
+
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "tools/list",
+  "params": {}
+}
+
+### MCP JSON-RPC: Call Tool with Session
+POST {{baseUrl}}/api/mcp/v1
+Content-Type: application/json
+
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "method": "tools/call",
+  "params": {
+    "name": "WeatherAgent",
+    "arguments": {
+      "message": "Compare the weather in Tokyo and Paris",
+      "sessionId": "multi-city-session"
+    }
+  }
+}
