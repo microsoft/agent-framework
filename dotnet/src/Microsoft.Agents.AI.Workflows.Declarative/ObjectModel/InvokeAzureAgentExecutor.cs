@@ -63,11 +63,11 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
 
         AgentRunResponse agentResponse = await agentProvider.InvokeAgentAsync(this.Id, context, agentName, conversationId, autoSend, messages, cancellationToken).ConfigureAwait(false);
 
-        ChatMessage[] actionablMessages = FilterActionableContent(agentResponse).ToArray();
-        if (actionablMessages.Length > 0)
+        ChatMessage[] actionableMessages = FilterActionableContent(agentResponse).ToArray();
+        if (actionableMessages.Length > 0)
         {
             AgentRunResponse filteredResponse =
-                new(actionablMessages)
+                new(actionableMessages)
                 {
                     AdditionalProperties = agentResponse.AdditionalProperties,
                     AgentId = agentResponse.AgentId,
