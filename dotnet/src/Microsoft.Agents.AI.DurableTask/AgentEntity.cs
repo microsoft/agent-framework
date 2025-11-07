@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using Microsoft.Agents.AI.DurableTask.State;
 using Microsoft.DurableTask.Client;
 using Microsoft.DurableTask.Entities;
 using Microsoft.Extensions.AI;
@@ -40,13 +41,11 @@ internal class AgentEntity(IServiceProvider services, CancellationToken cancella
             logger.LogInformation("Ignoring empty request");
         }
 
-        // TODO: Get state from optional state store
-        DurableAgentState state = this.State;
+        this.State.Data.ConversationHistory.Add(DurableAgentStateRequest.FromRunRequest(request));
 
         foreach (ChatMessage msg in request.Messages)
         {
             logger.LogAgentRequest(sessionId, msg.Role, msg.Text);
-            state.AddChatMessage(msg);
         }
 
         // Set the current agent context for the duration of the agent run. This will be exposed
@@ -62,7 +61,7 @@ internal class AgentEntity(IServiceProvider services, CancellationToken cancella
         {
             // Start the agent response stream
             IAsyncEnumerable<AgentRunResponseUpdate> responseStream = agentWrapper.RunStreamingAsync(
-                state.EnumerateChatMessages(),
+                this.State.Data.ConversationHistory.SelectMany(e => e.Messages).Select(m => m.ToChatMessage()),
                 agentWrapper.GetNewThread(),
                 options: null,
                 this._cancellationToken);
@@ -98,7 +97,8 @@ internal class AgentEntity(IServiceProvider services, CancellationToken cancella
             }
 
             // Persist the agent response to the entity state for client polling
-            state.AddAgentResponse(response, request.CorrelationId);
+            this.State.Data.ConversationHistory.Add(
+                DurableAgentStateResponse.FromRunResponse(request.CorrelationId, response));
 
             string responseText = response.Text;
 
@@ -113,8 +113,6 @@ internal class AgentEntity(IServiceProvider services, CancellationToken cancella
                     response.Usage?.TotalTokenCount);
             }
 
-            this.UpdateEntityState(state);
-
             return response;
         }
         finally
@@ -122,12 +120,5 @@ internal class AgentEntity(IServiceProvider services, CancellationToken cancella
             // Clear the current agent context
             DurableAgentContext.ClearCurrent();
         }
-    }
-
-    private void UpdateEntityState(DurableAgentState state)
-    {
-        // This method is called to update the state of the entity.
-        // It can be used to persist the state to a durable store if needed.
-        this.State = state;
     }
 }

@@ -3,6 +3,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
+using Microsoft.Agents.AI.DurableTask.State;
 using Microsoft.DurableTask;
 using Microsoft.DurableTask.Client;
 using Microsoft.DurableTask.Worker;
@@ -97,7 +98,7 @@ public static class ServiceCollectionExtensions
         return options;
     }
 
-    private class DefaultDataConverter : DataConverter
+    private sealed class DefaultDataConverter : DataConverter
     {
         // Use durable agent options (web defaults + camel case by default) with case-insensitive matching.
         // We clone to apply naming/casing tweaks while retaining source-generated metadata where available.
@@ -114,6 +115,11 @@ public static class ServiceCollectionExtensions
             if (data is null)
             {
                 return null;
+            }
+
+            if (targetType == typeof(DurableAgentState))
+            {
+                return JsonSerializer.Deserialize(data, DurableAgentStateJsonContext.Default.DurableAgentState);
             }
 
             JsonTypeInfo? typeInfo = s_options.GetTypeInfo(targetType);
@@ -134,6 +140,11 @@ public static class ServiceCollectionExtensions
             if (value is null)
             {
                 return null;
+            }
+
+            if (value is DurableAgentState durableAgentState)
+            {
+                return JsonSerializer.Serialize(durableAgentState, DurableAgentStateJsonContext.Default.DurableAgentState);
             }
 
             JsonTypeInfo? typeInfo = s_options.GetTypeInfo(value.GetType());
