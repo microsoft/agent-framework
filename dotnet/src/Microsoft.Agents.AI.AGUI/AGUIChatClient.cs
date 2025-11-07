@@ -262,9 +262,7 @@ public sealed class AGUIChatClient : DelegatingChatClient
         // Extract the thread id from the options additional properties
         private static string? ExtractThreadIdFromOptions(ChatOptions? options)
         {
-            if (options?.AdditionalProperties == null ||
-              !options.AdditionalProperties.TryGetValue("agui_thread_id", out var threadIdObj) ||
-              threadIdObj is not string threadId ||
+            if (options?.AdditionalProperties.TryGetValue("agui_thread_id", out string? threadId) is not true ||
               string.IsNullOrEmpty(threadId))
             {
                 return null;
