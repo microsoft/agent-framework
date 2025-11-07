@@ -32,7 +32,7 @@ source .venv/bin/activate
 - Azurite storage emulator – the sample uses `AzureWebJobsStorage=UseDevelopmentStorage=true`; start Azurite before launching the app.
 - Durable Task local backend – `DURABLE_TASK_SCHEDULER_CONNECTION_STRING` expects the Durable Task scheduler listening on `http://localhost:8080` (start the Durable Functions emulator if it is not already running).
 - Python dependencies – from this folder, run `pip install -r requirements.txt` (or the equivalent in your active virtual environment).
-- Environment variables – update `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME` in `local.settings.json` with your Azure OpenAI resource details; keep the other values as provided unless you are using custom infrastructure.
+- Copy `local.settings.json.template` to `local.settings.json` and update the values for `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME` (and optionally `AZURE_OPENAI_API_KEY`) with your Azure OpenAI resource details; keep the other values as provided unless you are using custom infrastructure.
 
 ## Running the Sample
 
@@ -47,3 +47,17 @@ curl -X POST http://localhost:7071/api/agents/Joker/run \
 ```
 
 The agent responds with a JSON payload that includes the generated joke.
+
+## Expected Output
+
+When you send a POST request with plain-text input, the Functions host responds with an HTTP 202 and queues the request for the durable agent entity. A typical response body looks like the following:
+
+```json
+{
+  "status": "accepted",
+  "response": "Agent request accepted",
+  "message": "Tell me a short joke about cloud computing.",
+  "conversation_id": "<guid>",
+  "correlation_id": "<guid>"
+}
+```
