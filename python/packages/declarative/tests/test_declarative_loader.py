@@ -424,35 +424,41 @@ properties:
     assert result.properties[2].kind == "array"
 
 
-def test_load_maml_agent_samples():
-    """Test that load_maml successfully loads all YAML files from agent-samples directory."""
-    # Find agent-samples directory (should be at repo root level, parallel to python/)
+def _get_agent_sample_yaml_files():
+    """Helper function to collect all YAML files from agent-samples directory."""
     current_file = Path(__file__)
     repo_root = current_file.parent.parent.parent.parent  # tests -> declarative -> packages -> python
     agent_samples_dir = repo_root.parent / "agent-samples"
 
-    # Skip test if agent-samples directory doesn't exist
+    if not agent_samples_dir.exists():
+        return []
+
+    yaml_files = list(agent_samples_dir.rglob("*.yaml")) + list(agent_samples_dir.rglob("*.yml"))
+    return [(yaml_file, agent_samples_dir) for yaml_file in yaml_files]
+
+
+@pytest.mark.parametrize(
+    "yaml_file,agent_samples_dir",
+    _get_agent_sample_yaml_files(),
+    ids=lambda x: x[0].name if isinstance(x, tuple) else str(x),
+)
+def test_load_maml_agent_samples(yaml_file: Path, agent_samples_dir: Path):
+    """Test that load_maml successfully loads a YAML file from agent-samples directory."""
+    with open(yaml_file) as f:
+        content = f.read()
+    result = load_maml(content)
+    # Result can be None for unknown kinds, but should not raise exceptions
+    assert result is not None, f"load_maml returned None for {yaml_file.relative_to(agent_samples_dir)}"
+
+
+def test_agent_samples_directory_exists():
+    """Test that the agent-samples directory exists and contains YAML files."""
+    current_file = Path(__file__)
+    repo_root = current_file.parent.parent.parent.parent  # tests -> declarative -> packages -> python
+    agent_samples_dir = repo_root.parent / "agent-samples"
+
     if not agent_samples_dir.exists():
         pytest.skip(f"agent-samples directory not found at {agent_samples_dir}")
 
-    # Find all YAML files in agent-samples directory
-    yaml_files = list(agent_samples_dir.rglob("*.yaml")) + list(agent_samples_dir.rglob("*.yml"))
-
+    yaml_files = _get_agent_sample_yaml_files()
     assert len(yaml_files) > 0, f"No YAML files found in {agent_samples_dir}"
-
-    # Test each YAML file
-    errors = []
-    for yaml_file in yaml_files:
-        try:
-            with open(yaml_file) as f:
-                content = f.read()
-            result = load_maml(content)
-            # Result can be None for unknown kinds, but should not raise exceptions
-            assert result is not None, f"load_maml returned None for {yaml_file.relative_to(agent_samples_dir)}"
-        except Exception as e:
-            errors.append(f"{yaml_file.relative_to(agent_samples_dir)}: {e}")
-
-    # Report all errors at once
-    if errors:
-        error_msg = "\n".join(errors)
-        pytest.fail(f"Failed to load {len(errors)} out of {len(yaml_files)} YAML files:\n{error_msg}")

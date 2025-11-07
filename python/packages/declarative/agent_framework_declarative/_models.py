@@ -532,7 +532,7 @@ class FunctionTool(Tool):
         kind: str = "function",
         description: str | None = None,
         bindings: list[Binding] | None = None,
-        parameters: PropertySchema | list[Property] | None = None,
+        parameters: PropertySchema | list[Property] | dict[str, Any] | None = None,
         strict: bool = False,
     ) -> None:
         super().__init__(
@@ -544,7 +544,7 @@ class FunctionTool(Tool):
         if isinstance(parameters, list):
             # If parameters is a list, wrap it in a PropertySchema
             parameters = PropertySchema(properties=parameters)
-        elif isinstance(parameters, dict) or (not isinstance(parameters, PropertySchema) and parameters is not None):
+        elif not isinstance(parameters, PropertySchema) and parameters is not None:
             parameters = PropertySchema.from_dict(parameters)
         self.parameters = parameters
         self.strict = strict
