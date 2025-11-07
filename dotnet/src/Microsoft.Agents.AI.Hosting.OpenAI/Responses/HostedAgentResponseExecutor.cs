@@ -43,7 +43,7 @@ internal sealed class HostedAgentResponseExecutor : IResponseExecutor
         CancellationToken cancellationToken = default)
     {
         // Extract agent name from agent.name or model parameter
-        string? agentName = request.Agent?.Name ?? request.Model;
+        string? agentName = GetAgentName(request);
 
         if (string.IsNullOrEmpty(agentName))
         {
@@ -75,36 +75,12 @@ internal sealed class HostedAgentResponseExecutor : IResponseExecutor
         CreateResponse request,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        // Extract agent name from agent.name or model parameter
-        string? model;
-        if (request.Agent?.Name is { } agentName)
-        {
-            model = request.Model;
-        }
-        else
-        {
-            // If the model is being used for the agent name, do not also use it for the model.
-            agentName = request.Model;
-            model = null;
-        }
+        // Extract agent name and model from request (validation already done in ValidateRequestAsync)
+        string agentName = GetAgentName(request)!;
+        string? model = GetModelId(request);
 
-        if (string.IsNullOrEmpty(agentName))
-        {
-            throw new InvalidOperationException("No 'agent.name' or 'model' specified in the request.");
-        }
-
-        // Validate and resolve agent synchronously to ensure validation errors are thrown immediately
-        AIAgent agent;
-        try
-        {
-            // Resolve the keyed agent service
-            agent = this._serviceProvider.GetRequiredKeyedService<AIAgent>(agentName);
-        }
-        catch (InvalidOperationException ex)
-        {
-            this._logger.LogError(ex, "Failed to resolve agent with name '{AgentName}'", agentName);
-            throw new InvalidOperationException($"Agent '{agentName}' not found. Ensure the agent is registered with AddAIAgent().", ex);
-        }
+        // Resolve the keyed agent service (validation guarantees this succeeds)
+        AIAgent agent = this._serviceProvider.GetRequiredKeyedService<AIAgent>(agentName);
 
         // Create options with properties from the request
         var chatOptions = new ChatOptions
@@ -132,5 +108,27 @@ internal sealed class HostedAgentResponseExecutor : IResponseExecutor
         {
             yield return streamingEvent;
         }
+    }
+
+    /// <summary>
+    /// Extracts the agent name from the request, prioritizing agent.name over model.
+    /// </summary>
+    /// <param name="request">The create response request.</param>
+    /// <returns>The agent name, or null if not specified.</returns>
+    private static string? GetAgentName(CreateResponse request)
+    {
+        return request.Agent?.Name ?? request.Model;
+    }
+
+    /// <summary>
+    /// Extracts the model ID from the request. Returns null if model is being used as agent name.
+    /// </summary>
+    /// <param name="request">The create response request.</param>
+    /// <returns>The model ID to use, or null if model parameter is being used for agent identification.</returns>
+    private static string? GetModelId(CreateResponse request)
+    {
+        // If agent.name is specified, use model as the model ID
+        // Otherwise, model is being used for agent name, so return null
+        return request.Agent?.Name is not null ? request.Model : null;
     }
 }
