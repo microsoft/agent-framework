@@ -34,8 +34,7 @@
 
   <!-- Build the frontend -->
   <Target Name="BuildFrontend" BeforeTargets="AssignTargetPaths" DependsOnTargets="EnsureNodeModules" Inputs="@(FrontendSourceFiles)" Outputs="$(FrontendBuildMarker)">
-    <!-- Set VITE_API_BASE_URL to empty string for relative URLs -->
-    <Exec Command="npm run build" WorkingDirectory="$(FrontendRoot)" EnvironmentVariables="VITE_API_BASE_URL=" />
+    <Exec Command="npm run build" WorkingDirectory="$(FrontendRoot)" />
     <!-- Create marker file to track successful build -->
     <Touch Files="$(FrontendBuildMarker)" AlwaysCreate="true" />
   </Target>
