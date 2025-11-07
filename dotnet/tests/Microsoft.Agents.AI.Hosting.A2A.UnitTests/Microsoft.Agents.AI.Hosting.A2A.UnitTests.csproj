@@ -11,6 +11,7 @@
   </ItemGroup>
   
   <ItemGroup>
+    <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Hosting.A2A.AspNetCore\Microsoft.Agents.AI.Hosting.A2A.AspNetCore.csproj" />
     <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Hosting.A2A\Microsoft.Agents.AI.Hosting.A2A.csproj" />
   </ItemGroup>
 
