@@ -149,7 +149,12 @@ public sealed class DurableAIAgent : AIAgent
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        return await this.RunAsync<T>([new ChatMessage(ChatRole.User, message)], thread, serializerOptions, options, cancellationToken);
+        return await this.RunAsync<T>(
+            messages: [new ChatMessage(ChatRole.User, message) { CreatedAt = DateTimeOffset.UtcNow }],
+            thread,
+            serializerOptions,
+            options,
+            cancellationToken);
     }
 
     /// <summary>

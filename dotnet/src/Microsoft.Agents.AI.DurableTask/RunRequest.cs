@@ -34,7 +34,7 @@ public record RunRequest
     /// Gets or sets the correlation ID for correlating this request with its response.
     /// </summary>
     [JsonInclude]
-    internal string? CorrelationId { get; set; }
+    internal string CorrelationId { get; set; } = Guid.NewGuid().ToString("N");
 
     /// <summary>
     /// Initializes a new instance of the <see cref="RunRequest"/> class for a single message.
@@ -50,7 +50,7 @@ public record RunRequest
         ChatResponseFormat? responseFormat = null,
         bool enableToolCalls = true,
         IList<string>? enableToolNames = null)
-        : this([new ChatMessage(role ?? ChatRole.User, message)], responseFormat, enableToolCalls, enableToolNames)
+        : this([new ChatMessage(role ?? ChatRole.User, message) { CreatedAt = DateTimeOffset.UtcNow }], responseFormat, enableToolCalls, enableToolNames)
     {
     }
 

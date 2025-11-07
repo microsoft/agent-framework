@@ -2,13 +2,14 @@
 
 using Microsoft.DurableTask.Client;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Microsoft.Agents.AI.DurableTask;
 
-internal class DefaultDurableAgentClient(DurableTaskClient client, ILoggerFactory? loggerFactory = null) : IDurableAgentClient
+internal class DefaultDurableAgentClient(DurableTaskClient client, ILoggerFactory loggerFactory) : IDurableAgentClient
 {
-    private readonly DurableTaskClient _client = client;
-    private readonly ILogger? _logger = loggerFactory?.CreateLogger<DefaultDurableAgentClient>();
+    private readonly DurableTaskClient _client = client ?? throw new ArgumentNullException(nameof(client));
+    private readonly ILogger _logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<DefaultDurableAgentClient>();
 
     public async Task<AgentRunHandle> RunAgentAsync(
         AgentSessionId sessionId,
@@ -17,11 +18,7 @@ internal class DefaultDurableAgentClient(DurableTaskClient client, ILoggerFactor
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        // The correlation ID is used to fetch the correct response later.
-        request.CorrelationId = Guid.NewGuid().ToString("N");
-
-        // TODO: Use source generators to log the request
-        this._logger?.LogInformation("Signalling agent with session ID '{SessionId}'", sessionId);
+        this._logger.LogSignallingAgent(sessionId);
 
         await this._client.Entities.SignalEntityAsync(
             sessionId,
@@ -29,6 +26,6 @@ internal class DefaultDurableAgentClient(DurableTaskClient client, ILoggerFactor
             request,
             cancellation: cancellationToken);
 
-        return new AgentRunHandle(this._client, sessionId, request.CorrelationId);
+        return new AgentRunHandle(this._client, this._logger, sessionId, request.CorrelationId);
     }
 }
