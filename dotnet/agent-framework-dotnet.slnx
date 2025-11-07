@@ -75,8 +75,8 @@
     <Project Path="samples/GettingStarted/AgentWithOpenAI/Agent_OpenAI_Step01_Running/Agent_OpenAI_Step01_Running.csproj" />
     <Project Path="samples/GettingStarted/AgentWithOpenAI/Agent_OpenAI_Step02_Reasoning/Agent_OpenAI_Step02_Reasoning.csproj" />
   </Folder>
-  <Folder Name="/Samples/GettingStarted/AgentWithPurview/">
-    <Project Path="samples/GettingStarted/AgentWithPurview/AgentWithPurview.csproj" Id="36a59e99-ac83-4a35-b5ae-8b60f009dc1e" />
+  <Folder Name="/Samples/Purview/AgentWithPurview/">
+    <Project Path="samples/Purview/AgentWithPurview/AgentWithPurview.csproj" Id="36a59e99-ac83-4a35-b5ae-8b60f009dc1e" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/AgentWithRAG/">
     <File Path="samples/GettingStarted/AgentWithRAG/README.md" />
