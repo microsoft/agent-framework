@@ -255,23 +255,25 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     /// </summary>
     /// <param name="cosmosClient">The <see cref="CosmosClient"/> instance to use for Cosmos DB operations.</param>
     /// <param name="serializedStoreState">A <see cref="JsonElement"/> representing the serialized state of the message store.</param>
+    /// <param name="databaseId">The identifier of the Cosmos DB database.</param>
+    /// <param name="containerId">The identifier of the Cosmos DB container.</param>
     /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="cosmosClient"/> is null.</exception>
     /// <exception cref="ArgumentException">Thrown when the serialized state cannot be deserialized.</exception>
-    public CosmosChatMessageStore(CosmosClient cosmosClient, JsonElement serializedStoreState, JsonSerializerOptions? jsonSerializerOptions = null)
+    public CosmosChatMessageStore(CosmosClient cosmosClient, JsonElement serializedStoreState, string databaseId, string containerId, JsonSerializerOptions? jsonSerializerOptions = null)
     {
         this._cosmosClient = cosmosClient ?? throw new ArgumentNullException(nameof(cosmosClient));
+        this._databaseId = Throw.IfNullOrWhitespace(databaseId);
+        this._containerId = Throw.IfNullOrWhitespace(containerId);
+        this._container = this._cosmosClient.GetContainer(databaseId, containerId);
         this._ownsClient = false;
 
         if (serializedStoreState.ValueKind is JsonValueKind.Object)
         {
             var state = JsonSerializer.Deserialize<StoreState>(serializedStoreState, jsonSerializerOptions);
-            if (state?.ConversationIdentifier is { } conversationId && state.DatabaseIdentifier is { } databaseId && state.ContainerIdentifier is { } containerId)
+            if (state?.ConversationIdentifier is { } conversationId)
             {
                 this._conversationId = conversationId;
-                this._databaseId = databaseId;
-                this._containerId = containerId;
-                this._container = this._cosmosClient.GetContainer(databaseId, containerId);
 
                 // Initialize hierarchical partitioning if available in state
                 this._tenantId = state.TenantId;
@@ -474,8 +476,6 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
         var state = new StoreState
         {
             ConversationIdentifier = this._conversationId,
-            DatabaseIdentifier = this.DatabaseId,
-            ContainerIdentifier = this.ContainerId,
             TenantId = this._tenantId,
             UserId = this._userId,
             UseHierarchicalPartitioning = this._useHierarchicalPartitioning
@@ -589,8 +589,6 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     private sealed class StoreState
     {
         public string ConversationIdentifier { get; set; } = string.Empty;
-        public string DatabaseIdentifier { get; set; } = string.Empty;
-        public string ContainerIdentifier { get; set; } = string.Empty;
         public string? TenantId { get; set; }
         public string? UserId { get; set; }
         public bool UseHierarchicalPartitioning { get; set; }
