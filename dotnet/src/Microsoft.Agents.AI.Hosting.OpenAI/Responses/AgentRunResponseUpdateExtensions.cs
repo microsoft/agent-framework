@@ -4,11 +4,13 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Converters;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Streaming;
+using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses;
@@ -26,7 +28,7 @@ internal static class AgentRunResponseUpdateExtensions
     /// <param name="context">The agent invocation context.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A stream of response events.</returns>
-    internal static async IAsyncEnumerable<StreamingResponseEvent> ToStreamingResponseAsync(
+    public static async IAsyncEnumerable<StreamingResponseEvent> ToStreamingResponseAsync(
         this IAsyncEnumerable<AgentRunResponseUpdate> updates,
         CreateResponse request,
         AgentInvocationContext context,
@@ -49,6 +51,13 @@ internal static class AgentRunResponseUpdateExtensions
         {
             cancellationToken.ThrowIfCancellationRequested();
             var update = updateEnumerator.Current;
+
+            // Special-case for agent framework workflow events.
+            if (update.RawRepresentation is WorkflowEvent workflowEvent)
+            {
+                yield return CreateWorkflowEventResponse(workflowEvent, seq.Increment(), outputIndex);
+                continue;
+            }
 
             if (!IsSameMessage(update, previousUpdate))
             {
@@ -99,6 +108,8 @@ internal static class AgentRunResponseUpdateExtensions
                         TextReasoningContent => new TextReasoningContentEventGenerator(context.IdGenerator, seq, outputIndex),
                         FunctionCallContent => new FunctionCallEventGenerator(context.IdGenerator, seq, outputIndex, context.JsonSerializerOptions),
                         FunctionResultContent => new FunctionResultEventGenerator(context.IdGenerator, seq, outputIndex),
+                        FunctionApprovalRequestContent => new FunctionApprovalRequestEventGenerator(context.IdGenerator, seq, outputIndex, context.JsonSerializerOptions),
+                        FunctionApprovalResponseContent => new FunctionApprovalResponseEventGenerator(context.IdGenerator, seq, outputIndex),
                         ErrorContent => new ErrorContentEventGenerator(context.IdGenerator, seq, outputIndex),
                         UriContent uriContent when uriContent.HasTopLevelMediaType("image") => new ImageContentEventGenerator(context.IdGenerator, seq, outputIndex),
                         DataContent dataContent when dataContent.HasTopLevelMediaType("image") => new ImageContentEventGenerator(context.IdGenerator, seq, outputIndex),
@@ -144,38 +155,38 @@ internal static class AgentRunResponseUpdateExtensions
         {
             return new Response
             {
-                Id = context.ResponseId,
-                CreatedAt = createdAt.ToUnixTimeSeconds(),
-                Model = request.Agent?.Name ?? request.Model,
-                Status = status,
                 Agent = request.Agent?.ToAgentId(),
+                Background = request.Background,
                 Conversation = request.Conversation ?? new ConversationReference { Id = context.ConversationId },
-                Metadata = request.Metadata != null ? new Dictionary<string, string>(request.Metadata) : [],
+                CreatedAt = createdAt.ToUnixTimeSeconds(),
+                Error = null,
+                Id = context.ResponseId,
                 Instructions = request.Instructions,
-                Temperature = request.Temperature ?? 1.0,
-                TopP = request.TopP ?? 1.0,
-                Output = outputs?.ToList() ?? [],
-                Usage = latestUsage,
-                ParallelToolCalls = request.ParallelToolCalls ?? true,
-                Tools = [.. request.Tools ?? []],
-                ToolChoice = request.ToolChoice,
-                ServiceTier = request.ServiceTier ?? "default",
-                Store = request.Store ?? true,
-                PreviousResponseId = request.PreviousResponseId,
-                Reasoning = request.Reasoning,
-                Text = request.Text,
                 MaxOutputTokens = request.MaxOutputTokens,
+                MaxToolCalls = request.MaxToolCalls,
+                Metadata = request.Metadata != null ? new Dictionary<string, string>(request.Metadata) : [],
+                Model = request.Agent?.Name ?? request.Model,
+                Output = outputs?.ToList() ?? [],
+                ParallelToolCalls = request.ParallelToolCalls ?? true,
+                PreviousResponseId = request.PreviousResponseId,
+                Prompt = request.Prompt,
+                PromptCacheKey = request.PromptCacheKey,
+                Reasoning = request.Reasoning,
+                SafetyIdentifier = request.SafetyIdentifier,
+                ServiceTier = request.ServiceTier,
+                Status = status,
+                Store = request.Store ?? true,
+                Temperature = request.Temperature ?? 1.0,
+                Text = request.Text,
+                ToolChoice = request.ToolChoice,
+                Tools = [.. request.Tools ?? []],
+                TopLogprobs = request.TopLogprobs,
+                TopP = request.TopP ?? 1.0,
                 Truncation = request.Truncation,
+                Usage = latestUsage,
 #pragma warning disable CS0618 // Type or member is obsolete
                 User = request.User,
-                PromptCacheKey = request.PromptCacheKey,
 #pragma warning restore CS0618 // Type or member is obsolete
-                SafetyIdentifier = request.SafetyIdentifier,
-                TopLogprobs = request.TopLogprobs,
-                MaxToolCalls = request.MaxToolCalls,
-                Background = request.Background,
-                Prompt = request.Prompt,
-                Error = null
             };
         }
     }
@@ -191,5 +202,50 @@ internal static class AgentRunResponseUpdateExtensions
 
         static bool IsSameRole(ChatRole? value1, ChatRole? value2) =>
             !value1.HasValue || !value2.HasValue || value1.Value == value2.Value;
+    }
+
+    private static StreamingWorkflowEventComplete CreateWorkflowEventResponse(WorkflowEvent workflowEvent, int sequenceNumber, int outputIndex)
+    {
+        // Extract executor_id if this is an ExecutorEvent
+        string? executorId = null;
+        if (workflowEvent is ExecutorEvent execEvent)
+        {
+            executorId = execEvent.ExecutorId;
+        }
+        JsonElement eventData;
+        if (JsonSerializer.IsReflectionEnabledByDefault)
+        {
+            JsonElement? dataElement = null;
+            if (workflowEvent.Data is not null)
+            {
+                dataElement = JsonSerializer.SerializeToElement(workflowEvent.Data, OpenAIHostingJsonUtilities.DefaultOptions.GetTypeInfo(typeof(object)));
+            }
+
+            var eventDataObj = new WorkflowEventData
+            {
+                EventType = workflowEvent.GetType().Name,
+                Data = dataElement,
+                ExecutorId = executorId,
+                Timestamp = DateTime.UtcNow.ToString("O")
+            };
+
+            eventData = JsonSerializer.SerializeToElement(eventDataObj, OpenAIHostingJsonUtilities.DefaultOptions.GetTypeInfo(typeof(WorkflowEventData)));
+        }
+        else
+        {
+            eventData = JsonSerializer.SerializeToElement(
+                "Unsupported. Workflow event serialization is currently only supported when JsonSerializer.IsReflectionEnabledByDefault is true.",
+                OpenAIHostingJsonContext.Default.String);
+        }
+
+        // Create the properly typed streaming workflow event
+        return new StreamingWorkflowEventComplete
+        {
+            SequenceNumber = sequenceNumber,
+            OutputIndex = outputIndex,
+            Data = eventData,
+            ExecutorId = executorId,
+            ItemId = IdGenerator.NewId(prefix: "wf", stringLength: 8, delimiter: "")
+        };
     }
 }
