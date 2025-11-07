@@ -10,6 +10,8 @@ using Azure.Identity;
 using Microsoft.Agents.AI;
 using SampleApp;
 
+#pragma warning disable CA5399
+
 var endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
 var deploymentName = "gpt-5"; // Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
@@ -20,7 +22,9 @@ const string AssistantName = "StructuredOutputAssistant";
 var agentsClient = new AgentsClient(new Uri(endpoint), new AzureCliCredential());
 
 // Create ChatClientAgent directly
-ChatClientAgent agent = await agentsClient.CreateAIAgentAsync(model: deploymentName, new ChatClientAgentOptions(name: AssistantName, instructions: AssistantInstructions));
+ChatClientAgent agent = await agentsClient.CreateAIAgentAsync(
+    model: deploymentName,
+    new ChatClientAgentOptions(name: AssistantName, instructions: AssistantInstructions));
 
 // Set PersonInfo as the type parameter of RunAsync method to specify the expected structured output from the agent and invoke the agent with some unstructured input.
 AgentRunResponse<PersonInfo> response = await agent.RunAsync<PersonInfo>("Please provide information about John Smith, who is a 35-year-old software engineer.");

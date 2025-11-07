@@ -97,8 +97,11 @@ internal sealed class AzureAIAgentChatClient : DelegatingChatClient
 
     private ChatOptions GetConversationEnabledChatOptions(ChatOptions? chatOptions, string conversationId)
     {
-        // Ignore all the chatOptions provided per-request and use by default the one provided at the agent creation.
+        // Start with a clone of the base chat options defined for the agent, if any.
         ChatOptions conversationChatOptions = this._chatOptions?.Clone() ?? new();
+
+        // Ignore per-request all options that can't be overriden.
+        conversationChatOptions.Instructions = null;
 
         // Preserve the original RawRepresentationFactory
         var originalFactory = chatOptions?.RawRepresentationFactory;

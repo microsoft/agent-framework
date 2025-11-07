@@ -26,14 +26,20 @@ VectorStore vectorStore = new InMemoryVectorStore();
 // Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
 var agentsClient = new AgentsClient(new Uri(endpoint), new AzureCliCredential());
 
-// Define the agent you want to create. (Prompt Agent in this case)
-var agentDefinition = new PromptAgentDefinition(model: deploymentName) { Instructions = JokerInstructions };
-
-// Create a server side agent version with the Azure.AI.Agents SDK client.
-var agentVersion = agentsClient.CreateAgentVersion(agentName: JokerName, definition: agentDefinition);
-
-// Retrieve an AIAgent for the created server side agent version.
-AIAgent agent = agentsClient.GetAIAgent(agentVersion);
+AIAgent agent = await agentsClient.CreateAIAgentAsync(
+    deploymentName,
+    new ChatClientAgentOptions
+    {
+        Instructions = JokerInstructions,
+        Name = JokerName,
+        ChatMessageStoreFactory = ctx =>
+        {
+            // Create a new chat message store for this agent that stores the messages in a vector store.
+            // Each thread must get its own copy of the VectorChatMessageStore, since the store
+            // also contains the id that the thread is stored under.
+            return new VectorChatMessageStore(vectorStore, ctx.SerializedState, ctx.JsonSerializerOptions);
+        }
+    });
 
 // Start a new thread for the agent conversation.
 AgentThread thread = agent.GetNewThread();

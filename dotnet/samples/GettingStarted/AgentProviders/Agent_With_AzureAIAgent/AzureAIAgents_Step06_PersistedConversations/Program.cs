@@ -16,14 +16,7 @@ const string JokerName = "JokerAgent";
 // Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
 var agentsClient = new AgentsClient(new Uri(endpoint), new AzureCliCredential());
 
-// Define the agent you want to create. (Prompt Agent in this case)
-var agentDefinition = new PromptAgentDefinition(model: deploymentName) { Instructions = JokerInstructions };
-
-// Create a server side agent version with the Azure.AI.Agents SDK client.
-var agentVersion = agentsClient.CreateAgentVersion(agentName: JokerName, definition: agentDefinition);
-
-// Retrieve an AIAgent for the created server side agent version.
-AIAgent agent = agentsClient.GetAIAgent(agentVersion);
+AIAgent agent = await agentsClient.CreateAIAgentAsync(name: JokerName, model: deploymentName, instructions: JokerInstructions);
 
 // Start a new thread for the agent conversation.
 AgentThread thread = agent.GetNewThread();
